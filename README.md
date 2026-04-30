@@ -29,15 +29,15 @@ Nếu nhìn nhanh, có thể hiểu Deplao là:
 
 ## ✨ Điểm nổi bật
 
-- 👤 **Đa tài khoản Zalo** — đăng nhập nhiều tài khoản, chuyển đổi nhanh, theo dõi trạng thái online/offline và reconnect dễ dàng
-- 💬 **Hộp thư tập trung** — xem và xử lý hội thoại từ nhiều tài khoản trong một giao diện duy nhất
-- 👥 **CRM & Campaign** — quản lý liên hệ, nhãn, ghi chú nội bộ, chiến dịch gửi tin và chăm sóc khách hàng
-- ⚙️ **Workflow tự động hóa** — kéo-thả Trigger → Node → Action, chạy nền 24/7 không cần code
-- 🤖 **AI Assistant** — hỗ trợ tạo nội dung, phân loại tin nhắn, gợi ý trả lời và tích hợp trong workflow
-- 🔗 **Tích hợp ngoài** — POS, vận chuyển, Google Sheets, Telegram, Discord, Email, HTTP Request...
-- 📈 **Báo cáo & phân tích** — theo dõi tin nhắn, liên hệ, chiến dịch, workflow, AI và hiệu suất nhân viên
+- 👤 **Đa tài khoản Zalo** — đăng nhập không giới hạn tài khoản, chuyển đổi qua lại nhanh
+- 💬 **Hộp thư tập trung** — chế độ gộp tài khoản giúp gom và xử lý hội thoại từ nhiều tài khoản trong một giao diện duy nhất
+- 👥 **CRM & Campaign** — quản lý liên hệ, nhãn, ghi chú nội bộ, chăm sóc khách cũ. Quét thành viên nhóm ẩn, nhóm chưa tham gia để tìm khách mới.
+- ⚙️ **Workflow tự động hóa** — kéo-thả Trigger → Node → Action hoặc dùng AI tạo quy trình, chạy nền 24/7 không cần code
+- 🤖 **AI Assistant** — hỗ trợ gợi ý câu trả lời, chat trực tiếp trong hội thoại. Còn giúp phân loại tin nhắn, trả lời khách hàng 24/7.
+- 🔗 **Tích hợp ngoài** — POS, vận chuyển, thanh toán, Google Sheets, Telegram, Discord, Email, HTTP Request... Kết hợp sử dụng khi chat hoặc workflow
+- 📈 **Báo cáo & phân tích** — theo dõi tin nhắn, liên hệ, nhãn, nhân viên, chiến dịch, workflow, AI.
 - 🗂️ **ERP nội bộ** — task, lịch làm việc, notes và phối hợp vận hành nội bộ ngay trong cùng hệ thống
-- 🧑‍💼 **Workspace boss ↔ nhân viên** — phân quyền chi tiết, relay server và theo dõi hiệu suất từng người
+- 🧑‍💼 **Workspace boss ↔ nhân viên** — nhiều thiết bị đăng nhập quản lý 1 tài khoản, phân quyền chi tiết và theo dõi hiệu suất từng nhân viên
 - 🔒 **Dữ liệu lưu cục bộ** — ưu tiên quyền kiểm soát dữ liệu và bảo mật trên máy người dùng
 
 ## 🎯 Phù hợp với ai?
@@ -227,8 +227,6 @@ Deplao hiện được xây dựng trên các công nghệ chính sau:
 ## 📣 Hỗ trợ
 
 - Telegram: [@Deplao_support](https://t.me/Deplao_support)
-
-- Telegram Community: [@Deplao_support](https://t.me/DeplaoCommunity)
 
 ## 🙏 Lời cảm ơn
 
