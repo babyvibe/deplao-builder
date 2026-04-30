@@ -1,0 +1,194 @@
+<svg width="1200" height="1040" viewBox="0 0 1200 1040" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Sơ đồ tổng quan Deplao</title>
+  <desc id="desc">Bản đồ trực quan mô tả Deplao là workspace desktop tập trung cho bán hàng và chăm sóc khách hàng trên Zalo, kết nối các module đa tài khoản, inbox, CRM, workflow, AI, tích hợp, báo cáo và team nội bộ.</desc>
+  <defs>
+    <linearGradient id="bg" x1="150" y1="80" x2="1050" y2="860" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F8FBFF"/>
+      <stop offset="1" stop-color="#EEF5FF"/>
+    </linearGradient>
+    <radialGradient id="coreGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(600 470) rotate(90) scale(210 210)">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="0.55" stop-color="#E3F0FF"/>
+      <stop offset="1" stop-color="#C8DDFF"/>
+    </radialGradient>
+    <radialGradient id="sun" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(600 390) rotate(90) scale(40 40)">
+      <stop stop-color="#FFF8D8"/>
+      <stop offset="0.65" stop-color="#FFD46A"/>
+      <stop offset="1" stop-color="#F59E0B"/>
+    </radialGradient>
+    <linearGradient id="blueNode" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#2647A5"/>
+      <stop offset="1" stop-color="#3A7BFF"/>
+    </linearGradient>
+    <linearGradient id="cyanNode" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#119AD6"/>
+      <stop offset="1" stop-color="#21C7C7"/>
+    </linearGradient>
+    <linearGradient id="tealNode" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#1EAF8B"/>
+      <stop offset="1" stop-color="#1AA1A1"/>
+    </linearGradient>
+    <linearGradient id="violetNode" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#7C5CFF"/>
+      <stop offset="1" stop-color="#3257E5"/>
+    </linearGradient>
+    <linearGradient id="navyNode" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#3E4A88"/>
+      <stop offset="1" stop-color="#4B3DBB"/>
+    </linearGradient>
+    <filter id="softShadow" x="-30%" y="-30%" width="160%" height="160%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="18" stdDeviation="24" flood-color="#8FB4E8" flood-opacity="0.22"/>
+    </filter>
+    <filter id="nodeGlow" x="-60%" y="-60%" width="220%" height="220%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="0" stdDeviation="24" flood-color="#A9D4FF" flood-opacity="0.45"/>
+    </filter>
+    <style>
+      .label { font: 700 18px Inter, Arial, sans-serif; fill: #475569; }
+      .node-title { font: 800 28px Inter, Arial, sans-serif; fill: #0F172A; }
+      .node-title-blue { fill: #2563EB; }
+      .node-chip { fill: white; stroke: rgba(148,163,184,0.32); stroke-width: 2; }
+      .chip-text { font: 700 17px Inter, Arial, sans-serif; fill: #475569; }
+      .core-title { font: 800 42px Inter, Arial, sans-serif; fill: #0F172A; }
+      .core-body { font: 500 24px Inter, Arial, sans-serif; fill: #64748B; }
+      .icon-stroke { stroke: white; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; fill: none; }
+      .orbit { stroke: #D6E6FF; stroke-width: 2.5; fill: none; }
+    </style>
+  </defs>
+
+  <rect x="20" y="20" width="1160" height="1000" rx="44" fill="url(#bg)" stroke="#DDE8F5" stroke-width="2"/>
+
+  <circle cx="600" cy="470" r="275" class="orbit"/>
+  <circle cx="600" cy="470" r="185" class="orbit"/>
+  <circle cx="600" cy="470" r="110" class="orbit" stroke="#C9E4FF"/>
+
+  <circle cx="600" cy="470" r="165" fill="url(#coreGlow)" stroke="#BEDCFF" stroke-width="2" filter="url(#softShadow)"/>
+  <circle cx="600" cy="390" r="16" fill="url(#sun)"/>
+  <circle cx="600" cy="390" r="28" fill="#FDECC8" opacity="0.65"/>
+  <text x="600" y="465" text-anchor="middle" class="core-title">Deplao</text>
+  <text x="600" y="515" text-anchor="middle" class="core-body">Workspace desktop tập trung</text>
+  <text x="600" y="550" text-anchor="middle" class="core-body">cho bán hàng &amp; CSKH trên Zalo</text>
+
+  <!-- Đa tài khoản -->
+  <g filter="url(#nodeGlow)">
+    <circle cx="190" cy="170" r="72" fill="url(#blueNode)"/>
+  </g>
+  <g transform="translate(190 170)">
+    <circle cx="0" cy="-16" r="10" class="icon-stroke"/>
+    <path d="M-24 20c0-12 10-22 22-22h4c12 0 22 10 22 22" class="icon-stroke"/>
+    <path d="M-8 16c0-8 7-15 15-15s15 7 15 15" class="icon-stroke" opacity="0.92"/>
+  </g>
+  <text x="190" y="275" text-anchor="middle" class="node-title">Đa tài khoản</text>
+  <rect x="130" y="293" width="120" height="42" rx="21" class="node-chip"/>
+  <text x="190" y="320" text-anchor="middle" class="chip-text">QR Login</text>
+
+  <!-- Inbox -->
+  <g filter="url(#nodeGlow)">
+    <circle cx="560" cy="105" r="66" fill="url(#cyanNode)"/>
+  </g>
+  <g transform="translate(560 105)">
+    <path d="M-18 -4c0-15 11-26 26-26h6c15 0 26 11 26 26v10c0 15-11 26-26 26h-16l-18 14 4-18c-11-5-18-14-18-28v-4z" class="icon-stroke"/>
+    <path d="M-2 -1h0.5" class="icon-stroke"/>
+    <path d="M10 -1h0.5" class="icon-stroke"/>
+    <path d="M22 -1h0.5" class="icon-stroke"/>
+  </g>
+  <text x="560" y="190" text-anchor="middle" class="node-title">Quản lý tin nhắn</text>
+  <rect x="513" y="208" width="94" height="42" rx="21" class="node-chip"/>
+  <text x="560" y="235" text-anchor="middle" class="chip-text">Inbox</text>
+
+  <!-- CRM -->
+  <g filter="url(#nodeGlow)">
+    <circle cx="930" cy="185" r="72" fill="url(#tealNode)"/>
+  </g>
+  <g transform="translate(930 185)">
+    <circle cx="0" cy="-12" r="10" class="icon-stroke"/>
+    <path d="M-18 18c0-12 8-20 18-20s18 8 18 20" class="icon-stroke"/>
+  </g>
+  <text x="930" y="302" text-anchor="middle" class="node-title node-title-blue">CRM</text>
+  <rect x="885" y="320" width="90" height="42" rx="21" class="node-chip" stroke="#B6D8FF"/>
+  <text x="930" y="347" text-anchor="middle" class="chip-text" fill="#2563EB">Labels</text>
+
+  <!-- Tích hợp -->
+  <g filter="url(#nodeGlow)">
+    <circle cx="970" cy="500" r="78" fill="url(#blueNode)"/>
+  </g>
+  <g transform="translate(970 500)">
+    <path d="M-18 -10h36" class="icon-stroke"/>
+    <path d="M-8 4h16" class="icon-stroke"/>
+    <path d="M-2 18h4" class="icon-stroke"/>
+  </g>
+  <text x="970" y="615" text-anchor="middle" class="node-title">Tích hợp</text>
+  <rect x="931" y="633" width="78" height="42" rx="21" class="node-chip"/>
+  <text x="970" y="660" text-anchor="middle" class="chip-text">POS</text>
+
+  <!-- Workspace -->
+  <g filter="url(#nodeGlow)">
+    <circle cx="1015" cy="790" r="64" fill="url(#navyNode)"/>
+  </g>
+  <g transform="translate(1015 790)">
+    <path d="M-18 20h36" class="icon-stroke"/>
+    <path d="M-12 20V6" class="icon-stroke"/>
+    <path d="M0 20V-8" class="icon-stroke"/>
+    <path d="M12 20V0" class="icon-stroke"/>
+  </g>
+  <text x="1015" y="890" text-anchor="middle" class="node-title">Workspace</text>
+  <rect x="938" y="907" width="154" height="42" rx="21" class="node-chip"/>
+  <text x="1015" y="934" text-anchor="middle" class="chip-text">Permissions</text>
+
+  <!-- Báo cáo -->
+  <g filter="url(#nodeGlow)">
+    <circle cx="645" cy="860" r="62" fill="url(#cyanNode)"/>
+  </g>
+  <g transform="translate(645 860)">
+    <path d="M-18 16V-18" class="icon-stroke"/>
+    <path d="M-18 16H18" class="icon-stroke"/>
+    <path d="M-8 4l10-12 8 8 12-18" class="icon-stroke"/>
+  </g>
+  <text x="645" y="960" text-anchor="middle" class="node-title">Báo cáo</text>
+  <rect x="574" y="977" width="142" height="42" rx="21" class="node-chip"/>
+  <text x="645" y="1004" text-anchor="middle" class="chip-text">Dashboard</text>
+
+  <!-- Workflow -->
+  <g filter="url(#nodeGlow)">
+    <circle cx="370" cy="700" r="78" fill="url(#violetNode)"/>
+  </g>
+  <g transform="translate(370 700)">
+    <path d="M4 -34L-20 -2h18l-6 30 28-40H2l2-22z" class="icon-stroke"/>
+  </g>
+  <text x="370" y="825" text-anchor="middle" class="node-title">Workflow</text>
+  <rect x="321" y="843" width="98" height="42" rx="21" class="node-chip"/>
+  <text x="370" y="870" text-anchor="middle" class="chip-text">Trigger</text>
+
+  <!-- ERP -->
+  <g filter="url(#nodeGlow)">
+    <circle cx="165" cy="835" r="58" fill="url(#tealNode)"/>
+  </g>
+  <g transform="translate(165 835)">
+    <rect x="-16" y="-12" width="32" height="10" rx="2" class="icon-stroke"/>
+    <rect x="-16" y="4" width="14" height="14" rx="2" class="icon-stroke"/>
+    <rect x="2" y="4" width="14" height="6" rx="2" class="icon-stroke"/>
+    <rect x="2" y="14" width="14" height="4" rx="2" class="icon-stroke"/>
+  </g>
+  <text x="165" y="925" text-anchor="middle" class="node-title">ERP</text>
+  <rect x="126" y="943" width="78" height="42" rx="21" class="node-chip"/>
+  <text x="165" y="970" text-anchor="middle" class="chip-text">Task</text>
+
+  <!-- AI -->
+  <g filter="url(#nodeGlow)">
+    <circle cx="115" cy="475" r="60" fill="url(#violetNode)"/>
+  </g>
+  <g transform="translate(115 475)">
+    <rect x="-15" y="-18" width="30" height="38" rx="6" class="icon-stroke"/>
+    <path d="M-8 -26h16" class="icon-stroke"/>
+    <path d="M-8 -6h16" class="icon-stroke"/>
+  </g>
+  <text x="115" y="570" text-anchor="middle" class="node-title">AI</text>
+  <rect x="70" y="588" width="90" height="42" rx="21" class="node-chip"/>
+  <text x="115" y="615" text-anchor="middle" class="chip-text">AI reply</text>
+
+  <!-- tiny ambient dots -->
+  <circle cx="1000" cy="245" r="7" fill="#E8F4FF"/>
+  <circle cx="960" cy="835" r="10" fill="#E8F4FF"/>
+  <circle cx="328" cy="876" r="10" fill="#E8F4FF"/>
+</svg>
+
+
