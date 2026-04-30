@@ -6,6 +6,63 @@
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Desktop-3b82f6)](#-yeu-cau-he-thong)
 [![Support](https://img.shields.io/badge/support-Telegram-0ea5e9)](https://t.me/Deplao_support)
 
+## 📦 Download
+
+Deplao hỗ trợ nhiều hệ điều hành. Bạn có thể tải phiên bản phù hợp theo nhu cầu tại trang Releases:
+
+👉 https://github.com/babyvibe/Deplao-releases/releases
+
+---
+
+### 🖥️ Chọn phiên bản phù hợp:
+
+- 🪟 **Windows**  
+  Chọn file có dạng: `*.exe`
+  
+- 🍎 **macOS (Apple Silicon - M1/M2/M3/M4/M5)**  
+  Chọn file có dạng: `*-arm64.dmg`
+
+- 🍎 **macOS (Intel)**  
+  Chọn file có dạng: `*.dmg`
+
+---
+
+💡 **Lưu ý:**
+- Luôn chọn phiên bản mới nhất (ở trên cùng)
+- Đảm bảo tải đúng file tương ứng với hệ điều hành để tránh lỗi khi cài đặt
+
+## ⚠️ Lưu ý khi mở file cài đặt
+
+Do Deplao chưa được ký chứng chỉ (code signing) - nói thẳng ra là nghèo, nên hệ điều hành có thể hiển thị cảnh báo khi mở file. Bạn có thể làm theo hướng dẫn dưới đây:
+
+---
+
+### 🪟 Windows (.exe)
+
+Khi mở file `.exe`, Windows có thể hiển thị cảnh báo **“Windows protected your PC”**:
+
+👉 Cách xử lý:
+1. Nhấn **More info**
+2. Chọn **Run anyway**
+
+---
+
+### 🍎 macOS (.dmg)
+
+Khi mở file `.dmg`, macOS có thể báo **“cannot be opened because it is from an unidentified developer”**
+
+👉 Cách xử lý:
+
+**Cách 1:**
+- Chuột phải vào file → chọn **Open**
+- Nhấn **Open** lần nữa
+
+**Cách 2 (nếu vẫn bị chặn):**
+1. Vào **System Settings → Privacy & Security**
+2. Kéo xuống phần Security
+3. Nhấn **Open Anyway**
+
+
 ## 🚀 Deplao là gì?
 
 Deplao là ứng dụng desktop dành cho cá nhân, shop, doanh nghiệp và đội nhóm đang vận hành bán hàng hoặc chăm sóc khách hàng qua Zalo.
