@@ -8,63 +8,6 @@
 
 Website: http://deplaoapp.com/
 
-## 📦 Download
-
-Deplao hỗ trợ nhiều hệ điều hành. Bạn có thể tải phiên bản phù hợp theo nhu cầu tại trang Releases:
-
-👉 https://github.com/babyvibe/Deplao-releases/releases
-
----
-
-### 🖥️ Chọn phiên bản phù hợp:
-
-- 🪟 **Windows**  
-  Chọn file có dạng: `*.exe`
-  
-- 🍎 **macOS (Apple Silicon - M1/M2/M3/M4/M5)**  
-  Chọn file có dạng: `*-arm64.dmg`
-
-- 🍎 **macOS (Intel)**  
-  Chọn file có dạng: `*.dmg`
-
----
-
-💡 **Lưu ý:**
-- Luôn chọn phiên bản mới nhất (ở trên cùng)
-- Đảm bảo tải đúng file tương ứng với hệ điều hành để tránh lỗi khi cài đặt
-
-## ⚠️ Lưu ý khi mở file cài đặt
-
-Do Deplao chưa được ký chứng chỉ (code signing) - nói thẳng ra là nghèo, nên hệ điều hành có thể hiển thị cảnh báo khi mở file. Bạn có thể làm theo hướng dẫn dưới đây:
-
----
-
-### 🪟 Windows (.exe)
-
-Khi mở file `.exe`, Windows có thể hiển thị cảnh báo **“Windows protected your PC”**:
-
-👉 Cách xử lý:
-1. Nhấn **More info**
-2. Chọn **Run anyway**
-
----
-
-### 🍎 macOS (.dmg)
-
-Khi mở file `.dmg`, macOS có thể báo **“cannot be opened because it is from an unidentified developer”**
-
-👉 Cách xử lý:
-
-**Cách 1:**
-- Chuột phải vào file → chọn **Open**
-- Nhấn **Open** lần nữa
-
-**Cách 2 (nếu vẫn bị chặn):**
-1. Vào **System Settings → Privacy & Security**
-2. Kéo xuống phần Security
-3. Nhấn **Open Anyway**
-
-
 ## 🚀 Deplao là gì?
 
 Deplao là một **workspace desktop tập trung** cho đội nhóm bán hàng và chăm sóc khách hàng trên Zalo.
@@ -165,6 +108,82 @@ Deplao ưu tiên kiến trúc chạy cục bộ trên máy người dùng:
 - khuyến nghị **8 GB+** nếu chạy nhiều tài khoản hoặc nhiều workflow
 - kết nối Internet 24/7 ổn định để đồng bộ hội thoại và automation
 - nên để app hoạt động liên tục nếu dùng workflow hoặc vận hành đội nhóm
+
+
+## 📦 Download
+
+Deplao hỗ trợ nhiều hệ điều hành. Bạn có thể tải phiên bản phù hợp theo nhu cầu tại trang Releases:
+
+👉 https://github.com/babyvibe/Deplao-releases/releases
+
+---
+
+### 🖥️ Chọn phiên bản phù hợp:
+
+- 🪟 **Windows**  
+  Chọn file có dạng: `*.exe`
+  
+- 🍎 **macOS (Apple Silicon - M1/M2/M3/M4/M5)**  
+  Chọn file có dạng: `*-arm64.dmg`
+
+- 🍎 **macOS (Intel)**  
+  Chọn file có dạng: `*.dmg`
+
+---
+
+💡 **Lưu ý:**
+- Luôn chọn phiên bản mới nhất (ở trên cùng)
+- Đảm bảo tải đúng file tương ứng với hệ điều hành để tránh lỗi khi cài đặt
+
+## ⚠️ Lưu ý khi mở file cài đặt
+
+Do Deplao chưa được ký chứng chỉ (code signing) - nói thẳng ra là nghèo, nên hệ điều hành có thể hiển thị cảnh báo khi mở file. Bạn có thể làm theo hướng dẫn dưới đây:
+
+---
+
+### 🪟 Windows (.exe)
+
+Khi mở file `.exe`, Windows có thể hiển thị cảnh báo **“Windows protected your PC”**:
+
+👉 Cách xử lý:
+1. Nhấn **More info**
+2. Chọn **Run anyway**
+
+---
+
+### 🍎 macOS (.dmg)
+
+Khi mở file `.dmg`, macOS có thể báo **“cannot be opened because it is from an unidentified developer”**
+
+👉 Cách xử lý:
+
+**Cách 1:**
+- Chuột phải vào file → chọn **Open**
+- Nhấn **Open** lần nữa
+
+**Cách 2 (nếu vẫn bị chặn):**
+1. Vào **System Settings → Privacy & Security**
+2. Kéo xuống phần Security
+3. Nhấn **Open Anyway**
+
+
+## 🛠️ Công nghệ & ngôn ngữ sử dụng
+
+Deplao hiện được xây dựng trên các công nghệ chính sau:
+
+- **Thư viện:** zca-js - https://github.com/RFS-ADRENO/zca-js
+- **Ngôn ngữ:** TypeScript, JavaScript, SQL, HTML, CSS
+- **Ứng dụng desktop:** Electron, React, Vite
+- **Giao diện:** Tailwind CSS, PostCSS, React Router
+- **Lưu trữ dữ liệu cục bộ:** SQLite qua `better-sqlite3`
+- **State & UI chuyên biệt:** Zustand, React Flow, Recharts, Quill
+- **Backend dịch vụ:** Node.js + Express
+- **Tích hợp & automation:** Axios, Google APIs / Google Sheets, node-cron, MQTT
+
+
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+
 
 ## 🆕 Changelog v26.4.0
 
