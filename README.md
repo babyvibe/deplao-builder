@@ -136,7 +136,7 @@ Deplao phù hợp cho:
 - có lịch sử chạy để kiểm tra và debug dễ dàng
 
 ### 5) Tích hợp phục vụ bán hàng
-- POS: KiotViet, Haravan, Sapo, iPOS, Nhanh.vn, Pancake POS
+- POS: KiotViet, Haravan, Sapo, Nhanh.vn, Pancake POS
 - vận chuyển: GHN, GHTK
 - AI Assistant dùng trực tiếp trong chat hoặc workflow
 - dễ kết hợp thành quy trình bán hàng và chăm sóc khách hàng khép kín
@@ -161,16 +161,8 @@ Deplao ưu tiên kiến trúc chạy cục bộ trên máy người dùng:
 - **Windows 10/11 (64-bit)**
 - RAM tối thiểu **4 GB**
 - khuyến nghị **8 GB+** nếu chạy nhiều tài khoản hoặc nhiều workflow
-- kết nối Internet ổn định để đồng bộ hội thoại và automation
+- kết nối Internet 24/7 ổn định để đồng bộ hội thoại và automation
 - nên để app hoạt động liên tục nếu dùng workflow hoặc vận hành đội nhóm
-
-## 📦 Tải ứng dụng
-
-- Xem bản phát hành mới nhất tại mục **Releases** của repository này
-- Tải file cài đặt phù hợp và cài như ứng dụng desktop thông thường
-- Sau khi cài xong, mở app và đăng nhập tài khoản Zalo bằng QR Code để bắt đầu sử dụng
-
-> Gợi ý: bạn có thể thêm link trực tiếp tại đây sau khi publish release đầu tiên, ví dụ `https://github.com/babyvibe/Deplao-releases/releases/latest`
 
 ## 🆕 Changelog v26.4.0
 
@@ -216,6 +208,17 @@ Deplao ưu tiên kiến trúc chạy cục bộ trên máy người dùng:
 ## 📣 Hỗ trợ
 
 - Telegram: [@Deplao_support](https://t.me/Deplao_support)
+
+- Telegram Community: [@Deplao_support](https://t.me/DeplaoCommunity)
+
+## 🙏 Lời cảm ơn
+
+Deplao xin gửi lời cảm ơn đến dự án:  
+👉 https://github.com/RFS-ADRENO/zca-js
+
+Nhờ những đóng góp và nền tảng từ dự án này, Deplao mới có thể được hoàn thiện và ra mắt như ngày hôm nay.
+
+Rất trân trọng những giá trị mà cộng đồng open-source mang lại 💙
 
 ---
 
