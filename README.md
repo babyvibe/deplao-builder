@@ -65,16 +65,22 @@ Khi mở file `.dmg`, macOS có thể báo **“cannot be opened because it is f
 
 ## 🚀 Deplao là gì?
 
-Deplao là ứng dụng desktop dành cho cá nhân, shop, doanh nghiệp và đội nhóm đang vận hành bán hàng hoặc chăm sóc khách hàng qua Zalo.
+Deplao là một **workspace desktop tập trung** cho đội nhóm bán hàng và chăm sóc khách hàng trên Zalo.
 
-Thay vì phải mở nhiều cửa sổ, chuyển qua lại giữa chat, CRM, báo cáo, workflow và công cụ nội bộ, Deplao gom mọi thứ vào một nơi:
+Thay vì phải nhảy qua lại giữa nhiều công cụ, Deplao gom **đa tài khoản Zalo, inbox, CRM, workflow, AI, tích hợp, báo cáo và quản lý nội bộ** vào cùng một ứng dụng để vận hành nhanh hơn và ít bỏ sót hơn.
 
-- quản lý nhiều tài khoản Zalo trong cùng một app
-- xử lý hội thoại tập trung nhanh hơn
-- lưu CRM khách hàng và lịch sử tương tác
-- tự động hóa các quy trình bằng workflow kéo-thả
-- kết nối với POS, vận chuyển, AI và các công cụ ngoài
-- quản lý công việc nội bộ, nhân viên và workspace ngay trên desktop
+<p align="center">
+  <img src="./assets/deplao-overview-map.svg" alt="Sơ đồ trực quan mô tả Deplao là workspace desktop tập trung cho bán hàng và chăm sóc khách hàng trên Zalo" width="960" />
+</p>
+
+Nếu nhìn nhanh, có thể hiểu Deplao là:
+
+- **trung tâm vận hành Zalo**: nhiều tài khoản, inbox tập trung, trả lời nhanh
+- **lớp quản lý khách hàng**: CRM, nhãn, lịch sử tương tác, campaign
+- **lớp tự động hóa**: workflow, AI, trigger và action chạy nền
+- **lớp kết nối kinh doanh**: POS, vận chuyển, API và công cụ ngoài
+- **lớp quản trị nội bộ**: báo cáo, ERP, phân quyền, workspace nhân viên
+
 
 ## ✨ Điểm nổi bật
 
