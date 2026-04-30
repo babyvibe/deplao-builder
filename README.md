@@ -10,10 +10,6 @@ Website: http://deplaoapp.com/
 
 ## 🚀 Deplao là gì?
 
-Deplao là một **workspace desktop tập trung** cho đội nhóm bán hàng và chăm sóc khách hàng trên Zalo.
-
-Thay vì phải nhảy qua lại giữa nhiều công cụ, Deplao gom **đa tài khoản Zalo, inbox, CRM, workflow, AI, tích hợp, báo cáo và quản lý nội bộ** vào cùng một ứng dụng để vận hành nhanh hơn và ít bỏ sót hơn.
-
 <p align="center">
   <img src="./assets/deplao-overview-map.svg" alt="Sơ đồ trực quan mô tả Deplao là workspace desktop tập trung cho bán hàng và chăm sóc khách hàng trên Zalo" width="960" />
 </p>
@@ -207,7 +203,7 @@ Deplao hiện được xây dựng trên các công nghệ chính sau:
 - Ra mắt Workflow Engine kéo-thả không cần code với mô hình Trigger → Node → Action, hỗ trợ chạy nền 24/7 và xem lịch sử chạy để debug
 - Workflow hỗ trợ nhiều trigger và action quan trọng: tin nhắn mới, lời mời kết bạn, sự kiện nhóm, react, cron, gửi tin, gửi ảnh/file, tìm user, lấy profile, quản lý nhóm, mute, forward, recall, poll và đọc lịch sử chat
 - Tích hợp node Logic, Google Sheets, AI, Telegram, Discord, Email, Notion và HTTP Request để tự động hóa quy trình bán hàng, chăm sóc khách hàng và vận hành nội bộ
-- Ra mắt hub Tích hợp với POS, vận chuyển và AI: hỗ trợ KiotViet, Haravan, Sapo, iPOS, Nhanh.vn, Pancake POS, GHN, GHTK và các trợ lý AI dùng ngay trong chat hoặc workflow
+- Ra mắt hub Tích hợp với POS, vận chuyển và AI: hỗ trợ KiotViet, Haravan, Sapo, Nhanh.vn, Pancake POS, GHN, GHTK và các trợ lý AI dùng ngay trong chat hoặc workflow
 - Bổ sung Báo cáo & Phân tích với nhiều tab: Tổng quan, Tin nhắn, Liên hệ, Nhãn, Chiến dịch, Workflow, AI và Nhân viên để theo dõi hiệu suất vận hành theo thời gian thực
 - Ra mắt ERP nội bộ gồm Task, Calendar, Notes và phân quyền ERP để quản lý giao việc, lịch, tài liệu nội bộ và phối hợp vận hành ngay trong Deplao
 - Ra mắt mô hình Workspace boss ↔ nhân viên với Relay Server, phân quyền module chi tiết, cấp tài khoản nhân viên và theo dõi báo cáo hiệu suất từng người
