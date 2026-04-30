@@ -6,6 +6,8 @@
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Desktop-3b82f6)](#-yeu-cau-he-thong)
 [![Support](https://img.shields.io/badge/support-Telegram-0ea5e9)](https://t.me/Deplao_support)
 
+Website: http://deplaoapp.com/
+
 ## 📦 Download
 
 Deplao hỗ trợ nhiều hệ điều hành. Bạn có thể tải phiên bản phù hợp theo nhu cầu tại trang Releases:
