@@ -1,6 +1,6 @@
 # Deplao
 
-> Nền tảng desktop giúp đội nhóm bán hàng và chăm sóc khách hàng trên Zalo vận hành tập trung trong một ứng dụng duy nhất.
+> Phần mềm desktop quản lý Zalo chuyên nghiệp Đa tài khoản tích hợp CRM, Workflow và AI Assistant giúp đội nhóm bán hàng và chăm sóc khách hàng trên Zalo vận hành tập trung trong một ứng dụng duy nhất.
 
 [![Version](https://img.shields.io/badge/version-26.4.0-22c55e)](#-changelog-v2640)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Desktop-3b82f6)](#-yeu-cau-he-thong)
@@ -75,6 +75,7 @@ Deplao phù hợp cho:
 
 ### 4) Workflow tự động hóa
 - workflow kéo-thả không cần code
+- tích hợp trợ lý AI hỗ trợ tạo node chỉ bằng vài dòng prompt không cần kéo-thả
 - hỗ trợ trigger từ tin nhắn, nhãn, react, lịch cron, sự kiện nhóm...
 - action gửi tin, gửi ảnh/file, tìm user, quản lý nhóm, mute, forward, recall...
 - tích hợp logic, Google Sheets, AI, Telegram, Discord, Email, Notion và HTTP Request
@@ -83,7 +84,7 @@ Deplao phù hợp cho:
 ### 5) Tích hợp phục vụ bán hàng
 - POS: KiotViet, Haravan, Sapo, Nhanh.vn, Pancake POS
 - vận chuyển: GHN, GHTK
-- AI Assistant dùng trực tiếp trong chat hoặc workflow
+- AI Assistant dùng để gợi ý câu trả lời, chat nhanh trực tiếp khi trò chuyện hoặc workflow
 - dễ kết hợp thành quy trình bán hàng và chăm sóc khách hàng khép kín
 
 ### 6) Báo cáo, ERP và nhân viên
@@ -96,16 +97,13 @@ Deplao phù hợp cho:
 
 Deplao ưu tiên kiến trúc chạy cục bộ trên máy người dùng:
 
-- dữ liệu tin nhắn, danh bạ, CRM, cài đặt và media được lưu trên máy
+- tất cả dữ liệu tin nhắn, danh bạ, CRM, cài đặt và media được lưu trên máy
 - đăng nhập bằng QR Code, không yêu cầu lưu mật khẩu Zalo
 - người dùng có thể đổi thư mục lưu trữ dữ liệu sang ổ đĩa khác khi cần
 - phù hợp với đội nhóm muốn kiểm soát dữ liệu nội bộ chặt chẽ hơn
 
-## 💻 Yêu cầu hệ thống
+## 💻 Yêu cầu vận hành
 
-- **Windows 10/11 (64-bit)**
-- RAM tối thiểu **4 GB**
-- khuyến nghị **8 GB+** nếu chạy nhiều tài khoản hoặc nhiều workflow
 - kết nối Internet 24/7 ổn định để đồng bộ hội thoại và automation
 - nên để app hoạt động liên tục nếu dùng workflow hoặc vận hành đội nhóm
 
