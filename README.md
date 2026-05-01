@@ -36,6 +36,65 @@ Nếu nhìn nhanh, có thể hiểu Deplao là:
 - 🧑‍💼 **Workspace boss ↔ nhân viên** — nhiều thiết bị đăng nhập quản lý 1 tài khoản, phân quyền chi tiết và theo dõi hiệu suất từng nhân viên
 - 🔒 **Dữ liệu lưu cục bộ** — ưu tiên quyền kiểm soát dữ liệu và bảo mật trên máy người dùng
 
+
+### Xem nhanh giao diện Deplao
+
+Các màn hình dưới đây được sắp theo luồng sử dụng thực tế: từ dashboard → chat → CRM → workflow → POS / báo cáo / ERP.
+
+<table>
+  <tr>
+    <td>
+      <img src="./assets/dashboard.png" alt="Dashboard quản lý đa tài khoản Zalo trong Deplao" width="360" />
+      <br />
+      <sub><strong>Dashboard đa tài khoản</strong></sub>
+    </td>
+    <td>
+      <img src="./assets/chat.png" alt="Giao diện chat tập trung trong Deplao" width="360" />
+      <br />
+      <sub><strong>Chat tập trung</strong></sub>
+    </td>
+    <td>
+      <img src="./assets/crm.png" alt="Màn hình CRM và quản lý liên hệ trong Deplao" width="360" />
+      <br />
+      <sub><strong>CRM & liên hệ</strong></sub>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <img src="./assets/workflow.png" alt="Trình thiết kế workflow kéo thả trong Deplao" width="360" />
+      <br />
+      <sub><strong>Workflow editor</strong></sub>
+    </td>
+    <td>
+      <img src="./assets/detail-workflow.png" alt="Chi tiết cấu hình workflow trong Deplao" width="360" />
+      <br />
+      <sub><strong>Chi tiết workflow</strong></sub>
+    </td>
+    <td>
+      <img src="./assets/workflow-ai.png" alt="Workflow kết hợp AI trong Deplao" width="360" />
+      <br />
+      <sub><strong>Ra lệnh tạo Workflow bằng AI</strong></sub>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <img src="./assets/pos.png" alt="Tích hợp POS và bán hàng trong Deplao" width="360" />
+      <br />
+      <sub><strong>Tích hợp POS, VC, Thanh toán</strong></sub>
+    </td>
+    <td>
+      <img src="./assets/report.jpg" alt="Báo cáo và phân tích hiệu suất trong Deplao" width="360" />
+      <br />
+      <sub><strong>Báo cáo & phân tích</strong></sub>
+    </td>
+    <td>
+      <img src="./assets/erp.png" alt="ERP nội bộ và phối hợp vận hành trong Deplao" width="360" />
+      <br />
+      <sub><strong>ERP nội bộ</strong></sub>
+    </td>
+  </tr>
+</table>
+
 ## 🎯 Phù hợp với ai?
 
 Deplao phù hợp cho:
@@ -94,9 +153,10 @@ Deplao phù hợp cho:
 Deplao ưu tiên kiến trúc chạy cục bộ trên máy người dùng:
 
 - tất cả dữ liệu tin nhắn, danh bạ, CRM, cài đặt và media được lưu trên máy
-- đăng nhập bằng QR Code, không yêu cầu lưu mật khẩu Zalo
+- đăng nhập bằng QR Code, không yêu cầu lưu mật khẩu Zalo, Cookie được mã hóa lưu trên máy
 - người dùng có thể đổi thư mục lưu trữ dữ liệu sang ổ đĩa khác khi cần
 - phù hợp với đội nhóm muốn kiểm soát dữ liệu nội bộ chặt chẽ hơn
+- phần mềm có tracking để báo cáo số lượng người dùng, hoạt động chỉ dùng do mục đích báo cáo. Không thu thập cookies
 
 ## 💻 Yêu cầu vận hành
 
