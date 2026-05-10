@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",        // Phiên bản JavaScript được biên dịch
+    "module": "CommonJS",      // Module sử dụng cho Node.js
+    "lib": ["ES2020", "DOM"],  // Thư viện hỗ trợ
+    "outDir": "./dist",        // Thư mục chứa file biên dịch
+    "rootDir": "./",           // Thư mục chứa mã nguồn TypeScript
+    "strict": false,           // Tắt kiểm tra kiểu chặt chẽ
+    "esModuleInterop": true,   // Hỗ trợ import/export kiểu ES6
+    "allowSyntheticDefaultImports": true, // Cho phép import mặc định từ mô-đun không có xuất khẩu mặc định
+    "resolveJsonModule": true, // Cho phép nhập khẩu tệp JSON
+    "moduleResolution": "node", // Cách giải quyết mô-đun
+    "skipLibCheck": true,      // Bỏ qua kiểm tra kiểu trong các tệp khai báo của thư viện
+    "jsx": "react-jsx",        // Cài đặt JSX cho React
+    "baseUrl": ".",            // Đường dẫn cơ sở cho các đường dẫn tương đối
+    "paths": {
+      "@/*": ["src/ui/*"]      // Định nghĩa đường dẫn tùy chỉnh
+    }
+  },
+  "include": ["src/**/*", "electron/**/*"], // Thư mục bao gồm
+  "exclude": ["node_modules", "dist", "dist-electron", "dist-electron-build"] // Thư mục loại trừ
+}

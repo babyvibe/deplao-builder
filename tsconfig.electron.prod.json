@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.electron.json",
+  "compilerOptions": {
+    "sourceMap": false,
+    "declarationMap": false,
+    "removeComments": true,
+    "inlineSourceMap": false,
+    "inlineSources": false
+  }
+}
+
