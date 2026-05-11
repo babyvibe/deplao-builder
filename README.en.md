@@ -32,6 +32,124 @@
 
 ---
 
+## 🗺️ Architecture & Flow Diagrams
+
+---
+
+### 1️⃣ Build Pipeline
+
+```mermaid
+flowchart LR
+    subgraph SRC["📁 Source Code"]
+        E("⚡ electron/\n*.ts")
+        S("🔧 services/\n*.ts")
+        R("🎨 src/ui/\n*.tsx")
+    end
+
+    subgraph COMPILE["🔨 Compile"]
+        TSC("tsc\ntsconfig.electron")
+        VITE("vite build\n+ Tailwind CSS")
+    end
+
+    subgraph OUT["📦 Output"]
+        DE("dist-electron/\nmain · services · ipc")
+        D("dist/\nindex.html · assets")
+    end
+
+    subgraph PKG["🚀 Package"]
+        EB(("electron\nbuilder"))
+        WIN("🪟 Windows\n.exe / dir")
+        MAC("🍎 macOS\n.dmg arm64 + x64")
+    end
+
+    E & S --> TSC --> DE
+    R --> VITE --> D
+    DE & D --> EB --> WIN & MAC
+```
+
+---
+
+### 2️⃣ Runtime Architecture
+
+```mermaid
+mindmap
+  root((🖥️ Deplao))
+    ⚙️ Main Process
+      📡 IPC Handlers
+        login · zalo · crm
+        workflow · erp · sync
+        facebook · relay · file
+      🔧 Services
+        DatabaseService
+        WorkspaceManager
+        WorkflowEngine
+        CRMQueueService
+        HttpConnectionManager
+        FileStorageService
+        AIAssistantService
+    🎨 Renderer
+      ⚛️ React Pages
+        Dashboard
+        Chat & Inbox
+        CRM & Campaign
+        Workflow Editor
+        POS & Integrations
+        ERP · Settings
+      🗃️ Zustand State
+        accountStore
+        chatStore
+        workspaceStore
+        employeeStore
+    📱 Zalo Protocol
+      zca-js
+        QR Login
+        Cookie Session
+        WebSocket realtime
+    🌐 External APIs
+      OpenAI · Google Sheets
+      Telegram · Discord
+      KiotViet · Haravan · Sapo
+      GHN · GHTK
+```
+
+---
+
+### 3️⃣ Boss ↔ Employee Model
+
+```mermaid
+flowchart TB
+    subgraph BOSS["🖥️ Boss Machine — Local Workspace"]
+        BZ("📱 Zalo / FB\nAccounts")
+        BSV("🔧 Services\nCRM · ERP · AI · Workflow")
+        BSD[("🗄️ SQLite DB\n+ Media Files")]
+        BRL("🔁 Relay Server\nExpress + WebSocket :9900")
+    end
+
+    subgraph NET["🌐 Network"]
+        LAN("🏠 LAN\n192.168.x.x:9900")
+        WAN("🌍 Tunnel / VPN\nremote access")
+    end
+
+    subgraph EMP["💻 Employee Machine — Remote Workspace"]
+        EA("📲 Deplao App\nEmployee Mode")
+        EP("🔐 Permission Filter\nerp · crm · workflow · ...")
+        EU("👁️ UI\nassigned accounts only")
+    end
+
+    BZ --> BSV
+    BSV <--> BSD
+    BSV --> BRL
+    BRL <-->|HTTP + WS| LAN & WAN
+    LAN <-->|IPC relay| EA
+    WAN <-->|IPC relay| EA
+    EA --> EP --> EU
+    EP -.->|forward request| BRL
+```
+
+> Employees have **no local DB** — all actions are relayed to the Boss machine and filtered by the configured permission set.
+
+---
+
 ### 4️⃣ Multi-account & Local Storage
 
 ```mermaid

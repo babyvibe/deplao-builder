@@ -33,6 +33,160 @@ Deplao hiện được xây dựng trên các công nghệ chính sau:
 - **Backend dịch vụ:** Node.js + Express
 - **Tích hợp & automation:** Axios, Google APIs / Google Sheets, node-cron, Discord.js, Telegram Bot API, OpenAI API, v.v.
 
+---
+
+## 🗺️ Sơ đồ kiến trúc & luồng hoạt động
+
+---
+
+### 1️⃣ Luồng Build
+
+```mermaid
+flowchart LR
+    subgraph SRC["📁 Source Code"]
+        E("⚡ electron/\n*.ts")
+        S("🔧 services/\n*.ts")
+        R("🎨 src/ui/\n*.tsx")
+    end
+
+    subgraph COMPILE["🔨 Compile"]
+        TSC("tsc\ntsconfig.electron")
+        VITE("vite build\n+ Tailwind CSS")
+    end
+
+    subgraph OUT["📦 Output"]
+        DE("dist-electron/\nmain · services · ipc")
+        D("dist/\nindex.html · assets")
+    end
+
+    subgraph PKG["🚀 Đóng gói"]
+        EB(("electron\nbuilder"))
+        WIN("🪟 Windows\n.exe / dir")
+        MAC("🍎 macOS\n.dmg arm64 + x64")
+    end
+
+    E & S --> TSC --> DE
+    R --> VITE --> D
+    DE & D --> EB --> WIN & MAC
+```
+
+---
+
+### 2️⃣ Kiến trúc Runtime
+
+```mermaid
+mindmap
+  root((🖥️ Deplao))
+    ⚙️ Main Process
+      📡 IPC Handlers
+        login · zalo · crm
+        workflow · erp · sync
+        facebook · relay · file
+      🔧 Services
+        DatabaseService
+        WorkspaceManager
+        WorkflowEngine
+        CRMQueueService
+        HttpConnectionManager
+        FileStorageService
+        AIAssistantService
+    🎨 Renderer
+      ⚛️ React Pages
+        Dashboard
+        Chat & Inbox
+        CRM & Campaign
+        Workflow Editor
+        POS & Tích hợp
+        ERP · Settings
+      🗃️ Zustand State
+        accountStore
+        chatStore
+        workspaceStore
+        employeeStore
+    📱 Giao thức Zalo
+      zca-js
+        QR Login
+        Cookie Session
+        WebSocket realtime
+    🌐 External APIs
+      OpenAI · Google Sheets
+      Telegram · Discord
+      KiotViet · Haravan · Sapo
+      GHN · GHTK
+```
+
+---
+
+### 3️⃣ Mô hình Boss ↔ Nhân viên
+
+```mermaid
+flowchart TB
+    subgraph BOSS["🖥️ Máy BOSS — Local Workspace"]
+        BZ("📱 Zalo / FB\nAccounts")
+        BSV("🔧 Services\nCRM · ERP · AI · Workflow")
+        BSD[("🗄️ SQLite DB\n+ Media Files")]
+        BRL("🔁 Relay Server\nExpress + WebSocket :9900")
+    end
+
+    subgraph NET["🌐 Kết nối"]
+        LAN("🏠 LAN\n192.168.x.x:9900")
+        WAN("🌍 Tunnel / VPN\ntruy cập từ xa")
+    end
+
+    subgraph EMP["💻 Nhân Viên — Remote Workspace"]
+        EA("📲 Deplao App\nEmployee Mode")
+        EP("🔐 Permission Filter\nerp · crm · workflow · ...")
+        EU("👁️ UI\nchỉ thấy TK được gán")
+    end
+
+    BZ --> BSV
+    BSV <--> BSD
+    BSV --> BRL
+    BRL <-->|HTTP + WS| LAN & WAN
+    LAN <-->|IPC relay| EA
+    WAN <-->|IPC relay| EA
+    EA --> EP --> EU
+    EP -.->|forward request| BRL
+```
+
+> Nhân viên **không có DB riêng** — mọi thao tác relay về Boss xử lý theo quyền đã cấp.
+
+---
+
+### 4️⃣ Đa tài khoản & Lưu trữ
+
+```mermaid
+flowchart LR
+    subgraph ACCS["👤 Tài khoản"]
+        Z1("Zalo #1\nzca-js")
+        Z2("Zalo #2\nzca-js")
+        ZN("Zalo #N\nzca-js")
+        FB("Facebook\nGraph API")
+    end
+
+    subgraph STORE["💾 Lưu trữ cục bộ"]
+        DB[("🗄️ SQLite\ndeplao-tool.db\nmessages · contacts\ncrm · workflow · erp")]
+        MED("📁 FileStorage\n~/media/\nảnh · video · file")
+        ES("🔑 electron-store\ncookies · tokens\nsettings")
+    end
+
+    subgraph WS["🗂️ Workspace Manager"]
+        WA("🏠 Local WS\nDefault")
+        WB("🌐 Remote WS\nBoss")
+        WC("⚙️ Custom WS\npath tuỳ chỉnh")
+    end
+
+    Z1 & Z2 & ZN & FB -->|"tin nhắn · danh bạ"| DB
+    Z1 & Z2 & ZN & FB -->|"ảnh · video · file"| MED
+    ES -->|"cookie session"| Z1 & Z2 & ZN
+    DB & ES <-->|"path resolve\nswitch workspace"| WS
+    WA & WB & WC -.-|"mỗi WS = DB riêng"| DB
+```
+
+> Mỗi **Workspace** có DB + media folder độc lập — đổi hoặc di chuyển sang ổ đĩa khác không mất dữ liệu.
+
+---
+
 # Cách cài đặt
 <details open>
 <summary>Tự cài đặt </summary>
@@ -289,7 +443,7 @@ Deplao ưu tiên kiến trúc chạy cục bộ trên máy người dùng:
 
 ## 📣 Liên hệ
 
-- Báo lỗi, góp ý hoặc cần hỗ trợ: 👉 Tạo issue nhé!
+- Báo lỗi, góp ý hoặc cần hỗ trợ: 👉 [Tạo issue tại đây](https://github.com/babyvibe/deplao-builder/issues)
 
 ## 🙏 Lời cảm ơn
 
