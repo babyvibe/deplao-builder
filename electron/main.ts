@@ -29,7 +29,7 @@ import IntegrationRegistry from '../src/services/integrations/IntegrationRegistr
 import EventBroadcaster from '../src/services/EventBroadcaster';
 import CRMQueueService from '../src/services/CRMQueueService';
 import FileStorageService from '../src/services/FileStorageService';
-import { SHOW_DEV_TOOLS, IS_DEV_BUILD } from '../src/configs/BuildConfig.generated';
+import { SHOW_DEV_TOOLS, IS_DEV_BUILD } from '../src/configs/BuildConfig';
 
 const isDev = IS_DEV_BUILD;
 let isQuitting = false;

@@ -61,6 +61,9 @@ function loadObfuscatorPlugin(): any[] {
 const config: UserConfig = {
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
+    // Polyfill process.env cho renderer (browser không có process)
+    'process.env.NODE_ENV':    JSON.stringify(isProd ? 'production' : 'development'),
+    'process.env.BUILD_TARGET': JSON.stringify(process.env.BUILD_TARGET ?? (isProd ? 'production' : 'development')),
   },
   plugins: [
     react(),

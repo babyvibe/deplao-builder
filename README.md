@@ -1,11 +1,24 @@
 # Deplao
 
+<p>
+  <strong>🌐 Language:</strong>
+  &nbsp;🇻🇳 <strong>Tiếng Việt</strong>
+  &nbsp;|&nbsp;
+  🇬🇧 <a href="./README.en.md">English</a>
+</p>
+
+---
+
 > Phần mềm desktop quản lý Zalo Đa tài khoản tích hợp CRM, ERP, POS, Workflow và AI Assistant giúp đội nhóm bán hàng và chăm sóc khách hàng trên Zalo vận hành tập trung trong một ứng dụng duy nhất.
 
 [![Version](https://img.shields.io/badge/version-26.4.0-22c55e)](#-changelog-v2640)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Desktop-3b82f6)](#-yeu-cau-he-thong)
 [![Support](https://img.shields.io/badge/support-Telegram-0ea5e9)](https://t.me/Deplao_support)
 
+
+<p align="center">
+  <img src="./assets/deplao-overview-map.svg" alt="Sơ đồ trực quan mô tả Deplao là workspace desktop tập trung cho bán hàng và chăm sóc khách hàng trên Zalo" width="960" />
+</p>
 
 ## 🛠️ Công nghệ & ngôn ngữ sử dụng
 
@@ -41,27 +54,14 @@ npm install --legacy-peer-deps
 ## Chạy development
 
 ```powershell
-npm run devDepLaoApp
+npm run dev
 ```
 
-## Build
+## Build app
 
-### Electron main process
-
-```powershell
-npm run build:electron
-```
-
-### Renderer
 
 ```powershell
-npm run build:renderer
-```
-
-### Full build
-
-```powershell
-npm run build
+npm run production
 ```
 
 ## Dữ liệu cục bộ
@@ -77,6 +77,7 @@ npm run build
 
 
 Deplao hỗ trợ nhiều hệ điều hành. Bạn có thể tải phiên bản phù hợp theo nhu cầu tại trang Releases:
+
 
 👉 https://github.com/babyvibe/deplao-builder/releases
 
@@ -134,9 +135,6 @@ Khi mở file `.dmg`, macOS có thể báo **“cannot be opened because it is f
 
 ## 🚀 Deplao là gì?
 
-<p align="center">
-  <img src="./assets/deplao-overview-map.svg" alt="Sơ đồ trực quan mô tả Deplao là workspace desktop tập trung cho bán hàng và chăm sóc khách hàng trên Zalo" width="960" />
-</p>
 
 Nếu nhìn nhanh, có thể hiểu Deplao là:
 

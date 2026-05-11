@@ -4,10 +4,10 @@
   "description": "Phần mềm quản lý Zalo Đa tài khoản tích hợp CRM, ERP, POS, Workflow và AI Assistant giúp đội nhóm bán hàng và chăm sóc khách hàng trên Zalo vận hành tập trung trong một ứng dụng duy nhất.",
   "main": "dist-electron/electron/main.js",
   "scripts": {
-    "build:dev": "node scripts/generate-build-config.js && npm run build:electron && concurrently -n VITE,TSC,ELECTRON -c cyan,magenta,yellow \"vite\" \"tsc -p tsconfig.electron.json --watch --preserveWatchOutput\" \"wait-on http://localhost:5713 && cross-env NODE_ENV=development electron dist-electron/electron/main.js\"",
+    "dev": "npm run build:electron && concurrently -n VITE,TSC,ELECTRON -c cyan,magenta,yellow \"vite\" \"tsc -p tsconfig.electron.json --watch --preserveWatchOutput\" \"wait-on http://localhost:5713 && cross-env NODE_ENV=development electron dist-electron/electron/main.js\"",
     "build:electron": "tsc -p tsconfig.electron.json",
     "build:renderer": "vite build",
-    "build:production": "cross-env BUILD_TARGET=production node scripts/generate-build-config.js && tsc -p tsconfig.electron.prod.json && npm run build:renderer && node scripts/strip-sourcemaps.js && cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/compile-bytecode.js && electron-builder --publish never"
+    "production": "tsc -p tsconfig.electron.prod.json && npm run build:renderer && node scripts/strip-sourcemaps.js && cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/compile-bytecode.js && electron-builder --publish never"
   },
   "author": "https://github.com/babyvibe",
   "license": "ISC",

@@ -6,7 +6,7 @@ import {
   type Division,
 } from './vnDivisions';
 import { adaptOrderForPlatform, type GenericOrderData } from './platformOrderAdapters';
-import { IS_DEV_BUILD } from '../../../configs/BuildConfig.generated';
+import { IS_DEV_BUILD } from '../../../configs/BuildConfig';
 
 /**
  * POSOrderPanel — Giao diện tạo đơn hàng POS đầy đủ

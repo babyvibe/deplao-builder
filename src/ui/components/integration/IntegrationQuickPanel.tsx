@@ -9,7 +9,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import ipc from '@/lib/ipc';
 import { useAppStore } from '@/store/appStore';
 import POSOrderPanel from './POSOrderPanel';
-import {IS_DEV_BUILD} from "../../../configs/BuildConfig.generated";
+import { IS_DEV_BUILD } from "../../../configs/BuildConfig";
 
 // ─── Pin icon emoji list ─────────────────────────────────────────────────────
 const PIN_EMOJIS = [
