@@ -1,7 +1,8 @@
 import { useState, useCallback } from 'react';
-import logo from '../logo/icon.png';
 import { DOWNLOAD_URL, DOWNLOAD_URL_MAC_ARM64, DOWNLOAD_URL_MAC_X64 } from '../constants';
 import DownloadDropdown from './DownloadDropdown';
+
+const LOGO_URL = '/deplao-builder/icon.png';
 
 const navLinks = [
   { target: 'features', label: 'Tính năng' },
@@ -27,7 +28,7 @@ const Navbar: React.FC = () => {
         {/* Logo */}
         <button onClick={() => scrollToSection('hero')} className="flex items-center gap-3 no-underline group bg-transparent border-none cursor-pointer">
           <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white shadow-[0_10px_24px_rgba(15,23,42,0.08)] ring-1 ring-slate-200">
-            <img src={logo} alt="Deplao" className="w-8 h-8 rounded-lg object-contain group-hover:scale-105 transition-transform" />
+            <img src={LOGO_URL} alt="Deplao" className="w-8 h-8 rounded-lg object-contain group-hover:scale-105 transition-transform" />
           </div>
           <div className="text-left">
             <span className="block font-bold text-lg text-slate-900 tracking-tight">Deplao</span>
