@@ -1,83 +1,33 @@
-const steps = [
-  {
-    number: '01',
-    icon: '⬇️',
-    color: 'from-violet-600 to-purple-700',
-    title: 'Tải & Cài Đặt',
-    desc: 'Tải file cài đặt Deplao. Chạy installer và cài đặt trong vài giây. Không cần kỹ thuật phức tạp.',
-    detail: 'Windows · MacOS · NSIS Installer',
-  },
-  {
-    number: '02',
-    icon: '📱',
-    color: 'from-blue-600 to-cyan-600',
-    title: 'Kết Nối Zalo',
-    desc: 'Đăng nhập tài khoản Zalo bằng QR code quét từ điện thoại, hoặc nhập cookie. Thêm bao nhiêu tài khoản tùy ý.',
-    detail: 'QR Login · Multi-account',
-  },
-  {
-    number: '03',
-    icon: '🚀',
-    color: 'from-emerald-500 to-teal-600',
-    title: 'Bắt Đầu Ngay',
-    desc: 'Chat, quản lý bạn bè, nhóm, CRM, Workllow,  AI Assistant... không giới hạn tính năng.',
-    detail: 'Không giới hạn · Full features',
-  },
+﻿const STEPS = [
+  { num: "01", icon: "⬇️", title: "Tải & cài đặt", desc: "Tải file .exe (Windows) hoặc .dmg (macOS). Cài đặt và mở app trong vài phút." },
+  { num: "02", icon: "📱", title: "Đăng nhập Zalo", desc: "Quét QR Code bằng điện thoại. App kết nối ngay, không cần mật khẩu." },
+  { num: "03", icon: "💬", title: "Quản lý hội thoại", desc: "Xem inbox, trả lời khách, gắn nhãn và ghi chú nội bộ ngay trong app." },
+  { num: "04", icon: "⚙️", title: "Tạo Workflow", desc: "Kéo-thả hoặc mô tả bằng tiếng Việt để AI tạo workflow tự động cho bạn." },
 ];
-
-const HowItWorks: React.FC = () => {
+export default function HowItWorks() {
   return (
-    <section id="how-it-works" className="orbit-shell py-28 px-6 relative"
-      style={{ background: 'linear-gradient(180deg, transparent, rgba(255,255,255,0.3) 40%, transparent)' }}>
-      <div className="max-w-5xl mx-auto">
-        <div className="text-center mb-16">
-          <div className="orbit-badge mb-4 aos-element">
-            🎯 Bắt Đầu Dễ Dàng
-          </div>
-          <h2 className="text-4xl md:text-5xl font-bold text-slate-950 mb-4 aos-element delay-1">
-            Chỉ <span className="gradient-text">3 bước</span> để bắt đầu
-          </h2>
-          <p className="text-slate-600 text-lg aos-element delay-2">
-            Từ tải xuống đến dùng được trong chưa đầy 5 phút.
-          </p>
+    <section id="how-it-works" className="py-20 px-5">
+      <div className="mx-auto max-w-5xl">
+        <div className="text-center mb-14 aos-element">
+          <div className="mini-kicker mb-3"><span className="signal-dot" />Bắt đầu</div>
+          <h2 className="text-3xl md:text-4xl font-black text-slate-900 tracking-tight mb-3">Chạy ngay trong <span className="gradient-text">5 phút</span></h2>
+          <p className="text-slate-500 max-w-xl mx-auto">Không cần server, không cần tài khoản cloud. Cài và chạy thôi.</p>
         </div>
-
-        <div className="relative">
-          <div className="hidden md:block absolute top-16 left-[16.67%] right-[16.67%] h-px"
-            style={{ background: 'linear-gradient(90deg, rgba(99,102,241,0.26), rgba(14,165,233,0.26), rgba(16,185,129,0.26))' }} />
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 relative">
-            {steps.map((step, idx) => (
-              <div key={step.title} className={`text-center aos-element delay-${idx + 2}`}>
-                <div className="relative inline-flex items-center justify-center mb-6">
-                  <div className={`w-16 h-16 rounded-full bg-gradient-to-br ${step.color} flex items-center justify-center text-2xl font-black text-white shadow-lg relative z-10`}>
-                    {step.number}
-                  </div>
-                  <div className={`absolute inset-0 rounded-full bg-gradient-to-br ${step.color} opacity-30 blur-md scale-125`} />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+          {STEPS.map((s, i) => (
+            <div key={s.num} className={`aos-element delay-${i + 1} relative`}>
+              <div className="glass glass-hover rounded-2xl p-5 h-full flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-3xl">{s.icon}</span>
+                  <span className="text-4xl font-black text-slate-100">{s.num}</span>
                 </div>
-
-                <div className="planet-card rounded-[1.75rem] p-6 transition-all duration-300 glass-hover">
-                  <div className="text-3xl mb-3">{step.icon}</div>
-                  <h3 className="text-xl font-bold mb-3 text-slate-950">{step.title}</h3>
-                  <p className="text-slate-600 text-sm leading-relaxed mb-4">{step.desc}</p>
-                  <div className="text-xs text-slate-500 bg-slate-50 rounded-xl px-3 py-2 font-mono border border-slate-200">
-                    {step.detail}
-                  </div>
-                </div>
+                <h3 className="font-bold text-slate-900">{s.title}</h3>
+                <p className="text-sm text-slate-500 leading-relaxed">{s.desc}</p>
               </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="mt-12 text-center aos-element">
-          <p className="text-slate-500 text-sm">
-            Gặp vấn đề? Liên hệ hỗ trợ qua Facebook hoặc Telegram — đội ngũ sẽ phản hồi bạn sớm nhất.
-          </p>
+            </div>
+          ))}
         </div>
       </div>
     </section>
   );
-};
-
-export default HowItWorks;
-
+}

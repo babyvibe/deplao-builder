@@ -1,5 +1,4 @@
 import { Link } from 'react-router-dom';
-import logo from '../logo/icon.png';
 
 export default function TermsPage() {
   return (
@@ -8,7 +7,7 @@ export default function TermsPage() {
       <nav className="border-b border-white/5 bg-[#060a18]/80 backdrop-blur-xl sticky top-0 z-50">
         <div className="max-w-4xl mx-auto px-6 h-16 flex items-center justify-between">
           <Link to="/" className="flex items-center gap-2.5 no-underline group">
-            <img src={logo} alt="Deplao" className="w-8 h-8 rounded-lg object-contain group-hover:scale-105 transition-transform" />
+            <img src="/deplao-builder/icon.png" alt="Deplao" className="w-8 h-8 rounded-lg object-contain group-hover:scale-105 transition-transform" />
             <span className="font-bold text-lg text-white tracking-tight">Deplao</span>
           </Link>
           <Link to="/" className="text-sm text-slate-400 hover:text-white transition-colors no-underline">

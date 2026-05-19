@@ -1,72 +1,113 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { DOWNLOAD_URL, APP_VERSION, GITHUB_URL } from '../constants';
+import { useState, useCallback } from 'react';
+import logo from '../logo/icon.png';
+import { DOWNLOAD_URL, DOWNLOAD_URL_MAC_ARM64, DOWNLOAD_URL_MAC_X64 } from '../constants';
+import DownloadDropdown from './DownloadDropdown';
 
-export default function Navbar() {
-  const [open, setOpen] = useState(false);
+const navLinks = [
+  { target: 'features', label: 'Tính năng' },
+  { target: 'workflow', label: 'Workflow' },
+  { target: 'integration', label: 'Tích hợp' },
+  { target: 'how-it-works', label: 'Hướng dẫn' },
+  // FREE_MODE_TEMP: tạm ẩn bảng giá, giữ link cũ để mở lại nhanh
+  // { target: 'pricing', label: 'Bảng giá' },
+  { target: 'faq', label: 'FAQ' },
+];
+
+const Navbar: React.FC = () => {
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const scrollToSection = useCallback((sectionId: string) => {
+    const el = document.getElementById(sectionId);
+    if (el) el.scrollIntoView({ behavior: 'smooth' });
+  }, []);
 
   return (
-    <nav className="sticky top-0 z-50 border-b border-black/5 bg-white/80 backdrop-blur-xl">
-      <div className="mx-auto max-w-6xl px-5 h-16 flex items-center justify-between gap-4">
+    <nav className="fixed top-0 left-0 right-0 z-50 border-b border-slate-200/80 bg-white/88 backdrop-blur-2xl shadow-[0_10px_28px_rgba(15,23,42,0.06)]">
+      <div className="max-w-7xl mx-auto px-6 h-[72px] flex items-center justify-between">
         {/* Logo */}
-        <Link to="/" className="flex items-center gap-2.5 no-underline flex-shrink-0">
-          <img src="/deplao-builder/icon.png" alt="Deplao" className="w-8 h-8 rounded-xl object-contain" />
-          <span className="font-extrabold text-lg text-slate-900 tracking-tight">Deplao</span>
-        </Link>
+        <button onClick={() => scrollToSection('hero')} className="flex items-center gap-3 no-underline group bg-transparent border-none cursor-pointer">
+          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white shadow-[0_10px_24px_rgba(15,23,42,0.08)] ring-1 ring-slate-200">
+            <img src={logo} alt="Deplao" className="w-8 h-8 rounded-lg object-contain group-hover:scale-105 transition-transform" />
+          </div>
+          <div className="text-left">
+            <span className="block font-bold text-lg text-slate-900 tracking-tight">Deplao</span>
+            <span className="block text-[11px] font-medium uppercase tracking-[0.24em] text-slate-400">operator workspace</span>
+          </div>
+        </button>
 
         {/* Desktop nav */}
-        <div className="hidden md:flex items-center gap-6 text-sm font-medium text-slate-600">
-          <a href="#features" className="hover:text-slate-900 transition-colors no-underline">Tính năng</a>
-          <a href="#workflow" className="hover:text-slate-900 transition-colors no-underline">Workflow</a>
-          <a href="#integrations" className="hover:text-slate-900 transition-colors no-underline">Tích hợp</a>
-          <a href="#how-it-works" className="hover:text-slate-900 transition-colors no-underline">Cách dùng</a>
-          <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 hover:text-slate-900 transition-colors no-underline">
-            <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M12 .5C5.37.5 0 5.87 0 12.5c0 5.3 3.438 9.8 8.205 11.387.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.807 5.625-5.479 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.5 24 5.87 18.627.5 12 .5z"/></svg>
-            GitHub
-          </a>
+        <div className="hidden md:flex items-center gap-6">
+          {navLinks.map((link) => (
+            <button
+              key={link.target}
+              onClick={() => scrollToSection(link.target)}
+              className="text-sm font-medium text-slate-500 hover:text-slate-900 transition-colors duration-200 no-underline bg-transparent border-none cursor-pointer"
+            >
+              {link.label}
+            </button>
+          ))}
         </div>
 
-        {/* CTA */}
-        <div className="hidden md:flex items-center gap-2">
-          <a
-            href={DOWNLOAD_URL}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-colors no-underline"
-          >
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 16l-6-6h4V4h4v6h4z"/><path d="M20 20H4"/></svg>
-            Tải về v{APP_VERSION}
-          </a>
+        {/* CTA — dùng DownloadDropdown chung */}
+        <div className="hidden md:flex items-center gap-3">
+          <DownloadDropdown
+            label="Tải xuống"
+            variant="primary"
+            align="right"
+            className="px-4 py-2 text-sm"
+          />
         </div>
 
-        {/* Mobile toggle */}
+        {/* Mobile menu button */}
         <button
-          className="md:hidden p-2 rounded-lg text-slate-600 hover:bg-slate-100 transition-colors"
-          onClick={() => setOpen(!open)}
-          aria-label="Menu"
+          onClick={() => setMenuOpen(!menuOpen)}
+          className="md:hidden p-2 rounded-xl text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors"
+          aria-label="Toggle menu"
         >
-          {open
-            ? <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
-            : <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
-          }
+          {menuOpen ? (
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          ) : (
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          )}
         </button>
       </div>
 
       {/* Mobile menu */}
-      {open && (
-        <div className="md:hidden border-t border-black/5 bg-white px-5 py-4 space-y-3 text-sm font-medium text-slate-600">
-          <a href="#features" onClick={() => setOpen(false)} className="block py-1 hover:text-slate-900 no-underline">Tính năng</a>
-          <a href="#workflow" onClick={() => setOpen(false)} className="block py-1 hover:text-slate-900 no-underline">Workflow</a>
-          <a href="#integrations" onClick={() => setOpen(false)} className="block py-1 hover:text-slate-900 no-underline">Tích hợp</a>
-          <a href="#how-it-works" onClick={() => setOpen(false)} className="block py-1 hover:text-slate-900 no-underline">Cách dùng</a>
-          <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className="block py-1 hover:text-slate-900 no-underline">GitHub</a>
-          <a
-            href={DOWNLOAD_URL}
-            className="inline-flex items-center gap-1.5 mt-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold transition-colors no-underline"
-          >
-            Tải về v{APP_VERSION}
-          </a>
+      {menuOpen && (
+        <div className="md:hidden border-t border-slate-200/80 bg-white/80 px-6 py-4 space-y-3 backdrop-blur-2xl">
+          {navLinks.map((link) => (
+            <button
+              key={link.target}
+              onClick={() => { scrollToSection(link.target); setMenuOpen(false); }}
+              className="block text-slate-600 hover:text-slate-900 py-2 text-sm font-medium no-underline bg-transparent border-none cursor-pointer w-full text-left"
+            >
+              {link.label}
+            </button>
+          ))}
+          <div className="border-t border-slate-200 pt-3 space-y-2">
+            <a href={DOWNLOAD_URL} download onClick={() => setMenuOpen(false)}
+              className="flex items-center gap-3 py-2.5 px-3 rounded-2xl text-sm font-semibold text-white no-underline shadow-[0_16px_35px_rgba(79,70,229,0.2)]"
+              style={{ background: 'linear-gradient(135deg, #4f46e5, #0ea5e9)' }}>
+              <span>🪟</span> Tải Windows (.exe)
+            </a>
+            <a href={DOWNLOAD_URL_MAC_ARM64} download onClick={() => setMenuOpen(false)}
+              className="flex items-center gap-3 py-2.5 px-3 rounded-2xl text-sm font-semibold text-slate-700 no-underline bg-slate-50 hover:bg-white border border-slate-200">
+              <span>🍎</span> macOS Apple Silicon
+            </a>
+            <a href={DOWNLOAD_URL_MAC_X64} download onClick={() => setMenuOpen(false)}
+              className="flex items-center gap-3 py-2.5 px-3 rounded-2xl text-sm font-semibold text-slate-700 no-underline bg-slate-50 hover:bg-white border border-slate-200">
+              <span>🍎</span> macOS Intel
+            </a>
+          </div>
         </div>
       )}
     </nav>
   );
-}
+};
+
+export default Navbar;
 

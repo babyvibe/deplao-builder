@@ -1,115 +1,315 @@
 import { useState } from 'react';
-import {
-  DOWNLOAD_URL, DOWNLOAD_URL_MAC_ARM64, DOWNLOAD_URL_MAC_X64,
-  APP_VERSION, GITHUB_URL, RELEASES_URL,
-} from '../constants';
+import DownloadDropdown from './DownloadDropdown';
 
-function DownloadButton() {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="relative">
-      <button
-        onClick={() => setOpen(!open)}
-        className="btn-primary flex items-center gap-2 hero-cta-button"
-      >
-        <span>
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" className="inline mr-1"><path d="M12 16l-6-6h4V4h4v6h4z"/><path d="M20 20H4"/></svg>
-          Tải về miễn phí
-        </span>
-        <span className="text-xs opacity-70 ml-1">v{APP_VERSION}</span>
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" className={`transition-transform ${open ? 'rotate-180' : ''}`}><path d="M6 9l6 6 6-6"/></svg>
-      </button>
-      {open && (
-        <div className="absolute left-0 mt-2 w-72 rounded-2xl bg-white border border-black/8 shadow-xl shadow-black/8 py-2 z-50">
-          <a href={DOWNLOAD_URL} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 no-underline transition-colors group">
-            <div className="w-9 h-9 rounded-xl bg-blue-50 flex items-center justify-center flex-shrink-0 group-hover:bg-blue-100 transition-colors">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#2563eb" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9l3 3 3-3M12 12V4"/></svg>
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-slate-900">Windows (x64)</p>
-              <p className="text-xs text-slate-500">.exe installer · v{APP_VERSION}</p>
-            </div>
-          </a>
-          <a href={DOWNLOAD_URL_MAC_ARM64} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 no-underline transition-colors group">
-            <div className="w-9 h-9 rounded-xl bg-slate-50 flex items-center justify-center flex-shrink-0 group-hover:bg-slate-100 transition-colors">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" className="text-slate-700"><path d="M18.7 12.4c0-2.9 2.3-4.3 2.4-4.4-1.3-1.9-3.3-2.1-4.1-2.2-1.7-.2-3.4 1-4.3 1-0.9 0-2.3-1-3.8-1-1.9 0-3.7 1.1-4.7 2.9-2 3.5-.5 8.6 1.4 11.4 1 1.4 2.1 2.9 3.6 2.9 1.4-.1 2-0.9 3.7-.9 1.7 0 2.2.9 3.7.9 1.6 0 2.6-1.4 3.6-2.8.7-1 1.3-2.1 1.5-3.3-3.3-1.3-3.1-5.4.0-5.5z"/><path d="M15.6 4.2c.8-1 1.3-2.4 1.2-3.7-1.2.1-2.5.8-3.3 1.8-.7.9-1.3 2.2-1.1 3.5 1.3 0 2.5-.7 3.2-1.6z"/></svg>
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-slate-900">macOS Apple Silicon</p>
-              <p className="text-xs text-slate-500">.dmg (M1/M2/M3/M4) · v{APP_VERSION}</p>
-            </div>
-          </a>
-          <a href={DOWNLOAD_URL_MAC_X64} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 no-underline transition-colors group">
-            <div className="w-9 h-9 rounded-xl bg-slate-50 flex items-center justify-center flex-shrink-0 group-hover:bg-slate-100 transition-colors">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" className="text-slate-500"><path d="M18.7 12.4c0-2.9 2.3-4.3 2.4-4.4-1.3-1.9-3.3-2.1-4.1-2.2-1.7-.2-3.4 1-4.3 1-0.9 0-2.3-1-3.8-1-1.9 0-3.7 1.1-4.7 2.9-2 3.5-.5 8.6 1.4 11.4 1 1.4 2.1 2.9 3.6 2.9 1.4-.1 2-0.9 3.7-.9 1.7 0 2.2.9 3.7.9 1.6 0 2.6-1.4 3.6-2.8.7-1 1.3-2.1 1.5-3.3-3.3-1.3-3.1-5.4.0-5.5z"/><path d="M15.6 4.2c.8-1 1.3-2.4 1.2-3.7-1.2.1-2.5.8-3.3 1.8-.7.9-1.3 2.2-1.1 3.5 1.3 0 2.5-.7 3.2-1.6z"/></svg>
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-slate-900">macOS Intel</p>
-              <p className="text-xs text-slate-500">.dmg (x64) · v{APP_VERSION}</p>
-            </div>
-          </a>
-          <div className="border-t border-black/5 mt-1 px-4 pt-2 pb-1">
-            <a href={RELEASES_URL} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:text-blue-700 no-underline">Xem tất cả phiên bản →</a>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+const GITHUB_RELEASES_URL = 'https://github.com/babyvibe/Deplao-releases';
 
-export default function Hero() {
-  return (
-    <section className="relative pt-20 pb-16 px-5 overflow-hidden">
-      <div className="mx-auto max-w-5xl text-center">
-        {/* Badge */}
-        <div className="aos-element inline-flex items-center gap-2 hero-pill mb-6">
-          <span className="dot-pulse" />
-          <span>Open source · Miễn phí · v{APP_VERSION}</span>
-        </div>
+const heroMetrics = [
+	{ value: '10+', label: 'module', note: 'chat · crm · ai' },
+	{ value: '50+', label: 'workflow mẫu', note: 'cài nhanh' },
+	{ value: '24/7', label: 'automation', note: 'chạy nền' },
+];
 
-        {/* Headline */}
-        <h1 className="aos-element delay-1 text-4xl md:text-6xl font-black tracking-tight leading-[1.1] text-slate-900 mb-5">
-          Quản lý Zalo<br />
-          <span className="gradient-text">đa tài khoản</span><br />
-          mạnh hơn &amp; thông minh hơn
-        </h1>
+const heroScenarios = [
+	{
+		id: 'shop-online',
+		tab: 'Shop online',
+		audience: 'Shop online / TMĐT',
+		trigger: 'Khách hỏi giá, hỏi tình trạng đơn hoặc cần báo phí ship',
+		logic: 'AI hiểu ý định → tra CRM / POS / vận chuyển theo hội thoại hiện tại',
+		action: 'Gửi báo giá, trạng thái đơn, ưu đãi và gắn nhãn để nuôi lead tiếp',
+		outcome: 'Chốt đơn nhanh hơn mà không cần nhảy qua nhiều phần mềm khác nhau.',
+		steps: [
+			{ icon: '💬', label: 'Khách nhắn Zalo', group: 'Trigger' },
+			{ icon: '🤖', label: 'AI hiểu nhu cầu', group: 'AI' },
+			{ icon: '🛒', label: 'Tra POS / vận chuyển', group: 'Tích hợp' },
+			{ icon: '🏷️', label: 'Gửi báo giá + gắn nhãn', group: 'Action' },
+		],
+		icon: '🛒',
+		badge: 'Bán hàng',
+		tone: 'bg-blue-50 border-blue-200 text-blue-700',
+	},
+	{
+		id: 'sales',
+		tab: 'Sales',
+		audience: 'Sales / Telesales',
+		trigger: 'Lead chưa phản hồi 4 giờ',
+		logic: 'Workflow đọc trạng thái lead + kiểm tra lần tương tác cuối',
+		action: 'Tự follow-up, lưu log CRM, nhắc nhân viên phụ trách',
+		outcome: 'Giảm bỏ sót lead và giữ nhịp follow-up đồng đều cho toàn đội.',
+		steps: [
+			{ icon: '⏳', label: 'Lead im lặng 4 giờ', group: 'Trigger' },
+			{ icon: '👥', label: 'Đọc trạng thái CRM', group: 'CRM' },
+			{ icon: '⚙️', label: 'Workflow kiểm tra điều kiện', group: 'Logic' },
+			{ icon: '📞', label: 'Follow-up + nhắc sales', group: 'Action' },
+		],
+		icon: '📞',
+		badge: 'Follow-up',
+		tone: 'bg-emerald-50 border-emerald-200 text-emerald-700',
+	},
+	{
+		id: 'education',
+		tab: 'Giáo dục',
+		audience: 'Trung tâm đào tạo / Giáo dục',
+		trigger: 'Đến lịch học, đổi lịch hoặc cần nhắc học viên / phụ huynh',
+		logic: 'Lọc theo lớp, khóa học, ngày học và người phụ trách từng nhóm',
+		action: 'Gửi nhắc lịch, thông báo thay đổi và chăm sóc học viên hàng loạt',
+		outcome: 'Giảm công việc thủ công cho giáo vụ và giữ liên lạc ổn định với phụ huynh.',
+		steps: [
+			{ icon: '📅', label: 'Đến lịch học', group: 'Trigger' },
+			{ icon: '🧩', label: 'Lọc theo lớp / khóa', group: 'Logic' },
+			{ icon: '👨‍👩‍👧', label: 'Tách học viên / phụ huynh', group: 'CRM' },
+			{ icon: '📣', label: 'Gửi nhắc lịch hàng loạt', group: 'Action' },
+		],
+		icon: '🎓',
+		badge: 'Giáo dục',
+		tone: 'bg-amber-50 border-amber-200 text-amber-700',
+	},
+	{
+		id: 'spa-clinic',
+		tab: 'Spa / Clinic',
+		audience: 'Phòng khám / Spa / Làm đẹp',
+		trigger: 'Lịch hẹn ngày mai hoặc sinh nhật khách',
+		logic: 'Lọc danh sách theo ngày, gói dịch vụ và nhãn chăm sóc sau dịch vụ',
+		action: 'Gửi nhắc lịch, chúc mừng sinh nhật và ưu đãi kéo khách quay lại',
+		outcome: 'Tăng tỷ lệ khách quay lại và giữ trải nghiệm chăm sóc cá nhân hoá hơn.',
+		steps: [
+			{ icon: '🎂', label: 'Sinh nhật / lịch hẹn', group: 'Trigger' },
+			{ icon: '🗂️', label: 'Lọc gói dịch vụ', group: 'Logic' },
+			{ icon: '💎', label: 'Chọn ưu đãi phù hợp', group: 'CRM' },
+			{ icon: '🏥', label: 'Nhắc lịch + chăm sóc lại', group: 'Action' },
+		],
+		icon: '🏥',
+		badge: 'CSKH',
+		tone: 'bg-violet-50 border-violet-200 text-violet-700',
+	},
+	{
+		id: 'fnb',
+		tab: 'F&B',
+		audience: 'F&B / Nhà hàng / Quán ăn',
+		trigger: 'Khách đặt bàn, đặt món hoặc đến ngày ưu đãi đặc biệt',
+		logic: 'Tra trạng thái đặt bàn, lịch sử mua và nhóm khách thân thiết',
+		action: 'Xác nhận đơn, gửi ưu đãi phù hợp và nhắc khách quay lại đúng dịp',
+		outcome: 'Giữ tương tác đều với khách quen và tự động hoá phần nhắc món/ưu đãi.',
+		steps: [
+			{ icon: '🍽️', label: 'Đặt bàn / đặt món', group: 'Trigger' },
+			{ icon: '🧾', label: 'Tra lịch sử mua', group: 'CRM' },
+			{ icon: '🎯', label: 'Chọn ưu đãi theo dịp', group: 'Logic' },
+			{ icon: '📩', label: 'Xác nhận + nhắc quay lại', group: 'Action' },
+		],
+		icon: '🍜',
+		badge: 'F&B',
+		tone: 'bg-rose-50 border-rose-200 text-rose-700',
+	},
+	{
+		id: 'agency',
+		tab: 'Agency',
+		audience: 'Agency / Freelancer Marketing',
+		trigger: 'Lead mới vào nhiều tài khoản Zalo của từng client',
+		logic: 'Phân loại nguồn lead, gắn nhãn theo chiến dịch và tách từng client',
+		action: 'Tự nurture lead, báo cáo kết quả và giảm bỏ sót tin nhắn cho từng khách hàng',
+		outcome: 'Quản lý nhiều client trên cùng một workspace mà vẫn tách luồng rõ ràng.',
+		steps: [
+			{ icon: '📥', label: 'Lead mới vào nhiều page', group: 'Trigger' },
+			{ icon: '🏷️', label: 'Gắn nhãn theo client', group: 'CRM' },
+			{ icon: '🪄', label: 'Workflow nurture tự động', group: 'Workflow' },
+			{ icon: '📊', label: 'Báo cáo theo chiến dịch', group: 'Analytics' },
+		],
+		icon: '📣',
+		badge: 'Agency',
+		tone: 'bg-cyan-50 border-cyan-200 text-cyan-700',
+	},
+];
 
-        {/* Subtitle */}
-        <p className="aos-element delay-2 text-base md:text-lg text-slate-500 max-w-2xl mx-auto mb-8 leading-relaxed">
-          Deplao tích hợp <strong className="text-slate-700">CRM, Workflow tự động hóa, AI Assistant, POS và ERP</strong> vào
-          một desktop app duy nhất — giúp đội ngũ bán hàng &amp; chăm sóc khách hàng trên Zalo vận hành tập trung.
-        </p>
+const heroPills = [
+	'Đa tài khoản Zalo',
+	'Inbox tập trung',
+	'CRM khách hàng',
+	'AI Assistant',
+	'Workflow tự động',
+	'Tích hợp bán hàng',
+	'Nhân viên & workspace',
+];
 
-        {/* CTAs */}
-        <div className="aos-element delay-3 flex flex-wrap items-center justify-center gap-3 mb-12 hero-cta-row">
-          <DownloadButton />
-          <a
-            href={GITHUB_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn-secondary hero-github-button flex items-center gap-2 no-underline"
-          >
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 .5C5.37.5 0 5.87 0 12.5c0 5.3 3.438 9.8 8.205 11.387.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.807 5.625-5.479 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.5 24 5.87 18.627.5 12 .5z"/></svg>
-            ⭐ Star on GitHub
-          </a>
-        </div>
+const Hero: React.FC = () => {
+	const [activeScenarioId, setActiveScenarioId] = useState(heroScenarios[0].id);
+	const activeScenario = heroScenarios.find((scenario) => scenario.id === activeScenarioId) ?? heroScenarios[0];
 
-        {/* Stats */}
-        <div className="aos-element delay-4 flex flex-wrap items-center justify-center gap-8 text-sm text-slate-500">
-          {[
-            { icon: '👤', label: 'Đa tài khoản Zalo' },
-            { icon: '🔒', label: 'Dữ liệu lưu cục bộ 100%' },
-            { icon: '⚡', label: 'Workflow 24/7' },
-            { icon: '🤖', label: 'AI Assistant tích hợp' },
-          ].map(s => (
-            <div key={s.label} className="flex items-center gap-2">
-              <span>{s.icon}</span>
-              <span>{s.label}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
+	return (
+		<section id="hero" className="relative overflow-hidden px-4 pb-16 pt-28 sm:px-6 sm:pb-20 sm:pt-32">
+			<div className="mx-auto grid max-w-7xl items-start gap-8 lg:grid-cols-[0.9fr_1.1fr] lg:gap-10">
+				<div className="relative z-10 pt-0 sm:pt-2">
+					<div className="orbit-badge mb-6 aos-element">
+						<span className="dot-pulse" />
+						Workspace CSKH & Automation Zalo
+					</div>
+
+					<h1 className="aos-element delay-1 mb-5 max-w-[12ch] text-4xl font-black leading-[0.98] tracking-tight text-slate-950 sm:max-w-[14ch] sm:text-5xl lg:text-7xl">
+						Quản lý Zalo chuyên nghiệp <span className="gradient-text">Đa tài khoản, CRM, Workflow và  AI Assistant</span>
+					</h1>
+
+					<p className="aos-element delay-2 mb-7 max-w-2xl text-base leading-relaxed text-slate-600 sm:text-md md:text-md">
+						Phần mềm giúp bạn phản hồi nhanh hơn, chuyển đổi cao hơn, tự động chăm sóc khách hàng,
+						AI xử lý 24/7, giảm tải cho đội ngũ.
+						Vận hành gọn nhẹ, không bỏ sót khách hàng.
+					</p>
+
+					<div className="aos-element delay-2 mb-8 flex flex-wrap gap-2.5 sm:gap-3">
+						{heroPills.map((chip) => (
+							<span key={chip} className="hero-pill">
+								{chip}
+							</span>
+						))}
+					</div>
+
+					<div className="hero-cta-row aos-element delay-3 mb-8 sm:mb-10 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+						<DownloadDropdown
+							label="Tải xuống"
+							variant="primary"
+							align="left"
+							className="hero-cta-button px-6 py-4 text-base sm:px-8"
+							wrapperClassName="hero-download-trigger"
+						/>
+						<a
+							href={GITHUB_RELEASES_URL}
+							target="_blank"
+							rel="noreferrer"
+							className="btn-secondary hero-cta-button hero-github-button flex items-center gap-2 text-base no-underline"
+						>
+							<svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+								<path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.009-.866-.014-1.7-2.782.605-3.369-1.344-3.369-1.344-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.071 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.091-.647.349-1.088.635-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.389-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.748-1.026 2.748-1.026.546 1.378.203 2.397.1 2.65.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.31.678.922.678 1.858 0 1.341-.012 2.422-.012 2.751 0 .268.18.579.688.481A10.019 10.019 0 0022 12.017C22 6.484 17.523 2 12 2z" />
+							</svg>
+							<span>GitHub</span>
+						</a>
+						<button
+							onClick={() => document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' })}
+							className="btn-secondary hero-cta-button flex cursor-pointer items-center gap-2 bg-transparent text-base"
+						>
+							<svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path
+									strokeLinecap="round"
+									strokeLinejoin="round"
+									strokeWidth={2}
+									d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+								/>
+							</svg>
+							Tính năng
+						</button>
+					</div>
+
+					<div className="aos-element delay-4 grid gap-3 sm:grid-cols-3 md:gap-4">
+						{heroMetrics.map((metric) => (
+							<div key={metric.label} className="metric-tile">
+								<div className="text-3xl font-black text-slate-950">{metric.value}</div>
+								<div className="mt-1 text-sm font-semibold text-slate-800">{metric.label}</div>
+								<div className="mt-1 text-xs text-slate-500">{metric.note}</div>
+							</div>
+						))}
+					</div>
+				</div>
+
+				<div className="relative min-w-0 aos-element delay-3 lg:pl-20">
+					<div className="command-panel rounded-[1.6rem] p-3.5 sm:rounded-[2rem] sm:p-4 md:p-5">
+						<div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4">
+							<div>
+								<div className="mini-kicker mb-2">
+									<span className="signal-dot" />
+									Workflow live preview
+								</div>
+								<h3 className="max-w-[24rem] text-lg font-bold text-slate-950 sm:text-xl">Nhiều use case vận hành thực tế trên cùng một workspace</h3>
+							</div>
+						</div>
+
+						<div className="workflow-preview">
+							<div className="workflow-tabs relative z-10 mb-4">
+								{heroScenarios.map((scenario) => (
+									<button
+										key={scenario.id}
+										type="button"
+										onClick={() => setActiveScenarioId(scenario.id)}
+										className={`workflow-tab ${activeScenario.id === scenario.id ? 'is-active' : ''}`}
+									>
+										<span className="workflow-tab-icon">{scenario.icon}</span>
+										<span>{scenario.tab}</span>
+									</button>
+								))}
+							</div>
+
+							<div key={activeScenario.id} className="workflow-tab-panel workflow-live-spotlight workflow-node workflow-node-dark">
+								<div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+									<div>
+										<div className="inline-flex rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-white/80">
+											{activeScenario.badge}
+										</div>
+										<div className="mt-3 text-lg font-black text-white md:text-xl">
+											{activeScenario.audience}
+										</div>
+									</div>
+									<div className="workflow-live-orb">
+										<span>{activeScenario.icon}</span>
+									</div>
+								</div>
+
+								<div className="workflow-step-flow mb-4">
+									{activeScenario.steps.map((step, index) => (
+										<div key={step.label} className="workflow-step-flow-item">
+											<div className="workflow-step-card">
+												<div className="workflow-step-icon">{step.icon}</div>
+												<div className="workflow-step-copy">
+													<div className="workflow-step-group">{step.group}</div>
+													<div className="workflow-step-label">{step.label}</div>
+												</div>
+											</div>
+											{index < activeScenario.steps.length - 1 && <div className="workflow-step-arrow">→</div>}
+										</div>
+									))}
+								</div>
+
+								<div className="grid gap-3 md:grid-cols-[0.9fr_1.05fr_1.2fr]">
+									<div className="feature-proof-dark">
+										<div className="text-[10px] font-bold uppercase tracking-[0.16em] text-white/60">
+											Trigger
+										</div>
+										<div className="mt-2 text-sm leading-relaxed text-white/88">
+											{activeScenario.trigger}
+										</div>
+									</div>
+
+									<div className="feature-proof-dark">
+										<div className="text-[10px] font-bold uppercase tracking-[0.16em] text-white/60">
+											Logic
+										</div>
+										<div className="mt-2 text-sm leading-relaxed text-white/88">
+											{activeScenario.logic}
+										</div>
+									</div>
+
+									<div className="feature-proof-dark">
+										<div className="text-[10px] font-bold uppercase tracking-[0.16em] text-white/60">
+											Action
+										</div>
+										<div className="mt-2 text-sm leading-relaxed text-white/88">
+											{activeScenario.action}
+										</div>
+									</div>
+								</div>
+
+								<div className="workflow-live-result mt-4">
+									<div className="text-[10px] font-bold uppercase tracking-[0.16em] text-white/60">
+										Outcome
+									</div>
+									<div className="mt-2 text-sm leading-relaxed text-white/88">
+										{activeScenario.outcome}
+									</div>
+								</div>
+							</div>
+
+						</div>
+					</div>
+				</div>
+			</div>
+		</section>
+	);
+};
+
+export default Hero;
 

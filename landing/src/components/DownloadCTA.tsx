@@ -1,219 +1,36 @@
-import { useState } from 'react';
-import { DOWNLOAD_URL, DOWNLOAD_URL_MAC_ARM64, DOWNLOAD_URL_MAC_X64, APP_VERSION } from '../constants';
-
-interface FaqItem {
-  question: string;
-  answer: string;
-}
-
-const faqs: FaqItem[] = [
-  {
-    question: 'Deplao là gì?',
-    answer:
-      'Deplao là phần mềm quản lý đa tài khoản Zalo trên máy tính. Bạn có thể đăng nhập và sử dụng nhiều tài khoản Zalo cùng lúc trên một giao diện duy nhất — chat, quản lý bạn bè, nhóm, CRM, chiến dịch marketing, tự động hoá workflow, tích hợp các công công cụ bán hàng và  AI Assistant.',
-  },
-  {
-    question: 'Dùng Deplao có mất phí không?',
-    answer:
-      'Tất cả các tính năng trong phần mềm đều miễn phí. Chúng tôi sẽ không thu phí vì cơ sở dữ liệu và ảnh/video được lưu trữ trên máy tính của bạn. Bạn có thể thoải mái sử dụng mà không lo về chi phí hay giới hạn tính năng.',
-  },
-  {
-    question: 'Dùng Deplao có dùng song song với Zalo Desktop hay Zalo App được không?',
-    answer:
-        'Có. Chính sách Zalo hỗ trợ mỗi tài khoản đăng nhập đồng thời trên 1 điện thoại, 1 Desktop và 1 Web. Deplao sử dụng nền tảng Web của Zalo, vì vậy bạn vẫn dùng bình thường trên Zalo PC và Zalo App. Lưu ý: sau khi đăng nhập vào Deplao, bạn sẽ không thể đăng nhập thêm trên Zalo Web (chat.zalo.me) cho cùng tài khoản đó.',
-  },
-  {
-    question: 'Có cho phép nhiều nhân viên hoặc nhiều máy cùng dùng chung 1 tài khoản Zalo không?',
-    answer:
-        'Có. Deplao hỗ trợ mô hình làm việc theo team/workspace, cho phép nhiều nhân viên cùng tham gia vận hành với cơ chế phân quyền rõ ràng. Bạn có thể phân quyền theo nhân viên và theo từng module để mỗi người chỉ thấy và thao tác đúng phần được giao, trong khi quản lý vẫn kiểm soát tập trung toàn bộ hoạt động.',
-  },
-  {
-    question: 'Cài đặt trên hệ điều hành nào?',
-    answer:
-      'Hiện tại Deplao hỗ trợ Windows và macOS. Bộ cài gọn nhẹ khoảng 150MB, khi vận hành thực tế chỉ tiêu thụ khoảng 500MB RAM nên chạy nhanh và ổn định.',
-  },
-  {
-    question: 'Dữ liệu của tôi có an toàn không?',
-    answer:
-      'Toàn bộ dữ liệu (tin nhắn, liên hệ, ảnh, file…) được lưu trữ trực tiếp trên máy tính của bạn, không qua bất kỳ máy chủ trung gian nào. Deplao không thu thập hay chia sẻ dữ liệu cá nhân cho bên thứ ba.',
-  },
-  {
-    question: 'Tài khoản Zalo có bị khoá khi dùng Deplao không?',
-    answer:
-      'Deplao hoạt động dựa trên giao thức chính thức của Zalo. Tuy nhiên, bạn nên tránh hành vi spam (gửi tin nhắn hàng loạt quá nhiều trong thời gian ngắn). Phần mềm có cơ chế delay thông minh giúp hạn chế rủi ro bị hạn chế tài khoản.',
-  }
-];
-
-const FaqAccordionItem: React.FC<{
-  item: FaqItem;
-  isOpen: boolean;
-  onToggle: () => void;
-  index: number;
-}> = ({ item, isOpen, onToggle, index }) => {
+﻿import { DOWNLOAD_URL, DOWNLOAD_URL_MAC_ARM64, APP_VERSION, GITHUB_URL, RELEASES_URL } from "../constants";
+export default function DownloadCTA() {
   return (
-    <div
-      className={`planet-card rounded-[1.5rem] overflow-hidden transition-all duration-300 delay-${Math.min(index + 1, 6)} ${
-        isOpen ? 'ring-1 ring-indigo-200' : 'hover:border-indigo-200'
-      }`}
-    >
-      <button
-        onClick={onToggle}
-        className="w-full flex items-center justify-between gap-4 px-6 py-5 text-left cursor-pointer focus:outline-none group"
-      >
-        <span className="text-base font-semibold text-slate-950 group-hover:text-indigo-600 transition-colors">
-          {item.question}
-        </span>
-        <span
-          className={`flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center transition-all duration-300 ${
-            isOpen
-              ? 'bg-indigo-50 text-indigo-600 rotate-180'
-              : 'bg-slate-100 text-slate-400 group-hover:bg-indigo-50 group-hover:text-indigo-600'
-          }`}
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
-          </svg>
-        </span>
-      </button>
-
-      <div
-        className={`overflow-hidden transition-all duration-300 ease-in-out ${
-          isOpen ? 'max-h-60 opacity-100' : 'max-h-0 opacity-0'
-        }`}
-      >
-        <div className="px-6 pb-5 text-sm text-slate-600 leading-relaxed border-t border-slate-200 pt-4">
-          {item.answer}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const DownloadCTA: React.FC = () => {
-  const [openIndex, setOpenIndex] = useState<number | null>(0);
-
-  const toggle = (idx: number) => {
-    setOpenIndex((prev) => (prev === idx ? null : idx));
-  };
-
-  return (
-    <section id="faq" className="orbit-shell py-28 px-6 relative overflow-hidden">
-      <div className="absolute inset-0 pointer-events-none">
-        <div
-          className="absolute inset-0"
-          style={{
-            background:
-              'radial-gradient(ellipse 70% 80% at 50% 50%, rgba(99,102,241,0.12) 0%, transparent 70%)',
-          }}
-        />
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full border border-indigo-200/70 animate-[spin_30s_linear_infinite]" />
-      </div>
-
-      <div className="max-w-3xl mx-auto relative z-10">
-        <div className="text-center mb-14">
-          <div className="orbit-badge mb-4 aos-element">
-            ❓ FAQ
-          </div>
-          <h2 className="text-4xl md:text-5xl font-bold text-slate-950 mb-4 aos-element delay-1">
-            Câu hỏi{' '}
-            <span className="gradient-text">thường gặp</span>
+    <section id="download" className="py-24 px-5">
+      <div className="mx-auto max-w-3xl text-center">
+        <div className="editorial-band rounded-3xl p-10 md:p-14 stellar-panel">
+          <div className="mini-kicker mb-4 text-white/70"><span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" />Sẵn sàng</div>
+          <h2 className="text-3xl md:text-4xl font-black text-white tracking-tight mb-4">
+            Tải Deplao miễn phí<br />ngay hôm nay
           </h2>
-          <p className="text-slate-600 text-lg max-w-xl mx-auto aos-element delay-2">
-            Giải đáp nhanh những thắc mắc phổ biến nhất khi sử dụng Deplao.
+          <p className="text-white/70 mb-8 max-w-lg mx-auto">
+            Mã nguồn mở. Dữ liệu lưu cục bộ 100%. Không subscription, không yêu cầu tài khoản cloud.
           </p>
-        </div>
-
-        <div className="flex flex-col gap-3">
-          {faqs.map((faq, idx) => (
-            <FaqAccordionItem
-              key={idx}
-              item={faq}
-              isOpen={openIndex === idx}
-              onToggle={() => toggle(idx)}
-              index={idx}
-            />
-          ))}
-        </div>
-
-        <div className="mt-12 text-center aos-element delay-4">
-          <p className="text-slate-500 text-sm mb-3">Chưa tìm thấy câu trả lời?</p>
-          <a
-            href="https://zalo.me/g/deplao"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn-secondary inline-flex items-center gap-2 text-sm px-6 py-3 no-underline"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-              />
-            </svg>
-            Liên hệ hỗ trợ
-          </a>
-        </div>
-
-        <div className="mt-16 text-center aos-element delay-5">
-          <div className="stellar-panel rounded-[2rem] p-8 md:p-10 relative overflow-hidden">
-            <div className="absolute inset-0 bg-gradient-to-br from-slate-900/5 via-transparent to-blue-600/10 pointer-events-none" />
-            <div className="relative z-10">
-              <h3 className="text-2xl md:text-3xl font-bold text-slate-950 mb-3">
-                Sẵn sàng trải nghiệm <span className="gradient-text">Deplao</span>?
-              </h3>
-              <p className="text-slate-600 text-sm mb-8">
-                Tải miễn phí · Cài đặt dễ dàng
-              </p>
-
-              <div className="flex flex-col sm:flex-row items-center justify-center gap-3 flex-wrap">
-                <a
-                  href={DOWNLOAD_URL}
-                  download
-                  className="btn-primary inline-flex items-center gap-2.5 no-underline text-sm px-6 py-3.5"
-                >
-                  <span className="text-base">🪟</span>
-                  <span>
-                    <span className="block font-semibold">Windows 10/11</span>
-                    <span className="text-xs opacity-70">.exe · 64-bit</span>
-                  </span>
-                </a>
-
-                <a
-                  href={DOWNLOAD_URL_MAC_ARM64}
-                  download
-                  className="btn-secondary inline-flex items-center gap-2.5 no-underline text-sm px-6 py-3.5"
-                >
-                  <span className="text-base">🍎</span>
-                  <span>
-                    <span className="block font-semibold">macOS Apple</span>
-                    <span className="text-xs opacity-70">chip M series</span>
-                  </span>
-                </a>
-
-                <a
-                  href={DOWNLOAD_URL_MAC_X64}
-                  download
-                  className="btn-secondary inline-flex items-center gap-2.5 no-underline text-sm px-6 py-3.5"
-                >
-                  <span className="text-base">💻</span>
-                  <span>
-                    <span className="block font-semibold">macOS Intel</span>
-                    <span className="text-xs opacity-70">chip Intel series</span>
-                  </span>
-                </a>
-              </div>
-
-              <p className="text-slate-500 text-xs mt-5">
-                v{APP_VERSION} · ~150 MB
-              </p>
-            </div>
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <a href={DOWNLOAD_URL} className="flex items-center gap-2 px-6 py-3 rounded-xl bg-white text-slate-900 font-bold text-sm hover:bg-white/90 transition-colors no-underline">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9l3 3 3-3M12 12V4"/></svg>
+              🪟 Windows · v{APP_VERSION}
+            </a>
+            <a href={DOWNLOAD_URL_MAC_ARM64} className="flex items-center gap-2 px-6 py-3 rounded-xl bg-white/10 border border-white/20 text-white font-bold text-sm hover:bg-white/20 transition-colors no-underline">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M18.7 12.4c0-2.9 2.3-4.3 2.4-4.4-1.3-1.9-3.3-2.1-4.1-2.2-1.7-.2-3.4 1-4.3 1-.9 0-2.3-1-3.8-1-1.9 0-3.7 1.1-4.7 2.9-2 3.5-.5 8.6 1.4 11.4 1 1.4 2.1 2.9 3.6 2.9 1.4-.1 2-.9 3.7-.9 1.7 0 2.2.9 3.7.9 1.6 0 2.6-1.4 3.6-2.8.7-1 1.3-2.1 1.5-3.3-3.3-1.3-3.1-5.4.0-5.5z"/><path d="M15.6 4.2c.8-1 1.3-2.4 1.2-3.7-1.2.1-2.5.8-3.3 1.8-.7.9-1.3 2.2-1.1 3.5 1.3 0 2.5-.7 3.2-1.6z"/></svg>
+              🍎 macOS (M1+) · v{APP_VERSION}
+            </a>
+          </div>
+          <div className="mt-6 flex items-center justify-center gap-4 text-sm text-white/50">
+            <a href={RELEASES_URL} target="_blank" rel="noopener noreferrer" className="hover:text-white/80 transition-colors no-underline">Tất cả phiên bản →</a>
+            <span>·</span>
+            <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className="hover:text-white/80 transition-colors no-underline flex items-center gap-1">
+              <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><path d="M12 .5C5.37.5 0 5.87 0 12.5c0 5.3 3.438 9.8 8.205 11.387.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.807 5.625-5.479 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.5 24 5.87 18.627.5 12 .5z"/></svg>
+              Source code
+            </a>
           </div>
         </div>
       </div>
     </section>
   );
-};
-
-export default DownloadCTA;
-
+}
