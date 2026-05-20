@@ -13,9 +13,16 @@
 
 > Phần mềm desktop quản lý Zalo Đa tài khoản tích hợp CRM, ERP, POS, Workflow và AI Assistant giúp đội nhóm bán hàng và chăm sóc khách hàng trên Zalo vận hành tập trung trong một ứng dụng duy nhất.
 
-[![Version](https://img.shields.io/badge/version-26.4.0-22c55e)](#-changelog-v2640)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Desktop-3b82f6)](#-yeu-cau-he-thong)
-[![Support](https://img.shields.io/badge/support-Telegram-0ea5e9)](https://t.me/Deplao_support)
+[![Version](https://img.shields.io/badge/version-26.4.0-22c55e)](#)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-3b82f6)](#-runtime-requirements)
+[![Electron](https://img.shields.io/badge/Electron-41-47848f?logo=electron&logoColor=white)](#)
+[![React](https://img.shields.io/badge/React-18-61dafb?logo=react&logoColor=white)](#)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6?logo=typescript&logoColor=white)](#)
+[![SQLite](https://img.shields.io/badge/SQLite-local--first-003b57?logo=sqlite&logoColor=white)](#)
+[![Vite](https://img.shields.io/badge/Vite-6-646cff?logo=vite&logoColor=white)](#)
+[![Node.js](https://img.shields.io/badge/Node.js-18+-339933?logo=node.js&logoColor=white)](#)
+[![License](https://img.shields.io/badge/license-ISC-f59e0b)](#)
+[![Support](https://img.shields.io/badge/support-GitHub_Issues-0ea5e9)](https://github.com/babyvibe/deplao-builder/issues)
 
 
 ### ⬇️ Tải xuống nhanh
