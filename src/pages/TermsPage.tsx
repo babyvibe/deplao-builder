@@ -187,7 +187,7 @@ export default function TermsPage() {
                 <span className="text-2xl">💬</span>
                 <div>
                   <p className="text-white text-sm font-medium">Telegram hỗ trợ</p>
-                  <a href="https://t.me/deplao_support" className="text-blue-400 text-sm no-underline hover:underline" target="_blank" rel="noopener noreferrer">@Deplao_support</a>
+                  <a href="https://t.me/babyvibe9" className="text-blue-400 text-sm no-underline hover:underline" target="_blank" rel="noopener noreferrer">@Deplao_support</a>
                 </div>
               </div>
               <div className="flex items-center gap-3 bg-gray-800/50 rounded-xl px-4 py-3">

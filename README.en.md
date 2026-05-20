@@ -11,9 +11,68 @@
 
 > A multi-account Zalo desktop app with integrated CRM, ERP, POS, Workflow automation and AI Assistant — helping sales and customer care teams operate centrally in one single application.
 
-[![Version](https://img.shields.io/badge/version-26.4.0-22c55e)](#-changelog-v2640)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-3b82f6)](#-system-requirements)
-[![Support](https://img.shields.io/badge/support-GitHub-0ea5e9)](https://github.com/babyvibe/deplao-builder/issues)
+[![Version](https://img.shields.io/badge/version-26.4.0-22c55e)](#)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-3b82f6)](#-runtime-requirements)
+[![Electron](https://img.shields.io/badge/Electron-41-47848f?logo=electron&logoColor=white)](#)
+[![React](https://img.shields.io/badge/React-18-61dafb?logo=react&logoColor=white)](#)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6?logo=typescript&logoColor=white)](#)
+[![SQLite](https://img.shields.io/badge/SQLite-local--first-003b57?logo=sqlite&logoColor=white)](#)
+[![Vite](https://img.shields.io/badge/Vite-6-646cff?logo=vite&logoColor=white)](#)
+[![Node.js](https://img.shields.io/badge/Node.js-18+-339933?logo=node.js&logoColor=white)](#)
+[![License](https://img.shields.io/badge/license-ISC-f59e0b)](#)
+[![Support](https://img.shields.io/badge/support-GitHub_Issues-0ea5e9)](https://github.com/babyvibe/deplao-builder/issues)
+
+### ⬇️ Quick Download
+
+<p>
+  <a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-Setup-26.4.0.exe">
+    <img src="https://img.shields.io/badge/%F0%9F%AA%9F_Windows-Deplao--Setup--26.4.0.exe-0078d4?style=for-the-badge" alt="Download Windows" />
+  </a>
+  &nbsp;
+  <a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.4.0-arm64.dmg">
+    <img src="https://img.shields.io/badge/%F0%9F%8D%8E_macOS_M1%2B-Deplao--26.4.0--arm64.dmg-000000?style=for-the-badge" alt="Download macOS Apple Silicon" />
+  </a>
+  &nbsp;
+  <a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.4.0.dmg">
+    <img src="https://img.shields.io/badge/%F0%9F%8D%8E_macOS_Intel-Deplao--26.4.0.dmg-000000?style=for-the-badge" alt="Download macOS Intel" />
+  </a>
+</p>
+
+👉 All releases: https://github.com/babyvibe/deplao-builder/releases
+
+<details>
+<summary>⚠️ Security warning on first launch (blocked by Windows / macOS)</summary>
+
+Deplao is not code-signed (we're bootstrapped), so your OS may show a warning when opening the installer.
+
+---
+
+### 🪟 Windows (.exe)
+
+Windows may show **"Windows protected your PC"**:
+
+👉 How to proceed:
+1. Click **More info**
+2. Click **Run anyway**
+
+---
+
+### 🍎 macOS (.dmg)
+
+macOS may show **"cannot be opened because it is from an unidentified developer"**
+
+👉 How to proceed:
+
+**Option 1:**
+- Right-click the file → **Open**
+- Click **Open** again
+
+**Option 2 (if still blocked):**
+1. Go to **System Settings → Privacy & Security**
+2. Scroll down to Security
+3. Click **Open Anyway**
+
+</details>
 
 <p align="center">
   <img src="./assets/deplao-overview-map.svg" alt="Deplao — centralized desktop workspace for Zalo sales and customer care" width="960" />
@@ -185,79 +244,39 @@ flowchart LR
 
 ---
 
-# Installation
+## Installation
 
-<details open>
-<summary>Build from source</summary>
+<details>
+<summary>🛠️ Build from source</summary>
 
-## Requirements
+### Requirements
 
 - Windows 10/11 or macOS
 - Node.js 18+ recommended
 - npm 9+
 
-## Install dependencies
+### Install dependencies
 
 ```powershell
 npm install --legacy-peer-deps
 ```
 
-## Run in development mode
+### Run in development mode
 
 ```powershell
-npm run build:dev
+npm run dev
 ```
 
-## Build production app
+### Build production app
 
 ```powershell
-npm run build:production
+npm run production
 ```
 
-## Local data
+### Local data
 
 - App data uses local SQLite
 - Storage directory can be changed in `Settings`
-
-</details>
-
-<details>
-<summary>Download pre-built release</summary>
-
-Deplao supports multiple operating systems. Download the right version from the Releases page:
-
-👉 https://github.com/babyvibe/deplao-builder/releases
-
----
-
-### 🖥️ Choose the right build:
-
-- 🪟 **Windows** — download `*.exe`
-- 🍎 **macOS (Apple Silicon — M1/M2/M3/M4/M5)** — download `*-arm64.dmg`
-- 🍎 **macOS (Intel)** — download `*.dmg`
-
-💡 Always pick the latest release (top of the list).
-
----
-
-## ⚠️ Security warning on first launch
-
-Deplao is not code-signed (we're bootstrapped), so your OS may show a warning.
-
-### 🪟 Windows — "Windows protected your PC"
-
-1. Click **More info**
-2. Click **Run anyway**
-
-### 🍎 macOS — "cannot be opened because it is from an unidentified developer"
-
-**Option 1:**
-- Right-click the `.dmg` → **Open** → **Open** again
-
-**Option 2 (if still blocked):**
-1. Go to **System Settings → Privacy & Security**
-2. Scroll to Security
-3. Click **Open Anyway**
 
 </details>
 
@@ -423,4 +442,3 @@ Without the contributions and foundation from this project, Deplao would not hav
 We deeply appreciate the value the open-source community brings 💙
 
 ---
-

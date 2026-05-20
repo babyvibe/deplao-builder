@@ -72,7 +72,7 @@ const Footer: React.FC = () => {
               {[
                 { href: 'https://t.me/deplaoCommunity', label: 'Telegram Community & Support' },
                 { href: 'https://fb.com/deplaoapp', label: 'Facebook Support' },
-                { href: 'https://t.me/deplao_support', label: 'Báo lỗi' },
+                { href: 'https://t.me/babyvibe9', label: 'Báo lỗi' },
               ].map((link) => (
                 <li key={link.label}>
                   <a href={link.href} className="text-slate-600 hover:text-slate-950 text-sm transition-colors no-underline">
