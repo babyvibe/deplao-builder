@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, Tray, Menu, nativeImage, protocol, net } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, Tray, Menu, nativeImage, protocol, net, Notification } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import { autoUpdater } from 'electron-updater';
@@ -23,6 +23,7 @@ import { registerErpCalendarIpc } from './ipc/erpCalendarIpc';
 import { registerErpNoteIpc } from './ipc/erpNoteIpc';
 import { registerErpNotificationIpc } from './ipc/erpNotificationIpc';
 import { registerErpHrmIpc } from './ipc/erpHrmIpc';
+import { registerLockScreenIpc } from './ipc/lockScreenIpc';
 import WorkspaceManager from '../src/utils/WorkspaceManager';
 import HttpConnectionManager from '../src/services/http/HttpConnectionManager';
 import WorkflowEngineService from '../src/services/workflow/WorkflowEngineService';
@@ -277,6 +278,7 @@ function createWindow() {
     if (!isQuitting) {
       event.preventDefault();
       mainWindow?.hide();
+      showTrayNotification();
     }
   });
 
@@ -370,6 +372,19 @@ function createTray() {
   });
 }
 
+/** Hiển thị thông báo system tray khi ẩn ứng dụng xuống tray */
+function showTrayNotification() {
+  if (!Notification.isSupported()) return;
+  const notif = new Notification({
+    title: 'Deplao đang chạy ngầm',
+    body: 'Ứng dụng vẫn đang hoạt động và nhận tin nhắn bình thường. Nhấn vào biểu tượng tray để mở lại.',
+    silent: false,
+  });
+  notif.show();
+  // Tự đóng sau 5 giây
+  setTimeout(() => notif.close(), 5000);
+}
+
 // Window control IPC handlers
 function registerWindowControls() {
   ipcMain.on('window:minimize', () => mainWindow?.minimize());
@@ -381,6 +396,7 @@ function registerWindowControls() {
   // Nút X trên custom title bar → ẩn xuống tray (không thoát hoàn toàn)
   ipcMain.on('window:close', () => {
     mainWindow?.hide();
+    showTrayNotification();
   });
 
   // Nút thoát hoàn toàn từ tray menu hoặc renderer
@@ -501,13 +517,22 @@ function registerWindowControls() {
 
   // ── Notification click → focus window + mở thread ───────────────
   ipcMain.on('app:openThread', (_event, { zaloId, threadId, threadType }: { zaloId: string; threadId: string; threadType: number }) => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      if (!mainWindow.isVisible()) mainWindow.show();
-      mainWindow.focus();
-      // Gửi event sang renderer để navigate đến đúng thread
-      mainWindow.webContents.send('app:openThread', { zaloId, threadId, threadType });
-    }
+    if (!mainWindow) return;
+
+    // Restore + focus: Windows không always reliable với focus() khi minimized
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    if (!mainWindow.isVisible()) mainWindow.show();
+    mainWindow.setAlwaysOnTop(true);
+    mainWindow.focus();
+    // Bỏ alwaysOnTop sau 200ms — chỉ cần để "kick" window lên foreground
+    setTimeout(() => { try { mainWindow?.setAlwaysOnTop(false); } catch {} }, 200);
+
+    // Delay nhẹ để đảm bảo renderer sẵn sàng nhận IPC
+    setTimeout(() => {
+      try {
+        mainWindow?.webContents.send('app:openThread', { zaloId, threadId, threadType });
+      } catch {}
+    }, 80);
   });
 }
 
@@ -604,6 +629,7 @@ app.whenReady().then(async () => {
   registerErpNoteIpc();
   registerErpNotificationIpc();
   registerErpHrmIpc();
+  registerLockScreenIpc();
   // Auto-reconnect Facebook accounts
   setTimeout(() => reconnectAllFBAccounts(), 4000);
   // Auto-connect remote workspaces with autoConnect=true (after delay for DB + initial workspace switch)

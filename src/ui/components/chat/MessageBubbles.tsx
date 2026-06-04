@@ -257,9 +257,10 @@ function StickerBubble({ msg }: { msg: any }) {
 function MediaBubble({ msg, isSelf, onView }: { msg: any; isSelf: boolean; onView?: (src: string) => void }) {
   const [useRemote, setUseRemote] = React.useState(false);
   const [loadFailed, setLoadFailed] = React.useState(false);
+  const repairAttemptedRef = React.useRef(false);
 
   const localPathsStr = typeof msg.local_paths === 'string' ? msg.local_paths : JSON.stringify(msg.local_paths ?? '');
-  React.useEffect(() => { setLoadFailed(false); setUseRemote(false); }, [localPathsStr]);
+  React.useEffect(() => { setLoadFailed(false); setUseRemote(false); repairAttemptedRef.current = false; }, [localPathsStr]);
 
   let localUrl = '';
   try {
@@ -330,8 +331,23 @@ function MediaBubble({ msg, isSelf, onView }: { msg: any; isSelf: boolean; onVie
         className={`max-w-xs max-h-64 object-cover cursor-pointer hover:opacity-90 transition-opacity bg-gray-700/30 w-full${caption ? ' rounded-t-xl' : ' rounded-xl'}`}
         onClick={() => onView?.(viewUrl)}
         onError={() => {
-          if (!useRemote && localUrl && remoteUrl) setUseRemote(true);
-          else if (!useRemote && remoteUrl && displayUrl !== remoteUrl) setUseRemote(true);
+          if (!useRemote && localUrl && remoteUrl) {
+            // Background repair: xóa file lỗi, tải lại từ CDN cho lần sau
+            if (!repairAttemptedRef.current && msg.msg_id) {
+              repairAttemptedRef.current = true;
+              const lp: Record<string, string> = (() => {
+                try { return typeof msg.local_paths === 'string' ? JSON.parse(msg.local_paths || '{}') : (msg.local_paths || {}); } catch { return {}; }
+              })();
+              ipc.file?.repairImage({
+                zaloId: msg.owner_zalo_id || '',
+                msgId: String(msg.msg_id),
+                threadId: msg.thread_id,
+                localPath: lp.main || lp.hd || '',
+                remoteUrl,
+              }).catch(() => {});
+            }
+            setUseRemote(true);
+          } else if (!useRemote && remoteUrl && displayUrl !== remoteUrl) setUseRemote(true);
           else setLoadFailed(true);
         }}
       />

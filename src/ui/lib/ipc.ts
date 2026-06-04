@@ -300,12 +300,26 @@ declare global {
         saveTempBlob: (params: { base64: string; ext: string }) => Promise<{ success: boolean; filePath?: string; error?: string }>;
         getVideoMeta: (params: { filePath: string }) => Promise<{ success: boolean; thumbPath: string; duration: number; width: number; height: number; error?: string }>;
         readImageAsBase64: (params: { localPath?: string; remoteUrl?: string }) => Promise<{ success: boolean; base64?: string; mimeType?: string; error?: string }>;
+        repairImage: (params: { zaloId: string; msgId: string; threadId?: string; localPath?: string; remoteUrl?: string }) => Promise<{ success: boolean; newLocalPath?: string; error?: string }>;
+        validateLocalImages: (items: Array<{ zaloId: string; msgId: string; threadId?: string; localPath: string; remoteUrl?: string }>) => Promise<{ success: boolean; corrupted: Array<{ zaloId: string; msgId: string; threadId?: string; localPath: string; remoteUrl?: string; reason: string }> }>;
       };
       app: {
         setBadge: (count: number) => void;
         openThread: (params: { zaloId: string; threadId: string; threadType: number }) => void;
         sendBadgeImage: (params: { dataUrl: string; count: number }) => void;
         flashFrame: (active: boolean) => void;
+      };
+      lockScreen: {
+        status: () => Promise<{ success: boolean; enabled?: boolean; biometricEnabled?: boolean; biometricAvailable?: boolean; failedAttempts?: number; isCoolingDown?: boolean; remainingCooldown?: number; error?: string }>;
+        setup: (params: { password: string }) => Promise<{ success: boolean; recoveryKey?: string; error?: string }>;
+        verify: (params: { password: string }) => Promise<{ success: boolean; error?: string; cooldownRemaining?: number; failedAttempts?: number }>;
+        verifyRecovery: (params: { recoveryKey: string }) => Promise<{ success: boolean; error?: string }>;
+        changePassword: (params: { oldPassword: string; newPassword: string }) => Promise<{ success: boolean; error?: string }>;
+        resetPassword: (params: { recoveryKey: string; newPassword: string }) => Promise<{ success: boolean; error?: string }>;
+        disable: (params: { password: string }) => Promise<{ success: boolean; error?: string }>;
+        getRecoveryKey: (params: { password: string }) => Promise<{ success: boolean; recoveryKey?: string; error?: string }>;
+        setBiometric: (params: { enabled: boolean }) => Promise<{ success: boolean; error?: string }>;
+        biometricUnlock: () => Promise<{ success: boolean; error?: string }>;
       };
       on: (channel: string, callback: (...args: any[]) => void) => () => void;
       removeAllListeners: (channel: string) => void;
@@ -609,6 +623,7 @@ export const ipc = {
   fb: window.electronAPI?.fb,
   proxy: window.electronAPI?.proxy,
   erp,
+  lockScreen: window.electronAPI?.lockScreen,
   on: window.electronAPI?.on,
   removeAllListeners: window.electronAPI?.removeAllListeners,
 };

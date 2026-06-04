@@ -87,7 +87,9 @@ export default function ChatWindow() {
   const [loadError, setLoadError] = useState(false);
   const [viewerState, setViewerState] = useState<{ images: MediaViewerImage[]; index: number } | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; msg: any; isSent: boolean; isGroupAdmin?: boolean } | null>(null);
-  const [forwardMsg, setForwardMsg] = useState<any | null>(null);
+  const [forwardMsgs, setForwardMsgs] = useState<any[] | null>(null);
+  const [isSelecting, setIsSelecting] = useState(false);
+  const [selectedMsgIds, setSelectedMsgIds] = useState<Set<string>>(new Set());
   const [reactionPopup, setReactionPopup] = useState<{ msg: any; activeEmoji: string } | null>(null);
   const [reactionContextMenu, setReactionContextMenu] = useState<{ x: number; y: number; msg: any; myEmoji: string | null } | null>(null);
   const [atTop, setAtTop] = useState(false);
@@ -344,6 +346,9 @@ export default function ChatWindow() {
     // Reset thread ready gate — ẩn UI cho đến khi data load xong
     setThreadReady(false);
     prevPinnedBarHeightRef.current = 0;
+    // Reset selection mode when switching threads
+    setIsSelecting(false);
+    setSelectedMsgIds(new Set());
   }, [activeThreadId]);
 
   // ─── Thread ready gate (đơn giản): set true ngay khi pinsReady = true ───────
@@ -393,6 +398,62 @@ export default function ChatWindow() {
       });
     });
   }, [threadReady, activeThreadId, msgs.length]);
+
+  // ─── Lazy scan: quét ảnh lỗi trong conversation khi mở thread ────────────────
+  // Chạy 1 lần per thread, sau khi threadReady. Background, không block UI.
+  const scannedThreadsRef = useRef(new Set<string>());
+  useEffect(() => {
+    if (!threadReady || !activeAccountId || !activeThreadId || !msgs.length) return;
+    const scanKey = `${activeAccountId}_${activeThreadId}`;
+    if (scannedThreadsRef.current.has(scanKey)) return;
+    scannedThreadsRef.current.add(scanKey);
+
+    // Collect messages with local_paths that are image types
+    const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff', 'avif'];
+    const items: Array<{ zaloId: string; msgId: string; threadId: string; localPath: string; remoteUrl?: string }> = [];
+    for (const msg of msgs) {
+      try {
+        const lp: Record<string, string> = typeof msg.local_paths === 'string'
+          ? JSON.parse(msg.local_paths || '{}') : (msg.local_paths || {});
+        const localFilePath = lp.main || lp.hd || '';
+        if (!localFilePath) continue;
+        const ext = localFilePath.split('.').pop()?.toLowerCase() || '';
+        if (!imageExts.includes(ext)) continue;
+
+        // Extract remoteUrl for repair
+        let remoteUrl = '';
+        try {
+          const parsed = JSON.parse(msg.content || '{}');
+          const params = typeof parsed.params === 'string' ? JSON.parse(parsed.params) : (parsed.params || {});
+          remoteUrl = params.hd || params.rawUrl || parsed.href || parsed.thumb || '';
+        } catch {}
+
+        items.push({
+          zaloId: activeAccountId,
+          msgId: String(msg.msg_id),
+          threadId: activeThreadId,
+          localPath: localFilePath,
+          remoteUrl,
+        });
+      } catch {}
+    }
+
+    if (!items.length) return;
+
+    // Validate in main process, then repair corrupted ones
+    ipc.file?.validateLocalImages(items).then((res) => {
+      if (!res?.success || !res.corrupted?.length) return;
+      console.log(`[ChatWindow] Found ${res.corrupted.length} corrupted images in thread ${activeThreadId}, repairing...`);
+      for (const item of res.corrupted) {
+        ipc.file?.repairImage({
+          zaloId: item.zaloId,
+          msgId: item.msgId,
+          threadId: item.threadId,
+          remoteUrl: item.remoteUrl,
+        }).catch(() => {});
+      }
+    }).catch(() => {});
+  }, [threadReady, activeAccountId, activeThreadId, msgs]);
 
   // OPTIMIZATION: Load group members với cache TTL - chỉ reload nếu cache cũ hơn 5 phút
   useEffect(() => {
@@ -745,7 +806,7 @@ export default function ChatWindow() {
   };
 
   const handleForward = (msg: any) => {
-    setForwardMsg(msg);
+    setForwardMsgs([msg]);
   };
 
   const handlePin = async (msg: any) => {
@@ -917,6 +978,8 @@ export default function ChatWindow() {
       displaySrc: localUrl || remoteUrl,
       localPath,
       defaultName,
+      msgId: msg?.msg_id ? String(msg.msg_id) : undefined,
+      threadId: msg?.thread_id ? String(msg.thread_id) : undefined,
     };
   }, []);
 
@@ -1393,8 +1456,34 @@ export default function ChatWindow() {
           const reactionCounts = parseReactions(msg.reactions);
           const hasReactions = Object.keys(reactionCounts).length > 0;
 
+          // Selection state for this message
+          const isMsgSelected = isSelecting && selectedMsgIds.has(msg.msg_id);
+          const isGroupedFirst = !!groupedFirstMsgs[msg.msg_id];
+
+          // Toggle selection for this message (and all images in group if applicable)
+          const toggleMsgSelect = () => {
+            if (!isSelecting) return;
+            setSelectedMsgIds(prev => {
+              const next = new Set(prev);
+              if (isGroupedFirst) {
+                // Select/deselect ALL images in the media group
+                const allIds = groupedFirstMsgs[msg.msg_id].map((m: any) => m.msg_id);
+                const allSelected = allIds.every((id: string) => next.has(id));
+                if (allSelected) { allIds.forEach((id: string) => next.delete(id)); }
+                else { allIds.forEach((id: string) => next.add(id)); }
+              } else {
+                if (next.has(msg.msg_id)) next.delete(msg.msg_id);
+                else next.add(msg.msg_id);
+              }
+              return next;
+            });
+          };
+
           return (
-            <div key={msg.msg_id + idx} id={`msg-${msg.msg_id}`} className={`flex flex-col mb-0.5 rounded-lg ${isEcardMsg ? 'items-center' : isSent ? 'items-end' : 'items-start'} group/msg`}>
+            <div key={msg.msg_id + idx} id={`msg-${msg.msg_id}`}
+              className={`flex flex-col mb-0.5 rounded-lg transition-colors ${isEcardMsg ? 'items-center' : isSent ? 'items-end' : 'items-start'} group/msg${isMsgSelected ? ' bg-blue-500/10 ring-1 ring-blue-500/40 rounded-lg' : ''}${isSelecting && !isEcardMsg ? ' cursor-pointer' : ''}`}
+              onClick={isSelecting && !isEcardMsg ? (e) => { e.stopPropagation(); toggleMsgSelect(); } : undefined}
+            >
               {showTime && (
                 <div className="flex justify-center w-full my-2">
                   <span className="text-xs text-gray-500 bg-gray-800 px-2 py-0.5 rounded-full">
@@ -1405,10 +1494,21 @@ export default function ChatWindow() {
 
               {/* Outer row: bubble + action buttons */}
               <div className={`flex items-end gap-1 ${isEcardMsg ? 'w-full justify-center' : isSent ? 'flex-row-reverse' : 'flex-row'}`} style={{ maxWidth: '100%' }}>
+                {/* Selection checkbox — visible when in selection mode */}
+                {isSelecting && !isEcardMsg && (
+                  <div className="w-5 h-5 flex-shrink-0 self-center mb-1">
+                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isMsgSelected ? 'bg-blue-500 border-blue-500' : 'border-gray-500 bg-transparent'}`}>
+                      {isMsgSelected && (
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
+                      )}
+                    </div>
+                  </div>
+                )}
                 {/* Bubble area */}
                 <div
                   className={`flex items-end gap-2 min-w-0 ${isEcardMsg ? 'w-full' : isSent ? 'flex-row-reverse' : 'flex-row'}`}
                   onContextMenu={(e) => {
+                    if (isSelecting) { e.preventDefault(); return; } // Suppress context menu in selection mode
                     if (isEcardMsg) return;
                     if (isGroupedStickerFirst) return; // Mỗi sticker trong nhóm tự xử lý context menu
                     // Nếu người dùng đang chọn text → để browser xử lý (copy tự nhiên)
@@ -1597,7 +1697,9 @@ export default function ChatWindow() {
                       isSticker={isStickerMsg}
                       isRtf={isRtf}
                       isBankCard={isBankCardMsg}
-                      renderGroupMedia={() => <MediaGroupBubble msgs={groupMediaMsgs!} onView={openViewer} />}
+                      renderGroupMedia={() => <MediaGroupBubble msgs={groupMediaMsgs!} onView={openViewer} isSelecting={isSelecting} selectedMsgIds={selectedMsgIds} onToggleSelect={(id) => {
+                        setSelectedMsgIds(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+                      }} />}
                       renderPoll={() => (
                         <PollBubble msg={msg} isSent={isSent} activeAccountId={activeAccountId || ''} threadId={activeThreadId || ''} />
                       )}
@@ -1698,7 +1800,7 @@ export default function ChatWindow() {
                 </div>{/* end bubble area (flex items-end gap-2) */}
 
                 {/* Hover action buttons — visible on msg hover, outside bubble */}
-                {!isEcardMsg && !isGroupedStickerFirst && (
+                {!isEcardMsg && !isGroupedStickerFirst && !isSelecting && (
                 <div className="flex items-center gap-0.5 self-end mb-1 opacity-0 group-hover/msg:opacity-100 transition-opacity duration-100 flex-shrink-0 flex-nowrap">
                   {/* Reply */}
                   <MsgActionBtn title="Trả lời" onClick={() => setReplyTo(msg)}>
@@ -1726,6 +1828,48 @@ export default function ChatWindow() {
           );
         }} />
       </div>
+      )}
+
+      {/* Selection action bar */}
+      {isSelecting && (
+        <div className="flex items-center justify-between px-3 py-2 bg-gray-800 border-t border-blue-500/40 flex-shrink-0">
+          <div className="flex items-center gap-2">
+            <button onClick={() => { setIsSelecting(false); setSelectedMsgIds(new Set()); }}
+              className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-gray-700 text-gray-400 hover:text-white transition-colors">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+            <span className="text-sm text-blue-400 font-medium">Đã chọn {selectedMsgIds.size} tin nhắn</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <button onClick={() => {
+              // Copy selected text messages
+              const selectedMsgs = msgs.filter(m => selectedMsgIds.has(m.msg_id));
+              const texts = selectedMsgs.map(m => extractMsgText(m)).filter(t => t && t !== '[Tin nhắn]');
+              if (texts.length > 0) {
+                navigator.clipboard.writeText(texts.join('\n'));
+                showNotification(`Đã sao chép ${texts.length} tin nhắn`, 'success');
+              } else {
+                showNotification('Không có tin nhắn văn bản nào được chọn', 'info');
+              }
+            }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg hover:bg-gray-700 text-gray-300 hover:text-white text-xs transition-colors">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+              Sao chép
+            </button>
+            <button onClick={() => {
+              const selectedMsgs = msgs.filter(m => selectedMsgIds.has(m.msg_id));
+              if (selectedMsgs.length > 0) {
+                setForwardMsgs(selectedMsgs);
+                setIsSelecting(false);
+                setSelectedMsgIds(new Set());
+              }
+            }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs transition-colors">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 014-4h12"/></svg>
+              Chuyển tiếp
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Typing indicator — hiển thị phía trên input, không chồng lên nội dung */}
@@ -1852,7 +1996,8 @@ export default function ChatWindow() {
           isGroupAdmin={contextMenu.isGroupAdmin}
           onClose={() => setContextMenu(null)}
           onReply={(m) => setReplyTo(m)}
-          onForward={(m) => { setForwardMsg(m); }}
+          onForward={(m) => { setForwardMsgs([m]); }}
+          onSelectMessages={(m) => { setIsSelecting(true); setSelectedMsgIds(new Set([m.msg_id])); }}
           onUndo={handleUndo}
           onDelete={handleDelete}
           onDeleteFromDb={handleDeleteFromDb}
@@ -1863,50 +2008,39 @@ export default function ChatWindow() {
       )}
 
       {/* Forward message modal */}
-      {forwardMsg && (
+      {forwardMsgs && (
         <ForwardMessageModal
-          msg={forwardMsg}
+          messages={forwardMsgs}
           contacts={contactList}
-          onClose={() => setForwardMsg(null)}
-          onForward={async (threadId, threadType, composeText) => {
+          onClose={() => setForwardMsgs(null)}
+          onForward={(messages, targets, composeText) => {
             const auth = getAuth();
             if (!auth) return;
-            try {
-              const msgType = forwardMsg.msg_type || '';
-              const content = forwardMsg.content || '';
-              const isVideo = msgType === 'chat.video.msg';
-              const isFile = !isVideo && isFileType(msgType, content);
-              const isImage = !isVideo && !isFile && isMediaType(msgType, content);
-
-              // Lấy local path an toàn (local_paths có thể là null/'{}'/'null')
-              const getPath = (): string => {
-                try {
-                  const raw = typeof forwardMsg.local_paths === 'string'
-                    ? JSON.parse(forwardMsg.local_paths || '{}')
-                    : (forwardMsg.local_paths || {});
-                  if (!raw || typeof raw !== 'object') return '';
-                  return raw.file || raw.video || raw.main || raw.hd || Object.values(raw).find(v => typeof v === 'string' && v) as string || '';
-                } catch { return ''; }
-              };
-              const localPath = getPath();
-
-              if ((isFile || isVideo) && localPath) {
-                await ipc.zalo?.sendFile({ auth, filePath: localPath, threadId, type: threadType });
-              } else if (isImage && localPath) {
-                await ipc.zalo?.sendImage({ auth, filePath: localPath, threadId, type: threadType, message: '' });
+            setForwardMsgs(null);
+            // Chạy lần lượt ở background, không block UI
+            (async () => {
+              const total = messages.length * targets.length;
+              let counter = 0;
+              let failCount = 0;
+              for (const msg of messages) {
+                for (const target of targets) {
+                  counter++;
+                  try {
+                    await sendOneForward(auth, msg, target, composeText);
+                  } catch (e: any) {
+                    failCount++;
+                  }
+                  if (total > 1) {
+                    showNotification(`Đang chuyển tiếp ${counter}/${total}...`, 'info');
+                  }
+                }
+              }
+              if (failCount === 0) {
+                showNotification('Đã chuyển tiếp xong', 'success');
               } else {
-                // Text / sticker / link / other
-                const text = composeText || extractMsgText(forwardMsg);
-                await ipc.zalo?.sendMessage({ auth, message: text, threadId, type: threadType });
+                showNotification(`Đã chuyển tiếp xong (${failCount} lỗi)`, 'error');
               }
-              if (composeText && (isFile || isVideo || isImage) && localPath) {
-                await ipc.zalo?.sendMessage({ auth, message: composeText, threadId, type: threadType });
-              }
-              showNotification('Đã chuyển tiếp tin nhắn', 'success');
-            } catch (e: any) {
-              showNotification('Chuyển tiếp thất bại: ' + e.message, 'error');
-            }
-            setForwardMsg(null);
+            })();
           }}
         />
       )}
@@ -3435,7 +3569,10 @@ function getGroupLayoutId(msg: any): string | null {  if (!isMediaType(msg.msg_t
 }
 
 /** Hiển thị nhóm ảnh gửi cùng 1 batch — tối đa 4 ảnh/hàng, chiều cao cố định */
-function MediaGroupBubble({ msgs: groupMsgs, onView }: { msgs: any[]; onView: (src: string) => void }) {
+function MediaGroupBubble({ msgs: groupMsgs, onView, isSelecting: isSelectingProp, selectedMsgIds: selectedMsgIdsProp, onToggleSelect }: {
+  msgs: any[]; onView: (src: string) => void;
+  isSelecting?: boolean; selectedMsgIds?: Set<string>; onToggleSelect?: (msgId: string) => void;
+}) {
   const sorted = React.useMemo(() => {
     return [...groupMsgs].sort((a, b) => {
       try {
@@ -3457,7 +3594,7 @@ function MediaGroupBubble({ msgs: groupMsgs, onView }: { msgs: any[]; onView: (s
       {rows.map((row, ri) => (
         <div key={ri} className="flex gap-0.5">
           {row.map((m) => (
-            <SingleImageInGroup key={m.msg_id} msg={m} onView={onView} />
+            <SingleImageInGroup key={m.msg_id} msg={m} onView={onView} isSelecting={isSelectingProp} isSelected={selectedMsgIdsProp?.has(m.msg_id)} onToggleSelect={onToggleSelect} />
           ))}
         </div>
       ))}
@@ -3466,7 +3603,10 @@ function MediaGroupBubble({ msgs: groupMsgs, onView }: { msgs: any[]; onView: (s
 }
 
 /** Ảnh đơn bên trong MediaGroupBubble — chiều cao cố định h-40 */
-function SingleImageInGroup({ msg, onView }: { msg: any; onView: (src: string) => void }) {
+function SingleImageInGroup({ msg, onView, isSelecting: isSelectingProp, isSelected, onToggleSelect }: {
+  msg: any; onView: (src: string) => void;
+  isSelecting?: boolean; isSelected?: boolean; onToggleSelect?: (msgId: string) => void;
+}) {
   // Remote-first: hiển thị CDN ngay; chuyển local khi file đã tải xong
   const [useLocal, setUseLocal] = React.useState(false);
   const [loadFailed, setLoadFailed] = React.useState(false);
@@ -3534,36 +3674,47 @@ function SingleImageInGroup({ msg, onView }: { msg: any; onView: (src: string) =
     );
   }
   return (
-    <div className="relative flex-1 min-w-0 group/singleimg">
+    <div className={`relative flex-1 min-w-0 group/singleimg${isSelectingProp ? ' cursor-pointer' : ''}${isSelected ? ' ring-2 ring-blue-500' : ''}`}
+      onClick={isSelectingProp ? (e) => { e.stopPropagation(); onToggleSelect?.(msg.msg_id); } : undefined}
+    >
       <img
         src={displayUrl}
         alt=""
-        className="h-40 w-full object-cover cursor-pointer hover:opacity-90 transition-opacity bg-gray-700/30"
-        onClick={() => onView(viewUrl)}
+        className={`h-40 w-full object-cover transition-opacity bg-gray-700/30${isSelectingProp ? '' : ' cursor-pointer hover:opacity-90'}`}
         onError={handleImgError}
       />
+      {/* Selection overlay */}
+      {isSelectingProp && isSelected && (
+        <div className="absolute inset-0 bg-blue-500/30 flex items-center justify-center pointer-events-none">
+          <div className="w-7 h-7 rounded-full bg-blue-500 flex items-center justify-center">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
+          </div>
+        </div>
+      )}
       {/* Viền overlay — hiển thị ở cả giao diện sáng lẫn tối */}
       <div className="absolute inset-0 pointer-events-none ring-1 ring-inset ring-black/[0.12]" />
-      {/* Hover action buttons */}
-      <div className="absolute top-1 right-1 flex gap-0.5 opacity-0 group-hover/singleimg:opacity-100 transition-opacity">
-        {localFilePath && (
-          <button onClick={(e) => { e.stopPropagation(); ipc.file?.showItemInFolder(localFilePath); }}
-            title="Mở trong thư mục"
-            className="w-6 h-6 bg-black/60 hover:bg-black/80 rounded-md flex items-center justify-center text-white transition-colors">
+      {/* Hover action buttons — hidden in selection mode */}
+      {!isSelectingProp && (
+        <div className="absolute top-1 right-1 flex gap-0.5 opacity-0 group-hover/singleimg:opacity-100 transition-opacity">
+          {localFilePath && (
+            <button onClick={(e) => { e.stopPropagation(); ipc.file?.showItemInFolder(localFilePath); }}
+              title="Mở trong thư mục"
+              className="w-6 h-6 bg-black/60 hover:bg-black/80 rounded-md flex items-center justify-center text-white transition-colors">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
+              </svg>
+            </button>
+          )}
+          <button onClick={handleSaveAs} disabled={saving} title="Lưu về máy"
+            className="w-6 h-6 bg-black/60 hover:bg-black/80 rounded-md flex items-center justify-center text-white transition-colors disabled:opacity-40">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
+              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
             </svg>
           </button>
-        )}
-        <button onClick={handleSaveAs} disabled={saving} title="Lưu về máy"
-          className="w-6 h-6 bg-black/60 hover:bg-black/80 rounded-md flex items-center justify-center text-white transition-colors disabled:opacity-40">
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
-            <polyline points="7 10 12 15 17 10"/>
-            <line x1="12" y1="15" x2="12" y2="3"/>
-          </svg>
-        </button>
-      </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -4598,11 +4749,41 @@ function extractMsgText(msg: any): string {
   } catch { return msg.content || '[Tin nhắn]'; }
 }
 
-function ForwardMessageModal({ msg, contacts, onClose, onForward }: {
-  msg: any;
+/** Gửi 1 tin nhắn đến 1 target — dùng trong forward loop */
+async function sendOneForward(
+  auth: any, msg: any, target: { threadId: string; threadType: number }, composeText: string,
+) {
+  const msgType = msg.msg_type || '';
+  const content = msg.content || '';
+  const isVideo = msgType === 'chat.video.msg';
+  const isFile = !isVideo && isFileType(msgType, content);
+  const isImage = !isVideo && !isFile && isMediaType(msgType, content);
+  let localPath = '';
+  try {
+    const raw = typeof msg.local_paths === 'string' ? JSON.parse(msg.local_paths || '{}') : (msg.local_paths || {});
+    if (raw && typeof raw === 'object') {
+      localPath = raw.file || raw.video || raw.main || raw.hd || Object.values(raw).find(v => typeof v === 'string' && v) as string || '';
+    }
+  } catch {}
+
+  if ((isFile || isVideo) && localPath) {
+    await ipc.zalo?.sendFile({ auth, filePath: localPath, threadId: target.threadId, type: target.threadType });
+  } else if (isImage && localPath) {
+    await ipc.zalo?.sendImage({ auth, filePath: localPath, threadId: target.threadId, type: target.threadType, message: '' });
+  } else {
+    const text = composeText || extractMsgText(msg);
+    await ipc.zalo?.sendMessage({ auth, message: text, threadId: target.threadId, type: target.threadType });
+  }
+  if (composeText && (isFile || isVideo || isImage) && localPath) {
+    await ipc.zalo?.sendMessage({ auth, message: composeText, threadId: target.threadId, type: target.threadType });
+  }
+}
+
+function ForwardMessageModal({ messages, contacts, onClose, onForward }: {
+  messages: any[];
   contacts: any[];
   onClose: () => void;
-  onForward: (threadId: string, threadType: number, composeText: string) => Promise<void>;
+  onForward: (messages: any[], targets: Array<{ threadId: string; threadType: number }>, composeText: string) => void;
 }) {
   const { labels: allLabels, groupInfoCache } = useAppStore();
   const { activeAccountId } = useAccountStore();
@@ -4611,7 +4792,7 @@ function ForwardMessageModal({ msg, contacts, onClose, onForward }: {
   const [search, setSearch] = React.useState('');
   const [tab, setTab] = React.useState<'recent' | 'friends' | 'groups' | 'categories'>('recent');
   const [selectedLabelId, setSelectedLabelId] = React.useState<number | null>(null);
-  const [forwarding, setForwarding] = React.useState<string | null>(null);
+  const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [labelSource, setLabelSource] = React.useState<'local' | 'zalo'>('local');
   const [composeText, setComposeText] = React.useState('');
 
@@ -4697,25 +4878,27 @@ function ForwardMessageModal({ msg, contacts, onClose, onForward }: {
 
   const filtered = getFiltered();
 
-  const handleSelect = async (contact: any) => {
-    if (forwarding) return;
-    setForwarding(contact.contact_id);
-    try { await onForward(contact.contact_id, contact.contact_type === 'group' ? 1 : 0, composeText); }
-    finally { setForwarding(null); }
+  const toggleSelect = (contactId: string) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(contactId)) next.delete(contactId);
+      else next.add(contactId);
+      return next;
+    });
   };
 
-  const previewText = (() => {
-    try {
-      const c = msg.content;
-      if (!c || c === 'null') return '[Tin nhắn]';
-      const parsed = JSON.parse(c);
-      if (typeof parsed === 'string') return parsed;
-      if (parsed?.title) return `📂 ${parsed.title}`;
-      if (parsed?.href || parsed?.thumb) return '[Hình ảnh]';
-      if (parsed?.msg) return String(parsed.msg);
-      return '[Tin nhắn]';
-    } catch { return msg.content || '[Tin nhắn]'; }
-  })();
+  const handleForward = () => {
+    const targets = filtered
+      .filter(c => selected.has(c.contact_id))
+      .map(c => ({ threadId: c.contact_id, threadType: c.contact_type === 'group' ? 1 : 0 }));
+    if (targets.length === 0) return;
+    onForward(messages, targets, composeText);
+  };
+
+  const msgCount = messages.length;
+  const previewText = msgCount === 1
+    ? (() => { try { const c = messages[0].content; if (!c || c === 'null') return '[Tin nhắn]'; const p = JSON.parse(c); if (typeof p === 'string') return p; if (p?.title) return `📂 ${p.title}`; if (p?.href || p?.thumb) return '[Hình ảnh]'; if (p?.msg) return String(p.msg); return '[Tin nhắn]'; } catch { return messages[0].content || '[Tin nhắn]'; } })()
+    : `[${msgCount} tin nhắn]`;
 
   const TABS: { key: 'recent' | 'friends' | 'groups' | 'categories'; label: string; icon: React.ReactNode }[] = [
     { key: 'recent', label: 'Gần nhất', icon: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> },
@@ -4765,7 +4948,7 @@ function ForwardMessageModal({ msg, contacts, onClose, onForward }: {
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700">
           <div>
-            <h2 className="text-white font-semibold text-base">Chuyển tiếp tin nhắn</h2>
+            <h2 className="text-white font-semibold text-base">Chuyển tiếp {msgCount > 1 ? `${msgCount} tin nhắn` : 'tin nhắn'}</h2>
             <p className="text-xs text-gray-400 mt-0.5 truncate max-w-[300px]">{previewText}</p>
           </div>
           <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-700 text-gray-400 hover:text-white transition-colors">
@@ -4867,43 +5050,67 @@ function ForwardMessageModal({ msg, contacts, onClose, onForward }: {
               <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mb-2 opacity-40"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
               <p className="text-sm">Không tìm thấy</p>
             </div>
-          ) : filtered.map(c => (
-            <button
-              key={c.contact_id}
-              onClick={() => handleSelect(c)}
-              disabled={!!forwarding}
-              className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-700 transition-colors text-left disabled:opacity-60"
-            >
-              {c.contact_type === 'group' ? (
-                <GroupAvatar
-                  avatarUrl={c.avatar_url}
-                  groupInfo={grpCache[c.contact_id]}
-                  name={c.display_name || c.contact_id}
-                  size="md"
-                />
-              ) : c.avatar_url ? (
-                <img src={c.avatar_url} alt="" className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
-              ) : (
-                <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold flex-shrink-0 bg-blue-600">
-                  {(c.display_name || 'U').charAt(0).toUpperCase()}
+          ) : filtered.map(c => {
+            const isSelected = selected.has(c.contact_id);
+            return (
+              <button
+                key={c.contact_id}
+                onClick={() => toggleSelect(c.contact_id)}
+                className={`w-full flex items-center gap-3 px-4 py-2.5 transition-colors text-left ${isSelected ? 'bg-blue-600/20' : 'hover:bg-gray-700'}`}
+              >
+                {/* Checkbox */}
+                <div className={`w-5 h-5 rounded border flex-shrink-0 flex items-center justify-center transition-colors ${isSelected ? 'bg-blue-500 border-blue-500' : 'border-gray-500'}`}>
+                  {isSelected && (
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
+                  )}
                 </div>
-              )}
-              <div className="flex-1 min-w-0">
-                <p className="text-sm text-gray-200 truncate">{c.alias || c.display_name || c.contact_id}
-                  {c.alias && c.display_name && <span className="text-xs text-gray-500 ml-1">({c.display_name})</span>}</p>
-                {c.contact_type === 'group'
-                  ? <p className="text-xs text-gray-500">Nhóm</p>
-                  : c.last_message_time
-                    ? <p className="text-xs text-gray-500">{formatMsgTime(c.last_message_time)}</p>
-                    : null}
-                {tab === 'categories' && getContactLabelBadges(c.contact_id)}
-              </div>
-              {forwarding === c.contact_id && (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="animate-spin text-blue-400 flex-shrink-0"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-              )}
-            </button>
-          ))}
+                {c.contact_type === 'group' ? (
+                  <GroupAvatar
+                    avatarUrl={c.avatar_url}
+                    groupInfo={grpCache[c.contact_id]}
+                    name={c.display_name || c.contact_id}
+                    size="md"
+                  />
+                ) : c.avatar_url ? (
+                  <img src={c.avatar_url} alt="" className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
+                ) : (
+                  <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold flex-shrink-0 bg-blue-600">
+                    {(c.display_name || 'U').charAt(0).toUpperCase()}
+                  </div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-gray-200 truncate">{c.alias || c.display_name || c.contact_id}
+                    {c.alias && c.display_name && <span className="text-xs text-gray-500 ml-1">({c.display_name})</span>}</p>
+                  {c.contact_type === 'group'
+                    ? <p className="text-xs text-gray-500">Nhóm</p>
+                    : c.last_message_time
+                      ? <p className="text-xs text-gray-500">{formatMsgTime(c.last_message_time)}</p>
+                      : null}
+                  {tab === 'categories' && getContactLabelBadges(c.contact_id)}
+                </div>
+              </button>
+            );
+          })}
         </div>
+
+        {/* Footer */}
+        {selected.size > 0 && (
+          <div className="flex items-center justify-between px-4 py-3 border-t border-gray-700 flex-shrink-0">
+            <button
+              onClick={() => setSelected(new Set())}
+              className="text-xs text-gray-400 hover:text-gray-200 transition-colors"
+            >
+              Bỏ chọn tất cả
+            </button>
+            <button
+              onClick={handleForward}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
+            >
+              Chuyển tiếp ({selected.size})
+            </button>
+          </div>
+        )}
+
       </div>
     </div>
   );

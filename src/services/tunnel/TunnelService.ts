@@ -13,6 +13,7 @@
  *   TunnelService.stop();
  */
 
+import path from 'path';
 import Logger from '../../utils/Logger';
 
 let Tunnel: any = null;
@@ -24,6 +25,14 @@ try {
   Tunnel = cf.Tunnel;
   bin = cf.bin;
   install = cf.install;
+
+  // Fix binary path when running inside Electron asar archive.
+  // asarUnpack extracts the binary to app.asar.unpacked/, but __dirname
+  // still resolves to the asar path. Rewrite bin to point to unpacked location.
+  if (bin && bin.includes('app.asar')) {
+    bin = bin.replace('app.asar', 'app.asar.unpacked');
+    Logger.log(`[TunnelService] Rewrote bin path for asar: ${bin}`);
+  }
 } catch {
   Logger.warn('[TunnelService] cloudflared package not found');
 }

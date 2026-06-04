@@ -18,7 +18,6 @@ function App() {
       <div className="min-h-screen bg-[#060a18] text-white">
         <Routes>
           <Route path="/" element={<LandingPage />} />
-          <Route path="/affiliate" element={<Navigate to="/" replace />} />
           <Route path="/terms" element={<TermsPage />} />
         </Routes>
       </div>

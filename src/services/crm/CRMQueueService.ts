@@ -140,11 +140,36 @@ class CRMQueueService {
         this.isProcessing.set(zaloId, true);
         db.updateCampaignContactStatus(item.id!, 'sending');
 
+        // ── Phone resolution at send time ────────────────────────────────────
+        // If contact_id is a phone placeholder (from by_phone import), resolve now
+        let effectiveContactId = item.contact_id;
+        let effectiveDisplayName = item.display_name || '';
+        if (item.contact_id.startsWith('phone:')) {
+            const phone = item.contact_id.slice(6); // strip "phone:" prefix
+            Logger.log(`[CRMQueue] Resolving phone ${phone} at send time...`);
+            const resolved = await this.resolvePhoneContact(phone, conn.api);
+            if (!resolved) {
+                Logger.warn(`[CRMQueue] Phone ${phone} not found on Zalo, marking failed`);
+                db.updateCampaignContactStatus(item.id!, 'failed', 'Không tìm thấy SĐT trên Zalo');
+                db.save();
+                this.broadcastProgress(zaloId, item.campaign_id, item.contact_id, 'failed', 'Không tìm thấy SĐT trên Zalo');
+                this.isProcessing.set(zaloId, false);
+                return;
+            }
+            effectiveContactId = resolved.uid;
+            effectiveDisplayName = resolved.name;
+            // Update the DB record so we don't resolve again on retry
+            try {
+                db.updateCampaignContactId(item.id!, resolved.uid, resolved.name);
+            } catch { /* non-critical */ }
+            Logger.log(`[CRMQueue] Phone ${phone} → UID ${resolved.uid} (${resolved.name})`);
+        }
+
         // Substitute template variables in a message string
         const substitute = (tpl: string) =>
             (tpl || '')
-                .replace(/\{name\}/g, item.display_name || item.contact_id)
-                .replace(/\{userId\}/g, item.contact_id);
+                .replace(/\{name\}/g, effectiveDisplayName || item.contact_id)
+                .replace(/\{userId\}/g, effectiveContactId);
 
         const campaignType: string = (item as any).campaign_type || 'message';
         const isGroup: boolean = (item as any).contact_type === 'group';
@@ -202,26 +227,40 @@ class CRMQueueService {
         // Common log base fields
         const logBase = {
             owner_zalo_id: zaloId,
-            contact_id: item.contact_id,
-            display_name: item.display_name || '',
+            contact_id: effectiveContactId,
+            display_name: effectiveDisplayName || '',
             phone: (item as any).phone || '',
             contact_type: isGroup ? 'group' : 'user',
             campaign_id: item.campaign_id,
             sent_at: Date.now(),
         };
 
+        // Helper: send multiple blocks with per-block error catching and 1s delay
+        const sendBlocks = async (blocks: ContentBlock[], threadId: string, threadType: number): Promise<{ sent: number; errors: string[] }> => {
+            let sent = 0;
+            const errors: string[] = [];
+            for (let bi = 0; bi < blocks.length; bi++) {
+                if (bi > 0) await new Promise(r => setTimeout(r, 1000));
+                try {
+                    await sendBlock(blocks[bi], threadId, threadType);
+                    sent++;
+                } catch (blockErr: any) {
+                    errors.push(blockErr.message || String(blockErr));
+                    Logger.warn(`[CRMQueue] Block ${bi + 1}/${blocks.length} failed for ${threadId}: ${blockErr.message}`);
+                }
+            }
+            return { sent, errors };
+        };
+
         try {
             if (isGroup) {
                 // ── Gửi vào nhóm ─────────────────────────────────────────────────
                 const threadType = 1;
-                for (let bi = 0; bi < blocksToSend.length; bi++) {
-                    if (bi > 0) await new Promise(r => setTimeout(r, 1500));
-                    await sendBlock(blocksToSend[bi], item.contact_id, threadType);
-                }
-                const logMsg = `[Nhóm] ${sendMode === 'all' ? `${blocksToSend.length} nội dung` : message}`;
-                db.updateCampaignContactStatus(item.id!, 'sent');
-                db.saveSendLog({ ...logBase, message: logMsg, status: 'sent', send_type: 'message',
-                    data_request: JSON.stringify({ type: 'sendMessage', threadId: item.contact_id, threadType, blocks: blocksToSend.length }),
+                const result = await sendBlocks(blocksToSend, effectiveContactId, threadType);
+                const logMsg = `[Nhóm] ${sendMode === 'all' ? `${result.sent}/${blocksToSend.length} nội dung` : message}`;
+                db.updateCampaignContactStatus(item.id!, result.errors.length > 0 ? 'failed' : 'sent', result.errors.join('; ') || undefined);
+                db.saveSendLog({ ...logBase, message: logMsg, status: result.errors.length > 0 ? 'failed' : 'sent', send_type: 'message',
+                    data_request: JSON.stringify({ type: 'sendMessage', threadId: effectiveContactId, threadType, blocks: blocksToSend.length, sent: result.sent }),
                     data_response: '' });
 
             } else if (campaignType === 'mixed' && mixedActions.length > 0) {
@@ -231,42 +270,40 @@ class CRMQueueService {
                     try {
                         if (action === 'message') {
                             const threadType = 0;
-                            for (let bi = 0; bi < blocksToSend.length; bi++) {
-                                if (bi > 0) await new Promise(r => setTimeout(r, 1500));
-                                await sendBlock(blocksToSend[bi], item.contact_id, threadType);
-                            }
+                            const result = await sendBlocks(blocksToSend, effectiveContactId, threadType);
                             const logMsg = sendMode === 'all'
-                                ? `[Hỗn hợp/Tin nhắn] ${blocksToSend.length} nội dung gửi lần lượt`
+                                ? `[Hỗn hợp/Tin nhắn] ${result.sent}/${blocksToSend.length} nội dung gửi lần lượt`
                                 : `[Hỗn hợp/Tin nhắn] ${message}`;
-                            db.saveSendLog({ ...logBase, message: logMsg, status: 'sent', send_type: 'message',
-                                data_request: JSON.stringify({ type: 'sendMessage', threadId: item.contact_id, threadType, blocks: blocksToSend.length }),
+                            db.saveSendLog({ ...logBase, message: logMsg, status: result.errors.length > 0 ? 'failed' : 'sent', send_type: 'message',
+                                data_request: JSON.stringify({ type: 'sendMessage', threadId: effectiveContactId, threadType, blocks: blocksToSend.length, sent: result.sent }),
                                 data_response: '' });
-                            Logger.log(`[CRMQueue] Mixed/message ✅ → ${item.contact_id} (${blocksToSend.length} blocks)`);
+                            if (result.errors.length > 0) anyFailed = true;
+                            Logger.log(`[CRMQueue] Mixed/message ✅ → ${effectiveContactId} (${result.sent}/${blocksToSend.length} blocks)`);
 
                         } else if (action === 'friend_request') {
-                            const req = { type: 'sendFriendRequest', msg: friendMsg, userId: item.contact_id };
-                            const resp = await (conn.api as any).sendFriendRequest(friendMsg, item.contact_id);
+                            const req = { type: 'sendFriendRequest', msg: friendMsg, userId: effectiveContactId };
+                            const resp = await (conn.api as any).sendFriendRequest(friendMsg, effectiveContactId);
                             db.saveSendLog({ ...logBase, message: `[Hỗn hợp/Kết bạn] ${friendMsg}`, status: 'sent', send_type: 'friend_request',
                                 data_request: JSON.stringify(req), data_response: JSON.stringify(resp) });
-                            Logger.log(`[CRMQueue] Mixed/friend_request ✅ → ${item.contact_id}`);
+                            Logger.log(`[CRMQueue] Mixed/friend_request ✅ → ${effectiveContactId}`);
 
                         } else if (action === 'invite_to_groups' && mixedGroupIds.length > 0) {
-                            const req = { type: 'inviteUserToGroups', userId: item.contact_id, groupIds: mixedGroupIds };
-                            const resp = await (conn.api as any).inviteUserToGroups(item.contact_id, mixedGroupIds);
+                            const req = { type: 'inviteUserToGroups', userId: effectiveContactId, groupIds: mixedGroupIds };
+                            const resp = await (conn.api as any).inviteUserToGroups(effectiveContactId, mixedGroupIds);
                             db.saveSendLog({ ...logBase,
                                 message: `[Hỗn hợp/Mời nhóm] Mời vào ${mixedGroupIds.length} nhóm: ${mixedGroupIds.join(', ')}`,
                                 status: 'sent', send_type: 'invite_to_group',
                                 data_request: JSON.stringify(req), data_response: JSON.stringify(resp) });
-                            Logger.log(`[CRMQueue] Mixed/invite_to_groups ✅ → ${item.contact_id} into ${mixedGroupIds.length} groups`);
+                            Logger.log(`[CRMQueue] Mixed/invite_to_groups ✅ → ${effectiveContactId} into ${mixedGroupIds.length} groups`);
                         }
                     } catch (actionErr: any) {
                         const errCode = Number(actionErr?.errorCode ?? actionErr?.code ?? -1);
-                        const req = { type: action, userId: item.contact_id };
+                        const req = { type: action, userId: effectiveContactId };
                         db.saveSendLog({ ...logBase,
                             message: `[Hỗn hợp/${action}] Lỗi ${errCode}: ${actionErr.message}`,
                             status: 'failed', error: actionErr.message,
                             data_request: JSON.stringify(req), data_response: '' });
-                        Logger.warn(`[CRMQueue] Mixed/${action} ❌ → ${item.contact_id}: ${actionErr.message}`);
+                        Logger.warn(`[CRMQueue] Mixed/${action} ❌ → ${effectiveContactId}: ${actionErr.message}`);
                         anyFailed = true;
                     }
                 }
@@ -276,11 +313,11 @@ class CRMQueueService {
                 // ── Hỗn hợp (cũ / fallback) ──────────────────────────────────────
                 let actionLabel = 'message';
                 try {
-                    await sendBlock(blocksToSend[0] ?? { id: '', text: '', images: [] }, item.contact_id, 0);
+                    await sendBlock(blocksToSend[0] ?? { id: '', text: '', images: [] }, effectiveContactId, 0);
                 } catch (msgErr: any) {
                     if (isMixedFallbackError(msgErr)) {
-                        Logger.log(`[CRMQueue] Mixed fallback → sendFriendRequest for ${item.contact_id}`);
-                        await (conn.api as any).sendFriendRequest(friendMsg, item.contact_id);
+                        Logger.log(`[CRMQueue] Mixed fallback → sendFriendRequest for ${effectiveContactId}`);
+                        await (conn.api as any).sendFriendRequest(friendMsg, effectiveContactId);
                         actionLabel = 'friend_request_fallback';
                     } else { throw msgErr; }
                 }
@@ -289,13 +326,13 @@ class CRMQueueService {
                     message: actionLabel === 'message' ? message : `[Kết bạn dự phòng] ${friendMsg}`,
                     status: 'sent',
                     send_type: actionLabel === 'message' ? 'message' : 'friend_request',
-                    data_request: JSON.stringify({ type: actionLabel, contact_id: item.contact_id }),
+                    data_request: JSON.stringify({ type: actionLabel, contact_id: effectiveContactId }),
                     data_response: '' });
 
             } else if (campaignType === 'friend_request') {
                 // ── Kết bạn only ─────────────────────────────────────────────────
-                const req = { type: 'sendFriendRequest', msg: friendMsg, userId: item.contact_id };
-                const resp = await (conn.api as any).sendFriendRequest(friendMsg, item.contact_id);
+                const req = { type: 'sendFriendRequest', msg: friendMsg, userId: effectiveContactId };
+                const resp = await (conn.api as any).sendFriendRequest(friendMsg, effectiveContactId);
                 db.updateCampaignContactStatus(item.id!, 'sent');
                 db.saveSendLog({ ...logBase, message: `[Kết bạn] ${friendMsg}`, status: 'sent',
                     data_request: JSON.stringify(req), data_response: JSON.stringify(resp) });
@@ -304,28 +341,25 @@ class CRMQueueService {
                 // ── Mời vào nhóm (standalone) ─────────────────────────────────────
                 const groupIds = mixedGroupIds;
                 if (groupIds.length === 0) throw new Error('Không có nhóm nào được chỉ định trong chiến dịch');
-                const req = { type: 'inviteUserToGroups', userId: item.contact_id, groupIds };
-                const resp = await (conn.api as any).inviteUserToGroups(item.contact_id, groupIds);
+                const req = { type: 'inviteUserToGroups', userId: effectiveContactId, groupIds };
+                const resp = await (conn.api as any).inviteUserToGroups(effectiveContactId, groupIds);
                 db.updateCampaignContactStatus(item.id!, 'sent');
                 db.saveSendLog({ ...logBase,
                     message: `[Mời nhóm] Mời vào ${groupIds.length} nhóm: ${groupIds.join(', ')}`,
                     status: 'sent', send_type: 'invite_to_group',
                     data_request: JSON.stringify(req), data_response: JSON.stringify(resp) });
-                Logger.log(`[CRMQueue] Invite ✅ → ${item.contact_id} into ${groupIds.length} groups`);
+                Logger.log(`[CRMQueue] Invite ✅ → ${effectiveContactId} into ${groupIds.length} groups`);
 
             } else {
                 // ── Tin nhắn only (default) ───────────────────────────────────────
                 const threadType = 0;
-                for (let bi = 0; bi < blocksToSend.length; bi++) {
-                    if (bi > 0) await new Promise(r => setTimeout(r, 1500));
-                    await sendBlock(blocksToSend[bi], item.contact_id, threadType);
-                }
+                const result = await sendBlocks(blocksToSend, effectiveContactId, threadType);
                 const logMsg = sendMode === 'all'
-                    ? `[${blocksToSend.length} nội dung gửi lần lượt] ${message}`
+                    ? `[${result.sent}/${blocksToSend.length} nội dung gửi lần lượt] ${message}`
                     : message;
-                db.updateCampaignContactStatus(item.id!, 'sent');
-                db.saveSendLog({ ...logBase, message: logMsg, status: 'sent',
-                    data_request: JSON.stringify({ type: 'sendMessage', threadId: item.contact_id, threadType, blocks: blocksToSend.length }),
+                db.updateCampaignContactStatus(item.id!, result.errors.length > 0 ? 'failed' : 'sent', result.errors.join('; ') || undefined);
+                db.saveSendLog({ ...logBase, message: logMsg, status: result.errors.length > 0 ? 'failed' : 'sent',
+                    data_request: JSON.stringify({ type: 'sendMessage', threadId: effectiveContactId, threadType, blocks: blocksToSend.length, sent: result.sent }),
                     data_response: '' });
             }
 
@@ -334,21 +368,21 @@ class CRMQueueService {
             this.lastSentAt.set(zaloId, Date.now());
             db.save();
 
-            Logger.log(`[CRMQueue] ✅ Sent to ${item.contact_id} (campaign ${item.campaign_id})`);
-            this.broadcastProgress(zaloId, item.campaign_id, item.contact_id, 'sent');
+            Logger.log(`[CRMQueue] ✅ Sent to ${effectiveContactId} (campaign ${item.campaign_id})`);
+            this.broadcastProgress(zaloId, item.campaign_id, effectiveContactId, 'sent');
             this.checkCampaignCompletion(item.campaign_id, zaloId);
 
         } catch (err: any) {
-            Logger.error(`[CRMQueue] ❌ Failed to send to ${item.contact_id}: ${err.message}`);
+            Logger.error(`[CRMQueue] ❌ Failed to send to ${effectiveContactId}: ${err.message}`);
             db.updateCampaignContactStatus(item.id!, 'failed', err.message);
             db.saveSendLog({ ...logBase,
                 message: item.template_message || '',
                 status: 'failed', error: err.message,
                 send_type: campaignType === 'friend_request' ? 'friend_request' : campaignType === 'mixed' ? 'mixed' : 'message',
-                data_request: JSON.stringify({ type: campaignType, contact_id: item.contact_id }),
+                data_request: JSON.stringify({ type: campaignType, contact_id: effectiveContactId }),
                 data_response: '' });
             db.save();
-            this.broadcastProgress(zaloId, item.campaign_id, item.contact_id, 'failed', err.message);
+            this.broadcastProgress(zaloId, item.campaign_id, effectiveContactId, 'failed', err.message);
         } finally {
             this.isProcessing.set(zaloId, false);
         }
@@ -387,6 +421,30 @@ class CRMQueueService {
             maxTokens: this.MAX_TOKENS,
             lastSentAt: this.lastSentAt.get(zaloId) ?? 0,
         });
+    }
+
+    /**
+     * Resolve a phone number to Zalo UID via API.
+     * Called at send time to avoid rate limiting when importing phones.
+     * Returns { uid, name } or null if not found.
+     */
+    private async resolvePhoneContact(phone: string, api: any): Promise<{ uid: string; name: string } | null> {
+        try {
+            const res = await api.findUser(phone);
+            const u = res?.response ?? res;
+            if (!u?.uid) return null;
+            let name = u.display_name || u.zalo_name || phone;
+            try {
+                const infoRes = await api.getUserInfo(u.uid);
+                const profile = infoRes?.response?.changed_profiles?.[u.uid] ?? infoRes?.changed_profiles?.[u.uid];
+                if (profile) {
+                    name = profile.displayName || profile.zaloName || profile.name || name;
+                }
+            } catch { /* getUserInfo failure is non-fatal */ }
+            return { uid: String(u.uid), name };
+        } catch {
+            return null;
+        }
     }
 }
 

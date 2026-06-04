@@ -1,15 +1,24 @@
 import { ipcMain, dialog, shell, app, net } from 'electron';
 import FileStorageService from '../../src/services/file/FileStorageService';
+import DatabaseService from '../../src/services/database/DatabaseService';
+import EventBroadcaster from '../../src/services/event/EventBroadcaster';
 import Logger from '../../src/utils/Logger';
 import * as fs from 'fs';
 import * as path from 'path';
+
+/** Repair queue: dedup concurrent repairs for the same file */
+const pendingRepairs = new Map<string, Promise<{ success: boolean; newLocalPath?: string; error?: string }>>();
 
 /** Lấy đường dẫn ffmpeg: ưu tiên ffmpeg-static, fallback về PATH */
 function getFfmpegBin(): string {
     try {
         // ffmpeg-static trả về path tới binary
         // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const ffmpegStatic = require('ffmpeg-static') as string;
+        let ffmpegStatic = require('ffmpeg-static') as string;
+        // Fix path when running inside Electron asar archive
+        if (ffmpegStatic && ffmpegStatic.includes('app.asar') && !ffmpegStatic.includes('app.asar.unpacked')) {
+            ffmpegStatic = ffmpegStatic.replace('app.asar', 'app.asar.unpacked');
+        }
         if (ffmpegStatic && fs.existsSync(ffmpegStatic)) {
             return ffmpegStatic;
         }
@@ -108,7 +117,25 @@ export function registerFileIpc() {
             const destPath = result.filePath;
 
             const resolvedLocalPath = params.localPath ? FileStorageService.resolveAbsolutePath(params.localPath) : '';
+            const isImageExt = imageExts.includes(extNoDot);
+
+            // Try local file first — validate if it's an image
+            let localValid = false;
             if (resolvedLocalPath && fs.existsSync(resolvedLocalPath)) {
+                if (isImageExt) {
+                    const v = FileStorageService.validateImageFile(resolvedLocalPath);
+                    localValid = v.valid;
+                    if (!v.valid) {
+                        Logger.warn(`[fileIpc] saveAs: local file corrupted (${v.reason}), will try remote`);
+                        try { fs.unlinkSync(resolvedLocalPath); } catch {}
+                    }
+                } else {
+                    // Non-image: chỉ check size > 0
+                    try { localValid = fs.statSync(resolvedLocalPath).size > 0; } catch {}
+                }
+            }
+
+            if (localValid && resolvedLocalPath) {
                 fs.copyFileSync(resolvedLocalPath, destPath);
             } else if (params.remoteUrl) {
                 if (!params.zaloId) return { success: false, error: 'zaloId required for remote download' };
@@ -268,6 +295,119 @@ export function registerFileIpc() {
             Logger.error(`[fileIpc] getVideoMeta error: ${error.message}`);
             return { success: false, error: error.message, thumbPath: '', duration: 0, width: 0, height: 0 };
         }
+    });
+
+    /**
+     * Repair ảnh lỗi: xóa file hỏng, tải lại từ CDN backup URL, cập nhật DB.
+     * Renderer gọi khi img onError fire (MediaBubble / MediaViewer).
+     */
+    ipcMain.handle('file:repairImage', async (_event, params: {
+        zaloId: string;
+        msgId: string;
+        threadId?: string;
+        localPath?: string;
+        remoteUrl?: string;
+    }) => {
+        const { zaloId, msgId, threadId, localPath, remoteUrl } = params;
+        if (!zaloId || !msgId) return { success: false, error: 'Missing zaloId or msgId' };
+
+        // Dedup: nếu đang repair file này rồi → chờ kết quả hiện tại
+        const queueKey = localPath || `${zaloId}:${msgId}`;
+        const existing = pendingRepairs.get(queueKey);
+        if (existing) return existing;
+
+        const repairPromise = (async () => {
+            try {
+                // 1. Xóa file cũ nếu tồn tại
+                if (localPath) {
+                    const absPath = FileStorageService.resolveAbsolutePath(localPath);
+                    if (absPath && fs.existsSync(absPath)) {
+                        try { fs.unlinkSync(absPath); } catch {}
+                    }
+                }
+
+                // 2. Lấy URL ảnh: ưu tiên remoteUrl, fallback lookup DB
+                let imgUrl = remoteUrl || '';
+                if (!imgUrl) {
+                    try {
+                        const row = DatabaseService.getInstance().getMessageById(zaloId, msgId);
+                        if (row?.content) {
+                            const contentRaw = typeof row.content === 'string' ? JSON.parse(row.content) : row.content;
+                            imgUrl = DatabaseService.extractImageUrlFromContent(contentRaw) || '';
+                        }
+                    } catch (e: any) {
+                        Logger.warn(`[fileIpc] repairImage: DB lookup failed: ${e.message}`);
+                    }
+                }
+
+                if (!imgUrl) return { success: false, error: 'No image URL available' };
+
+                // 3. Tải lại ảnh
+                const newLocalPath = await FileStorageService.downloadImage(zaloId, imgUrl);
+                if (!newLocalPath) return { success: false, error: 'Download returned empty (CDN expired?)' };
+
+                // 4. Cập nhật DB
+                DatabaseService.getInstance().updateLocalPaths(zaloId, msgId, { main: newLocalPath });
+
+                // 5. Emit event để renderer refresh
+                const resolvedThreadId = threadId || (() => {
+                    try {
+                        const row = DatabaseService.getInstance().getMessageById(zaloId, msgId);
+                        return row?.thread_id || '';
+                    } catch { return ''; }
+                })();
+                if (resolvedThreadId) {
+                    EventBroadcaster.sendDirect('event:localPath', {
+                        zaloId, msgId, threadId: resolvedThreadId,
+                        localPaths: { main: newLocalPath },
+                    });
+                }
+
+                Logger.log(`[fileIpc] repairImage success: ${msgId} → ${newLocalPath}`);
+                return { success: true, newLocalPath };
+            } catch (error: any) {
+                Logger.error(`[fileIpc] repairImage error: ${error.message}`);
+                return { success: false, error: error.message };
+            }
+        })();
+
+        pendingRepairs.set(queueKey, repairPromise);
+        repairPromise.finally(() => pendingRepairs.delete(queueKey));
+        return repairPromise;
+    });
+
+    /**
+     * Batch validate ảnh local: kiểm tra nhiều ảnh cùng lúc, trả về danh sách ảnh lỗi.
+     * Renderer gọi khi load messages để tìm và repair ảnh hỏng từ trước.
+     */
+    ipcMain.handle('file:validateLocalImages', async (_event, items: Array<{
+        zaloId: string;
+        msgId: string;
+        threadId?: string;
+        localPath: string;
+        remoteUrl?: string;
+    }>) => {
+        const corrupted: Array<{ zaloId: string; msgId: string; threadId?: string; localPath: string; remoteUrl?: string; reason: string }> = [];
+        if (!items?.length) return { success: true, corrupted };
+
+        for (const item of items) {
+            try {
+                const absPath = FileStorageService.resolveAbsolutePath(item.localPath);
+                if (!absPath) continue;
+                const ext = path.extname(absPath).replace('.', '').toLowerCase();
+                const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff', 'avif'];
+                if (!imageExts.includes(ext)) continue; // Chỉ validate ảnh
+
+                const v = FileStorageService.validateImageFile(absPath);
+                if (!v.valid) {
+                    corrupted.push({ ...item, reason: v.reason || 'unknown' });
+                    // Xóa file lỗi ngay
+                    try { fs.unlinkSync(absPath); } catch {}
+                }
+            } catch {}
+        }
+
+        return { success: true, corrupted };
     });
 }
 

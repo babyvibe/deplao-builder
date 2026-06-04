@@ -435,11 +435,27 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
         }
         // Assign new IDs to avoid conflicts
         const idMap: Record<string, string> = {};
-        const importedNodes = (data.nodes || []).map((n: any) => {
-          const newId = uuidv4();
-          idMap[n.id] = newId;
-          return { ...n, id: newId };
-        });
+        const originalNodes = data.nodes || [];
+        originalNodes.forEach((n: any) => { idMap[n.id] = uuidv4(); });
+
+        // Remap $node.xxx references in configs to use new UUIDs
+        const remapRef = (str: string) =>
+          str.replace(/\$node\.([\w-]+)\./g, (m, ref) => {
+            if (idMap[ref]) return `$node.${idMap[ref]}.`;
+            return m;
+          });
+        const deepRemap = (obj: any): any => {
+          if (typeof obj === 'string') return remapRef(obj);
+          if (Array.isArray(obj)) return obj.map(item => typeof item === 'string' ? remapRef(item) : item && typeof item === 'object' ? deepRemap(item) : item);
+          if (obj && typeof obj === 'object') { const r: any = {}; for (const [k, v] of Object.entries(obj)) r[k] = deepRemap(v); return r; }
+          return obj;
+        };
+
+        const importedNodes = originalNodes.map((n: any) => ({
+          ...n,
+          id: idMap[n.id],
+          config: deepRemap(n.config),
+        }));
         const importedEdges = (data.edges || []).map((e: any) => ({
           ...e,
           id: uuidv4(),

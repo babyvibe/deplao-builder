@@ -101,6 +101,93 @@ class FileStorageService {
     }
 
     /**
+     * Kiểm tra tính hợp lệ của file ảnh trên đĩa.
+     * Đọc ~20 bytes đầu/cuối file — rất nhanh, không decode ảnh.
+     * @returns `{ valid: true }` nếu file hợp lệ, `{ valid: false, reason }` nếu lỗi.
+     */
+    public static validateImageFile(filePath: string): { valid: boolean; reason?: string } {
+        try {
+            if (!fs.existsSync(filePath)) return { valid: false, reason: 'not_found' };
+
+            const stat = fs.statSync(filePath);
+            if (stat.size === 0) return { valid: false, reason: 'empty' };
+
+            // Đọc 12 bytes đầu để check magic bytes
+            const headBuf = Buffer.alloc(12);
+            const fd = fs.openSync(filePath, 'r');
+            let bytesRead = 0;
+            try {
+                bytesRead = fs.readSync(fd, headBuf, 0, 12, 0);
+            } finally {
+                fs.closeSync(fd);
+            }
+            if (bytesRead < 2) return { valid: false, reason: 'not_image_content' };
+
+            // Detect HTML error page (CDN trả 200 nhưng nội dung là HTML)
+            const headStr = headBuf.slice(0, Math.min(bytesRead, 6)).toString('ascii').toLowerCase();
+            if (headStr.startsWith('<html') || headStr.startsWith('<!doc')) {
+                return { valid: false, reason: 'not_image_content' };
+            }
+
+            // Check magic bytes cho các định dạng ảnh phổ biến
+            const isJpeg = headBuf[0] === 0xFF && headBuf[1] === 0xD8 && headBuf[2] === 0xFF;
+            const isPng = headBuf[0] === 0x89 && headBuf[1] === 0x50 && headBuf[2] === 0x4E && headBuf[3] === 0x47;
+            const isGif = headBuf.slice(0, 6).toString('ascii') === 'GIF87a'
+                       || headBuf.slice(0, 6).toString('ascii') === 'GIF89a';
+            const isWebP = headBuf.slice(0, 4).toString('ascii') === 'RIFF'
+                        && headBuf.slice(8, 12).toString('ascii') === 'WEBP';
+            const isBmp = headBuf[0] === 0x42 && headBuf[1] === 0x4D;
+            const isTiff = (headBuf[0] === 0x49 && headBuf[1] === 0x49 && headBuf[2] === 0x2A && headBuf[3] === 0x00)
+                        || (headBuf[0] === 0x4D && headBuf[1] === 0x4D && headBuf[2] === 0x00 && headBuf[3] === 0x2A);
+            // AVIF/HEIF: ftyp box at offset 4
+            const isAvif = bytesRead >= 8
+                        && headBuf[4] === 0x66 && headBuf[5] === 0x74
+                        && headBuf[6] === 0x79 && headBuf[7] === 0x70;
+
+            if (!isJpeg && !isPng && !isGif && !isWebP && !isBmp && !isTiff && !isAvif) {
+                return { valid: false, reason: 'not_image_content' };
+            }
+
+            // Tier 3: Kiểm tra end marker (bắt file bị cắt cụt)
+            if (stat.size >= 2) {
+                const tailBuf = Buffer.alloc(12);
+                const fdTail = fs.openSync(filePath, 'r');
+                try {
+                    const readFrom = Math.max(0, stat.size - 12);
+                    const tailBytesRead = fs.readSync(fdTail, tailBuf, 0, 12, readFrom);
+
+                    if (isJpeg) {
+                        // JPEG phải kết thúc bằng FF D9
+                        if (tailBytesRead >= 2) {
+                            const last = tailBuf[tailBytesRead - 2];
+                            const last2 = tailBuf[tailBytesRead - 1];
+                            if (last !== 0xFF || last2 !== 0xD9) {
+                                return { valid: false, reason: 'truncated' };
+                            }
+                        }
+                    } else if (isPng) {
+                        // PNG phải có IEND chunk ở cuối (12 bytes cuối)
+                        if (tailBytesRead >= 12) {
+                            const iendSig = Buffer.from([0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82]);
+                            const tailSlice = tailBuf.slice(tailBytesRead - 12, tailBytesRead - 4);
+                            if (!tailSlice.equals(iendSig)) {
+                                return { valid: false, reason: 'truncated' };
+                            }
+                        }
+                    }
+                } finally {
+                    fs.closeSync(fdTail);
+                }
+            }
+
+            return { valid: true };
+        } catch {
+            // Nếu không đọc được file → coi như invalid
+            return { valid: false, reason: 'read_error' };
+        }
+    }
+
+    /**
      * Lấy đường dẫn thư mục media cho một tài khoản
      */
     public static getAccountDir(zaloId: string): string {
@@ -196,7 +283,12 @@ class FileStorageService {
             const localPath = path.join(dir, safeFilename);
 
             if (fs.existsSync(localPath)) {
-                return this.toRelativePath(localPath); // Already downloaded
+                try {
+                    if (fs.statSync(localPath).size > 0) return this.toRelativePath(localPath);
+                } catch {}
+                Logger.warn(`[FileStorageService] Corrupted file (empty): ${safeFilename}, will re-download`);
+                try { fs.unlinkSync(localPath); } catch {}
+                // Fall through to download
             }
 
             const headers: Record<string, string> = {
@@ -265,8 +357,11 @@ class FileStorageService {
             const localPath = path.join(dir, fname);
 
             if (fs.existsSync(localPath)) {
-                // Return relative path so the DB entry is folder-agnostic
-                return this.toRelativePath(localPath);
+                const v = this.validateImageFile(localPath);
+                if (v.valid) return this.toRelativePath(localPath);
+                Logger.warn(`[FileStorageService] Corrupted image (${v.reason}): ${fname}, will re-download`);
+                try { fs.unlinkSync(localPath); } catch {}
+                // Fall through to download
             }
 
             const headers: Record<string, string> = {
@@ -384,7 +479,13 @@ class FileStorageService {
             const localPath = path.join(dir, fname);
 
             if (fs.existsSync(localPath)) {
-                return this.toRelativePath(localPath);
+                try {
+                    const stat = fs.statSync(localPath);
+                    if (stat.size > 0) return this.toRelativePath(localPath);
+                } catch {}
+                Logger.warn(`[FileStorageService] Corrupted video (empty): ${fname}, will re-download`);
+                try { fs.unlinkSync(localPath); } catch {}
+                // Fall through to download
             }
 
             const headers: Record<string, string> = {

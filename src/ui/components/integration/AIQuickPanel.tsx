@@ -340,7 +340,7 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
               <input
                 type="number"
                 min={1}
-                max={100}
+                max={1000}
                 step={1}
                 value={contextCountInput}
                 onChange={(e) => setContextCountInput(e.target.value)}
@@ -354,7 +354,7 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
                 className="w-16 bg-gray-800 border border-gray-600 rounded-md px-2 py-1 text-[11px] text-white focus:outline-none focus:border-blue-500"
                 title="Số lượng tin nhắn dùng làm ngữ cảnh"
               />
-              <span className="text-[10px] text-gray-500">Hỗ trợ ngữ cảnh: 1–100 tin</span>
+              <span className="text-[10px] text-gray-500">Tối đa 1000 tin</span>
             </div>
           )}
         </div>

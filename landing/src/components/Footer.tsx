@@ -33,8 +33,6 @@ const Footer: React.FC = () => {
                 { target: 'workflow', label: 'Workflow' },
                 { target: 'integration', label: 'Tích hợp' },
                 { target: 'how-it-works', label: 'Hướng dẫn' },
-                // FREE_MODE_TEMP: tạm ẩn bảng giá, giữ link cũ để mở lại nhanh
-                // { target: 'pricing', label: 'Bảng giá' },
               ].map((link) => (
                 <li key={link.target}>
                   <button
@@ -45,13 +43,6 @@ const Footer: React.FC = () => {
                   </button>
                 </li>
               ))}
-              {/* FREE_MODE_TEMP: tạm ẩn link affiliate, không xóa để sau này mở lại nhanh
-              <li>
-                <Link to="/affiliate" className="text-slate-600 hover:text-slate-950 text-sm transition-colors no-underline">
-                  Affiliate
-                </Link>
-              </li>
-              */}
             </ul>
           </div>
 
@@ -66,13 +57,8 @@ const Footer: React.FC = () => {
                   FAQ
                 </button>
               </li>
-              {/*<li>*/}
-              {/*  <span className="text-slate-600 text-sm">Tài liệu hướng dẫn</span>*/}
-              {/*</li>*/}
               {[
-                { href: 'https://t.me/deplaoCommunity', label: 'Telegram Community & Support' },
-                { href: 'https://fb.com/deplaoapp', label: 'Facebook Support' },
-                { href: 'https://t.me/babyvibe9', label: 'Báo lỗi' },
+                { href: 'https://github.com/babyvibe/deplao-builder/issues', label: 'Báo lỗi' },
               ].map((link) => (
                 <li key={link.label}>
                   <a href={link.href} className="text-slate-600 hover:text-slate-950 text-sm transition-colors no-underline">
@@ -91,9 +77,6 @@ const Footer: React.FC = () => {
           <div className="flex items-center gap-4">
             <Link to="/terms" className="hover:text-slate-900 transition-colors no-underline">Chính sách bảo mật</Link>
             <Link to="/terms" className="hover:text-slate-900 transition-colors no-underline">Điều khoản sử dụng</Link>
-            {/* FREE_MODE_TEMP: tạm ẩn link affiliate footer, không xóa để sau này mở lại nhanh
-            <Link to="/affiliate" className="hover:text-slate-900 transition-colors no-underline">Affiliate</Link>
-            */}
           </div>
         </div>
       </div>

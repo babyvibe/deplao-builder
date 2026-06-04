@@ -11,6 +11,7 @@ interface MessageContextMenuProps {
   onClose: () => void;
   onReply: (msg: any) => void;
   onForward: (msg: any) => void;
+  onSelectMessages?: (msg: any) => void;
   onUndo: (msg: any) => void;
   onDelete: (msg: any) => void;
   onDeleteFromDb?: (msg: any) => void;
@@ -80,7 +81,7 @@ function getDefaultFilename(msg: any): string {
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export default function MessageContextMenu({
-  x, y, msg, isSent, isGroupAdmin, onClose, onReply, onForward, onUndo, onDelete, onDeleteFromDb, onReact, onPin, showNotification,
+  x, y, msg, isSent, isGroupAdmin, onClose, onReply, onForward, onSelectMessages, onUndo, onDelete, onDeleteFromDb, onReact, onPin, showNotification,
 }: MessageContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -232,6 +233,9 @@ export default function MessageContextMenu({
 
       <MenuItem icon="↩" label="Trả lời" onClick={() => { onReply(msg); onClose(); }} />
       <MenuItem icon="↪" label="Chuyển tiếp" onClick={() => { onForward(msg); onClose(); }} />
+      {onSelectMessages && (
+        <MenuItem icon="☑" label="Chọn tin nhắn" onClick={() => { onSelectMessages(msg); onClose(); }} />
+      )}
 
       {/* Sao chép text — cho tin nhắn text và link */}
       {!isFile && !isMedia && !isVideo && (

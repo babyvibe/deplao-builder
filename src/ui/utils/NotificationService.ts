@@ -90,23 +90,36 @@ function processQueue() {
 
     activeNotifs[threadKey] = n;
 
-    if (item.threadInfo) {
+    // Lưu ref để onclick có thể truy cập ngay cả sau khi timeout close
+    const threadInfo = item.threadInfo;
+    let handled = false;
+
+    if (threadInfo) {
       n.onclick = () => {
-        n.close();
+        if (handled) return;
+        handled = true;
+        try { n.close(); } catch {}
         delete activeNotifs[threadKey];
-        (window as any).electronAPI?.app?.openThread(item.threadInfo);
+        // Gửi IPC mở hội thoại
+        try {
+          (window as any).electronAPI?.app?.openThread(threadInfo);
+        } catch (e) {
+          console.warn('[NotificationService] openThread IPC error:', e);
+        }
       };
     }
 
+    // onclose: giải phóng queue slot cho notification tiếp theo
     n.onclose = () => {
       delete activeNotifs[threadKey];
-    };
-
-    // Hiển thị 4 giây, sau đó xử lý item tiếp theo (delay 300ms giữa các notification)
-    setTimeout(() => {
-      try { n.close(); } catch {}
       notifBusy = false;
       setTimeout(processQueue, 300);
+    };
+
+    // Hiển thị 4 giây, sau đó tự động đóng
+    // onclose sẽ xử lý queue tiếp theo (không cần duplicate trong setTimeout)
+    setTimeout(() => {
+      try { n.close(); } catch {}
     }, 4000);
   } catch (e) {
     console.warn('[NotificationService] showDesktopNotification error:', e);

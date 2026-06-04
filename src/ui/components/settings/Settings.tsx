@@ -12,9 +12,10 @@ import ConversationSettings from './ConversationSettings';
 import EmployeeSettings from './EmployeeSettings';
 import WorkspaceSettings from './WorkspaceSettings';
 import ProxySettings from './ProxySettings';
+import LockScreenSettings from './LockScreenSettings';
 import { loadSeenTabs, markTabSeen, SETTINGS_WATCHLIST, hasUnseenChangelog, markChangelogSeen } from '@/utils/settingsSeenTabs';
 
-type SettingsTab = 'notifications' | 'accounts' | 'storage' | 'conversation' | 'employees' | 'workspace' | 'introduction' | 'changelog' | 'appearance' | 'proxy';
+type SettingsTab = 'notifications' | 'accounts' | 'storage' | 'conversation' | 'employees' | 'workspace' | 'introduction' | 'changelog' | 'appearance' | 'proxy' | 'security';
 
 export default function Settings() {
   const [activeTab, setActiveTab] = useState<SettingsTab>('conversation');
@@ -164,6 +165,7 @@ export default function Settings() {
     { id: 'notifications', icon: '🔔', label: 'Thông báo' },
     { id: 'accounts',      icon: '👤', label: 'Tài khoản', requiredPerm: 'settings_accounts' },
     { id: 'proxy',         icon: '🔒', label: 'Proxy' },
+    { id: 'security',      icon: '🛡️', label: 'Bảo mật' },
     { id: 'employees',     icon: '👥', label: 'Nhân viên', requiredPerm: 'settings_employees' },
     { id: 'workspace',     icon: '🗂️', label: 'Workspace' },
     { id: 'storage',       icon: '📁', label: 'Lưu trữ' },
@@ -463,6 +465,9 @@ export default function Settings() {
 
         {/* ── Conversation ── */}
         {activeTab === 'conversation' && <ConversationSettings />}
+
+        {/* ── Security ── */}
+        {activeTab === 'security' && <LockScreenSettings />}
 
         {/* ── Employees ── */}
         {activeTab === 'proxy' && <ProxySettings />}

@@ -1,6 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import type { LabelData } from '@/store/appStore';
-import { useAccountStore } from '@/store/accountStore';
 import ipc from '@/lib/ipc';
 import ZaloLabelBadge from '../tags/ZaloLabelBadge';
 import { formatPhone } from '@/utils/phoneUtils';
@@ -46,11 +45,7 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
   // ── Phone tab state ──
   const [phoneInput, setPhoneInput] = useState('');
   const [phoneList, setPhoneList] = useState<string[]>([]);
-  const [phoneResolving, setPhoneResolving] = useState(false);
   const [phoneResolved, setPhoneResolved] = useState<Map<string, { uid: string; name: string; avatar?: string } | null>>(new Map());
-  const [resolving, setResolving] = useState<Set<string>>(new Set());
-  const resolveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const scheduledRef = useRef<Set<string>>(new Set());
 
   // Label section scroll ref
   const labelScrollRef = useRef<HTMLDivElement>(null);
@@ -174,47 +169,9 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
     });
   }, [phoneList, allContacts]);
 
-  // ── Auto-resolve unresolved phones from API (debounced 800ms) ──
-  useEffect(() => {
-    const toResolve = phoneList.filter(p => !phoneResolved.has(p) && !scheduledRef.current.has(p));
-    if (toResolve.length === 0) return;
-    if (resolveTimeoutRef.current) clearTimeout(resolveTimeoutRef.current);
-    resolveTimeoutRef.current = setTimeout(async () => {
-      const acc = useAccountStore.getState().accounts.find((a) => a.zalo_id === zaloId);
-      if (!acc) return;
-      const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
-      toResolve.forEach(p => scheduledRef.current.add(p));
-      setResolving(prev => { const next = new Set(prev); toResolve.forEach(p => next.add(p)); return next; });
-      for (const phone of toResolve) {
-        try {
-          const res = await ipc.zalo?.findUser({ auth, phone });
-          const u = res?.response;
-          if (u?.uid) {
-            let name = u.display_name || u.zalo_name || '';
-            let avatar = u.avatar || '';
-            try {
-              const infoRes = await ipc.zalo?.getUserInfo({ auth, userId: u.uid });
-              const profile = infoRes?.response?.changed_profiles?.[u.uid];
-              if (profile) {
-                name = profile.displayName || profile.zaloName || profile.name || name;
-                avatar = profile.avatar || profile.avatarUrl || avatar;
-              }
-            } catch { /* ignore getUserInfo errors */ }
-            setPhoneResolved(prev => new Map(prev).set(phone, { uid: u.uid, name: name || phone, avatar }));
-          } else {
-            setPhoneResolved(prev => new Map(prev).set(phone, null));
-          }
-        } catch {
-          setPhoneResolved(prev => new Map(prev).set(phone, null));
-        }
-        scheduledRef.current.delete(phone);
-        setResolving(prev => { const next = new Set(prev); next.delete(phone); return next; });
-        // Small delay between API calls to avoid rate limiting
-        await new Promise(r => setTimeout(r, 300));
-      }
-    }, 800);
-    return () => { if (resolveTimeoutRef.current) clearTimeout(resolveTimeoutRef.current); };
-  }, [phoneList]); // eslint-disable-line react-hooks/exhaustive-deps
+  // NOTE: Phone numbers are no longer resolved via Zalo API at add time.
+  // Resolution happens at send time in CRMQueueService to avoid rate limiting.
+  // Local-contact cache matching (above) still works without API calls.
 
   // Final selected contacts
   const finalSelected: any[] = useMemo(() => {
@@ -261,17 +218,19 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
     });
   };
 
-  // Confirm phone contacts using pre-resolved data (API resolution happens automatically on phoneList change)
+  // Confirm phone contacts — unresolved phones are added directly,
+  // Zalo API resolution will happen at send time in CRMQueueService.
   const handleConfirmPhones = () => {
     const contacts = phoneList
       .map(phone => {
         const r = phoneResolved.get(phone);
-        if (!r) return null;
-        return { contact_id: r.uid, display_name: r.name || phone, avatar: r.avatar || '', phone };
+        if (r) return { contact_id: r.uid, display_name: r.name || phone, avatar: r.avatar || '', phone };
+        // Not resolved — add as pending phone, will be resolved at send time
+        return { contact_id: `phone:${phone}`, display_name: phone, avatar: '', phone };
       })
-      .filter(Boolean);
+      .filter(c => !existingContactIds.has(c.contact_id));
     if (contacts.length > 0) {
-      onConfirm(contacts as any[]);
+      onConfirm(contacts);
       onClose();
     }
   };
@@ -425,7 +384,6 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
                   ) : (
                     phoneList.map((phone, i) => {
                       const resolved = phoneResolved.get(phone);
-                      const isResolving = resolving.has(phone);
                       const existing = existingContactIds.has(resolved?.uid || '');
                       return (
                         <div key={phone} className={`flex items-center gap-2 px-3 py-2 border-b border-gray-700/30 ${existing ? 'opacity-40' : ''}`}>
@@ -435,10 +393,8 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
                             {resolved?.avatar
                               ? <img src={resolved.avatar} alt="" className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                               : <div className="w-full h-full flex items-center justify-center text-white text-[10px] font-bold"
-                                  style={{ background: isResolving ? '#1d4ed8' : resolved ? 'linear-gradient(135deg,#3b82f6,#8b5cf6)' : '#374151' }}>
-                                  {isResolving
-                                    ? <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                                    : resolved ? (resolved.name || phone).charAt(0).toUpperCase() : '?'}
+                                  style={{ background: resolved ? 'linear-gradient(135deg,#3b82f6,#8b5cf6)' : '#374151' }}>
+                                  {resolved ? (resolved.name || phone).charAt(0).toUpperCase() : '?'}
                                 </div>}
                           </div>
                           {/* Name + phone */}
@@ -448,12 +404,9 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
                                   <p className="text-xs text-gray-100 truncate font-medium leading-tight">{resolved.name || phone}</p>
                                   <p className="text-[10px] text-gray-500 font-mono leading-tight">{phone}</p>
                                 </>
-                              : isResolving
-                              ? <p className="text-xs text-blue-400 font-mono animate-pulse">{phone}</p>
                               : <p className="text-xs text-gray-400 font-mono">{phone}</p>
                             }
                           </div>
-                          {resolved === null && !isResolving && <span className="text-[10px] text-red-400 flex-shrink-0">✕</span>}
                           {existing && <span className="text-[10px] text-yellow-500 flex-shrink-0">đã có</span>}
                           <button onClick={() => removePhone(phone)} className="text-gray-600 hover:text-red-400 text-xs flex-shrink-0 ml-1">✕</button>
                         </div>
@@ -470,26 +423,15 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
                 {phoneList.length} SĐT
                 {phoneList.length > 0 && (() => {
                   const resolvedCount = phoneList.filter(p => phoneResolved.get(p) != null).length;
-                  const resolvingCount = resolving.size;
-                  const notFoundCount = phoneList.filter(p => phoneResolved.has(p) && phoneResolved.get(p) === null).length;
-                  return (
-                    <span>
-                      {resolvedCount > 0 && <span className="text-green-400"> · {resolvedCount} có tên</span>}
-                      {resolvingCount > 0 && <span className="text-blue-400 animate-pulse"> · đang tra {resolvingCount}...</span>}
-                      {notFoundCount > 0 && <span className="text-red-400"> · {notFoundCount} không tìm thấy</span>}
-                    </span>
-                  );
+                  return resolvedCount > 0 ? <span className="text-green-400"> · {resolvedCount} có tên</span> : null;
                 })()}
               </span>
               <button onClick={onClose} className="px-4 py-2 rounded-xl bg-gray-700 text-gray-300 text-sm hover:bg-gray-600">Hủy</button>
               <button
-                disabled={phoneList.length === 0 || resolving.size > 0 || phoneList.every(p => phoneResolved.has(p) && phoneResolved.get(p) === null)}
+                disabled={phoneList.length === 0}
                 onClick={handleConfirmPhones}
-                className="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-40 flex items-center gap-1.5">
-                {resolving.size > 0 && <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
-                {resolving.size > 0
-                  ? `Đang tra cứu...`
-                  : `Thêm ${phoneList.filter(p => phoneResolved.get(p) != null).length} SĐT`}
+                className="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-40">
+                Thêm {phoneList.length} SĐT
               </button>
             </div>
           </>

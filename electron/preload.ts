@@ -277,6 +277,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     saveTempBlob: (params: any) => ipcRenderer.invoke('file:saveTempBlob', params),
     getVideoMeta: (params: any) => ipcRenderer.invoke('file:getVideoMeta', params),
     readImageAsBase64: (params: { localPath?: string; remoteUrl?: string }) => ipcRenderer.invoke('file:readImageAsBase64', params),
+    repairImage: (params: any) => ipcRenderer.invoke('file:repairImage', params),
+    validateLocalImages: (items: any) => ipcRenderer.invoke('file:validateLocalImages', items),
   },
 
   // ─── Workflow Engine ─────────────────────────────────────────────
@@ -527,6 +529,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     notifyMarkRead:     (params: any) => ipcRenderer.invoke('erp:notify:markRead', params),
     notifyMarkAllRead:  (params: any) => ipcRenderer.invoke('erp:notify:markAllRead', params),
     notifyUnreadCount:  (params: any) => ipcRenderer.invoke('erp:notify:unreadCount', params),
+  },
+  lockScreen: {
+    status:           () => ipcRenderer.invoke('lockScreen:status'),
+    setup:            (params: { password: string }) => ipcRenderer.invoke('lockScreen:setup', params),
+    verify:           (params: { password: string }) => ipcRenderer.invoke('lockScreen:verify', params),
+    verifyRecovery:   (params: { recoveryKey: string }) => ipcRenderer.invoke('lockScreen:verifyRecovery', params),
+    changePassword:   (params: { oldPassword: string; newPassword: string }) => ipcRenderer.invoke('lockScreen:changePassword', params),
+    resetPassword:    (params: { recoveryKey: string; newPassword: string }) => ipcRenderer.invoke('lockScreen:resetPassword', params),
+    disable:          (params: { password: string }) => ipcRenderer.invoke('lockScreen:disable', params),
+    getRecoveryKey:   (params: { password: string }) => ipcRenderer.invoke('lockScreen:getRecoveryKey', params),
+    setBiometric:     (params: { enabled: boolean }) => ipcRenderer.invoke('lockScreen:setBiometric', params),
+    biometricUnlock:  () => ipcRenderer.invoke('lockScreen:biometricUnlock'),
   },
   on: (channel: string, callback: (...args: any[]) => void) => {
     const validChannels = [

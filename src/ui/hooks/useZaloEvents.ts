@@ -578,26 +578,41 @@ export function useZaloEvents() {
         return;
       }
 
-      // 1. Switch sang đúng account nếu cần (multi-account)
+      const chatStore = useChatStore.getState();
       const { activeAccountId, setActiveAccount } = useAccountStore.getState();
+
+      // 1. Lưu thread notification vào perAccountThread TRƯỚC khi switch account
+      //    → ConversationList effect([activeAccountId]) sẽ restore đúng thread này
+      //    thay vì restore thread cũ của account
+      chatStore.saveAccountThread(zaloId, threadId, threadType || 0);
+
+      // 2. Switch sang đúng account nếu cần (multi-account)
       if (activeAccountId !== zaloId) {
         setActiveAccount(zaloId);
       }
 
-      // 2. Chuyển sang tab Chat
+      // 3. Chuyển sang tab Chat
       useAppStore.getState().setView('chat');
 
-      // 3. Trên mobile: hiện màn hình chat
+      // 4. Trên mobile: hiện màn hình chat
       useAppStore.getState().setMobileShowChat(true);
 
-      // 4. Navigate đến đúng thread
-      setActiveThread(threadId, threadType);
+      // 5. Navigate đến đúng thread — dùng setTimeout ngắn để đảm bảo
+      //    ConversationList effect đã chạy xong (nếu có switch account)
+      const applyThread = () => {
+        setActiveThread(threadId, threadType);
+        ipc.db?.getMessages({ zaloId, threadId, limit: 50, offset: 0 }).then((res: any) => {
+          const msgs = res?.messages || [];
+          if (msgs.length > 0) setMessages(zaloId, threadId, [...msgs].reverse());
+        }).catch(() => {});
+      };
 
-      // 5. Load messages
-      ipc.db?.getMessages({ zaloId, threadId, limit: 50, offset: 0 }).then((res: any) => {
-        const msgs = res?.messages || [];
-        if (msgs.length > 0) setMessages(zaloId, threadId, [...msgs].reverse());
-      }).catch(() => {});
+      if (activeAccountId !== zaloId) {
+        // Delay khi switch account → chờ ConversationList effect chạy xong
+        setTimeout(applyThread, 50);
+      } else {
+        applyThread();
+      }
 
       // 6. Clear unread, mark as read, update badge
       ipc.db?.markAsRead({ zaloId, contactId: threadId }).catch(() => {});

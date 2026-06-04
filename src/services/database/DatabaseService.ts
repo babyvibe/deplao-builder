@@ -4771,6 +4771,17 @@ class DatabaseService {
         } catch (err: any) { Logger.error(`[DB] updateCampaignContactStatus: ${err.message}`); }
     }
 
+    /** Update contact_id and display_name after phone resolution at send time */
+    public updateCampaignContactId(id: number, newContactId: string, displayName: string): void {
+        if (!this.initialized) return;
+        try {
+            this.run(
+                `UPDATE crm_campaign_contacts SET contact_id=?, display_name=? WHERE id=?`,
+                [newContactId, displayName, id]
+            );
+        } catch (err: any) { Logger.error(`[DB] updateCampaignContactId: ${err.message}`); }
+    }
+
     /** Lấy item tiếp theo cần gửi cho account này */
     public getNextPendingCampaignContact(ownerZaloId: string): CRMCampaignContact | null {
         if (!this.initialized) return null;

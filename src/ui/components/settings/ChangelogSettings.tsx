@@ -14,6 +14,52 @@ interface VersionEntry {
 // ─── Changelog data — thêm entry mới vào ĐẦU mảng khi có bản cập nhật ────────
 const CHANGELOG: VersionEntry[] = [
   {
+    version: '26.4.5',
+    date: '06/2026',
+    type: 'minor',
+    highlights: [
+      '🔒 khoá màn hình — bảo vệ ứng dụng bằng mật khẩu, sinh trắc học và recovery key',
+      '☑️ Chọn nhiều tin nhắn — chọn và chuyển tiếp/sao chép nhiều tin cùng lúc',
+      '🖼️ Tự động sửa ảnh lỗi — ảnh hỏng được tải lại ngầm, không cần thao tác',
+      '📞 CRM nhập SĐT nhanh hơn — không cần chờ tra cứu, tự động xử lý khi gửi',
+    ],
+    changes: [
+      {
+        category: 'new',
+        items: [
+          'Khoá màn hình: đặt mật khẩu bảo vệ ứng dụng, phím tắt Ctrl+Shift+L để khoá nhanh, nút khoá trên thanh tiêu đề',
+          'Chọn nhiều tin nhắn: nhấn chuột phải → "Chọn tin nhắn" để chọn nhiều tin, sau đó sao chép hoặc chuyển tiếp hàng loạt',
+          'Chuyển tiếp nhiều tin cùng lúc: chọn nhiều tin nhắn và nhiều người nhận, gửi lần lượt tự động',
+          'Tự động phát hiện và sửa ảnh bị lỗi (ảnh trắng, 0 byte, nội dung HTML) khi mở cuộc trò chuyện',
+          'Hiển thị thông báo khi ẩn ứng dụng xuống tray — cho biết app vẫn chạy ngầm và nhận tin nhắn',
+        ],
+      },
+      {
+        category: 'improved',
+        items: [
+          'Chiến dịch CRM: nhập số điện thoại nhanh hơn — không cần chờ tra cứu Zalo, tự động tìm người dùng khi gửi chiến dịch',
+          'Chiến dịch CRM: gửi nhiều nội dung báo lỗi chính xác hơn — biết block nào gửi thành công, block nào thất bại',
+          'Cài đặt bảo mật: Cài mật khẩu, Recovery Key, Tắt khoá',
+          'Khi lưu ảnh về máy mà file bị lỗi, tự động tải lại từ url gốc để đảm bảo file lưu ra không bị hỏng',
+          'Nhấp vào thông báo desktop mở đúng cuộc trò chuyện ổn định hơn',
+          'Ngữ cảnh AI: tăng giới hạn lên 1000 tin nhắn thay vì 100',
+          'Workflow: hỗ trợ biến thời gian (HH:MM) trong điều kiện so sánh lớn hơn / nhỏ hơn',
+          'Workflow: import/template tự động cập nhật liên kết giữa các node',
+        ],
+      },
+      {
+        category: 'fixed',
+        items: [
+          'Sửa lỗi ảnh hiển thị trắng hoặc xoay mãi khi zoom do file ảnh bị hỏng',
+          'Sửa lỗi lưu ảnh về máy (Save As) không khắc phục được file đã lỗi',
+          'Sửa lỗi nhấp thông báo tin nhắn đôi khi không mở được cuộc trò chuyện',
+          'Sửa lỗi biến workflow không đúng khi dùng node AI trợ lý',
+          'Sửa lỗi Cloudflare Tunnel và ffmpeg không hoạt động trên bản cài đặt (asar)',
+        ],
+      },
+    ],
+  },
+  {
     version: '26.4.4',
     date: '06/2026',
     type: 'minor',

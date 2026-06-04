@@ -37,6 +37,7 @@ import AddAccountModal from "@/components/auth/AddAccountModal";
 import EmployeeConnectionBanner from "@/components/common/EmployeeConnectionBanner";
 import { useWorkspaceStore } from './store/workspaceStore';
 import { useEmployeeStore } from './store/employeeStore';
+import LockScreen from './components/auth/LockScreen';
 
 const HEALTH_CHECK_INTERVAL_MS = 60 * 1000; // 1 phút
 const NETWORK_RECONNECT_COOLDOWN_MS = 15 * 1000; // 15 giây
@@ -114,6 +115,8 @@ export default function App() {
   const { activeThreadId, activeThreadType, contacts } = useChatStore();
   const { activeAccountId } = useAccountStore();
   const [initializing, setInitializing] = useState(true);
+  const [lockEnabled, setLockEnabled] = useState(false);
+  const [isLocked, setIsLocked] = useState(false);
   const isMobile = useIsMobile();
   const { mobileShowChat, setMobileShowChat } = useAppStore();
 
@@ -121,6 +124,34 @@ export default function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
+
+  // ─── Lock screen: check status on mount ─────────────────────────────────
+  useEffect(() => {
+    ipc.lockScreen.status().then(res => {
+      if (res.success && res.enabled) {
+        setLockEnabled(true);
+        setIsLocked(true);
+      }
+    });
+  }, []);
+
+  // ─── Lock screen: listen for lock events + keyboard shortcut ───────────
+  useEffect(() => {
+    if (!lockEnabled) return;
+    const handleLockEvent = () => setIsLocked(true);
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && e.key === 'L') {
+        e.preventDefault();
+        setIsLocked(true);
+      }
+    };
+    window.addEventListener('lockScreen:lock', handleLockEvent);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('lockScreen:lock', handleLockEvent);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [lockEnabled]);
 
   // ─── Employee permission guard: redirect to dashboard if current view is not allowed ──
   useEffect(() => {
@@ -966,6 +997,11 @@ export default function App() {
     if (showIntegrationQuickPanel) toggleIntegrationQuickPanel();
     if (showAIQuickPanel) toggleAIQuickPanel();
   };
+
+  // ─── Lock screen gate: block entire app until unlocked ───────────────────
+  if (lockEnabled && isLocked) {
+    return <LockScreen onUnlock={() => setIsLocked(false)} />;
+  }
 
   if (initializing) {
     return (

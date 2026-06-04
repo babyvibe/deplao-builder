@@ -189,13 +189,6 @@ export default function TermsPage() {
                   <a href="https://t.me/babyvibe9" className="text-blue-400 text-sm no-underline hover:underline" target="_blank" rel="noopener noreferrer">@Deplao_support</a>
                 </div>
               </div>
-              <div className="flex items-center gap-3 bg-gray-800/50 rounded-xl px-4 py-3">
-                <span className="text-2xl">📧</span>
-                <div>
-                  <p className="text-white text-sm font-medium">Email</p>
-                  <a href="mailto:Deplao_support@gmail.com" className="text-blue-400 text-sm no-underline hover:underline">Deplao_support@gmail.com</a>
-                </div>
-              </div>
             </div>
           </section>
         </div>
@@ -207,9 +200,6 @@ export default function TermsPage() {
           <p>© {new Date().getFullYear()} Deplao. All rights reserved.</p>
           <div className="flex items-center gap-4">
             <Link to="/" className="hover:text-slate-400 transition-colors no-underline">Trang chủ</Link>
-            {/* FREE_MODE_TEMP: tạm ẩn link affiliate footer, giữ code cũ để mở lại nhanh
-            <Link to="/affiliate" className="hover:text-slate-400 transition-colors no-underline">Affiliate</Link>
-            */}
           </div>
         </div>
       </footer>

@@ -527,8 +527,14 @@ class WorkflowEngineService {
       let renderedConfig: Record<string, any> = {};
       try {
         renderedConfig = this.renderConfig(node.config, context);
+        if (node.type === 'zalo.sendMessage') {
+          Logger.info(`[WorkflowEngine] sendMessage BEFORE: raw="${(node.config.message || '').substring(0, 300)}" → rendered="${(renderedConfig.message || '').substring(0, 300)}"`);
+        }
         const output = await this.executeNode(node, renderedConfig, context, wf);
         context.nodes[nodeId] = { output };
+        if (node.type === 'ai.generateText') {
+          Logger.info(`[WorkflowEngine] AI chat output stored: keys=${output ? Object.keys(output).join(',') : 'null'}, result="${typeof output === 'object' && output ? (output.result || '').substring(0, 200) : String(output).substring(0, 200)}"`);
+        }
 
         // If this is an IF node, mark the wrong branch as skipped
         if (node.type === 'logic.if') {
@@ -731,6 +737,7 @@ class WorkflowEngineService {
       case 'zalo.sendMessage': {
         const api = this.getApi(ctx.pageId);
         const threadType = Number(cfg.threadType) === 1 ? 1 : 0;   // guard NaN → 0
+        Logger.info(`[WorkflowEngine] sendMessage: message="${(cfg.message || '').substring(0, 300)}", threadId=${cfg.threadId}, threadType=${threadType}, isEmpty=${!cfg.message?.trim()}`);
 
         // ─── Structured AI response handling ─────────────────────────────
         // Detect AI structured JSON: [{type:"text",content:"..."}, {type:"image",content:["url",...]}]
@@ -993,8 +1000,8 @@ class WorkflowEngineService {
           case 'not_contains': result = !left.includes(right); break;
           case 'starts_with':  result = left.startsWith(right); break;
           case 'ends_with':    result = left.endsWith(right); break;
-          case 'greater_than': result = Number(left) > Number(right); break;
-          case 'less_than':    result = Number(left) < Number(right); break;
+          case 'greater_than': result = this.compareValues(left, right) > 0; break;
+          case 'less_than':    result = this.compareValues(left, right) < 0; break;
           case 'is_empty':     result = !left || left.trim() === ''; break;
           case 'not_empty':    result = !!left && left.trim() !== ''; break;
           case 'regex':
@@ -1038,8 +1045,8 @@ class WorkflowEngineService {
           case 'not_contains': stop = !left.includes(right); break;
           case 'starts_with':  stop = left.startsWith(right); break;
           case 'ends_with':    stop = left.endsWith(right); break;
-          case 'greater_than': stop = Number(left) > Number(right); break;
-          case 'less_than':    stop = Number(left) < Number(right); break;
+          case 'greater_than': stop = this.compareValues(left, right) > 0; break;
+          case 'less_than':    stop = this.compareValues(left, right) < 0; break;
           case 'is_empty':     stop = !left || left.trim() === ''; break;
           case 'not_empty':    stop = !!left && left.trim() !== ''; break;
           case 'regex':
@@ -1200,6 +1207,7 @@ class WorkflowEngineService {
 
             chatMsgs.push({ role: 'user', content: cfg.prompt });
             const result = await AIAssistantService.getInstance().chatForWorkflow(cfg.assistantId, chatMsgs);
+            Logger.info(`[WorkflowEngine] AI assistant response: success=${!!result.result}, length=${result.result?.length || 0}, preview="${(result.result || '').substring(0, 200)}", tokens=${result.totalTokens}`);
             return { result: result.result, totalTokens: result.totalTokens, model: 'assistant' };
           } catch (e: any) {
             throw new Error(`Trợ lý AI lỗi: ${e.message}`);
@@ -1839,7 +1847,7 @@ class WorkflowEngineService {
   }
 
   private renderTemplate(template: string, ctx: ExecutionContext): string {
-    return template.replace(/\{\{[\s]*([\w$.[\]]+)[\s]*}}/g, (_, expr) => {
+    return template.replace(/\{\{\s*([^\s{}]+)\s*\}\}/gu, (_, expr) => {
       try {
         if (expr.startsWith('$trigger.'))   return String(ctx.trigger?.[expr.slice(9)] ?? '');
         if (expr.startsWith('$var.'))       return String(ctx.variables?.[expr.slice(5)] ?? '');
@@ -1857,8 +1865,38 @@ class WorkflowEngineService {
             const nodeDef = ctx._wfNodes?.find(n => n.id === nid);
             const labelOrId = nodeDef?.label || nid;
             if (nid === nodeRef || labelOrId === nodeRef) {
-              return String(this.getNestedValue(ndata.output, field) ?? '');
+              // $node.X.output → return the whole output object (not getNestedValue on it)
+              if (field === 'output') {
+                const out = ndata.output;
+                const val = typeof out === 'string' ? out : (out?.result ?? out?.text ?? out?.message ?? JSON.stringify(out ?? ''));
+                Logger.info(`[WorkflowEngine] $node.${nodeRef}.output → matched by ${nid === nodeRef ? 'id' : 'label'}("${labelOrId}"), value="${String(val).substring(0, 200)}"`);
+                return String(val);
+              }
+              const val = this.getNestedValue(ndata.output, field);
+              Logger.info(`[WorkflowEngine] $node.${nodeRef}.${field} → matched by ${nid === nodeRef ? 'id' : 'label'}("${labelOrId}"), value="${String(val ?? '').substring(0, 200)}"`);
+              return String(val ?? '');
             }
+          }
+          // Fallback: match "n4" → 4th node by array order (legacy template IDs like n1,n2,n3...)
+          const idxMatch = nodeRef.match(/^n(\d+)$/);
+          if (idxMatch && ctx._wfNodes) {
+            const targetIdx = parseInt(idxMatch[1]) - 1;
+            if (targetIdx >= 0 && targetIdx < ctx._wfNodes.length) {
+              const targetNodeId = ctx._wfNodes[targetIdx].id;
+              const ndata = ctx.nodes[targetNodeId];
+              if (ndata) {
+                let val: any;
+                if (field === 'output') {
+                  const out = ndata.output;
+                  val = typeof out === 'string' ? out : (out?.result ?? out?.text ?? out?.message ?? JSON.stringify(out ?? ''));
+                } else {
+                  val = this.getNestedValue(ndata.output, field);
+                }
+                Logger.info(`[WorkflowEngine] $node.${nodeRef}.${field} → fallback n${targetIdx + 1} → node "${ctx._wfNodes[targetIdx].label}" (${targetNodeId}), value="${String(val ?? '').substring(0, 200)}"`);
+                return String(val ?? '');
+              }
+            }
+            Logger.warn(`[WorkflowEngine] $node.${nodeRef}.${field} → fallback n${targetIdx + 1} FAILED — no output for node at index ${targetIdx}. Available nodes: ${ctx._wfNodes.map((n, i) => `n${i+1}=${n.label}`).join(', ')}`);
           }
         }
       } catch {}
@@ -1877,6 +1915,29 @@ class WorkflowEngineService {
       }
       return acc[key];
     }, obj);
+  }
+
+  /**
+   * Compare two values for greater_than / less_than.
+   * Supports numbers and time strings (HH:MM or HH:MM:SS).
+   * Returns positive if left > right, negative if left < right, 0 if equal.
+   */
+  private compareValues(left: string, right: string): number {
+    // Try numeric comparison first
+    const ln = Number(left), rn = Number(right);
+    if (!isNaN(ln) && !isNaN(rn)) return ln - rn;
+
+    // Try time comparison: HH:MM or HH:MM:SS
+    const parseTime = (s: string): number | null => {
+      const m = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+      if (!m) return null;
+      return parseInt(m[1]) * 3600 + parseInt(m[2]) * 60 + (parseInt(m[3] || '0'));
+    };
+    const lt = parseTime(left), rt = parseTime(right);
+    if (lt !== null && rt !== null) return lt - rt;
+
+    // Fallback: string comparison (lexicographic)
+    return left.localeCompare(right, 'vi');
   }
 
   /** Get the OpenAI-compatible chat/completions URL for a given platform */

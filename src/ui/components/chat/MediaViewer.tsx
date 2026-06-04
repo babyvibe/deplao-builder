@@ -2,6 +2,7 @@ import React, { useEffect, useCallback, useRef, useState } from 'react';
 import { TransformWrapper, TransformComponent, ReactZoomPanPinchRef } from 'react-zoom-pan-pinch';
 import ipc from '@/lib/ipc';
 import { useAppStore } from '@/store/appStore';
+import { toLocalMediaUrl } from '@/lib/localMedia';
 
 export interface MediaViewerImage {
   src: string;           // remote/view URL
@@ -9,6 +10,8 @@ export interface MediaViewerImage {
   alt?: string;
   localPath?: string;    // absolute local file path (for show-in-folder)
   defaultName?: string;
+  msgId?: string;        // message ID for repair
+  threadId?: string;     // thread ID for event emission
 }
 
 interface MediaViewerProps {
@@ -57,6 +60,8 @@ export default function MediaViewer({ src, images, initialIndex = 0, alt = 'ản
   // Track pointer drag to avoid closing dialog after panning
   const pointerDownPos = useRef<{ x: number; y: number } | null>(null);
   const hasDragged = useRef(false);
+  // Guard auto-repair: only attempt once per image to avoid infinite loops
+  const repairAttemptedRef = useRef(false);
   // Skip resetTransform on the very first render — centerOnInit handles it.
   // Calling resetTransform(0) on mount fights against centerOnInit and causes a visible jump.
   const isMountedRef = useRef(false);
@@ -90,6 +95,7 @@ export default function MediaViewer({ src, images, initialIndex = 0, alt = 'ản
     }
     setIsImageLoading(false); // Reset — don't show spinner immediately
     setMainImageError(false);
+    repairAttemptedRef.current = false; // Allow repair attempt for new image
 
     // Immediately check if the image is already loaded (cache hit).
     // img.src might not match yet on the first render tick, so we wait one frame.
@@ -459,7 +465,28 @@ export default function MediaViewer({ src, images, initialIndex = 0, alt = 'ản
                 onLoad={() => setIsImageLoading(false)}
                 onError={() => {
                   setIsImageLoading(false);
-                  setMainImageError(true);
+                  // Attempt auto-repair if we have a local path (corrupted local file)
+                  const img = imageList[currentIndex];
+                  if (img?.localPath && img?.src && zaloId && img?.msgId && !repairAttemptedRef.current) {
+                    repairAttemptedRef.current = true;
+                    ipc.file?.repairImage({
+                      zaloId,
+                      msgId: img.msgId,
+                      threadId: img.threadId,
+                      localPath: img.localPath,
+                      remoteUrl: img.src,
+                    }).then((res) => {
+                      if (res?.success && res.newLocalPath) {
+                        const newDisplaySrc = toLocalMediaUrl(res.newLocalPath);
+                        setCurrentSrc(newDisplaySrc);
+                        setMainImageError(false);
+                      } else {
+                        setMainImageError(true);
+                      }
+                    }).catch(() => setMainImageError(true));
+                  } else {
+                    setMainImageError(true);
+                  }
                 }}
               />
             </TransformComponent>

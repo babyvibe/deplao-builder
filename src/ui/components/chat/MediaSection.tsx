@@ -83,7 +83,7 @@ function buildViewerImages(msgs: any[]): MediaViewerImage[] {
       // FB: use CDN URL directly
       const fb = extractFBAttachment(msg);
       if (fb && ['image', 'photo', 'sticker', 'animated_image'].includes(fb.type)) {
-        return { src: fb.url, displaySrc: fb.url, defaultName: fb.name || `image_${msg?.msg_id || Date.now()}.jpg` };
+        return { src: fb.url, displaySrc: fb.url, defaultName: fb.name || `image_${msg?.msg_id || Date.now()}.jpg`, msgId: msg?.msg_id ? String(msg.msg_id) : undefined, threadId: msg?.thread_id ? String(msg.thread_id) : undefined };
       }
       const displaySrc = extractImgUrl(msg); // local-media:// or remote URL
       const localPath = extractLocalFilePath(msg);
@@ -100,6 +100,8 @@ function buildViewerImages(msgs: any[]): MediaViewerImage[] {
         displaySrc: ds,
         localPath,
         defaultName: localPath ? localPath.replace(/.*[/\\]/, '') : `image_${msg?.msg_id || Date.now()}.jpg`,
+        msgId: msg?.msg_id ? String(msg.msg_id) : undefined,
+        threadId: msg?.thread_id ? String(msg.thread_id) : undefined,
       };
     })
     .filter(img => img.src || img.displaySrc);

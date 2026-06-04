@@ -52,6 +52,35 @@ export const TEMPLATE_CATEGORIES: { key: TemplateCategory; label: string; icon: 
 // ── Helper: generate fresh IDs when installing ─────────────────────────────────
 
 /** Deep-clone a template and assign fresh UUIDs to all nodes/edges while keeping internal references intact */
+/** Remap $node.xxx references in a string to use new UUIDs */
+function remapNodeRefs(str: string, idMap: Record<string, string>): string {
+  return str.replace(/\$node\.([\w-]+)\./g, (match, nodeRef) => {
+    if (idMap[nodeRef]) return `$node.${idMap[nodeRef]}.`;
+    return match;
+  });
+}
+
+/** Deep-remap all string values in a config object */
+function remapConfigRefs(config: Record<string, any>, idMap: Record<string, string>): Record<string, any> {
+  const result: Record<string, any> = {};
+  for (const [key, val] of Object.entries(config)) {
+    if (typeof val === 'string') {
+      result[key] = remapNodeRefs(val, idMap);
+    } else if (Array.isArray(val)) {
+      result[key] = val.map(item =>
+        typeof item === 'string' ? remapNodeRefs(item, idMap)
+        : item && typeof item === 'object' ? remapConfigRefs(item, idMap)
+        : item
+      );
+    } else if (val && typeof val === 'object') {
+      result[key] = remapConfigRefs(val, idMap);
+    } else {
+      result[key] = val;
+    }
+  }
+  return result;
+}
+
 export function instantiateTemplate(tpl: WorkflowTemplate): {
   nodes: TemplateNode[];
   edges: TemplateEdge[];
@@ -62,7 +91,7 @@ export function instantiateTemplate(tpl: WorkflowTemplate): {
   const nodes = tpl.nodes.map(n => ({
     ...n,
     id: idMap[n.id],
-    config: { ...n.config },
+    config: remapConfigRefs(n.config, idMap),
   }));
 
   const edges = tpl.edges.map(e => ({
@@ -203,7 +232,7 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
         config: { ...DEFAULT_CONFIGS['zalo.sendTyping'], delaySeconds: 3 } },
       { id: 'n4', type: 'ai.generateText', label: 'AI tạo câu trả lời', position: { x: 300, y: 480 },
         config: {
-          platform: 'openai', apiKey: '', model: 'gpt-4o-mini',
+          aiConfigMode: 'assistant', assistantId: '', platform: 'openai', apiKey: '', model: 'gpt-5.4-mini',
           systemPrompt: 'Bạn là trợ lý tư vấn bán hàng chuyên nghiệp, thân thiện. Trả lời ngắn gọn, đúng trọng tâm. Nếu không biết, hãy nói sẽ chuyển cho nhân viên hỗ trợ.',
           prompt: '{{ $trigger.content }}',
           maxTokens: 300, temperature: 0.7,
@@ -233,7 +262,7 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
         config: { ...DEFAULT_CONFIGS['trigger.message'], threadType: 'user', ignoreOwn: true } },
       { id: 'n2', type: 'ai.classify', label: 'AI phân loại tin nhắn', position: { x: 300, y: 200 },
         config: {
-          platform: 'openai', apiKey: '', model: 'gpt-4o-mini',
+          aiConfigMode: 'assistant', assistantId: '', platform: 'openai', apiKey: '', model: 'gpt-5.4-mini',
           categories: 'hỏi giá, đặt hàng, khiếu nại, hỗ trợ kỹ thuật, khác',
           input: '{{ $trigger.content }}',
         } },
@@ -1054,7 +1083,7 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
         config: { ...DEFAULT_CONFIGS['zalo.sendTyping'], delaySeconds: 2 } },
       { id: 'n4', type: 'ai.generateText', label: 'AI trả lời từ FAQ', position: { x: 300, y: 470 },
         config: {
-          platform: 'openai', apiKey: '', model: 'gpt-4o-mini',
+          aiConfigMode: 'assistant', assistantId: '', platform: 'openai', apiKey: '', model: 'gpt-5.4-mini',
           systemPrompt: 'Bạn là trợ lý hỗ trợ khách hàng. Trả lời DỰA TRÊN FAQ bên dưới. Nếu câu hỏi ngoài FAQ, nói "Mình sẽ chuyển cho nhân viên hỗ trợ nhé!".\n\n--- FAQ ---\nQ: Giờ mở cửa?\nA: 8h - 21h hàng ngày (T2-CN)\n\nQ: Phí ship bao nhiêu?\nA: Miễn phí ship đơn từ 300k. Dưới 300k phí ship 25k.\n\nQ: Đổi trả như thế nào?\nA: Đổi trả trong 7 ngày, sản phẩm còn nguyên tem mác.\n\nQ: Thanh toán bằng gì?\nA: Chuyển khoản, COD, hoặc ví MoMo/ZaloPay.\n\nQ: Bao lâu nhận hàng?\nA: Nội thành 1-2 ngày, tỉnh khác 3-5 ngày.',
           prompt: '{{ $trigger.content }}',
           maxTokens: 250, temperature: 0.3,
@@ -1086,7 +1115,7 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
         config: { threadId: '{{ $trigger.threadId }}', count: 20 } },
       { id: 'n3', type: 'ai.generateText', label: 'AI tóm tắt', position: { x: 300, y: 340 },
         config: {
-          platform: 'openai', apiKey: '', model: 'gpt-4o-mini',
+          aiConfigMode: 'assistant', assistantId: '', platform: 'openai', apiKey: '', model: 'gpt-5.4-mini',
           systemPrompt: 'Bạn là trợ lý phân tích hội thoại. Hãy tóm tắt cuộc trò chuyện bằng tiếng Việt, nêu rõ:\n1. Chủ đề chính\n2. Các yêu cầu/vấn đề của khách\n3. Trạng thái (đã giải quyết / cần follow-up)\n4. Action items cần làm',
           prompt: 'Tóm tắt cuộc hội thoại sau:\n\n{{ $node.n2.output }}',
           maxTokens: 500, temperature: 0.3,
@@ -1117,7 +1146,7 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
         config: { ...DEFAULT_CONFIGS['zalo.sendTyping'], delaySeconds: 5 } },
       { id: 'n3', type: 'ai.generateText', label: 'AI soạn bài marketing', position: { x: 300, y: 350 },
         config: {
-          platform: 'openai', apiKey: '', model: 'gpt-4o-mini',
+          aiConfigMode: 'assistant', assistantId: '', platform: 'openai', apiKey: '', model: 'gpt-5.4-mini',
           systemPrompt: 'Bạn là chuyên gia viết content marketing. Viết bài ngắn gọn, hấp dẫn, có emoji. Format:\n- Tiêu đề bắt mắt\n- 3-4 bullet points lợi ích\n- Call-to-action rõ ràng\n- Tạo cảm giác urgency',
           prompt: 'Viết bài marketing về: {{ $trigger.content }}',
           maxTokens: 400, temperature: 0.8,
