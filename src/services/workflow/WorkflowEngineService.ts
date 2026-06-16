@@ -12,6 +12,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
 import { google } from 'googleapis';
+import { parseStructuredResponse, isValidStructuredResponse } from '../../utils/aiUtils';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -38,7 +39,7 @@ export type NodeType =
   | 'trigger.payment'
   | 'kiotviet.lookupCustomer' | 'kiotviet.lookupOrder' | 'kiotviet.createOrder' | 'kiotviet.lookupProduct'
   | 'haravan.lookupCustomer' | 'haravan.lookupOrder' | 'haravan.createOrder' | 'haravan.lookupProduct'
-  | 'sapo.lookupCustomer'    | 'sapo.lookupOrder'    | 'sapo.createOrder'    | 'sapo.lookupProduct'
+  | 'sapo.lookupCustomer'    | 'sapo.lookupOrder'    | 'sapo.createOrder'    | 'sapo.lookupProduct'    | 'sapo.getInventory'
   | 'nhanh.lookupCustomer'   | 'nhanh.lookupOrder'   | 'nhanh.createOrder'   | 'nhanh.lookupProduct'
   | 'pancake.lookupCustomer' | 'pancake.lookupOrder' | 'pancake.createOrder' | 'pancake.lookupProduct'
   | 'payment.getTransactions'
@@ -924,7 +925,7 @@ class WorkflowEngineService {
 
         // ─── Structured AI response handling ─────────────────────────────
         // Detect AI structured JSON: [{type:"text",content:"..."}, {type:"image",content:["url",...]}]
-        const segments = this.parseStructuredAIResponse(cfg.message);
+        const segments = parseStructuredResponse(cfg.message);
         if (segments) {
           Logger.info(`[WorkflowEngine] Structured AI response: ${segments.length} segments`);
           let lastMsgId = '';
@@ -1077,8 +1078,45 @@ class WorkflowEngineService {
 
       case 'zalo.forwardMessage': {
         const api = this.getApi(ctx.pageId);
-        await api.forwardMessage({ msgId: cfg.msgId, toThreadId: cfg.toThreadId, toThreadType: Number(cfg.toThreadType ?? 0) } as any);
-        return { success: true };
+        const threadType = Number(cfg.toThreadType ?? 0);
+        const threadId = cfg.toThreadId;
+        if (!threadId) throw new Error('[zalo.forwardMessage] toThreadId required');
+
+        const message = cfg.message || ctx.trigger?.content || '';
+        const msgId = cfg.msgId || ctx.trigger?.msgId || '';
+
+        // Tra DB lấy local_paths + msg_type từ tin nhắn gốc (giống chat sendOneForward)
+        let localPaths: Record<string, string> = {};
+        let dbMsgType = '';
+        const triggerZaloId = ctx.trigger?.zaloId || ctx.pageId;
+        if (msgId && triggerZaloId) {
+          try {
+            const stored = DatabaseService.getInstance().getMessageById(triggerZaloId, msgId);
+            if (stored) {
+              dbMsgType = stored.msg_type || '';
+              if (stored.local_paths) {
+                const parsed = typeof stored.local_paths === 'string'
+                  ? JSON.parse(stored.local_paths)
+                  : stored.local_paths;
+                if (parsed && typeof parsed === 'object') localPaths = parsed;
+              }
+            }
+          } catch {}
+        }
+
+        // Ưu tiên gửi media (ảnh/file/video) trước — giống sendOneForward
+        const mediaPath = localPaths.file || localPaths.video || localPaths.main || localPaths.hd || '';
+        if (mediaPath) {
+          // Gửi media + text (caption) trong 1 lần
+          await api.sendMessage({ msg: message, attachments: [mediaPath] }, threadId, threadType);
+        } else if (message) {
+          // Chỉ có text
+          await api.sendMessage({ msg: message, attachments: [] }, threadId, threadType);
+        } else {
+          throw new Error('[zalo.forwardMessage] Missing message content');
+        }
+
+        return { success: true, msgId };
       }
 
       case 'zalo.createPoll': {
@@ -1815,6 +1853,12 @@ class WorkflowEngineService {
         });
         return { products: result.products || [], found: result.found };
       }
+      case 'sapo.getInventory': {
+        const result = await IntegrationRegistry.executeActionByType('sapo', 'getInventory', {
+          limit: Number(cfg.limit || 50),
+        });
+        return { items: result.items || [] };
+      }
 
       // ── P0: Nhanh.vn ─────────────────────────────────────────────────────
       case 'nhanh.lookupCustomer': {
@@ -2119,15 +2163,24 @@ class WorkflowEngineService {
       }
 
       case 'fb.action.forward': {
-        const rawA3 = cfg.accountId || ctx.trigger?.fbAccountId || ctx.pageId;
-        if (!rawA3) throw new Error('[fb.action.forward] accountId required');
-        const a3 = this.resolveFBAccountId(rawA3);
-        const s3 = await FacebookService.getInstance(a3);
-        const m1 = cfg.messageId || ctx.trigger?.messageId;
-        if (!m1) throw new Error('[fb.action.forward] messageId required');
-        if (!cfg.targetThreadId) throw new Error('[fb.action.forward] targetThreadId required');
-        const r1 = await s3.forwardMessage(String(m1), String(cfg.targetThreadId));
-        return { success: r1.success };
+        const rawAccountId = cfg.accountId || ctx.trigger?.fbAccountId || ctx.pageId;
+        if (!rawAccountId) throw new Error('[fb.action.forward] accountId required');
+        const accountId = this.resolveFBAccountId(rawAccountId);
+        const threadId = cfg.targetThreadId || ctx.trigger?.threadId;
+        if (!threadId) throw new Error('[fb.action.forward] targetThreadId required');
+        const message = cfg.message || ctx.trigger?.content || '';
+        if (!message) throw new Error('[fb.action.forward] Missing message content');
+        // Resend như tin nhắn mới — giống behavior chat (sendOneForward), không dùng forwardMessage API riêng
+        const result = await FacebookSendService.sendTextMessage({
+          accountId,
+          threadId: String(threadId),
+          body: String(message),
+        });
+        return {
+          success: result.success,
+          messageId: result.messageId,
+          ...(result.error ? { error: result.error } : {}),
+        };
       }
 
       case 'fb.action.pin': {
@@ -2478,36 +2531,7 @@ class WorkflowEngineService {
    * Parse structured AI JSON response: [{type:"text",content:"..."}, {type:"image",content:["url",...]}]
    * Returns null if the message is not structured JSON, otherwise returns the parsed array.
    */
-  private parseStructuredAIResponse(message: string): Array<{ type: 'text' | 'image'; content: any }> | null {
-    if (!message || typeof message !== 'string') return null;
-    const trimmed = message.trim();
-    if (!trimmed.startsWith('[')) return null;
-
-    try {
-      // Try direct parse first
-      const parsed = JSON.parse(trimmed);
-      if (this.isValidStructuredResponse(parsed)) return parsed as Array<{ type: 'text' | 'image'; content: any }>;
-    } catch {
-      // Try regex extraction (AI may wrap JSON in markdown code block)
-      try {
-        const jsonMatch = trimmed.match(/\[[\s\S]*]/);
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]);
-          if (this.isValidStructuredResponse(parsed)) return parsed as Array<{ type: 'text' | 'image'; content: any }>;
-        }
-      } catch {}
-    }
-    return null;
-  }
-
-  private isValidStructuredResponse(parsed: any): parsed is Array<{ type: 'text' | 'image'; content: any }> {
-    if (!Array.isArray(parsed) || parsed.length === 0) return false;
-    return parsed.every((item: any) =>
-      item && typeof item === 'object' &&
-      (item.type === 'text' || item.type === 'image') &&
-      item.content !== undefined
-    );
-  }
+  // parseStructuredAIResponse → moved to utils/aiUtils.ts
 
   /**
    * Download a URL to a temporary file. Returns the local temp file path.

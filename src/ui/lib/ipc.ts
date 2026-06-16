@@ -204,6 +204,9 @@ declare global {
         // Local Pinned Conversations
         getLocalPinnedConversations: (params: { zaloId: string }) => Promise<{ success: boolean; threadIds: string[] }>;
         setLocalPinnedConversation: (params: { zaloId: string; threadId: string; isPinned: boolean }) => Promise<{ success: boolean }>;
+        // Per-account Notification Settings
+        getNotifSettings: (zaloId: string) => Promise<{ success: boolean; settings: any | null; error?: string }>;
+        setNotifSettings: (zaloId: string, settings: any) => Promise<{ success: boolean; error?: string }>;
         // Local Labels
         getLocalLabels: (params: { zaloId?: string }) => Promise<{ success: boolean; labels: any[] }>;
         upsertLocalLabel: (params: { label: { id?: number; name: string; color: string; textColor?: string; emoji: string; pageIds: string; isActive?: number; sortOrder?: number; shortcut?: string } }) => Promise<{ success: boolean; id?: number; error?: string }>;
@@ -441,6 +444,7 @@ declare global {
       // ─── Facebook ─────────────────────────────────────────────────────
       fb: {
         addAccount:           (params: { cookie: string; proxyId?: number | null }) => Promise<{ success: boolean; account?: any; facebookId?: string; name?: string; error?: string }>;
+        addAccountWithCredentials: (params: { username: string; password: string; twoFASecret?: string; proxyId?: number | null }) => Promise<{ success: boolean; need2FA?: boolean; account?: any; facebookId?: string; name?: string; error?: string; errorTitle?: string }>;
         removeAccount:        (params: { accountId: string }) => Promise<{ success: boolean; error?: string }>;
         updateCookie:         (params: { accountId: string; cookie: string }) => Promise<{ success: boolean; error?: string }>;
         refreshProfile:       (params: { accountId: string }) => Promise<{ success: boolean; name?: string; avatarUrl?: string; error?: string, facebookId?: string }>;

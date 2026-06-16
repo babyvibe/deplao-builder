@@ -309,6 +309,13 @@ export interface FBAddAccountPayload {
   cookie: string;
 }
 
+export interface FBAddAccountWithCredentialsPayload {
+  username: string;
+  password: string;
+  twoFASecret?: string;
+  proxyId?: number | null;
+}
+
 export interface FBSendMessagePayload {
   accountId: string;
   threadId: string;

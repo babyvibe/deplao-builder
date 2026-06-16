@@ -37,6 +37,7 @@ export default function AddAccountModal({ onClose }: AddAccountModalProps) {
   const [step, setStep] = useState<Step>('channel');
   const [channel, setChannel] = useState<Channel>('zalo');
   const [tab, setTab] = useState<'qr' | 'cookie'>('qr');
+  const [fbTab, setFbTab] = useState<'account' | 'cookie'>('account');
   const [selectedProxyId, setSelectedProxyId] = useState<number | null>(null);
   const [proxies, setProxies] = useState<any[]>([]);
   const [proxyLoading, setProxyLoading] = useState(false);
@@ -124,7 +125,7 @@ export default function AddAccountModal({ onClose }: AddAccountModalProps) {
                 </div>
                 <div className="text-center">
                   <p className="text-white font-semibold text-sm">Facebook cá nhân</p>
-                  <p className="text-gray-400 text-xs mt-0.5">Đăng nhập bằng Cookie</p>
+                  <p className="text-gray-400 text-xs mt-0.5">Tài khoản hoặc Cookie</p>
                 </div>
               </button>
               {/* Telegram */}
@@ -203,9 +204,46 @@ export default function AddAccountModal({ onClose }: AddAccountModalProps) {
         )}
 
         {step === 'detail' && channel === 'facebook' && (
-          <div className="p-6">
-            <FacebookLoginTab onSuccess={onClose} proxyId={selectedProxyId} />
-          </div>
+          <>
+            {/* Proxy indicator */}
+            {selectedProxyId && proxies.length > 0 && (
+              <div className="px-6 pt-3 pb-0">
+                <div className="flex items-center gap-2 bg-green-900/20 border border-green-700/40 rounded-lg px-3 py-1.5">
+                  <span className="text-green-400 text-sm">🔒</span>
+                  <span className="text-xs text-green-300">
+                    Proxy: <strong>{proxies.find(p => p.id === selectedProxyId)?.name}</strong>
+                  </span>
+                  <button
+                    onClick={() => setSelectedProxyId(null)}
+                    className="ml-auto text-gray-500 hover:text-gray-300 text-xs"
+                  >✕</button>
+                </div>
+              </div>
+            )}
+            {/* Facebook sub-tabs */}
+            <div className="flex border-b border-gray-700">
+              {(['account', 'cookie'] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setFbTab(t)}
+                  className={`flex-1 py-3 text-sm font-medium transition-colors ${
+                    fbTab === t
+                      ? 'text-blue-400 border-b-2 border-blue-400'
+                      : 'text-gray-400 hover:text-gray-200'
+                  }`}
+                >
+                  {t === 'account' ? '🔑 Tài khoản' : '🍪 Cookie'}
+                </button>
+              ))}
+            </div>
+            <div className="p-6">
+              {fbTab === 'account' ? (
+                <FacebookAccountLoginTab onSuccess={onClose} proxyId={selectedProxyId} />
+              ) : (
+                <FacebookCookieLoginTab onSuccess={onClose} proxyId={selectedProxyId} />
+              )}
+            </div>
+          </>
         )}
       </div>
     </div>
@@ -584,9 +622,171 @@ function QRLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId?: n
   );
 }
 
-// ─── Facebook Login Tab ───────────────────────────────────────────────────────
+// ─── Facebook Account Login Tab ────────────────────────────────────────────────
 
-function FacebookLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId?: number | null }) {
+function FacebookAccountLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId?: number | null }) {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [twoFASecret, setTwoFASecret] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [need2FA, setNeed2FA] = useState(false);
+  const [showSecretGuide, setShowSecretGuide] = useState(false);
+  const { showNotification } = useAppStore();
+  const { setAccounts } = useAccountStore();
+
+  const handleLogin = async () => {
+    if (!username.trim()) { setError('Vui lòng nhập email hoặc số điện thoại Facebook'); return; }
+    if (!password) { setError('Vui lòng nhập mật khẩu'); return; }
+    setLoading(true);
+    setError('');
+    try {
+      const result = await ipc.fb?.addAccountWithCredentials({
+        username: username.trim(),
+        password,
+        twoFASecret: twoFASecret.trim() || undefined,
+        proxyId,
+      });
+      if (result?.success) {
+        showNotification('Đăng nhập Facebook thành công! 🎉 Đang hoàn tất thiết lập tài khoản...', 'success');
+
+        const res = await ipc.login?.getAccounts();
+        if (res?.accounts) setAccounts(res.accounts);
+
+        showNotification('✅ Tài khoản Facebook đã được thêm vào ứng dụng!', 'success');
+        onSuccess();
+      } else if (result?.need2FA) {
+        setNeed2FA(true);
+        setError(result?.error || 'Tài khoản yêu cầu xác thực 2 yếu tố (2FA). Vui lòng nhập mã bí mật 2FA.');
+      } else {
+        setError(result?.error || 'Đăng nhập thất bại');
+      }
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <label className="text-xs text-gray-400 mb-1 block font-medium">
+          Email hoặc số điện thoại
+        </label>
+        <input
+          type="text"
+          value={username}
+          onChange={(e) => { setUsername(e.target.value); setError(''); }}
+          placeholder="example@gmail.com hoặc số điện thoại"
+          className="input-field text-sm"
+          disabled={loading}
+          autoComplete="username"
+          spellCheck={false}
+        />
+      </div>
+
+      <div>
+        <label className="text-xs text-gray-400 mb-1 block font-medium">
+          Mật khẩu
+        </label>
+        <input
+          type="password"
+          value={password}
+          onChange={(e) => { setPassword(e.target.value); setError(''); }}
+          placeholder="••••••••"
+          className="input-field text-sm"
+          disabled={loading}
+          autoComplete="current-password"
+        />
+      </div>
+
+      {/* 2FA field — luôn hiển thị */}
+      <div className={`rounded-xl p-3 border transition-all ${
+        need2FA
+          ? 'bg-red-900/20 border-red-700/40'
+          : 'bg-indigo-900/15 border-indigo-700/30'
+      }`}>
+        <div className="flex items-center justify-between mb-2">
+          <p className={`text-xs font-medium ${need2FA ? 'text-red-400' : 'text-indigo-300'}`}>
+            {need2FA ? (
+              '⚠️ Tài khoản yêu cầu xác thực 2 yếu tố (2FA)'
+            ) : (
+              '🔐 Mã bí mật 2FA (2FA Secret Key)'
+            )}
+          </p>
+          <button
+            type="button"
+            onClick={() => setShowSecretGuide(true)}
+            className="text-indigo-400 hover:text-indigo-300 text-[11px] underline underline-offset-2 transition-colors flex items-center gap-1"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="10" />
+              <path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" />
+              <line x1="12" y1="17" x2="12.01" y2="17" />
+            </svg>
+            Hướng dẫn lấy mã
+          </button>
+        </div>
+        <input
+          type="text"
+          value={twoFASecret}
+          onChange={(e) => { setTwoFASecret(e.target.value); setError(''); }}
+          placeholder={need2FA
+            ? '⚠️ Nhập mã bí mật 2FA để đăng nhập (32 ký tự)'
+            : 'Nhập mã bí mật 2FA từ Facebook (để trống nếu không có)'
+          }
+          className={`input-field text-sm font-mono ${
+            need2FA && !twoFASecret.trim()
+              ? 'border-red-600 focus:border-red-500'
+              : ''
+          }`}
+          disabled={loading}
+          autoComplete="off"
+          spellCheck={false}
+        />
+        {need2FA && (
+          <p className="text-red-400/70 text-[11px] mt-1.5 flex items-center gap-1">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            Bắt buộc nhập mã bí mật 2FA để đăng nhập
+          </p>
+        )}
+      </div>
+
+      {error && (
+        <div className="bg-red-900/30 border border-red-700 rounded-lg p-2 text-red-400 text-xs">
+          {error}
+        </div>
+      )}
+
+      <button
+        onClick={handleLogin}
+        disabled={loading || !username.trim() || !password || (need2FA && !twoFASecret.trim())}
+        className="btn-primary text-white w-full"
+      >
+        {loading ? (
+          <span className="flex items-center justify-center gap-2">
+            <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+            Đang đăng nhập...
+          </span>
+        ) : '💙 Đăng nhập Facebook'}
+      </button>
+
+      <TosFooter />
+
+      {showSecretGuide && <SecretKeyGuidePopup onClose={() => setShowSecretGuide(false)} />}
+    </div>
+  );
+}
+
+// ─── Facebook Cookie Login Tab ─────────────────────────────────────────────────
+
+function FacebookCookieLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId?: number | null }) {
   const [cookie, setCookie] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -859,6 +1059,270 @@ function CookieLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId
         Lấy auth JSON bằng cách chạy tool extract cookies từ trình duyệt
       </p>
       <TosFooter />
+    </div>
+  );
+}
+
+// ─── Secret Key Guide Popup ──────────────────────────────────────────────────
+
+function SecretKeyGuidePopup({ onClose }: { onClose: () => void }) {
+  const [tab, setTab] = useState<'have-2fa' | 'setup-2fa'>('have-2fa');
+
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60]">
+      <div className="bg-gray-800 rounded-2xl w-full max-w-3xl mx-4 max-h-[85vh] flex flex-col shadow-2xl border border-gray-700">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700 shrink-0">
+          <div className="flex items-center gap-2.5">
+            <span className="text-indigo-400 text-xl">🔐</span>
+            <h3 className="text-white font-semibold">Hướng dẫn lấy mã bí mật 2FA (Secret Key) từ Facebook</h3>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-gray-400 hover:text-white transition-colors"
+          >
+            <svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Tab selector */}
+        <div className="flex border-b border-gray-700">
+          <button
+            onClick={() => setTab('have-2fa')}
+            className={`flex-1 py-3 text-sm font-medium transition-colors ${
+              tab === 'have-2fa'
+                ? 'text-indigo-400 border-b-2 border-indigo-400'
+                : 'text-gray-400 hover:text-gray-200'
+            }`}
+          >
+            ✅ Đã có 2FA — Cách lấy Secret Key
+          </button>
+          <button
+            onClick={() => setTab('setup-2fa')}
+            className={`flex-1 py-3 text-sm font-medium transition-colors ${
+              tab === 'setup-2fa'
+                ? 'text-indigo-400 border-b-2 border-indigo-400'
+                : 'text-gray-400 hover:text-gray-200'
+            }`}
+          >
+            🛠 Chưa có 2FA — Cách thiết lập
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="overflow-y-auto p-6 space-y-4">
+          {tab === 'have-2fa' ? <Have2FAGuide /> : <Setup2FAGuide />}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end px-6 py-4 border-t border-gray-700 shrink-0">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-5 py-2 rounded-lg text-xs font-medium bg-indigo-600 hover:bg-indigo-500 text-white transition-colors"
+          >
+            ✅ Đã hiểu
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Have2FAGuide() {
+  const steps = [
+    {
+      title: 'Vào Facebook → Ảnh đại diện → Cài đặt & quyền riêng tư → Cài đặt',
+      desc: 'Mở Facebook trên trình duyệt (khuyến nghị Chrome/Edge), nhấn vào ảnh đại diện góc trên bên phải, chọn "Cài đặt & quyền riêng tư" → "Cài đặt".',
+    },
+    {
+      title: 'Chọn Trung tâm tài khoản (Accounts Center)',
+      desc: 'Trong menu bên trái, tìm và chọn "Trung tâm tài khoản" (Accounts Center) — mục này thường nằm ở phía trên cùng hoặc dưới phần "Đăng nhập".',
+    },
+    {
+      title: 'Mật khẩu và bảo mật → Xác thực hai yếu tố',
+      desc: 'Trong Trung tâm tài khoản, chọn "Mật khẩu và bảo mật", sau đó chọn "Xác thực hai yếu tố" (Two-Factor Authentication).',
+    },
+    {
+      title: 'Chọn tài khoản Facebook',
+      desc: 'Nếu bạn có nhiều tài khoản, chọn tài khoản Facebook bạn muốn lấy mã bí mật.',
+    },
+    {
+      title: 'Chọn "Ứng dụng xác thực" (Authentication App)',
+      desc: 'Phương thức xác thực bạn cần tìm là "Ứng dụng xác thực" — bấm vào đó để xem chi tiết.',
+    },
+    {
+      title: 'Tìm tùy chọn hiện mã bí mật',
+      desc: (
+        <span>
+          Lúc này Facebook thường hiển thị <strong className="text-indigo-300">mã QR</strong>. Bên dưới hoặc cạnh mã QR
+          sẽ có một trong các liên kết sau:
+          <br />• "Nhập khóa theo cách thủ công"
+          <br />• "Không quét được mã?"
+          <br />• "Thiết lập trên thiết bị khác"
+          <br />• "Can't scan it?"
+          <br /><br />
+          <strong className="text-indigo-300">Bấm vào đó!</strong>
+        </span>
+      ),
+    },
+    {
+      title: 'Sao chép mã bí mật (Secret Key)',
+      desc: (
+        <span>
+          Facebook sẽ hiển thị một chuỗi ký tự dạng:
+          <br />
+          <code className="block bg-gray-900 text-indigo-300 px-3 py-2 rounded-lg my-2 text-center text-xs font-mono tracking-widest select-all">
+            ABCD EFGH IJKL MNOP QRST UVWX YZ12 3456
+          </code>
+          Đó là mã bí mật 2FA (Secret Key) — <strong className="text-indigo-300">copy nguyên chuỗi này</strong> (kể cả khoảng trắng, app tự xử lý) và dán vào ô "Mã bí mật 2FA" phía trên.
+        </span>
+      ),
+    },
+  ];
+
+  return (
+    <div className="space-y-1">
+      <div className="bg-indigo-900/20 border border-indigo-700/30 rounded-xl p-3 mb-4">
+        <p className="text-indigo-300 text-xs leading-relaxed">
+          <strong>📌 Mục "Mã bí mật (Secret Key)"</strong> không phải tài khoản Facebook nào cũng hiện sẵn vì Facebook thường xuyên thay đổi giao diện.
+          Nếu bạn không thấy Secret Key trong giao diện hiện tại, hãy làm theo các bước dưới đây.
+        </p>
+      </div>
+      {steps.map((s, i) => (
+        <div key={i} className="flex gap-3 p-3 rounded-xl hover:bg-gray-700/40 transition-colors">
+          <span className="w-7 h-7 rounded-full bg-indigo-600/30 text-indigo-400 text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
+            {i + 1}
+          </span>
+          <div className="min-w-0">
+            <p className="text-white text-xs font-semibold">{s.title}</p>
+            <p className="text-gray-400 text-[11px] mt-1 leading-relaxed">{s.desc}</p>
+          </div>
+        </div>
+      ))}
+
+      {/* Tips */}
+      <div className="bg-emerald-600 border border-emerald-700/30 rounded-xl p-3 mt-4 space-y-2">
+        <p className="text-emerald-300 text-xs font-semibold">💡 Mẹo nhỏ</p>
+        <ul className="text-white-important text-[11px] space-y-1.5 list-disc list-inside leading-relaxed">
+          <li>Nếu đã thấy mục "Ứng dụng xác thực" hiển thị trạng thái "Đã bật" — bấm vào để xem lại mã.</li>
+          <li>Dùng trình duyệt trên máy tính (không dùng app điện thoại) để dễ thao tác.</li>
+          <li>Secret Key không thay đổi trừ khi bạn tắt và thiết lập lại 2FA.</li>
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+function Setup2FAGuide() {
+  const steps = [
+    {
+      title: 'Vào Facebook → Cài đặt & quyền riêng tư → Cài đặt',
+      desc: 'Mở Facebook trên trình duyệt, nhấn ảnh đại diện → "Cài đặt & quyền riêng tư" → "Cài đặt".',
+    },
+    {
+      title: 'Chọn Trung tâm tài khoản (Accounts Center)',
+      desc: 'Tìm "Trung tâm tài khoản" trong menu bên trái.',
+    },
+    {
+      title: 'Mật khẩu và bảo mật → Xác thực hai yếu tố',
+      desc: 'Chọn "Mật khẩu và bảo mật" → "Xác thực hai yếu tố". Chọn tài khoản Facebook cần cấu hình.',
+    },
+    {
+      title: 'Thêm phương thức bảo mật → Chọn "Ứng dụng xác thực"',
+      desc: (
+        <span>
+          Nếu chưa có phương thức nào, Facebook sẽ yêu cầu chọn loại xác thực. Chọn <strong className="text-indigo-300">"Ứng dụng xác thực"</strong>
+          {' '}(Authentication App) — <strong className="text-indigo-300">KHÔNG chọn SMS</strong> vì SMS không cung cấp Secret Key.
+        </span>
+      ),
+    },
+    {
+      title: 'Xác nhận mật khẩu',
+      desc: 'Facebook sẽ yêu cầu nhập lại mật khẩu để xác nhận quyền truy cập.',
+    },
+    {
+      title: 'Quét mã QR — nhưng hãy tìm Secret Key',
+      desc: (
+        <span>
+          Facebook hiển thị mã QR để quét. <strong className="text-indigo-300">Đừng vội quét!</strong> Hãy tìm một trong các liên kết sau:
+          <br />• <strong className="text-indigo-300">"Nhập khóa theo cách thủ công"</strong>
+          <br />• "Không quét được mã?"
+          <br />• "Thiết lập trên thiết bị khác"
+          <br />• "Can't scan it?"
+          <br /><br />
+          Bấm vào đó để hiển thị Secret Key.
+        </span>
+      ),
+    },
+    {
+      title: 'Sao chép Secret Key và dán vào app',
+      desc: (
+        <span>
+          Bạn sẽ thấy một chuỗi ký tự dạng:
+          <br />
+          <code className="block bg-gray-900 text-indigo-300 px-3 py-2 rounded-lg my-2 text-center text-xs font-mono tracking-widest select-all">
+            ABCD EFGH IJKL MNOP QRST UVWX YZ12 3456
+          </code>
+          Copy chuỗi này và dán vào ô <strong className="text-indigo-300">"Mã bí mật 2FA"</strong> trong app.
+        </span>
+      ),
+    },
+    {
+      title: 'Hoàn tất thiết lập 2FA trên Facebook',
+      desc: (
+        <span>
+          Sau khi lấy được Secret Key, hãy hoàn tất các bước còn lại trên Facebook:
+          <br />• Mở Google Authenticator, Authy hoặc 2FAS trên điện thoại
+          <br />• Quét mã QR (hoặc nhập Secret Key thủ công)
+          <br />• Nhập mã 6 số từ ứng dụng xác thực vào Facebook để xác nhận
+          <br />• Lưu lại mã dự phòng nếu Facebook cung cấp
+        </span>
+      ),
+    },
+  ];
+
+  return (
+    <div className="space-y-1">
+      <div className="bg-amber-900/20 border border-amber-700/30 rounded-xl p-3 mb-4">
+        <p className="text-amber-300 text-xs leading-relaxed">
+          <strong>⚠️ Hướng dẫn dành cho tài khoản CHƯA bật 2FA</strong>
+          {' — hoặc đã bật 2FA nhưng không tìm thấy Secret Key, cần thiết lập lại từ đầu.'}
+        </p>
+      </div>
+
+      {steps.map((s, i) => (
+        <div key={i} className="flex gap-3 p-3 rounded-xl hover:bg-gray-700/40 transition-colors">
+          <span className="w-7 h-7 rounded-full bg-amber-600/30 text-amber-400 text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
+            {i + 1}
+          </span>
+          <div className="min-w-0">
+            <p className="text-white text-xs font-semibold">{s.title}</p>
+            <p className="text-gray-400 text-[11px] mt-1 leading-relaxed">{s.desc}</p>
+          </div>
+        </div>
+      ))}
+
+      {/* When secret key is hidden */}
+      <div className="bg-red-900/20 border border-red-700/30 rounded-xl p-3 mt-4">
+        <p className="text-red-300 text-xs font-semibold mb-2">❓ Vẫn không thấy Secret Key?</p>
+        <ul className="text-red-400 text-[11px] space-y-1.5 list-disc list-inside leading-relaxed">
+          <li>Bạn đã bật 2FA từ trước — Facebook chỉ hiện QR mà không hiện khóa thủ công.</li>
+          <li>Tài khoản đang dùng Passkey hoặc phương thức bảo mật khác.</li>
+        </ul>
+        <div className="bg-gray-900/50 rounded-lg p-3 mt-2">
+          <p className="text-gray-300 text-xs font-medium mb-1">Giải pháp:</p>
+          <ol className="text-gray-400 text-[11px] space-y-1.5 list-decimal list-inside leading-relaxed">
+            <li>Tắt phương thức <strong className="text-red-300">"Ứng dụng xác thực"</strong> hiện tại.</li>
+            <li>Thiết lập lại từ đầu theo hướng dẫn phía trên.</li>
+            <li>Ở bước quét QR, tìm tùy chọn <strong className="text-red-300">"Can't scan it?"</strong> hoặc <strong className="text-red-300">"Nhập mã thủ công"</strong> để lấy Secret Key.</li>
+            <li>Hoặc dùng ứng dụng 2FA đã quét trước đó để xem lại Secret Key (Authy/2FAS có tùy chọn hiển thị).</li>
+          </ol>
+        </div>
+      </div>
     </div>
   );
 }

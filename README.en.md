@@ -1,4 +1,5 @@
 # Deplao
+*Website Introduction*:  https://deplaoapp.com/
 
 <p>
   <strong>🌐 Language:</strong>
@@ -7,13 +8,11 @@
   🇬🇧 <strong>English</strong>
 </p>
 
-*Introduction*:  https://babyvibe.github.io/deplao-builder/
-
 ---
 
 > A multi-account Zalo & Facebook desktop app with integrated CRM, ERP, POS, Workflow automation and AI Assistant — helping sales, customer care teams and marketing operate centrally on Zalo and Facebook in one single application.
 
-[![Version](https://img.shields.io/badge/version-26.6.1-22c55e)](#)
+[![Version](https://img.shields.io/badge/version-26.6.2-22c55e)](#)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-3b82f6)](#-runtime-requirements)
 [![Electron](https://img.shields.io/badge/Electron-41-47848f?logo=electron&logoColor=white)](#)
 [![React](https://img.shields.io/badge/React-18-61dafb?logo=react&logoColor=white)](#)
@@ -21,33 +20,45 @@
 [![SQLite](https://img.shields.io/badge/SQLite-local--first-003b57?logo=sqlite&logoColor=white)](#)
 [![Vite](https://img.shields.io/badge/Vite-6-646cff?logo=vite&logoColor=white)](#)
 [![Node.js](https://img.shields.io/badge/Node.js-18+-339933?logo=node.js&logoColor=white)](#)
-[![License](https://img.shields.io/badge/license-ISC-f59e0b)](#)
+[![License](https://img.shields.io/badge/license-MIT-22c55e)](#license)
 [![Support](https://img.shields.io/badge/support-GitHub_Issues-0ea5e9)](https://github.com/babyvibe/deplao-builder/issues)
+
+<p align="center">
+  <a href="#download">📥 Download</a> &nbsp;|&nbsp;
+  <a href="#tech-stack">🛠️ Tech Stack</a> &nbsp;|&nbsp;
+  <a href="#installation">📦 Install</a> &nbsp;|&nbsp;
+  <a href="#core-feature-groups">✨ Features</a> &nbsp;|&nbsp;
+  <a href="#security--data">🔒 Security</a> &nbsp;|&nbsp;
+  <a href="#license">📝 MIT</a> &nbsp;|&nbsp;
+  <a href="#contact--support">📞 Contact</a>
+</p>
+
+---
 
 ## ⬇️ Download
 
 <table>
 <tr>
 <td align="center" width="33%">
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-Setup-26.6.1.exe">
-<img src="https://img.shields.io/badge/🪟_Windows-v26.6.1-0078d4?style=for-the-badge&logo=windows&logoColor=white" alt="Download Windows" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-Setup-26.6.2.exe">
+<img src="https://img.shields.io/badge/🪟_Windows-v26.6.2-0078d4?style=for-the-badge&logo=windows&logoColor=white" alt="Download Windows" />
 </a>
 <br>
-<sub>Deplao-Setup-26.6.1.exe</sub>
+<sub>Deplao-Setup-26.6.2.exe</sub>
 </td>
 <td align="center" width="33%">
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.6.1-arm64.dmg">
-<img src="https://img.shields.io/badge/🍎_macOS_M1+-v26.6.1-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Apple Silicon" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.6.2-arm64.dmg">
+<img src="https://img.shields.io/badge/🍎_macOS_M1+-v26.6.2-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Apple Silicon" />
 </a>
 <br>
-<sub>Deplao-26.6.1-arm64.dmg</sub>
+<sub>Deplao-26.6.2-arm64.dmg</sub>
 </td>
 <td align="center" width="33%">
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.6.1.dmg">
-<img src="https://img.shields.io/badge/🍎_macOS_Intel-v26.6.1-333333?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Intel" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.6.2.dmg">
+<img src="https://img.shields.io/badge/🍎_macOS_Intel-v26.6.2-333333?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Intel" />
 </a>
 <br>
-<sub>Deplao-26.6.1.dmg</sub>
+<sub>Deplao-26.6.2.dmg</sub>
 </td>
 </tr>
 </table>
@@ -96,7 +107,8 @@ macOS may show **"cannot be opened because it is from an unidentified developer"
 
 ## 🛠️ Tech Stack
 
-- **Core library:** zca-js — https://github.com/RFS-ADRENO/zca-js
+- **Core library:** zca-js — https://github.com/RFS-ADRENO/zca-js, fbchat-v2 (Facebook E2EE bridge Go)
+- **AI Gateway:** 9router
 - **Languages:** TypeScript, JavaScript, SQL, HTML, CSS
 - **Desktop:** Electron, React, Vite
 - **UI:** Tailwind CSS, PostCSS, React Router
@@ -429,7 +441,7 @@ Screens are ordered by typical usage flow: dashboard → chat → CRM → workfl
 
 ### 4) Workflow automation
 - No-code drag-and-drop workflow builder
-- AI assistant generates nodes from a plain-text prompt
+- AI assistant generates nodes and workflows from plain-text commands (see section 7)
 - Triggers: message received, label applied, reaction, cron schedule, group events…
 - Actions: send message/image/file, find user, manage group, mute, forward, recall…
 - Integrations: logic, Google Sheets, AI, Telegram, Discord, Email, Notion, HTTP Request
@@ -438,7 +450,7 @@ Screens are ordered by typical usage flow: dashboard → chat → CRM → workfl
 ### 5) Sales integrations
 - POS: KiotViet, Haravan, Sapo, Nhanh.vn, Pancake POS
 - Shipping: GHN, GHTK
-- AI Assistant for reply suggestions and quick in-chat responses
+- AI Assistant with reply suggestions and in-chat Q&A (see section 7)
 - Easy to combine into end-to-end sales and customer care pipelines
 
 ### 6) Reports, ERP & employee management
@@ -446,6 +458,13 @@ Screens are ordered by typical usage flow: dashboard → chat → CRM → workfl
 - Internal ERP: Tasks, Calendar, Notes
 - Boss ↔ employee model with relay server and module-level permissions
 - Track work performance per person and per time period
+
+### 7) 🤖 AI Assistant
+- Smart reply suggestions in Zalo and Facebook conversations
+- Real-time Q&A with AI directly in the chat window
+- Create workflows using plain natural language commands — no drag-and-drop needed
+- Use AI action nodes in workflows to build 24/7 auto-reply chatbots
+- Multi-platform AI support: OpenAI, Claude, Gemini and 9Router (local AI gateway)
 
 ## 🔒 Security & data
 
@@ -469,7 +488,16 @@ Deplao prioritizes a local-first architecture:
 
 ## 🙏 Acknowledgements
 
-Deplao would like to thank the project: 👉 https://github.com/RFS-ADRENO/zca-js
-Without the contributions and foundation from this project, Deplao would not have been possible. We deeply appreciate the value the open-source community brings 💙
+Deplao would like to thank the project:
+👉 https://github.com/RFS-ADRENO/zca-js
+👉 https://github.com/m008v/fbchat-v2
+Without the contributions and foundation from this project, Deplao would not have been possible.
+
+---
+
+## 📝 License
+
+This project is distributed under the **MIT License**.  
+See the [LICENSE](LICENSE) file for details.
 
 ---

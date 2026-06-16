@@ -444,10 +444,17 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
   ],
   'zalo.forwardMessage': [
     {
-      key: 'msgId', label: 'Tin nhắn cần chuyển tiếp', type: 'text',
+      key: 'message', label: 'Nội dung chuyển tiếp', type: 'textarea',
+      placeholder: '{{ $trigger.content }}',
+      desc: 'Nội dung tin nhắn sẽ gửi đi. Dùng {{ $trigger.content }} để lấy nội dung từ tin nhắn trigger.',
+      templateVars: ['$trigger.content'],
+    },
+    {
+      key: 'msgId', label: 'ID tin nhắn gốc (tham khảo)', type: 'text',
       placeholder: '{{ $trigger.msgId }}',
-      desc: 'ID tin nhắn muốn chuyển tiếp. Dùng {{ $trigger.msgId }} để chuyển tiếp tin nhắn vừa nhận.',
+      desc: 'ID tin nhắn gốc — chỉ để tham chiếu, không dùng cho forward API.',
       templateVars: ['$trigger.msgId'],
+      advanced: true,
     },
     {
       key: 'toThreadId', label: 'Chuyển đến hội thoại', type: 'contact-picker', contactType: 'all',
@@ -1332,6 +1339,9 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
     },
     { key: 'limit', label: 'Số kết quả tối đa', type: 'number', placeholder: '10', advanced: true },
   ],
+  'sapo.getInventory': [
+    { key: 'limit', label: 'Số sản phẩm', type: 'number', placeholder: '50', advanced: true },
+  ],
   'sapo.createOrder': [
     {
       key: 'order', label: 'Dữ liệu đơn hàng (JSON)', type: 'json',
@@ -1731,15 +1741,29 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
   ],
   'fb.action.forward': [
     {
-      key: 'messageId', label: 'Tin nhắn cần chuyển tiếp', type: 'text',
+      key: 'message', label: 'Nội dung chuyển tiếp', type: 'textarea',
+      placeholder: '{{ $trigger.content }}',
+      desc: 'Nội dung tin nhắn sẽ gửi đi. Dùng {{ $trigger.content }} để lấy nội dung từ tin nhắn trigger.',
+      templateVars: ['$trigger.content'],
+    },
+    {
+      key: 'messageId', label: 'ID tin nhắn gốc (tham khảo)', type: 'text',
       placeholder: '{{ $trigger.messageId }}',
-      desc: 'ID tin nhắn muốn chuyển tiếp.',
+      desc: 'ID tin nhắn Facebook gốc — chỉ để tham khảo, không dùng cho forward API riêng.',
       templateVars: ['$trigger.messageId'],
+      advanced: true,
     },
     {
       key: 'targetThreadId', label: 'Chuyển đến hội thoại', type: 'contact-picker', contactType: 'all',
       placeholder: 'ID hội thoại đích',
       desc: 'ID hội thoại Facebook nơi tin nhắn sẽ được chuyển đến.',
+    },
+    {
+      key: 'accountId', label: 'Tài khoản Facebook', type: 'text',
+      desc: 'Nhập ID tài khoản Facebook để gửi tin nhắn.',
+      advanced: true,
+      placeholder: '{{ $trigger.fbAccountId }}',
+      templateVars: ['$trigger.fbAccountId'],
     },
   ],
   'fb.action.pin': [

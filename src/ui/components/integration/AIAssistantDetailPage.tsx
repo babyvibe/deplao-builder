@@ -8,6 +8,7 @@ import ipc from '@/lib/ipc';
 import { useAppStore } from '@/store/appStore';
 import {showConfirm} from "@/components/common/ConfirmDialog";
 import PromptWizardModal from './PromptWizardModal';
+import { parseStructuredResponse } from '../../../utils/aiUtils';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -76,11 +77,14 @@ const MODELS_BY_PLATFORM: Record<string, { value: string; label: string }[]> = {
     { value: 'kr/claude-opus-4.6',         label: 'Kiro: Claude Opus 4.6 (free)' },
     { value: 'kr/glm-5',                   label: 'Kiro: GLM-5 (free)' },
     { value: 'kr/minimax',                 label: 'Kiro: MiniMax (free)' },
-    { value: 'oc/<auto>',                  label: 'OpenCode Free (auto, free)' },
+    { value: 'oc/deepseek-v4-flash-free',       label: 'OpenCode: DeepSeek V4 Flash (free)' },
+    { value: 'oc/mimo-v2.5-free',               label: 'OpenCode: Mimo 2.5 (free)' },
+    { value: 'oc/qwen3.6-plus-free',             label: 'OpenCode: Qwen 3.6 Plus (free)' },
     { value: 'glm/glm-4.7',                label: 'GLM-4.7 ($0.6/1M)' },
     { value: 'minimax/minimax',            label: 'MiniMax ($0.2/1M)' },
     { value: 'kimi/kimi-k2-thinking',      label: 'Kimi K2 Thinking (free)' },
-    { value: 'vertex/<auto>',              label: 'Vertex AI (auto, $300 free)' },
+    { value: 'vertex/claude-sonnet-4-5',        label: 'Vertex: Claude Sonnet 4.5 (free)' },
+    { value: 'vertex/gemini-3-flash',           label: 'Vertex: Gemini 3 Flash (free)' },
     { value: 'cc/claude-opus-4-6',         label: 'Claude Code subscription' },
     { value: 'openrouter/<model>',         label: 'OpenRouter (tùy chọn)' },
   ],
@@ -154,33 +158,6 @@ function normalizeForAI(raw: any, platform: string) {
     || raw.retail_price || raw.final_price || nested.price || nested.basePrice || 0;
   const code = raw.code || raw.sku || raw.barcode || raw.productCode || nested.code || nested.sku || '';
   return { ...raw, _id: id, _name: name, _price: Number(price) || 0, _code: code, _image: image };
-}
-
-// ─── Parse structured AI JSON response (text/image segments) ─────────────────
-
-function parseStructuredResponse(raw: string): Array<{ type: 'text' | 'image'; content: any }> | null {
-  if (!raw || typeof raw !== 'string') return null;
-  const trimmed = raw.trim();
-  if (!trimmed.startsWith('[')) return null;
-  try {
-    const parsed = JSON.parse(trimmed);
-    if (Array.isArray(parsed) && parsed.length > 0 &&
-        parsed.every((item: any) => item && (item.type === 'text' || item.type === 'image') && item.content !== undefined)) {
-      return parsed;
-    }
-  } catch {
-    try {
-      const jsonMatch = trimmed.match(/\[[\s\S]*]/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        if (Array.isArray(parsed) && parsed.length > 0 &&
-            parsed.every((item: any) => item && (item.type === 'text' || item.type === 'image') && item.content !== undefined)) {
-          return parsed;
-        }
-      }
-    } catch {}
-  }
-  return null;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -668,16 +645,17 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                 {platform === 'deepseek' && 'Lấy tại: platform.deepseek.com/api-keys'}
                 {platform === 'grok' && 'Lấy tại: console.x.ai'}
                 {platform === 'mistral' && 'Lấy tại: console.mistral.ai/api-keys'}
-                {platform === '9router' && 'Lấy từ dashboard 9router tại http://localhost:20128/settings'}
+                {platform === '9router' && 'Lấy từ Dashboard -> API Keys 9router tại http://localhost:20128/dashboard'}
               </p>
               {platform === '9router' && (
                 <div className="mt-2 flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => {
-                      window.dispatchEvent(new CustomEvent('nav:settings', {
-                        detail: { tab: 'introduction', subtab: '9router' },
-                      }));
+                      window.dispatchEvent(new CustomEvent('nav:view', { detail: { view: 'settings' } }));
+                      setTimeout(() => window.dispatchEvent(new CustomEvent('nav:settings', {
+                        detail: { tab: 'introduction', subtab: 'ai-assistant' },
+                      })), 80);
                     }}
                     className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-cyan-600/20 text-cyan-400 hover:bg-cyan-600/30 border border-cyan-600/40 transition-colors"
                   >
@@ -964,7 +942,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
               <div>
                 <label className="block text-xs text-gray-400 mb-1">Base URL (tuỳ chọn)</label>
                 <input type="text" value={baseUrl} onChange={e => setBaseUrl(e.target.value)}
-                  placeholder={platform === '9router' ? 'http://localhost:20128' : 'https://api.custom-proxy.com'}
+                  placeholder={platform === '9router' ? 'http://localhost:20128/v1' : 'https://api.custom-proxy.com'}
                   className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"/>
                 <p className="text-[10px] text-gray-500 mt-1">
                   Ghi đè endpoint API. Để trống để dùng URL mặc định. Hữu ích khi dùng proxy như 9Router, OpenRouter, hoặc các API gateway khác.

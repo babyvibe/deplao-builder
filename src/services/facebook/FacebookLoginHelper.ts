@@ -70,7 +70,19 @@ async function postLogin(data: Record<string, string>, httpsAgent?: any): Promis
     });
     return response.data;
   } catch (err: any) {
-    return { error: { error_user_msg: err.message, code: -1 } };
+    // Trích xuất response body từ Facebook (luôn là JSON dù status 400/401/403...)
+    if (err.response?.data) {
+      const fbError = err.response.data;
+      Logger.warn(`[FacebookLoginHelper] Facebook API error (HTTP ${err.response.status}):`, JSON.stringify(fbError));
+      // Facebook trả về { error: { ... } } trong body
+      if (fbError.error) {
+        return { error: fbError.error };
+      }
+      // Một số response lỗi khác có cấu trúc khác
+      return { error: { error_user_msg: JSON.stringify(fbError), code: err.response.status } };
+    }
+    Logger.warn(`[FacebookLoginHelper] Network error:`, err.message);
+    return { error: { error_user_msg: err.message, code: err.response?.status || -1 } };
   }
 }
 
@@ -157,13 +169,20 @@ export async function loginWithCredentials(
     return buildLoginResult(dataJson, 0);
   }
 
+  // 2FA required but user didn't provide a secret — return the 2FA error immediately
+  // (không thử bước 2 với password rỗng, tránh lỗi 400 ghi đè)
+  if (!twoFASecret) {
+    return buildLoginResult(dataJson, 0);
+  }
+
   // Step 2: Handle 2FA challenge
-  const token2FA = getToken2FA(twoFASecret || '');
-  const dataForm2FA = baseForm(await token2FA, 'two_factor', 2);
+  const totpCode = await getToken2FA(twoFASecret);
+  const dataForm2FA = baseForm(totpCode, 'two_factor', 2);
   const errorData = error.error_data || {};
-  dataForm2FA.twofactor_code = await token2FA;
+  dataForm2FA.twofactor_code = totpCode;
   dataForm2FA.userid = String(errorData.uid || '');
   dataForm2FA.first_factor = String(errorData.login_first_factor || '');
+  dataForm2FA.auth_token = String(errorData.auth_token || '');
 
   const pass2FA = await postLogin(dataForm2FA, httpsAgent);
   if (pass2FA?.error) {

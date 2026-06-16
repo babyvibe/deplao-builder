@@ -290,6 +290,13 @@ class ZaloLoginHelper {
                 return;
             }
 
+            // Nếu account đã bị xoá trong khi timer đang chờ → không reconnect
+            if (ZaloLoginHelper.removedAccounts.has(zaloId)) {
+                Logger.log(`[ZaloLoginHelper] ${zaloId} was removed — cancelling reconnect attempt ${attempt + 1}`);
+                ZaloLoginHelper.reconnectAttempts.delete(zaloId);
+                return;
+            }
+
             Logger.log(`[ZaloLoginHelper] ${zaloId} attempting reconnect #${attempt + 1}...`);
             try {
                 const helper = new ZaloLoginHelper();

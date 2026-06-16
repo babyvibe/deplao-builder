@@ -63,6 +63,8 @@ export class FacebookService {
   private e2eeThreads: Set<string> = new Set();
   /** Debounce avatar refresh — chỉ 1 lần mỗi user/session */
   private avatarRefreshDebounce = new Set<string>();
+  /** Bridge instance ID — tăng mỗi lần startE2EEBridge, dùng để detect stale reconnect timers (BUG #6 fix) */
+  private e2eeBridgeGen: number = 0;
 
   private constructor(accountId: string, cookie: string, proxyId?: number | null) {
     this.accountId = accountId;
@@ -760,6 +762,8 @@ export class FacebookService {
       // 1. Spawn Go bridge
       this.e2eeBridge = new FacebookE2EEBridge(binaryPath);
       this.e2eeBridge.spawn();
+      const bridgeInstance = this.e2eeBridge;
+      const bridgeGen = ++this.e2eeBridgeGen; // BUG #6 fix: track instance for stale timer detection
 
       // 2. Parse E2EE cookies
       let cookies: Record<string, string>;
@@ -797,15 +801,21 @@ export class FacebookService {
         this.handleBridgeEvent(evt);
       });
 
+      // BUG #6 fix: dùng bridgeGen để detect stale timer
       this.e2eeBridge.on('closed', (code: number | null) => {
-        Logger.warn(`[FacebookService:${this.accountId}] E2EE bridge closed (code=${code})`);
-        this.e2eeBridge = null; // Clear reference so reconnect check works
+        Logger.warn(`[FacebookService:${this.accountId}] E2EE bridge closed (code=${code}, gen=${bridgeGen})`);
+        // Chỉ clear nếu bridge hiện tại vẫn là instance này
+        if (this.e2eeBridge === bridgeInstance) {
+          this.e2eeBridge = null;
+        }
         this.setE2EEStatus('disconnected');
-        // Auto-reconnect nếu service vẫn connected
+        // Auto-reconnect nếu service vẫn connected và bridge chưa được thay thế
         if (this.isConnected()) {
           Logger.log(`[FacebookService:${this.accountId}] E2EE bridge closed — attempting reconnect in 10s...`);
           setTimeout(() => {
-            if (this.isConnected() && !this.e2eeBridge?.isAlive()) {
+            // BUG #6 fix: chỉ reconnect nếu bridge instance không thay đổi
+            // và e2eeBridgeGen không tăng (không có bridge mới được tạo)
+            if (this.isConnected() && this.e2eeBridgeGen === bridgeGen && !this.e2eeBridge?.isAlive()) {
               this.startE2EEBridge(fbId).catch(() => {});
             }
           }, 10000);
@@ -1827,6 +1837,70 @@ export class FacebookService {
   public getAccountId(): string { return this.accountId; }
   public getRealFacebookId(): string | null { return this.dataFB?.FacebookID || null; }
   public isConnected(): boolean { return this.status === 'connected'; }
+
+  /**
+   * Kiểm tra MQTT listener thực sự còn kết nối không (BUG #3 fix).
+   * Khác với isConnected() chỉ check status flag — method này check actual socket.
+   * Dùng trước khi gửi tin nhắn để đảm bảo kết nối thực sự alive.
+   */
+  public isListenerActuallyConnected(): boolean {
+    if (!this.listener) return false;
+    return this.listener.isActuallyConnected();
+  }
+
+  /**
+   * Kiểm tra kết nối và tự động reconnect nếu listener đã chết (BUG #3 fix).
+   * Gọi trước mỗi lần send message để đảm bảo connection thực sự alive.
+   * Trả về true nếu sẵn sàng gửi, false nếu không thể gửi.
+   */
+  public async ensureConnected(): Promise<boolean> {
+    // Service says connected → verify listener thực sự alive
+    if (this.status === 'connected' && this.isListenerActuallyConnected()) {
+      return true;
+    }
+
+    // Service says connected but listener actually dead → force reconnect
+    if (this.status === 'connected' && !this.isListenerActuallyConnected()) {
+      Logger.warn(`[FacebookService:${this.accountId}] Status is 'connected' but listener is dead — forcing reconnect`);
+      try {
+        // Ngắt listener cũ và tạo lại
+        if (this.listener) {
+          this.listener.disconnect();
+          this.listener = null;
+        }
+        await this._doConnect();
+        return this.isListenerActuallyConnected();
+      } catch (err: any) {
+        Logger.error(`[FacebookService:${this.accountId}] ensureConnected reconnect failed: ${err.message}`);
+        return false;
+      }
+    }
+
+    // Not connected at all → try to connect
+    if (this.status !== 'connected' && this.status !== 'connecting') {
+      Logger.log(`[FacebookService:${this.accountId}] Not connected — attempting connect`);
+      try {
+        await this.connect();
+        return this.isListenerActuallyConnected();
+      } catch (err: any) {
+        Logger.error(`[FacebookService:${this.accountId}] ensureConnected failed: ${err.message}`);
+        return false;
+      }
+    }
+
+    // Already connecting → wait a bit
+    if (this.status === 'connecting') {
+      Logger.log(`[FacebookService:${this.accountId}] Already connecting — waiting...`);
+      if (this._connectPromise) {
+        try {
+          await Promise.race([this._connectPromise, new Promise(r => setTimeout(r, 15000))]);
+        } catch {}
+      }
+      return this.isListenerActuallyConnected();
+    }
+
+    return false;
+  }
 
   /** Reset retry count của MQTT listener (gọi khi user manual reconnect từ dashboard) */
   public resetListenerRetryCount(): void {

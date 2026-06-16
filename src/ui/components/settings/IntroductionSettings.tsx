@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import ipc from '@/lib/ipc';
+import qrCodeImg from '../../../assets/donate/qr.png';
 
 type FeatureId =
   | 'overview'
@@ -1066,13 +1067,127 @@ function AIAssistantPanel() {
 
         <Card>
           <SectionTitle>📦 Cài đặt 9Router</SectionTitle>
+          <div className="space-y-2 mb-3">
+            <div className="bg-gray-900/60 border border-blue-700/40 rounded-lg p-3 space-y-2">
+              <p className="text-gray-200 text-xs font-semibold">⚡ Hướng dẫn nhanh — 2 lệnh trong Terminal:</p>
+              <div className="bg-gray-900/80 border border-gray-700 rounded-lg p-2.5 font-mono text-xs space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <span className="w-5 h-5 rounded-full bg-green-900/40 text-green-400 flex items-center justify-center text-[10px] font-bold flex-shrink-0">1</span>
+                  <code className="text-green-400">npm install -g 9router</code>
+                  <span className="text-gray-500 text-[10px]">← Cài đặt 9Router</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="w-5 h-5 rounded-full bg-blue-900/40 text-blue-400 flex items-center justify-center text-[10px] font-bold flex-shrink-0">2</span>
+                  <code className="text-blue-400">9router</code>
+                  <span className="text-gray-500 text-[10px]">← Chạy 9Router (giữ cửa sổ Terminal mở)</span>
+                </div>
+              </div>
+              <p className="text-gray-500 text-[10px]">
+                Sau khi chạy, Dashboard mở tại <strong className="text-gray-400">http://localhost:20128</strong>
+              </p>
+            </div>
+          </div>
           <StepList steps={[
-            { title: 'Cài đặt Node.js', desc: 'Tải và cài Node.js phiên bản 18+ từ <strong class="text-gray-200">https://nodejs.org</strong>. Kiểm tra: <code style={{color:"#86efac"}}>node -v</code>' },
-            { title: 'Cài đặt 9Router', desc: 'Mở Terminal (CMD/PowerShell) và chạy: <code style={{color:"#86efac"}}>npm install -g 9router</code>' },
-            { title: 'Chạy 9Router', desc: 'Sau khi cài, chạy lệnh: <code style={{color:"#86efac"}}>9router</code> — Dashboard sẽ mở tại <strong class="text-gray-200">http://localhost:20128</strong>' },
-            { title: 'Kết nối Provider', desc: 'Mở http://localhost:20128 → Settings → Add Provider → nhập API Key của OpenAI/Claude/Gemini.' },
-            { title: 'Copy API Endpoint', desc: '9Router Dashboard → Copy endpoint URL (VD: <strong class="text-gray-200">http://localhost:20128/v1/chat/completions</strong>)' },
+            { title: 'Cài Node.js (nếu chưa có)', desc: 'Tải và cài Node.js phiên bản 18+ từ <strong class="text-gray-200">https://nodejs.org</strong>. Kiểm tra: <code style={{color:"#86efac",background:"#1f2937",padding:"1px 5px",borderRadius:"3px"}}>node -v</code>' },
+            { title: 'Cài đặt 9Router', desc: 'Mở Terminal (CMD/PowerShell) và chạy: <code style={{color:"#86efac",background:"#1f2937",padding:"1px 5px",borderRadius:"3px"}}>npm install -g 9router</code>' },
+            { title: 'Chạy 9Router', desc: 'Sau khi cài xong, gõ lệnh: <code style={{color:"#86efac",background:"#1f2937",padding:"1px 5px",borderRadius:"3px"}}>9router</code> — giữ Terminal chạy nền.' },
+            { title: 'Kết nối Provider', desc: 'Mở Dashboard tại <strong class="text-gray-200">http://localhost:20128</strong> → Settings → Add Provider → nhập API Key (OpenAI, Claude, Gemini...).' },
+            { title: 'Dùng trong Deplao', desc: 'Vào <strong class="text-gray-200">Cài đặt → Giới thiệu → Trợ lý AI</strong> hoặc <strong class="text-gray-200">Tích hợp → Trợ lý AI</strong>, chọn nền tảng <strong class="text-gray-200">9Router</strong> và chọn model miễn phí.' },
           ]} />
+        </Card>
+
+        <Card>
+          <SectionTitle>🖼️ Hướng dẫn chi tiết các bước setup 9Router FREE</SectionTitle>
+          <div className="space-y-3">
+            {/* Step 1 */}
+            <div className="bg-gray-900/40 border border-gray-700/60 rounded-xl p-3.5 flex items-start gap-3.5 hover:border-blue-700/50 transition-colors group">
+              <div className="w-9 h-9 rounded-xl bg-blue-900/50 border border-blue-700/40 flex items-center justify-center text-blue-400 font-bold text-sm flex-shrink-0 group-hover:bg-blue-800/50 group-hover:border-blue-600/50 transition-colors">1</div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-gray-200 text-xs font-semibold">Mở Terminal</span>
+                  <span className="text-[10px] text-gray-400 bg-gray-700/50 px-1.5 py-0.5 rounded-full">CMD / PowerShell</span>
+                </div>
+                <p className="text-gray-400 text-[11px] leading-relaxed">
+                  Nhấn <strong className="text-gray-300">Win + R</strong> → gõ <strong className="text-gray-300">cmd</strong> → Enter.
+                  Hoặc chuột phải Start → <strong className="text-gray-300">Terminal</strong>.
+                </p>
+              </div>
+            </div>
+
+            {/* Step 2 */}
+            <div className="bg-gray-900/40 border border-gray-700/60 rounded-xl p-3.5 flex items-start gap-3.5 hover:border-blue-700/50 transition-colors group">
+              <div className="w-9 h-9 rounded-xl bg-blue-900/50 border border-blue-700/40 flex items-center justify-center text-blue-400 font-bold text-sm flex-shrink-0 group-hover:bg-blue-800/50 group-hover:border-blue-600/50 transition-colors">2</div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-gray-200 text-xs font-semibold">Cài đặt 9Router</span>
+                  <span className="text-[10px] text-gray-400 bg-gray-700/50 px-1.5 py-0.5 rounded-full">npm</span>
+                </div>
+                <p className="text-gray-400 text-[11px] leading-relaxed mb-1.5">
+                  Copy và paste dòng sau vào Terminal, nhấn <strong className="text-gray-300">Enter</strong>:
+                </p>
+                <div className="bg-gray-900/80 rounded-lg px-3 py-2 border border-gray-700/60">
+                  <code className="text-green-400 text-xs font-mono select-all">npm install -g 9router</code>
+                </div>
+                <p className="text-gray-500 text-[10px] mt-1">Đợi ~10-30s cho đến khi thấy dòng <code className="text-gray-400">added X packages</code></p>
+              </div>
+            </div>
+
+            {/* Step 3 */}
+            <div className="bg-gray-900/40 border border-gray-700/60 rounded-xl p-3.5 flex items-start gap-3.5 hover:border-blue-700/50 transition-colors group">
+              <div className="w-9 h-9 rounded-xl bg-blue-900/50 border border-blue-700/40 flex items-center justify-center text-blue-400 font-bold text-sm flex-shrink-0 group-hover:bg-blue-800/50 group-hover:border-blue-600/50 transition-colors">3</div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-gray-200 text-xs font-semibold">Chạy 9Router</span>
+                  <span className="text-[10px] text-gray-400 bg-gray-700/50 px-1.5 py-0.5 rounded-full">startup</span>
+                </div>
+                <p className="text-gray-400 text-[11px] leading-relaxed mb-1.5">
+                  Gõ lệnh sau và nhấn <strong className="text-gray-300">Enter</strong>:
+                </p>
+                <div className="bg-gray-900/80 rounded-lg px-3 py-2 border border-gray-700/60">
+                  <code className="text-blue-400 text-xs font-mono select-all">9router</code>
+                </div>
+                <p className="text-gray-500 text-[10px] mt-1">
+                  ⏳ Lần đầu chạy có thể hơi lâu — đợi đến khi thấy <strong className="text-gray-400">Dashboard ready at http://localhost:20128</strong>
+                </p>
+              </div>
+            </div>
+
+            {/* Step 4 */}
+            <div className="bg-gray-900/40 border border-gray-700/60 rounded-xl p-3.5 flex items-start gap-3.5 hover:border-blue-700/50 transition-colors group">
+              <div className="w-9 h-9 rounded-xl bg-blue-900/50 border border-blue-700/40 flex items-center justify-center text-blue-400 font-bold text-sm flex-shrink-0 group-hover:bg-blue-800/50 group-hover:border-blue-600/50 transition-colors">4</div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-gray-200 text-xs font-semibold">Cấu hình trong Deplao</span>
+                  <span className="text-[10px] text-green-400 bg-green-900/30 px-1.5 py-0.5 rounded-full">done ✅</span>
+                </div>
+                <p className="text-gray-400 text-[11px] leading-relaxed">
+                  Vào <strong className="text-gray-300">Cài đặt → Giới thiệu → Trợ lý AI</strong> (hoặc <strong className="text-gray-300">Tích hợp → Trợ lý AI</strong>), tạo trợ lý mới,
+                  chọn nền tảng <strong className="text-blue-400">9Router</strong>, chọn model FREE như <strong className="text-gray-300">kr/claude-sonnet-4.5</strong> hoặc <strong className="text-gray-300">oc/deepseek-v4-flash-free</strong>,
+                  API Key nhập bất kỳ → Lưu → Test. 🎉
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Issue #31 reference */}
+          <div className="mt-3 bg-blue-900/20 border border-blue-700/40 rounded-lg px-3.5 py-2.5">
+            <div className="flex items-start gap-2.5">
+              <span className="text-blue-400 text-sm flex-shrink-0 mt-0.5">💡</span>
+              <div>
+                <p className="text-blue-300 text-[11px] font-semibold">Model tự động đồng bộ từ 9Router</p>
+                <p className="text-gray-400 text-[10px] leading-relaxed mt-0.5">
+                  Sau khi kết nối thành công, danh sách model trong Deplao sẽ tự động cập nhật theo các provider bạn đã thêm vào 9Router.
+                  Nếu có model mới xuất hiện trong Dashboard 9Router, bạn chỉ cần reload trang Deplao để thấy — không cần cấu hình thêm.{' '}
+                  <button
+                    onClick={() => ipc.shell?.openExternal('https://github.com/babyvibe/deplao-builder/issues/31')}
+                    className="text-blue-400 hover:text-blue-300 underline underline-offset-2 inline-flex items-center gap-0.5"
+                  >
+                    Theo dõi issue #31 →
+                  </button>
+                </p>
+              </div>
+            </div>
+          </div>
         </Card>
 
         <Card>
@@ -1784,7 +1899,7 @@ function DonateCoffeePanel() {
             </svg>
             <span className="text-xs text-gray-500">QR Code</span>
             <span className="text-[10px] text-gray-600 text-center px-4">
-              <img src="../../../src/assets/donate/qr.png" alt="QR Code" className="w-full h-full object-contain" />
+              <img src={qrCodeImg} alt="QR Code" className="w-full h-full object-contain" />
             </span>
           </div>
         </div>

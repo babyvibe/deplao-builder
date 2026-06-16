@@ -9,6 +9,7 @@ import ipc from '@/lib/ipc';
 import { useChatStore } from '@/store/chatStore';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
+import { parseStructuredResponse } from '../../../utils/aiUtils';
 
 interface ChatMsg {
   role: 'user' | 'assistant';
@@ -31,33 +32,6 @@ const PLATFORM_ICONS: Record<string, string> = {
 };
 
 const clampContextCount = (value: number) => Math.min(100, Math.max(1, Math.round(value)));
-
-// ─── Parse structured AI JSON response (text/image segments) ─────────────────
-
-function parseStructuredResponse(raw: string): Array<{ type: 'text' | 'image'; content: any }> | null {
-  if (!raw || typeof raw !== 'string') return null;
-  const trimmed = raw.trim();
-  if (!trimmed.startsWith('[')) return null;
-  try {
-    const parsed = JSON.parse(trimmed);
-    if (Array.isArray(parsed) && parsed.length > 0 &&
-        parsed.every((item: any) => item && (item.type === 'text' || item.type === 'image') && item.content !== undefined)) {
-      return parsed;
-    }
-  } catch {
-    try {
-      const jsonMatch = trimmed.match(/\[[\s\S]*]/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        if (Array.isArray(parsed) && parsed.length > 0 &&
-            parsed.every((item: any) => item && (item.type === 'text' || item.type === 'image') && item.content !== undefined)) {
-          return parsed;
-        }
-      }
-    } catch {}
-  }
-  return null;
-}
 
 export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
   const [assistants, setAssistants] = useState<AssistantSummary[]>([]);

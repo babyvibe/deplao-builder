@@ -10,9 +10,21 @@
 
 import { useEffect } from 'react';
 import ipc from '../lib/ipc';
-import { useChatStore, type MessageItem, type ContactItem } from '@/store/chatStore';
+import { useChatStore, type MessageItem } from '@/store/chatStore';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
+import { playNotificationSound, showDesktopNotification } from '../utils/NotificationService';
+import { getFilteredUnreadCount } from '@/lib/badgeUtils';
+
+/**
+ * Lấy tên hiển thị của account từ accountStore.
+ * Dùng trong notification title để biết tin nhắn đến từ account nào.
+ */
+function getAccountDisplayName(zaloId: string): string {
+  const accounts = useAccountStore.getState().accounts;
+  const acc = accounts.find(a => a.zalo_id === zaloId || a.facebook_id === zaloId);
+  return acc?.full_name || acc?.zalo_id || zaloId;
+}
 
 /**
  * Generate human-readable preview from FB attachment metadata
@@ -264,6 +276,32 @@ export function useChatEvents(): void {
       const currentActive = useChatStore.getState().activeThreadId;
       if (currentActive !== threadId && !isSelf) {
         store.incrementUnread(fbAccountId, threadId);
+
+        // ─── Sound + Desktop notification cho FB messages ────────────────
+        const appState = useAppStore.getState();
+        const { isMuted, isInOthers, getNotifSettingsForAccount } = appState;
+        const fbNotifSettings = getNotifSettingsForAccount(fbAccountId);
+        const notifAllowed = !('Notification' in window) || Notification.permission === 'granted';
+        if (!isMuted(fbAccountId, threadId) && !isInOthers(fbAccountId, threadId)) {
+          if (fbNotifSettings.soundEnabled && notifAllowed) {
+            playNotificationSound(fbNotifSettings.volume);
+          }
+          if (fbNotifSettings.desktopEnabled && notifAllowed) {
+            // Resolve contact name from store
+            const contacts = useChatStore.getState().contacts[fbAccountId] || [];
+            const ctact = contacts.find(c => c.contact_id === threadId);
+            const contactName = ctact?.display_name || message.userID || threadId;
+            const contactAvatar = ctact?.avatar_url || undefined;
+            const notifTitle = `[${getAccountDisplayName(fbAccountId)}] ${contactName}`;
+            showDesktopNotification(
+              notifTitle,
+              lastMsgPreview,
+              contactAvatar,
+              { zaloId: fbAccountId, threadId, threadType: 0 }
+            );
+          }
+        }
+        ipc.app?.setBadge(getFilteredUnreadCount());
       }
     });
     if (unsubMsg) unsubscribers.push(unsubMsg);

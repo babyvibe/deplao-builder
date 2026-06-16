@@ -1,4 +1,5 @@
 # Deplao
+*Website giới thiệu*:  https://deplaoapp.com/
 
 <p>
   <strong>🌐 Language:</strong>
@@ -7,7 +8,6 @@
   🇬🇧 <a href="./README.en.md">English</a>
 </p>
 
-*Giới thiệu*:  https://babyvibe.github.io/deplao-builder/
 
 ---
 
@@ -21,9 +21,21 @@
 [![SQLite](https://img.shields.io/badge/SQLite-local--first-003b57?logo=sqlite&logoColor=white)](#)
 [![Vite](https://img.shields.io/badge/Vite-6-646cff?logo=vite&logoColor=white)](#)
 [![Node.js](https://img.shields.io/badge/Node.js-18+-339933?logo=node.js&logoColor=white)](#)
-[![License](https://img.shields.io/badge/license-ISC-f59e0b)](#)
+[![License](https://img.shields.io/badge/license-MIT-22c55e)](#giấy-phép)
 [![Support](https://img.shields.io/badge/support-GitHub_Issues-0ea5e9)](https://github.com/babyvibe/deplao-builder/issues)
 
+
+<p align="center">
+  <a href="#tải-xuống">📥 Tải xuống</a> &nbsp;|&nbsp;
+  <a href="#công-nghệ-ngôn-ngữ-sử-dụng">🛠️ Công nghệ</a> &nbsp;|&nbsp;
+  <a href="#cài-đặt">📦 Cài đặt</a> &nbsp;|&nbsp;
+  <a href="#các-nhóm-tính-năng-chính">✨ Tính năng</a> &nbsp;|&nbsp;
+  <a href="#bảo-mật-dữ-liệu">🔒 Bảo mật</a> &nbsp;|&nbsp;
+  <a href="#giấy-phép">📝 MIT</a> &nbsp;|&nbsp;
+  <a href="#liên-hệ">📞 Liên hệ</a>
+</p>
+
+---
 
 ## ⬇️ Tải xuống
 
@@ -481,6 +493,13 @@ Deplao ưu tiên kiến trúc chạy cục bộ trên máy người dùng:
 
 Deplao xin gửi lời cảm ơn đến dự án:  👉 https://github.com/RFS-ADRENO/zca-js
 Nhờ những đóng góp và nền tảng từ dự án này, Deplao mới có thể được hoàn thiện và ra mắt như ngày hôm nay. Rất trân trọng những giá trị mà cộng đồng open-source mang lại 💙
+
+---
+
+## 📝 Giấy phép
+
+Dự án được phân phối dưới giấy phép **MIT**.  
+Xem file [LICENSE](LICENSE) để biết thêm chi tiết.
 
 ---
 

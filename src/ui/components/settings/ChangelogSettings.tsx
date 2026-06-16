@@ -14,6 +14,42 @@ interface VersionEntry {
 // ─── Changelog data — thêm entry mới vào ĐẦU mảng khi có bản cập nhật ────────
 const CHANGELOG: VersionEntry[] = [
   {
+    version: '26.6.2',
+    date: '06/2026',
+    type: 'minor',
+    highlights: [
+      '🔐 Đăng nhập Facebook bằng tài khoản + mật khẩu + xác thực 2FA — không cần cookie',
+      '🔔 Cài đặt thông báo và âm thanh riêng theo từng tài khoản — không cần chung tất cả',
+      '📡 Kết nối Facebook ổn định hơn — cải thiện duy trì phiên hoạt động',
+      '🤖 Trợ lý AI tích hợp thêm OpenRouter — thêm lựa chọn model AI giá rẻ hoặc miễn phí (author kungfu321)',
+      '🐛 Sửa lỗi kết nối model AI Free ở 9Router, workflow chuyển tiếp Zalo, xoá tài khoản còn sót kết nối, và kết nối Sapo',
+    ],
+    changes: [
+      {
+        category: 'new',
+        items: [
+          'Đăng nhập Facebook qua tài khoản + mật khẩu + secretKey 2FA — hỗ trợ xác thực hai yếu tố, không cần phải lấy cookie thủ công',
+          'Cài đặt thông báo góc màn hình và âm thanh theo từng tài khoản riêng biệt — mỗi tài khoản có thể tuỳ chỉnh thông báo riêng thay vì áp dụng chung một cấu hình cho tất cả',
+        ],
+      },
+      {
+        category: 'improved',
+        items: [
+          'Cải thiện duy trì kết nối Facebook ổn định hơn — giảm tình trạng mất kết nối và tự động phục hồi tốt hơn',
+        ],
+      },
+      {
+        category: 'fixed',
+        items: [
+          'Sửa lỗi kết nối đến một số model AI Free ở 9Router không hoạt động',
+          'Sửa lỗi workflow Zalo node chuyển tiếp không chuyển tiếp được tin nhắn & hình ảnh',
+          'Sửa lỗi đã xoá tài khoản trong Cài đặt nhưng vẫn còn kết nối ngầm',
+          'Sửa lỗi kết nối Sapo và cải thiện một số lỗi API tích hợp',
+        ],
+      },
+    ],
+  },
+  {
     version: '26.6.1',
     date: '06/2026',
     type: 'hotfix',

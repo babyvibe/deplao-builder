@@ -429,6 +429,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ─── Facebook ─────────────────────────────────────────────────────
   fb: {
     addAccount:          (params: { cookie: string; proxyId?: number | null }) => ipcRenderer.invoke('fb:addAccount', params),
+    addAccountWithCredentials: (params: { username: string; password: string; twoFASecret?: string; proxyId?: number | null }) => ipcRenderer.invoke('fb:addAccountWithCredentials', params),
     removeAccount:       (params: { accountId: string }) => ipcRenderer.invoke('fb:removeAccount', params),
     updateCookie:        (params: { accountId: string; cookie: string }) => ipcRenderer.invoke('fb:updateCookie', params),
     refreshProfile:      (params: { accountId: string }) => ipcRenderer.invoke('fb:refreshProfile', params),

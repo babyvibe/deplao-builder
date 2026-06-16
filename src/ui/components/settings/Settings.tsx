@@ -32,7 +32,8 @@ export default function Settings() {
   const [copyProgress, setCopyProgress] = useState<number>(0);
   const [copyTotal, setCopyTotal] = useState<number>(0);
   const { accounts, removeAccount } = useAccountStore();
-  const { showNotification, notifSettings, setNotifSettings, theme, setTheme } = useAppStore();
+  const { showNotification, notifSettings, setNotifSettings, getNotifSettingsForAccount, setNotifSettingsForAccount, theme, setTheme } = useAppStore();
+  const [selectedNotifAccount, setSelectedNotifAccount] = useState<string>('__global__');
 
   useEffect(() => {
     ipc.db?.getStoragePath().then((res: any) => {
@@ -299,52 +300,89 @@ export default function Settings() {
         {activeTab === 'notifications' && (
           <>
             <h2 className="text-base font-semibold text-white">🔔 Cài đặt thông báo</h2>
+
+            {/* Account selector */}
+            <div className="mb-2">
+              <label className="text-sm text-gray-400 block mb-1">Áp dụng cho tài khoản</label>
+              <select
+                value={selectedNotifAccount}
+                onChange={e => setSelectedNotifAccount(e.target.value)}
+                className="w-full bg-gray-700 text-white rounded-lg p-2 text-sm border border-gray-600"
+              >
+                <option value="__global__">🌐 Mặc định (tất cả tài khoản)</option>
+                {accounts.filter(a => (a.channel || 'zalo') === 'zalo').map(acc => (
+                  <option key={acc.zalo_id} value={acc.zalo_id}>
+                    📱 {acc.full_name || acc.zalo_id}
+                  </option>
+                ))}
+                {accounts.filter(a => a.channel === 'facebook').map(acc => (
+                  <option key={acc.zalo_id} value={acc.zalo_id}>
+                    📘 {acc.full_name || acc.zalo_id}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <Section>
               <div className="space-y-4">
-                <ToggleRow
-                  title="Thông báo màn hình"
-                  desc="Hiện popup ở góc màn hình khi có tin nhắn mới"
-                  value={notifSettings.desktopEnabled}
-                  onChange={(v) => {
-                    if (v) requestNotificationPermission().then(granted => {
-                      if (!granted) { showNotification('Trình duyệt đã chặn thông báo. Vui lòng cấp quyền trong cài đặt.', 'warning'); return; }
-                      setNotifSettings({ desktopEnabled: true });
-                    });
-                    else setNotifSettings({ desktopEnabled: false });
-                  }}
-                />
-                <ToggleRow
-                  title="Âm thanh thông báo"
-                  desc="Phát tiếng khi nhận tin nhắn mới"
-                  value={notifSettings.soundEnabled}
-                  onChange={(v) => setNotifSettings({ soundEnabled: v })}
-                />
-                {notifSettings.soundEnabled && (
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <p className="text-sm text-gray-400">Âm lượng</p>
-                      <span className="text-xs text-gray-400">{Math.round(notifSettings.volume * 100)}%</span>
-                    </div>
-                    <input type="range" min="0" max="100" step="5"
-                      value={Math.round(notifSettings.volume * 100)}
-                      onChange={e => setNotifSettings({ volume: parseInt(e.target.value) / 100 })}
-                      className="w-full accent-blue-500" />
-                  </div>
-                )}
-                <div className="flex gap-2 pt-1">
-                  <button onClick={() => { if (notifSettings.soundEnabled) playNotificationSound(notifSettings.volume); else showNotification('Hãy bật âm thanh trước', 'info'); }}
-                    className="flex-1 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg transition-colors">
-                    🔊 Test âm thanh
-                  </button>
-                  <button onClick={() => {
-                    requestNotificationPermission().then(granted => {
-                      if (!granted) { showNotification('Cần cấp quyền thông báo', 'warning'); return; }
-                      showDesktopNotification('Deplao', 'Đây là thông báo thử nghiệm 🎉');
-                    });
-                  }} className="flex-1 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg transition-colors">
-                    🖥 Test popup
-                  </button>
-                </div>
+                {(() => {
+                  const isGlobal = selectedNotifAccount === '__global__';
+                  const settings = isGlobal
+                    ? notifSettings
+                    : getNotifSettingsForAccount(selectedNotifAccount);
+                  const saveSettings = isGlobal
+                    ? setNotifSettings
+                    : (partial: any) => setNotifSettingsForAccount(selectedNotifAccount, partial);
+
+                  return (
+                    <>
+                      <ToggleRow
+                        title="Thông báo màn hình"
+                        desc="Hiện popup ở góc màn hình khi có tin nhắn mới"
+                        value={settings.desktopEnabled}
+                        onChange={(v) => {
+                          if (v) requestNotificationPermission().then(granted => {
+                            if (!granted) { showNotification('Trình duyệt đã chặn thông báo. Vui lòng cấp quyền trong cài đặt.', 'warning'); return; }
+                            saveSettings({ desktopEnabled: true });
+                          });
+                          else saveSettings({ desktopEnabled: false });
+                        }}
+                      />
+                      <ToggleRow
+                        title="Âm thanh thông báo"
+                        desc="Phát tiếng khi nhận tin nhắn mới"
+                        value={settings.soundEnabled}
+                        onChange={(v) => saveSettings({ soundEnabled: v })}
+                      />
+                      {settings.soundEnabled && (
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <p className="text-sm text-gray-400">Âm lượng</p>
+                            <span className="text-xs text-gray-400">{Math.round(settings.volume * 100)}%</span>
+                          </div>
+                          <input type="range" min="0" max="100" step="5"
+                            value={Math.round(settings.volume * 100)}
+                            onChange={e => saveSettings({ volume: parseInt(e.target.value) / 100 })}
+                            className="w-full accent-blue-500" />
+                        </div>
+                      )}
+                      <div className="flex gap-2 pt-1">
+                        <button onClick={() => { if (settings.soundEnabled) playNotificationSound(settings.volume); else showNotification('Hãy bật âm thanh trước', 'info'); }}
+                          className="flex-1 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg transition-colors">
+                          🔊 Test âm thanh
+                        </button>
+                        <button onClick={() => {
+                          requestNotificationPermission().then(granted => {
+                            if (!granted) { showNotification('Cần cấp quyền thông báo', 'warning'); return; }
+                            showDesktopNotification('Deplao', 'Đây là thông báo thử nghiệm 🎉');
+                          });
+                        }} className="flex-1 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg transition-colors">
+                          🖥 Test popup
+                        </button>
+                      </div>
+                    </>
+                  );
+                })()}
                 <p className="text-xs text-gray-500 leading-relaxed">
                   * Thông báo không hiện với những hội thoại đã tắt thông báo.<br />
                   * <strong>Windows:</strong> Kiểm tra quyền trong Settings &gt; Notifications.<br />

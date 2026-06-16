@@ -102,6 +102,8 @@ interface AppStore {
    */
   mutedThreads: Record<string, Record<string, number>>;
   notifSettings: NotifSettings;
+  /** Per-account notification setting overrides: zaloId -> NotifSettings */
+  notifSettingsOverrides: Record<string, NotifSettings>;
   /** In-memory others cache: zaloId -> Set<contactId> */
   othersConversations: Record<string, Set<string>>;
 
@@ -150,6 +152,13 @@ interface AppStore {
   getMuteUntil: (zaloId: string, contactId: string) => number | undefined;
 
   setNotifSettings: (settings: Partial<NotifSettings>) => void;
+
+  /** Get notification settings for a specific account (override + fallback to global) */
+  getNotifSettingsForAccount: (zaloId: string) => NotifSettings;
+  /** Set per-account notification settings (persists to DB) */
+  setNotifSettingsForAccount: (zaloId: string, settings: Partial<NotifSettings>) => Promise<void>;
+  /** Load per-account notification settings from DB into store */
+  loadNotifSettingsForAccount: (zaloId: string) => Promise<void>;
 
   /** Move a contact to Others folder. Persists to DB + updates in-memory cache. */
   addToOthers: (zaloId: string, contactId: string) => void;
@@ -335,6 +344,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   labelsFetchedAt: {},
   mutedThreads: {},
   notifSettings: loadNotifSettings(),
+  notifSettingsOverrides: {},
   theme: loadTheme(),
   fontSizeScale: loadFontSizeScale(),
   groupInfoCache: {},
@@ -570,6 +580,44 @@ export const useAppStore = create<AppStore>((set, get) => ({
     try { localStorage.setItem('app_notifSettings', JSON.stringify(updated)); } catch {}
     return { notifSettings: updated };
   }),
+
+  getNotifSettingsForAccount: (zaloId) => {
+    const state = get();
+    const override = state.notifSettingsOverrides[zaloId];
+    return override ? { ...state.notifSettings, ...override } : state.notifSettings;
+  },
+
+  setNotifSettingsForAccount: async (zaloId, settings) => {
+    const state = get();
+    const current = (state.notifSettingsOverrides[zaloId] || {}) as NotifSettings;
+    const updated: NotifSettings = {
+      soundEnabled: settings.soundEnabled ?? current.soundEnabled ?? true,
+      desktopEnabled: settings.desktopEnabled ?? current.desktopEnabled ?? true,
+      volume: settings.volume ?? current.volume ?? 0.6,
+    };
+    set((s) => ({
+      notifSettingsOverrides: { ...s.notifSettingsOverrides, [zaloId]: updated },
+    }));
+    try {
+      const ipc = (window as any).electronAPI?.db;
+      if (ipc?.setNotifSettings) {
+        await ipc.setNotifSettings(zaloId, updated);
+      }
+    } catch {}
+  },
+
+  loadNotifSettingsForAccount: async (zaloId) => {
+    try {
+      const ipc = (window as any).electronAPI?.db;
+      if (!ipc?.getNotifSettings) return;
+      const res = await ipc.getNotifSettings(zaloId);
+      if (res?.success && res.settings) {
+        set((s) => ({
+          notifSettingsOverrides: { ...s.notifSettingsOverrides, [zaloId]: res.settings },
+        }));
+      }
+    } catch {}
+  },
 
   setTheme: (theme) => {
     try { localStorage.setItem('app_theme', theme); } catch {}

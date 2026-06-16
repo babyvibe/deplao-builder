@@ -109,7 +109,7 @@ const config: UserConfig = {
     },
   },
   server: {
-    port: 5713,
+    port: 27799,
     strictPort: true,
   },
   resolve: {

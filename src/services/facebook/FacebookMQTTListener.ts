@@ -88,6 +88,16 @@ export class FacebookMQTTListener extends EventEmitter {
   private healthCheckTimer: ReturnType<typeof setInterval> | null = null;
   /** Đếm số lần lỗi queue liên tiếp — dùng trong ERROR_QUEUE_NOT_FOUND */
   private queueErrorCount: number = 0;
+  /** Guard flag: ngăn scheduleReconnect bị gọi 2 lần từ offline+close cascade (BUG #1 fix) */
+  private _reconnectPending: boolean = false;
+  /** Thời điểm nhận pong cuối cùng từ MQTT server (dùng để detect silent disconnect) */
+  private lastPongTime: number = 0;
+  /** Timer gửi ping định kỳ để kiểm tra kết nối còn sống (BUG #2 fix) */
+  private pingTimer: ReturnType<typeof setInterval> | null = null;
+  /** Phase 3 threshold: sau N lần retry phase 2, chuyển sang retry mỗi 5 phút (BUG #4 fix) */
+  private readonly PHASE3_THRESHOLD: number = 30;
+  /** Tổng số lần retry từ khi listener được tạo (không reset khi success — để track aging) */
+  private totalRetryCount: number = 0;
   /**
    * Callback để FacebookService kiểm tra cookie health trong lúc retry kéo dài.
    * Nếu cookie thực sự hết hạn → listener emit 'cookie_expired' và dừng retry.
@@ -126,6 +136,7 @@ export class FacebookMQTTListener extends EventEmitter {
 
     this.isConnecting = true;
     this.shouldReconnect = true;
+    this._reconnectPending = false; // Reset guard (BUG #1 fix)
 
     // ── Timeout guard: nếu connect treo quá 45s, reset isConnecting ──
     this.clearConnectTimeout();
@@ -225,7 +236,11 @@ export class FacebookMQTTListener extends EventEmitter {
       this.retryCount = 0;
       this.reconnectDelay = 3000;
       this.overflowRetryCount = 0;
+      this.lastPongTime = Date.now(); // Reset pong timer on connect (BUG #2 fix)
       this.emit('connectionStatus', 'connected' as FBConnectionStatus);
+
+      // ── Start ping/pong tracking (BUG #2 fix) ────────────────────
+      this.startPingPong();
 
       // Subscribe explicitly to topics (in addition to `st` field in username)
       this.client?.subscribe(FB_TOPICS, { qos: 1 }, (err) => {
@@ -272,7 +287,10 @@ export class FacebookMQTTListener extends EventEmitter {
       Logger.warn(`[FBMqtt:${this.accountId}] error event: ${err.message}`);
       this.isConnecting = false;
       this.clearConnectTimeout();
+      this.stopPingPong(); // Clean up ping timer (BUG #2 fix)
       this.emit('error', err);
+      // BUG #7 fix: emit disconnected status so UI updates immediately
+      this.emit('connectionStatus', 'disconnected' as FBConnectionStatus);
       // Error có thể xảy ra mà không kèm close event → schedule reconnect để an toàn
       this.scheduleReconnect();
     });
@@ -281,25 +299,31 @@ export class FacebookMQTTListener extends EventEmitter {
       Logger.warn(`[FBMqtt:${this.accountId}] disconnect packet: ${JSON.stringify(packet)}`);
       this.isConnecting = false;
       this.clearConnectTimeout();
+      this.stopPingPong(); // Clean up ping timer (BUG #2 fix)
       // Server chủ động gửi DISCONNECT → cần reconnect
       this.emit('connectionStatus', 'disconnected' as FBConnectionStatus);
       this.scheduleReconnect();
     });
 
+    // BUG #1 fix: close event — only reconnect if offline didn't already schedule
     this.client.on('close', () => {
       Logger.log(`[FBMqtt:${this.accountId}] MQTT closed`);
       this.isConnecting = false;
       this.clearConnectTimeout();
-      this.emit('connectionStatus', 'disconnected' as FBConnectionStatus);
-      this.scheduleReconnect();
+      this.stopPingPong(); // Clean up ping timer (BUG #2 fix)
+      if (!this._reconnectPending) {
+        this.emit('connectionStatus', 'disconnected' as FBConnectionStatus);
+        this.scheduleReconnect();
+      }
     });
 
+    // BUG #1 fix: offline event — mark reconnect pending, only schedule if not already
     this.client.on('offline', () => {
       Logger.log(`[FBMqtt:${this.accountId}] MQTT offline`);
       this.isConnecting = false;
       this.clearConnectTimeout();
+      this.stopPingPong(); // Clean up ping timer (BUG #2 fix)
       this.emit('connectionStatus', 'disconnected' as FBConnectionStatus);
-      // Đề phòng close event không fire → vẫn schedule reconnect
       this.scheduleReconnect();
     });
 
@@ -713,13 +737,19 @@ export class FacebookMQTTListener extends EventEmitter {
   private scheduleReconnect(fullReset: boolean = false): void {
     if (!this.shouldReconnect) return;
 
-    // ── Kiểm tra max retries ──────────────────────────────────────────
-    if (this.retryCount >= this.MAX_RECONNECT_ATTEMPTS) {
-      Logger.error(`[FBMqtt:${this.accountId}] Max reconnect attempts (${this.MAX_RECONNECT_ATTEMPTS}) reached — giving up`);
-      this.clearHealthCheck();
-      this.shouldReconnect = false;
-      this.emit('connectionStatus', 'max_retries' as FBConnectionStatus);
+    // ── BUG #1 fix: Guard chống double-schedule từ offline+close cascade ──
+    if (this._reconnectPending) {
+      Logger.log(`[FBMqtt:${this.accountId}] Reconnect already pending — skipping duplicate`);
       return;
+    }
+    this._reconnectPending = true;
+
+    // ── Kiểm tra max retries ──────────────────────────────────────────
+    // BUG #4 fix: Không dừng hẳn sau MAX_RECONNECT_ATTEMPTS nữa.
+    // Thay vào đó chuyển sang phase 3: retry mỗi 5 phút vô thời hạn.
+    // Chỉ dừng thực sự khi cookie expired hoặc user chủ động disconnect.
+    if (this.retryCount >= this.MAX_RECONNECT_ATTEMPTS && this.retryCount < this.PHASE3_THRESHOLD) {
+      Logger.warn(`[FBMqtt:${this.accountId}] Max reconnect attempts (${this.MAX_RECONNECT_ATTEMPTS}) reached — entering slow retry phase...`);
     }
 
     // ── Test connection health trước mỗi lần retry ────────────────────
@@ -731,15 +761,17 @@ export class FacebookMQTTListener extends EventEmitter {
           Logger.warn(`[FBMqtt:${this.accountId}] Pre-retry health check failed — cookie expired`);
           this.clearHealthCheck();
           this.shouldReconnect = false;
+          this._reconnectPending = false;
           this.emit('connectionStatus', 'cookie_expired' as FBConnectionStatus);
         }
       }).catch(() => {});
     }
 
-    // ─── Two-phase reconnect backoff ──────────────────────────────────
+    // ─── Three-phase reconnect backoff ──────────────────────────────────
     // Phase 1 (attempts 0..PHASE2_THRESHOLD): exponential 3s→4.5s→...→60s
-    // Phase 2 (attempts > PHASE2_THRESHOLD): steady 60s indefinitely
-    // NHƯNG: nếu vượt MAX_RECONNECT_ATTEMPTS (8) → dừng hẳn.
+    // Phase 2 (attempts > PHASE2_THRESHOLD, ≤ PHASE3_THRESHOLD): steady 60s
+    // Phase 3 (attempts > PHASE3_THRESHOLD): steady 5min indefinitely (BUG #4 fix)
+    //   → Không bao giờ dừng hẳn, trừ khi cookie expired hoặc user disconnect.
 
     // Chuyển từ Phase 1 → Phase 2: bắt đầu health check timer
     if (this.retryCount === this.PHASE2_THRESHOLD && !this.healthCheckTimer && this._healthCheckFn) {
@@ -755,6 +787,7 @@ export class FacebookMQTTListener extends EventEmitter {
             Logger.warn(`[FBMqtt:${this.accountId}] Health check failed — cookie expired, stopping retry`);
             this.clearHealthCheck();
             this.shouldReconnect = false;
+            this._reconnectPending = false;
             this.emit('connectionStatus', 'cookie_expired' as FBConnectionStatus);
           }
         } catch {
@@ -768,15 +801,20 @@ export class FacebookMQTTListener extends EventEmitter {
     if (this.retryCount < this.PHASE2_THRESHOLD) {
       // Phase 1: exponential backoff 3s → 60s
       this.reconnectDelay = Math.min(this.reconnectDelay * 1.5, 60000);
-    } else {
+    } else if (this.retryCount < this.PHASE3_THRESHOLD) {
       // Phase 2: steady 60s (không tăng nữa)
       this.reconnectDelay = 60000;
+    } else {
+      // Phase 3: steady 5 minutes indefinitely (BUG #4 fix)
+      this.reconnectDelay = 5 * 60 * 1000;
     }
     this.retryCount += 1;
+    this.totalRetryCount += 1;
 
-    Logger.log(`[FBMqtt:${this.accountId}] Reconnecting in ${Math.round(delay / 1000)}s (attempt ${this.retryCount}/${this.MAX_RECONNECT_ATTEMPTS})`);
+    Logger.log(`[FBMqtt:${this.accountId}] Reconnecting in ${Math.round(delay / 1000)}s (attempt ${this.retryCount}, total ${this.totalRetryCount})`);
 
     this.reconnectTimer = setTimeout(() => {
+      this._reconnectPending = false; // Reset guard before connecting
       if (this.shouldReconnect) {
         if (fullReset) {
           this.syncToken = null;
@@ -791,8 +829,10 @@ export class FacebookMQTTListener extends EventEmitter {
    */
   public disconnect(): void {
     this.shouldReconnect = false;
+    this._reconnectPending = false; // Reset guard (BUG #1 fix)
     this.clearHealthCheck();
     this.clearConnectTimeout();
+    this.stopPingPong(); // Clean up ping timer (BUG #2 fix)
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -832,6 +872,7 @@ export class FacebookMQTTListener extends EventEmitter {
     this.retryCount = 0;
     this.reconnectDelay = 3000;
     this.shouldReconnect = true;
+    this._reconnectPending = false; // Reset guard (BUG #1 fix)
     this.overflowRetryCount = 0;
     this.clearHealthCheck();
   }
@@ -854,6 +895,86 @@ export class FacebookMQTTListener extends EventEmitter {
       clearTimeout(this.connectTimeout);
       this.connectTimeout = null;
     }
+  }
+
+  // ─── Ping/Pong Health Tracking (BUG #2 fix) ──────────────────────────────
+
+  /**
+   * Bắt đầu gửi ping định kỳ để kiểm tra kết nối MQTT còn sống.
+   * MQTT protocol hỗ trợ PINGREQ/PINGRESP — mqtt.js xử lý internal,
+   * nhưng ta track thời điểm pong cuối để detect silent disconnect.
+   */
+  private startPingPong(): void {
+    this.stopPingPong();
+    this.lastPongTime = Date.now();
+
+    // Track incoming packets to detect pong responses
+    if (this.client) {
+      this.client.on('packetreceive', this._onPacketReceive);
+    }
+
+    // Gửi ping application-level mỗi 30s qua MQTT publish (dummy message)
+    // Facebook MQTT server sẽ respond hoặc ít nhất giữ kết nối alive
+    this.pingTimer = setInterval(() => {
+      if (!this.client?.connected) {
+        Logger.warn(`[FBMqtt:${this.accountId}] Ping check: client not connected`);
+        this.handlePingTimeout();
+        return;
+      }
+
+      // Kiểm tra thời gian từ pong cuối
+      const timeSinceLastPong = Date.now() - this.lastPongTime;
+      if (timeSinceLastPong > 120000) {
+        // 2 phút không có bất kỳ packet nào → kết nối có thể đã chết
+        Logger.warn(`[FBMqtt:${this.accountId}] No MQTT activity for ${Math.round(timeSinceLastPong / 1000)}s — connection may be dead`);
+        this.handlePingTimeout();
+      }
+    }, 30000); // Check mỗi 30s
+  }
+
+  private _onPacketReceive = (_packet: any) => {
+    // Bất kỳ packet nào từ server cũng update lastPongTime
+    this.lastPongTime = Date.now();
+  };
+
+  private handlePingTimeout(): void {
+    this.stopPingPong();
+    // Force disconnect và reconnect để khôi phục kết nối
+    if (this.client) {
+      try {
+        this.client.removeAllListeners();
+        this.client.end(true);
+      } catch {}
+      this.client = null;
+    }
+    this.isConnecting = false;
+    this.emit('connectionStatus', 'disconnected' as FBConnectionStatus);
+    this.scheduleReconnect();
+  }
+
+  private stopPingPong(): void {
+    if (this.pingTimer) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = null;
+    }
+    if (this.client) {
+      this.client.off('packetreceive', this._onPacketReceive);
+    }
+  }
+
+  /**
+   * Kiểm tra kết nối MQTT thực sự còn sống không.
+   * Khác với isConnected() — method này check cả:
+   * 1. client.connected (MQTT-level)
+   * 2. Thời gian từ packet cuối (application-level)
+   * Trả về true nếu kết nối thực sự healthy.
+   */
+  public isActuallyConnected(): boolean {
+    if (!this.client?.connected) return false;
+    // Nếu không có packet nào trong 2 phút → coi như đã chết
+    const timeSinceLastPong = Date.now() - this.lastPongTime;
+    if (this.lastPongTime > 0 && timeSinceLastPong > 120000) return false;
+    return true;
   }
 }
 

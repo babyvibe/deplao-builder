@@ -792,15 +792,15 @@ export const INTEGRATION_TEMPLATES: WorkflowTemplate[] = [
         config: { ...DEFAULT_CONFIGS['trigger.schedule'], cron: '0 8 * * *' },
       },
       {
-        id: 'n2', type: 'sapo.lookupProduct', label: 'Tra tồn kho Sapo',
+        id: 'n2', type: 'sapo.getInventory', label: 'Tra cứu tồn kho',
         position: { x: 300, y: 220 },
-        config: { ...DEFAULT_CONFIGS['sapo.lookupProduct'], keyword: '', limit: 50 },
+        config: { ...DEFAULT_CONFIGS['sapo.getInventory'], limit: 50 },
       },
       {
         id: 'n3', type: 'logic.if', label: 'Có sản phẩm < 5 cái?',
         position: { x: 300, y: 380 },
         config: {
-          left: '{{ $node.n2.products | filter(_.onHand < 5) | length }}',
+          left: '{{ $node.n2.items | filter(_.inventory_quantity < 5) | length }}',
           operator: 'greaterThan',
           right: '0',
         },
@@ -812,7 +812,7 @@ export const INTEGRATION_TEMPLATES: WorkflowTemplate[] = [
           ...DEFAULT_CONFIGS['notify.telegram'],
           message:
             '📉 *Cảnh báo sắp hết hàng!*\n\n' +
-            '{{ $node.n2.products | filter(_.onHand < 5) | map("⚠️ " + _.name + ": còn " + _.onHand + " cái") | join("\n") }}\n\n' +
+            '{{ $node.n2.items | filter(_.inventory_quantity < 5) | map("⚠️ " + _.product_title + " (" + _.variant_title + "): còn " + _.inventory_quantity + " cái") | join("\n") }}\n\n' +
             '⏰ Kiểm tra ngay: ' + new Date().toLocaleDateString('vi-VN'),
         },
       },
@@ -823,7 +823,7 @@ export const INTEGRATION_TEMPLATES: WorkflowTemplate[] = [
           ...DEFAULT_CONFIGS['zalo.sendMessage'],
           message:
             '⚠️ Cảnh báo tồn kho!\n\n' +
-            '{{ $node.n2.products | filter(_.onHand < 5) | map("• " + _.name + ": còn " + _.onHand) | join("\n") }}\n\n' +
+            '{{ $node.n2.items | filter(_.inventory_quantity < 5) | map("• " + _.product_title + " (" + _.variant_title + "): còn " + _.inventory_quantity) | join("\n") }}\n\n' +
             'Vui lòng kiểm tra và bổ sung hàng sớm nhé!',
         },
       },

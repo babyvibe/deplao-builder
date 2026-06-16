@@ -113,6 +113,16 @@ function reactionIconToEmoji(icon: string): string {
 }
 
 /**
+ * Lấy tên hiển thị của account từ accountStore.
+ * Dùng trong notification title để biết tin nhắn đến từ account nào.
+ */
+function getAccountDisplayName(zaloId: string): string {
+  const accounts = useAccountStore.getState().accounts;
+  const acc = accounts.find(a => a.zalo_id === zaloId || a.facebook_id === zaloId);
+  return acc?.full_name || acc?.zalo_id || zaloId;
+}
+
+/**
  * Xây dựng chuỗi preview cho last_message / notification dựa trên loại tin nhắn.
  * Dùng chung cho cả updateContact (last_message) và showDesktopNotification (msgText).
  */
@@ -683,7 +693,7 @@ export function useZaloEvents() {
       const avatar: string = requester.avatar || '';
       const msg: string = requester.msg || '';
 
-      const { notifSettings } = useAppStore.getState();
+      const notifSettings = useAppStore.getState().getNotifSettingsForAccount(zaloId);
       const currentAppState = useAppStore.getState();
       const currentCRMState = useCRMStore.getState();
       const currentAccountState = useAccountStore.getState();
@@ -722,8 +732,9 @@ export function useZaloEvents() {
       } else {
         // ── App is NOT focused → desktop notification + flash taskbar ──
         if (notifSettings.desktopEnabled && notifAllowed) {
+          const accName = getAccountDisplayName(zaloId);
           showDesktopNotification(
-            `🤝 Lời mời kết bạn`,
+            `[${accName}] 🤝 Lời mời kết bạn`,
             `${displayName}${msg ? `: "${msg}"` : ' muốn kết bạn với bạn'}`,
             avatar || undefined,
             { zaloId, threadId: '__friend_requests__', threadType: 0 }
@@ -770,10 +781,11 @@ export function useZaloEvents() {
       const displayName = requester?.displayName || userId;
       const avatar: string = requester?.avatar || '';
 
-      const { notifSettings } = useAppStore.getState();
-      if (notifSettings.desktopEnabled) {
+      const notifForAccount = useAppStore.getState().getNotifSettingsForAccount(zaloId);
+      if (notifForAccount.desktopEnabled) {
+        const accName = getAccountDisplayName(zaloId);
         showDesktopNotification(
-          `✅ Đã chấp nhận kết bạn`,
+          `[${accName}] ✅ Đã chấp nhận kết bạn`,
           `${displayName} đã chấp nhận lời mời kết bạn của bạn`,
           avatar || undefined,
           { zaloId, threadId: userId, threadType: 0 }
@@ -1017,7 +1029,8 @@ export function useZaloEvents() {
 
         // ─── Sound + Desktop notification ───────────────────────────────
         const appState = useAppStore.getState();
-        const { notifSettings, isMuted, isInOthers } = appState;
+        const { isMuted, isInOthers, getNotifSettingsForAccount } = appState;
+        const notifSettings = getNotifSettingsForAccount(zaloId);
         // Notification.permission đồng bộ với macOS system notification authorization (Electron 20+)
         // Khi user tắt notification trên macOS → permission = 'denied' → không phát âm thanh/hiện popup
         const notifAllowed = !('Notification' in window) || Notification.permission === 'granted';
@@ -1032,8 +1045,9 @@ export function useZaloEvents() {
               const contactName = nameOverride || ctact?.alias || ctact?.display_name || alias || realName || threadId;
               const contactAvatar = avatarOverride || ctact?.avatar_url || undefined;
               const msgText = buildMessagePreview(contentRaw, rawMsgType, isImage, content).slice(0, 120);
+              const notifTitle = `[${getAccountDisplayName(zaloId)}] ${contactName}`;
               showDesktopNotification(
-                contactName,
+                notifTitle,
                 msgText,
                 contactAvatar,
                 { zaloId, threadId, threadType: isGroup ? 1 : 0 }

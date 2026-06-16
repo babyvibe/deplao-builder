@@ -80,8 +80,7 @@ const CATALOG: Record<string, CatalogItem[]> = {
       icon: '🟢', color: 'bg-emerald-500',
       desc: 'Quản lý bán hàng đa kênh Sapo. Tra cứu đơn, khách hàng theo SĐT.',
       credentialFields: [
-        { key: 'apiKey',     label: 'API Key',    placeholder: 'Sapo API Key' },
-        { key: 'secretKey',  label: 'Secret Key', secret: true, placeholder: 'Sapo Secret Key' },
+        { key: 'accessToken',  label: 'Access Token', secret: true, placeholder: 'Lấy từ SAPO Admin → Cài đặt → Phát triển → Quản lý API → Token' },
         { key: 'storeDomain', label: 'Tên store (subdomain)', placeholder: 'vd: myshop (myshop.mysapo.net)' },
       ],
     },
@@ -189,6 +188,44 @@ function AISection({ onNavigateAi }: { onNavigateAi: () => void }) {
 
   return (
     <div id="section-ai" className="scroll-mt-20">
+      {/* 🚀 9Router FREE Banner */}
+      <div className="mb-4 bg-gray-900/60 border-l-4 border-l-blue-500 border border-gray-700/60 rounded-xl p-3.5">
+        <div className="flex items-start gap-3">
+          <div className="w-8 h-8 rounded-lg bg-blue-600/20 flex items-center justify-center text-lg flex-shrink-0 border border-blue-500/30">
+            🚀
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-gray-300 text-xs font-semibold mb-1.5">
+              Cài đặt <strong className="text-white">9Router</strong> để dùng AI <strong className="text-green-400">FREE</strong> cho:
+            </p>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+              {[
+                '💬 Gợi ý trả lời trong hội thoại',
+                '🤖 Hỏi đáp với AI trong hội thoại',
+                '⚡ Dùng AI tạo workflow bằng câu lệnh',
+                '🔄 Node AI trả lời — tạo chatbot 24/7',
+              ].map((text, i) => (
+                <p key={i} className="text-gray-300 text-[11px] flex items-center gap-1.5">
+                  <span className="text-blue-500/70">▸</span>
+                  {text}
+                </p>
+              ))}
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              window.dispatchEvent(new CustomEvent('nav:view', { detail: { view: 'settings' } }));
+              setTimeout(() => window.dispatchEvent(new CustomEvent('nav:settings', {
+                detail: { tab: 'introduction', subtab: 'ai-assistant' },
+              })), 80);
+            }}
+            className="flex-shrink-0 px-3 py-1.5 text-[11px] rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-600/40 hover:border-blue-500/60 transition-colors font-medium"
+          >
+            Hướng dẫn →
+          </button>
+        </div>
+      </div>
+
       {/* Section header */}
       <div className="flex items-center gap-3 mb-4">
         <div className="w-8 h-8 rounded-lg bg-amber-600 flex items-center justify-center text-base">

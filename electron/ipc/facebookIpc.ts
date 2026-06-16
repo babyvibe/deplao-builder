@@ -54,15 +54,109 @@ export function setFBMainWindow(_win: any) {}
 export function registerFacebookIpc(): void {
 
   /**
+   * Shared helper: verify cookie, save account to DB, connect.
+   * Dùng chung cho cả cookie-based và credentials-based login.
+   */
+  async function _addFBAccountCommon(cookie: string, proxyId: number | null | undefined): Promise<{
+    success: boolean; account?: any; facebookId?: string; name?: string; error?: string;
+  }> {
+    // Resolve proxy agent để dùng cho initSession
+    let httpsAgent: any = undefined;
+    if (proxyId) {
+      try {
+        const proxy = DatabaseService.getInstance().getProxyById(proxyId);
+        if (proxy) {
+          const { createProxyAgent } = require('../../src/utils/ProxyHelper');
+          httpsAgent = createProxyAgent(proxy);
+        }
+      } catch {}
+    }
+
+    // 1. Verify cookie alive + init session (with proxy)
+    const sessionData = await initSession(cookie, httpsAgent);
+    const fbId = sessionData.FacebookID;
+
+    if (!fbId || fbId === '0' || fbId.includes('Unable') || !fbId.match(/^\d+$/)) {
+      return { success: false, error: 'Cookie không hợp lệ hoặc đã hết hạn. Vui lòng đăng nhập lại Facebook và copy cookie mới.' };
+    }
+
+    // 2. Nếu account đã tồn tại (trong fb_accounts), xoá record cũ để thêm lại
+    const existing = DatabaseService.getInstance().getFBAccounts()
+      .find((a: any) => a.facebook_id === fbId);
+    if (existing) {
+      Logger.log(`[facebookIpc] _addFBAccountCommon — account ${fbId} đã tồn tại, xoá cũ và thêm lại`);
+      await FacebookConnectionManager.disconnect(existing.id).catch(() => {});
+      secureDelete(fbCookieKey(existing.id));
+      DatabaseService.getInstance().deleteFBAccount(existing.id);
+      DatabaseService.getInstance().deleteAccount(fbId);
+    }
+
+    // 3. Lấy tên + avatar
+    let name = fbId;
+    let avatarUrl = '';
+    try {
+      const html = await fetchFBHomepage(cookie);
+      const profile = await fetchBasicProfileFromHome(html);
+      name = profile.name || fbId;
+      avatarUrl = profile.avatarUrl || '';
+    } catch {}
+
+    // 4. Lưu vào DB (cookie mã hóa)
+    const accountId = uuid();
+    secureSet(fbCookieKey(accountId), cookie);
+
+    DatabaseService.getInstance().saveFBAccount({
+      id: accountId,
+      facebook_id: fbId,
+      name,
+      avatar_url: avatarUrl,
+      cookie_encrypted: cookie,
+      session_data: JSON.stringify(sessionData),
+      status: 'disconnected',
+    });
+
+    // Also sync to unified accounts table — use fbId as zalo_id (for license matching)
+    DatabaseService.getInstance()['run'](
+      `INSERT INTO accounts (zalo_id, full_name, avatar_url, phone, is_business, imei, user_agent, cookies, is_active, channel, proxy_id, created_at)
+       VALUES (?, ?, ?, '', 0, '', '', '', 1, 'facebook', ?, datetime('now'))
+       ON CONFLICT(zalo_id) DO UPDATE SET
+         full_name = excluded.full_name, avatar_url = excluded.avatar_url,
+         channel = 'facebook', is_active = 1, proxy_id = excluded.proxy_id`,
+      [fbId, name, avatarUrl, proxyId ?? null]
+    );
+
+    // 5. Connect (with proxy) — getOrCreate đã tự động connect
+    await FacebookConnectionManager.getOrCreate(accountId, cookie, proxyId);
+
+    const account = DatabaseService.getInstance().getFBAccount(accountId);
+    return { success: true, account, facebookId: fbId, name };
+  }
+
+  /**
    * Thêm tài khoản Facebook bằng cookie
    */
   ipcMain.handle('fb:addAccount', async (_event, { cookie, proxyId }: { cookie: string; proxyId?: number | null }) => {
     try {
-      // Resolve proxy agent để dùng cho initSession
+      return await _addFBAccountCommon(cookie, proxyId);
+    } catch (err: any) {
+      Logger.error(`[facebookIpc] fb:addAccount error: ${err.message}`);
+      return { success: false, error: err.message };
+    }
+  });
+
+  /**
+   * Thêm tài khoản Facebook bằng username/password (+ 2FA optional)
+   * Gọi loginWithCredentials → lấy cookie → tạo account qua _addFBAccountCommon
+   */
+  ipcMain.handle('fb:addAccountWithCredentials', async (_event, params: {
+    username: string; password: string; twoFASecret?: string; proxyId?: number | null;
+  }) => {
+    try {
+      // Resolve proxy agent cho loginWithCredentials
       let httpsAgent: any = undefined;
-      if (proxyId) {
+      if (params.proxyId) {
         try {
-          const proxy = DatabaseService.getInstance().getProxyById(proxyId);
+          const proxy = DatabaseService.getInstance().getProxyById(params.proxyId);
           if (proxy) {
             const { createProxyAgent } = require('../../src/utils/ProxyHelper');
             httpsAgent = createProxyAgent(proxy);
@@ -70,70 +164,40 @@ export function registerFacebookIpc(): void {
         } catch {}
       }
 
-      // 1. Verify cookie alive + init session (with proxy)
-      const sessionData = await initSession(cookie, httpsAgent);
-      const fbId = sessionData.FacebookID;
-
-      if (!fbId || fbId === '0' || fbId.includes('Unable') || !fbId.match(/^\d+$/)) {
-        return { success: false, error: 'Cookie không hợp lệ hoặc đã hết hạn. Vui lòng đăng nhập lại Facebook và copy cookie mới.' };
-      }
-
-      // 2. Nếu account đã tồn tại (trong fb_accounts), xoá record cũ để thêm lại
-      const existing = DatabaseService.getInstance().getFBAccounts()
-        .find((a: any) => a.facebook_id === fbId);
-      if (existing) {
-        Logger.log(`[facebookIpc] fb:addAccount — account ${fbId} đã tồn tại, xoá cũ và thêm lại`);
-        await FacebookConnectionManager.disconnect(existing.id).catch(() => {});
-        secureDelete(fbCookieKey(existing.id));
-        DatabaseService.getInstance().deleteFBAccount(existing.id);
-        // Cập nhật accounts table — account cũ có thể bị xoá mềm (is_active=0)
-        DatabaseService.getInstance().deleteAccount(fbId);
-      }
-
-      // 3. Lấy tên + avatar
-      let name = fbId;
-      let avatarUrl = '';
-      try {
-        const html = await fetchFBHomepage(cookie);
-        const profile = await fetchBasicProfileFromHome(html);
-        name = profile.name || fbId;
-        avatarUrl = profile.avatarUrl || '';
-      } catch {}
-
-      // 4. Lưu vào DB (cookie mã hóa)
-      const accountId = uuid();
-      secureSet(fbCookieKey(accountId), cookie);
-
-      // Lưu raw cookie vào cookie_encrypted làm fallback khi secureGet thất bại
-      // (ví dụ: safeStorage key thay đổi do cài lại app / migrate data)
-      DatabaseService.getInstance().saveFBAccount({
-        id: accountId,
-        facebook_id: fbId,
-        name,
-        avatar_url: avatarUrl,
-        cookie_encrypted: cookie,
-        session_data: JSON.stringify(sessionData),
-        status: 'disconnected',
-      });
-
-      // Also sync to unified accounts table — use fbId as zalo_id (for license matching)
-      DatabaseService.getInstance()['run'](
-        `INSERT INTO accounts (zalo_id, full_name, avatar_url, phone, is_business, imei, user_agent, cookies, is_active, channel, proxy_id, created_at)
-         VALUES (?, ?, ?, '', 0, '', '', '', 1, 'facebook', ?, datetime('now'))
-         ON CONFLICT(zalo_id) DO UPDATE SET
-           full_name = excluded.full_name, avatar_url = excluded.avatar_url,
-           channel = 'facebook', is_active = 1, proxy_id = excluded.proxy_id`,
-        [fbId, name, avatarUrl, proxyId ?? null]
+      // 1. Đăng nhập lấy cookie
+      const loginResult = await loginWithCredentials(
+        params.username, params.password, params.twoFASecret, httpsAgent
       );
 
-      // 5. Connect (with proxy) — getOrCreate đã tự động connect
-      const service = await FacebookConnectionManager.getOrCreate(accountId, cookie, proxyId);
+      // 2FA challenge — yêu cầu UI cung cấp twoFASecret
+      if (loginResult.error?.error_subcode === 1348162) {
+        return {
+          success: false,
+          need2FA: true,
+          error: loginResult.error.description || 'Tài khoản yêu cầu xác thực 2 yếu tố (2FA). Vui lòng nhập mã bí mật 2FA.',
+          errorTitle: loginResult.error.title,
+        };
+      }
 
+      // Lỗi đăng nhập khác (sai mật khẩu, checkpoint, ...)
+      if (!loginResult.success) {
+        Logger.warn(`[facebookIpc] loginWithCredentials failed:`, JSON.stringify(loginResult.error));
+        return {
+          success: false,
+          error: loginResult.error?.description || loginResult.error?.title || 'Đăng nhập thất bại',
+          errorTitle: loginResult.error?.title,
+        };
+      }
 
-      const account = DatabaseService.getInstance().getFBAccount(accountId);
-      return { success: true, account, facebookId: fbId, name };
+      // 2. Thành công — tạo account với cookie vừa lấy được
+      const cookie = loginResult.success.setCookies;
+      if (!cookie) {
+        return { success: false, error: 'Đăng nhập thành công nhưng không lấy được cookie.' };
+      }
+
+      return await _addFBAccountCommon(cookie, params.proxyId);
     } catch (err: any) {
-      Logger.error(`[facebookIpc] fb:addAccount error: ${err.message}`);
+      Logger.error(`[facebookIpc] fb:addAccountWithCredentials error: ${err.message}`);
       return { success: false, error: err.message };
     }
   });
