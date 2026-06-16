@@ -39,6 +39,7 @@ const AI_PLATFORMS: { key: string; label: string; icon: string; color: string; d
   { key: 'claude',   label: 'Claude',   icon: '🟠', color: 'bg-amber-600',   desc: 'Sonnet 4.6, Opus 4.8, Haiku 4.5' },
   { key: 'deepseek', label: 'DeepSeek', icon: '🔮', color: 'bg-purple-600',  desc: 'DeepSeek V3, R1' },
   { key: 'grok',     label: 'Grok',     icon: '⚡', color: 'bg-orange-600',  desc: 'Grok 3, Grok 3 Mini' },
+  { key: 'openrouter', label: 'OpenRouter', icon: '🔀', color: 'bg-indigo-600', desc: 'Gateway nhiều model qua một API key' },
 ];
 
 const AI_PLATFORM_META: Record<string, { label: string; color: string; icon: string }> = {
@@ -47,6 +48,7 @@ const AI_PLATFORM_META: Record<string, { label: string; color: string; icon: str
   claude:   { label: 'Claude',   color: 'bg-amber-600',   icon: '🟠' },
   deepseek: { label: 'DeepSeek', color: 'bg-purple-600',  icon: '🔮' },
   grok:     { label: 'Grok',     color: 'bg-orange-600',  icon: '⚡' },
+  openrouter: { label: 'OpenRouter', color: 'bg-indigo-600', icon: '🔀' },
 };
 
 const CATALOG: Record<string, CatalogItem[]> = {
