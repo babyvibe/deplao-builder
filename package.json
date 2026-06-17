@@ -13,7 +13,10 @@
     "build:renderer": "vite build",
     "production": "npm run build:bridge-e2ee && tsc -p tsconfig.electron.prod.json && node scripts/strip-console.js && npm run build:renderer && electron-builder --publish never"
   },
-  "author": "https://github.com/babyvibe",
+  "author": {
+    "name": "babyvibe",
+    "email": "babyvibe@users.noreply.github.com"
+  },
   "license": "MIT",
   "dependencies": {
     "axios": "^1.7.8",
