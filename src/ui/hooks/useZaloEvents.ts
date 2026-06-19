@@ -69,7 +69,7 @@ async function loadAliases(zaloId: string) {
       const account = useAccountStore.getState().accounts.find((a) => a.zalo_id === zaloId);
       if (!account) return;
       const auth = { cookies: account.cookies, imei: account.imei, userAgent: account.user_agent };
-      const res = await ipc.zalo?.getAliasList({ auth, count: 500 });
+      const res = await ipc.zalo?.getAliasList({ auth, count: 5000 });
       if (!res?.success) return;
       const items: { userId: string; alias: string }[] = res?.response?.items || [];
       for (const item of items) {
@@ -353,7 +353,7 @@ function extractContent(contentRaw: any, fallbackMessage?: string, msgType?: str
 }
 
 /** Background fetch thông tin contact, ưu tiên alias, cache 7 ngày */
-async function fetchContactInfo(zaloId: string, contactId: string): Promise<void> {
+export async function fetchContactInfo(zaloId: string, contactId: string): Promise<void> {
   const cacheKey = `${zaloId}__${contactId}`;
   const contacts = useChatStore.getState().contacts[zaloId] || [];
   const existing = contacts.find((c) => c.contact_id === contactId);
@@ -1579,6 +1579,13 @@ export function useZaloEvents() {
     }));
     unsubs.push(ipc.on('db:contactAliasChanged', (data: any) => {
       window.dispatchEvent(new CustomEvent('ui:contactAliasChanged', { detail: data }));
+      // Cập nhật Zustand store ngay lập tức — quan trọng cho employee nhận từ relay
+      if (data?.ownerZaloId && data?.contactId && data?.alias !== undefined) {
+        useChatStore.getState().updateContact(data.ownerZaloId, {
+          contact_id: data.contactId,
+          alias: data.alias,
+        });
+      }
     }));
 
     return () => { unsubs.forEach(u => u?.()); };
