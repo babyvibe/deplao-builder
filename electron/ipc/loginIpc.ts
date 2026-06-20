@@ -1,3 +1,4 @@
+import axios from 'axios';
 import { ipcMain, BrowserWindow } from 'electron';
 import LoginService from '../../src/services/login/LoginService';
 import DatabaseService from '../../src/services/database/DatabaseService';
@@ -316,6 +317,76 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
             return { success: true, results };
         } catch (error: any) {
             return { success: false, error: error.message };
+        }
+    });
+
+    // ─── Check + refresh avatar cho tài khoản Zalo ───────────────────────
+    // Kiểm tra avatar URL còn hạn không (HTTP HEAD). Nếu lỗi (403/etc) thì
+    // gọi Zalo API fetchAccountInfo() để lấy URL mới + cập nhật DB.
+    ipcMain.handle('login:checkAndRefreshAvatar', async (_event, { zaloId }) => {
+        try {
+            if (!zaloId) return { success: false, refreshed: false, error: 'Missing zaloId' };
+
+            const conn = ConnectionManager.getConnection(zaloId);
+            if (!conn || !conn.connected) {
+                return { success: false, refreshed: false, reason: 'not_connected' };
+            }
+
+            // Đọc account từ DB để lấy avatar_url hiện tại
+            const accounts = DatabaseService.getInstance().getAccounts();
+            const account = accounts.find((a: any) => a.zalo_id === zaloId);
+            if (!account) return { success: false, refreshed: false, error: 'Account not found' };
+
+            const currentAvatarUrl: string = account.avatar_url || '';
+
+            // Kiểm tra URL hiện tại nếu có
+            if (currentAvatarUrl) {
+                try {
+                    const headResp = await axios.head(currentAvatarUrl, {
+                        timeout: 5000,
+                        validateStatus: () => true,
+                        headers: { 'User-Agent': 'Mozilla/5.0' },
+                    });
+                    if (headResp.status === 200) {
+                        Logger.log(`[AvatarCheck] ${zaloId}: avatar URL still valid (${currentAvatarUrl.substring(0, 60)}...)`);
+                        return { success: true, refreshed: false };
+                    }
+                    Logger.log(`[AvatarCheck] ${zaloId}: avatar URL returned status ${headResp.status}, refreshing...`);
+                } catch (headErr: any) {
+                    Logger.log(`[AvatarCheck] ${zaloId}: avatar HEAD request failed (${headErr.message}), refreshing...`);
+                }
+            } else {
+                Logger.log(`[AvatarCheck] ${zaloId}: no avatar URL on file, fetching...`);
+            }
+
+            // URL expired hoặc không có → gọi Zalo API để refresh
+            const accountInfo = await conn.api.fetchAccountInfo();
+            const newAvatar = accountInfo?.profile?.avatar || (accountInfo as any)?.avatar || '';
+            const newName = accountInfo?.profile?.displayName || (accountInfo as any)?.displayName || '';
+
+            if (newAvatar && newAvatar !== currentAvatarUrl) {
+                // Update DB với avatar + name mới
+                const phone = accountInfo?.profile?.phoneNumber || (accountInfo as any)?.phoneNumber || '';
+                const bizPkgId = accountInfo?.profile?.bizPkg?.pkgId ?? (accountInfo as any)?.bizPkg?.pkgId ?? 0;
+                const isBusiness = bizPkgId > 0 ? 1 : 0;
+                DatabaseService.getInstance().updateAccountInfo(zaloId, phone, isBusiness, newAvatar, newName || undefined);
+
+                Logger.log(`[AvatarCheck] ${zaloId}: refreshed avatar: ${newAvatar.substring(0, 60)}...${newName ? ', name: ' + newName : ''}`);
+                return { success: true, refreshed: true, avatar_url: newAvatar, full_name: newName || undefined };
+            }
+
+            if (newAvatar && newAvatar === currentAvatarUrl) {
+                // URL giống nhau nhưng bây giờ vẫn valid → chỉ update timestamp
+                Logger.log(`[AvatarCheck] ${zaloId}: avatar unchanged, still valid`);
+                return { success: true, refreshed: false };
+            }
+
+            // fetchAccountInfo trả về avatar rỗng
+            Logger.warn(`[AvatarCheck] ${zaloId}: fetchAccountInfo returned empty avatar`);
+            return { success: true, refreshed: false, reason: 'empty_avatar_response' };
+        } catch (error: any) {
+            Logger.error(`[AvatarCheck] ${zaloId}: error: ${error.message}`);
+            return { success: false, refreshed: false, error: error.message };
         }
     });
 

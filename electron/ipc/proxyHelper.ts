@@ -48,21 +48,23 @@ export async function uploadEmployeeMedia(filePaths: string[], zaloId?: string):
     const client = HCM.getInstance().getServiceForWorkspace(activeWs.id);
     if (!client) throw new Error('Không kết nối tới Boss');
 
-    const bossPaths: string[] = [];
-    for (const fp of filePaths) {
-        if (!fp) { bossPaths.push(fp); continue; }
+    const bossPaths: string[] = new Array(filePaths.length);
+
+    // Upload parallel all files để giảm thời gian chờ (nhất là khi gửi nhiều ảnh)
+    const uploadTasks = filePaths.map(async (fp, index) => {
+        if (!fp) { bossPaths[index] = fp; return; }
         if (!fs.existsSync(fp)) {
             Logger.warn(`[uploadEmployeeMedia] File not found on Employee: ${fp}`);
-            bossPaths.push(fp);
-            continue;
+            bossPaths[index] = fp;
+            return;
         }
+        const buffer = fs.readFileSync(fp);
+        const base64 = buffer.toString('base64');
+        const filename = path.basename(fp);
         try {
-            const buffer = fs.readFileSync(fp);
-            const base64 = buffer.toString('base64');
-            const filename = path.basename(fp);
             const result = await client.uploadMedia(base64, filename, zaloId);
             if (result.success && result.bossPath) {
-                bossPaths.push(result.bossPath);
+                bossPaths[index] = result.bossPath;
                 Logger.log(`[uploadEmployeeMedia] ✅ ${fp} → ${result.bossPath}`);
             } else {
                 throw new Error(result.error || 'Upload thất bại');
@@ -70,6 +72,8 @@ export async function uploadEmployeeMedia(filePaths: string[], zaloId?: string):
         } catch (err: any) {
             throw new Error(`Không thể upload file ${fp}: ${err.message}`);
         }
-    }
+    });
+
+    await Promise.all(uploadTasks);
     return bossPaths;
 }

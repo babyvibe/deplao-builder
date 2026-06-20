@@ -63,6 +63,23 @@ function resolveZaloId(auth: any): string {
 }
 
 /**
+ * Nếu auth không có cookies nhưng đã resolve được zaloId từ connection
+ * đang active → dùng auth của connection để tránh tạo instance ZaloService
+ * mới với cookies rỗng (dẫn đến lỗi "Cookies tài khoản không hợp lệ").
+ */
+function resolveAuthFromConnection(auth: any, zaloId: string): any {
+    if (!zaloId) return auth;
+    const authObj = typeof auth === 'string' ? JSON.parse(auth) : auth;
+    if (authObj?.cookies) return auth;
+    const conn = ConnectionManager.getConnection(zaloId);
+    if (conn?.auth?.cookies) {
+        Logger.log(`[zaloIpc] resolveAuthFromConnection: using connection auth for ${zaloId} (no cookies in request auth)`);
+        return conn.auth;
+    }
+    return auth;
+}
+
+/**
  * Upload local media files from Employee machine to Boss storage before proxying.
  * Employee's local file paths are invalid on Boss — reads each file on the
  * Employee side, sends as base64 via uploadEmployeeMedia(), returns Boss-resolved paths.
@@ -111,7 +128,7 @@ function wrap(channel: string, fn: (service: ZaloService, params: any) => Promis
             // ───────────────────────────────────────────────────────────
 
             // Strip relay flag before passing to service
-            const { auth, isReconnection = false, _fromRelay, ...rest } = params;
+            let { auth, isReconnection = false, _fromRelay, ...rest } = params;
             if (!auth) return { error: 'Missing auth' };
 
             const zaloId = resolveZaloId(auth);
@@ -125,6 +142,10 @@ function wrap(channel: string, fn: (service: ZaloService, params: any) => Promis
                 return { success: false, error: 'Tài khoản chưa kết nối.' };
             }
             // ────────────────────────────────────────────────────────────
+
+            // ─── Fallback auth: nếu cookies rỗng nhưng đã có connection → dùng auth của connection
+            auth = resolveAuthFromConnection(auth, zaloId);
+            // ──────────────────────────────────────────────────────────────
 
             const service = await getService(typeof auth === 'string' ? auth : JSON.stringify(auth), isReconnection);
             const result = await fn(service, rest);
@@ -270,9 +291,10 @@ export function registerZaloIpc() {
                 if (activeWs?.type === 'remote' && !params?._fromRelay) {
                     return await HttpConnectionManager.getInstance().proxyAction(activeWs.id, 'zalo:getContext', params);
                 }
-                const { auth, _fromRelay } = params;
+                let { auth, _fromRelay } = params;
             if (!auth) return { success: false, error: 'Missing auth' };
             const zaloId = resolveZaloId(auth);
+            auth = resolveAuthFromConnection(auth, zaloId);
             const service = await getService(typeof auth === 'string' ? auth : JSON.stringify(auth));
             const context = service.getContext();
 
@@ -480,9 +502,10 @@ export function registerZaloIpc() {
                     }
                     return await HttpConnectionManager.getInstance().proxyAction(activeWs.id, 'zalo:getLabels', params);
                 }
-                const { auth, _fromRelay } = params;
+                let { auth, _fromRelay } = params;
                 if (!auth) return { success: false, error: 'Missing auth' };
                 const zaloId = resolveZaloId(auth);
+                auth = resolveAuthFromConnection(auth, zaloId);
                 const service = await getService(typeof auth === 'string' ? auth : JSON.stringify(auth), false);
                 const result = await service.getLabels();
                 Logger.info(`[zaloIpc] zalo:getLabels ✅ got ${result?.labelData?.length ?? 0} labels`);
@@ -507,7 +530,7 @@ export function registerZaloIpc() {
                     }
                     return await HttpConnectionManager.getInstance().proxyAction(activeWs.id, 'zalo:updateLabels', params);
                 }
-                const { auth, isReconnection = false, _fromRelay, labelData, version, labelDiffs, ...rest } = params;
+                let { auth, isReconnection = false, _fromRelay, labelData, version, labelDiffs, ...rest } = params;
             if (!auth) return { error: 'Missing auth' };
 
             const zaloId = resolveZaloId(auth);
@@ -516,6 +539,7 @@ export function registerZaloIpc() {
                 return { success: false, error: 'Tài khoản chưa kết nối.' };
             }
 
+            auth = resolveAuthFromConnection(auth, zaloId);
             const service = await getService(typeof auth === 'string' ? auth : JSON.stringify(auth), isReconnection);
             const result = await service.updateLabels(labelData, version);
 

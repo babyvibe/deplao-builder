@@ -14,6 +14,58 @@ interface VersionEntry {
 // ─── Changelog data — thêm entry mới vào ĐẦU mảng khi có bản cập nhật ────────
 const CHANGELOG: VersionEntry[] = [
   {
+    version: '26.6.4',
+    date: '06/2026',
+    type: 'minor',
+    highlights: [
+      '👤 Tự động refresh avatar Zalo khi khởi động — avatar không còn bị mờ/thiếu do CDN hết hạn',
+      '✏️ Facebook E2EE: hỗ trợ xem lịch sử chỉnh sửa tin nhắn — đánh dấu "đã chỉnh sửa" + nút "Xem nội dung cũ"',
+      '📞 Gợi ý danh thiếp Zalo từ SĐT trong khung chat — gõ số 0xx, tự động tra cứu và gửi danh thiếp khi Enter',
+      '🖼️ Danh thiếp Zalo cải tiến — nút "Kết bạn" trực tiếp, chọn được số điện thoại, click avatar mới mở profile',
+      '🚫 Facebook: admin message (pin, poll, đổi tên nhóm) hiển thị đúng dạng thông báo hệ thống',
+      'ℹ️ Tự động fetch thông tin user khi vào hội thoại mới — không còn thấy "Unknown" hay avatar mặc định',
+    ],
+    changes: [
+      {
+        category: 'new',
+        items: [
+          'Avatar Zalo tự động refresh khi khởi động app — kiểm tra avatar URL còn hạn không (HTTP HEAD), nếu expired thì gọi Zalo API lấy URL mới, cập nhật cả tên hiển thị',
+          'Facebook E2EE: hỗ trợ tin nhắn đã chỉnh sửa — lưu edit history, DB migration thêm cột edit_history + is_edited, IPC event fb:onEdit',
+          'Gợi ý danh thiếp Zalo khi gõ SĐT trong khung chat — detect pattern 0xx, debounce 800ms, tra cứu local DB + Zalo findUser API + getUserInfo, Enter để gửi danh thiếp thay vì text',
+          'Nút "Kết bạn" trên danh thiếp Zalo — kiểm tra trạng thái bạn bè (isFr/is_friend), gửi lời mời trực tiếp với tin nhắn mặc định',
+          'Facebook E2EE: xử lý unsend tin nhắn mã hoá — lưu nội dung gốc vào recalled_content',
+        ],
+      },
+      {
+        category: 'improved',
+        items: [
+          'Tự động fetch tên + avatar khi vào hội thoại mới thiếu thông tin (Zalo & Facebook) — áp dụng cho ChatHeader, ConversationInfo, và deep link/notification',
+          'Danh thiếp Zalo: click avatar mới mở profile (không block select text), hiển thị SĐT dùng PhoneDisplay (selectable)',
+          'Refresh alias dùng getAliasList (count=5000) thay vì gọi getUserInfo từng user — nhanh hơn, không tốn quota API',
+          'Facebook E2EE unsend: lưu nội dung gốc vào recalled_content để user có thể xem lại',
+          'Facebook: admin message (pin, poll, group info changes) hiển thị dạng system notification centered thay vì chat bubble',
+          'Cập nhật contact alias ngay lập tức trong Zustand store khi nhận từ employee relay — không cần chờ refresh',
+          'Load contacts từ DB khi nhận deep link — tránh hiển thị danh sách trống trước khi kịp load',
+        ],
+      },
+      {
+        category: 'fixed',
+        items: [
+          'Sửa lỗi admin text Facebook (pin, poll, đổi tên nhóm) hiển thị thành message bình thường — giờ là centered system notification',
+          'Sửa lỗi avatar Zalo bị mờ/thiếu khi CDN URL hết hạn — tự động HEAD check + refresh khi startup',
+          'Sửa lỗi không hiển thị tên contact khi vào hội thoại từ deep link / thông báo desktop — tự động fetch ngay sau khi navigate',
+          'Sửa lỗi Facebook alias không được update Zustand store khi nhận từ relay server',
+          'Sửa lỗi nhân viên click vào hội thoại không hiển thị tin nhắn (báo "Chưa có tin nhắn nào") — thêm zaloId vào params getMessageHistory và getUserInfo khi proxy sang Boss, giúp Boss resolve đúng tài khoản Zalo cần dùng',
+          'Sửa lỗi đồng bộ dữ liệu Boss → Nhân viên timeout với nhiều messages — tăng timeout requestFullSync từ 120s lên 600s, tăng timeout deltaSync từ 60s lên 600s',
+          'Sửa lỗi import messages quá chậm (INSERT từng dòng) — batch 200 rows/INSERT, giảm số lần gọi db.exec(), có fallback row-by-row nếu batch lỗi',
+          'Sửa lỗi sync thất bại im lặng — thêm retry 3 lần tự động + log lỗi chi tiết nếu sync không hoàn tất',
+          'Sửa lỗi upload media qua tunnel timeout với ảnh lớn — tăng timeout uploadMedia từ 60s lên 120s',
+          'Sửa lỗi upload nhiều ảnh/ file tuần tự — chuyển sang upload song song (Promise.all)',
+        ],
+      },
+    ],
+  },
+  {
     version: '26.6.3',
     date: '06/2026',
     type: 'minor',

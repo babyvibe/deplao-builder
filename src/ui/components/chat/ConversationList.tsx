@@ -956,14 +956,49 @@ export default function ConversationList() {
       for (const m of dbMessages) {
         msgLookup.set(m.msg_id, { content: m.content || '', type: m.msg_type || 'text' });
       }
+      const missingLookup: Array<{ msg: any; replyToId: string }> = [];
       const mapped = dbMessages.map((m: any) => {
         if (m.reply_to_id && !m.quote_data) {
           const orig = msgLookup.get(m.reply_to_id);
-          return { ...m, quote_data: JSON.stringify({ msgId: m.reply_to_id, msg: orig?.content || '', senderId: '', msgType: orig?.type || 'text' }) };
+          if (orig) {
+            return { ...m, quote_data: JSON.stringify({ msgId: m.reply_to_id, msg: orig.content || '', senderId: '', msgType: orig.type || 'text' }) };
+          }
+          // Original not in loaded batch — defer async DB lookup
+          missingLookup.push({ msg: m, replyToId: m.reply_to_id });
+          return m;
         }
         return m;
       });
       setMessages(zaloId, contactId, [...mapped].reverse());
+      // Async fixup: query DB for original messages not in the loaded batch
+      if (missingLookup.length > 0) {
+        (async () => {
+          for (const item of missingLookup) {
+            try {
+              const dbRes = await ipc.db?.getMessageById({ zaloId, msgId: item.replyToId });
+              const origMsg = dbRes?.message;
+              if (origMsg?.msg_type || origMsg?.content) {
+                const store = useChatStore.getState();
+                const key = `${zaloId}_${contactId}`;
+                const msgs = (store.messages[key] || []).slice();
+                const idx = msgs.findIndex((m2: any) => m2.msg_id === item.msg.msg_id);
+                if (idx >= 0 && !msgs[idx].quote_data) {
+                  msgs[idx] = {
+                    ...msgs[idx],
+                    quote_data: JSON.stringify({
+                      msgId: item.replyToId,
+                      msg: origMsg.content || '',
+                      senderId: '',
+                      msgType: origMsg.msg_type || 'text',
+                    }),
+                  };
+                  store.setMessages(zaloId, contactId, msgs);
+                }
+              }
+            } catch {}
+          }
+        })();
+      }
       // Sync is_replied dựa trên tin nhắn cuối thực tế
       syncRepliedState(zaloId, contactId, zaloId);
     } else {
@@ -972,7 +1007,7 @@ export default function ConversationList() {
         : useAccountStore.getState().getActiveAccount();
       if (acc && (acc.channel || 'zalo') === 'zalo') {
         const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
-        ipc.zalo?.getMessageHistory({ auth, threadId: contactId, type: threadType, lastMsgId: 0, count: 50 })
+        ipc.zalo?.getMessageHistory({ auth, zaloId, threadId: contactId, type: threadType, lastMsgId: 0, count: 50 })
           .then((histRes: any) => {
             const msgs: any[] = histRes?.response?.data || histRes?.response || [];
             if (msgs.length > 0) {
@@ -1001,7 +1036,7 @@ export default function ConversationList() {
           : useAccountStore.getState().getActiveAccount();
         if (acc && (acc.channel || 'zalo') === 'zalo') {
           const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
-          ipc.zalo?.getUserInfo({ auth, userId: contactId })
+          ipc.zalo?.getUserInfo({ auth, zaloId, userId: contactId })
             .then((res: any) => {
               const rawProfile = res?.response?.changed_profiles?.[contactId]
                 || res?.response?.data?.[contactId];

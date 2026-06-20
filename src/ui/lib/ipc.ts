@@ -33,6 +33,7 @@ declare global {
         getAccounts: () => Promise<any>;
         removeAccount: (zaloId: string) => Promise<any>;
         checkHealth: (zaloIds: string | string[]) => Promise<{ success: boolean; results: Array<{ zaloId: string; healthy: boolean; readyState: number | null; reason?: string }>; error?: string }>;
+        checkAndRefreshAvatar: (zaloId: string) => Promise<{ success: boolean; refreshed: boolean; avatar_url?: string; full_name?: string; reason?: string; error?: string }>;
         requestOldMessages: (zaloId: string) => Promise<{ success: boolean; error?: string }>;
       };
       zalo: {
@@ -131,6 +132,7 @@ declare global {
         getMessages: (params: any) => Promise<any>;
         getMessagesAround: (params: { zaloId: string; threadId: string; timestamp: number; limit?: number }) => Promise<any>;
         getContacts: (zaloId: string) => Promise<any>;
+        searchContactByPhone: (params: { zaloId: string; phone: string }) => Promise<{ success: boolean; contact: any | null }>;
         searchMessages: (params: any) => Promise<any>;
         getMediaMessages: (params: { zaloId: string; threadId?: string; limit?: number; offset?: number }) => Promise<any>;
         getFileMessages: (params: { zaloId: string; threadId: string; limit?: number; offset?: number }) => Promise<any>;

@@ -1,6 +1,6 @@
 {
   "name": "Deplao",
-  "version": "26.6.3",
+  "version": "26.6.4",
   "description": "Phần mềm desktop quản lý Zalo & Facebook cá nhân Đa tài khoản tích hợp CRM, ERP, POS, Workflow và AI Assistant giúp đội nhóm bán hàng, chăm sóc khách hàng và marketing trên Zalo vận hành tập trung trong một ứng dụng duy nhất.",
   "main": "dist-electron/electron/main.js",
   "scripts": {
@@ -13,7 +13,7 @@
     "build:renderer": "vite build",
     "production": "npm run build:bridge-e2ee && tsc -p tsconfig.electron.prod.json && node scripts/strip-console.js && npm run build:renderer && electron-builder --publish never"
   },
-  "author": "trungtien9x@gmail.com",
+  "author": "babyvibe <babyvibe@users.noreply.github.com>",
   "homepage": "https://deplaoapp.com",
   "license": "MIT",
   "dependencies": {
@@ -182,7 +182,7 @@
       "category": "Network"
     },
     "deb": {
-      "maintainer": "trungtien9x@gmail.com"
+      "maintainer": "babyvibe <babyvibe@users.noreply.github.com>"
     }
   }
 }

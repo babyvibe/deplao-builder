@@ -12,6 +12,7 @@ import { getCachedBankCard } from '@/lib/bankCardCache';
 import ipc from '@/lib/ipc';
 import { toLocalMediaUrl } from '@/lib/localMedia';
 import { formatPhone } from '@/utils/phoneUtils';
+import PhoneDisplay from '../common/PhoneDisplay';
 
 // ── Zalo emoji codes → Unicode emoji ─────────────────────────────────────────
 const ZALO_CODE_TO_EMOJI: Record<string, string> = {
@@ -1041,7 +1042,7 @@ function ContactCardBubble({ parsed, isSelf, onOpenProfile }: { parsed: any; isS
   const qrCodeUrl = String(desc.qrCodeUrl || '');
 
   const { contacts } = useChatStore();
-  const { activeAccountId } = useAccountStore();
+  const { activeAccountId, getActiveAccount } = useAccountStore();
   const contactList = activeAccountId ? (contacts[activeAccountId] || []) : [];
 
   const directUid = String(desc.uid || desc.userId || desc.id || parsed.userId || parsed.uid || parsed.id || '').trim();
@@ -1070,6 +1071,12 @@ function ContactCardBubble({ parsed, isSelf, onOpenProfile }: { parsed: any; isS
     ''
   ).trim();
 
+  // Check friend status: ưu tiên isFr (từ Zalo contact list), fallback is_friend
+  const matchedContact = byDirectId || byParamsId || byPhone;
+  const isFriend = matchedContact ? (matchedContact.isFr === 1 || matchedContact.is_friend === 1) : false;
+
+  const [sendingReq, setSendingReq] = React.useState(false);
+
   const handleOpenQuickChat = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!resolvedUserId) return;
@@ -1087,24 +1094,52 @@ function ContactCardBubble({ parsed, isSelf, onOpenProfile }: { parsed: any; isS
 
   const handleOpenProfile = (e: React.MouseEvent) => {
     if (!resolvedUserId || !onOpenProfile) return;
-    onOpenProfile(resolvedUserId, e);
+    // Chỉ mở profile khi click vào avatar, không block select text ở tên/SĐT
+    const target = e.target as HTMLElement;
+    if (target.closest('.card-avatar-area')) {
+      onOpenProfile(resolvedUserId, e);
+    }
+  };
+
+  const handleAddFriend = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!resolvedUserId || sendingReq) return;
+    setSendingReq(true);
+    try {
+      const account = getActiveAccount();
+      if (!account) return;
+      const auth = { cookies: account.cookies, imei: account.imei, userAgent: account.user_agent };
+      const res = await ipc.zalo?.sendFriendRequest({ auth, userId: resolvedUserId, msg: 'Làm quen qua danh thiếp Zalo' });
+      if (res?.success || res?.response?.success) {
+        useAppStore.getState().showNotification('Đã gửi lời mời kết bạn', 'success');
+      } else {
+        useAppStore.getState().showNotification(res?.error || 'Gửi lời mời thất bại', 'error');
+      }
+    } catch (err: any) {
+      useAppStore.getState().showNotification('Gửi lời mời thất bại: ' + err.message, 'error');
+    } finally {
+      setSendingReq(false);
+    }
   };
 
   return (
     <div
-      className={`rounded-2xl max-w-[340px] overflow-hidden ${isSelf ? 'bg-blue-600/70 text-white' : 'bg-gray-700 text-gray-200'} ${resolvedUserId ? 'cursor-pointer hover:opacity-95 transition-opacity' : ''}`}
-      onClick={handleOpenProfile}
+      className={`rounded-2xl max-w-[340px] ${isSelf ? 'bg-blue-600/70 text-white' : 'bg-gray-700 text-gray-200'}`}
     >
-      <div className="flex items-center gap-3.5 px-4 py-3.5">
-        <div className="w-14 h-14 rounded-full overflow-hidden flex-shrink-0 bg-gray-600">
+      <div className="flex items-center gap-3.5 px-4 py-3.5 select-text">
+        {/* Avatar — click mở profile */}
+        <div
+          className={`card-avatar-area w-14 h-14 rounded-full overflow-hidden flex-shrink-0 bg-gray-600 ${resolvedUserId && onOpenProfile ? 'cursor-pointer hover:opacity-85 transition-opacity' : ''}`}
+          onClick={handleOpenProfile}
+        >
           {thumbUrl
             ? <img src={thumbUrl} alt={title} className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
             : <div className="w-full h-full flex items-center justify-center text-white text-xl font-bold">{(title || 'U').charAt(0).toUpperCase()}</div>
           }
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-base font-semibold truncate">{title || 'Danh thiếp'}</p>
-          {phone && <p className={`text-sm mt-1 ${isSelf ? 'text-blue-100' : 'text-gray-300'}`}>{phone}</p>}
+          <p className="text-base font-semibold truncate select-text cursor-text">{title || 'Danh thiếp'}</p>
+          {phone && <PhoneDisplay phone={phone} className={`text-sm ${isSelf ? 'text-blue-100' : 'text-gray-300'}`} />}
           <p className={`text-xs mt-1 ${isSelf ? 'text-blue-200' : 'text-gray-500'}`}>Danh thiếp Zalo</p>
         </div>
         {qrCodeUrl && (
@@ -1129,6 +1164,31 @@ function ContactCardBubble({ parsed, isSelf, onOpenProfile }: { parsed: any; isS
             </svg>
             Gửi tin nhắn
           </button>
+          {/* Nút kết bạn — chỉ hiện nếu chưa là bạn bè */}
+          {!isFriend && !isSelf && (
+            <button
+              onClick={handleAddFriend}
+              disabled={sendingReq}
+              className={`mt-1.5 w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors border border-dashed ${
+                sendingReq
+                  ? 'opacity-50 cursor-not-allowed'
+                  : 'hover:bg-white/10'
+              } ${isSelf ? 'border-blue-400/30 text-blue-200' : 'border-gray-500/40 text-gray-300'}`}
+              title="Gửi lời mời kết bạn"
+            >
+              {sendingReq ? (
+                <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeDasharray="31.4 31.4" strokeLinecap="round" />
+                </svg>
+              ) : (
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/>
+                  <line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/>
+                </svg>
+              )}
+              {sendingReq ? 'Đang gửi...' : 'Kết bạn'}
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -1474,6 +1534,7 @@ export function BankCardBubble({ msg }: { msg: any }) {
 // ── Main Component ────────────────────────────────────────────────────────────
 export function MessageBubble({ msg, isSelf, senderName, onManage, onView, onOpenProfile }: MessageBubbleProps) {
   const [showRecalledOriginal, setShowRecalledOriginal] = React.useState(false);
+  const [showEditHistory, setShowEditHistory] = React.useState(false);
 
   const mt = msg.msg_type || '';
   const mc = msg.content || '';
@@ -1612,11 +1673,53 @@ export function MessageBubble({ msg, isSelf, senderName, onManage, onView, onOpe
 
   // ── Text (default) ──
   const text = parseTxt(mc);
+  const isEdited = msg.is_edited === 1;
+  let editHistoryEntries: Array<{ oldBody: string; editedAt: number; editCount: number }> = [];
+  if (isEdited && msg.edit_history) {
+    try {
+      const parsed = JSON.parse(msg.edit_history);
+      if (Array.isArray(parsed)) {
+        editHistoryEntries = parsed;
+      }
+    } catch {}
+  }
   return (
     <div className={`flex ${isSelf ? 'justify-end' : 'justify-start'} mb-0.5`}>
       <div className={`px-3 py-2 rounded-2xl text-sm max-w-[280px] break-words whitespace-pre-wrap ${cls}`}>
         {text || '(Không có nội dung)'}
+        {isEdited && (
+          <>
+            <span className="ml-1.5 text-[10px] opacity-60 select-none font-normal">
+              (đã chỉnh sửa)
+            </span>
+            {editHistoryEntries.length > 0 && (
+              <button
+                onClick={() => setShowEditHistory(p => !p)}
+                className="ml-1.5 text-[10px] font-medium text-blue-300/70 hover:text-blue-300 transition-colors underline underline-offset-2 select-none pointer-events-auto"
+              >
+                {showEditHistory ? 'Ẩn' : 'Xem nội dung cũ'}
+              </button>
+            )}
+          </>
+        )}
       </div>
+      {showEditHistory && editHistoryEntries.length > 0 && (
+        <div className="w-full mt-1 space-y-1">
+          {editHistoryEntries.map((entry, i) => (
+            <div
+              key={i}
+              className={`px-3 py-1.5 rounded-lg text-xs opacity-60 ${isSelf ? 'bg-blue-700/30 mr-8' : 'bg-gray-600/30 ml-8'}`}
+            >
+              <div className="text-[10px] opacity-50 mb-0.5">
+                {new Date(entry.editedAt).toLocaleString('vi-VN')}
+              </div>
+              <div className="break-words whitespace-pre-wrap italic">
+                {parseTxt(entry.oldBody) || '(Không có nội dung)'}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

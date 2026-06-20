@@ -15,6 +15,7 @@ import                           { UserProfilePopup } from '../common/UserProfil
 import FBVideoThumb from './FBVideoThumb';
 import { RecalledBubble, BankCardBubble } from './MessageBubbles';
 import GroupAvatar from '../common/GroupAvatar';
+import PhoneDisplay from '../common/PhoneDisplay';
 import ipc from '@/lib/ipc';
 import { toLocalMediaUrl } from '@/lib/localMedia';
 import { formatPhone } from '@/utils/phoneUtils';
@@ -123,6 +124,8 @@ export default function ChatWindow() {
   const [isDragging, setIsDragging] = useState(false);
   // Track which recalled messages the user has chosen to reveal original content
   const [revealedRecallIds, setRevealedRecallIds] = useState<Set<string>>(new Set());
+  // Track which edited messages the user has chosen to view edit history
+  const [revealedEditIds, setRevealedEditIds] = useState<Set<string>>(new Set());
 
   // Listen for groupinfo events from GroupBoardPanel / GroupInfoPanel
   useEffect(() => {
@@ -742,16 +745,48 @@ export default function ChatWindow() {
           msgLookup.set(m.msg_id, { content: m.content || '', type: m.msg_type || 'text' });
         }
         // Convert reply_to_id → quote_data for Facebook messages so reply previews render
+        const missingLookup: Array<{ msgId: string; replyToId: string }> = [];
         const mapped = res.messages.map((m: any) => {
           if (m.reply_to_id && !m.quote_data) {
             const orig = msgLookup.get(m.reply_to_id);
-            const origContent = orig?.content || '';
-            const origType = orig?.type || 'text';
-            return { ...m, quote_data: JSON.stringify({ msgId: m.reply_to_id, msg: origContent, senderId: '', msgType: origType }) };
+            if (orig) {
+              return { ...m, quote_data: JSON.stringify({ msgId: m.reply_to_id, msg: orig.content || '', senderId: '', msgType: orig.type || 'text' }) };
+            }
+            missingLookup.push({ msgId: m.msg_id, replyToId: m.reply_to_id });
+            return m;
           }
           return m;
         });
         prependMessages(activeAccountId, activeThreadId, [...mapped].reverse());
+        // Async fixup: query DB for original messages not in the loaded batch
+        const storeKey = `${activeAccountId}_${activeThreadId}`;
+        if (missingLookup.length > 0 && activeAccountId && activeThreadId) {
+          (async () => {
+            for (const item of missingLookup) {
+              try {
+                const dbRes = await ipc.db?.getMessageById({ zaloId: activeAccountId, msgId: item.replyToId });
+                const origMsg = dbRes?.message;
+                if (origMsg?.msg_type || origMsg?.content) {
+                  const store = useChatStore.getState();
+                  const msgs = (store.messages[storeKey] || []).slice();
+                  const idx = msgs.findIndex((m2: any) => m2.msg_id === item.msgId);
+                  if (idx >= 0 && !msgs[idx].quote_data) {
+                    msgs[idx] = {
+                      ...msgs[idx],
+                      quote_data: JSON.stringify({
+                        msgId: item.replyToId,
+                        msg: origMsg.content || '',
+                        senderId: '',
+                        msgType: origMsg.msg_type || 'text',
+                      }),
+                    };
+                    store.setMessages(activeAccountId!, activeThreadId, msgs);
+                  }
+                }
+              } catch {}
+            }
+          })();
+        }
         if (res.messages.length < 30) setHasMore(false);
         return;
       }
@@ -1006,16 +1041,50 @@ export default function ChatWindow() {
       // Build reply lookup map for reply_to_id → quote_data
       const msgLookup2 = new Map<string, { content: string; type: string }>();
       for (const m of aroundMsgs) msgLookup2.set(m.msg_id, { content: m.content || '', type: m.msg_type || 'text' });
+      const missingLookup2: Array<{ msgId: string; replyToId: string }> = [];
       const mappedAround = aroundMsgs.map((m: any) => {
         if (m.reply_to_id && !m.quote_data) {
           const orig = msgLookup2.get(m.reply_to_id);
-          return { ...m, quote_data: JSON.stringify({ msgId: m.reply_to_id, msg: orig?.content || '', senderId: '', msgType: orig?.type || 'text' }) };
+          if (orig) {
+            return { ...m, quote_data: JSON.stringify({ msgId: m.reply_to_id, msg: orig.content || '', senderId: '', msgType: orig.type || 'text' }) };
+          }
+          missingLookup2.push({ msgId: m.msg_id, replyToId: m.reply_to_id });
+          return m;
         }
         return m;
       });
 
       // Replace current messages with the "around" set
       setMessages(activeAccountId, activeThreadId, mappedAround);
+      // Async fixup: query DB for original messages not in the loaded batch
+      if (missingLookup2.length > 0 && activeAccountId && activeThreadId) {
+        (async () => {
+          for (const item of missingLookup2) {
+            try {
+              const dbRes = await ipc.db?.getMessageById({ zaloId: activeAccountId, msgId: item.replyToId });
+              const origMsg = dbRes?.message;
+              if (origMsg?.msg_type || origMsg?.content) {
+                const store = useChatStore.getState();
+                const key = `${activeAccountId}_${activeThreadId}`;
+                const msgs = (store.messages[key] || []).slice();
+                const idx = msgs.findIndex((m2: any) => m2.msg_id === item.msgId);
+                if (idx >= 0 && !msgs[idx].quote_data) {
+                  msgs[idx] = {
+                    ...msgs[idx],
+                    quote_data: JSON.stringify({
+                      msgId: item.replyToId,
+                      msg: origMsg.content || '',
+                      senderId: '',
+                      msgType: origMsg.msg_type || 'text',
+                    }),
+                  };
+                  store.setMessages(activeAccountId!, activeThreadId, msgs);
+                }
+              }
+            } catch {}
+          }
+        })();
+      }
       setHasMore(true); // Có thể còn tin cũ hơn phía trên
       setIsViewingHistory(true); // Đánh dấu đang xem tin cũ → hiện nút "Về tin mới nhất"
 
@@ -1050,16 +1119,50 @@ export default function ChatWindow() {
         // Build reply lookup map for reply_to_id → quote_data
         const msgLookup3 = new Map<string, { content: string; type: string }>();
         for (const m of res.messages) msgLookup3.set(m.msg_id, { content: m.content || '', type: m.msg_type || 'text' });
+        const missingLookup3 = [];
         const mappedLatest = res.messages.map((m: any) => {
           if (m.reply_to_id && !m.quote_data) {
             const orig = msgLookup3.get(m.reply_to_id);
-            return { ...m, quote_data: JSON.stringify({ msgId: m.reply_to_id, msg: orig?.content || '', senderId: '', msgType: orig?.type || 'text' }) };
+            if (orig) {
+              return { ...m, quote_data: JSON.stringify({ msgId: m.reply_to_id, msg: orig.content || '', senderId: '', msgType: orig.type || 'text' }) };
+            }
+            missingLookup3.push({ msgId: m.msg_id, replyToId: m.reply_to_id });
+            return m;
           }
           return m;
         });
         const sorted = [...mappedLatest].reverse();
         setMessages(activeAccountId, activeThreadId, sorted);
         setHasMore(res.messages.length >= 50);
+        // Async fixup: query DB for original messages not in the loaded batch
+        if (missingLookup3.length > 0 && activeAccountId && activeThreadId) {
+          (async () => {
+            for (const item of missingLookup3) {
+              try {
+                const dbRes = await ipc.db?.getMessageById({ zaloId: activeAccountId, msgId: item.replyToId });
+                const origMsg = dbRes?.message;
+                if (origMsg?.msg_type || origMsg?.content) {
+                  const store = useChatStore.getState();
+                  const mkey = activeAccountId + '_' + activeThreadId;
+                  const msgs = (store.messages[mkey] || []).slice();
+                  const idx = msgs.findIndex((m2) => m2.msg_id === item.msgId);
+                  if (idx >= 0 && !msgs[idx].quote_data) {
+                    msgs[idx] = {
+                      ...msgs[idx],
+                      quote_data: JSON.stringify({
+                        msgId: item.replyToId,
+                        msg: origMsg.content || '',
+                        senderId: '',
+                        msgType: origMsg.msg_type || 'text',
+                      }),
+                    };
+                    store.setMessages(activeAccountId, activeThreadId, msgs);
+                  }
+                }
+              } catch {}
+            }
+          })();
+        }
       }
       setIsViewingHistory(false);
       // Scroll to bottom sau khi render
@@ -1831,6 +1934,10 @@ export default function ChatWindow() {
                         if (q.msgId) {
                           const origMsg = msgs.find(m => m.msg_id === String(q.msgId));
                           if (origMsg) {
+                            // Dùng msg_type thật từ tin nhắn gốc nếu quote_data đang fallback sai
+                            if (origMsg.msg_type && origMsg.msg_type !== 'text') {
+                              q.msgType = origMsg.msg_type;
+                            }
                             if (!quotedImgUrl && isMediaType(origMsg.msg_type, origMsg.content)) {
                               lookupImgUrl = extractMediaUrl(origMsg);
                             }
@@ -1988,9 +2095,60 @@ export default function ChatWindow() {
                           onMentionClick={(uid, e) => setUserProfilePopup({ userId: uid, x: e.clientX, y: e.clientY })} />
                       )}
                       renderText={() => (
-                        <TextWithMentions text={content} allContacts={contactList} groupMembersList={groupMembers}
-                          highlight={searchHighlightQuery}
-                          onMentionClick={(uid, e) => setUserProfilePopup({ userId: uid, x: e.clientX, y: e.clientY })} />
+                        <>
+                          <TextWithMentions text={content} allContacts={contactList} groupMembersList={groupMembers}
+                            highlight={searchHighlightQuery}
+                            onMentionClick={(uid, e) => setUserProfilePopup({ userId: uid, x: e.clientX, y: e.clientY })} />
+                          {msg.is_edited === 1 && (
+                            <>
+                              <span className="ml-1 text-[10px] opacity-60 select-none font-normal">
+                                (đã chỉnh sửa)
+                              </span>
+                              {(() => {
+                                try {
+                                  const parsed = JSON.parse(msg.edit_history || '[]');
+                                  if (!Array.isArray(parsed) || parsed.length === 0) return null;
+                                  return (
+                                    <button
+                                      onClick={() => setRevealedEditIds(prev => {
+                                        const next = new Set(prev);
+                                        if (next.has(msg.msg_id)) next.delete(msg.msg_id);
+                                        else next.add(msg.msg_id);
+                                        return next;
+                                      })}
+                                      className="ml-1 text-[10px] font-medium text-blue-300/70 hover:text-blue-300 transition-colors underline underline-offset-2 select-none pointer-events-auto"
+                                    >
+                                      {revealedEditIds.has(msg.msg_id) ? 'Ẩn' : 'Xem nội dung cũ'}
+                                    </button>
+                                  );
+                                } catch { return null; }
+                              })()}
+                            </>
+                          )}
+                          {revealedEditIds.has(msg.msg_id) && (() => {
+                            try {
+                              const parsed = JSON.parse(msg.edit_history || '[]');
+                              if (!Array.isArray(parsed) || parsed.length === 0) return null;
+                              return (
+                                <div className="w-full mt-1 space-y-1">
+                                  {parsed.map((entry: any, i: number) => (
+                                    <div
+                                      key={i}
+                                      className={`px-3 py-1.5 rounded-lg text-xs opacity-60 ${isSent ? 'bg-blue-700/30 mr-8' : 'bg-gray-600/30 ml-8'}`}
+                                    >
+                                      <div className="text-[10px] opacity-50 mb-0.5">
+                                        {new Date(entry.editedAt).toLocaleString('vi-VN')}
+                                      </div>
+                                      <div className="break-words whitespace-pre-wrap italic">
+                                        {parseContent(entry.oldBody || '') || '(Không có nội dung)'}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              );
+                            } catch { return null; }
+                          })()}
+                        </>
                       )}
                     />
                   </div>
@@ -4705,7 +4863,7 @@ function ContactCardBubble({ parsed, isSent, onOpenProfile }: { parsed: any; isS
   let phone = formatPhone(String(desc.phone || ''));
   const qrCodeUrl = String(desc.qrCodeUrl || '');
   const { contacts } = useChatStore();
-  const { activeAccountId } = useAccountStore();
+  const { activeAccountId, getActiveAccount } = useAccountStore();
   const contactList = activeAccountId ? (contacts[activeAccountId] || []) : [];
 
   const directUid = String(
@@ -4747,6 +4905,12 @@ function ContactCardBubble({ parsed, isSent, onOpenProfile }: { parsed: any; isS
     ''
   ).trim();
 
+  // Check friend status
+  const matchedContact = byDirectId || byParamsId || byPhone;
+  const isFriend = matchedContact ? (matchedContact.isFr === 1 || matchedContact.is_friend === 1) : false;
+
+  const [sendingReq, setSendingReq] = React.useState(false);
+
   const handleOpenCardChat = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!resolvedUserId) return;
@@ -4765,16 +4929,44 @@ function ContactCardBubble({ parsed, isSent, onOpenProfile }: { parsed: any; isS
 
   const handleOpenProfile = (e: React.MouseEvent) => {
     if (!resolvedUserId || !onOpenProfile) return;
-    onOpenProfile(resolvedUserId, e);
+    // Chỉ mở profile khi click vào avatar, không block select text ở tên/SĐT
+    const target = e.target as HTMLElement;
+    if (target.closest('.card-avatar-area')) {
+      onOpenProfile(resolvedUserId, e);
+    }
+  };
+
+  const handleAddFriend = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!resolvedUserId || sendingReq) return;
+    setSendingReq(true);
+    try {
+      const account = getActiveAccount();
+      if (!account) return;
+      const auth = { cookies: account.cookies, imei: account.imei, userAgent: account.user_agent };
+      const res = await ipc.zalo?.sendFriendRequest({ auth, userId: resolvedUserId, msg: 'Làm quen qua danh thiếp Zalo' });
+      if (res?.success || res?.response?.success) {
+        useAppStore.getState().showNotification('Đã gửi lời mời kết bạn', 'success');
+      } else {
+        useAppStore.getState().showNotification(res?.error || 'Gửi lời mời thất bại', 'error');
+      }
+    } catch (err: any) {
+      useAppStore.getState().showNotification('Gửi lời mời thất bại: ' + err.message, 'error');
+    } finally {
+      setSendingReq(false);
+    }
   };
 
   return (
     <div
-      className={`rounded-2xl max-w-[340px] overflow-hidden ${isSent ? 'bg-blue-600/70 text-white' : 'bg-gray-700 text-gray-200'} ${resolvedUserId ? 'cursor-pointer hover:opacity-95 transition-opacity' : ''}`}
-      onClick={handleOpenProfile}
+      className={`rounded-2xl max-w-[340px] ${isSent ? 'bg-blue-600/70 text-white' : 'bg-gray-700 text-gray-200'}`}
     >
-      <div className="flex items-center gap-3.5 px-4 py-3.5">
-        <div className="w-14 h-14 rounded-full overflow-hidden flex-shrink-0 bg-gray-600">
+      <div className="flex items-center gap-3.5 px-4 py-3.5 select-text">
+        {/* Avatar — click mở profile */}
+        <div
+          className={`card-avatar-area w-14 h-14 rounded-full overflow-hidden flex-shrink-0 bg-gray-600 ${resolvedUserId && onOpenProfile ? 'cursor-pointer hover:opacity-85 transition-opacity' : ''}`}
+          onClick={handleOpenProfile}
+        >
           {thumbUrl ? (
             <img src={thumbUrl} alt={title} className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
           ) : (
@@ -4782,8 +4974,8 @@ function ContactCardBubble({ parsed, isSent, onOpenProfile }: { parsed: any; isS
           )}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-base font-semibold truncate">{title || 'Danh thiếp'}</p>
-          {phone && <p className={`text-sm mt-1 ${isSent ? 'text-blue-100' : 'text-gray-300'}`}>{phone}</p>}
+          <p className="text-base font-semibold truncate select-text cursor-text">{title || 'Danh thiếp'}</p>
+          {phone && <PhoneDisplay phone={phone} className={`text-sm ${isSent ? 'text-blue-100' : 'text-gray-300'}`} />}
           <p className={`text-xs mt-1 ${isSent ? 'text-blue-200' : 'text-gray-500'}`}>Danh thiếp Zalo</p>
         </div>
         {qrCodeUrl && (
@@ -4809,6 +5001,31 @@ function ContactCardBubble({ parsed, isSent, onOpenProfile }: { parsed: any; isS
             </svg>
             Gửi tin nhắn
           </button>
+          {/* Nút kết bạn — chỉ hiện nếu chưa là bạn bè */}
+          {!isFriend && !isSent && (
+            <button
+              onClick={handleAddFriend}
+              disabled={sendingReq}
+              className={`mt-1.5 w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors border border-dashed ${
+                sendingReq
+                  ? 'opacity-50 cursor-not-allowed'
+                  : 'hover:bg-white/10'
+              } ${isSent ? 'border-blue-400/30 text-blue-200' : 'border-gray-500/40 text-gray-300'}`}
+              title="Gửi lời mời kết bạn"
+            >
+              {sendingReq ? (
+                <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeDasharray="31.4 31.4" strokeLinecap="round" />
+                </svg>
+              ) : (
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/>
+                  <line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/>
+                </svg>
+              )}
+              {sendingReq ? 'Đang gửi...' : 'Kết bạn'}
+            </button>
+          )}
         </div>
       )}
     </div>

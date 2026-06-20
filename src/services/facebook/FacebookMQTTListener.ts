@@ -564,6 +564,15 @@ export class FacebookMQTTListener extends EventEmitter {
       return;
     }
 
+    // 4eii. Admin activity messages (pin, poll, group info changes from adminText) — skip
+    // Facebook sends admin-generate text like "Tiến đã ghim một tin nhắn." inside
+    // messageMetadata.adminText. These are NOT real user messages — just localized
+    // informational text that the bridge handles internally.
+    if (delta.messageMetadata?.adminText) {
+      Logger.log(`[FBMqtt:${this.accountId}] Admin message: "${(delta.messageMetadata.adminText as string).slice(0, 100)}" — skipping (admin activity, not a user message)`);
+      return;
+    }
+
     // 4f. Unsend/Recall — delta với message_type='unsent', không body, không attachments
     const isUnsentDelta = !delta.body && !delta.attachments?.length && (
       delta.message_type === 'unsent' ||

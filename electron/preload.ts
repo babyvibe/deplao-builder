@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getAccounts: () => ipcRenderer.invoke('login:getAccounts'),
     removeAccount: (zaloId: string) => ipcRenderer.invoke('login:removeAccount', { zaloId }),
     checkHealth: (zaloIds: string | string[]) => ipcRenderer.invoke('login:checkHealth', { zaloIds }),
+    checkAndRefreshAvatar: (zaloId: string) => ipcRenderer.invoke('login:checkAndRefreshAvatar', { zaloId }),
     requestOldMessages: (zaloId: string) => ipcRenderer.invoke('login:requestOldMessages', { zaloId }),
   },
 
@@ -140,6 +141,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getMessages: (params: any) => ipcRenderer.invoke('db:getMessages', params),
     getMessagesAround: (params: any) => ipcRenderer.invoke('db:getMessagesAround', params),
     getContacts: (zaloId: string) => ipcRenderer.invoke('db:getContacts', { zaloId }),
+    searchContactByPhone: (params: { zaloId: string; phone: string }) => ipcRenderer.invoke('db:searchContactByPhone', params),
     searchMessages: (params: any) => ipcRenderer.invoke('db:searchMessages', params),
     getMediaMessages: (params: any) => ipcRenderer.invoke('db:getMediaMessages', params),
     getFileMessages: (params: any) => ipcRenderer.invoke('db:getFileMessages', params),
@@ -627,6 +629,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       // ─── Facebook events ─────────────────────────────────────────────
       'fb:onMessage',
       'fb:onReaction',
+      'fb:onEdit',
       'fb:onUnsend',
       'fb:onDisconnect',
       'fb:onReconnect',

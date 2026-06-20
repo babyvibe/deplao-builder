@@ -657,7 +657,17 @@ export function useZaloEvents() {
       // 4. Trên mobile: hiện màn hình chat
       useAppStore.getState().setMobileShowChat(true);
 
-      // 5. Navigate đến đúng thread — dùng setTimeout ngắn để đảm bảo
+      // 5. Đảm bảo contacts cho account đã được load (để ConversationList hiển thị)
+      const existingContacts = useChatStore.getState().contacts[zaloId];
+      if (!existingContacts || existingContacts.length === 0) {
+        ipc.db?.getContacts(zaloId).then((res: any) => {
+          if (res?.contacts) {
+            useChatStore.getState().setContacts(zaloId, res.contacts);
+          }
+        }).catch(() => {});
+      }
+
+      // 6. Navigate đến đúng thread — dùng setTimeout ngắn để đảm bảo
       //    ConversationList effect đã chạy xong (nếu có switch account)
       const applyThread = () => {
         setActiveThread(threadId, threadType);
@@ -674,11 +684,43 @@ export function useZaloEvents() {
         applyThread();
       }
 
-      // 6. Clear unread, mark as read, update badge
+      // 7. Clear unread, mark as read, update badge
       ipc.db?.markAsRead({ zaloId, contactId: threadId }).catch(() => {});
       clearUnread(zaloId, threadId);
       sendSeenForThread(zaloId, threadId, threadType);
       ipc.app?.setBadge(Math.max(0, getFilteredUnreadCount()));
+
+      // 8. Auto-fetch user info cho thread nếu thiếu (sau khi contacts kịp load)
+      if (threadType !== 1) { // Không áp dụng cho group
+        const accountInfo = useAccountStore.getState().accounts.find(a => a.zalo_id === zaloId);
+        const channel = accountInfo?.channel || 'zalo';
+        setTimeout(() => {
+          const updatedContacts = useChatStore.getState().contacts[zaloId] || [];
+          const ct = updatedContacts.find((c: any) => c.contact_id === threadId);
+          if (!ct) return;
+
+          const hasRealName = !!(ct.display_name && ct.display_name !== threadId && !/^\d+$/.test(ct.display_name));
+          const hasAvatar = !!ct.avatar_url;
+          if (hasRealName && hasAvatar) return;
+
+          if (channel === 'zalo') {
+            fetchContactInfo(zaloId, threadId).catch(() => {});
+          } else if (channel === 'facebook') {
+            ipc.fb?.getUserInfoFacebookHtml({ accountId: zaloId, userId: threadId })
+              .then((res: any) => {
+                if (res?.success && (res.name || res.avatarUrl)) {
+                  const patch: any = { contact_id: threadId, channel: 'facebook' };
+                  if (res.name) patch.display_name = res.name;
+                  if (res.avatarUrl) patch.avatar_url = res.avatarUrl;
+                  useChatStore.getState().updateContact(zaloId, patch);
+                }
+              }).catch(() => {});
+            if (/^\d+$/.test(threadId)) {
+              ipc.fb?.refreshContactAvatar({ accountId: zaloId, userId: threadId }).catch(() => {});
+            }
+          }
+        }, 500); // Chờ contacts load từ DB
+      }
     });
     return unsub;
   }, []);

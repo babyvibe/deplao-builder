@@ -954,6 +954,24 @@ export class FacebookService {
         // The bridge handles delivery tracking internally
         break;
 
+      case 'messageUnsend': {
+        // E2EE 1:1 message unsend from bridge
+        // data: { isE2EE, messageId, threadId }
+        if (data?.messageId) {
+          const stripJid = (id: string) => id.replace(/@.*$/, '');
+          const threadId = data.threadId ? stripJid(String(data.threadId)) : '';
+          try {
+            DatabaseService.getInstance().updateFBMessageUnsent(data.messageId);
+          } catch {}
+          EventBroadcaster.emit('fb:onUnsend', {
+            fbAccountId: this.getFacebookId(),
+            messageId: data.messageId,
+            threadId,
+          });
+        }
+        break;
+      }
+
       case 'e2eeReaction': {
         // E2EE 1:1 reaction from bridge
         // data: { chatJid, messageId, reaction, senderId, senderJid }
@@ -968,6 +986,38 @@ export class FacebookService {
             threadId,
             userId,
             emoji: data.reaction,
+          });
+        }
+        break;
+      }
+
+      case 'messageEdit': {
+        // E2EE 1:1 message edit from bridge
+        // data: { messageId, threadId, newText, editCount, timestampMs }
+        if (data?.messageId && data?.newText !== undefined) {
+          const stripJid = (id: string) => id.replace(/@.*$/, '');
+          // threadId=0 means bridge couldn't determine thread — pass empty string
+          // so store will search across all threads by messageId
+          const threadId = data.threadId != null && data.threadId !== 0
+            ? stripJid(String(data.threadId))
+            : '';
+          try {
+            DatabaseService.getInstance().updateFBMessageEdit(
+              data.messageId,
+              data.newText,
+              data.editCount || 0,
+              data.timestampMs || Date.now()
+            );
+          } catch (err: any) {
+            Logger.warn(`[FacebookService:${this.accountId}] messageEdit DB error: ${err.message}`);
+          }
+          EventBroadcaster.emit('fb:onEdit', {
+            fbAccountId: this.getFacebookId(),
+            messageId: data.messageId,
+            threadId,
+            newText: data.newText,
+            editCount: data.editCount || 0,
+            timestampMs: data.timestampMs || Date.now(),
           });
         }
         break;
@@ -1076,6 +1126,16 @@ export class FacebookService {
   private handleBridgeGroupMessage(data: any): void {
     if (!data?.id) return;
 
+    // Handle admin messages (pin, poll, group info changes) as system notifications.
+    // The bridge processes the raw delta internally (e.g. deltaUpdatePinnedMessagesV2)
+    // and ALSO emits a human-readable message event with isAdminMsg=true.
+    // We save these as type='system' so the UI renders them as centered notification text,
+    // NOT as regular chat bubbles.
+    if (data.isAdminMsg) {
+      this.handleAdminGroupMessage(data);
+      return;
+    }
+
     const stripJid = (id: string) => id.replace(/@.*$/, '');
     const threadId = data.threadId ? stripJid(String(data.threadId)) : '0';
 
@@ -1091,6 +1151,56 @@ export class FacebookService {
     };
 
     this.handleIncomingMessage(msg);
+  }
+
+  /**
+   * Handle admin activity messages (pin, poll, group info changes) from bridge as system notifications.
+   * Saves with type='system' and broadcasts msg_type='system' so the UI renders them as centered
+   * notification text in the chat, NOT as regular message bubbles.
+   */
+  private handleAdminGroupMessage(data: any): void {
+    const stripJid = (id: string) => id.replace(/@.*$/, '');
+    const threadId = data.threadId ? stripJid(String(data.threadId)) : '0';
+    const fbId = this.getFacebookId();
+    const ts = parseInt(data.timestampMs) || Date.now();
+    const isSelf = data.senderId === fbId ? 1 : 0;
+
+    Logger.log(`[FacebookService:${this.accountId}] Saving admin message as system: msgId=${data.id} threadId=${threadId} text="${(data.text || '').slice(0, 100)}"`);
+
+    // Save to DB with type='system' — saveFBMessage handles fb_messages + unified messages + thread preview + contacts
+    try {
+      DatabaseService.getInstance().saveFBMessage({
+        id: data.id,
+        account_id: this.accountId,
+        thread_id: threadId,
+        sender_id: String(data.senderId || ''),
+        body: data.text || null,
+        timestamp: ts,
+        type: 'system',
+        attachments: undefined,
+        reply_to_id: undefined,
+        is_self: isSelf,
+        is_unsent: 0,
+      });
+    } catch (err: any) {
+      Logger.warn(`[FacebookService:${this.accountId}] handleAdminGroupMessage DB error: ${err.message}`);
+    }
+
+    // Broadcast as system notification — UI's normalizeFBMessage respects msg_type override
+    EventBroadcaster.emit('fb:onMessage', {
+      fbAccountId: fbId,
+      message: {
+        messageID: data.id,
+        body: data.text || null,
+        timestamp: String(data.timestampMs || Date.now()),
+        userID: String(data.senderId || ''),
+        replyToID: threadId,
+        type: data.threadType === 2 ? 'group' : 'user',
+        attachments: { id: 0, url: null },
+        isSelf: false,
+        msg_type: 'system',
+      },
+    });
   }
 
   /**

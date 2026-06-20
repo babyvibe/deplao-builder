@@ -528,22 +528,44 @@ class DataSyncService {
         if (cols.length === 0) return;
 
         const colList = cols.join(', ');
+        const BATCH_SIZE = 200; // 200 rows per INSERT batch
 
         let inserted = 0;
+        const totalRows = rows.length;
         try {
             db.exec(`BEGIN TRANSACTION`);
-            for (const row of rows) {
-                try {
+            for (let i = 0; i < totalRows; i += BATCH_SIZE) {
+                const batch = rows.slice(i, i + BATCH_SIZE);
+                const valueStrings = batch.map(row => {
                     const escapedValues = cols.map(c => {
                         const v = row[c];
                         if (v === null || v === undefined) return 'NULL';
                         if (typeof v === 'number') return String(v);
                         return `'${this.esc(String(v))}'`;
                     }).join(', ');
-                    db.exec(`INSERT OR REPLACE INTO ${tableName} (${colList}) VALUES (${escapedValues})`);
-                    inserted++;
-                } catch {
-                    // Skip individual row errors
+                    return `(${escapedValues})`;
+                }).join(',\n');
+
+                try {
+                    db.exec(`INSERT OR REPLACE INTO ${tableName} (${colList}) VALUES ${valueStrings}`);
+                    inserted += batch.length;
+                } catch (err: any) {
+                    // Batch failed — fallback to row-by-row for this batch
+                    Logger.warn(`[DataSyncService] Batch insert failed for ${tableName}[${i}-${i + batch.length}]: ${err.message}. Falling back to row-by-row.`);
+                    for (const row of batch) {
+                        try {
+                            const escapedValues = cols.map(c => {
+                                const v = row[c];
+                                if (v === null || v === undefined) return 'NULL';
+                                if (typeof v === 'number') return String(v);
+                                return `'${this.esc(String(v))}'`;
+                            }).join(', ');
+                            db.exec(`INSERT OR REPLACE INTO ${tableName} (${colList}) VALUES (${escapedValues})`);
+                            inserted++;
+                        } catch {
+                            // Skip individual row errors
+                        }
+                    }
                 }
             }
             db.exec(`COMMIT`);
@@ -553,7 +575,9 @@ class DataSyncService {
         }
 
         if (inserted > 0) {
-            Logger.info(`[DataSyncService] Inserted ${inserted}/${rows.length} rows into ${tableName}`);
+            Logger.info(`[DataSyncService] Inserted ${inserted}/${totalRows} rows into ${tableName}`);
+        } else {
+            Logger.error(`[DataSyncService] FAILED to insert ANY rows into ${tableName} (${totalRows} total)`);
         }
     }
 

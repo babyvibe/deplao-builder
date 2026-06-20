@@ -29,6 +29,14 @@ interface LocalLabel {
   shortcut?: string;
 }
 
+/** Contact card suggestion state — dùng khi detect SĐT 0xx trong input */
+interface ContactCardSuggestion {
+  userId: string;
+  displayName: string;
+  avatarUrl: string;
+  phone: string;
+}
+
 /**
  * Dùng HTMLVideoElement + Canvas để capture frame video làm thumbnail.
  * Trả về base64 JPEG data URL, hoặc '' nếu thất bại.
@@ -161,6 +169,12 @@ export default function MessageInput() {
   const [inlineStickerSuggestions, setInlineStickerSuggestions] = useState<any[]>([]);
   const inlineStickerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inlineStickerLastKwRef = useRef<string>('');
+
+  // ─── Contact card suggestion (SĐT 0xx detection) ────────────────────────────
+  const [contactCardSuggestion, setContactCardSuggestion] = useState<ContactCardSuggestion | null>(null);
+  const [contactCardLoading, setContactCardLoading] = useState(false);
+  const contactCardTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastDetectedPhoneRef = useRef<string>('');
 
   const textareaRef = useRef<HTMLDivElement>(null);
   const mentionListRef = useRef<HTMLDivElement>(null);
@@ -457,6 +471,9 @@ export default function MessageInput() {
     setFmtRanges([]);
     setActiveFmts(new Set());
     setClipboardImages([]);
+    setContactCardSuggestion(null);
+    setContactCardLoading(false);
+    lastDetectedPhoneRef.current = '';
     prevTextRef.current = '';
     lastTypingSentRef.current = 0;
     if (typingStopTimerRef.current) { clearTimeout(typingStopTimerRef.current); typingStopTimerRef.current = null; }
@@ -633,6 +650,103 @@ export default function MessageInput() {
     setInlineStickerSuggestions([]);
     inlineStickerLastKwRef.current = '';
   }, [activeThreadId]);
+
+  // ─── Phone number detection → contact card suggestion ──────────────────
+  // Pattern: 0 + 10 digits (SĐT Việt Nam)
+  const PHONE_REGEX = /0\d{10}/g;
+
+  // Clear suggestion when thread changes
+  useEffect(() => {
+    setContactCardSuggestion(null);
+    setContactCardLoading(false);
+    lastDetectedPhoneRef.current = '';
+  }, [activeThreadId]);
+
+  // Debounced lookup when text contains phone number
+  useEffect(() => {
+    // Skip for Facebook channel — only Zalo supports business cards
+    if (activeContact?.channel === 'facebook') return;
+
+    if (contactCardTimerRef.current) clearTimeout(contactCardTimerRef.current);
+
+    const phones = text.match(PHONE_REGEX);
+    const phone = phones?.[0] || '';
+
+    if (!phone || phone === lastDetectedPhoneRef.current) {
+      // If phone was removed from text (or changed), clear suggestion
+      if (!phone && lastDetectedPhoneRef.current) {
+        setContactCardSuggestion(null);
+        setContactCardLoading(false);
+        lastDetectedPhoneRef.current = '';
+      }
+      return;
+    }
+
+    // New phone detected — debounce 800ms before lookup
+    lastDetectedPhoneRef.current = phone;
+    setContactCardLoading(true);
+
+    contactCardTimerRef.current = setTimeout(async () => {
+      try {
+        // Step 1: Search local DB contacts
+        if (activeAccountId) {
+          const dbRes = await ipc.db?.searchContactByPhone?.({ zaloId: activeAccountId, phone });
+          if (dbRes?.success && dbRes?.contact) {
+            const c = dbRes.contact;
+            setContactCardSuggestion({
+              userId: c.contact_id || '',
+              displayName: c.display_name || '',
+              avatarUrl: c.avatar_url || '',
+              phone: c.phone || phone,
+            });
+            setContactCardLoading(false);
+            return;
+          }
+        }
+
+        // Step 2: Not found in DB → try Zalo findUser API
+        const account = getActiveAccount();
+        if (!account) { setContactCardLoading(false); return; }
+        const auth = { cookies: account.cookies, imei: account.imei, userAgent: account.user_agent };
+
+        const findRes = await ipc.zalo?.findUser({ phone });
+        const foundUser = findRes?.response || findRes?.data;
+        if (foundUser?.userId || foundUser?.uid || foundUser?.id) {
+          const uid = foundUser.userId || foundUser.uid || foundUser.id;
+          // Try getUserInfo for detailed info (avatar, name)
+          let displayName = foundUser.displayName || foundUser.name || foundUser.zaloName || uid;
+          let avatarUrl = foundUser.avatar || foundUser.avatarUrl || foundUser.avatar_url || '';
+
+          try {
+            const infoRes = await ipc.zalo?.getUserInfo({ userId: uid });
+            if (infoRes?.response) {
+              const info = infoRes.response;
+              displayName = info.displayName || info.name || displayName;
+              avatarUrl = info.avatar || info.avatarUrl || info.avatar_url || avatarUrl;
+            }
+          } catch { /* best-effort */ }
+
+          setContactCardSuggestion({
+            userId: uid,
+            displayName,
+            avatarUrl: avatarUrl || '',
+            phone,
+          });
+        } else {
+          // Not found — clear suggestion
+          setContactCardSuggestion(null);
+        }
+      } catch {
+        setContactCardSuggestion(null);
+      } finally {
+        setContactCardLoading(false);
+      }
+    }, 800);
+
+    return () => {
+      if (contactCardTimerRef.current) clearTimeout(contactCardTimerRef.current);
+    };
+  }, [text, activeAccountId, activeContact?.channel]);
 
   const getAuth = () => {
     const account = getActiveAccount();
@@ -1448,8 +1562,43 @@ export default function MessageInput() {
         }
       }
 
-      if (!hasText) {
+      // ── Gửi danh thiếp nếu có SĐT suggestion ──────────────────────
+      const cardToSend = contactCardSuggestion;
+      if (cardToSend) {
+        try {
+          await ipc.zalo?.sendCard({
+            auth,
+            options: { userId: cardToSend.userId, phoneNumber: cardToSend.phone },
+            threadId: activeThreadId,
+            type: activeThreadType,
+            ...(quotePayload ? { quote: quotePayload } : {}),
+          });
+        } catch (err: any) {
+          showNotification('Gửi danh thiếp thất bại: ' + err.message, 'error');
+        }
+        // Clear suggestion after sending card
+        setContactCardSuggestion(null);
+        setContactCardLoading(false);
+        lastDetectedPhoneRef.current = '';
         if (quotePayload) setReplyTo(null);
+      }
+
+      // Clear suggestion also when sending with the phone text
+      if (contactCardSuggestion && hasText) {
+        setContactCardSuggestion(null);
+        setContactCardLoading(false);
+        lastDetectedPhoneRef.current = '';
+      }
+
+      // Nếu chỉ có danh thiếp (không text, không ảnh) → done
+      if (!hasText && !cardToSend) {
+        if (quotePayload) setReplyTo(null);
+        setSending(false);
+        textareaRef.current?.focus();
+        return;
+      }
+      // If only had card (no text, no images) → done
+      if (!hasText && !hasImages) {
         setSending(false);
         textareaRef.current?.focus();
         return;
@@ -2590,6 +2739,48 @@ export default function MessageInput() {
           >
             ✕
           </button>
+        </div>
+      )}
+
+      {/* ── Contact card suggestion bar (SĐT detected) ── */}
+      {(contactCardSuggestion || contactCardLoading) && (
+        <div className="flex items-center gap-3 px-3 py-2 border-b border-blue-500/30 bg-blue-950/30">
+          {contactCardLoading ? (
+            <div className="flex items-center gap-3 flex-1">
+              <div className="w-9 h-9 rounded-full bg-blue-800/50 animate-pulse flex-shrink-0" />
+              <div className="flex-1 space-y-1.5">
+                <div className="h-3 w-28 bg-blue-800/40 rounded animate-pulse" />
+                <div className="h-2.5 w-20 bg-blue-800/30 rounded animate-pulse" />
+              </div>
+            </div>
+          ) : contactCardSuggestion ? (
+            <>
+              <div className="w-9 h-9 rounded-full overflow-hidden flex-shrink-0 bg-blue-800/50">
+                {contactCardSuggestion.avatarUrl ? (
+                  <img src={contactCardSuggestion.avatarUrl} alt="" className="w-full h-full object-cover"
+                    onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-white text-sm font-bold">
+                    {(contactCardSuggestion.displayName || '?').charAt(0).toUpperCase()}
+                  </div>
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-blue-200 truncate">{contactCardSuggestion.displayName}</p>
+                <p className="text-xs text-blue-300/80 mt-0.5">{contactCardSuggestion.phone}</p>
+              </div>
+              <span className="text-[11px] text-blue-300/70 flex-shrink-0 bg-blue-900/40 px-2.5 py-1 rounded-full border border-blue-500/30">
+                Danh thiếp
+              </span>
+              <button
+                onClick={() => { setContactCardSuggestion(null); setContactCardLoading(false); lastDetectedPhoneRef.current = ''; }}
+                className="flex-shrink-0 w-5 h-5 rounded-full hover:bg-blue-800/50 flex items-center justify-center text-blue-300/70 hover:text-blue-200 text-xs transition-colors"
+                title="Bỏ gợi ý"
+              >
+                ✕
+              </button>
+            </>
+          ) : null}
         </div>
       )}
 

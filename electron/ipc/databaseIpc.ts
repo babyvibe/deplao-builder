@@ -84,6 +84,15 @@ export function registerDatabaseIpc() {
         }
     });
 
+    ipcMain.handle('db:searchContactByPhone', async (_event, { zaloId, phone }) => {
+        try {
+            const contact = DatabaseService.getInstance().searchContactByPhone(zaloId, phone);
+            return { success: true, contact: contact || null };
+        } catch (error: any) {
+            return { success: false, error: error.message };
+        }
+    });
+
     ipcMain.handle('db:searchMessages', async (_event, { zaloId, query }) => {
         try {
             const results = DatabaseService.getInstance().searchMessages(zaloId, query);

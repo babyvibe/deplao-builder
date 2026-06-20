@@ -1309,6 +1309,20 @@ class DatabaseService {
                 Logger.log('[DatabaseService] Migration: added reply_to_id column');
             }
 
+            const hasEditHistory = cols.some((c: any) => c.name === 'edit_history');
+            if (!hasEditHistory) {
+                db!.exec(`ALTER TABLE messages ADD COLUMN edit_history TEXT DEFAULT NULL`);
+                this.save();
+                Logger.log('[DatabaseService] Migration: added edit_history column');
+            }
+
+            const hasIsEdited = cols.some((c: any) => c.name === 'is_edited');
+            if (!hasIsEdited) {
+                db!.exec(`ALTER TABLE messages ADD COLUMN is_edited INTEGER DEFAULT 0`);
+                this.save();
+                Logger.log('[DatabaseService] Migration: added is_edited column');
+            }
+
             // Add listener_active column to accounts if missing
             const accCols = this.query<any>(`PRAGMA table_info(accounts)`);
             const hasListenerActive = accCols.some((c: any) => c.name === 'listener_active');
@@ -2163,6 +2177,18 @@ class DatabaseService {
             Logger.warn(`[DatabaseService] is_e2ee migration: ${err.message}`);
         }
 
+        // ── fb_messages.edit_history ────────────────────────────────────────
+        try {
+            const fbMsgCols = this.query<any>(`PRAGMA table_info(fb_messages)`);
+            if (!fbMsgCols.some((c: any) => c.name === 'edit_history')) {
+                db!.exec(`ALTER TABLE fb_messages ADD COLUMN edit_history TEXT DEFAULT NULL`);
+                this.save();
+                Logger.log('[DatabaseService] Migration: added edit_history to fb_messages');
+            }
+        } catch (err: any) {
+            Logger.warn(`[DatabaseService] edit_history migration: ${err.message}`);
+        }
+
         // ── ai_assistants.base_url ────────────────────────────────────────────
         try {
             const aiCols = this.query<any>(`PRAGMA table_info(ai_assistants)`);
@@ -2226,12 +2252,23 @@ class DatabaseService {
         this.run('UPDATE accounts SET phone = ? WHERE zalo_id = ?', [this.normalizeVietnamPhone(phone), zaloId]);
     }
 
-    /** Cập nhật thông tin profile đầy đủ: phone + is_business */
-    public updateAccountInfo(zaloId: string, phone: string, isBusiness: number): void {
+    /** Cập nhật thông tin profile: phone + is_business + avatar_url + full_name */
+    public updateAccountInfo(zaloId: string, phone: string, isBusiness: number, avatarUrl?: string, fullName?: string): void {
         if (!this.initialized) return;
+        const fields: string[] = ['phone = ?', 'is_business = ?'];
+        const values: any[] = [this.normalizeVietnamPhone(phone), isBusiness];
+        if (avatarUrl !== undefined) {
+            fields.push('avatar_url = ?');
+            values.push(avatarUrl);
+        }
+        if (fullName !== undefined) {
+            fields.push('full_name = ?');
+            values.push(fullName);
+        }
+        values.push(zaloId);
         this.run(
-            'UPDATE accounts SET phone = ?, is_business = ? WHERE zalo_id = ?',
-            [this.normalizeVietnamPhone(phone), isBusiness, zaloId]
+            `UPDATE accounts SET ${fields.join(', ')} WHERE zalo_id = ?`,
+            values
         );
     }
 
@@ -2626,6 +2663,24 @@ class DatabaseService {
             'SELECT * FROM contacts WHERE owner_zalo_id = ? ORDER BY last_message_time DESC',
             [ownerZaloId]
         );
+    }
+
+    /**
+     * Tìm contact trong DB theo số điện thoại (normalized).
+     * So khớp cả phone đã lưu (normalized) và raw phone từ user nhập.
+     */
+    public searchContactByPhone(ownerZaloId: string, phone: string): Contact | null {
+        if (!this.initialized || !phone) return null;
+        const normalized = this.normalizeVietnamPhone(phone);
+        if (!normalized) return null;
+        // So khớp chính xác hoặc so khớp phần cuối (cho trường hợp số nhập thiếu đầu)
+        return this.queryOne<Contact>(
+            `SELECT * FROM contacts
+             WHERE owner_zalo_id = ?
+               AND (phone = ? OR phone LIKE ?)
+             LIMIT 1`,
+            [ownerZaloId, normalized, `%${normalized.slice(-7)}`]
+        ) || null;
     }
 
     /** Update one or more flag columns (is_muted, mute_until, is_in_others) for a contact row */
@@ -7041,13 +7096,72 @@ class DatabaseService {
     }
 
     public updateFBMessageUnsent(id: string): void {
+        // Read current body from fb_messages to preserve as recalled_content
+        const existing = this.queryOne<any>(
+            `SELECT body FROM fb_messages WHERE id = ?`, [id]
+        );
         this.run(`UPDATE fb_messages SET is_unsent = 1, body = null WHERE id = ?`, [id]);
-        this.run(`UPDATE messages SET is_recalled = 1, content = '' WHERE msg_id = ? AND channel = 'facebook'`, [id]);
+        const originalContent = existing?.body || null;
+        this.run(
+            `UPDATE messages SET is_recalled = 1, content = '', recalled_content = ? WHERE msg_id = ? AND channel = 'facebook'`,
+            [originalContent, id]
+        );
     }
 
     public updateFBMessageReaction(id: string, reactions: string): void {
         this.run(`UPDATE fb_messages SET reactions = ? WHERE id = ?`, [reactions, id]);
         this.run(`UPDATE messages SET reactions = ? WHERE msg_id = ? AND channel = 'facebook'`, [reactions, id]);
+    }
+
+    public updateFBMessageEdit(id: string, newBody: string, editCount: number, timestampMs: number): void {
+        // Read current body + edit_history + account + thread from fb_messages
+        // Also resolve owner_zalo_id (facebook_id) for contacts update
+        const existing = this.queryOne<any>(
+            `SELECT fm.body, fm.edit_history, fm.account_id, fm.thread_id,
+                    COALESCE(fa.facebook_id, fm.account_id) as owner_zalo_id
+             FROM fb_messages fm
+             LEFT JOIN fb_accounts fa ON fa.id = fm.account_id
+             WHERE fm.id = ?`, [id]
+        );
+        if (!existing) return; // message not found
+
+        // Build edit history entry from current body
+        let historyArr: Array<{ oldBody: string | null; editedAt: number; editCount: number }> = [];
+        if (existing.edit_history) {
+            try { historyArr = JSON.parse(existing.edit_history); } catch { historyArr = []; }
+        }
+        historyArr.push({
+            oldBody: existing.body,
+            editedAt: timestampMs,
+            editCount: editCount,
+        });
+
+        // Update fb_messages + unified messages
+        this.run(
+            `UPDATE fb_messages SET body = ?, edit_history = ? WHERE id = ?`,
+            [newBody, JSON.stringify(historyArr), id]
+        );
+        this.run(
+            `UPDATE messages SET content = ?, edit_history = ?, is_edited = 1 WHERE msg_id = ? AND channel = 'facebook'`,
+            [newBody, JSON.stringify(historyArr), id]
+        );
+
+        // Update contact last_message if this message IS the last message in the thread
+        if (existing.account_id && existing.thread_id && existing.owner_zalo_id) {
+            const isLatest = this.queryOne<any>(
+                `SELECT 1 FROM fb_messages
+                 WHERE account_id = ? AND thread_id = ? AND id = ?
+                 AND timestamp = (SELECT MAX(timestamp) FROM fb_messages WHERE account_id = ? AND thread_id = ? AND is_unsent = 0)`,
+                [existing.account_id, existing.thread_id, id, existing.account_id, existing.thread_id]
+            );
+            if (isLatest) {
+                this.run(
+                    `UPDATE contacts SET last_message = ?, last_message_time = ?
+                     WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'facebook'`,
+                    [newBody?.slice(0, 100) || '[Đã chỉnh sửa]', timestampMs, existing.owner_zalo_id, existing.thread_id]
+                );
+            }
+        }
     }
 
     public hasFBMessage(accountId: string, messageId: string): boolean {

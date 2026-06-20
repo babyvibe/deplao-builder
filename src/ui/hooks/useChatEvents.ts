@@ -32,6 +32,7 @@ function getAccountDisplayName(zaloId: string): string {
  * tự quyết định render dựa trên msg_type.
  */
 function fbAttachmentPreview(attachType: string, attObj: any): string {
+  if (attachType === 'system') return ''; // System notifications use body text (admin msg), not a preview
   if (attachType === 'image' || attachType === 'photo') return '🖼️ Hình ảnh';
   if (attachType === 'video') return '🎬 Video';
   if (attachType === 'audio') return '🎵 Audio';
@@ -56,7 +57,8 @@ function normalizeFBMessage(fbAccountId: string, msg: any): MessageItem {
     (msg.attachments.url || msg.attachments.attachmentType));
 
   // rawType: giữ nguyên type gốc từ MQTT (sticker, image, video, file...)
-  const rawType = !hasAttachment ? 'text' : (msg.attachments.attachmentType || 'image');
+  // Cho phép backend override msg_type (vd 'system' cho admin notification)
+  const rawType = msg.msg_type || (!hasAttachment ? 'text' : (msg.attachments.attachmentType || 'image'));
   // KHÔNG map sticker→image ở đây — để MessageBubbles.isStickerType xử lý
   const msgType = rawType;
 
@@ -399,6 +401,27 @@ export function useChatEvents(): void {
       }
     });
     if (unsubReaction) unsubscribers.push(unsubReaction);
+
+    // ─── fb:onEdit → chatStore.updateMessageEdit ──────────────────────────
+    const unsubEdit = ipc.on?.('fb:onEdit', (data: {
+      fbAccountId: string;
+      messageId: string;
+      threadId?: string;
+      newText: string;
+      editCount: number;
+      timestampMs: number;
+    }) => {
+      if (!data?.fbAccountId || !data?.messageId) return;
+      useChatStore.getState().updateMessageEdit(
+        data.fbAccountId,
+        data.threadId || '',
+        data.messageId,
+        data.newText,
+        data.editCount,
+        data.timestampMs
+      );
+    });
+    if (unsubEdit) unsubscribers.push(unsubEdit);
 
     // ─── fb:onTyping → chatStore.setTyping ────────────────────────────────
     const unsubTyping = ipc.on?.('fb:onTyping', (data: {

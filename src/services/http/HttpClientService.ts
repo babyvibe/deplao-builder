@@ -279,7 +279,7 @@ class HttpClientService {
                 `${this.bossUrl}/api/media/upload`,
                 { base64, filename, zaloId },
                 { Authorization: `Bearer ${this.token}` },
-                60000
+                120000 // 2 phút cho ảnh lớn qua tunnel
             );
         } catch (err: any) {
             return { success: false, error: err.message };
@@ -348,16 +348,19 @@ class HttpClientService {
             const result = await this.httpGet(
                 `${this.bossUrl}/api/sync/full`,
                 { Authorization: `Bearer ${this.token}` },
-                120000
+                600000
             );
 
             if (!result?.success) {
-                return { success: false, error: result?.error || 'Sync failed' };
+                // Log chi tiết lý do sync thất bại
+                Logger.error(`[HttpClientService] Full sync failed: ${result?.error || 'unknown'}. Boss may have 100k+ messages - try increasing server timeout or reducing batch size.`);
+                return { success: false, error: result?.error || 'Sync failed - dữ liệu quá lớn, vui lòng thử lại' };
             }
 
             this.onSyncProgress?.('Đang xử lý dữ liệu...', 50);
             return { success: true, payload: result.payload, syncTs: result.syncTs };
         } catch (err: any) {
+            Logger.error(`[HttpClientService] Full sync exception: ${err.message}. Boss may have too many messages - consider paginated sync.`);
             return { success: false, error: err.message };
         }
     }
@@ -372,7 +375,7 @@ class HttpClientService {
             const result = await this.httpGet(
                 `${this.bossUrl}/api/sync/delta?sinceTs=${sinceTs}`,
                 { Authorization: `Bearer ${this.token}` },
-                60000
+                600000
             );
 
             if (!result?.success) {

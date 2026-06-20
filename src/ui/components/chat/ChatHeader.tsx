@@ -6,10 +6,10 @@ import ipc from '@/lib/ipc';
 import { UserProfilePopup } from '../common/UserProfilePopup';
 import LabelPicker, { ActiveLabels, EditLabelsModal } from './LabelPicker';
 import useIsMobile from '@/hooks/useIsMobile';
-import ChannelBadge from '../common/ChannelBadge';
 import { toLocalMediaUrl } from '@/lib/localMedia';
 import { useChannelCapability } from '@/hooks/useChannelCapability';
 import { fetchContactInfo } from '@/hooks/useZaloEvents';
+import { extractUserProfile } from '../../../utils/profileUtils';
 
 interface HeaderLocalLabel {
   id: number;
@@ -371,7 +371,7 @@ export default function ChatHeader() {
     }).catch(() => {});
   };
 
-  /** Reload alias (biệt danh) từ API Zalo — dùng getAliasList, không phải getUserInfo */
+  /** Reload alias + user info từ API Zalo — lưu toàn bộ alias + cập nhật thông tin hội thoại hiện tại */
   const handleRefreshAlias = async () => {
     if (!activeThreadId || !activeAccountId || activeThreadType === 1) return;
     const acc = getActiveAccount();
@@ -379,12 +379,38 @@ export default function ChatHeader() {
     setAliasRefreshing(true);
     try {
       const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+      // 1. Update toàn bộ alias từ getAliasList
       const res = await ipc.zalo?.getAliasList({ auth, count: 5000 });
+      if (!res?.success) return;
       const items: { userId: string; alias: string }[] = res?.response?.items || [];
-      const found = items.find((item) => item.userId === activeThreadId);
-      if (found?.alias) {
-        updateContact(activeAccountId, { contact_id: activeThreadId, alias: found.alias });
-        ipc.db?.setContactAlias({ zaloId: activeAccountId, contactId: activeThreadId, alias: found.alias }).catch(() => {});
+      for (const item of items) {
+        if (item.alias && item.userId) {
+          updateContact(activeAccountId, { contact_id: item.userId, alias: item.alias });
+          ipc.db?.setContactAlias({ zaloId: activeAccountId, contactId: item.userId, alias: item.alias }).catch(() => {});
+        }
+      }
+      // 2. Fetch full profile (tên, avatar, SĐT) cho hội thoại hiện tại
+      const infoRes = await ipc.zalo?.getUserInfo({ auth, userId: activeThreadId });
+      const rawProfile = infoRes?.response?.changed_profiles?.[activeThreadId]
+        || infoRes?.response?.data?.[activeThreadId];
+      if (rawProfile) {
+        const { displayName: newName, avatar: newAvatar, phone: newPhone, gender, birthday, alias: newAlias } = extractUserProfile(rawProfile);
+        const patch: any = { contact_id: activeThreadId };
+        if (newName) patch.display_name = newName;
+        if (newAvatar) patch.avatar_url = newAvatar;
+        if (newPhone) patch.phone = newPhone;
+        if (newAlias) patch.alias = newAlias;
+        if (Object.keys(patch).length > 1) {
+          updateContact(activeAccountId, patch);
+          await ipc.db?.updateContactProfile({
+            zaloId: activeAccountId, contactId: activeThreadId,
+            displayName: newName, avatarUrl: newAvatar, phone: newPhone,
+            gender, birthday,
+          });
+          if (newAlias) {
+            ipc.db?.setContactAlias({ zaloId: activeAccountId, contactId: activeThreadId, alias: newAlias }).catch(() => {});
+          }
+        }
       }
     } catch {} finally {
       setAliasRefreshing(false);
@@ -559,10 +585,10 @@ export default function ChatHeader() {
                   </svg>
               }
             </button>
-            {/* Alias reload button — chỉ hiện cho user DM có hỗ trợ alias */}
+            {/* Reload user info + alias button — chỉ hiện cho user DM có hỗ trợ alias */}
             {!isGroup && channelCap.supportsAlias && (
               <button
-                title="Tải lại biệt danh"
+                title="Cập nhật thông tin + tên gợi nhớ"
                 onClick={handleRefreshAlias}
                 disabled={aliasRefreshing}
                 className="flex-shrink-0 text-gray-400 hover:text-white transition-colors"
