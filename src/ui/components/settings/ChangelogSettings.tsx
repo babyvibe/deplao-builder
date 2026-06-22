@@ -14,6 +14,39 @@ interface VersionEntry {
 // ─── Changelog data — thêm entry mới vào ĐẦU mảng khi có bản cập nhật ────────
 const CHANGELOG: VersionEntry[] = [
   {
+    version: '26.6.6',
+    date: '06/2026',
+    type: 'minor',
+    highlights: [
+      '⌨️ Nâng cấp phím tắt hội thoại: Tab chuyển hội thoại, Ctrl+P ghim, Ctrl+F tìm tin, Ctrl+K tìm hội thoại, Ctrl+N ghi chú, Ctrl+S AI, Ctrl+I thông tin, Ctrl+T tag nhanh',
+      '⌨️ Chuyển tài khoản nhanh: giữ Ctrl+Tab → overlay chọn nick, thả Ctrl để chọn, Esc thoát',
+      '📁 Tự động xoá media cũ — cài số ngày trong Cài đặt → Tài khoản, dọn mỗi đêm lúc 3AM',
+      '📡 Tăng ổn định khi gửi tin Facebook — chống trùng tin, xử lý link đúng, hạn chế mất kết nối',
+      '🤖 AI model tuỳ chỉnh — nhập model name bất kỳ cho 9Router & OpenRouter',
+    ],
+    changes: [
+      {
+        category: 'new',
+        items: [
+          'Phím tắt hội thoại: Tab/Shift+Tab chuyển hội thoại, Ctrl+P ghim/bỏ ghim, Ctrl+K tìm hội thoại, Ctrl+F tìm tin nhắn, Ctrl+N tạo ghi chú, Ctrl+S mở AI, Ctrl+I mở thông tin, Ctrl+T ẩn/hiện tag nhanh — kèm popup tra cứu',
+          'Chuyển tài khoản nhanh Ctrl+Tab: giữ Ctrl + Tab navigate, thả Ctrl để chọn, Shift+Tab prev, Esc thoát; hỗ trợ merged inbox mode (có thêm "Tất cả tài khoản")',
+          'Xoá tài khoản triệt để: 2 chế độ — (1) Xoá tất cả dữ liệu: xoá sạch tin nhắn, danh bạ, khách hàng, chiến dịch, workflow, file media; (2) Chỉ xoá tài khoản: giữ nguyên dữ liệu',
+          'Tự động xoá media cũ theo ngày — cài đặt số ngày riêng từng tài khoản, hệ thống tự dọn mỗi 3AM',
+          'AI: custom model input cho 9Router & OpenRouter — nhập model name bất kỳ, thêm model mới (Big Pickle, Nemotron 3 Ultra, North Mini Code)',
+          'Bridge Facebook: tự động kiểm tra bridge còn sống không, respawn nếu bị treo',
+        ],
+      },
+      {
+        category: 'improved',
+        items: [
+          'Tăng ổn định gửi tin Facebook: chống trùng tin nhắn khi bridge echo ngược, xử lý link/sticker đúng',
+          'Cải thiện kết nối Facebook: giảm tình trạng mất kết nối do overflow queue, tự động chuyển qua bridge',
+          'Settings: tách giao diện quản lý tài khoản riêng, thêm cài đặt xoá media cho từng tài khoản',
+        ],
+      },
+    ],
+  },
+  {
     version: '26.6.5',
     date: '06/2026',
     type: 'minor',

@@ -524,6 +524,66 @@ class FileStorageService {
     }
 
     /**
+     * Xoá toàn bộ thư mục media của một tài khoản (bao gồm tất cả file con).
+     */
+    public static deleteAccountMedia(zaloId: string): void {
+        const accountDir = path.join(this.getBaseDir(), zaloId);
+        if (!fs.existsSync(accountDir)) {
+            Logger.log(`[FileStorageService] Account media dir not found: ${accountDir}`);
+            return;
+        }
+        try {
+            fs.rmSync(accountDir, { recursive: true, force: true });
+            Logger.log(`[FileStorageService] Deleted media for account: ${zaloId}`);
+        } catch (error: any) {
+            Logger.error(`[FileStorageService] Failed to delete media for account ${zaloId}: ${error.message}`);
+        }
+    }
+
+    /**
+     * Xoá các thư mục ngày cũ hơn `olderThanDays` ngày trong thư mục media của tài khoản.
+     * Cấu trúc: {baseDir}/{zaloId}/{YYYY-MM-DD}/files
+     * @returns số lượng thư mục ngày đã xoá
+     */
+    public static cleanupOldMedia(zaloId: string, olderThanDays: number): number {
+        const accountDir = path.join(this.getBaseDir(), zaloId);
+        if (!fs.existsSync(accountDir)) return 0;
+
+        const cutoff = Date.now() - olderThanDays * 86400_000;
+        let deletedCount = 0;
+
+        try {
+            const entries = fs.readdirSync(accountDir);
+            for (const entry of entries) {
+                const fullPath = path.join(accountDir, entry);
+                try {
+                    const stat = fs.statSync(fullPath);
+                    if (!stat.isDirectory()) continue;
+
+                    // Tên thư mục theo format YYYY-MM-DD
+                    const dirDate = new Date(entry + 'T00:00:00');
+                    if (isNaN(dirDate.getTime())) continue;
+
+                    if (dirDate.getTime() < cutoff) {
+                        fs.rmSync(fullPath, { recursive: true, force: true });
+                        deletedCount++;
+                    }
+                } catch {
+                    // Skip entries we can't stat
+                    continue;
+                }
+            }
+        } catch (error: any) {
+            Logger.error(`[FileStorageService] cleanupOldMedia error for ${zaloId}: ${error.message}`);
+        }
+
+        if (deletedCount > 0) {
+            Logger.log(`[FileStorageService] Cleaned ${deletedCount} old media dirs for ${zaloId} (older than ${olderThanDays}d)`);
+        }
+        return deletedCount;
+    }
+
+    /**
      * Xóa file local
      */
     public static deleteFile(filePath: string): void {

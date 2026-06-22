@@ -97,7 +97,7 @@ export class FacebookSendService {
     //   - Group → bridge MQTT (fallback REST)
     // KHÔNG tự route ở đây vì isUserThread() không phân biệt được user vs group.
     const isUserMessage = params.typeChat === 'user';
-    const SEND_TIMEOUT_MS = 45000;
+    const SEND_TIMEOUT_MS = 30000; // 30s — enough for bridge E2EE + REST fallback
     let result: any;
     try {
       result = await Promise.race([
@@ -115,6 +115,9 @@ export class FacebookSendService {
 
     // ── Save DB + emit UI ──
     if (result?.success && result?.messageId) {
+      // Safety: mark as locally sent để ngăn self-echo duplicate
+      // (sendMessage đã gọi markMessageLocallySent internally, đây là double-safety)
+      service.markMessageLocallySent(result.messageId);
       await FacebookSendService.persistSentMessage({
         accountId,
         threadId,

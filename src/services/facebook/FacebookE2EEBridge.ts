@@ -99,10 +99,26 @@ export class FacebookE2EEBridge extends EventEmitter {
   private closed = false;
   private buffer = '';
 
-  constructor(binaryPath: string) {
-    super();
-    this.binaryPath = binaryPath;
+  // ─── Static helpers ────────────────────────────────────────────────────────
+  // Bridge Go struct expects threadId as int64, not string.
+  // Facebook thread IDs là số, parse sang number để JSON serialize đúng.
+  private static toIntThreadId(threadId: string): number {
+    const n = parseInt(String(threadId), 10);
+    return isNaN(n) ? (threadId as any) : n;
   }
+
+  // ─── Static Init ───────────────────────────────────────────────────────────
+  // TypeScript 5.9+ strict check: EventEmitter constructor(options?) conflicts
+  // với constructor(binaryPath). Dùng builder pattern để tránh.
+  static create(binaryPath: string): FacebookE2EEBridge {
+    const bridge = new FacebookE2EEBridge();
+    bridge.binaryPath = binaryPath;
+    return bridge;
+  }
+
+  // Private constructor — chỉ dùng qua create() để tránh TS 5.9 EventEmitter conflict
+  private constructor() { super(); }
+
 
   // ─── Lifecycle ────────────────────────────────────────────────────────────
 
@@ -110,9 +126,15 @@ export class FacebookE2EEBridge extends EventEmitter {
    * Khởi động Go bridge child process và reader loop.
    */
   public spawn(): void {
-    if (this.process) {
-      Logger.warn('[FBE2EEBridge] Already spawned');
+    // Cho phép spawn mới nếu process cũ đã bị kill hoặc null
+    if (this.process && !this.process.killed) {
+      Logger.warn('[FBE2EEBridge] Already spawned with alive process');
       return;
+    }
+    // Cleanup process cũ đã chết
+    if (this.process) {
+      this.process.removeAllListeners();
+      this.process = null;
     }
 
     Logger.log(`[FBE2EEBridge] Spawning: ${this.binaryPath}`);
@@ -222,9 +244,12 @@ export class FacebookE2EEBridge extends EventEmitter {
       this.onProcessExited(this.process?.exitCode ?? null);
     });
 
-    // ─── Stderr forward (debug) ─────────────────────────────────────────
+    // ─── Stderr forward (debug + file) ────────────────────────────────
     this.process.stderr?.on('data', (chunk: Buffer) => {
-      Logger.log(`[FBE2EEBridge:stderr] ${chunk.toString('utf8').trim()}`);
+      const text = chunk.toString('utf8').trim();
+      if (text) {
+        Logger.log(`[FBE2EEBridge:stderr] ${text}`);
+      }
     });
 
     // ─── Process exit ──────────────────────────────────────────────────
@@ -247,6 +272,8 @@ export class FacebookE2EEBridge extends EventEmitter {
     // Async event (has `event` key, no `id`)
     if (msg.event) {
       const evt = msg as FBJsonRpcEvent;
+      const eventType = evt.event?.type || '?';
+      const dataPreview = evt.event?.data != null ? JSON.stringify(evt.event.data).slice(0, 200) : 'undefined';
       this.emit('event', evt.event);
       return;
     }
@@ -262,6 +289,7 @@ export class FacebookE2EEBridge extends EventEmitter {
       this.pending.delete(id);
 
       if (msg.ok === true) {
+        const dataPreview = msg.data != null ? JSON.stringify(msg.data).slice(0, 200) : 'undefined';
         pending.resolve(msg.data ?? {});
       } else {
         pending.reject(new BridgeError(msg.error || 'Unknown bridge error'));
@@ -275,6 +303,7 @@ export class FacebookE2EEBridge extends EventEmitter {
   private onProcessExited(code: number | null): void {
     if (this.closed) return;
     this.closed = true;
+    this.process = null; // Cleanup process reference on unexpected exit
 
     // Drain tất cả pending requests — bridge đã chết
     for (const [, pending] of this.pending) {
@@ -302,12 +331,19 @@ export class FacebookE2EEBridge extends EventEmitter {
     params?: any,
     timeout: number = 120000,
   ): Promise<any> {
+    // DEBUG: log state trước khi check để biết tại sao connect() fail sớm
+    const preCheck = `method=${method} closed=${this.closed} hasProcess=${!!this.process} killed=${this.process?.killed} idCounter=${this.idCounter}`;
     if (this.closed || !this.process || this.process.killed) {
       throw new BridgeNotReadyError();
     }
 
     const id = this.idCounter++;
     const request = { id, method, ...(params !== undefined ? { params } : {}) };
+
+    // Mask sensitive params (cookies) để không leak vào log
+    const safeParams = params ? { ...params } : undefined;
+    if (safeParams?.cookies) safeParams.cookies = { ...safeParams.cookies, xs: '***', fr: '***' };
+    const safeMethodName = String(method);
 
     return new Promise<any>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -318,6 +354,7 @@ export class FacebookE2EEBridge extends EventEmitter {
       this.pending.set(id, {
         resolve: (data: any) => {
           clearTimeout(timer);
+          const dataPreview = data != null ? JSON.stringify(data).slice(0, 300) : 'undefined';
           resolve(data);
         },
         reject: (err: Error) => {
@@ -519,7 +556,7 @@ export class FacebookE2EEBridge extends EventEmitter {
     replyToId?: string;
   }): Promise<{ messageId?: string; timestampMs?: number }> {
     return this.call('sendMessage', {
-      threadId: params.threadId,
+      threadId: FacebookE2EEBridge.toIntThreadId(params.threadId),
       text: params.text,
       replyToId: params.replyToId || '',
     });
@@ -534,7 +571,7 @@ export class FacebookE2EEBridge extends EventEmitter {
     emoji: string;
   }): Promise<any> {
     return this.call('sendReaction', {
-      threadId: params.threadId,
+      threadId: FacebookE2EEBridge.toIntThreadId(params.threadId),
       messageId: params.messageId,
       emoji: params.emoji,
     });
@@ -549,7 +586,7 @@ export class FacebookE2EEBridge extends EventEmitter {
     caption?: string;
   }): Promise<{ messageId?: string; timestampMs?: number }> {
     return this.call('sendImage', {
-      threadId: params.threadId,
+      threadId: FacebookE2EEBridge.toIntThreadId(params.threadId),
       imagePath: params.imagePath,
       caption: params.caption || '',
     });
@@ -564,30 +601,10 @@ export class FacebookE2EEBridge extends EventEmitter {
     fileName?: string;
   }): Promise<{ messageId?: string; timestampMs?: number }> {
     return this.call('sendFile', {
-      threadId: params.threadId,
+      threadId: FacebookE2EEBridge.toIntThreadId(params.threadId),
       filePath: params.filePath,
       fileName: params.fileName || '',
     });
-  }
-
-  /**
-   * Đánh dấu thread đã đọc trên Facebook server
-   */
-  public async markRead(params: {
-    threadId: string;
-  }): Promise<any> {
-    return this.call('markRead', params);
-  }
-
-  /**
-   * Gửi typing indicator
-   */
-  public async sendTyping(params: {
-    threadId: string;
-    isTyping: boolean;
-    isGroup?: boolean;
-  }): Promise<any> {
-    return this.call('sendTyping', params);
   }
 
   // ─── Shutdown ─────────────────────────────────────────────────────────────
@@ -612,7 +629,7 @@ export class FacebookE2EEBridge extends EventEmitter {
     }
     this.pending.clear();
 
-    // Close stdin, give process 5s to exit
+    // Close stdin, give process 5s to exit gracefully
     try { this.process.stdin?.end(); } catch {}
     const proc = this.process;
 
@@ -623,12 +640,17 @@ export class FacebookE2EEBridge extends EventEmitter {
       }
     }, 5000);
 
+    // Đợi process exit rồi mới null reference — tránh race với spawn()
     proc.on('exit', () => {
       clearTimeout(forceKill);
+      if (this.process === proc) {
+        this.process = null;
+      }
+      Logger.log('[FBE2EEBridge] Process exited after close');
     });
 
-    this.process = null;
-    Logger.log('[FBE2EEBridge] Closed');
+    // KHÔNG set this.process = null ở đây — đợi 'exit' event
+    Logger.log('[FBE2EEBridge] Close requested — waiting for process exit');
   }
 
   /**

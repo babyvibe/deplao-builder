@@ -31,10 +31,13 @@ declare global {
         disconnectAccount: (zaloId: string) => Promise<any>;
         disconnectAll: () => Promise<any>;
         getAccounts: () => Promise<any>;
-        removeAccount: (zaloId: string) => Promise<any>;
+        removeAccount: (zaloId: string, deleteData?: boolean) => Promise<any>;
         checkHealth: (zaloIds: string | string[]) => Promise<{ success: boolean; results: Array<{ zaloId: string; healthy: boolean; readyState: number | null; reason?: string }>; error?: string }>;
         checkAndRefreshAvatar: (zaloId: string) => Promise<{ success: boolean; refreshed: boolean; avatar_url?: string; full_name?: string; reason?: string; error?: string }>;
         requestOldMessages: (zaloId: string) => Promise<{ success: boolean; error?: string }>;
+        getMediaAutoDelete: (zaloId: string) => Promise<{ success: boolean; config: { enabled: boolean; days: number } | null; error?: string }>;
+        setMediaAutoDelete: (zaloId: string, enabled: boolean, days: number) => Promise<{ success: boolean; config?: { enabled: boolean; days: number }; cleanedDirs?: number; message?: string; error?: string }>;
+        runAllMediaCleanup: () => Promise<{ success: boolean; results?: Array<{ zaloId: string; cleaned: number; config: any }>; error?: string }>;
       };
       zalo: {
         sendMessage: (params: any) => Promise<any>;

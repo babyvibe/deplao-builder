@@ -229,6 +229,30 @@ export default function ConversationList() {
     };
   }, [activeAccountId]);
 
+  // Listen for Ctrl+K from MessageInput → focus conversation search
+  useEffect(() => {
+    const handler = () => {
+      setSearchPanelOpen(true);
+      setTimeout(() => searchInputRef.current?.focus(), 50);
+    };
+    window.addEventListener('focus:conversationSearch', handler);
+    return () => window.removeEventListener('focus:conversationSearch', handler);
+  }, []);
+
+  // Refresh local pinned threads when pin state changes (Ctrl+P from MessageInput)
+  useEffect(() => {
+    if (!activeAccountId) return;
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (!detail?.zaloId || detail.zaloId !== activeAccountId) return;
+      ipc.db?.getLocalPinnedConversations({ zaloId: activeAccountId }).then((res: any) => {
+        setLocalPinnedThreads(new Set(res?.threadIds || []));
+      }).catch(() => {});
+    };
+    window.addEventListener('local-pin-changed', handler);
+    return () => window.removeEventListener('local-pin-changed', handler);
+  }, [activeAccountId]);
+
   useEffect(() => {
     if (!mergedInboxMode) return;
     mergedInboxAccounts.forEach((zaloId) => {
@@ -1963,7 +1987,7 @@ export default function ConversationList() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between gap-1">
                   <span className="text-sm font-medium text-gray-200 truncate flex items-center gap-1">
-                    {isLocalPinned && <span title="Ghim trong app">📎</span>}
+                    {isLocalPinned && <span title="Ghim trong app">📍</span>}
                     {isPinned && <span title="Ghim Zalo">📌</span>}
                     {contact.alias || contact.display_name || contact.contact_id}
                   </span>

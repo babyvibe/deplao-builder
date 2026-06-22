@@ -20,6 +20,7 @@ import IntegrationPage from './components/integration/IntegrationPage';
 import AnalyticsPage from './components/analytics/AnalyticsPage';
 import ErpPage from './features/erp/ErpPage';
 import AccountInitPanel from './components/common/AccountInitPanel';
+import AccountSwitcherOverlay from './components/common/AccountSwitcherOverlay';
 import { UpdateNotification } from './components/common/UpdateNotification';
 import { useAppStore } from './store/appStore';
 import { useAccountStore } from './store/accountStore';
@@ -157,6 +158,52 @@ export default function App() {
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, [lockEnabled]);
+
+  // ─── Account switcher (Ctrl+Tab): global keyboard handler ──────────────
+  useEffect(() => {
+    const ctrlHeldRef = { current: false };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const store = useAppStore.getState();
+      // Ctrl+Tab: open account switcher
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Tab') {
+        e.preventDefault();
+        if (!store.accountSwitcherOpen) {
+          store.openAccountSwitcher();
+        } else {
+          if (e.shiftKey) store.prevAccountSwitcher();
+          else store.nextAccountSwitcher();
+        }
+        ctrlHeldRef.current = true;
+        return;
+      }
+      // Escape while switcher open: close without switching
+      if (e.key === 'Escape' && store.accountSwitcherOpen) {
+        store.closeAccountSwitcher(false);
+        ctrlHeldRef.current = false;
+        return;
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      // Ctrl/Meta released while switcher open → select account
+      if ((e.key === 'Control' || e.key === 'Meta') && ctrlHeldRef.current) {
+        ctrlHeldRef.current = false;
+        const store = useAppStore.getState();
+        if (store.accountSwitcherOpen) {
+          e.preventDefault();
+          store.closeAccountSwitcher(true);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, []);
 
   // ─── Employee permission guard: redirect to dashboard if current view is not allowed ──
   useEffect(() => {
@@ -1474,6 +1521,7 @@ export default function App() {
 
       {/* Auto-update notification — bottom-right corner */}
       <UpdateNotification />
+      <AccountSwitcherOverlay />
     </div>
   );
 }

@@ -169,6 +169,9 @@ export default function MessageInput() {
   const [inlineStickerSuggestions, setInlineStickerSuggestions] = useState<any[]>([]);
   const inlineStickerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inlineStickerLastKwRef = useRef<string>('');
+  // Keyboard shortcuts popup
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const shortcutsBtnRef = useRef<HTMLButtonElement>(null);
 
   // ─── Contact card suggestion (SĐT 0xx detection) ────────────────────────────
   const [contactCardSuggestion, setContactCardSuggestion] = useState<ContactCardSuggestion | null>(null);
@@ -898,33 +901,124 @@ export default function MessageInput() {
     }
   }, [activeAccountId, activeThreadId, activeThreadType, loadLocalLabelsForThread, showNotification, threadLocalLabelIds, togglingLocalLabelId]);
 
-  // ─── Keyboard shortcuts for label toggle ─────────────────────────────────────
+  // ─── Pin/unpin conversation locally (Ctrl+P) ──────────────────────────────────
+  const handlePinConversation = useCallback(async () => {
+    if (!activeAccountId || !activeThreadId) return;
+    try {
+      const res = await ipc.db?.getLocalPinnedConversations({ zaloId: activeAccountId });
+      const pinnedThreadIds: string[] = res?.threadIds || [];
+      const isPinned = pinnedThreadIds.includes(activeThreadId);
+      await ipc.db?.setLocalPinnedConversation({ zaloId: activeAccountId, threadId: activeThreadId, isPinned: !isPinned });
+      showNotification(isPinned ? 'Đã bỏ ghim hội thoại' : 'Đã ghim hội thoại', 'success');
+      // Notify ConversationList to refresh pinned state
+      window.dispatchEvent(new CustomEvent('local-pin-changed', { detail: { zaloId: activeAccountId } }));
+    } catch {
+      showNotification('Không thể ghim hội thoại', 'error');
+    }
+  }, [activeAccountId, activeThreadId, showNotification]);
+
+  // ─── Keyboard shortcuts for chat page ─────────────────────────────────────────
   useEffect(() => {
     if (!activeAccountId || !activeThreadId) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Skip if user is typing in an input/textarea/contenteditable
       const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
-        // Still allow if it's a modifier key combination (Ctrl/Alt/Meta + key)
-        if (!e.ctrlKey && !e.altKey && !e.metaKey) return;
+      const isInInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+      const hasMod = e.ctrlKey || e.altKey || e.metaKey;
+
+      // ── Tab: navigate to next/prev conversation (full handleSelect-like) ──
+      if (e.key === 'Tab' && !hasMod) {
+        e.preventDefault();
+        e.stopPropagation();
+        const store = useChatStore.getState();
+        const conList = store.contacts[activeAccountId || ''] || [];
+        if (conList.length === 0) return;
+        const activeTId = store.activeThreadId;
+        const sorted = [...conList].sort((a, b) => (b.last_message_time || 0) - (a.last_message_time || 0));
+        const currentIdx = activeTId ? sorted.findIndex(c => c.contact_id === activeTId) : -1;
+        let nextIdx: number;
+        if (currentIdx === -1) {
+          nextIdx = 0;
+        } else {
+          nextIdx = e.shiftKey ? currentIdx - 1 : currentIdx + 1;
+          if (nextIdx < 0) nextIdx = sorted.length - 1;
+          if (nextIdx >= sorted.length) nextIdx = 0;
+        }
+        if (nextIdx === currentIdx) return;
+        const next = sorted[nextIdx];
+        const zaloId = activeAccountId!;
+        const contactId = next.contact_id;
+        const threadType = next.contact_type === 'group' ? 1 : 0;
+
+        // Set active thread + clear unread (like ConversationList.handleSelect)
+        store.setActiveThread(contactId, threadType);
+        store.clearUnread(zaloId, contactId);
+        ipc.db?.markAsRead({ zaloId, contactId }).catch(() => {});
+
+        // Load latest 50 messages from DB so ChatWindow is not blank
+        ipc.db?.getMessages({ zaloId, threadId: contactId, limit: 50, offset: 0 }).then((res: any) => {
+          if (res?.messages?.length > 0) {
+            const msgs = [...res.messages].reverse();
+            useChatStore.getState().setMessages(zaloId, contactId, msgs);
+          }
+        }).catch(() => {});
+        return;
       }
 
-      // Check if any label has a shortcut that matches
+      // ── For non-modified keys when in input, skip (let label shortcuts handle) ──
+      if (isInInput && !e.ctrlKey && !e.metaKey) return;
+
+      // ── Ctrl+ / Cmd+ shortcuts only ──
+      if (!e.ctrlKey && !e.metaKey) return;
+
+      switch (e.key.toLowerCase()) {
+        case 'p': // Pin conversation locally
+          e.preventDefault();
+          e.stopPropagation();
+          handlePinConversation();
+          return;
+        case 'k': // Focus conversation search (sidebar)
+          e.preventDefault();
+          e.stopPropagation();
+          window.dispatchEvent(new CustomEvent('focus:conversationSearch'));
+          return;
+        case 'f': // Toggle message search in header
+          e.preventDefault();
+          e.stopPropagation();
+          useAppStore.getState().toggleSearch();
+          return;
+        case 'n': // Create internal note
+          e.preventDefault();
+          e.stopPropagation();
+          setShowCreateNote(true);
+          return;
+        case 's': // Toggle AI Quick Panel
+          e.preventDefault();
+          e.stopPropagation();
+          useAppStore.getState().toggleAIQuickPanel();
+          return;
+        case 'i': // Toggle conversation info panel
+          e.preventDefault();
+          e.stopPropagation();
+          useAppStore.getState().toggleConversationInfo();
+          return;
+        case 't': // Toggle local labels row
+          e.preventDefault();
+          e.stopPropagation();
+          toggleLocalLabels();
+          return;
+      }
+
+      // ── Label shortcuts (toggle local labels by assigned shortcut) ──
       for (const label of localLabels) {
         if (label.shortcut && matchesShortcut(e, label.shortcut)) {
           e.preventDefault();
           e.stopPropagation();
-
-          // Toggle this label
           const exists = threadLocalLabelIds.has(label.id);
           const action = exists ? 'Gỡ' : 'Gắn';
-
-          // Call toggle function
           handleToggleLocalLabel(label).then(() => {
             showNotification(`${action} nhãn "${label.emoji || ''} ${label.name}" thành công`, 'success');
           });
-
           return;
         }
       }
@@ -932,7 +1026,7 @@ export default function MessageInput() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeAccountId, activeThreadId, localLabels, threadLocalLabelIds, handleToggleLocalLabel, showNotification]);
+  }, [activeAccountId, activeThreadId, handlePinConversation, showNotification, localLabels, threadLocalLabelIds, handleToggleLocalLabel]);
 
   /** Trả về true nếu chuỗi là 1 URL thuần (không có khoảng trắng, bắt đầu bằng http/https) */
   const isUrlOnly = (s: string): boolean => {
@@ -3073,6 +3167,38 @@ export default function MessageInput() {
 
         </div>
 
+        {/* Phím tắt — icon bàn phím, bấm để xem danh sách shortcuts */}
+        <div className="relative ml-auto">
+          <ToolbarBtn
+            ref={shortcutsBtnRef}
+            onClick={() => setShowShortcuts(v => !v)}
+            title="Phím tắt"
+            active={showShortcuts}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="2" y="4" width="20" height="16" rx="2" />
+              <line x1="6" y1="8" x2="6.01" y2="8" />
+              <line x1="10" y1="8" x2="10.01" y2="8" />
+              <line x1="14" y1="8" x2="14.01" y2="8" />
+              <line x1="18" y1="8" x2="18.01" y2="8" />
+              <line x1="6" y1="12" x2="6.01" y2="12" />
+              <line x1="10" y1="12" x2="10.01" y2="12" />
+              <line x1="14" y1="12" x2="14.01" y2="12" />
+              <line x1="18" y1="12" x2="18.01" y2="12" />
+              <line x1="6" y1="16" x2="6.01" y2="16" />
+              <line x1="10" y1="16" x2="10.01" y2="16" />
+              <line x1="14" y1="16" x2="14.01" y2="16" />
+              <line x1="18" y1="16" x2="18.01" y2="16" />
+            </svg>
+          </ToolbarBtn>
+
+          {showShortcuts && (
+            <ShortcutsPopup
+              onClose={() => setShowShortcuts(false)}
+            />
+          )}
+        </div>
+
       </div>
 
       {/* ── Format bar (expandable) ── */}
@@ -4326,6 +4452,60 @@ function MoreMenuDropdown({ isGroup, onCreatePoll, onCreateNote, onCreateReminde
           </div>
         </button>
       ))}
+    </div>
+  );
+}
+
+// ─── ShortcutsPopup ──────────────────────────────────────────────────────────
+function ShortcutsPopup({ onClose }: { onClose: () => void }) {
+  const ref = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    const h = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    setTimeout(() => {
+      document.addEventListener('mousedown', h);
+      document.addEventListener('keydown', k);
+    }, 0);
+    return () => {
+      document.removeEventListener('mousedown', h);
+      document.removeEventListener('keydown', k);
+    };
+  }, [onClose]);
+
+  const SHORTCUTS = [
+    { key: 'Ctrl + Tab', desc: 'Giữ để chuyển đổi nick nhanh' },
+    { key: 'Tab', desc: 'Chuyển đến hội thoại tiếp theo' },
+    { key: 'Shift + Tab', desc: 'Chuyển đến hội thoại trước đó' },
+    { key: 'Ctrl + P', desc: 'Ghim / bỏ ghim hội thoại trong app' },
+    { key: 'Ctrl + K', desc: 'Tìm kiếm hội thoại' },
+    { key: 'Ctrl + F', desc: 'Tìm kiếm tin nhắn trong hội thoại' },
+    { key: 'Ctrl + N', desc: 'Tạo ghi chú nội bộ' },
+    { key: 'Ctrl + S', desc: 'Mở trợ lý AI' },
+    { key: 'Ctrl + I', desc: 'Mở thông tin hội thoại' },
+    { key: 'Ctrl + T', desc: 'Ẩn / hiện danh sách tag nhanh' },
+  ] as const;
+
+  return (
+    <div
+      ref={ref}
+      className="absolute bottom-full right-0 mb-2 bg-gray-800 border border-gray-700 rounded-2xl shadow-2xl z-50 w-72 py-3 px-4"
+    >
+      <p className="text-[11px] text-gray-500 font-medium uppercase tracking-wide mb-3">
+        Phím tắt hội thoại
+      </p>
+      <div className="flex flex-col gap-1.5">
+        {SHORTCUTS.map(sc => (
+          <div key={sc.key} className="flex items-center justify-between gap-4">
+            <span className="text-xs text-gray-400">{sc.desc}</span>
+            <kbd className="flex-shrink-0 text-[11px] font-mono px-2 py-1 rounded-md bg-gray-700 text-gray-200 border border-gray-600 leading-none">
+              {sc.key}
+            </kbd>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

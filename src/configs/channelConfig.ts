@@ -173,7 +173,7 @@ export const CHANNEL_CONFIG: Record<Channel, ChannelCapability> = {
     supportsBusinessCard: false,
     supportsBankCard: false,
     supportsTextStyle: false,
-    supportsAlias: false,
+    supportsAlias: true,
     supportsMuteSync: false,
     supportsPinConversation: false,
     supportsCreateGroup: false,

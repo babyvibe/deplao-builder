@@ -63,6 +63,10 @@ export interface FBListenerEvents {
   reaction: (data: { messageId: string; reaction: string; actorFbId: string; threadId: string }) => void;
   connectionStatus: (status: FBConnectionStatus) => void;
   error: (err: Error) => void;
+  /** Emitted when MQTT seqId is updated — FacebookService dùng để cache fallback */
+  seqId: (seqId: string) => void;
+  /** Emitted on ERROR_QUEUE_OVERFLOW — FacebookService dùng để ngăn tạo listener mới */
+  overflow: (seqId: string) => void;
 }
 
 export class FacebookMQTTListener extends EventEmitter {
@@ -235,7 +239,9 @@ export class FacebookMQTTListener extends EventEmitter {
       this.clearConnectTimeout();
       this.retryCount = 0;
       this.reconnectDelay = 3000;
-      this.overflowRetryCount = 0;
+      // KHÔNG reset overflowRetryCount ở đây — nó chỉ reset khi queue tạo thành công
+      // (trong handleMQTTMessage khi nhận syncToken + firstDeltaSeqId).
+      // Reset ở đây khiến overflow loop vô hạn vì counter luôn về 0 trước khi publishQueue.
       this.lastPongTime = Date.now(); // Reset pong timer on connect (BUG #2 fix)
       this.emit('connectionStatus', 'connected' as FBConnectionStatus);
 
@@ -346,7 +352,7 @@ export class FacebookMQTTListener extends EventEmitter {
 
     const queue: any = {
       sync_api_version: 10,
-      max_deltas_able_to_process: 1000,
+      max_deltas_able_to_process: 500,
       delta_batch_size: 500,
       encoding: 'JSON',
       entity_fbid: this.dataFB.FacebookID,
@@ -356,7 +362,14 @@ export class FacebookMQTTListener extends EventEmitter {
     let topic: string;
     if (!this.syncToken) {
       topic = '/messenger_sync_create_queue';
-      queue.initial_titan_sequence_id = this.lastSeqId;
+      // Tránh ERROR_QUEUE_OVERFLOW: nếu đã có overflow trước đó, không gửi
+      // initial_titan_sequence_id để Facebook tự chọn starting point phù hợp.
+      // Nếu seqId=0 hoặc seq quá thấp, Facebook cố đồng bộ toàn bộ messages → overflow.
+      if (this.overflowRetryCount === 0 && this.lastSeqId !== '0') {
+        queue.initial_titan_sequence_id = this.lastSeqId;
+      } else {
+        Logger.log(`[FBMqtt:${this.accountId}] Omitting initial_titan_sequence_id (overflowRetryCount=${this.overflowRetryCount}, lastSeqId=${this.lastSeqId}) — letting Facebook choose starting point`);
+      }
       queue.device_params = null;
     } else {
       topic = '/messenger_sync_get_diffs';
@@ -379,12 +392,14 @@ export class FacebookMQTTListener extends EventEmitter {
       this.lastSeqId = String(j.firstDeltaSeqId);
       this.overflowRetryCount = 0; // Queue created successfully
       Logger.log(`[FBMqtt:${this.accountId}] Got syncToken, seqId=${this.lastSeqId} — listening for deltas`);
+      this.emit('seqId', this.lastSeqId); // Cache fallback in FacebookService
       return;
     }
 
     // Update last seq ID
     if (j.lastIssuedSeqId) {
       this.lastSeqId = String(j.lastIssuedSeqId);
+      this.emit('seqId', this.lastSeqId); // Cache fallback in FacebookService
     }
 
     // Error codes
@@ -396,6 +411,7 @@ export class FacebookMQTTListener extends EventEmitter {
         // Queue overflow = server-side queue is full. Must disconnect, fetch latest seqId
         // via GraphQL, then reconnect with that seqId so Facebook only syncs recent messages.
         Logger.warn(`[FBMqtt:${this.accountId}] ERROR_QUEUE_OVERFLOW — fetching latest seqId then reconnect`);
+        this.emit('overflow', this.lastSeqId); // Notify FacebookService để ngăn create listener mới
         this.syncToken = null;
         // Force-close current connection but allow reconnect
         this.shouldReconnect = true;
@@ -406,7 +422,9 @@ export class FacebookMQTTListener extends EventEmitter {
         this.isConnecting = false;
         this.overflowRetryCount = (this.overflowRetryCount || 0) + 1;
         if (this.overflowRetryCount > 3) {
-          Logger.error(`[FBMqtt:${this.accountId}] ERROR_QUEUE_OVERFLOW persists after ${this.overflowRetryCount} full reconnects — giving up. User must reconnect manually.`);
+          Logger.error(`[FBMqtt:${this.accountId}] ERROR_QUEUE_OVERFLOW persists after ${this.overflowRetryCount} full reconnects — giving up permanently. Bridge will handle MQTT traffic.`);
+          this.shouldReconnect = false; // Dừng hẳn, không reconnect nữa
+          this._reconnectPending = false;
           this.overflowRetryCount = 0;
           this.emit('connectionStatus', 'error' as FBConnectionStatus);
           return;

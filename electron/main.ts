@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, shell, Tray, Menu, nativeImage, protocol, 
 import * as path from 'path';
 import * as fs from 'fs';
 import { autoUpdater } from 'electron-updater';
+import * as cron from 'node-cron';
 import DatabaseService from '../src/services/database/DatabaseService';
 import { registerLoginIpc } from './ipc/loginIpc';
 import { registerZaloIpc } from './ipc/zaloIpc';
@@ -825,8 +826,10 @@ app.whenReady().then(async () => {
   registerErpNotificationIpc();
   registerErpHrmIpc();
   registerLockScreenIpc();
-  // Auto-reconnect Facebook accounts
-  setTimeout(() => reconnectAllFBAccounts(), 4000);
+  // Auto-reconnect Facebook accounts — start ngay, không đợi 4s
+  reconnectAllFBAccounts().catch(err => {
+    console.error('[main] reconnectAllFBAccounts error:', err.message);
+  });
   // Ordered startup: relay + Zalo for all local workspaces FIRST, then remote workspaces
   setTimeout(() => startupAllWorkspaces().catch(err => {
     console.error('[main] startupAllWorkspaces error:', err.message);
@@ -867,6 +870,31 @@ app.whenReady().then(async () => {
     }
   }, 5000);
 
+  // ─── Media cleanup scheduler (tự động xoá media cũ) ─────────────────────
+  // Chạy mỗi ngày lúc 3:00 sáng, kiểm tra tất cả tài khoản có cấu hình auto-delete
+  const mediaCleanupJob = cron.schedule('0 3 * * *', async () => {
+    console.log('[MediaCleanup] Running daily scheduled cleanup...');
+    try {
+      const DatabaseService = require('../src/services/database/DatabaseService').default;
+      const FileStorageService = require('../src/services/file/FileStorageService').default;
+      const db = DatabaseService.getInstance();
+      const accounts = db.getAccounts();
+
+      for (const acc of accounts) {
+        const config = db.getMediaAutoDeleteConfig(acc.zalo_id);
+        if (config?.enabled && config.days > 0) {
+          const deleted = FileStorageService.cleanupOldMedia(acc.zalo_id, config.days);
+          if (deleted > 0) {
+            console.log(`[MediaCleanup] Cleaned ${deleted} dirs for ${acc.zalo_id}`);
+          }
+        }
+      }
+      console.log('[MediaCleanup] Daily cleanup completed');
+    } catch (err: any) {
+      console.error('[MediaCleanup] Error:', err.message);
+    }
+  });
+  console.log('[MediaCleanup] Scheduler initialized — runs daily at 3:00 AM');
 
   // Check for updates
   if (!isDev) {

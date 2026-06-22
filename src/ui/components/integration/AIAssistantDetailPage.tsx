@@ -80,14 +80,16 @@ const MODELS_BY_PLATFORM: Record<string, { value: string; label: string }[]> = {
     { value: 'kr/minimax',                 label: 'Kiro: MiniMax (free)' },
     { value: 'oc/deepseek-v4-flash-free',       label: 'OpenCode: DeepSeek V4 Flash (free)' },
     { value: 'oc/mimo-v2.5-free',               label: 'OpenCode: Mimo 2.5 (free)' },
-    { value: 'oc/qwen3.6-plus-free',             label: 'OpenCode: Qwen 3.6 Plus (free)' },
+    { value: 'oc/big-pickle',               label: 'OpenCode: Big Pickle (free)' },
+    { value: 'oc/nemotron-3-ultra-free',    label: 'OpenCode: Nemotron 3 Ultra (free)' },
+    { value: 'oc/north-mini-code-free',     label: 'OpenCode: North Mini Code (free)' },
     { value: 'glm/glm-4.7',                label: 'GLM-4.7 ($0.6/1M)' },
     { value: 'minimax/minimax',            label: 'MiniMax ($0.2/1M)' },
     { value: 'kimi/kimi-k2-thinking',      label: 'Kimi K2 Thinking (free)' },
     { value: 'vertex/claude-sonnet-4-5',        label: 'Vertex: Claude Sonnet 4.5 (free)' },
     { value: 'vertex/gemini-3-flash',           label: 'Vertex: Gemini 3 Flash (free)' },
     { value: 'cc/claude-opus-4-6',         label: 'Claude Code subscription' },
-    { value: 'openrouter/<model>',         label: 'OpenRouter (tùy chọn)' },
+    { value: '__custom__',                  label: '✏️ Custom model — tự nhập...' },
   ],
   openrouter: [
     { value: 'openrouter/auto',             label: 'Auto Router (tự chọn model tốt nhất — khuyên dùng)' },
@@ -98,6 +100,7 @@ const MODELS_BY_PLATFORM: Record<string, { value: string; label: string }[]> = {
     { value: 'meta-llama/llama-4-maverick', label: 'Llama 4 Maverick (Meta, open-source)' },
     { value: 'qwen/qwen3-max',              label: 'Qwen3 Max (Alibaba)' },
     { value: 'mistralai/mistral-large-2',   label: 'Mistral Large 2' },
+    { value: '__custom__',                  label: '✏️ Custom model — tự nhập...' },
   ],
 };
 
@@ -191,6 +194,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
   const [apiKey, setApiKey] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
   const [model, setModel] = useState('gpt-5.4-mini');
+  const [customModelInput, setCustomModelInput] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
   const [systemPrompt, setSystemPrompt] = useState('');
   const [posIntegrationId, setPosIntegrationId] = useState('');
@@ -295,13 +299,27 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  // Auto-set first model when platform changes
+  // Auto-set first model when platform changes (skip for platforms that support custom models)
   useEffect(() => {
-    const models = MODELS_BY_PLATFORM[platform];
-    if (models?.length && !models.find(m => m.value === model)) {
+    if (platform === '9router' || platform === 'openrouter') return; // these support any model name
+    const models = MODELS_BY_PLATFORM[platform] || [];
+    const inList = models.find(m => m.value === model);
+    if (models.length && !inList && model !== '__custom__') {
       setModel(models[0].value);
     }
   }, [platform]);
+
+  // Derived: check if current model is a custom (free-text) model not in the predefined list
+  const getPlatformModels = () => MODELS_BY_PLATFORM[platform] || [];
+  const isCustomModel = model === '__custom__' || ((platform === '9router' || platform === 'openrouter') &&
+    !getPlatformModels().find(m => m.value === model) && model.length > 0);
+
+  // Keep customModelInput in sync when model is a custom name (not __custom__ sentinel)
+  useEffect(() => {
+    if (isCustomModel && model !== '__custom__') {
+      setCustomModelInput(model);
+    }
+  }, [isCustomModel, model]);
 
   // Auto-scroll chat
   useEffect(() => {
@@ -313,6 +331,8 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
   const handleSave = async () => {
     if (!name.trim()) { showNotification('Vui lòng nhập tên trợ lý', 'error'); return; }
     if (!apiKey && !savedId) { showNotification('Vui lòng nhập API Key', 'error'); return; }
+    const resolvedModel = model === '__custom__' ? customModelInput.trim() : model;
+    if (!resolvedModel) { showNotification('Vui lòng nhập model name', 'error'); return; }
 
     setSaving(true);
     setTestResult(null);
@@ -322,7 +342,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
         name: name.trim(),
         platform,
         apiKey: apiKey || '***',
-        model,
+        model: resolvedModel,
         baseUrl: baseUrl.trim() || null,
         systemPrompt: systemPrompt.trim(),
         posIntegrationId: posIntegrationId || null,
@@ -573,7 +593,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
           <h1 className="text-base font-semibold text-white truncate">
             {savedId ? name || 'Chỉnh sửa trợ lý' : 'Tạo trợ lý AI mới'}
           </h1>
-          <p className="text-xs text-gray-400">{currentPlatform.label} — {model}</p>
+          <p className="text-xs text-gray-400">{currentPlatform.label} — {model === '__custom__' ? (customModelInput || 'tự nhập...') : model}</p>
         </div>
         <label className="flex items-center gap-2 cursor-pointer flex-shrink-0">
           <span className="text-xs text-gray-400">Kích hoạt</span>
@@ -635,12 +655,37 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                 </div>
                 <div>
                   <label className="block text-xs text-gray-400 mb-1">Model</label>
-                  <select value={model} onChange={e => setModel(e.target.value)}
-                    className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
-                    {currentModels.map(m => (
-                      <option key={m.value} value={m.value}>{m.label}</option>
-                    ))}
-                  </select>
+                  {(platform === '9router' || platform === 'openrouter') ? (
+                    <div className="space-y-1.5">
+                      <select value={isCustomModel && model !== '__custom__' ? '__custom__' : model}
+                        onChange={e => {
+                          if (e.target.value === '__custom__') {
+                            setModel('__custom__');
+                            setCustomModelInput('');
+                          } else {
+                            setModel(e.target.value);
+                          }
+                        }}
+                        className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
+                        {currentModels.map(m => (
+                          <option key={m.value} value={m.value}>{m.label}</option>
+                        ))}
+                      </select>
+                      {isCustomModel && (
+                        <input type="text" value={customModelInput}
+                          onChange={e => { setCustomModelInput(e.target.value); setModel(e.target.value); }}
+                          placeholder="Nhập model name bất kỳ, VD: oc/llama-4, vertex/gemini-3-flash..."
+                          className="w-full bg-gray-700 border border-blue-600/50 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"/>
+                      )}
+                    </div>
+                  ) : (
+                    <select value={model} onChange={e => setModel(e.target.value)}
+                      className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
+                      {currentModels.map(m => (
+                        <option key={m.value} value={m.value}>{m.label}</option>
+                      ))}
+                    </select>
+                  )}
                 </div>
               </div>
             </div>

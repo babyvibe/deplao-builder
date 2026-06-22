@@ -45,6 +45,10 @@ export default function ChatHeader() {
   const [aliasEditPos, setAliasEditPos] = useState<{ x: number; y: number } | null>(null);
   const [aliasInputValue, setAliasInputValue] = useState('');
   const [aliasSaving, setAliasSaving] = useState(false);
+  const [groupNameEditing, setGroupNameEditing] = useState(false);
+  const [groupNameInput, setGroupNameInput] = useState('');
+  const [groupNameSaving, setGroupNameSaving] = useState(false);
+  const [groupNameEditPos, setGroupNameEditPos] = useState<{ x: number; y: number } | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -388,16 +392,20 @@ export default function ChatHeader() {
   const handleSaveAlias = async () => {
     if (!activeThreadId || !activeAccountId) return;
     const acc = getActiveAccount();
-    if (!acc || (acc.channel || 'zalo') !== 'zalo') return;
-    const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+    if (!acc) return;
     setAliasSaving(true);
     try {
       const trimmed = aliasInputValue.trim();
-      const res = await ipc.zalo?.changeFriendAlias({ auth, alias: trimmed, friendId: activeThreadId });
-      if (res && !res.success && res.error) {
-        showNotification('Lỗi cập nhật biệt danh: ' + res.error, 'error');
-        return;
+      // Zalo: sync to API. Facebook/kênh khác: save locally only.
+      if ((acc.channel || 'zalo') === 'zalo') {
+        const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+        const res = await ipc.zalo?.changeFriendAlias({ auth, alias: trimmed, friendId: activeThreadId });
+        if (res && !res.success && res.error) {
+          showNotification('Lỗi cập nhật biệt danh: ' + res.error, 'error');
+          return;
+        }
       }
+      // Always save alias locally to DB
       updateContact(activeAccountId, { contact_id: activeThreadId, alias: trimmed });
       ipc.db?.setContactAlias({
         zaloId: activeAccountId, contactId: activeThreadId, alias: trimmed,
@@ -415,45 +423,96 @@ export default function ChatHeader() {
   const handleRefreshAlias = async () => {
     if (!activeThreadId || !activeAccountId || activeThreadType === 1) return;
     const acc = getActiveAccount();
-    if (!acc || (acc.channel || 'zalo') !== 'zalo') return;
+    if (!acc) return;
     setAliasRefreshing(true);
     try {
-      const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
-      // 1. Update toàn bộ alias từ getAliasList
-      const res = await ipc.zalo?.getAliasList({ auth, count: 5000 });
-      if (!res?.success) return;
-      const items: { userId: string; alias: string }[] = res?.response?.items || [];
-      for (const item of items) {
-        if (item.alias && item.userId) {
-          updateContact(activeAccountId, { contact_id: item.userId, alias: item.alias });
-          ipc.db?.setContactAlias({ zaloId: activeAccountId, contactId: item.userId, alias: item.alias }).catch(() => {});
-        }
-      }
-      // 2. Fetch full profile (tên, avatar, SĐT) cho hội thoại hiện tại
-      const infoRes = await ipc.zalo?.getUserInfo({ auth, userId: activeThreadId });
-      const rawProfile = infoRes?.response?.changed_profiles?.[activeThreadId]
-        || infoRes?.response?.data?.[activeThreadId];
-      if (rawProfile) {
-        const { displayName: newName, avatar: newAvatar, phone: newPhone, gender, birthday, alias: newAlias } = extractUserProfile(rawProfile);
-        const patch: any = { contact_id: activeThreadId };
-        if (newName) patch.display_name = newName;
-        if (newAvatar) patch.avatar_url = newAvatar;
-        if (newPhone) patch.phone = newPhone;
-        if (newAlias) patch.alias = newAlias;
-        if (Object.keys(patch).length > 1) {
-          updateContact(activeAccountId, patch);
-          await ipc.db?.updateContactProfile({
-            zaloId: activeAccountId, contactId: activeThreadId,
-            displayName: newName, avatarUrl: newAvatar, phone: newPhone,
-            gender, birthday,
-          });
-          if (newAlias) {
-            ipc.db?.setContactAlias({ zaloId: activeAccountId, contactId: activeThreadId, alias: newAlias }).catch(() => {});
+      if ((acc.channel || 'zalo') === 'zalo') {
+        const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+        // 1. Update toàn bộ alias từ getAliasList (Zalo API)
+        const res = await ipc.zalo?.getAliasList({ auth, count: 5000 });
+        if (res?.success) {
+          const items: { userId: string; alias: string }[] = res?.response?.items || [];
+          for (const item of items) {
+            if (item.alias && item.userId) {
+              updateContact(activeAccountId, { contact_id: item.userId, alias: item.alias });
+              ipc.db?.setContactAlias({ zaloId: activeAccountId, contactId: item.userId, alias: item.alias }).catch(() => {});
+            }
           }
         }
+        // 2. Fetch full profile (tên, avatar, SĐT) cho hội thoại hiện tại
+        const infoRes = await ipc.zalo?.getUserInfo({ auth, userId: activeThreadId });
+        const rawProfile = infoRes?.response?.changed_profiles?.[activeThreadId]
+          || infoRes?.response?.data?.[activeThreadId];
+        if (rawProfile) {
+          const { displayName: newName, avatar: newAvatar, phone: newPhone, gender, birthday, alias: newAlias } = extractUserProfile(rawProfile);
+          const patch: any = { contact_id: activeThreadId };
+          if (newName) patch.display_name = newName;
+          if (newAvatar) patch.avatar_url = newAvatar;
+          if (newPhone) patch.phone = newPhone;
+          if (newAlias) patch.alias = newAlias;
+          if (Object.keys(patch).length > 1) {
+            updateContact(activeAccountId, patch);
+            await ipc.db?.updateContactProfile({
+              zaloId: activeAccountId, contactId: activeThreadId,
+              displayName: newName, avatarUrl: newAvatar, phone: newPhone,
+              gender, birthday,
+            });
+            if (newAlias) {
+              ipc.db?.setContactAlias({ zaloId: activeAccountId, contactId: activeThreadId, alias: newAlias }).catch(() => {});
+            }
+          }
+        }
+      } else {
+        // Facebook: refresh tên + avatar từ profile HTML
+        const fbRes = await ipc.fb?.getUserInfoFacebookHtml({ accountId: activeAccountId, userId: activeThreadId });
+        if (fbRes?.success && (fbRes.name || fbRes.avatarUrl)) {
+          const patch: any = { contact_id: activeThreadId };
+          if (fbRes.name) patch.display_name = fbRes.name;
+          if (fbRes.avatarUrl) patch.avatar_url = fbRes.avatarUrl;
+          if (Object.keys(patch).length > 1) updateContact(activeAccountId, patch);
+        }
+        showNotification('Đã cập nhật thông tin từ Facebook', 'success');
       }
     } catch {} finally {
       setAliasRefreshing(false);
+    }
+  };
+
+  /** Đổi tên nhóm — Zalo: API changeGroupName, Facebook: note local-only */
+  const handleOpenGroupNameEdit = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setGroupNameInput(displayName);
+    setGroupNameEditing(true);
+    setGroupNameEditPos({ x: e.clientX, y: e.clientY });
+  };
+
+  const handleSaveGroupName = async () => {
+    if (!activeAccountId || !activeThreadId || !isGroup) return;
+    const acc = getActiveAccount();
+    if (!acc) return;
+    const trimmed = groupNameInput.trim();
+    if (!trimmed || trimmed === displayName) { setGroupNameEditing(false); return; }
+    setGroupNameSaving(true);
+    try {
+      if ((acc.channel || 'zalo') === 'zalo') {
+        const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+        const res = await ipc.zalo?.changeGroupName({ name: trimmed, groupId: activeThreadId });
+        if (res && !res.success && res.error) {
+          showNotification('Lỗi đổi tên nhóm: ' + res.error, 'error');
+          return;
+        }
+        showNotification('Đã đổi tên nhóm thành công', 'success');
+      } else {
+        // Facebook / other: chỉ lưu local
+        showNotification('Tên nhóm đã được cập nhật (chỉ áp dụng trên app)', 'success');
+      }
+      // Cập nhật tên hiển thị
+      updateContact(activeAccountId, { contact_id: activeThreadId, display_name: trimmed });
+      setGroupNameEditing(false);
+    } catch (e: any) {
+      showNotification('Lỗi: ' + (e.message || 'Không thể đổi tên nhóm'), 'error');
+    } finally {
+      setGroupNameSaving(false);
     }
   };
 
@@ -605,7 +664,6 @@ export default function ChatHeader() {
           title={isGroup ? '' : 'Xem thông tin'}
         >
           {renderAvatar()}
-          <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 rounded-full border-2 border-gray-800" />
         </div>
 
         <div className="flex-1 min-w-0">
@@ -620,18 +678,31 @@ export default function ChatHeader() {
               <p className="text-md font-semibold text-white truncate group-hover:text-blue-300 transition-colors">{displayName}</p>
               {copied
                 ? <span className="text-xs text-green-400 flex-shrink-0">✓</span>
-                : <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="opacity-0 group-hover:opacity-50 flex-shrink-0 text-gray-400 transition-opacity">
+                : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="opacity-50 flex-shrink-0 transition-opacity">
                     <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
                   </svg>
               }
             </button>
+            {/* Group rename button — chỉ cho nhóm Zalo (có API) */}
+            {isGroup && channelCap.supportsGroupRename && (activeAccount?.channel || 'zalo') === 'zalo' && (
+              <button
+                title="Đổi tên nhóm"
+                onClick={(e) => handleOpenGroupNameEdit(e)}
+                className="flex-shrink-0 text-gray-400 hover:text-white transition-colors ml-1.5"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                </svg>
+              </button>
+            )}
             {/* Reload user info + alias button — chỉ hiện cho user DM có hỗ trợ alias */}
-            {!isGroup && channelCap.supportsAlias && (
+            {!isGroup && channelCap.supportsAlias && (activeAccount?.channel || 'zalo') === 'zalo' && (
               <button
                 title="Cập nhật thông tin + tên gợi nhớ"
                 onClick={handleRefreshAlias}
                 disabled={aliasRefreshing}
-                className="flex-shrink-0 text-gray-400 hover:text-white transition-colors"
+                className="flex-shrink-0 text-gray-400 hover:text-white transition-colors ml-1.5"
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
                   className={aliasRefreshing ? 'animate-spin' : ''}>
@@ -640,31 +711,31 @@ export default function ChatHeader() {
                 </svg>
               </button>
             )}
-            {/* Edit alias button — sửa tên gợi nhớ trực tiếp */}
+            {/* Facebook info reload — chỉ cho FB 1-1 */}
+            {isFacebookDM && (
+                <button
+                    title="Tải lại thông tin từ Facebook"
+                    onClick={handleRefreshFacebookInfo}
+                    disabled={refreshingFBInfo}
+                    className="flex-shrink-0 text-gray-400 hover:text-white transition-colors ml-1.5"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                       className={refreshingFBInfo ? 'animate-spin' : ''}>
+                    <path d="M23 4v6h-6"/><path d="M1 20v-6h6"/>
+                    <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+                  </svg>
+                </button>
+            )}
+            {/* Edit alias button — sửa tên gợi nhớ (mọi kênh) */}
             {!isGroup && channelCap.supportsAlias && (
               <button
-                title="Sửa tên gợi nhớ"
+                title={(activeAccount?.channel || 'zalo') === 'zalo' ? 'Sửa tên gợi nhớ (đồng bộ Zalo)' : 'Sửa tên gợi nhớ (lưu local trên app)'}
                 onClick={handleOpenAliasEdit}
-                className="flex-shrink-0 text-gray-400 hover:text-white transition-colors ml-1"
+                className="flex-shrink-0 text-gray-400 hover:text-white transition-colors ml-1.5"
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
                   <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                </svg>
-              </button>
-            )}
-            {/* Facebook info reload — chỉ cho FB 1-1 */}
-            {isFacebookDM && (
-              <button
-                title="Tải lại thông tin từ Facebook"
-                onClick={handleRefreshFacebookInfo}
-                disabled={refreshingFBInfo}
-                className="flex-shrink-0 text-gray-400 hover:text-white transition-colors"
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-                  className={refreshingFBInfo ? 'animate-spin' : ''}>
-                  <path d="M23 4v6h-6"/><path d="M1 20v-6h6"/>
-                  <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
                 </svg>
               </button>
             )}
@@ -910,6 +981,21 @@ export default function ChatHeader() {
         />
       )}
 
+      {/* Group name edit popup — đổi tên nhóm */}
+      {groupNameEditing && groupNameEditPos && isGroup && (
+        <AliasEditPopup
+          title="Đổi tên nhóm"
+          placeholder="Nhập tên nhóm mới..."
+          value={groupNameInput}
+          onChange={setGroupNameInput}
+          saving={groupNameSaving}
+          onSave={handleSaveGroupName}
+          onClose={() => setGroupNameEditing(false)}
+          anchorX={groupNameEditPos.x}
+          anchorY={groupNameEditPos.y}
+        />
+      )}
+
       {/* Alias edit popup — sửa tên gợi nhớ */}
       {aliasEditOpen && aliasEditPos && contact && (
         <AliasEditPopup
@@ -998,7 +1084,7 @@ function HeaderLabelPickerPopup({ contactId, isGroup, x, y, labels, onAssign, on
 }
 
 // ─── AliasEditPopup ───────────────────────────────────────────────────────────
-function AliasEditPopup({ value, onChange, saving, onSave, onClose, anchorX, anchorY }: {
+function AliasEditPopup({ value, onChange, saving, onSave, onClose, anchorX, anchorY, title, placeholder }: {
   value: string;
   onChange: (v: string) => void;
   saving: boolean;
@@ -1006,6 +1092,8 @@ function AliasEditPopup({ value, onChange, saving, onSave, onClose, anchorX, anc
   onClose: () => void;
   anchorX: number;
   anchorY: number;
+  title?: string;
+  placeholder?: string;
 }) {
   const ref = React.useRef<HTMLDivElement>(null);
   const inputRef = React.useRef<HTMLInputElement>(null);
@@ -1037,13 +1125,13 @@ function AliasEditPopup({ value, onChange, saving, onSave, onClose, anchorX, anc
       style={{ top: Math.max(8, top), left: Math.max(8, left) }}
       onMouseDown={(e) => e.stopPropagation()}
     >
-      <div className="text-xs text-gray-400 font-medium mb-2">Sửa tên gợi nhớ</div>
+      <div className="text-xs text-gray-400 font-medium mb-2">{title || 'Sửa tên gợi nhớ'}</div>
       <input
         ref={inputRef}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 mb-2"
-        placeholder="Nhập tên gợi nhớ..."
+        placeholder={placeholder || 'Nhập tên gợi nhớ...'}
         onKeyDown={(e) => {
           if (e.key === 'Enter') onSave();
           if (e.key === 'Escape') onClose();

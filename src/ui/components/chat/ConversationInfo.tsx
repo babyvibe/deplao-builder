@@ -61,6 +61,14 @@ function UserConversationInfo() {
   // isFriendDB: check thực từ bảng friends trong DB (đáng tin hơn contact.is_friend)
   const [isFriendDB, setIsFriendDB] = useState<boolean | null>(null);
   const [aliasRefreshing, setAliasRefreshing] = useState(false);
+  // Editable contact info states
+  const [editingPhone, setEditingPhone] = useState(false);
+  const [phoneInput, setPhoneInput] = useState('');
+  const [editingBirthday, setEditingBirthday] = useState(false);
+  const [birthdayInput, setBirthdayInput] = useState('');
+  // Gender picker popup
+  const [showGenderPicker, setShowGenderPicker] = useState(false);
+  const genderBtnRef = useRef<HTMLDivElement>(null);
 
   const contactList = activeAccountId ? (contacts[activeAccountId] || []) : [];
   const contact = contactList.find((c) => c.contact_id === activeThreadId);
@@ -174,7 +182,7 @@ function UserConversationInfo() {
     try {
       await loadPinStatus();
       // Zalo-only: fetch fresh user profile (avatar, name, phone) via API
-      if (activeAccountId && activeThreadId && channelCap.supportsAlias) {
+      if (activeAccountId && activeThreadId && effectiveChannel === 'zalo') {
         const auth = getAuth();
         if (auth) {
           try {
@@ -269,18 +277,22 @@ function UserConversationInfo() {
   };
 
   const handleSaveAlias = async () => {
-    if (!channelCap.supportsAlias) return;
-    const auth = getAuth();
-    if (!auth || !activeThreadId) return;
+    if (!activeThreadId) return;
     try {
       const trimmed = aliasValue.trim();
-      const res = await ipc.zalo?.changeFriendAlias({ auth, alias: trimmed, friendId: activeThreadId });
-      if (res && !res.success && res.error) {
-        showNotification('Lỗi cập nhật biệt danh: ' + res.error, 'error');
-        return;
+      // Zalo: sync alias to API. Facebook/channels khác: save locally only.
+      if (effectiveChannel === 'zalo') {
+        const auth = getAuth();
+        if (auth) {
+          const res = await ipc.zalo?.changeFriendAlias({ auth, alias: trimmed, friendId: activeThreadId });
+          if (res && !res.success && res.error) {
+            showNotification('Lỗi cập nhật biệt danh: ' + res.error, 'error');
+            return;
+          }
+        }
       }
+      // Always save alias locally to DB
       if (activeAccountId) {
-        // Lưu alias vào field riêng, KHÔNG overwrite display_name
         useChatStore.getState().updateContact(activeAccountId, {
           contact_id: activeThreadId,
           alias: trimmed,
@@ -298,50 +310,133 @@ function UserConversationInfo() {
     }
   };
 
-  /** Reload alias + user info từ API Zalo — lưu toàn bộ alias + cập nhật thông tin hội thoại hiện tại */
+  /** Reload alias + user info từ API — lưu toàn bộ alias + cập nhật thông tin hội thoại hiện tại */
   const handleRefreshAlias = async () => {
-    if (!channelCap.supportsAlias) return;
-    const auth = getAuth();
-    if (!auth || !activeThreadId || !activeAccountId) return;
+    if (!activeThreadId || !activeAccountId) return;
     setAliasRefreshing(true);
     try {
-      // 1. Update toàn bộ alias từ getAliasList
-      const res = await ipc.zalo?.getAliasList({ auth, count: 5000 });
-      if (!res?.success) return;
-      const items: { userId: string; alias: string }[] = res?.response?.items || [];
-      for (const item of items) {
-        if (item.alias && item.userId) {
-          updateContact(activeAccountId, { contact_id: item.userId, alias: item.alias });
-          ipc.db?.setContactAlias({ zaloId: activeAccountId, contactId: item.userId, alias: item.alias }).catch(() => {});
-        }
-      }
-      // 2. Fetch full profile (tên, avatar, SĐT) cho hội thoại hiện tại
-      const infoRes = await ipc.zalo?.getUserInfo({ auth, userId: activeThreadId });
-      const rawProfile = infoRes?.response?.changed_profiles?.[activeThreadId]
-        || infoRes?.response?.data?.[activeThreadId];
-      if (rawProfile) {
-        const { displayName: newName, avatar: newAvatar, phone: newPhone, gender, birthday, alias: newAlias } = extractUserProfile(rawProfile);
-        const patch: any = { contact_id: activeThreadId };
-        if (newName) patch.display_name = newName;
-        if (newAvatar) patch.avatar_url = newAvatar;
-        if (newPhone) patch.phone = newPhone;
-        if (newAlias) patch.alias = newAlias;
-        if (Object.keys(patch).length > 1) {
-          updateContact(activeAccountId, patch);
-          await ipc.db?.updateContactProfile({
-            zaloId: activeAccountId, contactId: activeThreadId,
-            displayName: newName, avatarUrl: newAvatar, phone: newPhone,
-            gender, birthday,
-          });
-          if (newAlias) {
-            ipc.db?.setContactAlias({ zaloId: activeAccountId, contactId: activeThreadId, alias: newAlias }).catch(() => {});
+      if (effectiveChannel === 'zalo') {
+        const auth = getAuth();
+        if (!auth) return;
+        // 1. Update toàn bộ alias từ getAliasList (Zalo API)
+        const res = await ipc.zalo?.getAliasList({ auth, count: 5000 });
+        if (res?.success) {
+          const items: { userId: string; alias: string }[] = res?.response?.items || [];
+          for (const item of items) {
+            if (item.alias && item.userId) {
+              updateContact(activeAccountId, { contact_id: item.userId, alias: item.alias });
+              ipc.db?.setContactAlias({ zaloId: activeAccountId, contactId: item.userId, alias: item.alias }).catch(() => {});
+            }
           }
+        }
+        // 2. Fetch full profile (tên, avatar, SĐT) cho hội thoại hiện tại
+        const infoRes = await ipc.zalo?.getUserInfo({ auth, userId: activeThreadId });
+        const rawProfile = infoRes?.response?.changed_profiles?.[activeThreadId]
+          || infoRes?.response?.data?.[activeThreadId];
+        if (rawProfile) {
+          const { displayName: newName, avatar: newAvatar, phone: newPhone, gender, birthday, alias: newAlias } = extractUserProfile(rawProfile);
+          const patch: any = { contact_id: activeThreadId };
+          if (newName) patch.display_name = newName;
+          if (newAvatar) patch.avatar_url = newAvatar;
+          if (newPhone) patch.phone = newPhone;
+          if (newAlias) patch.alias = newAlias;
+          if (Object.keys(patch).length > 1) {
+            updateContact(activeAccountId, patch);
+            await ipc.db?.updateContactProfile({
+              zaloId: activeAccountId, contactId: activeThreadId,
+              displayName: newName, avatarUrl: newAvatar, phone: newPhone,
+              gender, birthday,
+            });
+            if (newAlias) {
+              ipc.db?.setContactAlias({ zaloId: activeAccountId, contactId: activeThreadId, alias: newAlias }).catch(() => {});
+            }
+          }
+        }
+      } else {
+        // Facebook / other: refresh thông tin user từ profile HTML + reload alias từ DB
+        // FB: refresh tên + avatar từ profile HTML
+        const fbRes = await ipc.fb?.getUserInfoFacebookHtml({ accountId: activeAccountId, userId: activeThreadId });
+        if (fbRes?.success && (fbRes.name || fbRes.avatarUrl)) {
+          const patch: any = { contact_id: activeThreadId };
+          if (fbRes.name) patch.display_name = fbRes.name;
+          if (fbRes.avatarUrl) patch.avatar_url = fbRes.avatarUrl;
+          if (Object.keys(patch).length > 1) updateContact(activeAccountId, patch);
         }
       }
     } catch {} finally {
       setAliasRefreshing(false);
     }
   };
+
+  // ─── Editable contact info handlers ─────────────────────────────────────
+  const handleSavePhone = async () => {
+    if (!activeAccountId || !activeThreadId) return;
+    const normalized = phoneInput.trim();
+    updateContact(activeAccountId, { contact_id: activeThreadId, phone: normalized || undefined });
+    await ipc.db?.updateContactProfile({
+      zaloId: activeAccountId, contactId: activeThreadId,
+      phone: normalized,
+      gender: contact?.gender ?? null,
+      birthday: contact?.birthday ?? null,
+      displayName: contact?.display_name || '',
+      avatarUrl: contact?.avatar_url || '',
+    }).catch(() => {});
+    setEditingPhone(false);
+    showNotification('Đã cập nhật số điện thoại', 'success');
+  };
+
+  const handleSaveBirthday = async () => {
+    if (!activeAccountId || !activeThreadId) return;
+    const val = birthdayInput.trim();
+    // Basic validation: DD/MM/YYYY or empty
+    if (val && !/^\d{2}\/\d{2}\/\d{4}$/.test(val)) {
+      showNotification('Ngày sinh không đúng định dạng DD/MM/YYYY', 'error');
+      return;
+    }
+    updateContact(activeAccountId, { contact_id: activeThreadId, birthday: val || null });
+    await ipc.db?.updateContactProfile({
+      zaloId: activeAccountId, contactId: activeThreadId,
+      phone: contact?.phone || '',
+      gender: contact?.gender ?? null,
+      birthday: val || null,
+      displayName: contact?.display_name || '',
+      avatarUrl: contact?.avatar_url || '',
+    }).catch(() => {});
+    setEditingBirthday(false);
+    showNotification('Đã cập nhật ngày sinh', 'success');
+  };
+
+  const handleSetGender = async (gender: number | null) => {
+    if (!activeAccountId || !activeThreadId) return;
+    updateContact(activeAccountId, { contact_id: activeThreadId, gender });
+    await ipc.db?.updateContactProfile({
+      zaloId: activeAccountId, contactId: activeThreadId,
+      phone: contact?.phone || '',
+      gender,
+      birthday: contact?.birthday || null,
+      displayName: contact?.display_name || '',
+      avatarUrl: contact?.avatar_url || '',
+    }).catch(() => {});
+    const label = gender === 0 ? 'Nam' : gender === 1 ? 'Nữ' : 'chưa xác định';
+    showNotification(`Đã đặt giới tính: ${label}`, 'success');
+  };
+
+  // Close gender picker on outside click
+  useEffect(() => {
+    if (!showGenderPicker) return;
+    const handler = (e: MouseEvent) => {
+      if (genderBtnRef.current && !genderBtnRef.current.contains(e.target as Node)) setShowGenderPicker(false);
+    };
+    const keyHandler = (e: KeyboardEvent) => { if (e.key === 'Escape') setShowGenderPicker(false); };
+    setTimeout(() => {
+      document.addEventListener('mousedown', handler);
+      document.addEventListener('keydown', keyHandler);
+    }, 0);
+    return () => {
+      document.removeEventListener('mousedown', handler);
+      document.removeEventListener('keydown', keyHandler);
+    };
+  }, [showGenderPicker]);
 
   // Load mutual groups khi mở sub-panel
   const handleOpenMutualGroups = () => {
@@ -458,7 +553,7 @@ function UserConversationInfo() {
       {/* Header */}
       <div className="flex items-center px-4 py-3 border-b border-gray-700">
         <span className="flex-1 text-sm font-semibold text-white text-center">Thông tin liên hệ</span>
-        {channelCap.supportsAlias && (
+        {channelCap.supportsAlias && (activeAccount?.channel || 'zalo') === 'zalo' && (
         <button title="Cập nhật thông tin" onClick={handleRefresh} disabled={loading}
           className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors hover:bg-gray-700 text-gray-400 hover:text-white disabled:opacity-50 flex-shrink-0">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
@@ -493,7 +588,7 @@ function UserConversationInfo() {
             onMouseEnter={() => channelCap.supportsAlias && setHovering(true)} onMouseLeave={() => setHovering(false)}
             onClick={() => { if (!channelCap.supportsAlias) return; setAliasValue(contact?.alias || ''); setEditingAlias(true); }}>
             <p className="text-white font-semibold text-base text-center">{displayName}</p>
-            {channelCap.supportsAlias && (
+            {channelCap.supportsAlias && (activeAccount?.channel || 'zalo') === 'zalo' && (
               <button
                 title="Cập nhật thông tin + tên gợi nhớ"
                 onClick={(e) => { e.stopPropagation(); handleRefreshAlias(); }}
@@ -524,6 +619,53 @@ function UserConversationInfo() {
             📞 <PhoneDisplay phone={contact.phone} className="text-gray-400 text-xs" />
           </p>
         )}
+      </div>
+
+      {/* Contact detail info — editable phone, birthday, gender */}
+      <div className="border-b border-gray-700 divide-y divide-gray-700/50">
+        <ContactInfoRow
+          icon="📞"
+          label="Số điện thoại"
+          value={contact?.phone || ''}
+          placeholder="Thêm số điện thoại"
+          editing={editingPhone}
+          editValue={phoneInput}
+          onStartEdit={() => { setPhoneInput(contact?.phone || ''); setEditingPhone(true); }}
+          onCancelEdit={() => setEditingPhone(false)}
+          onSave={handleSavePhone}
+          onEditChange={setPhoneInput}
+        />
+        <ContactInfoRow
+          icon="🎂"
+          label="Sinh nhật"
+          value={contact?.birthday || ''}
+          placeholder="Chọn ngày"
+          editing={editingBirthday}
+          editValue={birthdayInput}
+          onStartEdit={() => { setBirthdayInput(contact?.birthday || ''); setEditingBirthday(true); }}
+          onCancelEdit={() => setEditingBirthday(false)}
+          onSave={handleSaveBirthday}
+          onEditChange={setBirthdayInput}
+          inputType="date"
+        />
+        <div ref={genderBtnRef} className="relative">
+          <ContactInfoRow
+            icon="👤"
+            label="Giới tính"
+            value={contact?.gender === 0 ? 'Nam' : contact?.gender === 1 ? 'Nữ' : ''}
+            placeholder="Chọn giới tính"
+            editing={false}
+            onStartEdit={() => setShowGenderPicker(true)}
+            isClickable
+          />
+          {showGenderPicker && (
+            <GenderPickerPopup
+              current={contact?.gender ?? null}
+              onSelect={(g) => { handleSetGender(g); setShowGenderPicker(false); }}
+              onClose={() => setShowGenderPicker(false)}
+            />
+          )}
+        </div>
       </div>
 
       {/* Action buttons */}
@@ -560,10 +702,10 @@ function UserConversationInfo() {
           )}
         </div>
         {effectiveChannelCap.supportsPinConversation && (
-          <UserActionBtn icon={isPinned ? '📌' : '📍'} label={isPinned ? 'Bỏ ghim' : 'Ghim hội thoại'} onClick={handleTogglePin} active={isPinned} />
+          <UserActionBtn icon={isPinned ? '📌' : '📌'} label={isPinned ? 'Bỏ ghim' : 'Ghim hội thoại'} onClick={handleTogglePin} active={isPinned} />
         )}
         {!effectiveChannelCap.supportsPinConversation && (
-          <UserActionBtn icon={isLocalPinned ? '🔖' : '📎'} label={isLocalPinned ? 'Bỏ ghim app' : 'Ghim trong app'} onClick={handleTogglePin} active={isLocalPinned} />
+          <UserActionBtn icon={isLocalPinned ? '📍' : '📍'} label={isLocalPinned ? 'Bỏ ghim app' : 'Ghim trong app'} onClick={handleTogglePin} active={isLocalPinned} />
         )}
         {channelCap.supportsCreateGroup && (
           <UserActionBtn icon="👥" label="Tạo nhóm" onClick={() => setCreateGroupOpen(true)} />
@@ -615,5 +757,147 @@ function UserActionBtn({ icon, label, onClick, active }: { icon: string; label: 
       <div className={`w-9 h-9 rounded-full flex items-center justify-center text-lg ${active ? 'bg-blue-600' : 'bg-gray-700'}`}>{icon}</div>
       <span className={`text-[9px] leading-tight ${active ? 'text-blue-400' : 'text-gray-400'}`}>{label}</span>
     </button>
+  );
+}
+
+// ─── ContactInfoRow ──────────────────────────────────────────────────────────
+/** Inline-editable row: icon + label + value/input. Click value to edit, Enter to save, Esc to cancel. */
+function ContactInfoRow({ icon, label, value, placeholder, editing, editValue, onStartEdit, onCancelEdit, onSave, onEditChange, onClick, isClickable, inputType }: {
+  icon: string; label: string; value: string; placeholder?: string;
+  editing?: boolean; editValue?: string;
+  onStartEdit?: () => void; onCancelEdit?: () => void; onSave?: () => void; onEditChange?: (v: string) => void;
+  onClick?: () => void; isClickable?: boolean;
+  inputType?: 'text' | 'date';
+}) {
+  /** Convert DD/MM/YYYY → YYYY-MM-DD cho date input */
+  const toDateInputValue = (ddmmyyyy: string): string => {
+    if (!ddmmyyyy) return '';
+    const parts = ddmmyyyy.split('/');
+    if (parts.length !== 3) return '';
+    return `${parts[2]}-${parts[1]}-${parts[0]}`;
+  };
+  /** Convert YYYY-MM-DD → DD/MM/YYYY cho DB */
+  const fromDateInputValue = (yyyyMmDd: string): string => {
+    if (!yyyyMmDd) return '';
+    const parts = yyyyMmDd.split('-');
+    if (parts.length !== 3) return '';
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  };
+
+  const isDate = inputType === 'date';
+  const inputVal = isDate ? toDateInputValue(editValue || '') : (editValue || '');
+
+  return (
+    <div className="flex items-center justify-between px-4 py-2.5 hover:bg-gray-700/20 transition-colors min-h-[44px]">
+      <div className="flex items-center gap-2.5 min-w-0 flex-1">
+        <span className="text-base flex-shrink-0 leading-none">{icon}</span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[10px] text-gray-500 font-medium uppercase tracking-[0.08em]">{label}</p>
+          {editing && onEditChange ? (
+            <div className="flex items-center gap-1 mt-1">
+              {isDate ? (
+                <input type="date"
+                  value={inputVal}
+                  onChange={e => onEditChange(fromDateInputValue(e.target.value))}
+                  className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-2 py-1 text-sm text-white w-28 focus:outline-none focus:border-blue-500 [color-scheme:dark]"
+                  autoFocus
+                  onKeyDown={e => { if (e.key === 'Enter') onSave?.(); if (e.key === 'Escape') onCancelEdit?.(); }}
+                />
+              ) : (
+                <input
+                  value={editValue || ''}
+                  onChange={e => onEditChange(e.target.value)}
+                  className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-2 py-1 text-sm text-white w-24 focus:outline-none focus:border-blue-500"
+                  placeholder={placeholder}
+                  autoFocus
+                  onKeyDown={e => { if (e.key === 'Enter') onSave?.(); if (e.key === 'Escape') onCancelEdit?.(); }}
+                />
+              )}
+              <button onClick={onSave}
+                className="px-2 py-1 text-xs font-medium text-green-400 hover:text-green-300 bg-gray-700/50 hover:bg-gray-700 rounded-lg transition-colors flex-shrink-0">
+                Lưu
+              </button>
+              <button onClick={onCancelEdit}
+                className="px-2 py-1 text-xs text-gray-400 hover:text-white bg-gray-700/50 hover:bg-gray-700 rounded-lg transition-colors flex-shrink-0">
+                ✕
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={onClick || onStartEdit}
+              className="text-left mt-0.5 block w-full"
+              title={isClickable ? 'Nhấn để chọn' : 'Nhấn để sửa'}
+            >
+              {value ? (
+                <span className={`text-sm ${isClickable ? 'text-blue-400 hover:text-blue-300 cursor-pointer' : 'text-gray-200'}`}>
+                  {isClickable && value === 'Nam' && '♂ '}
+                  {isClickable && value === 'Nữ' && '♀ '}
+                  {value}
+                </span>
+              ) : (
+                <span className="text-sm text-gray-500 italic">{placeholder || 'Chưa cập nhật'}</span>
+              )}
+            </button>
+          )}
+        </div>
+      </div>
+      {!editing && !isClickable && (
+        <button onClick={onStartEdit}
+          className="text-gray-600 hover:text-gray-300 transition-colors flex-shrink-0 ml-2"
+          title="Sửa">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+          </svg>
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ─── GenderPickerPopup ────────────────────────────────────────────────────────
+function GenderPickerPopup({ current, onSelect, onClose }: {
+  current: number | null;
+  onSelect: (g: number | null) => void;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const h = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    setTimeout(() => {
+      document.addEventListener('mousedown', h);
+      document.addEventListener('keydown', k);
+    }, 0);
+    return () => {
+      document.removeEventListener('mousedown', h);
+      document.removeEventListener('keydown', k);
+    };
+  }, [onClose]);
+
+  const OPTIONS = [
+    { value: null, label: 'Không xác định' },
+    { value: 0, label: '♂ Nam' },
+    { value: 1, label: '♀ Nữ' },
+  ];
+
+  return (
+    <div ref={ref}
+      className="absolute left-12 bottom-0 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl z-50 w-44 py-1"
+    >
+      {OPTIONS.map(opt => (
+        <button key={String(opt.value)} onClick={() => onSelect(opt.value)}
+          className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-gray-700 ${
+            current === opt.value ? 'bg-blue-600/20 text-blue-400' : 'text-gray-200'
+          }`}
+        >
+          <span className="text-sm flex-1">{opt.label}</span>
+          {current === opt.value && <span className="text-blue-400 text-xs">✓</span>}
+        </button>
+      ))}
+    </div>
   );
 }

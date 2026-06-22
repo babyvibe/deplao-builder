@@ -76,7 +76,7 @@ export class FacebookE2EESender {
     }
 
     const binaryPath = this.opts.binaryPath || resolveE2EEBinaryPath();
-    this.bridge = new FacebookE2EEBridge(binaryPath);
+    this.bridge = FacebookE2EEBridge.create(binaryPath);
     this.bridge.spawn();
     this.ownsBridge = true;
 

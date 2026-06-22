@@ -2242,6 +2242,112 @@ class DatabaseService {
         this.run('UPDATE accounts SET is_active = 0 WHERE zalo_id = ?', [zaloId]);
     }
 
+    /**
+     * Xoá HOÀN TOÀN tài khoản và tất cả dữ liệu liên quan (hard delete).
+     * Gọi disconnect trước đó để đảm bảo listener/connection được cleanup.
+     * Hỗ trợ cả Zalo và Facebook accounts.
+     */
+    public deleteAccountData(zaloId: string): void {
+        if (!this.initialized) return;
+        Logger.log(`[DatabaseService] Permanently deleting all data for account: ${zaloId}`);
+
+        // Kiểm tra nếu là FB account → cần xử lý FB-specific tables riêng
+        const account = this.queryOne<{ channel?: string }>('SELECT channel FROM accounts WHERE zalo_id = ?', [zaloId]);
+        const isFB = account?.channel === 'facebook';
+
+        if (isFB) {
+            // FB account: xoá dữ liệu FB-specific qua UUID từ fb_accounts
+            const fbAcc = this.queryOne<{ id: string }>('SELECT id FROM fb_accounts WHERE facebook_id = ?', [zaloId]);
+            if (fbAcc?.id) {
+                this.run('DELETE FROM fb_messages WHERE account_id = ?', [fbAcc.id]);
+                this.run('DELETE FROM fb_threads WHERE account_id = ?', [fbAcc.id]);
+                this.run('DELETE FROM fb_crm_contacts WHERE fb_account_id = ?', [fbAcc.id]);
+                this.run('DELETE FROM fb_accounts WHERE id = ?', [fbAcc.id]);
+            }
+        }
+
+        // Zalo tables (có owner_zalo_id column) — chạy an toàn, không ảnh hưởng nếu ko có row
+        this.run('DELETE FROM messages WHERE owner_zalo_id = ?', [zaloId]);
+        this.run('DELETE FROM contacts WHERE owner_zalo_id = ?', [zaloId]);
+        this.run('DELETE FROM friends WHERE owner_zalo_id = ?', [zaloId]);
+        this.run('DELETE FROM page_group_member WHERE owner_zalo_id = ?', [zaloId]);
+        this.run('DELETE FROM links WHERE owner_zalo_id = ?', [zaloId]);
+        this.run('DELETE FROM friend_requests WHERE owner_zalo_id = ?', [zaloId]);
+        this.run('DELETE FROM pinned_messages WHERE owner_zalo_id = ?', [zaloId]);
+        this.run('DELETE FROM local_quick_messages WHERE owner_zalo_id = ?', [zaloId]);
+        this.run('DELETE FROM local_label_threads WHERE owner_zalo_id = ?', [zaloId]);
+        this.run('DELETE FROM local_pinned_conversations WHERE owner_zalo_id = ?', [zaloId]);
+        this.run('DELETE FROM message_drafts WHERE owner_zalo_id = ?', [zaloId]);
+        this.run('DELETE FROM bank_cards WHERE owner_zalo_id = ?', [zaloId]);
+
+        // CRM tables
+        this.run('DELETE FROM crm_tags WHERE owner_zalo_id = ?', [zaloId]);
+        this.run('DELETE FROM crm_contact_tags WHERE owner_zalo_id = ?', [zaloId]);
+        this.run('DELETE FROM crm_notes WHERE owner_zalo_id = ?', [zaloId]);
+        this.run('DELETE FROM crm_send_log WHERE owner_zalo_id = ?', [zaloId]);
+
+        // CRM campaigns (xoá campaign_contacts trước)
+        this.run(`DELETE FROM crm_campaign_contacts WHERE campaign_id IN (SELECT id FROM crm_campaigns WHERE owner_zalo_id = ?)`, [zaloId]);
+        this.run('DELETE FROM crm_campaigns WHERE owner_zalo_id = ?', [zaloId]);
+
+        // Workflows — page_ids là comma-separated list of account IDs
+        // Nếu workflow chỉ gắn với account này → xoá cả workflow
+        // Nếu workflow gắn với nhiều account → chỉ gỡ account này khỏi page_ids
+        try {
+            const wfRows = this.query<{ id: string; page_ids: string }>('SELECT id, page_ids FROM workflows WHERE page_ids LIKE ?', [`%${zaloId}%`]);
+            for (const wf of wfRows) {
+                const ids = (wf.page_ids || '').split(',').filter(Boolean);
+                if (ids.length <= 1) {
+                    // Chỉ có account này → xoá cả workflow
+                    this.run('DELETE FROM workflow_run_logs WHERE workflow_id = ?', [wf.id]);
+                    this.run('DELETE FROM workflows WHERE id = ?', [wf.id]);
+                } else {
+                    // Nhiều account → chỉ gỡ account này khỏi page_ids
+                    const newIds = ids.filter(id => id !== zaloId).join(',');
+                    this.run('UPDATE workflows SET page_ids = ? WHERE id = ?', [newIds, wf.id]);
+                }
+            }
+        } catch { /* workflows table may not have page_ids column on very old DBs */ }
+
+        // Integrations — không có owner_zalo_id, bỏ qua (integration không gắn với account cụ thể)
+        // Ai assistant data — không có owner_zalo_id, bỏ qua
+
+        // Employee access (dùng zalo_id column)
+        this.run('DELETE FROM employee_account_access WHERE zalo_id = ?', [zaloId]);
+        this.run('DELETE FROM employee_message_log WHERE zalo_id = ?', [zaloId]);
+
+        // Notification settings + media auto-delete config
+        this.run("DELETE FROM app_settings WHERE key LIKE ?", [`notif_${zaloId}%`]);
+        this.run("DELETE FROM app_settings WHERE key = ?", [`media_auto_delete_${zaloId}`]);
+
+        // Cuối cùng: hard-delete account
+        this.run('DELETE FROM accounts WHERE zalo_id = ?', [zaloId]);
+
+        Logger.log(`[DatabaseService] Deleted all data for account: ${zaloId} (isFB=${isFB})`);
+    }
+
+    /**
+     * Lấy cấu hình tự động xoá media cho tài khoản
+     */
+    public getMediaAutoDeleteConfig(zaloId: string): { enabled: boolean; days: number } | null {
+        if (!this.initialized) return null;
+        const val = this.getSetting(`media_auto_delete_${zaloId}`);
+        if (!val) return null;
+        try {
+            return JSON.parse(val) as { enabled: boolean; days: number };
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Lưu cấu hình tự động xoá media cho tài khoản
+     */
+    public setMediaAutoDeleteConfig(zaloId: string, config: { enabled: boolean; days: number }): void {
+        if (!this.initialized) return;
+        this.setSetting(`media_auto_delete_${zaloId}`, JSON.stringify(config));
+    }
+
     public updateAccountLastSeen(zaloId: string): void {
         this.run('UPDATE accounts SET last_seen = datetime(\'now\') WHERE zalo_id = ?', [zaloId]);
     }

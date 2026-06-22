@@ -510,15 +510,13 @@ export function registerFacebookIpc(): void {
 
       const { FacebookSendService } = require('../../src/services/facebook/FacebookSendService');
 
-      // ── Timeout guard: prevent UI hanging forever ──────────────────────
-      // 15s cho hầu hết trường hợp, nếu group MQTT treo cũng không chờ quá lâu.
-      const TIMEOUT_MS = 15000;
+      const TIMEOUT_MS = 60000;
       const result = (await Promise.race([
         FacebookSendService.sendTextMessage({
           accountId: internalId,
           threadId: params.threadId,
           body: params.body,
-          typeChat: params.options?.typeChat,
+          typeChat: params.options?.typeChat ?? null, // ← pass typeChat từ UI
           replyToMessageId: params.options?.replyToMessageId,
         }),
         new Promise<any>((_, reject) =>
@@ -1197,13 +1195,15 @@ export function registerFacebookIpc(): void {
         params.replyToSenderJid || '',
       );
 
-      // Save sent message to DB
+      // Save sent message to DB — strip @msgr JID from chatJid để nhất quán
+      // với handleE2EEMessage (dùng stripped numeric ID làm thread_id)
       if (result.success && result.messageId) {
         try {
+          const strippedThreadId = params.chatJid ? params.chatJid.replace(/@.*$/, '') : params.chatJid;
           DatabaseService.getInstance().saveFBMessage({
             id: result.messageId,
             account_id: internalId,
-            thread_id: params.chatJid, // Use chatJid as thread_id for 1:1 E2EE
+            thread_id: strippedThreadId, // ← numeric ID, nhất quán với receive path
             sender_id: resolveRealFacebookId(internalId, service),
             body: params.text,
             timestamp: result.timestamp || Date.now(),

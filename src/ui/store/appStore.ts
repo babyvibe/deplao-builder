@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { useAccountStore } from './accountStore';
 
 type AppView = 'chat' | 'friends' | 'settings' | 'dashboard' | 'crm' | 'workflow' | 'integration' | 'analytics' | 'erp';
 export type AppTheme = 'dark' | 'light';
@@ -210,6 +211,14 @@ interface AppStore {
   clearCRMRequestUnseen: (zaloId: string) => void;
   hasCRMRequestUnseen: (zaloId: string) => boolean;
   hasAnyCRMRequestUnseen: () => boolean;
+
+  // ── Account switcher (Ctrl+Tab) ──────────────────────────────────────────
+  accountSwitcherOpen: boolean;
+  accountSwitcherIndex: number;
+  openAccountSwitcher: () => void;
+  closeAccountSwitcher: (select?: boolean) => void;
+  nextAccountSwitcher: () => void;
+  prevAccountSwitcher: () => void;
 }
 
 // ─── fontSizeScale persists in localStorage ─────────────────────────────────
@@ -356,6 +365,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   integrationPanelTarget: null,
   analyticsInitialTab: null as string | null,
   crmRequestUnseenByAccount: loadCRMRequestUnseen(),
+  accountSwitcherOpen: false,
+  accountSwitcherIndex: 0,
 
   openQuickChat: (opts) => set({
     quickChatOpen: true,
@@ -738,4 +749,56 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   hasCRMRequestUnseen: (zaloId) => !!get().crmRequestUnseenByAccount[zaloId],
   hasAnyCRMRequestUnseen: () => Object.values(get().crmRequestUnseenByAccount).some(Boolean),
+
+  // ── Account switcher (Ctrl+Tab) ──────────────────────────────────────────
+  /** Số items: merged mode → "Tất cả" (index 0) + accounts; normal → chỉ accounts */
+  openAccountSwitcher: () => set((s) => {
+    const accs = useAccountStore.getState().accounts;
+    const total = s.mergedInboxMode ? accs.length + 1 : accs.length;
+    if (s.accountSwitcherOpen) {
+      // Ctrl still held + Tab again → advance
+      return { accountSwitcherIndex: (s.accountSwitcherIndex + 1) % total };
+    }
+    // Find current active account to highlight it
+    const activeId = useAccountStore.getState().activeAccountId;
+    let startIdx = accs.findIndex(a => a.zalo_id === activeId);
+    if (startIdx < 0) startIdx = 0;
+    if (s.mergedInboxMode) startIdx += 1; // "Tất cả" ở index 0
+    return { accountSwitcherOpen: true, accountSwitcherIndex: startIdx };
+  }),
+  closeAccountSwitcher: (select) => set((s) => {
+    if (!s.accountSwitcherOpen) return {};
+    if (select) {
+      const accs = useAccountStore.getState().accounts;
+      const idx = s.accountSwitcherIndex;
+      // Merged mode: index 0 = "Tất cả", 1..N = accounts[0..N-1]
+      // Normal mode: 0..N-1 = accounts[0..N-1] directly
+      if (s.mergedInboxMode) {
+        if (idx === 0) {
+          return { accountSwitcherOpen: false, accountSwitcherIndex: 0, mergedInboxFilterAccount: null };
+        }
+        const acc = accs[idx - 1];
+        if (acc) {
+          return { accountSwitcherOpen: false, accountSwitcherIndex: 0, mergedInboxFilterAccount: acc.zalo_id };
+        }
+      } else {
+        const acc = accs[idx];
+        const activeId = useAccountStore.getState().activeAccountId;
+        if (acc && acc.zalo_id !== activeId) {
+          useAccountStore.getState().setActiveAccount(acc.zalo_id);
+        }
+      }
+    }
+    return { accountSwitcherOpen: false, accountSwitcherIndex: 0 };
+  }),
+  nextAccountSwitcher: () => set((s) => {
+    const accs = useAccountStore.getState().accounts;
+    const total = s.mergedInboxMode ? accs.length + 1 : accs.length;
+    return { accountSwitcherIndex: (s.accountSwitcherIndex + 1) % total };
+  }),
+  prevAccountSwitcher: () => set((s) => {
+    const accs = useAccountStore.getState().accounts;
+    const total = s.mergedInboxMode ? accs.length + 1 : accs.length;
+    return { accountSwitcherIndex: (s.accountSwitcherIndex - 1 + total) % total };
+  }),
 }));

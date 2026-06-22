@@ -579,10 +579,10 @@ export default function GroupInfoPanel() {
           )}
         </div>
         {channelCap.supportsPinConversation && (
-          <GrpActionBtn icon={isPinned ? '📌' : '📍'} label={isPinned ? 'Bỏ ghim' : 'Ghim hội thoại'} onClick={handleTogglePin} active={isPinned} />
+          <GrpActionBtn icon={isPinned ? '📌' : '📌'} label={isPinned ? 'Bỏ ghim' : 'Ghim hội thoại'} onClick={handleTogglePin} active={isPinned} />
         )}
         {!channelCap.supportsPinConversation && (
-          <GrpActionBtn icon={isLocalPinned ? '🔖' : '📎'} label={isLocalPinned ? 'Bỏ ghim app' : 'Ghim trong app'} onClick={handleToggleLocalPin} active={isLocalPinned} />
+          <GrpActionBtn icon={isLocalPinned ? '📍' : '📍'} label={isLocalPinned ? 'Bỏ ghim app' : 'Ghim trong app'} onClick={handleToggleLocalPin} active={isLocalPinned} />
         )}
         {channelCap.supportsInviteToGroup && (
           <GrpActionBtn icon="👥" label="Thêm thành viên" onClick={() => setAddMemberOpen(true)} />

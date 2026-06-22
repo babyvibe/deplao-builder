@@ -55,6 +55,10 @@ export interface ContactItem {
   alias?: string;
   avatar_url: string;
   phone?: string;
+  /** 0 = Nam, 1 = Nữ, null = chưa biết */
+  gender?: number | null;
+  /** DD/MM/YYYY format */
+  birthday?: string | null;
   is_friend: number;
   contact_type: string;
   unread_count: number;

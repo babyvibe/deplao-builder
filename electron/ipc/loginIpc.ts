@@ -244,8 +244,8 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
         }
     });
 
-    // ─── Xóa tài khoản ────────────────────────────────────────────────────
-    ipcMain.handle('login:removeAccount', async (_event, { zaloId }) => {
+    // ─── Xoá tài khoản (có tuỳ chọn xoá hết dữ liệu) ─────────────────────────
+    ipcMain.handle('login:removeAccount', async (_event, { zaloId, deleteData }) => {
         try {
             // Check nếu là Facebook account → cleanup qua FacebookConnectionManager
             const accounts = DatabaseService.getInstance().getAccounts();
@@ -253,17 +253,17 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
             const isFB = account?.channel === 'facebook';
 
             if (isFB) {
-                // Facebook cleanup: tìm fb_account UUID → disconnect + xóa cookie + xóa fb_accounts
+                // Facebook cleanup: tìm fb_account UUID → disconnect + xóa cookie
                 const fbAcc = DatabaseService.getInstance().getFBAccountByFacebookId(zaloId);
                 if (fbAcc?.id) {
                     const FacebookConnectionManager = require('../../src/utils/FacebookConnectionManager').default;
                     await FacebookConnectionManager.disconnect(fbAcc.id).catch(() => {});
                     const { secureDelete } = require('../../src/services/secure/SecureSettingsService');
                     secureDelete(`fb_cookie_${fbAcc.id}`);
-                    DatabaseService.getInstance().deleteFBAccount(fbAcc.id);
+                    // Không gọi deleteFBAccount ở đây — deleteAccountData sẽ xử lý FB tables
                 }
             } else {
-                // Zalo cleanup (existing)
+                // Zalo cleanup
                 const ZaloLoginHelper = require('../../src/utils/ZaloLoginHelper').default;
                 ZaloLoginHelper.markRemoved(zaloId);
                 if (ConnectionManager.getConnection(zaloId)) {
@@ -271,10 +271,71 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
                 }
             }
 
-            // Mark as inactive in unified accounts table (cho cả Zalo và FB)
-            DatabaseService.getInstance().deleteAccount(zaloId);
+            if (deleteData) {
+                // Xoá toàn bộ dữ liệu DB + media
+                DatabaseService.getInstance().deleteAccountData(zaloId);
+                const FileStorageService = require('../../src/services/file/FileStorageService').default;
+                FileStorageService.deleteAccountMedia(zaloId);
+            } else {
+                // Legacy: chỉ mark inactive
+                DatabaseService.getInstance().deleteAccount(zaloId);
+            }
             return { success: true };
         } catch (error: any) {
+            return { success: false, error: error.message };
+        }
+    });
+
+    // ─── Lấy cấu hình auto-delete media cho tài khoản ──────────────────────
+    ipcMain.handle('login:getMediaAutoDelete', async (_event, { zaloId }) => {
+        try {
+            const config = DatabaseService.getInstance().getMediaAutoDeleteConfig(zaloId);
+            return { success: true, config };
+        } catch (error: any) {
+            return { success: false, error: error.message };
+        }
+    });
+
+    // ─── Lưu cấu hình auto-delete media + chạy cleanup ngay ───────────────
+    ipcMain.handle('login:setMediaAutoDelete', async (_event, { zaloId, enabled, days }) => {
+        try {
+            const config = { enabled, days: Math.max(1, days) };
+            DatabaseService.getInstance().setMediaAutoDeleteConfig(zaloId, config);
+
+            // Nếu enabled, chạy cleanup ngay lập tức
+            if (enabled) {
+                const FileStorageService = require('../../src/services/file/FileStorageService').default;
+                const deleted = FileStorageService.cleanupOldMedia(zaloId, days);
+                return { success: true, config, cleanedDirs: deleted, message: `Đã xoá ${deleted} thư mục media cũ. Cấu hình sẽ tự động chạy hàng ngày.` };
+            }
+
+            return { success: true, config };
+        } catch (error: any) {
+            return { success: false, error: error.message };
+        }
+    });
+
+    // ─── Chạy cleanup media cho tất cả tài khoản (gọi từ scheduler) ────────
+    ipcMain.handle('login:runAllMediaCleanup', async () => {
+        try {
+            const DatabaseService = require('../../src/services/database/DatabaseService').default;
+            const FileStorageService = require('../../src/services/file/FileStorageService').default;
+            const db = DatabaseService.getInstance();
+            const accounts = db.getAccounts();
+            const results: Array<{ zaloId: string; cleaned: number; config: any }> = [];
+
+            for (const acc of accounts) {
+                const config = db.getMediaAutoDeleteConfig(acc.zalo_id);
+                if (config?.enabled && config.days > 0) {
+                    const cleaned = FileStorageService.cleanupOldMedia(acc.zalo_id, config.days);
+                    results.push({ zaloId: acc.zalo_id, cleaned, config });
+                }
+            }
+
+            Logger.log(`[MediaCleanup] Ran cleanup for ${results.length} accounts`);
+            return { success: true, results };
+        } catch (error: any) {
+            Logger.error(`[MediaCleanup] Error: ${error.message}`);
             return { success: false, error: error.message };
         }
     });
