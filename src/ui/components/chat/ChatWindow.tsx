@@ -1,3 +1,4 @@
+import PageLoading, { Spinner } from '@/components/common/PageLoading';
 import DateInputVN from '@/components/common/DateInputVN';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useChatStore } from '@/store/chatStore';
@@ -16,6 +17,7 @@ import FBVideoThumb from './FBVideoThumb';
 import { RecalledBubble, BankCardBubble } from './MessageBubbles';
 import GroupAvatar from '../common/GroupAvatar';
 import PhoneDisplay from '../common/PhoneDisplay';
+import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import { toLocalMediaUrl } from '@/lib/localMedia';
 import { formatPhone } from '@/utils/phoneUtils';
@@ -109,6 +111,9 @@ export default function ChatWindow() {
   const [reactionContextMenu, setReactionContextMenu] = useState<{ x: number; y: number; msg: any; myEmoji: string | null } | null>(null);
   const [atTop, setAtTop] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
+  // Track which group member info requests have been made (avoid duplicate IPC calls)
+  const requestedMemberInfoRef = useRef<Set<string>>(new Set());
+
   // Track khi đang xem tin nhắn cũ (do click vào ghim / quote / search) - cần nút "Về tin mới nhất"
   const [isViewingHistory, setIsViewingHistory] = useState(false);
   const [loadingLatest, setLoadingLatest] = useState(false);
@@ -182,6 +187,8 @@ export default function ChatWindow() {
 
   // ─── Thread ready gate: chỉ hiển thị UI khi messages + pins đều đã load ──
   const [threadReady, setThreadReady] = useState(false);
+  // Track initial loading for PageLoading display
+  const [initialLoading, setInitialLoading] = useState(true);
   // Track threadId đã scroll - tránh race condition giữa useLayoutEffect vs useEffect
   const lastScrolledThreadRef = useRef<string | null>(null);
 
@@ -423,6 +430,7 @@ export default function ChatWindow() {
     isInitialThreadLoadRef.current = true;
     // Reset thread ready gate - ẩn UI cho đến khi data load xong
     setThreadReady(false);
+    setInitialLoading(true);
     prevPinnedBarHeightRef.current = 0;
     // Reset selection mode when switching threads
     setIsSelecting(false);
@@ -440,14 +448,25 @@ export default function ChatWindow() {
   useEffect(() => {
     if (!pinsReady || !activeThreadId) return;
     setThreadReady(true);
+    // setInitialLoading(false); // chờ messages load
   }, [pinsReady, activeThreadId]);
 
   // ─── Safety fallback: nếu loading quá 3s mà vẫn chưa ready → force hiển thị ───
   useEffect(() => {
     if (!activeThreadId) return;
-    const fallback = setTimeout(() => setThreadReady(true), 3000);
+    const fallback = setTimeout(() => {
+      setThreadReady(true);
+      setInitialLoading(false);
+    }, 3000);
     return () => clearTimeout(fallback);
   }, [activeThreadId]);
+
+  // ─── Clear initial loading khi messages thực sự có data ────────────────
+  useEffect(() => {
+    if (threadKey && msgs.length > 0 && initialLoading) {
+      setInitialLoading(false);
+    }
+  }, [threadKey, msgs, initialLoading]);
 
   // ─── Drag-to-select: pointer move/up (document level) ──────────────────────
   useEffect(() => {
@@ -553,14 +572,24 @@ export default function ChatWindow() {
     prevPinnedBarHeightRef.current = currentHeight;
   }, [threadReady, activeThreadId, pins.length, pinnedNotes.length]);
 
-  // ─── Scroll to bottom SAU KHI threadReady = true (1 lần duy nhất per thread) ──
+  // ─── Scroll to bottom SAU KHI threadReady = true (có guard tránh race realtime) ──
   // Dùng useEffect (không phải useLayoutEffect) + double-RAF để đảm bảo
   // messages đã được render + DOM đã được paint trước khi scroll.
+  //
+  // ⚠️ Race condition guard: nếu realtime message đến trong lúc chờ batch load,
+  // effect sẽ fire với 1 tin và lock thread prematurely → batch đầy đủ sau đó
+  // không được scroll (lastScrolledThreadRef đã set). Fix: chỉ lock khi có ≥3
+  // messages thực (không tính temp_), batch đầy đủ (50 tin) sẽ trigger lock thật.
   useEffect(() => {
     if (!threadReady || !activeThreadId) return;
-    if (!msgs.length) return; // Chưa có tin nhắn → chưa cần scroll
-    if (lastScrolledThreadRef.current === activeThreadId) return; // Đã scroll cho thread này rồi
-    lastScrolledThreadRef.current = activeThreadId;
+    if (!msgs.length) return;
+    if (lastScrolledThreadRef.current === activeThreadId) return;
+
+    // Lock thread chỉ khi có đủ messages thực (≥3), tránh realtime lẻ lock sớm
+    const realCount = msgs.filter(m => !String(m.msg_id).startsWith('temp_')).length;
+    if (realCount >= 3) {
+      lastScrolledThreadRef.current = activeThreadId;
+    }
 
     // Double-RAF: frame 1 = messages render, frame 2 = layout hoàn chỉnh → scroll
     requestAnimationFrame(() => {
@@ -630,6 +659,60 @@ export default function ChatWindow() {
     }).catch(() => {});
   }, [threadReady, activeAccountId, activeThreadId, msgs]);
 
+  // ─── Media cache preloader (employee mode) ─────────────────────
+  // Khi mo hoi thoai, download background cac file media ve cache local
+  // de lan sau xem khong can load tu Boss
+  const preloadScannedRef = useRef(new Set<string>());
+  useEffect(() => {
+    if (!activeAccountId || !activeThreadId || !threadReady) return;
+    const key = `${activeAccountId}_${activeThreadId}`;
+    if (preloadScannedRef.current.has(key)) return;
+    preloadScannedRef.current.add(key);
+
+    // Chi chay o employee mode
+    const isEmployee = useEmployeeStore.getState().mode === 'employee';
+    if (!isEmployee) return;
+
+    // Chay async, khong block UI
+    (async () => {
+      try {
+        // Lay danh sach media messages tu Boss
+        const r = await DataAccessor.getMediaMessages({
+          zaloId: activeAccountId!,
+          threadId: activeThreadId,
+          limit: 50,
+          offset: 0,
+        });
+        const msgs = r?.messages || [];
+        if (!msgs.length) return;
+
+        // Build danh sach Boss URLs de preload
+        const bossUrls: string[] = [];
+        for (const msg of msgs) {
+          try {
+            const lp = typeof msg.local_paths === 'string'
+              ? JSON.parse(msg.local_paths || '{}')
+              : (msg.local_paths || {});
+            const lf = lp.main || lp.hd || lp.thumb || '';
+            if (lf) {
+              const bossUrl = toLocalMediaUrl(lf);
+              if (bossUrl && !bossUrl.startsWith('local-media://') && !bossUrl.startsWith('file://')) {
+                bossUrls.push(bossUrl);
+              }
+            }
+          } catch {}
+        }
+
+        if (bossUrls.length > 0) {
+          console.log(`[MediaCache] Preloading ${bossUrls.length} files for thread ${activeThreadId}`);
+          ipc.file?.preloadMediaBatch(bossUrls).catch(() => {});
+        }
+      } catch (err) {
+        console.warn('[MediaCache] Preload error:', err);
+      }
+    })();
+  }, [activeAccountId, activeThreadId, threadReady]);
+
   // OPTIMIZATION: Load group members với cache TTL - chỉ reload nếu cache cũ hơn 5 phút
   useEffect(() => {
     if (!activeAccountId || !activeThreadId) return;
@@ -675,7 +758,7 @@ export default function ChatWindow() {
     };
 
     // 1. Tải từ DB trước
-    ipc.db?.getGroupMembers({ zaloId: accountId, groupId })
+    DataAccessor.getGroupMembers({ zaloId: accountId, groupId })
       .then(async (res: any) => {
         if (res?.members?.length) {
           // DB có members → dùng luôn
@@ -720,11 +803,11 @@ export default function ChatWindow() {
 
             // Lưu vào DB
             if (rawMembers.length) {
-              ipc.db?.saveGroupMembers({ zaloId: accountId, groupId, members: rawMembers }).catch(() => {});
+              DataAccessor.saveGroupMembers({ zaloId: accountId, groupId, members: rawMembers }).catch(() => {});
             }
             // Cập nhật tên/avatar nhóm nếu có
             if (name) {
-              ipc.db?.updateContactProfile({ zaloId: accountId, contactId: groupId, displayName: name, avatarUrl: avatar, phone: '' }).catch(() => {});
+              DataAccessor.updateContactProfile({ zaloId: accountId, contactId: groupId, displayName: name, avatarUrl: avatar, phone: '' }).catch(() => {});
               useChatStore.getState().updateContact(accountId, { contact_id: groupId, display_name: name, avatar_url: avatar });
             }
 
@@ -734,6 +817,94 @@ export default function ChatWindow() {
       })
       .catch(() => {});
   }, [activeThreadId, activeAccountId]);
+
+  // ─── Fetch thông tin thành viên nhóm chưa biết - xử lý messages đã có ─────
+  // Khi messages load từ DB hoặc nhóm có thành viên mới chưa có tên/avatar,
+  // tự động gọi getUserInfo để enrich thông tin cho các sender_id lạ.
+  useEffect(() => {
+    if (!activeAccountId || !activeThreadId) return;
+    const contactList = useChatStore.getState().contacts[activeAccountId] || [];
+    const isGroup = contactList.find(c => c.contact_id === activeThreadId)?.contact_type === 'group' ||
+                    contactList.find(c => c.contact_id === activeThreadId)?.contact_type === '1';
+    if (!isGroup) return;
+
+    const unknownSenders = new Set<string>();
+    for (const msg of msgs) {
+      if (msg.is_sent === 1 || !msg.sender_id) continue;
+      const senderKey = `${activeAccountId}__${msg.sender_id}__${activeThreadId}`;
+      if (requestedMemberInfoRef.current.has(senderKey)) continue;
+
+      const ct = getContact(msg.sender_id);
+      if (ct?.display_name && ct.display_name !== msg.sender_id && !/^\d+$/.test(ct.display_name)) {
+        continue; // đã có tên trong contacts → skip
+      }
+      const gm = getGroupMember(msg.sender_id);
+      if (gm?.displayName && gm.displayName !== msg.sender_id && !/^\d+$/.test(gm.displayName)) {
+        continue; // đã có tên trong group cache → skip
+      }
+
+      unknownSenders.add(msg.sender_id);
+    }
+
+    if (unknownSenders.size === 0) return;
+
+    for (const senderId of unknownSenders) {
+      const senderKey = `${activeAccountId}__${senderId}__${activeThreadId}`;
+      requestedMemberInfoRef.current.add(senderKey);
+
+      // Fetch member info via IPC - tương tự fetchGroupMemberInfo trong useZaloEvents
+      const load = async () => {
+        try {
+          const acc = useAccountStore.getState().accounts.find(a => a.zalo_id === activeAccountId);
+          if (!acc || (acc.channel || 'zalo') !== 'zalo') return;
+          const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+          const res = await ipc.zalo?.getUserInfo({ auth, userId: senderId });
+          if (!res?.success || !res.response) return;
+          const profile = res.response.changed_profiles?.[senderId];
+          if (!profile) return;
+
+          const displayName = profile.displayName || profile.zaloName || '';
+          const avatar = profile.avatar || '';
+          if (!displayName && !avatar) return;
+
+          // Update contact store
+          if (displayName || avatar) {
+            useChatStore.getState().updateContact(activeAccountId!, {
+              contact_id: senderId,
+              ...(displayName ? { display_name: displayName } : {}),
+              ...(avatar ? { avatar_url: avatar } : {}),
+            });
+          }
+
+          // Update groupInfoCache
+          if (activeThreadId && (displayName || avatar)) {
+            const cache = useAppStore.getState().groupInfoCache?.[activeAccountId!]?.[activeThreadId];
+            if (cache?.members) {
+              const members = [...cache.members];
+              const idx = members.findIndex(m => m.userId === senderId);
+              if (idx >= 0) {
+                members[idx] = { ...members[idx], ...(displayName ? { displayName } : {}), ...(avatar ? { avatar } : {}) };
+              } else {
+                members.push({ userId: senderId, displayName: displayName || senderId, avatar: avatar || '', role: 0 });
+              }
+              useAppStore.getState().setGroupInfo(activeAccountId!, activeThreadId, { ...cache, members, fetchedAt: Date.now() });
+            }
+          }
+
+          // Save to DB
+          await DataAccessor.saveGroupMembers({
+            zaloId: activeAccountId, groupId: activeThreadId,
+            members: [{ memberId: senderId, displayName: displayName || senderId, avatar: avatar || '', role: 0 }],
+          }).catch(() => {});
+          DataAccessor.updateContactProfile({
+            zaloId: activeAccountId, contactId: senderId,
+            displayName: displayName || senderId, avatarUrl: avatar, phone: '',
+          }).catch(() => {});
+        } catch {}
+      };
+      load();
+    }
+  }, [activeAccountId, activeThreadId, msgs, groupInfoCache]);
 
   // Scroll event: track top/bottom position
   useEffect(() => {
@@ -857,13 +1028,26 @@ export default function ChatWindow() {
     shouldRestoreScrollRef.current = true;
 
     try {
-      // Step 1: Try local DB first (existing behavior)
-      const res = await ipc.db?.getMessages({
-        zaloId: activeAccountId,
-        threadId: activeThreadId,
-        limit: 30,
-        before,
-      });
+      // Step 1: Try REST (employee) hoặc local DB (boss/standalone)
+      const isEmployee = useEmployeeStore.getState().mode === 'employee';
+      let res: any;
+      if (isEmployee) {
+        const DataAccessor = (await import('../../lib/data/DataAccessor')).default;
+        const restResult = await DataAccessor.getMessages({
+          zaloId: activeAccountId,
+          threadId: activeThreadId,
+          limit: 30,
+          before,
+        });
+        res = { messages: restResult?.items || [] };
+      } else {
+        res = await DataAccessor.getMessages({
+          zaloId: activeAccountId,
+          threadId: activeThreadId,
+          limit: 30,
+          before,
+        });
+      }
       if (res?.messages?.length > 0) {
         // Build a lookup map of msg_id → content+type for all loaded messages
         // (used to populate reply quote_data with actual original message content)
@@ -891,7 +1075,7 @@ export default function ChatWindow() {
           (async () => {
             for (const item of missingLookup) {
               try {
-                const dbRes = await ipc.db?.getMessageById({ zaloId: activeAccountId, msgId: item.replyToId });
+                const dbRes = await DataAccessor.getMessageById({ zaloId: activeAccountId, msgId: item.replyToId });
                 const origMsg = dbRes?.message;
                 if (origMsg?.msg_type || origMsg?.content) {
                   const store = useChatStore.getState();
@@ -969,7 +1153,7 @@ export default function ChatWindow() {
       // Đánh dấu thu hồi thay vì xóa - hiển thị "Tin nhắn đã thu hồi"
       if (activeAccountId) {
         useChatStore.getState().recallMessage(activeAccountId, msg.msg_id, msg.thread_id);
-        ipc.db?.markMessageRecalled?.({ zaloId: activeAccountId, msgId: msg.msg_id }).catch(() => {});
+        DataAccessor.markMessageRecalled?.({ zaloId: activeAccountId, msgId: msg.msg_id }).catch(() => {});
       }
       showNotification('Đã thu hồi tin nhắn', 'success');
     } catch (e: any) {
@@ -990,7 +1174,7 @@ export default function ChatWindow() {
       // Đánh dấu đã xoá trong DB (recalled) thay vì xoá hẳn - nhất quán với thu hồi
       if (activeAccountId) {
         useChatStore.getState().recallMessage(activeAccountId, msg.msg_id, msg.thread_id);
-        ipc.db?.markMessageRecalled?.({ zaloId: activeAccountId, msgId: msg.msg_id }).catch(() => {});
+        DataAccessor.markMessageRecalled?.({ zaloId: activeAccountId, msgId: msg.msg_id }).catch(() => {});
       }
       showNotification('Đã xóa tin nhắn', 'success');
     } catch (e: any) {
@@ -1001,7 +1185,7 @@ export default function ChatWindow() {
   const handleDeleteFromDb = async (msg: any) => {
     if (!activeAccountId) return;
     try {
-      await ipc.db?.deleteMessages({ zaloId: activeAccountId, msgIds: [msg.msg_id] });
+      await DataAccessor.deleteMessages({ zaloId: activeAccountId, msgIds: [msg.msg_id] });
       removeMessage(activeAccountId, msg.thread_id, msg.msg_id);
       showNotification('Đã xóa vĩnh viễn tin nhắn khỏi app', 'success');
     } catch (e: any) {
@@ -1152,14 +1336,14 @@ export default function ChatWindow() {
     // 2. Message not in DOM - fetch its info to get timestamp, then load messages around it
     if (!activeAccountId || !activeThreadId) return;
     try {
-      const msgRes = await ipc.db?.getMessageById({ zaloId: activeAccountId, msgId });
+      const msgRes = await DataAccessor.getMessageById({ zaloId: activeAccountId, msgId });
       const targetMsg = msgRes?.message;
       if (!targetMsg?.timestamp) return;
 
-      const aroundRes = await ipc.db?.getMessagesAround({
+      const aroundRes = await DataAccessor.getMessagesAround({
         zaloId: activeAccountId,
         threadId: activeThreadId,
-        timestamp: targetMsg.timestamp,
+        msgId: String(targetMsg.msg_id || targetMsg.timestamp),
         limit: 200,
       });
       const aroundMsgs = aroundRes?.messages;
@@ -1188,7 +1372,7 @@ export default function ChatWindow() {
         (async () => {
           for (const item of missingLookup2) {
             try {
-              const dbRes = await ipc.db?.getMessageById({ zaloId: activeAccountId, msgId: item.replyToId });
+              const dbRes = await DataAccessor.getMessageById({ zaloId: activeAccountId, msgId: item.replyToId });
               const origMsg = dbRes?.message;
               if (origMsg?.msg_type || origMsg?.content) {
                 const store = useChatStore.getState();
@@ -1236,7 +1420,7 @@ export default function ChatWindow() {
     if (!activeAccountId || !activeThreadId || loadingLatest) return;
     setLoadingLatest(true);
     try {
-      const res = await ipc.db?.getMessages({
+      const res = await DataAccessor.getMessages({
         zaloId: activeAccountId,
         threadId: activeThreadId,
         limit: 50,
@@ -1266,7 +1450,7 @@ export default function ChatWindow() {
           (async () => {
             for (const item of missingLookup3) {
               try {
-                const dbRes = await ipc.db?.getMessageById({ zaloId: activeAccountId, msgId: item.replyToId });
+                const dbRes = await DataAccessor.getMessageById({ zaloId: activeAccountId, msgId: item.replyToId });
                 const origMsg = dbRes?.message;
                 if (origMsg?.msg_type || origMsg?.content) {
                   const store = useChatStore.getState();
@@ -1334,6 +1518,7 @@ export default function ChatWindow() {
     return {
       src: remoteUrl || localUrl,
       displaySrc: localUrl || remoteUrl,
+      fallbackSrc: remoteUrl || undefined,  // Zalo CDN làm fallback
       localPath,
       defaultName,
       msgId: msg?.msg_id ? String(msg.msg_id) : undefined,
@@ -1407,7 +1592,7 @@ export default function ChatWindow() {
 
     try {
       for (let page = 0; page < MAX_PAGES; page++) {
-        const r = await ipc.db?.getMediaMessages({
+        const r = await DataAccessor.getMediaMessages({
           zaloId: activeAccountId,
           threadId: activeThreadId,
           limit: PAGE_SIZE,
@@ -1522,8 +1707,11 @@ export default function ChatWindow() {
         </div>
       )}
 
-      {/* ── Loading skeleton - hiển thị khi data chưa sẵn sàng ── */}
-      {!threadReady && (
+      {/* ── Loading state - hiển thị khi data chưa sẵn sàng ── */}
+      {(!threadReady || msgs.length === 0) && initialLoading && (
+        <PageLoading text="Đang tải tin nhắn..." />
+      )}
+      {!threadReady && !initialLoading && (
         <div className="flex-1 flex flex-col p-4 space-y-3 animate-pulse">
           {/* Skeleton bubbles */}
           <div className="flex items-end gap-2">
@@ -1638,10 +1826,7 @@ export default function ChatWindow() {
             }`}
           >
             {loadingLatest ? (
-              <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-              </svg>
+              <Spinner size={4} />
             ) : isViewingHistory ? (
               <>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -1676,10 +1861,7 @@ export default function ChatWindow() {
             >
               {loadingMore ? (
                 <>
-                  <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-                  </svg>
+                  <Spinner size={3} />
                   <span>Đang tải...</span>
                 </>
               ) : loadError ? (
@@ -1705,6 +1887,12 @@ export default function ChatWindow() {
 
         {/* Empty state - no messages yet */}
         {msgs.length === 0 && (
+          useChatStore.getState().messagesLoading ? (
+            <div className="flex-1 flex flex-col items-center justify-center text-center px-6 py-12 opacity-60 gap-2">
+              <span className="w-6 h-6 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
+              <p className="text-gray-400 text-sm font-medium">Đang tải tin nhắn...</p>
+            </div>
+          ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-center px-6 py-12 opacity-60">
             <div className="text-3xl mb-3">💬</div>
             <p className="text-gray-400 text-sm font-medium">Chưa có tin nhắn nào</p>
@@ -1712,6 +1900,7 @@ export default function ChatWindow() {
               Tin nhắn chỉ hiển thị từ lúc kết nối. Hãy gửi tin nhắn mới để bắt đầu.
             </p>
           </div>
+          )
         )}
 
         <ChatHistoryList items={msgs} bottomRef={bottomRef} renderItem={(msg, idx) => {
@@ -2799,7 +2988,7 @@ function PollBubble({ msg, isSent, activeAccountId, threadId }: { msg: any; isSe
       >
         <span>{expanded ? 'Thu gọn' : 'Xem bình chọn'}</span>
         {loading
-          ? <svg className="animate-spin w-3 h-3" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+          ? <Spinner size={3} />
           : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <polyline points={expanded ? '18 15 12 9 6 15' : '6 9 12 15 18 9'}/>
             </svg>
@@ -3010,7 +3199,7 @@ export function CreatePollDialog({ groupId, activeAccountId, channel, onClose }:
           </button>
           <button onClick={handleCreate} disabled={creating || !question.trim() || options.filter(o => o.trim()).length < 2}
             className="px-5 py-2 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
-            {creating && <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>}
+            {creating && <Spinner size={3} />}
             Tạo bình chọn
           </button>
         </div>
@@ -4072,7 +4261,7 @@ function QuotedStickerPreview({ content }: { content: string }) {
 
       // DB cache lookup
       try {
-        const res = await ipc.db?.getStickerById({ stickerId });
+        const res = await DataAccessor.getStickerById(stickerId);
         if (res?.sticker?.stickerUrl && !res.sticker._unsupported) {
           if (!cancelled) setStickerUrl(res.sticker.stickerUrl);
           return;
@@ -4090,7 +4279,7 @@ function QuotedStickerPreview({ content }: { content: string }) {
         const stickers: any[] = detailRes?.response || [];
         if (stickers.length && stickers[0]?.stickerUrl) {
           if (!cancelled) setStickerUrl(stickers[0].stickerUrl);
-          ipc.db?.saveStickers({ stickers }).catch(() => {});
+          DataAccessor.saveStickers({ stickers }).catch(() => {});
         }
       } catch {}
     };
@@ -4376,7 +4565,7 @@ function StickerBubble({ msg }: { msg: any }) {
 
       // 1. Check DB cache first (includes unsupported flag)
       try {
-        const res = await ipc.db?.getStickerById({ stickerId });
+        const res = await DataAccessor.getStickerById(stickerId);
         if (res?.sticker) {
           if (res.sticker._unsupported) {
             if (!cancelled) setUnsupported(true);
@@ -4405,7 +4594,7 @@ function StickerBubble({ msg }: { msg: any }) {
         const stickers: any[] = detailRes?.response || [];
         if (stickers.length && stickers[0]?.stickerUrl) {
           if (!cancelled) setStickerUrl(stickers[0].stickerUrl);
-          ipc.db?.saveStickers({ stickers }).catch(() => {});
+          DataAccessor.saveStickers({ stickers }).catch(() => {});
         } else {
           ipc.db?.markStickerUnsupported({ stickerId }).catch(() => {});
           if (!cancelled) setUnsupported(true);
@@ -5541,8 +5730,8 @@ function ForwardMessageModal({ messages, contacts, onClose, onForward }: {
     (async () => {
       try {
         const [labelsRes, threadsRes] = await Promise.all([
-          ipc.db?.getLocalLabels({ zaloId: activeAccountId }),
-          ipc.db?.getLocalLabelThreads({ zaloId: activeAccountId }),
+          DataAccessor.getLocalLabels({ zaloId: activeAccountId }),
+          DataAccessor.getLocalLabelThreads({ zaloId: activeAccountId }),
         ]);
         const raw = (labelsRes?.labels || [])
           .filter((l: any) => (l?.is_active ?? 1) === 1)
@@ -6072,7 +6261,7 @@ export function NoteViewModal({ topicId, initialTitle, groupId, onClose, onNoteP
                   <button onClick={() => isEdit ? setMode('view') : onClose()} className="flex-1 py-2.5 rounded-xl bg-gray-700 hover:bg-gray-600 text-sm text-gray-300 transition-colors">Huỷ</button>
                   <button onClick={handleSave} disabled={saving || !title.trim()}
                     className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-sm text-white font-semibold transition-colors flex items-center justify-center gap-2">
-                    {saving && <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>}
+                    {saving && <Spinner size={4} />}
                     {isEdit ? 'Lưu thay đổi' : 'Tạo ghi chú'}
                   </button>
                 </div>
@@ -6087,7 +6276,7 @@ export function NoteViewModal({ topicId, initialTitle, groupId, onClose, onNoteP
             <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
               {localNoteLoading ? (
                 <div className="flex items-center justify-center py-6">
-                  <svg className="animate-spin w-5 h-5 text-green-400" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                  <Spinner size={5} className="text-green-400" />
                 </div>
               ) : localNotes.length === 0 ? (
                 <p className="text-xs text-gray-500 text-center py-4">Chưa có ghi chú local nào</p>
@@ -6184,7 +6373,7 @@ function FriendRequestBar({ zaloId, userId, contact, getAuth, onReady }: {
     const check = async () => {
       try {
         // 1. Check DB (friends table)
-        const friendRes = await ipc.db?.isFriend({ zaloId, userId });
+        const friendRes = await DataAccessor.isFriend({ zaloId, userId });
         if (cancelled) return;
         if (friendRes?.isFriend) { setStatus('friend'); return; }
 
@@ -6264,8 +6453,8 @@ function FriendRequestBar({ zaloId, userId, contact, getAuth, onReady }: {
       setStatus('friend');
       showNotification('Đã chấp nhận kết bạn', 'success');
       // Update local DB - also remove from friend_requests
-      ipc.db?.addFriend({ zaloId, friend: { userId, displayName: contact?.display_name || contact?.alias || '', avatar: contact?.avatar_url || contact?.avatar || '' } }).catch(() => {});
-      ipc.db?.removeFriendRequest({ zaloId, userId, direction: 'received' }).catch(() => {});
+      DataAccessor.addFriend({ zaloId, friend: { userId, displayName: contact?.display_name || contact?.alias || '', avatar: contact?.avatar_url || contact?.avatar || '' } }).catch(() => {});
+      DataAccessor.removeFriendRequest({ zaloId, userId, direction: 'received' }).catch(() => {});
     } catch (e: any) {
       showNotification('Thất bại: ' + e.message, 'error');
     } finally { setSending(false); }
@@ -6355,7 +6544,7 @@ function FriendRequestBar({ zaloId, userId, contact, getAuth, onReady }: {
               className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
             >
               {sending
-                ? <svg className="animate-spin w-3 h-3" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                ? <Spinner size={3} />
                 : <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               }
               Huỷ yêu cầu
@@ -6376,7 +6565,7 @@ function FriendRequestBar({ zaloId, userId, contact, getAuth, onReady }: {
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50"
               >
                 {sending
-                  ? <svg className="animate-spin w-3 h-3" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                  ? <Spinner size={3} />
                   : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
                 }
                 Chấp nhận
@@ -6447,7 +6636,7 @@ function FriendRequestBar({ zaloId, userId, contact, getAuth, onReady }: {
                 disabled={sending}
                 className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-sm text-white font-semibold transition-colors flex items-center justify-center gap-2"
               >
-                {sending && <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>}
+                {sending && <Spinner size={4} />}
                 Gửi yêu cầu
               </button>
             </div>

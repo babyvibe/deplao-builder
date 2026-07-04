@@ -3,6 +3,7 @@ import ipc from '@/lib/ipc';
 import type { ErpNote, ErpNoteVersion } from '../../../../models/erp';
 import { EmployeeAvatar } from '../shared/ErpBadges';
 import { ConfirmDialog } from '../shared/ErpDialogs';
+import PageLoading from '@/components/common/PageLoading';
 
 interface Props {
   note: ErpNote;
@@ -55,7 +56,7 @@ export default function NoteVersionHistory({ note, onClose, onRestored }: Props)
         <div className="flex-1 flex min-h-0">
           {/* Version list */}
           <div className="w-60 border-r border-gray-700/60 overflow-y-auto bg-gray-900/40">
-            {loading && <p className="text-xs text-gray-500 p-3">Đang tải...</p>}
+            {loading && <PageLoading variant="inline" size="sm" />}
             {!loading && versions.length === 0 && (
               <p className="text-xs text-gray-500 p-3 text-center">Chưa có phiên bản nào.</p>
             )}

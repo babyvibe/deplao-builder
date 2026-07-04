@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
+import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import { toLocalMediaUrl } from '@/lib/localMedia';
+import { Spinner } from '@/components/common/PageLoading';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -251,8 +253,8 @@ function GroupPicker({
 
   useEffect(() => {
     if (loaded || !zaloId) return;
-    ipc.db?.getContacts(zaloId).then(res => {
-      const contacts: any[] = res?.contacts ?? res ?? [];
+    DataAccessor.getConversations(zaloId).then(res => {
+      const contacts: any[] = (res as any)?.items || (res as any)?.contacts || [];
       setGroups(contacts.filter((c: any) => c.contact_type === 'group').map((c: any) => ({
         contact_id: c.contact_id,
         display_name: c.display_name || c.contact_id,
@@ -947,7 +949,7 @@ export default function CampaignCreateModal({
           </button>
           <button onClick={handleSave} disabled={saving || !isValid()}
             className="px-6 py-2 rounded-xl bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors font-semibold flex items-center gap-2">
-            {saving && <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>}
+            {saving && <Spinner size={3} />}
             {saving ? (editMode ? 'Đang lưu...' : 'Đang tạo...') : (editMode ? 'Lưu thay đổi' : 'Tạo chiến dịch')}
           </button>
         </div>

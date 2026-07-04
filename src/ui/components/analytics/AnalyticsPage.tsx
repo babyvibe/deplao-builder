@@ -7,9 +7,8 @@ import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
 import AccountSelectorDropdown from '@/components/common/AccountSelectorDropdown';
 import EmployeeAnalyticsTab from './EmployeeAnalyticsTab';
-
-// ── IPC helper ─────────────────────────────────────────────────────────────────
-const api = () => window.electronAPI?.analytics;
+import PageLoading from '@/components/common/PageLoading';
+import DataAccessor from '@/lib/data/DataAccessor';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface OverviewData {
@@ -189,19 +188,6 @@ function HeatmapGrid({ data }: { data: HeatmapPoint[] }) {
       </div>
     </div>
   );
-}
-
-function SkeletonCards({ count = 4 }: { count?: number }) {
-  return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-      {Array.from({ length: count }, (_, i) => (
-        <div key={i} className="h-24 bg-gray-700/30 rounded-xl animate-pulse" />
-      ))}
-    </div>
-  );
-}
-function SkeletonChart() {
-  return <div className="h-52 bg-gray-700/20 rounded-xl animate-pulse" />;
 }
 
 // ── Tabs ───────────────────────────────────────────────────────────────────────
@@ -438,33 +424,32 @@ export default function AnalyticsPage() {
   const loadData = useCallback(async () => {
     if (!selectedAccountId) return;
     setLoading(true);
-    const ipc = api();
     try {
       const tt = threadType === -1 ? undefined : threadType;
       const [overviewRes, volumeRes, heatmapRes, segRes, campRes, frRes, growthRes, wfRes, aiRes, rtRes, luRes] = await Promise.all([
-        ipc?.dashboardOverview({ zaloId: selectedAccountId }),
-        ipc?.messageVolume({ zaloId: selectedAccountId, sinceTs: from, untilTs: to, granularity: periodDays <= 2 ? 'hour' : 'day', threadType: tt }),
-        ipc?.peakHours({ zaloId: selectedAccountId, sinceTs: from, untilTs: to, threadType: tt }),
-        ipc?.contactSegmentation({ zaloId: selectedAccountId }),
-        ipc?.campaignComparison({ zaloId: selectedAccountId }),
-        ipc?.friendRequests({ zaloId: selectedAccountId, sinceTs: from, untilTs: to }),
-        ipc?.contactGrowth({ zaloId: selectedAccountId, sinceTs: from, untilTs: to }),
-        ipc?.workflowAnalytics({ zaloId: selectedAccountId, sinceTs: from, untilTs: to }),
-        ipc?.aiAnalytics({ sinceTs: from, untilTs: to }),
-        ipc?.responseTime({ zaloId: selectedAccountId, sinceTs: from, untilTs: to, threadType: tt }),
-        ipc?.labelUsage({ zaloId: selectedAccountId, sinceTs: from, untilTs: to }),
+        DataAccessor.getDashboardOverview(selectedAccountId),
+        DataAccessor.getMessageVolume({ zaloId: selectedAccountId, sinceTs: from, untilTs: to, granularity: periodDays <= 2 ? 'hour' : 'day', threadType: tt }),
+        DataAccessor.getPeakHours({ zaloId: selectedAccountId, sinceTs: from, untilTs: to, threadType: tt }),
+        DataAccessor.getContactSegmentation(selectedAccountId),
+        DataAccessor.getCampaignComparison(selectedAccountId),
+        DataAccessor.getFriendRequestAnalytics({ zaloId: selectedAccountId, sinceTs: from, untilTs: to }),
+        DataAccessor.getContactGrowth({ zaloId: selectedAccountId, sinceTs: from, untilTs: to }),
+        DataAccessor.getWorkflowAnalytics({ zaloId: selectedAccountId, sinceTs: from, untilTs: to }),
+        DataAccessor.getAIAnalytics({ sinceTs: from, untilTs: to }),
+        DataAccessor.getResponseTime({ zaloId: selectedAccountId, sinceTs: from, untilTs: to, threadType: tt }),
+        DataAccessor.getLabelUsage({ zaloId: selectedAccountId, sinceTs: from, untilTs: to }),
       ]);
-      if (overviewRes?.success) setOverview(overviewRes as any);
+      if (overviewRes?.success) setOverview((overviewRes as any).data ?? overviewRes);
       if (volumeRes?.success) setVolume(volumeRes.data || []);
       if (heatmapRes?.success) setHeatmap(heatmapRes.data || []);
-      if (segRes?.success) setSegmentation(segRes as any);
+      if (segRes?.success) setSegmentation((segRes as any).data ?? segRes);
       if (campRes?.success) setCampaigns(campRes.data || []);
-      if (frRes?.success) setFriendReqs({ totalSent: frRes.totalSent, totalReceived: frRes.totalReceived, timeline: frRes.timeline || [] });
+      if (frRes?.success) setFriendReqs((frRes as any).data ?? { totalSent: 0, totalReceived: 0, timeline: [] });
       if (growthRes?.success) setContactGrowth(growthRes.data || []);
-      if (wfRes?.success) setWorkflowData(wfRes as any);
-      if (aiRes?.success) setAIData(aiRes as any);
-      if (rtRes?.success) setResponseTimeData(rtRes as any);
-      if (luRes?.success) setLabelUsageData(luRes as any);
+      if (wfRes?.success) setWorkflowData((wfRes as any).data ?? wfRes);
+      if (aiRes?.success) setAIData((aiRes as any).data ?? aiRes);
+      if (rtRes?.success) setResponseTimeData((rtRes as any).data ?? rtRes);
+      if (luRes?.success) setLabelUsageData((luRes as any).data ?? luRes);
     } catch { /* silent */ }
     setLoading(false);
   }, [selectedAccountId, from, to, periodDays, threadType]);
@@ -481,7 +466,7 @@ export default function AnalyticsPage() {
   })() : undefined;
 
   // Pie data
-  const pieData = segmentation?.byType.filter(b => b.count > 0).map((b, i) => ({
+  const pieData = (segmentation?.byType || []).filter((b: any) => b.count > 0).map((b: any, i: number) => ({
     ...b, name: b.type, value: b.count, fill: PIE_COLORS[i % PIE_COLORS.length],
   })) || [];
 
@@ -497,7 +482,7 @@ export default function AnalyticsPage() {
   ].filter(d => d.value > 0) : [];
 
   // AI model pie
-  const aiModelPie = aiData?.byModel.map((m, i) => ({
+  const aiModelPie = (aiData?.byModel || []).map((m: any, i: number) => ({
     name: m.model, value: m.tokens, fill: PIE_COLORS[i % PIE_COLORS.length],
   })) || [];
 
@@ -654,7 +639,7 @@ function OverviewTab({ loading, overview, todayTrend, friendReqs, workflowData, 
   responseTime: ResponseTimeData | null; contactType: ContactType;
   contactGrowth: ContactGrowthPoint[]; labelUsage: LabelUsageData | null;
 }) {
-  if (loading || !overview) return <SkeletonCards count={8} />;
+  if (loading || !overview) return <PageLoading variant="skeleton" skeletonVariant="cards" text="Đang tải tổng quan..." />;
   return (
     <div className="space-y-5">
       {/* KPIs */}
@@ -675,7 +660,7 @@ function OverviewTab({ loading, overview, todayTrend, friendReqs, workflowData, 
         <KPICard icon="⚡" label="Workflow chạy" value={workflowData?.totalRuns ?? 0}
           sub={workflowData ? `${workflowData.successRate}% thành công` : '-'} color="orange" />
         <KPICard icon="🤖" label="AI requests" value={aiData?.totalRequests ?? 0}
-          sub={aiData ? `${aiData.totalTokens.toLocaleString('vi-VN')} tokens` : '-'} color="purple" />
+          sub={aiData?.totalTokens ? `${aiData.totalTokens.toLocaleString('vi-VN')} tokens` : '-'} color="purple" />
       </div>
 
 
@@ -716,7 +701,7 @@ function OverviewTab({ loading, overview, todayTrend, friendReqs, workflowData, 
             <Section title="🕐 Thời gian phản hồi trung bình theo giờ trong ngày">
               <div className="h-52">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={responseTime.byHour.filter(h => h.count > 0)} margin={{ top: 4, right: 8, bottom: 0, left: -10 }}>
+                  <BarChart data={(responseTime?.byHour || []).filter((h: any) => h.count > 0)} margin={{ top: 4, right: 8, bottom: 0, left: -10 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#374151" vertical={false} />
                     <XAxis dataKey="hour" tick={{ fontSize: 9, fill: '#9ca3af' }} axisLine={false} tickLine={false}
                            tickFormatter={(h: number) => `${h}h`} />
@@ -738,7 +723,7 @@ function OverviewTab({ loading, overview, todayTrend, friendReqs, workflowData, 
                 </ResponsiveContainer>
               </div>
               {(() => {
-                const active = responseTime.byHour.filter(h => h.count > 0);
+                const active = (responseTime?.byHour || []).filter((h: any) => h.count > 0);
                 if (active.length === 0) return null;
                 const fastest = active.reduce((a, b) => a.avgSeconds < b.avgSeconds ? a : b);
                 const slowest = active.reduce((a, b) => a.avgSeconds > b.avgSeconds ? a : b);
@@ -783,7 +768,7 @@ function OverviewTab({ loading, overview, todayTrend, friendReqs, workflowData, 
       </div>
 
       {/* Label details */}
-      {labelUsage && labelUsage.byLabel.length > 0 && (
+      {labelUsage?.byLabel?.length > 0 && (
         <Section title="📊 Chi tiết theo từng nhãn">
           <div className="h-52">
             <ResponsiveContainer width="100%" height="100%">
@@ -805,7 +790,7 @@ function OverviewTab({ loading, overview, todayTrend, friendReqs, workflowData, 
                   );
                 }} />
                 <Bar dataKey="count" name="Lượt" radius={[0, 3, 3, 0]} maxBarSize={18}>
-                  {labelUsage.byLabel.slice(0, 30).map((d, i) => (
+                  {(labelUsage?.byLabel || []).slice(0, 30).map((d: any, i: number) => (
                     <Cell key={i} fill={d.color || PIE_COLORS[i % PIE_COLORS.length]} />
                   ))}
                 </Bar>
@@ -853,7 +838,7 @@ interface MessagesTabProps {
 }
 
 function MessagesTab({ loading, volume, heatmap, periodDays, overview, responseTime, contactType }: MessagesTabProps) {
-  if (loading) return <SkeletonChart />;
+  if (loading) return <PageLoading variant="skeleton" skeletonVariant="chart" />;
   const avgPerDay = overview && periodDays > 0
     ? Math.round(overview.totalMessages / periodDays) : 0;
   const sentRatio = overview && overview.totalMessages > 0
@@ -896,7 +881,7 @@ function MessagesTab({ loading, volume, heatmap, periodDays, overview, responseT
             <Section title="📊 Phân bổ thời gian phản hồi">
               <div className="h-56">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={responseTime.distribution.filter(d => d.count > 0)} margin={{ top: 4, right: 8, bottom: 0, left: -18 }}>
+                  <BarChart data={(responseTime?.distribution || []).filter((d: any) => d.count > 0)} margin={{ top: 4, right: 8, bottom: 0, left: -18 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#374151" vertical={false} />
                     <XAxis dataKey="bucket" tick={{ fontSize: 9, fill: '#9ca3af' }} axisLine={false} tickLine={false} interval={0} angle={-20} textAnchor="end" height={45} />
                     <YAxis tick={{ fontSize: 9, fill: '#6b7280' }} axisLine={false} tickLine={false} allowDecimals={false} />
@@ -913,7 +898,7 @@ function MessagesTab({ loading, volume, heatmap, periodDays, overview, responseT
                       );
                     }} />
                     <Bar dataKey="count" name="Số lượt" radius={[4, 4, 0, 0]} maxBarSize={32}>
-                      {responseTime.distribution.filter(d => d.count > 0).map((_, i) => (
+                      {(responseTime?.distribution || []).filter((d: any) => d.count > 0).map((_, i) => (
                         <Cell key={i} fill={RT_COLORS[i % RT_COLORS.length]} />
                       ))}
                     </Bar>
@@ -937,7 +922,7 @@ function MessagesTab({ loading, volume, heatmap, periodDays, overview, responseT
             <Section title="🕐 Thời gian phản hồi TB theo giờ trong ngày">
               <div className="h-56">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={responseTime.byHour.filter(h => h.count > 0)} margin={{ top: 4, right: 8, bottom: 0, left: -10 }}>
+                  <BarChart data={(responseTime?.byHour || []).filter((h: any) => h.count > 0)} margin={{ top: 4, right: 8, bottom: 0, left: -10 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#374151" vertical={false} />
                     <XAxis dataKey="hour" tick={{ fontSize: 9, fill: '#9ca3af' }} axisLine={false} tickLine={false}
                       tickFormatter={(h: number) => `${h}h`} />
@@ -960,7 +945,7 @@ function MessagesTab({ loading, volume, heatmap, periodDays, overview, responseT
               </div>
               {/* Find peak & low hours */}
               {(() => {
-                const active = responseTime.byHour.filter(h => h.count > 0);
+                const active = (responseTime?.byHour || []).filter((h: any) => h.count > 0);
                 if (active.length === 0) return null;
                 const fastest = active.reduce((a, b) => a.avgSeconds < b.avgSeconds ? a : b);
                 const slowest = active.reduce((a, b) => a.avgSeconds > b.avgSeconds ? a : b);
@@ -1039,7 +1024,7 @@ function ContactsTab({ loading, overview, segmentation, pieData, tagPieData, con
   pieData: any[]; tagPieData: any[];  contactGrowth: ContactGrowthPoint[];
   friendReqs: { totalSent: number; totalReceived: number; timeline: any[] };
 }) {
-  if (loading) return <SkeletonChart />;
+  if (loading) return <PageLoading variant="skeleton" skeletonVariant="chart" />;
   return (
     <div className="space-y-5">
       {overview && (
@@ -1097,7 +1082,7 @@ function ContactsTab({ loading, overview, segmentation, pieData, tagPieData, con
         </Section>
 
         <Section title="🤝 Lời mời kết bạn">
-          {friendReqs.timeline.length === 0 ? (
+          {(!friendReqs.timeline || friendReqs.timeline.length === 0) ? (
             <p className="text-xs text-gray-500 text-center py-8">Chưa có dữ liệu</p>
           ) : (
             <div>
@@ -1113,7 +1098,7 @@ function ContactsTab({ loading, overview, segmentation, pieData, tagPieData, con
               </div>
               <div className="h-32">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={friendReqs.timeline.filter(t => t.sent + t.received > 0).slice(-14)} margin={{ top: 0, right: 0, bottom: 0, left: -24 }}>
+                  <BarChart data={(friendReqs?.timeline || []).filter((t: any) => t.sent + t.received > 0).slice(-14)} margin={{ top: 0, right: 0, bottom: 0, left: -24 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#374151" vertical={false} />
                     <XAxis dataKey="bucket" tick={{ fontSize: 8, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
                     <YAxis tick={{ fontSize: 8, fill: '#6b7280' }} axisLine={false} tickLine={false} allowDecimals={false} />
@@ -1137,7 +1122,7 @@ function ContactsTab({ loading, overview, segmentation, pieData, tagPieData, con
 function LabelsTab({ loading, labelUsage, periodDays }: {
   loading: boolean; labelUsage: LabelUsageData | null; periodDays: number;
 }) {
-  if (loading) return <SkeletonChart />;
+  if (loading) return <PageLoading variant="skeleton" skeletonVariant="chart" />;
   return (
     <div className="space-y-5">
       {/* Info banner */}
@@ -1148,7 +1133,7 @@ function LabelsTab({ loading, labelUsage, periodDays }: {
         </p>
       </div>
 
-      {labelUsage && labelUsage.totalAssignments > 0 && (
+      {labelUsage?.totalAssignments > 0 && (
         <>
           {/* KPI row */}
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
@@ -1161,7 +1146,7 @@ function LabelsTab({ loading, labelUsage, periodDays }: {
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
             {/* Timeline chart */}
             <Section title={`🏷️ Lượt gắn nhãn theo ngày (${periodDays} ngày)`}>
-              {labelUsage.timeline.filter(t => t.count > 0).length === 0 ? (
+              {(labelUsage?.timeline || []).filter((t: any) => t.count > 0).length === 0 ? (
                 <p className="text-xs text-gray-500 text-center py-8">Chưa có dữ liệu</p>
               ) : (
                 <div className="h-52">
@@ -1195,7 +1180,7 @@ function LabelsTab({ loading, labelUsage, periodDays }: {
 
             {/* By-label breakdown chart */}
             <Section title="📊 Chi tiết theo từng nhãn">
-              {labelUsage.byLabel.length === 0 ? (
+              {(!labelUsage.byLabel || labelUsage.byLabel.length === 0) ? (
                 <p className="text-xs text-gray-500 text-center py-8">Chưa có dữ liệu</p>
               ) : (
                 <div className="h-52">
@@ -1218,7 +1203,7 @@ function LabelsTab({ loading, labelUsage, periodDays }: {
                         );
                       }} />
                       <Bar dataKey="count" name="Lượt" radius={[0, 3, 3, 0]} maxBarSize={18}>
-                        {labelUsage.byLabel.slice(0, 30).map((d, i) => (
+                        {(labelUsage?.byLabel || []).slice(0, 30).map((d: any, i: number) => (
                           <Cell key={i} fill={d.color || PIE_COLORS[i % PIE_COLORS.length]} />
                         ))}
                       </Bar>
@@ -1231,7 +1216,7 @@ function LabelsTab({ loading, labelUsage, periodDays }: {
         </>
       )}
 
-      {labelUsage && labelUsage.totalAssignments === 0 && (
+      {labelUsage?.totalAssignments === 0 && (
         <Section title="🏷️ Thống kê sử dụng nhãn">
           <p className="text-xs text-gray-500 text-center py-6">
             Chưa có dữ liệu gắn nhãn trong khoảng thời gian này.
@@ -1241,7 +1226,7 @@ function LabelsTab({ loading, labelUsage, periodDays }: {
         </Section>
       )}
 
-      {!labelUsage && <SkeletonChart />}
+      {!labelUsage && <PageLoading variant="skeleton" skeletonVariant="chart" />}
     </div>
   );
 }
@@ -1252,7 +1237,7 @@ function LabelsTab({ loading, labelUsage, periodDays }: {
 function CampaignsTab({ loading, campaigns, overview }: {
   loading: boolean; campaigns: CampaignRow[]; overview: OverviewData | null;
 }) {
-  if (loading) return <SkeletonChart />;
+  if (loading) return <PageLoading variant="skeleton" skeletonVariant="chart" />;
 
   const totalSent = campaigns.reduce((s, c) => s + c.sent, 0);
   const totalFailed = campaigns.reduce((s, c) => s + c.failed, 0);
@@ -1263,7 +1248,7 @@ function CampaignsTab({ loading, campaigns, overview }: {
     ? Math.round(campaigns.reduce((s, c) => s + c.replyRate, 0) / campaigns.length) : 0;
 
   // Bar chart data: top 10 campaigns by sent
-  const barData = campaigns.slice(0, 10).map(c => ({
+  const barData = (campaigns || []).slice(0, 10).map(c => ({
     name: c.name.length > 18 ? c.name.slice(0, 16) + '…' : c.name,
     sent: c.sent, failed: c.failed, replied: c.replied,
   }));
@@ -1317,7 +1302,7 @@ function CampaignsTab({ loading, campaigns, overview }: {
                 </tr>
               </thead>
               <tbody>
-                {campaigns.slice(0, 20).map(c => (
+                {(campaigns || []).slice(0, 20).map(c => (
                   <tr key={c.id} className="border-b border-gray-700/50 hover:bg-gray-700/20 transition-colors">
                     <td className="py-2 px-2 text-gray-200 font-medium max-w-[200px] truncate">{c.name}</td>
                     <td className="py-2 px-2 text-center">
@@ -1366,7 +1351,7 @@ function CampaignsTab({ loading, campaigns, overview }: {
 function WorkflowTab({ loading, workflowData, wfPieData }: {
   loading: boolean; workflowData: WorkflowData | null; wfPieData: any[];
 }) {
-  if (loading) return <SkeletonChart />;
+  if (loading) return <PageLoading variant="skeleton" skeletonVariant="chart" />;
   if (!workflowData || workflowData.totalRuns === 0) {
     return (
       <div className="text-center py-16 text-gray-500 text-sm">
@@ -1389,7 +1374,7 @@ function WorkflowTab({ loading, workflowData, wfPieData }: {
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
         {/* Timeline */}
         <Section title="📈 Lượt chạy theo ngày">
-          {workflowData.timeline.length === 0 ? (
+          {(!workflowData.timeline || workflowData.timeline.length === 0) ? (
             <p className="text-xs text-gray-500 text-center py-8">Chưa có dữ liệu</p>
           ) : (
             <div className="h-52">
@@ -1430,7 +1415,7 @@ function WorkflowTab({ loading, workflowData, wfPieData }: {
       </div>
 
       {/* Top workflows table */}
-      {workflowData.topWorkflows.length > 0 && (
+      {workflowData.topWorkflows?.length > 0 && (
         <Section title="🏆 Top Workflows">
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
@@ -1443,7 +1428,7 @@ function WorkflowTab({ loading, workflowData, wfPieData }: {
                 </tr>
               </thead>
               <tbody>
-                {workflowData.topWorkflows.map((wf, i) => (
+                {(workflowData?.topWorkflows || []).map((wf: any, i: number) => (
                   <tr key={i} className="border-b border-gray-700/50 hover:bg-gray-700/20 transition-colors">
                     <td className="py-2 px-2 text-gray-500">{i + 1}</td>
                     <td className="py-2 px-2 text-gray-200 font-medium">{wf.workflowName}</td>
@@ -1470,7 +1455,7 @@ function WorkflowTab({ loading, workflowData, wfPieData }: {
 function AITab({ loading, aiData, aiModelPie }: {
   loading: boolean; aiData: AIData | null; aiModelPie: any[];
 }) {
-  if (loading) return <SkeletonChart />;
+  if (loading) return <PageLoading variant="skeleton" skeletonVariant="chart" />;
   if (!aiData || aiData.totalRequests === 0) {
     return (
       <div className="text-center py-16 text-gray-500 text-sm">
@@ -1492,7 +1477,7 @@ function AITab({ loading, aiData, aiModelPie }: {
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
         {/* Timeline: requests + tokens */}
         <Section title="📈 AI usage theo ngày">
-          {aiData.timeline.length === 0 ? (
+          {(!aiData.timeline || aiData.timeline.length === 0) ? (
             <p className="text-xs text-gray-500 text-center py-8">Chưa có dữ liệu</p>
           ) : (
             <div className="h-52">

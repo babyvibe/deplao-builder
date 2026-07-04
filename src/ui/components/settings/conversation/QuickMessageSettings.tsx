@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import { AccountInfo } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
@@ -764,7 +765,7 @@ export default function QuickMessageSettings({ accounts, filterAccounts, searchT
   // ─── Fetch ────────────────────────────────────────────────────────────────
   const fetchLocalMessages = async () => {
     try {
-      const res = await ipc.db?.getAllLocalQuickMessages();
+      const res = await DataAccessor.getAllLocalQuickMessages();
       if (res?.success) setLocalMessages((res.items || []).map(mapDbRowToLocalQMItem));
     } catch (err) { console.error(err); }
   };
@@ -818,7 +819,7 @@ export default function QuickMessageSettings({ accounts, filterAccounts, searchT
   const handleDeleteLocalMsg = async (item: LocalQMItem) => {
     const ok = await showConfirm({ title: 'Xóa tin nhắn nhanh?', message: 'Hành động này không thể hoàn tác.', variant: 'danger' });
     if (!ok) return;
-    await ipc.db?.deleteLocalQuickMessage({ zaloId: item.owner_zalo_id, id: item.id });
+    await DataAccessor.deleteLocalQuickMessage({ zaloId: item.owner_zalo_id, id: item.id });
     fetchLocalMessages();
     showNotification('Đã xóa tin nhắn nhanh');
   };
@@ -829,13 +830,13 @@ export default function QuickMessageSettings({ accounts, filterAccounts, searchT
   }) => {
     if (!data.keyword || !data.title) return;
     if (data.original_id !== undefined && data.original_owner_zalo_id) {
-      await ipc.db?.deleteLocalQuickMessage({ zaloId: data.original_owner_zalo_id, id: data.original_id });
+      await DataAccessor.deleteLocalQuickMessage({ zaloId: data.original_owner_zalo_id, id: data.original_id });
     }
     const targets = data.owner_zalo_id ? [data.owner_zalo_id] : (data.target_zalo_ids || []);
     if (!targets.length) return;
     const mediaObj = data.localMediaFiles?.length ? { localFiles: data.localMediaFiles } : undefined;
     for (const zId of targets) {
-      await ipc.db?.upsertLocalQuickMessage({ zaloId: zId, item: { keyword: data.keyword, title: data.title, media: mediaObj } });
+      await DataAccessor.upsertLocalQuickMessage({ zaloId: zId, item: { keyword: data.keyword, title: data.title, media: mediaObj } });
     }
     setLocalMsgModal({ open: false, data: null });
     fetchLocalMessages();
@@ -844,17 +845,17 @@ export default function QuickMessageSettings({ accounts, filterAccounts, searchT
 
   const handleToggleQMActive = async (item: LocalQMItem) => {
     const newVal = (item.is_active ?? 1) === 1 ? 0 : 1;
-    await ipc.db?.setLocalQMActive({ id: item.id, isActive: newVal });
+    await DataAccessor.setLocalQMActive({ id: item.id, isActive: newVal });
     fetchLocalMessages();
   };
 
   const handleCloneLocalMessages = async (sourceId: string, targetId: string, mode: 'add' | 'replace') => {
     if (!sourceId || !targetId || sourceId === targetId) return;
     if (mode === 'replace') {
-      const res = await ipc.db?.cloneLocalQuickMessages({ sourceZaloId: sourceId, targetZaloId: targetId });
+      const res = await DataAccessor.cloneLocalQuickMessages({ sourceZaloId: sourceId, targetZaloId: targetId });
       if (res?.success) {
         fetchLocalMessages(); setCloneMsgModal(false);
-        showNotification(`Đã sao chép ${res.count ?? ''} tin nhắn nhanh (thay thế)`);
+        showNotification(`Đã sao chép ${(res as any).count ?? ''} tin nhắn nhanh (thay thế)`);
       } else { showNotification(res?.error || 'Sao chép thất bại', 'error'); }
     } else {
       const sourceItems = localMessages.filter(m => m.owner_zalo_id === sourceId);
@@ -863,7 +864,7 @@ export default function QuickMessageSettings({ accounts, filterAccounts, searchT
       for (const msg of sourceItems) {
         if (!targetKeywords.has(msg.keyword)) {
           const mediaObj = msg._localMedia?.length ? { localFiles: msg._localMedia } : (msg.media || undefined);
-          await ipc.db?.upsertLocalQuickMessage({ zaloId: targetId, item: { keyword: msg.keyword, title: msg.message?.title || '', media: mediaObj } });
+          await DataAccessor.upsertLocalQuickMessage({ zaloId: targetId, item: { keyword: msg.keyword, title: msg.message?.title || '', media: mediaObj } });
           count++;
         }
       }
@@ -880,11 +881,11 @@ export default function QuickMessageSettings({ accounts, filterAccounts, searchT
       media: m.media || undefined,
     })).filter(m => m.keyword && m.title);
     if (mode === 'replace') {
-      await ipc.db?.bulkReplaceLocalQuickMessages({ zaloId: activeZaloId, items });
+      await DataAccessor.bulkReplaceLocalQuickMessages({ zaloId: activeZaloId, items });
     } else {
       const existing = new Set(localMessages.filter(m => m.owner_zalo_id === activeZaloId).map(m => m.keyword));
       for (const item of items) {
-        if (!existing.has(item.keyword)) await ipc.db?.upsertLocalQuickMessage({ zaloId: activeZaloId, item });
+        if (!existing.has(item.keyword)) await DataAccessor.upsertLocalQuickMessage({ zaloId: activeZaloId, item });
       }
     }
     invalidateZaloQuickMessageCache(activeZaloId);
@@ -932,7 +933,7 @@ export default function QuickMessageSettings({ accounts, filterAccounts, searchT
     const [moved] = reordered.splice(from, 1);
     reordered.splice(over, 0, moved);
     for (let i = 0; i < reordered.length; i++) {
-      await ipc.db?.setLocalQMOrder({ id: reordered[i].id, order: i + 1 });
+      await DataAccessor.setLocalQMOrder({ id: reordered[i].id, order: i + 1 });
     }
     fetchLocalMessages();
   };

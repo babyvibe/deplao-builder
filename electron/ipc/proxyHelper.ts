@@ -59,10 +59,9 @@ export async function uploadEmployeeMedia(filePaths: string[], zaloId?: string):
             return;
         }
         const buffer = fs.readFileSync(fp);
-        const base64 = buffer.toString('base64');
         const filename = path.basename(fp);
         try {
-            const result = await client.uploadMedia(base64, filename, zaloId);
+            const result = await client.uploadMedia(buffer, filename, zaloId);
             if (result.success && result.bossPath) {
                 bossPaths[index] = result.bossPath;
                 Logger.log(`[uploadEmployeeMedia] ✅ ${fp} → ${result.bossPath}`);

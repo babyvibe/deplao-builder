@@ -244,8 +244,8 @@ export default function RelayStatusPanel() {
                             disabled={tunnelLoading}
                             className={`w-full py-1 text-xs rounded-lg transition-colors disabled:opacity-50 ${
                                 tunnelActive
-                                    ? 'bg-red-600/80 hover:bg-red-600 text-white'
-                                    : 'bg-blue-600 hover:bg-blue-500 text-white'
+                                    ? 'bg-red-600/80 hover:bg-red-600 text-white-important'
+                                    : 'bg-blue-600 hover:bg-blue-500 text-white-important'
                             }`}
                         >
                             {tunnelLoading ? '⏳ Đang xử lý...' : tunnelActive ? '⏹ Tắt tunnel' : '🚀 Bật tunnel'}

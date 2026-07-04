@@ -2,11 +2,20 @@ import { ipcMain } from 'electron';
 import DatabaseService from '../../src/services/database/DatabaseService';
 import WorkflowEngineService, { Workflow, WorkflowChannel } from '../../src/services/workflow/WorkflowEngineService';
 import AppModeManager from '../../src/utils/AppModeManager';
+import WorkspaceManager from '../../src/utils/WorkspaceManager';
 import EmployeeService from '../../src/services/employee/EmployeeService';
 import { v4 as uuidv4 } from 'uuid';
 import Logger from '../../src/utils/Logger';
 import WebhookGatewayService from '../../src/services/workflow/WebhookGatewayService';
 import TunnelService from '../../src/services/tunnel/TunnelService';
+
+function isEmployeeMode(): boolean {
+    try {
+        const activeWs = WorkspaceManager.getInstance().getActiveWorkspace();
+        if (activeWs?.type === 'remote') return true;
+    } catch {}
+    return false;
+}
 
 /** Helper: row → Workflow shape (pageIds array) */
 function normalizeWorkflowChannel(channel?: string): WorkflowChannel {
@@ -79,6 +88,7 @@ export function registerWorkflowIpc(): void {
     ipcMain.handle('workflow:list', async () => {
         try {
             const rows = DatabaseService.getInstance().getWorkflows();
+            if (isEmployeeMode()) return { success: true, workflows: [] };
             let workflows = rows.map(rowToWorkflow);
 
             // Employee mode: filter workflows by assigned accounts
@@ -102,6 +112,7 @@ export function registerWorkflowIpc(): void {
     // ─── Get single ───────────────────────────────────────────────────────────
     ipcMain.handle('workflow:get', async (_e, { id }: { id: string }) => {
         try {
+            if (isEmployeeMode()) return { success: false, error: "Không khả dụng" };
             const row = DatabaseService.getInstance().getWorkflowById(id);
             if (!row) return { success: false, error: 'Not found' };
             return { success: true, workflow: rowToWorkflow(row) };

@@ -1,7 +1,17 @@
 import { ipcMain, BrowserWindow } from 'electron';
 import IntegrationRegistry from '../../src/services/integrations/IntegrationRegistry';
 import TunnelService from '../../src/services/tunnel/TunnelService';
+import WorkspaceManager from '../../src/utils/WorkspaceManager';
 import Logger from '../../src/utils/Logger';
+import { proxyToBoss } from './proxyHelper';
+
+function isEmployeeMode(): boolean {
+    try {
+        const activeWs = WorkspaceManager.getInstance().getActiveWorkspace();
+        if (activeWs?.type === 'remote') return true;
+    } catch {}
+    return false;
+}
 
 export function registerIntegrationIpc(): void {
     const extractActionError = (data: any): string | null => {
@@ -14,6 +24,7 @@ export function registerIntegrationIpc(): void {
     // ─── List all integrations (no credentials) ───────────────────────────────
     ipcMain.handle('integration:list', async () => {
         try {
+            if (isEmployeeMode()) return { success: true, integrations: [], webhookPort: 0 };
             const items = IntegrationRegistry.listConfigs();
             const port  = IntegrationRegistry.getWebhookPort();
             return { success: true, integrations: items, webhookPort: port };
@@ -26,6 +37,7 @@ export function registerIntegrationIpc(): void {
     // ─── Get single (masked credentials) ─────────────────────────────────────
     ipcMain.handle('integration:get', async (_e, { id }: { id: string }) => {
         try {
+            if (isEmployeeMode()) return { success: false, error: 'Không khả dụng ở chế độ nhân viên' };
             const item = IntegrationRegistry.getConfig(id);
             if (!item) return { success: false, error: 'Không tìm thấy' };
             return { success: true, integration: item };
@@ -37,6 +49,10 @@ export function registerIntegrationIpc(): void {
     // ─── Save (create or update) ──────────────────────────────────────────────
     ipcMain.handle('integration:save', async (_e, { integration }: { integration: any }) => {
         try {
+            if (isEmployeeMode()) {
+                proxyToBoss('integration:save', { integration });
+                return { success: true };
+            }
             const id = IntegrationRegistry.saveConfig(integration);
             return { success: true, id };
         } catch (e: any) {
@@ -48,6 +64,10 @@ export function registerIntegrationIpc(): void {
     // ─── Delete ───────────────────────────────────────────────────────────────
     ipcMain.handle('integration:delete', async (_e, { id }: { id: string }) => {
         try {
+            if (isEmployeeMode()) {
+                proxyToBoss('integration:delete', { id });
+                return { success: true };
+            }
             IntegrationRegistry.deleteConfig(id);
             return { success: true };
         } catch (e: any) {
@@ -58,6 +78,10 @@ export function registerIntegrationIpc(): void {
     // ─── Toggle enabled ───────────────────────────────────────────────────────
     ipcMain.handle('integration:toggle', async (_e, { id, enabled }: { id: string; enabled: boolean }) => {
         try {
+            if (isEmployeeMode()) {
+                proxyToBoss('integration:toggle', { id, enabled });
+                return { success: true };
+            }
             IntegrationRegistry.toggleEnabled(id, enabled);
             return { success: true };
         } catch (e: any) {

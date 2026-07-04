@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useWorkspaceStore, WorkspaceInfo } from '@/store/workspaceStore';
 import ipc from '@/lib/ipc';
 import { useAppStore } from '@/store/appStore';
+import { Spinner } from '@/components/common/PageLoading';
 
 /** Build normalized Boss URL - handles both IP:Port and full tunnel URL */
 function buildBossUrl(address: string, port: string): string {
@@ -103,10 +104,7 @@ export default function WorkspaceSwitcher() {
                     }`}
             >
                 {isSwitching ? (
-                    <svg className="animate-spin w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" />
-                        <path className="opacity-75" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" fill="currentColor" stroke="none" />
-                    </svg>
+                    <Spinner size={3} />
                 ) : (
                     <span className="text-sm">{activeWs?.icon || '🏠'}</span>
                 )}

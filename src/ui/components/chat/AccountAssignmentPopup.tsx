@@ -1,6 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react';
+import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import { useAccountStore } from '@/store/accountStore';
+import { Spinner } from '@/components/common/PageLoading';
 
 const PLATFORM_META: Record<string, { label: string; color: string; icon: string }> = {
   openai:   { label: 'OpenAI',   color: 'bg-green-600',   icon: '🤖' },
@@ -30,9 +32,9 @@ export default function AccountAssignmentPopup({ open, onClose }: { open: boolea
     if (!open) return;
     setLoading(true);
     const promises: Promise<any>[] = [
-      ipc.ai?.listAssistants(),
+      DataAccessor.getAssistants(),
       ...accounts.map(acc =>
-        ipc.ai?.getAccountAssistants(acc.zalo_id).then(res => ({ zaloId: acc.zalo_id, res }))
+        DataAccessor.getAccountAssistants(acc.zalo_id).then(res => ({ zaloId: acc.zalo_id, res }))
       ),
     ];
     Promise.all(promises).then(results => {
@@ -102,10 +104,7 @@ export default function AccountAssignmentPopup({ open, onClose }: { open: boolea
         <div className="flex-1 overflow-y-auto p-6">
           {loading ? (
             <div className="flex items-center justify-center h-32">
-              <svg className="animate-spin w-5 h-5 text-blue-400" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-              </svg>
+              <Spinner size={5} />
             </div>
           ) : accounts.length === 0 ? (
             <p className="text-sm text-gray-500 text-center py-10">Chưa có tài khoản Zalo nào.</p>

@@ -2,6 +2,7 @@ import React, { useEffect, useCallback, useState } from 'react';
 import { useCRMStore, CRMContact } from '@/store/crmStore';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore, LabelData } from '@/store/appStore';
+import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import CRMContactList from './contacts/CRMContactList';
 import CRMContactDetailPanel from './contacts/CRMContactDetailPanel';
@@ -24,6 +25,7 @@ import { getCapability, type Channel } from '../../../configs/channelConfig';
 import ScanPanel from './scan/ScanPanel';
 import ScanHistoryTab from './scan/ScanHistoryTab';
 import ScanStatsTab from './scan/ScanStatsTab';
+import { Spinner } from '@/components/common/PageLoading';
 
 
 // ── Wizard Step Indicator ────────────────────────────────────────────────
@@ -102,8 +104,8 @@ export default function CRMPage() {
     if (!activeAccountId) return;
     try {
       const [labelsRes, threadsRes] = await Promise.all([
-        ipc.db?.getLocalLabels({ zaloId: activeAccountId }),
-        ipc.db?.getLocalLabelThreads({ zaloId: activeAccountId }),
+        DataAccessor.getLocalLabels({ zaloId: activeAccountId }),
+        DataAccessor.getLocalLabelThreads({ zaloId: activeAccountId }),
       ]);
       setLocalLabels(labelsRes?.labels || []);
       // Build thread→labelIds map
@@ -131,7 +133,7 @@ export default function CRMPage() {
     store.setContactsLoading(true);
     // Strip client-only filters (has_phone, has_notes) before sending to backend
     const backendContactTypes = store.filterContactTypes.filter(t => t !== 'has_phone' && t !== 'has_notes');
-    const res = await ipc.crm?.getContacts({
+    const res = await DataAccessor.getCRMContacts({
       zaloId: activeAccountId,
       opts: {
         search: store.searchText,
@@ -150,7 +152,7 @@ export default function CRMPage() {
   const loadCampaigns = useCallback(async () => {
     if (!activeAccountId) return;
     store.setCampaignsLoading(true);
-    const res = await ipc.crm?.getCampaigns({ zaloId: activeAccountId });
+    const res = await DataAccessor.getCRMCampaigns({ zaloId: activeAccountId });
     store.setCampaignsLoading(false);
     if (res?.success) store.setCampaigns(res.campaigns);
   }, [activeAccountId]);
@@ -158,9 +160,9 @@ export default function CRMPage() {
   // Load group count from DB eagerly so the tab badge shows before entering the groups page
   const loadGroupCount = useCallback(async () => {
     if (!activeAccountId) return;
-    const res = await ipc.db?.getContacts(activeAccountId);
-    const allContacts: any[] = res?.contacts ?? res ?? [];
-    const count = allContacts.filter((c: any) => c.contact_type === 'group').length;
+    const res = await DataAccessor.getConversations(activeAccountId, 999, 0);
+    const allContacts = res?.items || [];
+    const count = (allContacts || []).filter((c: any) => c.contact_type === 'group').length;
     store.setGroupCount(count);
   }, [activeAccountId]);
 
@@ -168,7 +170,7 @@ export default function CRMPage() {
   const loadRequestCount = useCallback(async () => {
     if (!activeAccountId) return;
     try {
-      const recRes = await ipc.db?.getFriendRequests({ zaloId: activeAccountId, direction: 'received' });
+      const recRes = await DataAccessor.getFriendRequests({ zaloId: activeAccountId, direction: 'received' });
       const count = recRes?.requests?.length ?? 0;
       store.setRequestCount(count);
       if (count === 0) clearCRMRequestUnseen(activeAccountId);
@@ -199,7 +201,7 @@ export default function CRMPage() {
   // ── Load initial queue status when account changes ────────────────────────
   useEffect(() => {
     if (!activeAccountId) return;
-    ipc.crm?.getQueueStatus({ zaloId: activeAccountId }).then(res => {
+    DataAccessor.getQueueStatus({ zaloId: activeAccountId }).then(res => {
       if (res?.success && res.status) {
         store.updateQueueStatus(activeAccountId, {
           running: res.status.running,
@@ -241,7 +243,7 @@ export default function CRMPage() {
       showNotification('Chiến dịch đã hoàn thành!', 'success');
       loadCampaigns();
       // Queue có thể đã dừng → refresh trạng thái để ẩn status bar nếu cần
-      ipc.crm?.getQueueStatus({ zaloId: activeAccountId }).then(res => {
+      DataAccessor.getQueueStatus({ zaloId: activeAccountId }).then(res => {
         if (res?.success && res.status) {
           store.updateQueueStatus(activeAccountId, {
             running: res.status.running,
@@ -266,7 +268,7 @@ export default function CRMPage() {
   // ── Campaign actions ─────────────────────────────────────────────────────
   const handleCreateCampaign = async (data: any) => {
     if (!activeAccountId) return;
-    const res = await ipc.crm?.saveCampaign({ zaloId: activeAccountId, campaign: data });
+    const res = await DataAccessor.saveCRMCampaign({ zaloId: activeAccountId, campaign: data });
     if (res?.success) {
       await loadCampaigns();
       store.setActiveCampaign(res.id);
@@ -281,7 +283,7 @@ export default function CRMPage() {
   };
 
   const handleUpdateCampaignStatus = async (id: number, status: string) => {
-    await ipc.crm?.updateCampaignStatus({ campaignId: id, status });
+    await DataAccessor.updateCampaignStatus({ campaignId: id, status });
     await loadCampaigns();
     showNotification(
       status === 'active' ? '▶ Chiến dịch đang chạy'
@@ -293,7 +295,7 @@ export default function CRMPage() {
 
   const handleDeleteCampaign = async (id: number) => {
     if (!activeAccountId) return;
-    await ipc.crm?.deleteCampaign({ zaloId: activeAccountId, campaignId: id });
+    await DataAccessor.deleteCRMCampaign({ zaloId: activeAccountId, campaignId: id });
     if (store.activeCampaignId === id) store.setActiveCampaign(null);
     await loadCampaigns();
   };
@@ -301,7 +303,7 @@ export default function CRMPage() {
   const handleCloneCampaign = async (includeContacts: boolean, newName: string) => {
     if (!activeAccountId || cloneCampaignId === null) return;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const res: { success: boolean; id?: number; error?: string } | undefined = await (ipc.crm?.cloneCampaign({ zaloId: activeAccountId, campaignId: cloneCampaignId, includeContacts, newName }) as any);
+    const res: { success: boolean; id?: number; error?: string } | undefined = await (DataAccessor.cloneCampaign({ zaloId: activeAccountId, campaignId: cloneCampaignId, includeContacts, newName }) as any);
     if (res?.success) {
       await loadCampaigns();
       if (res.id) store.setActiveCampaign(res.id);
@@ -313,7 +315,7 @@ export default function CRMPage() {
 
   const handleAddContactsToCampaign = async (campaignId: number, contacts: any[]) => {
     if (!activeAccountId) return;
-    await ipc.crm?.addCampaignContacts({ zaloId: activeAccountId, campaignId, contacts });
+    await DataAccessor.addCampaignContacts({ zaloId: activeAccountId, campaignId, contacts });
     await loadCampaigns();
     showNotification(`Đã thêm ${contacts.length} liên hệ vào chiến dịch`, 'success');
   };
@@ -321,7 +323,7 @@ export default function CRMPage() {
   const handleUpdateCampaign = async (data: any) => {
     if (!activeAccountId || !store.activeCampaignId) return;
     const currentCampaign = store.campaigns.find(c => c.id === store.activeCampaignId);
-    const res = await ipc.crm?.saveCampaign({
+    const res = await DataAccessor.saveCRMCampaign({
       zaloId: activeAccountId,
       campaign: {
         ...data,
@@ -339,7 +341,7 @@ export default function CRMPage() {
 
   const handleCreateCampaignInAddModal = async (data: any) => {
     if (!activeAccountId) return;
-    const res = await ipc.crm?.saveCampaign({ zaloId: activeAccountId, campaign: data });
+    const res = await DataAccessor.saveCRMCampaign({ zaloId: activeAccountId, campaign: data });
     if (res?.success) {
       await loadCampaigns();
       if (res.id) setSelectedCampaignForAdd(res.id);
@@ -451,7 +453,7 @@ export default function CRMPage() {
       const selectedContactIds = [...store.selectedContactIds];
       for (const labelId of bulkLocalLabelIds) {
         for (const contactId of selectedContactIds) {
-          await ipc.db?.assignLocalLabelToThread({ zaloId: activeAccountId, labelId, threadId: contactId });
+          await DataAccessor.assignLocalLabelToThread({ zaloId: activeAccountId, labelId, threadId: contactId });
         }
       }
       // Note: Workflow events are emitted by backend (databaseIpc.ts) to avoid duplicates
@@ -510,7 +512,7 @@ export default function CRMPage() {
   const handleSelectAllPages = useCallback(async () => {
     if (!activeAccountId) return;
     const backendContactTypes = store.filterContactTypes.filter(t => t !== 'has_phone' && t !== 'has_notes');
-    const res = await ipc.crm?.getContacts({
+    const res = await DataAccessor.getCRMContacts({
       zaloId: activeAccountId,
       opts: {
         search: store.searchText,
@@ -531,7 +533,7 @@ export default function CRMPage() {
   const handleExportAll = useCallback(async (): Promise<any[]> => {
     if (!activeAccountId) return [];
     const backendContactTypes = store.filterContactTypes.filter(t => t !== 'has_phone' && t !== 'has_notes');
-    const res = await ipc.crm?.getContacts({
+    const res = await DataAccessor.getCRMContacts({
       zaloId: activeAccountId,
       opts: {
         search: store.searchText,
@@ -1115,7 +1117,7 @@ export default function CRMPage() {
                 disabled={leavingGroups}
                 className="flex-1 py-2 rounded-xl bg-red-600 text-white text-sm hover:bg-red-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-1.5">
                 {leavingGroups
-                  ? <><svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Đang rời...</>
+                  ? <><Spinner size={3} />Đang rời...</>
                   : 'Xác nhận rời nhóm'
                 }
               </button>

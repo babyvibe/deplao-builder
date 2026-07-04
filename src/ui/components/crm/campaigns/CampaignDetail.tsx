@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import type { CRMCampaign } from '@/store/crmStore';
 import type { LabelData } from '@/store/appStore';
+import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import TargetSelector from './TargetSelector';
 import CampaignCreateModal from './CampaignCreateModal';
@@ -46,7 +47,7 @@ export default function CampaignDetail({ campaign, zaloId, allLabels, localLabel
 
   const loadContacts = useCallback(async () => {
     setLoading(true);
-    const res = await ipc.crm?.getCampaignContacts({ campaignId: campaign.id });
+    const res = await DataAccessor.getCampaignContacts({ campaignId: campaign.id });
     if (res?.success) setContacts(res.contacts);
     setLoading(false);
   }, [campaign.id]);

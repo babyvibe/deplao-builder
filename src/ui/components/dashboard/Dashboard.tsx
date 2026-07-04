@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
 import { useEmployeeStore } from '@/store/employeeStore';
@@ -8,6 +8,7 @@ import AccountCard from './AccountCard';
 import MergedInboxModal from './MergedInboxModal';
 import EmployeeLoginModal from './EmployeeLoginModal';
 import ipc from '@/lib/ipc';
+import PageLoading from '@/components/common/PageLoading';
 
 const SUPPORT_GITHUB_URL = 'https://github.com/babyvibe/deplao-builder';
 
@@ -21,39 +22,20 @@ export default function Dashboard() {
   const [search, setSearch] = useState('');
   const [mergedModalOpen, setMergedModalOpen] = useState(false);
   const [employeeLoginOpen, setEmployeeLoginOpen] = useState(false);
-  const [syncing, setSyncing] = useState(false);
   const activeWs = useWorkspaceStore(s => s.activeWorkspace());
   const assignedAccounts = useEmployeeStore(s => s.assignedAccounts);
-  const bossConnected = useEmployeeStore(s => s.bossConnected);
 
   const isRemoteWs = activeWs?.type === 'remote' || empMode === 'employee';
   const isEmployeeWorkspace = activeWs?.type === 'remote' && empMode === 'employee';
 
-  const handleSyncFromBoss = async () => {
-    if (syncing) return;
-    const zaloIds = assignedAccounts;
-    if (!zaloIds || zaloIds.length === 0) {
-      showNotification('Chưa có tài khoản được gán. Hãy kết nối với BOSS trước.', 'warning');
-      return;
-    }
-    setSyncing(true);
-    showNotification('Đang tải dữ liệu từ Boss...', 'info');
-    try {
-      const res = await ipc.sync?.requestFullSync(zaloIds);
-      if (res?.success) {
-        showNotification('Đồng bộ dữ liệu thành công!', 'success');
-      } else {
-        showNotification(res?.error || 'Đồng bộ thất bại', 'error');
-      }
-    } catch (err: any) {
-      showNotification(err?.message || 'Lỗi đồng bộ', 'error');
-    } finally {
-      setSyncing(false);
-    }
-  };
-
   const dragIndexRef = useRef<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setLoading(false), 300);
+    return () => clearTimeout(timer);
+  }, []);
 
   const handleReconnect = async (acc: any) => {
     showNotification(`Đang kết nối ${acc.full_name || acc.zalo_id}...`, 'info');
@@ -109,6 +91,14 @@ export default function Dashboard() {
         (a.phone || '').includes(q)
       )
     : accounts;
+  if (loading) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <PageLoading text="Đang tải dashboard..." />
+      </div>
+    );
+  }
+
   if (accounts.length === 0) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center text-gray-500 gap-4">
@@ -132,25 +122,6 @@ export default function Dashboard() {
             <p className="text-lg font-medium text-gray-300">Chưa có trang nào được quản lý</p>
             <p className="text-sm text-gray-500">Liên hệ BOSS để được gán tài khoản Zalo vào workspace này.</p>
             <div className="flex items-center gap-3 mt-2">
-              {isRemoteWs && (
-              <button
-                onClick={handleSyncFromBoss}
-                disabled={syncing || !bossConnected}
-                className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-green-600 hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed text-white transition-colors"
-                title={!bossConnected ? 'Cần kết nối với BOSS trước' : 'Tải dữ liệu tin nhắn, danh bạ từ BOSS'}
-              >
-                {syncing ? (
-                  <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                ) : (
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-                    <polyline points="7 10 12 15 17 10" />
-                    <line x1="12" y1="15" x2="12" y2="3" />
-                  </svg>
-                )}
-                {syncing ? 'Đang tải...' : 'Tải dữ liệu từ Boss'}
-              </button>
-              )}
             </div>
           </>
         ) : (
@@ -202,26 +173,6 @@ export default function Dashboard() {
         })()}
 
         <div className="ml-auto flex items-center gap-2 flex-wrap">
-          {/* Sync from boss - remote workspace only */}
-          {isRemoteWs && (
-            <button
-              onClick={handleSyncFromBoss}
-              disabled={syncing || !bossConnected}
-              className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-green-700 hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed text-white transition-colors"
-              title={!bossConnected ? 'Cần kết nối với BOSS trước' : 'Tải dữ liệu DB + media từ BOSS'}
-            >
-              {syncing ? (
-                <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              ) : (
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-                  <polyline points="7 10 12 15 17 10" />
-                  <line x1="12" y1="15" x2="12" y2="3" />
-                </svg>
-              )}
-              {syncing ? 'Đang tải...' : 'Tải dữ liệu từ Boss'}
-            </button>
-          )}
 
           {/* Gộp tài khoản button - available for both boss and employee (uses visible/assigned accounts) */}
           {accounts.length > 1 && (

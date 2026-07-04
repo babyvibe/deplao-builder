@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useChatStore } from '@/store/chatStore';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore, LabelData } from '@/store/appStore';
+import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import { UserProfilePopup } from '../common/UserProfilePopup';
 import LabelPicker, { ActiveLabels, EditLabelsModal } from './LabelPicker';
@@ -10,6 +11,7 @@ import { toLocalMediaUrl } from '@/lib/localMedia';
 import { useChannelCapability } from '@/hooks/useChannelCapability';
 import { fetchContactInfo } from '@/hooks/useZaloEvents';
 import { extractUserProfile } from '../../../utils/profileUtils';
+import { Spinner } from '@/components/common/PageLoading';
 
 interface HeaderLocalLabel {
   id: number;
@@ -38,7 +40,6 @@ export default function ChatHeader() {
   const [labelsVersion, setLabelsVersion] = useState(0);
   const [labelPickerOpen, setLabelPickerOpen] = useState<{ x: number; y: number } | null>(null);
   const [editLabelsOpen, setEditLabelsOpen] = useState(false);
-  const [loadingGroupMsgs, setLoadingGroupMsgs] = useState(false);
   const [aliasRefreshing, setAliasRefreshing] = useState(false);
   const [refreshingFBInfo, setRefreshingFBInfo] = useState(false);
   const [aliasEditOpen, setAliasEditOpen] = useState(false);
@@ -64,8 +65,8 @@ export default function ChatHeader() {
     }
     try {
       const [labelsRes, threadRes] = await Promise.all([
-        ipc.db?.getLocalLabels({ zaloId: activeAccountId }),
-        ipc.db?.getThreadLocalLabels({ zaloId: activeAccountId, threadId: activeThreadId }),
+        DataAccessor.getLocalLabels({ zaloId: activeAccountId }),
+        DataAccessor.getThreadLocalLabels({ zaloId: activeAccountId, threadId: activeThreadId }),
       ]);
       const labels = (labelsRes?.labels || [])
         .filter((l: any) => (l?.is_active ?? 1) === 1)
@@ -164,63 +165,6 @@ export default function ChatHeader() {
     }
   }, [activeAccountId, activeThreadId, activeThreadType]);
 
-  // ── Tải lại tin nhắn nhóm (getGroupChatHistory) / FB threads ────────────
-  const handleReloadGroupMessages = useCallback(async () => {
-    if (!activeAccountId || !activeThreadId || loadingGroupMsgs) return;
-    const acc = getActiveAccount();
-    if (!acc) return;
-    const channel = acc.channel || 'zalo';
-    setLoadingGroupMsgs(true);
-    try {
-      if (channel === 'facebook') {
-        // FB: refresh threads from Facebook API
-        const res = await ipc.fb?.getThreads({ accountId: activeAccountId, forceRefresh: true });
-        if (res?.success) {
-          const count = res.threads?.length ?? 0;
-          showNotification(`Đã tải lại ${count} hội thoại Facebook`, 'success');
-          // Reload contacts into store
-          const contactsRes = await ipc.db?.getContacts(activeAccountId);
-          const contacts: any[] = contactsRes?.contacts ?? contactsRes ?? [];
-          if (contacts.length > 0) {
-            useChatStore.getState().setContacts(activeAccountId, contacts);
-          }
-          // Refresh avatar cho Facebook user 1-1 hiện tại (CDN thường hết hn)
-          if (activeThreadId && activeThreadType !== 1 && /^\d+$/.test(activeThreadId)) {
-            ipc.fb.refreshContactAvatar({ accountId: activeAccountId, userId: activeThreadId })
-              .then(refreshRes => {
-                if (refreshRes.success && refreshRes.avatarUrl) {
-                  useChatStore.getState().updateContact(activeAccountId, {
-                    contact_id: activeThreadId,
-                    avatar_url: refreshRes.avatarUrl,
-                  });
-                  // Tải lại contacts vào store
-                  ipc.db?.getContacts(activeAccountId).then(cr => {
-                    const cl = cr?.contacts ?? cr ?? [];
-                    if (cl.length > 0) useChatStore.getState().setContacts(activeAccountId, cl);
-                  });
-                }
-              }).catch(() => {});
-          }
-        } else {
-          showNotification(res?.error || 'Không thể tải hội thoại Facebook', 'error');
-        }
-      } else {
-        // Zalo: reload group chat history
-        const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
-        const res = await ipc.zalo?.getGroupChatHistory({ auth, groupId: activeThreadId });
-        if (res?.success) {
-          const count = res?.response?.groupMsgsCount ?? 0;
-          showNotification(`Đã tải lại tin nhắn nhóm thành công (${count} tin nhắn)`, 'success');
-        } else {
-          showNotification(res?.error || 'Không thể tải tin nhắn nhóm', 'error');
-        }
-      }
-    } catch (e: any) {
-      showNotification('Lỗi: ' + (e.message || 'Không thể tải lại'), 'error');
-    } finally {
-      setLoadingGroupMsgs(false);
-    }
-  }, [activeAccountId, activeThreadId, loadingGroupMsgs, getActiveAccount, showNotification]);
 
   const handleSearchChange = (q: string) => {
     setSearchQuery(q);
@@ -232,7 +176,7 @@ export default function ChatHeader() {
       if (!activeAccountId) return;
       setSearching(true);
       try {
-        const res = await ipc.db?.searchMessages({ zaloId: activeAccountId, query: q.trim() });
+        const res = await DataAccessor.searchMessages({ zaloId: activeAccountId, query: q.trim() });
         const all: any[] = res?.results || [];
         // Filter to current thread only
         const filtered = activeThreadId ? all.filter(m => m.thread_id === activeThreadId) : all;
@@ -269,10 +213,10 @@ export default function ChatHeader() {
     if (!activeAccountId || !activeThreadId || !msg.timestamp) return;
     try {
       const { setMessages } = useChatStore.getState();
-      const aroundRes = await ipc.db?.getMessagesAround({
+      const aroundRes = await DataAccessor.getMessagesAround({
         zaloId: activeAccountId,
         threadId: activeThreadId,
-        timestamp: msg.timestamp,
+        msgId: String(msg.msg_id || msg.timestamp),
         limit: 80,
       });
       const aroundMsgs = aroundRes?.messages;
@@ -407,7 +351,7 @@ export default function ChatHeader() {
       }
       // Always save alias locally to DB
       updateContact(activeAccountId, { contact_id: activeThreadId, alias: trimmed });
-      ipc.db?.setContactAlias({
+      DataAccessor.setContactAlias({
         zaloId: activeAccountId, contactId: activeThreadId, alias: trimmed,
       }).catch(() => {});
       showNotification('Đã cập nhật tên gợi nhớ', 'success');
@@ -435,7 +379,7 @@ export default function ChatHeader() {
           for (const item of items) {
             if (item.alias && item.userId) {
               updateContact(activeAccountId, { contact_id: item.userId, alias: item.alias });
-              ipc.db?.setContactAlias({ zaloId: activeAccountId, contactId: item.userId, alias: item.alias }).catch(() => {});
+              DataAccessor.setContactAlias({ zaloId: activeAccountId, contactId: item.userId, alias: item.alias }).catch(() => {});
             }
           }
         }
@@ -452,13 +396,13 @@ export default function ChatHeader() {
           if (newAlias) patch.alias = newAlias;
           if (Object.keys(patch).length > 1) {
             updateContact(activeAccountId, patch);
-            await ipc.db?.updateContactProfile({
+            await DataAccessor.updateContactProfile({
               zaloId: activeAccountId, contactId: activeThreadId,
               displayName: newName, avatarUrl: newAvatar, phone: newPhone,
               gender, birthday,
             });
             if (newAlias) {
-              ipc.db?.setContactAlias({ zaloId: activeAccountId, contactId: activeThreadId, alias: newAlias }).catch(() => {});
+              DataAccessor.setContactAlias({ zaloId: activeAccountId, contactId: activeThreadId, alias: newAlias }).catch(() => {});
             }
           }
         }
@@ -785,28 +729,6 @@ export default function ChatHeader() {
         </div>
 
         <div className="flex items-center gap-1">
-          {/* Tải lại tin nhắn nhóm */}
-          {isGroup && channelCap.supportsGroupReload && (
-            <button
-              title="Tải lại tin nhắn nhóm (trong phiên này)"
-              onClick={handleReloadGroupMessages}
-              disabled={loadingGroupMsgs}
-              className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${loadingGroupMsgs ? 'text-green-400 bg-gray-700' : 'hover:bg-gray-700 text-gray-400 hover:text-white'}`}
-            >
-              {loadingGroupMsgs ? (
-                <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-                </svg>
-              ) : (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                  <polyline points="7 10 12 15 17 10"/>
-                  <line x1="12" y1="15" x2="12" y2="3"/>
-                </svg>
-              )}
-            </button>
-          )}
           <button
             title="Tìm kiếm tin nhắn"
             onClick={toggleSearch}
@@ -884,10 +806,7 @@ export default function ChatHeader() {
               className="flex-1 bg-transparent text-sm text-white placeholder-gray-500 focus:outline-none min-w-0"
             />
             {searching && (
-              <svg className="animate-spin w-3.5 h-3.5 text-gray-400 flex-shrink-0" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-              </svg>
+              <Spinner size={3} className="text-gray-400 flex-shrink-0" />
             )}
             {searchQuery && !searching && (
               <button
@@ -1150,10 +1069,7 @@ function AliasEditPopup({ value, onChange, saving, onSave, onClose, anchorX, anc
           className="px-3 py-1.5 text-xs text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1"
         >
           {saving && (
-            <svg className="animate-spin w-3 h-3" viewBox="0 0 24 24" fill="none">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-            </svg>
+            <Spinner size={3} />
           )}
           Lưu
         </button>

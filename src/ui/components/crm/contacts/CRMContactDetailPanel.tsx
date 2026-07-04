@@ -1,7 +1,9 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import type { CRMContact, CRMNote } from '@/store/crmStore';
 import type { LabelData } from '@/store/appStore';
-import ipc from '@/lib/ipc';
+import ipc from '@/lib/ipc'
+import DataAccessor from '@/lib/data/DataAccessor';
+import PageLoading from '@/components/common/PageLoading';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
 import ZaloLabelSelector from '../tags/ZaloLabelSelector';
@@ -31,6 +33,7 @@ export default function CRMContactDetailPanel({ contact, allLabels, localLabels,
   const [zaloNotes, setZaloNotes] = useState<PinnedNote[]>([]);
   const [noteTab, setNoteTab] = useState<'local' | 'zalo'>('local');
   const [sendLog, setSendLog] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
   const isGroup = contact.contact_type === 'group';
 
@@ -61,9 +64,9 @@ export default function CRMContactDetailPanel({ contact, allLabels, localLabels,
     try {
       const threadType = contact.contact_type === 'group' ? 1 : 0;
       if (exists) {
-        await ipc.db?.removeLocalLabelFromThread({ zaloId: activeAccountId, labelId, threadId: contact.contact_id, threadType, labelText: label.name || '', labelColor: label.color || '', labelEmoji: label.emoji || '' });
+        await DataAccessor.removeLocalLabelFromThread({ zaloId: activeAccountId, labelId, threadId: contact.contact_id });
       } else {
-        await ipc.db?.assignLocalLabelToThread({ zaloId: activeAccountId, labelId, threadId: contact.contact_id, threadType, labelText: label.name || '', labelColor: label.color || '', labelEmoji: label.emoji || '' });
+        await DataAccessor.assignLocalLabelToThread({ zaloId: activeAccountId, labelId, threadId: contact.contact_id });
       }
       showNotification(exists ? `Đã gỡ nhãn "${label.name}"` : `Đã gắn nhãn "${label.name}"`, 'success');
       window.dispatchEvent(new CustomEvent('local-labels-changed', { detail: { zaloId: activeAccountId } }));
@@ -89,11 +92,15 @@ export default function CRMContactDetailPanel({ contact, allLabels, localLabels,
   }, [contact.contact_id, allLabels]);
 
   useEffect(() => {
-    if (detailTab === 'info' && activeAccountId) {
-      loadNotes();
-      if (isGroup) loadZaloNotes();
+    if (!activeAccountId) return;
+    setLoading(true);
+    const promises: Promise<any>[] = [];
+    if (detailTab === 'info') {
+      promises.push(loadNotes());
+      if (isGroup) promises.push(loadZaloNotes());
     }
-    if (detailTab === 'history' && activeAccountId) loadHistory();
+    if (detailTab === 'history') promises.push(loadHistory());
+    Promise.all(promises).finally(() => setLoading(false));
   }, [detailTab, contact.contact_id]);
 
   // Re-fetch notes when remote CRM note changes arrive
@@ -110,7 +117,7 @@ export default function CRMContactDetailPanel({ contact, allLabels, localLabels,
 
   const loadNotes = async () => {
     if (!activeAccountId) return;
-    const res = await ipc.crm?.getNotes({ zaloId: activeAccountId, contactId: contact.contact_id });
+    const res = await DataAccessor.getCRMNotes({ zaloId: activeAccountId, contactId: contact.contact_id });
     if (res?.success) setNotes(res.notes);
   };
 
@@ -140,7 +147,7 @@ export default function CRMContactDetailPanel({ contact, allLabels, localLabels,
 
   const loadHistory = async () => {
     if (!activeAccountId) return;
-    const res = await ipc.crm?.getSendLog({ zaloId: activeAccountId, opts: { contactId: contact.contact_id, limit: 50 } });
+    const res = await DataAccessor.getSendLog({ zaloId: activeAccountId, opts: { contactId: contact.contact_id, limit: 50 } });
     if (res?.success) setSendLog(res.logs);
   };
 
@@ -192,13 +199,13 @@ export default function CRMContactDetailPanel({ contact, allLabels, localLabels,
 
   const handleSaveNote = async (content: string, id?: number) => {
     if (!activeAccountId) return;
-    await ipc.crm?.saveNote({ zaloId: activeAccountId, note: { id, contact_id: contact.contact_id, content } });
+    await DataAccessor.saveCRMNote({ zaloId: activeAccountId, note: { id, contact_id: contact.contact_id, content } });
     await loadNotes();
   };
 
   const handleDeleteNote = async (noteId: number) => {
     if (!activeAccountId) return;
-    await ipc.crm?.deleteNote({ zaloId: activeAccountId, noteId });
+    await DataAccessor.deleteCRMNote({ zaloId: activeAccountId, noteId });
     setNotes(prev => prev.filter(n => n.id !== noteId));
   };
 
@@ -281,106 +288,113 @@ export default function CRMContactDetailPanel({ contact, allLabels, localLabels,
 
       {/* Tab content */}
       <div className="flex-1 overflow-y-auto p-3">
+        {loading ? (
+          <div className="flex items-center justify-center h-full min-h-[200px]">
+            <PageLoading variant="inline" text="Đang tải thông tin liên hệ..." />
+          </div>
+        ) : (
+          <>
+            {detailTab === 'info' && (
+              <div className="space-y-3">
+                {/* Local labels */}
+                {localLabels && localLabels.length > 0 && (
+                  <>
+                    <p className="text-xs text-gray-400 font-medium">Nhãn Local</p>
+                    <LocalLabelSelector
+                      labels={localLabels}
+                      selectedIds={threadLocalLabelIds}
+                      onChange={handleLocalLabelChange}
+                      togglingId={localLabelToggling}
+                      placeholder="Chọn Nhãn Local..."
+                      emptyText="Chưa có Nhãn Local nào"
+                    />
+                  </>
+                )}
 
-        {detailTab === 'info' && (
-          <div className="space-y-3">
-            {/* Local labels */}
-            {localLabels && localLabels.length > 0 && (
-              <>
-                <p className="text-xs text-gray-400 font-medium">Nhãn Local</p>
-                <LocalLabelSelector
-                  labels={localLabels}
-                  selectedIds={threadLocalLabelIds}
-                  onChange={handleLocalLabelChange}
-                  togglingId={localLabelToggling}
-                  placeholder="Chọn Nhãn Local..."
-                  emptyText="Chưa có Nhãn Local nào"
-                />
-              </>
-            )}
+                {/* Zalo labels */}
+                <p className="text-xs text-gray-400 font-medium">Nhãn Zalo</p>
+                {allLabels.length === 0 ? (
+                  <p className="text-xs text-gray-500">Chưa tải nhãn. Hãy đồng bộ nhãn từ header.</p>
+                ) : (
+                  <ZaloLabelSelector
+                    allLabels={allLabels}
+                    selectedIds={selectedLabelIds}
+                    singleSelect
+                    onChange={(ids) => { setSelectedLabelIds(ids); setLabelsDirty(true); }}
+                  />
+                )}
+                {labelsDirty && (
+                  <button onClick={handleSaveLabels} disabled={savingLabels}
+                    className="w-full py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs disabled:opacity-50">
+                    {savingLabels ? 'Đang lưu...' : 'Lưu nhãn'}
+                  </button>
+                )}
 
-            {/* Zalo labels */}
-            <p className="text-xs text-gray-400 font-medium">Nhãn Zalo</p>
-            {allLabels.length === 0 ? (
-              <p className="text-xs text-gray-500">Chưa tải nhãn. Hãy đồng bộ nhãn từ header.</p>
-            ) : (
-              <ZaloLabelSelector
-                allLabels={allLabels}
-                selectedIds={selectedLabelIds}
-                singleSelect
-                onChange={(ids) => { setSelectedLabelIds(ids); setLabelsDirty(true); }}
-              />
-            )}
-            {labelsDirty && (
-              <button onClick={handleSaveLabels} disabled={savingLabels}
-                className="w-full py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs disabled:opacity-50">
-                {savingLabels ? 'Đang lưu...' : 'Lưu nhãn'}
-              </button>
-            )}
+                <p className="text-xs text-gray-400 font-medium">Ghi chú</p>
 
-            <p className="text-xs text-gray-400 font-medium">Ghi chú</p>
+                {/* Tab switcher - chỉ hiện với nhóm */}
+                {isGroup && (
+                  <div className="flex rounded-lg overflow-hidden border border-gray-600 text-[11px] mb-1">
+                    <button
+                      onClick={() => setNoteTab('local')}
+                      className={`flex-1 py-1 font-medium transition-colors ${noteTab === 'local' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}>
+                      Nội bộ
+                    </button>
+                    <button
+                      onClick={() => setNoteTab('zalo')}
+                      className={`flex-1 py-1 font-medium transition-colors ${noteTab === 'zalo' ? 'bg-yellow-500/80 text-white' : 'text-gray-400 hover:text-gray-200'}`}>
+                      Zalo ({zaloNotes.length})
+                    </button>
+                  </div>
+                )}
 
-            {/* Tab switcher - chỉ hiện với nhóm */}
-            {isGroup && (
-              <div className="flex rounded-lg overflow-hidden border border-gray-600 text-[11px] mb-1">
-                <button
-                  onClick={() => setNoteTab('local')}
-                  className={`flex-1 py-1 font-medium transition-colors ${noteTab === 'local' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}>
-                  Nội bộ
-                </button>
-                <button
-                  onClick={() => setNoteTab('zalo')}
-                  className={`flex-1 py-1 font-medium transition-colors ${noteTab === 'zalo' ? 'bg-yellow-500/80 text-white' : 'text-gray-400 hover:text-gray-200'}`}>
-                  Zalo ({zaloNotes.length})
-                </button>
+                {/* Local notes - users & groups */}
+                {(!isGroup || noteTab === 'local') && (
+                  <NoteList notes={notes} onSave={handleSaveNote} onDelete={handleDeleteNote} />
+                )}
+
+                {/* Zalo group notes - read-only, logic cũ */}
+                {isGroup && noteTab === 'zalo' && (
+                  <div className="space-y-2">
+                    {zaloNotes.length === 0 && (
+                      <p className="text-xs text-gray-500 text-center py-2">Chưa có ghi chú Zalo nào</p>
+                    )}
+                    {zaloNotes.map(note => (
+                      <div key={note.topicId} className="bg-yellow-500/5 border border-yellow-700/30 rounded-lg p-2.5">
+                        <p className="text-xs text-gray-200 whitespace-pre-wrap">{note.title}</p>
+                        <div className="flex items-center justify-between mt-1.5">
+                          {note.creatorName && (
+                            <span className="text-[11px] text-gray-500">{note.creatorName}</span>
+                          )}
+                          <span className="text-[11px] text-gray-500 ml-auto">
+                            {note.editTime ? new Date(note.editTime).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
-            {/* Local notes - users & groups */}
-            {(!isGroup || noteTab === 'local') && (
-              <NoteList notes={notes} onSave={handleSaveNote} onDelete={handleDeleteNote} />
-            )}
-
-            {/* Zalo group notes - read-only, logic cũ */}
-            {isGroup && noteTab === 'zalo' && (
+            {detailTab === 'history' && (
               <div className="space-y-2">
-                {zaloNotes.length === 0 && (
-                  <p className="text-xs text-gray-500 text-center py-2">Chưa có ghi chú Zalo nào</p>
-                )}
-                {zaloNotes.map(note => (
-                  <div key={note.topicId} className="bg-yellow-500/5 border border-yellow-700/30 rounded-lg p-2.5">
-                    <p className="text-xs text-gray-200 whitespace-pre-wrap">{note.title}</p>
-                    <div className="flex items-center justify-between mt-1.5">
-                      {note.creatorName && (
-                        <span className="text-[11px] text-gray-500">{note.creatorName}</span>
-                      )}
-                      <span className="text-[11px] text-gray-500 ml-auto">
-                        {note.editTime ? new Date(note.editTime).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}
+                {sendLog.length === 0 && <p className="text-xs text-gray-500 text-center py-4">Chưa có lịch sử gửi</p>}
+                {sendLog.map(log => (
+                  <div key={log.id} className={`p-2.5 rounded-lg border text-xs ${log.status === 'sent' ? 'bg-green-500/5 border-green-700/30' : 'bg-red-500/5 border-red-700/30'}`}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className={`font-medium ${log.status === 'sent' ? 'text-green-400' : 'text-red-400'}`}>
+                        {log.status === 'sent' ? '✓ Đã gửi' : '✕ Thất bại'}
                       </span>
+                      <span className="text-gray-500">{fmt(log.sent_at)}</span>
                     </div>
+                    <p className="text-gray-300 line-clamp-2">{log.message}</p>
+                    {log.error && <p className="text-red-400 text-[11px] mt-1">{log.error}</p>}
                   </div>
                 ))}
               </div>
             )}
-          </div>
-        )}
-
-        {detailTab === 'history' && (
-          <div className="space-y-2">
-            {sendLog.length === 0 && <p className="text-xs text-gray-500 text-center py-4">Chưa có lịch sử gửi</p>}
-            {sendLog.map(log => (
-              <div key={log.id} className={`p-2.5 rounded-lg border text-xs ${log.status === 'sent' ? 'bg-green-500/5 border-green-700/30' : 'bg-red-500/5 border-red-700/30'}`}>
-                <div className="flex items-center justify-between mb-1">
-                  <span className={`font-medium ${log.status === 'sent' ? 'text-green-400' : 'text-red-400'}`}>
-                    {log.status === 'sent' ? '✓ Đã gửi' : '✕ Thất bại'}
-                  </span>
-                  <span className="text-gray-500">{fmt(log.sent_at)}</span>
-                </div>
-                <p className="text-gray-300 line-clamp-2">{log.message}</p>
-                {log.error && <p className="text-red-400 text-[11px] mt-1">{log.error}</p>}
-              </div>
-            ))}
-          </div>
+          </>
         )}
       </div>
     </div>

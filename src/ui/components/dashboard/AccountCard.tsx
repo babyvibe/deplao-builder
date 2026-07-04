@@ -2,12 +2,14 @@ import React, { useState, useRef, useEffect } from 'react';
 import { AccountInfo } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
 import { useAccountStore } from '@/store/accountStore';
-import ipc from '@/lib/ipc';
+import ipc from '@/lib/ipc'
+import DataAccessor from '@/lib/data/DataAccessor';;
 import { formatPhone } from '@/utils/phoneUtils';
 import PhoneDisplay from '../common/PhoneDisplay';
 import { showConfirm } from '../common/ConfirmDialog';
 import { extractApiError } from '@/utils/apiError';
 import ChannelBadge from '../common/ChannelBadge';
+import { Spinner } from '@/components/common/PageLoading';
 import type { Channel } from '@/../configs/channelConfig';
 
 interface AccountCardProps {
@@ -190,9 +192,9 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
         // Cập nhật DB
         if (phone && phone !== acc.phone) {
           // Cập nhật bảng contacts (để hiển thị trong chat)
-          await ipc.db?.updateContactProfile({ zaloId: uid, contactId: uid, displayName, avatarUrl, phone });
+          await DataAccessor.updateContactProfile({ zaloId: uid, contactId: uid, displayName, avatarUrl, phone });
           // Cập nhật bảng accounts (để lưu qua restart)
-          await ipc.db?.updateAccountPhone({ zaloId: uid, phone });
+          await DataAccessor.updateAccountPhone({ zaloId: uid, phone });
           // Cập nhật store
           useAccountStore.getState().updateAccount(uid, { phone });
           showNotification('Đã cập nhật số điện thoại: ' + phone, 'success');
@@ -319,10 +321,7 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
                   className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-200 hover:bg-gray-700 transition-colors disabled:opacity-50"
                 >
                   {updatingInfo ? (
-                    <svg className="animate-spin w-4 h-4 text-blue-400" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-                    </svg>
+                    <Spinner size={4} />
                   ) : (
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>
@@ -348,10 +347,7 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
                 className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-200 hover:bg-gray-700 transition-colors disabled:opacity-50"
               >
                 {updatingInfo ? (
-                  <svg className="animate-spin w-4 h-4 text-blue-400" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-                  </svg>
+                  <Spinner size={4} />
                 ) : (
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>

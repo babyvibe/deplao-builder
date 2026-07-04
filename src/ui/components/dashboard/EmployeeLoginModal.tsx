@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import ipc from '@/lib/ipc';
 import { useAppStore } from '@/store/appStore';
 import { useWorkspaceStore } from '@/store/workspaceStore';
+import { Spinner } from '@/components/common/PageLoading';
 
 /** Build normalized Boss URL - handles both IP:Port and full tunnel URL */
 function buildBossUrl(address: string, port: string): string {
@@ -186,10 +187,7 @@ export default function EmployeeLoginModal({ onClose }: Props) {
             className="w-full text-sm font-medium text-white bg-blue-600 hover:bg-blue-500 px-4 py-2.5 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             {loading && (
-              <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" fill="currentColor" />
-              </svg>
+              <Spinner size={4} />
             )}
             {stepLabel}
           </button>

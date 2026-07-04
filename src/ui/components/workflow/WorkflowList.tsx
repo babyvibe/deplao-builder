@@ -1,8 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
+import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '../../lib/ipc';
+import { useEmployeeStore } from '@/store/employeeStore';
 import { useAppStore } from '@/store/appStore';
+import { useAccountStore } from '@/store/accountStore';
 import { v4 as uuidv4 } from 'uuid';
 import { showConfirm } from '../common/ConfirmDialog';
+import PageLoading from '../common/PageLoading';
 import { FacebookIcon, ZaloIcon } from '../common/ChannelBadge';
 import type { Channel } from '../../../configs/channelConfig';
 import { getChannelColor } from '../../../configs/channelConfig';
@@ -685,6 +689,7 @@ function ChannelFilterButton({ value, onChange }: {
 // ── Main component ────────────────────────────────────────────────────────────
 export default function WorkflowList({ onEdit, onOpenStore }: Props) {
   const { showNotification } = useAppStore();
+  const isEmployeeMode = useEmployeeStore(s => s.mode === 'employee');
   const [workflows, setWorkflows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [accounts, setAccounts] = useState<PageAccount[]>([]);
@@ -701,8 +706,13 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
   const load = async () => {
     setLoading(true);
     try {
-      const res = await ipc.workflow?.list();
-      if (res?.success) setWorkflows(res.workflows);
+      if (isEmployeeMode) {
+        const res = await DataAccessor.getWorkflows();
+        if (res?.success) setWorkflows(res.workflows || []);
+      } else {
+        const res = await ipc.workflow?.list();
+        if (res?.success) setWorkflows(res.workflows);
+      }
     } finally {
       setLoading(false);
     }
@@ -710,25 +720,56 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
 
   useEffect(() => {
     load();
-    ipc.login?.getAccounts().then((res: any) => {
-      if (res?.success) setAccounts((res.accounts || [])
-        .map((a: any) => ({
-        zalo_id: a.zalo_id,
-        full_name: a.full_name || '',
-        avatar_url: a.avatar_url || '',
-        phone: a.phone || '',
-        channel: a.channel || 'zalo',
-      })));
-    }).catch(() => {});
-  }, []);
+    if (isEmployeeMode) {
+      // Employee: accounts từ accountStore (đã load từ workspace:initialState)
+      const accs = useAccountStore.getState().accounts;
+      if (accs.length > 0) {
+        setAccounts(accs.map((a: any) => ({
+          zalo_id: a.zalo_id,
+          full_name: a.full_name || '',
+          avatar_url: a.avatar_url || '',
+          phone: a.phone || '',
+          channel: a.channel || 'zalo',
+        })));
+      }
+      // Subscribe to account changes
+      const unsub = useAccountStore.subscribe((state) => {
+        const updated = state.accounts;
+        if (updated.length > 0) {
+          setAccounts(updated.map((a: any) => ({
+            zalo_id: a.zalo_id,
+            full_name: a.full_name || '',
+            avatar_url: a.avatar_url || '',
+            phone: a.phone || '',
+            channel: a.channel || 'zalo',
+          })));
+        }
+      });
+      return () => unsub();
+    } else {
+      ipc.login?.getAccounts().then((res: any) => {
+        if (res?.success) setAccounts((res.accounts || [])
+          .map((a: any) => ({
+          zalo_id: a.zalo_id,
+          full_name: a.full_name || '',
+          avatar_url: a.avatar_url || '',
+          phone: a.phone || '',
+          channel: a.channel || 'zalo',
+        })));
+      }).catch(() => {});
+    }
+  }, [isEmployeeMode]);
 
   const createNew = async (channel: Channel) => {
     const id = uuidv4();
-    const res = await ipc.workflow?.save({
+    const wfData = {
       channel,
       id, name: 'Workflow mới', description: '', enabled: false,
       nodes: [], edges: [], createdAt: Date.now(), updatedAt: Date.now(),
-    });
+    };
+    const res = isEmployeeMode
+      ? await DataAccessor.saveWorkflow(wfData)
+      : await ipc.workflow?.save(wfData);
     if (res?.success) {
       setShowCreateChannelModal(false);
       onEdit(id);
@@ -737,7 +778,9 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
   };
 
   const handleToggle = async (id: string, enabled: boolean) => {
-    const res = await ipc.workflow?.toggle(id, enabled);
+    const res = isEmployeeMode
+      ? await DataAccessor.toggleWorkflow(id, enabled)
+      : await ipc.workflow?.toggle(id, enabled);
     if (res?.success) {
       setWorkflows(ws => ws.map(w => w.id === id ? { ...w, enabled } : w));
       return;
@@ -752,7 +795,9 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
       confirmText: 'Xóa', cancelText: 'Hủy', variant: 'danger',
     });
     if (!ok) return;
-    const res = await ipc.workflow?.delete(id);
+    const res = isEmployeeMode
+      ? await DataAccessor.deleteWorkflow(id)
+      : await ipc.workflow?.delete(id);
     if (res?.success) {
       setWorkflows(ws => ws.filter(w => w.id !== id));
       showNotification('Đã xóa workflow', 'success');
@@ -839,7 +884,7 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
         }));
 
         const newId = uuidv4();
-        const res = await ipc.workflow?.save({
+        const importWf = {
           channel: importChannel,
           id: newId,
           name: data.name ? `${data.name} (nhập)` : 'Workflow nhập',
@@ -849,7 +894,10 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
           edges: importedEdges,
           createdAt: Date.now(),
           updatedAt: Date.now(),
-        });
+        };
+        const res = isEmployeeMode
+          ? await DataAccessor.saveWorkflow(importWf)
+          : await ipc.workflow?.save(importWf);
         if (res?.success) {
           showNotification(`Đã nhập workflow "${data.name || 'Imported'}"`, 'success');
           load();
@@ -949,6 +997,8 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
       </span>
     );
   };
+
+  if (loading) return <PageLoading text="Đang tải workflow..." />;
 
   return (
     <div className="flex flex-col h-full">
@@ -1079,10 +1129,6 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
                 <path d="M7 6h10M5 8v4a7 7 0 0 0 7 7M19 8v4a7 7 0 0 1-7 7"/>
               </svg>
             </div>
-            <p className="text-gray-300 font-semibold mb-1">Chưa có workflow nào</p>
-            <p className="text-gray-600 text-sm mb-6 max-w-xs">
-              Tạo workflow để Tự động hoá việc trả lời tin nhắn, xử lý kết bạn, gửi thông báo...
-            </p>
             <button onClick={() => setShowCreateChannelModal(true)}
               className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-xl transition-colors">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">

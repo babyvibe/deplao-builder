@@ -7,7 +7,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppStore, QuickChatTarget } from '@/store/appStore';
 import { useAccountStore } from '@/store/accountStore';
 import { useChatStore, MessageItem } from '@/store/chatStore';
-import ipc from '@/lib/ipc';
+import ipc from '@/lib/ipc'
+import DataAccessor from '@/lib/data/DataAccessor';;
 import { sendSeenForThread } from '@/lib/sendSeenHelper';
 import { toLocalMediaUrl } from '@/lib/localMedia';
 import { fetchQuickMessages, QuickMessage, LocalMediaFile } from './QuickMessageManager';
@@ -315,7 +316,7 @@ export default function QuickChatModal() {
   const loadMessages = useCallback(async (zaloId: string, threadId: string) => {
     setMsgsLoading(true);
     try {
-      const res = await ipc.db?.getMessages({ zaloId, threadId, limit: 40, offset: 0 });
+      const res = await DataAccessor.getMessages({ zaloId, threadId, limit: 40, offset: 0 });
       setLocalMsgs([...(res?.messages || [])].reverse());
     } catch { setLocalMsgs([]); } finally { setMsgsLoading(false); }
   }, []);
@@ -540,9 +541,9 @@ export default function QuickChatModal() {
       const { setActiveThread, setMessages: storeSet, clearUnread } = useChatStore.getState();
       setActiveThread(tid, ttype);
       clearUnread(zid, tid);
-      ipc.db?.markAsRead({ zaloId: zid, contactId: tid }).catch(() => {});
+      DataAccessor.markAsRead({ zaloId: zid, contactId: tid }).catch(() => {});
       sendSeenForThread(zid, tid, ttype);
-      ipc.db?.getMessages({ zaloId: zid, threadId: tid, limit: 50, offset: 0 }).then((res: any) => {
+      DataAccessor.getMessages({ zaloId: zid, threadId: tid, limit: 50, offset: 0 }).then((res: any) => {
         const msgs: MessageItem[] = res?.messages || [];
         if (msgs.length) storeSet(zid, tid, [...msgs].reverse());
       }).catch(() => {});

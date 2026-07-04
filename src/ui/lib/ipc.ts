@@ -311,6 +311,10 @@ declare global {
         repairImage: (params: { zaloId: string; msgId: string; threadId?: string; localPath?: string; remoteUrl?: string }) => Promise<{ success: boolean; newLocalPath?: string; error?: string }>;
         validateLocalImages: (items: Array<{ zaloId: string; msgId: string; threadId?: string; localPath: string; remoteUrl?: string }>) => Promise<{ success: boolean; corrupted: Array<{ zaloId: string; msgId: string; threadId?: string; localPath: string; remoteUrl?: string; reason: string }> }>;
         captureScreenshot: () => Promise<{ success: boolean; screenshots?: Array<{ name: string; id: string; displayId: string; thumbnail: string; width: number; height: number }>; error?: string }>;
+        // Media cache cho employee mode
+        resolveMediaUrl: (bossUrl: string, mediaType?: string) => Promise<{ success: boolean; displayUrl: string; fromCache: boolean }>;
+        hasMediaCache: (bossUrl: string) => Promise<{ success: boolean; cached: boolean }>;
+        preloadMediaBatch: (urls: string[]) => Promise<{ success: boolean; triggered: number; error?: string }>;
       };
       app: {
         setBadge: (count: number) => void;
@@ -329,6 +333,16 @@ declare global {
         getRecoveryKey: (params: { password: string }) => Promise<{ success: boolean; recoveryKey?: string; error?: string }>;
         setBiometric: (params: { enabled: boolean }) => Promise<{ success: boolean; error?: string }>;
         biometricUnlock: () => Promise<{ success: boolean; error?: string }>;
+      };
+      library: {
+        getItems:    (params: any) => Promise<any>;
+        upload:      (params: any) => Promise<any>;
+        deleteItem:  (uuid: string) => Promise<any>;
+        getFolders:  (params: { zaloId: string; type?: string }) => Promise<any>;
+        createFolder:(params: any) => Promise<any>;
+        renameFolder:(id: number, name: string) => Promise<any>;
+        deleteFolder:(id: number) => Promise<any>;
+        updateItem:  (uuid: string, params: any) => Promise<any>;
       };
 
       on: (channel: string, callback: (...args: any[]) => void) => () => void;
@@ -446,13 +460,6 @@ declare global {
         startTunnel: () => Promise<{ success: boolean; tunnelUrl?: string; error?: string }>;
         stopTunnel: () => Promise<{ success: boolean; error?: string }>;
         getTunnelStatus: () => Promise<{ success: boolean; active?: boolean; tunnelUrl?: string | null; error?: string }>;
-      };
-      sync: {
-        requestFullSync: (zaloIds: string[]) => Promise<{ success: boolean; error?: string }>;
-        requestDeltaSync: (sinceTs?: number) => Promise<{ success: boolean; error?: string }>;
-        resetEmployeeDB: (zaloIds: string[]) => Promise<{ success: boolean; error?: string }>;
-        getStatus: () => Promise<{ success: boolean; lastSyncTs: number }>;
-        requestMedia: (filePath: string) => Promise<{ success: boolean; data?: any; fileName?: string; error?: string }>;
       };
       // ─── Facebook ─────────────────────────────────────────────────────
       fb: {
@@ -674,13 +681,13 @@ export const ipc = {
   tunnel: window.electronAPI?.tunnel,
   employee: window.electronAPI?.employee,
   workspace: window.electronAPI?.workspace,
-  sync: window.electronAPI?.sync,
   relay: window.electronAPI?.relay,
   fb: window.electronAPI?.fb,
   proxy: window.electronAPI?.proxy,
 
   erp,
   lockScreen: window.electronAPI?.lockScreen,
+  library: window.electronAPI?.library,
   on: window.electronAPI?.on,
   removeAllListeners: window.electronAPI?.removeAllListeners,
 };

@@ -243,9 +243,10 @@ export function registerWorkspaceIpc(mainWindow: BrowserWindow | null): void {
                         Logger.log(`[workspaceIpc] Remote workspace "${result.workspace.name}" already connected`);
                     }
                     // Merge snapshot data into workspace object so renderer gets it in ONE event
+                    // _connected reflects ACTUAL connection status, not snapshot existence
                     const snapshot = scm.getSnapshot(id);
+                    (result.workspace as any)._connected = scm.isConnected(id);
                     if (snapshot) {
-                        (result.workspace as any)._connected = true;
                         (result.workspace as any)._snapshot = snapshot;
                     }
                 }

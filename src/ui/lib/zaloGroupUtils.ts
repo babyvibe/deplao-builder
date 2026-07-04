@@ -19,7 +19,8 @@
  *      Also the sole path when skipGetGroupMembersInfo=true
  */
 
-import ipc from '@/lib/ipc';
+import ipc from '@/lib/ipc'
+import DataAccessor from '@/lib/data/DataAccessor';;
 import { extractUserProfile } from '../../utils/profileUtils';
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -153,7 +154,7 @@ async function _fetchGroupMembersComplete(opts: _EnrichOpts): Promise<void> {
           if (displayName) coveredByStep1.add(memberId);
         }
         if (updates.length > 0) {
-          await ipc.db?.saveGroupMembers({ zaloId: activeAccountId, groupId, members: updates });
+          await DataAccessor.saveGroupMembers({ zaloId: activeAccountId, groupId, members: updates });
         }
       }
     } catch (err) {
@@ -187,7 +188,7 @@ async function _fetchGroupMembersComplete(opts: _EnrichOpts): Promise<void> {
           }
           // Always save profile with gender/birthday/phone when available
           contactSaves.push(
-            ipc.db?.updateContactProfile({
+            DataAccessor.updateContactProfile({
               zaloId: activeAccountId, contactId: memberId,
               displayName, avatarUrl: avatar, phone, contactType: 'friend',
               gender, birthday,
@@ -195,7 +196,7 @@ async function _fetchGroupMembersComplete(opts: _EnrichOpts): Promise<void> {
           );
         }
         if (memberUpdates.length > 0) {
-          await ipc.db?.saveGroupMembers({ zaloId: activeAccountId, groupId, members: memberUpdates });
+          await DataAccessor.saveGroupMembers({ zaloId: activeAccountId, groupId, members: memberUpdates });
         }
         if (contactSaves.length > 0) await Promise.all(contactSaves);
       }
@@ -270,7 +271,7 @@ async function _syncSingleGroup(opts: SyncGroupsOptions): Promise<void> {
     });
   }
 
-  await ipc.db?.saveGroupMembers({ zaloId: activeAccountId, groupId, members: placeholders });
+  await DataAccessor.saveGroupMembers({ zaloId: activeAccountId, groupId, members: placeholders });
 
   // Phase 1 done: let UI show UIDs
   await onPhase1Done?.();
@@ -307,7 +308,7 @@ async function _syncAllGroups(opts: SyncGroupsOptions): Promise<void> {
   if (groupIds.length === 0) return;
 
   // Load ALL existing members in one shot (no extra DB queries per group later)
-  const existingMembersRes = await ipc.db?.getAllGroupMembers({ zaloId: activeAccountId });
+  const existingMembersRes = await DataAccessor.getAllGroupMembers(activeAccountId);
   const existingMemberRows: any[] = existingMembersRes?.rows ?? [];
   const existingCountMap: Record<string, number> = {};
   const groupMembersMap: Record<string, MemberPlaceholder[]> = {};
@@ -351,7 +352,7 @@ async function _syncAllGroups(opts: SyncGroupsOptions): Promise<void> {
         if (id) memInfoMap[id] = { displayName: mem.dName || mem.zaloName || '', avatar: mem.avatar || mem.avatar_25 || '' };
       }
 
-      await ipc.db?.updateContactProfile({
+      await DataAccessor.updateContactProfile({
         zaloId: activeAccountId, contactId: groupId,
         displayName: name, avatarUrl: avatar, phone: '', contactType: 'group',
       });
@@ -390,8 +391,8 @@ async function _syncAllGroups(opts: SyncGroupsOptions): Promise<void> {
             .filter((m): m is MemberPlaceholder => m !== null);
 
           if (members.length > 0) {
-            await ipc.db?.saveGroupMembers({ zaloId: activeAccountId, groupId, members });
-            await ipc.db?.removeGroupMember({ zaloId: activeAccountId, groupId, memberId: '' });
+            await DataAccessor.saveGroupMembers({ zaloId: activeAccountId, groupId, members });
+            await DataAccessor.removeGroupMember({ zaloId: activeAccountId, groupId, memberId: '' });
             newlySaved.push({ groupId, groupName: name, memberIds: members.map(m => m.memberId), placeholders: members, skipGetGroupMembersInfo: false });
           }
         }

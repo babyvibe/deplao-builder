@@ -1,6 +1,6 @@
 {
   "name": "Deplao",
-  "version": "26.6.7",
+  "version": "26.7.0",
   "description": "Phần mềm desktop quản lý Zalo & Facebook cá nhân Đa tài khoản tích hợp CRM, ERP, POS, Workflow và AI Assistant giúp đội nhóm bán hàng, chăm sóc khách hàng và marketing trên Zalo vận hành tập trung trong một ứng dụng duy nhất.",
   "main": "dist-electron/electron/main.js",
   "scripts": {
@@ -43,6 +43,9 @@
     "react-zoom-pan-pinch": "^3.7.0",
     "reactflow": "^11.11.4",
     "recharts": "^3.8.0",
+    "sharp": "^0.35.3",
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3",
     "socks-proxy-agent": "^10.0.0",
     "tough-cookie": "^5.0.0",
     "uuid": "^13.0.0",
@@ -139,7 +142,9 @@
     },
     "protocols": {
       "name": "Deplao Deep Link",
-      "schemes": ["deplao"]
+      "schemes": [
+        "deplao"
+      ]
     },
     "nsis": {
       "oneClick": false,

@@ -5,6 +5,7 @@
  * Used by both runAccountInit (zaloInitUtils) and LabelSettings UI.
  */
 
+import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 
 /**
@@ -50,7 +51,7 @@ export async function syncZaloLabelsToLocalDB(opts: SyncZaloLabelsOptions): Prom
             existingNames = new Set(existingLocalLabels.map(l => l.name.toLowerCase()));
         } else {
             try {
-                const res = await ipc.db?.getLocalLabels({zaloId: activeZaloId});
+                const res = await DataAccessor.getLocalLabels({zaloId: activeZaloId});
                 const labels: any[] = res?.labels || [];
                 existingNames = new Set(labels.map((l: any) => (l.name || '').toLowerCase()));
             } catch { /* ignore */
@@ -61,11 +62,11 @@ export async function syncZaloLabelsToLocalDB(opts: SyncZaloLabelsOptions): Prom
     // Mode = 'replace' removeAllLabels done and add labels new
     if (mode === 'replace') {
         try {
-            const res = await ipc.db?.getLocalLabels({zaloId: activeZaloId});
+            const res = await DataAccessor.getLocalLabels({zaloId: activeZaloId});
             const labels: any[] = res?.labels || [];
             for (const label of labels) {
                 if (label?.id == null) continue;
-                await ipc.db?.deleteLocalLabel({id: label.id});
+                await DataAccessor.deleteLocalLabel({id: label.id});
             }
         } catch { /* ignore */
         }
@@ -84,7 +85,7 @@ export async function syncZaloLabelsToLocalDB(opts: SyncZaloLabelsOptions): Prom
         const textColor = '#ffffff';
 
         try {
-            await ipc.db?.upsertLocalLabel({
+            await DataAccessor.upsertLocalLabel({
                 label: {
                     name,
                     color,

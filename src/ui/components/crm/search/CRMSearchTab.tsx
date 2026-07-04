@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
 import { useChatStore } from '@/store/chatStore';
+import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import { extractApiError } from '@/utils/apiError';
 import PhoneDisplay from '../../common/PhoneDisplay';
@@ -27,7 +28,8 @@ export default function CRMSearchTab() {
   const { getActiveAccount } = useAccountStore();
   const activeAccountId = useAccountStore((s) => s.activeAccountId);
   const { showNotification, openQuickChat } = useAppStore();
-  const contactList = useChatStore((s) => s.contacts[activeAccountId || ''] || []);
+  // Không subscribe để tránh re-render khi contacts thay đổi
+  // Đọc trực tiếp từ store khi cần (dòng 158)
 
   const getAuth = () => {
     const acc = getActiveAccount();
@@ -48,9 +50,12 @@ export default function CRMSearchTab() {
   };
 
   // Load friends from DB to check if already friends
+  const friendsLoadedRef = useRef<string | null>(null);
   useEffect(() => {
     if (!activeAccountId) return;
-    ipc.db?.getFriends({ zaloId: activeAccountId }).then(res => {
+    if (friendsLoadedRef.current === activeAccountId) return;
+    friendsLoadedRef.current = activeAccountId;
+    DataAccessor.getFriends({ zaloId: activeAccountId }).then(res => {
       if (res?.friends) setFriends(res.friends);
     }).catch(() => {});
   }, [activeAccountId]);
@@ -151,7 +156,8 @@ export default function CRMSearchTab() {
             </button>
             <div className="flex-1 min-w-0">
               {(() => {
-                const searchContact = contactList.find(c => c.contact_id === searchResult.uid);
+                const contacts = useChatStore.getState().contacts[activeAccountId || ''] || [];
+                const searchContact = contacts.find(c => c.contact_id === searchResult.uid);
                 const searchAlias = searchContact?.alias || '';
                 const searchRealName = searchResult.display_name || searchResult.zalo_name || '';
                 const searchDisplayName = searchAlias || searchRealName;

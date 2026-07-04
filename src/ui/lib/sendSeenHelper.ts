@@ -1,4 +1,5 @@
-import ipc from '@/lib/ipc';
+import ipc from '@/lib/ipc'
+import DataAccessor from '@/lib/data/DataAccessor';;
 import { useAccountStore } from '@/store/accountStore';
 
 /**
@@ -31,7 +32,7 @@ export function sendSeenForThread(
     const finalAuth = auth;
 
     // Lấy tin nhắn cuối cùng từ DB để build params cho sendSeenEvent
-    ipc.db?.getMessages({ zaloId, threadId, limit: 1, offset: 0 }).then((res: any) => {
+    DataAccessor.getMessages({ zaloId, threadId, limit: 1, offset: 0 }).then((res: any) => {
       const msgs = res?.messages || [];
       if (msgs.length === 0) return;
       const lastMsg = msgs[0];

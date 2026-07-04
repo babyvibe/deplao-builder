@@ -80,6 +80,12 @@ interface ChatStore {
   activeThreadId: string | null;
   activeThreadType: number;
   replyTo: MessageItem | null;
+  /** Employee mode: đang load conversations từ Boss REST API */
+  conversationsLoading: boolean;
+  setConversationsLoading: (v: boolean) => void;
+  /** Employee mode: đang load messages từ Boss REST API */
+  messagesLoading: boolean;
+  setMessagesLoading: (v: boolean) => void;
   /** Draft messages per thread: key = `${zaloId}_${threadId}` → text */
   drafts: Record<string, string>;
   /** Draft updated_at per thread: key = `${zaloId}_${threadId}` → epoch ms */
@@ -143,7 +149,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   drafts: {},
   draftTimestamps: {},
   channelFilter: 'all',
+  conversationsLoading: false,
+  messagesLoading: false,
 
+  setConversationsLoading: (v) => set({ conversationsLoading: v }),
+  setMessagesLoading: (v) => set({ messagesLoading: v }),
   setChannelFilter: (filter) => set({ channelFilter: filter }),
 
   getFilteredContacts: (accountId) => {

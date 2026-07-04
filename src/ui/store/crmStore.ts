@@ -131,7 +131,7 @@ export const useCRMStore = create<CRMStore>((set) => ({
   sortBy: 'name',
   sortDir: 'asc',
   page: 0,
-  pageSize: 500,
+  pageSize: 200,
   contactsLoading: false,
   campaignsLoading: false,
   queueStatus: {},

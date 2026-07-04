@@ -14,6 +14,67 @@ interface VersionEntry {
 // ─── Changelog data - thêm entry mới vào ĐẦU mảng khi có bản cập nhật ────────
 const CHANGELOG: VersionEntry[] = [
   {
+    version: '26.7.0',
+    date: '07/2026',
+    type: 'major',
+    highlights: [
+      '🏛️ Kiến trúc mới: thay sync data toàn bộ bằng REST API — Employee gọi dữ liệu qua Boss theo từng request, ổn định & bảo mật hơn',
+      '📁 Thư viện Media dùng chung — ảnh/file/video có thư mục, upload, tìm kiếm, chọn nhanh khi chat',
+      '📡 Socket.IO thay SSE — kết nối realtime giữa Boss & Employee ổn định hơn, ít mất kết nối',
+      '⚡ PageLoading toàn app — skeleton loading cho employee mode, không còn màn hình trắng khi chờ REST API',
+      '🔁 Kết nối Boss linh hoạt — popup reconnect, ngắt kết nối, lưu mật khẩu, hiển thị latency',
+      '📦 Media Cache tự động — employee xem ảnh/video từ workspace cache, download background từ Boss',
+    ],
+    changes: [
+      {
+        category: 'new',
+        items: [
+          'Thư viện Media (Library): quản lý ảnh/file/video tập trung, có thư mục, upload qua multipart, thumbnail tự động, chọn từ library khi chat',
+          'DataAccessor — lớp trung gian routing UI → IPC hoặc REST API tuỳ mode, không sửa UI component',
+          'REST API cho employee: /api/query/* (read), /api/command/* (write), /api/boot (init), /api/media/* (file), /api/library/*, /api/search/*',
+          'RestQueryService — REST client cho employee, tự động health check, onStatusChange callback, cache',
+          'RestApiHandlers (986 dòng) — 50+ handler: messages, contacts, labels, flags, pins, notes, workflows, campaigns, AI, analytics, library...',
+          'MediaCacheService — cache media local cho employee, cascade: workspace → cache → Boss → CDN',
+          'EmployeeCache — in-memory cache conversations/messages/labels cho employee, SSE push tự update',
+          'Socket.IO — kết nối realtime giữa Boss & Employee thay SSE, attach cùng HTTP server relay',
+          'PageLoading component — skeleton loading 4 variants (full/inline/skeleton/overlay), dùng xuyên suốt app',
+          'EmployeeSettings: thiết kế lại với tabs Employees/Relay, quick actions start/stop tunnel, search nhân viên, groups panel',
+          'TopBar: popup reconnect Boss, ngắt kết nối, lưu mật khẩu localStorage, hiển thị latency real-time',
+          'Database: FTS5 full-text search migration, media library tables, withDbPathAsync method',
+          'Group member info auto-fetch — khi có tin nhắn nhóm từ sender chưa có tên/avatar, tự getUserInfo từng người, throttle 60s',
+        ],
+      },
+      {
+        category: 'improved',
+        items: [
+          'Xoá cơ chế sync data toàn bộ (syncIpc.ts) — employee không cần chờ sync hàng GB khi vào app',
+          'HttpRelayService viết lại lớn: REST API routing, REST cache 1.5s, Socket.IO, xoá sync endpoints',
+          'Tất cả UI components chuyển từ ipc.db.xxx → DataAccessor (messages, contacts, labels, notes, analytics, workflow, AI, integration...)',
+          'Dashboard: loading state với PageLoading, xoá nút "Đồng bộ từ Boss" cũ',
+          'ChatWindow: PageLoading khi load thread, cascade media URL cho employee, fetch thành viên nhóm tự động',
+          'MessageBubbles: cascade URL workspace cache → Boss → CDN, employee sticker loading',
+          'MediaSection: dùng DataAccessor, reload labels/media khi có change',
+          'AnalyticsPage: DataAccessor + PageLoading thay skeleton local cũ',
+          'EmployeeLoginScreen: xoá sync progress UI, dùng RestQueryService login',
+          'HttpClientService: tái cấu trúc giảm từ 576 xuống ~200 dòng',
+          'fileIpc: media:resolveUrl với cache-first, kiểm tra workspace media directory trước',
+          'EventBroadcaster: thêm 10+ event mới (library, unread, conversationDeleted, contactProfileUpdated, tagChanged...)',
+          'DatabaseService: thêm Logger.log cho getMessages để debug employee routing',
+          'WorkflowList: dùng DataAccessor cho employee, cache tránh redundant load',
+        ],
+      },
+      {
+        category: 'fixed',
+        items: [
+          'Sửa lỗi employee không load được media local — cascade URL qua workspace cache → Boss → CDN',
+          'Sửa lỗi employee login mất token khi restart — lưu & restore từ workspace',
+          'Sửa lỗi SSE half-open socket không phát hiện — Socket.IO quản lý connection lifecycle',
+          'Sửa lỗi group member hiển thị UID thay vì tên — auto-fetch getUserInfo từng member',
+        ],
+      },
+    ],
+  },
+  {
     version: '26.6.7',
     date: '06/2026',
     type: 'minor',

@@ -8,6 +8,7 @@ import {
   PieChart, Pie, Cell, AreaChart, Area, Legend,
 } from 'recharts';
 import type { ErpCalendarEvent, ErpTask } from '../../../../models/erp';
+import PageLoading from '@/components/common/PageLoading';
 
 const CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'];
 
@@ -292,7 +293,7 @@ export default function ErpReportsPage() {
           <div key={section.title} className="rounded-xl border border-gray-700/60 bg-gray-800/50 p-4">
             <h3 className="text-sm font-semibold text-white mb-3">{section.title}</h3>
             {loading ? (
-              <div className="text-sm text-gray-500">Đang tổng hợp dữ liệu…</div>
+              <PageLoading variant="inline" text="Đang tải báo cáo..." />
             ) : section.items.length === 0 ? (
               <div className="text-sm text-gray-500">{section.empty}</div>
             ) : (

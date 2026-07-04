@@ -15,7 +15,6 @@ import { registerAIAssistantIpc } from './ipc/aiAssistantIpc';
 import { registerUtilIpc } from './ipc/utilIpc';
 import { registerEmployeeIpc } from './ipc/employeeIpc';
 import { registerRelayIpc } from './ipc/relayIpc';
-import { registerSyncIpc } from './ipc/syncIpc';
 import { registerWorkspaceIpc } from './ipc/workspaceIpc';
 import { registerFacebookIpc, reconnectAllFBAccounts } from './ipc/facebookIpc';
 import { registerProxyIpc } from './ipc/proxyIpc';
@@ -25,6 +24,7 @@ import { registerErpNoteIpc } from './ipc/erpNoteIpc';
 import { registerErpNotificationIpc } from './ipc/erpNotificationIpc';
 import { registerErpHrmIpc } from './ipc/erpHrmIpc';
 import { registerLockScreenIpc } from './ipc/lockScreenIpc';
+import { registerLibraryIpc } from './ipc/libraryIpc';
 import WorkspaceManager from '../src/utils/WorkspaceManager';
 import HttpConnectionManager from '../src/services/http/HttpConnectionManager';
 import WorkflowEngineService from '../src/services/workflow/WorkflowEngineService';
@@ -817,7 +817,6 @@ app.whenReady().then(async () => {
   registerUtilIpc();
   registerEmployeeIpc();
   registerRelayIpc();
-  registerSyncIpc();
   registerWorkspaceIpc(mainWindow);
   registerFacebookIpc();
   registerProxyIpc();
@@ -827,6 +826,7 @@ app.whenReady().then(async () => {
   registerErpNotificationIpc();
   registerErpHrmIpc();
   registerLockScreenIpc();
+  registerLibraryIpc();
   // Auto-reconnect Facebook accounts - start ngay, không đợi 4s
   reconnectAllFBAccounts().catch(err => {
     console.error('[main] reconnectAllFBAccounts error:', err.message);

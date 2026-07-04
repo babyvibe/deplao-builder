@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import ipc from '@/lib/ipc';
+import PageLoading from '@/components/common/PageLoading';
+import DataAccessor from '@/lib/data/DataAccessor';
+import { useWorkspaceStore } from '@/store/workspaceStore';
 import AIAssistantDetailPage from './AIAssistantDetailPage';
 import AccountAssignmentPopup from '@/components/chat/AccountAssignmentPopup';
 
@@ -30,14 +32,16 @@ export default function AIAssistantPage() {
   const [creating, setCreating] = useState(false);
   const [showAccountPopup, setShowAccountPopup] = useState(false);
 
+  const workspaceId = useWorkspaceStore(s => s.activeWorkspaceId);
+
   const loadList = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await ipc.ai?.listAssistants();
+      const res = await DataAccessor.getAssistants();
       if (res?.success) setAssistants(res.assistants || []);
     } catch {}
     setLoading(false);
-  }, []);
+  }, [workspaceId]); // ← re-fetch khi chuyển workspace
 
   useEffect(() => { loadList(); }, [loadList]);
 
@@ -75,12 +79,7 @@ export default function AIAssistantPage() {
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">
         {loading ? (
-          <div className="flex items-center justify-center h-40">
-            <svg className="animate-spin w-6 h-6 text-blue-400" viewBox="0 0 24 24" fill="none">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-            </svg>
-          </div>
+          <PageLoading variant="inline" text="Đang tải trợ lý AI..." />
         ) : assistants.length === 0 ? (
           <div className="text-center py-20">
             <div className="text-5xl mb-4">🤖</div>

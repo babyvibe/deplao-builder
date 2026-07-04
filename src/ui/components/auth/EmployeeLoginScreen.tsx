@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import ipc from '@/lib/ipc';
 import { useEmployeeStore } from '@/store/employeeStore';
 import { useAppStore } from '@/store/appStore';
+import RestQueryService from '../../../services/http/RestQueryService';
 
 interface Props {
     onBossMode: () => void;
@@ -10,7 +11,10 @@ interface Props {
 
 export default function EmployeeLoginScreen({ onBossMode, onEmployeeConnected }: Props) {
     const { showNotification } = useAppStore();
-    const { setMode, setCurrentEmployee, setPermissions, setAssignedAccounts, setBossUrl, setBossConnected, setSyncProgress, setLastSyncTime } = useEmployeeStore();
+    const {
+        setMode, setCurrentEmployee, setPermissions, setAssignedAccounts,
+        setBossUrl, setBossConnected, setToken,
+    } = useEmployeeStore();
 
     const [tab, setTab] = useState<'boss' | 'employee'>('boss');
     const [bossAddress, setBossAddress] = useState('');
@@ -19,17 +23,6 @@ export default function EmployeeLoginScreen({ onBossMode, onEmployeeConnected }:
     const [connecting, setConnecting] = useState(false);
     const [error, setError] = useState('');
 
-    // Detect if user entered a full URL (tunnel) vs IP:PORT (LAN)
-    const isTunnelUrl = bossAddress.startsWith('https://') || bossAddress.startsWith('http://');
-    // Build bossUrl for connectToBoss (IP:PORT or full tunnel URL)
-    const bossUrl = isTunnelUrl ? bossAddress.trim() : `${bossAddress.trim()}`;
-
-    // Sync progress state
-    const [syncing, setSyncing] = useState(false);
-    const [syncPhase, setSyncPhase] = useState('');
-    const [syncPercent, setSyncPercent] = useState(0);
-    const [syncDone, setSyncDone] = useState(false);
-
     // Load saved values from localStorage
     useEffect(() => {
         try {
@@ -37,7 +30,6 @@ export default function EmployeeLoginScreen({ onBossMode, onEmployeeConnected }:
             if (saved) {
                 const data = JSON.parse(saved);
                 if (data.bossAddress) setBossAddress(data.bossAddress);
-                else if (data.bossIp) setBossAddress(data.bossIp + (data.bossPort ? `:${data.bossPort}` : ':9900'));
                 if (data.username) setUsername(data.username);
             }
         } catch { /* */ }
@@ -50,159 +42,85 @@ export default function EmployeeLoginScreen({ onBossMode, onEmployeeConnected }:
 
     const handleEmployeeLogin = async () => {
         setError('');
-        if (!bossAddress.trim()) { setError('Vui lòng nhập địa chỉ BOSS (IP:Port hoặc tunnel URL)'); return; }
+        if (!bossAddress.trim()) { setError('Vui lòng nhập địa chỉ BOSS'); return; }
         if (!username.trim()) { setError('Vui lòng nhập tên đăng nhập'); return; }
         if (!password) { setError('Vui lòng nhập mật khẩu'); return; }
 
         setConnecting(true);
 
         try {
-            // Step 1: Authenticate locally to get JWT token
-            const authRes = await ipc.employee?.login(username.trim(), password);
-            if (!authRes?.success || !authRes.token) {
-                setError(authRes?.error || 'Đăng nhập thất bại');
+            // Step 1: Gọi REST API login trực tiếp (không qua IPC local)
+            const loginRes = await RestQueryService.login(
+                bossAddress.trim(),
+                username.trim(),
+                password
+            );
+
+            if (!loginRes.success) {
+                setError(loginRes.error || 'Đăng nhập thất bại');
                 setConnecting(false);
                 return;
             }
 
-            // Step 2: Connect to Boss via main process
-            const connectRes = await ipc.employee?.connectToBoss(bossUrl, authRes.token);
-            if (!connectRes?.success) {
-                setError(connectRes?.error || 'Kết nối tới BOSS thất bại');
+            const { token, employee, snapshot } = loginRes.data || {};
+
+            if (!token || !employee) {
+                setError('Phản hồi từ BOSS không hợp lệ');
                 setConnecting(false);
                 return;
             }
 
-            // Step 3: Set mode in main process
+            // Step 2: Init RestQueryService với token
+            RestQueryService.getInstance().init(bossAddress.trim(), token);
+            // Theo dõi trạng thái kết nối → header cập nhật real-time
+            RestQueryService.getInstance().setOnStatusChange((connected, latency) => {
+              useEmployeeStore.getState().setBossConnected(connected);
+              if (latency > 0) useEmployeeStore.getState().setLatency(latency);
+            });
+
+            // Step 3: Set mode và lưu thông tin
             await ipc.employee?.setMode('employee');
 
-            // Save for next time
+            // Step 3b: Mở SSE connection để nhận realtime events (không sync data)
+            // connectToBoss sẽ start HttpClientService → heartbeat + SSE stream
+            const connectRes = await ipc.employee?.connectToBoss(bossAddress.trim(), token);
+            if (!connectRes?.success) {
+                console.warn('[EmployeeLogin] SSE connection failed, realtime events disabled');
+            }
+
+            // Lưu login cho lần sau
             localStorage.setItem('deplao_employee_login', JSON.stringify({
                 bossAddress: bossAddress.trim(),
                 username: username.trim(),
             }));
 
-            // Update store
-            const emp = authRes.employee;
+            // Step 4: Update store
             const permsMap: Record<string, boolean> = {};
-            if (emp.permissions) {
-                for (const p of emp.permissions) {
+            if (employee.permissions) {
+                for (const p of employee.permissions) {
                     permsMap[p.module] = p.can_access;
                 }
             }
 
-            setCurrentEmployee(emp);
+            setCurrentEmployee(employee);
             setPermissions(permsMap);
-            setAssignedAccounts(emp.assigned_accounts || []);
-            setBossUrl(bossUrl);
+            setAssignedAccounts(employee.assigned_accounts || []);
+            setBossUrl(bossAddress.trim());
             setBossConnected(true);
+            setToken(token);
             setMode('employee');
             setConnecting(false);
 
-            // Step 4: Start data sync
-            const assignedAccounts = emp.assigned_accounts || [];
-            if (assignedAccounts.length > 0) {
-                setSyncing(true);
-                setSyncPhase('Đang kiểm tra dữ liệu...');
-                setSyncPercent(0);
-                setSyncProgress({ phase: 'Đang đồng bộ...', percent: 0 });
+            showNotification(`Đăng nhập thành công! Xin chào ${employee.display_name}`, 'success');
 
-                try {
-                    // Check if we have a previous sync → delta, otherwise full
-                    const statusRes = await ipc.sync?.getStatus();
-                    const lastSync = statusRes?.lastSyncTs || 0;
-
-                    let syncRes: any;
-                    if (lastSync > 0) {
-                        setSyncPhase('Đang cập nhật dữ liệu mới...');
-                        syncRes = await ipc.sync?.requestDeltaSync(lastSync);
-                    } else {
-                        setSyncPhase('Đang tải dữ liệu lần đầu...');
-                        syncRes = await ipc.sync?.requestFullSync(assignedAccounts);
-                    }
-
-                    if (syncRes?.success) {
-                        setSyncPercent(100);
-                        setSyncPhase('Hoàn tất đồng bộ!');
-                        setLastSyncTime(Date.now());
-                        setSyncProgress({ phase: 'Hoàn tất', percent: 100 });
-                    } else {
-                        setSyncPhase(`⚠️ ${syncRes?.error || 'Lỗi đồng bộ'}`);
-                        setSyncProgress(null);
-                    }
-                } catch (syncErr: any) {
-                    setSyncPhase(`⚠️ ${syncErr.message}`);
-                    setSyncProgress(null);
-                }
-
-                setSyncing(false);
-                setSyncDone(true);
-            } else {
-                setSyncDone(true);
-            }
-
-            showNotification(`Đăng nhập thành công! Xin chào ${emp.display_name}`, 'success');
+            // Step 5: Kết nối xong → vào app. Data sẽ load lazy qua DataAccessor.
+            onEmployeeConnected();
 
         } catch (err: any) {
             setError(err.message || 'Lỗi kết nối');
             setConnecting(false);
         }
     };
-
-    const handleContinueAfterSync = () => {
-        onEmployeeConnected();
-    };
-
-    // ─── Sync progress screen ──────────────────────────────────────
-    if (syncing || syncDone) {
-        return (
-            <div className="flex-1 flex items-center justify-center bg-gray-900 p-4">
-                <div className="w-full max-w-md bg-gray-800 border border-gray-700 rounded-2xl shadow-2xl overflow-hidden">
-                    <div className="px-6 pt-6 pb-4 text-center">
-                        <h1 className="text-xl font-bold text-white mb-1">Deplao</h1>
-                        <p className="text-sm text-gray-400">Đồng bộ dữ liệu</p>
-                    </div>
-
-                    <div className="px-6 pb-6 space-y-4">
-                        {/* Progress bar */}
-                        <div>
-                            <div className="flex justify-between text-xs text-gray-400 mb-1.5">
-                                <span>{syncPhase}</span>
-                                <span>{syncPercent}%</span>
-                            </div>
-                            <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden">
-                                <div
-                                    className={`h-full rounded-full transition-all duration-500 ${
-                                        syncPercent >= 100 ? 'bg-green-500' : 'bg-blue-500'
-                                    }`}
-                                    style={{ width: `${Math.min(syncPercent, 100)}%` }}
-                                />
-                            </div>
-                        </div>
-
-                        {syncing && (
-                            <p className="text-xs text-gray-500 text-center animate-pulse">
-                                ⏳ Vui lòng đợi, đang đồng bộ dữ liệu từ BOSS...
-                            </p>
-                        )}
-
-                        {syncDone && (
-                            <button
-                                onClick={handleContinueAfterSync}
-                                className="w-full py-3 bg-green-600 hover:bg-green-500 text-white font-medium rounded-xl transition-colors"
-                            >
-                                ✅ Tiếp tục vào ứng dụng
-                            </button>
-                        )}
-                    </div>
-
-                    <div className="px-6 py-3 border-t border-gray-700/50 text-center">
-                        <p className="text-[10px] text-gray-600">Deplao - Quản lý Zalo & Facebook đa tài khoản</p>
-                    </div>
-                </div>
-            </div>
-        );
-    }
 
     // ─── Login screen ──────────────────────────────────────────────
     return (
@@ -258,16 +176,16 @@ export default function EmployeeLoginScreen({ onBossMode, onEmployeeConnected }:
                                 Kết nối tới máy Boss để nhận và quản lý tin nhắn. BOSS cần bật Relay Server.
                             </p>
 
-                            {/* Boss Address (IP:Port hoặc Tunnel URL) */}
+                            {/* Boss Address */}
                             <div>
                                 <label className="text-[11px] text-gray-500 mb-1 block">Địa chỉ BOSS</label>
                                 <input
                                     value={bossAddress} onChange={e => setBossAddress(e.target.value)}
-                                    placeholder="192.168.1.100:9900 hoặc https://xxxx.loca.lt"
+                                    placeholder="192.168.1.100:9900 hoặc https://xxx.trycloudflare.com"
                                     className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-sm text-gray-200 placeholder-gray-500"
                                 />
                                 <p className="text-[10px] text-gray-600 mt-1">
-                                    {isTunnelUrl
+                                    {bossAddress.includes('://')
                                         ? '🌐 Kết nối qua internet (Tunnel URL)'
                                         : '🏠 Kết nối qua LAN (IP:Port)'}
                                 </p>

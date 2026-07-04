@@ -1,5 +1,6 @@
 import DateInputVN from '@/components/common/DateInputVN';
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import { useAccountStore } from '@/store/accountStore';
 import { formatPhone } from '@/utils/phoneUtils';
@@ -174,8 +175,8 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
     setLoading(true);
     // Load logs + all campaigns in parallel
     const [logsRes, campsRes] = await Promise.all([
-      ipc.crm?.getSendLog({ zaloId: activeAccountId, opts: { limit: 2000 } }),
-      ipc.crm?.getCampaigns({ zaloId: activeAccountId }),
+      DataAccessor.getSendLog({ zaloId: activeAccountId, opts: { limit: 2000 } }),
+      DataAccessor.getCRMCampaigns({ zaloId: activeAccountId }),
     ]);
     if (logsRes?.success) setLogs(logsRes.logs);
     if (campsRes?.success) setAllCampaigns(campsRes.campaigns.map((c: any) => ({ id: c.id, name: c.name, campaign_type: c.campaign_type || 'message' })));

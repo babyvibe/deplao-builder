@@ -13,7 +13,7 @@
 
 > Phần mềm desktop quản lý Zalo & Facebook cá nhân Đa tài khoản tích hợp CRM, ERP, POS, Workflow và AI Assistant giúp đội nhóm bán hàng, chăm sóc khách hàng và marketing trên Zalo và Facebook vận hành tập trung trong một ứng dụng duy nhất.
 
-[![Version](https://img.shields.io/badge/version-26.6.7-22c55e)](#)
+[![Version](https://img.shields.io/badge/version-26.7.0-22c55e)](#)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-3b82f6)](#-runtime-requirements)
 [![Electron](https://img.shields.io/badge/Electron-41-47848f?logo=electron&logoColor=white)](#)
 [![React](https://img.shields.io/badge/React-18-61dafb?logo=react&logoColor=white)](#)
@@ -43,41 +43,41 @@
 <tr>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-Setup-26.6.7.exe">
-<img src="https://img.shields.io/badge/🪟_Windows_10/11-v26.6.7-0078d4?style=for-the-badge&logo=windows&logoColor=white" alt="Download Windows" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-Setup-26.7.0.exe">
+<img src="https://img.shields.io/badge/🪟_Windows_10/11-v26.7.0-0078d4?style=for-the-badge&logo=windows&logoColor=white" alt="Download Windows" />
 </a>
 
-<big><strong>Deplao-Setup-26.6.7.exe</strong></big>
+<big><strong>Deplao-Setup-26.7.0.exe</strong></big>
 
 </td>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.6.7-arm64.dmg">
-<img src="https://img.shields.io/badge/🍎_macOS_M1+-v26.6.7-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Apple Silicon" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.7.0-arm64.dmg">
+<img src="https://img.shields.io/badge/🍎_macOS_M1+-v26.7.0-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Apple Silicon" />
 </a>
 
-<big><strong>Deplao-26.6.7-arm64.dmg</strong></big>
+<big><strong>Deplao-26.7.0-arm64.dmg</strong></big>
 
 </td>
 </tr>
 <tr>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.6.7.AppImage">
-<img src="https://img.shields.io/badge/🐧_Ubuntu_Linux-v26.6.7-e95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Download Ubuntu" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.7.0.AppImage">
+<img src="https://img.shields.io/badge/🐧_Ubuntu_Linux-v26.7.0-e95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Download Ubuntu" />
 </a>
 
-<big><strong>Deplao-26.6.7.AppImage</strong></big><br>
+<big><strong>Deplao-26.7.0.AppImage</strong></big><br>
 <big>chạy mọi distro - <code>chmod +x</code> là dùng được</big>
 
 </td>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.6.7.dmg">
-<img src="https://img.shields.io/badge/🍎_macOS_Intel-v26.6.7-555555?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Intel" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.7.0.dmg">
+<img src="https://img.shields.io/badge/🍎_macOS_Intel-v26.7.0-555555?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Intel" />
 </a>
 
-<big><strong>Deplao-26.6.7.dmg</strong></big>
+<big><strong>Deplao-26.7.0.dmg</strong></big>
 
 </td>
 </tr>
@@ -282,15 +282,16 @@ mindmap
 
 ---
 
-### 3️⃣ Mô hình Boss ↔ Nhân viên
+### 3️⃣ Mô hình Boss ↔ Nhân viên (REST API)
 
 ```mermaid
 flowchart TB
     subgraph BOSS["🖥️ Máy BOSS - Local Workspace"]
         BZ("📱 Zalo / FB\nAccounts")
-        BSV("🔧 Services\nCRM · ERP · AI · Workflow")
+        BSV("🔧 Services\nCRM · ERP · AI · Workflow · Library")
         BSD[("🗄️ SQLite DB\n+ Media Files")]
-        BRL("🔁 Relay Server\nExpress + WebSocket :9900")
+        BRL("🔁 Relay Server\nHTTP REST + Socket.IO :9900")
+        BRS("📡 REST API Handlers\n/api/query | /api/command\n/api/library | /api/media")
     end
 
     subgraph NET["🌐 Kết nối"]
@@ -300,21 +301,32 @@ flowchart TB
 
     subgraph EMP["💻 Nhân Viên - Remote Workspace"]
         EA("📲 Deplao App\nEmployee Mode")
+        DA("🔀 DataAccessor\ntự động routing")
+        RQ("🌐 RestQueryService\nHTTP REST client")
         EP("🔐 Permission Filter\nerp · crm · workflow · ...")
         EU("👁️ UI\nchỉ thấy TK được gán")
+        MC("📦 Media Cache\nworkspace → Boss → CDN")
+        EC("⚡ Employee Cache\nconversations · messages · labels")
     end
 
     BZ --> BSV
     BSV <--> BSD
     BSV --> BRL
-    BRL <-->|HTTP + WS| LAN & WAN
-    LAN <-->|IPC relay| EA
-    WAN <-->|IPC relay| EA
+    BRL --> BRS
+    BRL <-->|HTTP REST + Socket.IO| LAN & WAN
+    LAN <-->|HTTP fetch| RQ
+    WAN <-->|HTTP fetch| RQ
+    RQ -->|/api/query · /api/command| BRS
+    RQ -->|/api/media| MC
+    RQ -->|/api/library| BSV
+    EA --> DA -->|boss mode → IPC| EU
+    DA -->|employee → REST| RQ
     EA --> EP --> EU
-    EP -.->|forward request| BRL
+    EA --> EC
+    EA --> MC
 ```
 
-> Nhân viên vẫn có **workspace riêng** (DB, media) trên máy. Do Zalo chỉ cho phép 1 kết nối cùng lúc, mọi request Zalo được **relay về Boss** để xử lý theo quyền đã cấp.
+> **Kiến trúc mới từ v26.7.0:** Employee gọi dữ liệu qua **REST API** (HTTP fetch → Boss) thay vì sync toàn bộ DB như trước. DataAccessor tự động routing: standalone/boss → IPC trực tiếp, employee → RestQueryService → Boss. Socket.IO thay SSE cho realtime event ổn định hơn. Media được cache local với cascade workspace → Boss → CDN. Employee vẫn có workspace riêng, nhưng không cần sync hàng GB khi vào app.
 
 ---
 

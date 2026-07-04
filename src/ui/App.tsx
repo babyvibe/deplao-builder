@@ -33,6 +33,7 @@ import useIsMobile from './hooks/useIsMobile';
 import ipc from './lib/ipc';
 import { sendSeenForThread } from './lib/sendSeenHelper';
 import { getFilteredUnreadCount } from './lib/badgeUtils';
+import DataAccessor from './lib/data/DataAccessor';
 import { playNotificationSound, showDesktopNotification } from './utils/NotificationService';
 import { checkAccountInitNeeds } from './lib/zaloInitUtils';
 import AddAccountModal from "@/components/auth/AddAccountModal";
@@ -40,6 +41,7 @@ import EmployeeConnectionBanner from "@/components/common/EmployeeConnectionBann
 import { useWorkspaceStore } from './store/workspaceStore';
 import { useEmployeeStore } from './store/employeeStore';
 import LockScreen from './components/auth/LockScreen';
+import { Spinner } from '@/components/common/PageLoading';
 
 const HEALTH_CHECK_INTERVAL_MS = 60 * 1000; // 1 phút
 const NETWORK_RECONNECT_COOLDOWN_MS = 15 * 1000; // 15 giây
@@ -377,8 +379,8 @@ export default function App() {
     if (!acc) return;
     const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
     await ipc.zalo?.acceptFriendRequest({ auth, userId });
-    await ipc.db?.removeFriendRequest({ zaloId, userId, direction: 'received' }).catch(() => {});
-    await ipc.db?.getFriendRequests({ zaloId, direction: 'received' }).then((res: any) => {
+    await DataAccessor.removeFriendRequest({ zaloId, userId, direction: 'received' }).catch(() => {});
+    await DataAccessor.getFriendRequests({ zaloId, direction: 'received' }).then((res: any) => {
       const count = res?.requests?.length ?? 0;
       if (useAccountStore.getState().activeAccountId === zaloId) {
         useCRMStore.getState().setRequestCount(count);
@@ -395,8 +397,8 @@ export default function App() {
     if (!acc) return;
     const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
     await ipc.zalo?.rejectFriendRequest({ auth, userId });
-    await ipc.db?.removeFriendRequest({ zaloId, userId, direction: 'received' }).catch(() => {});
-    await ipc.db?.getFriendRequests({ zaloId, direction: 'received' }).then((res: any) => {
+    await DataAccessor.removeFriendRequest({ zaloId, userId, direction: 'received' }).catch(() => {});
+    await DataAccessor.getFriendRequests({ zaloId, direction: 'received' }).then((res: any) => {
       const count = res?.requests?.length ?? 0;
       if (useAccountStore.getState().activeAccountId === zaloId) {
         useCRMStore.getState().setRequestCount(count);
@@ -487,19 +489,30 @@ export default function App() {
         empStore.setMode('employee');
         empStore.setCurrentEmployee(buildCurrentEmployeeFromWorkspace(ws));
         empStore.setBossUrl(ws.bossUrl || '');
+        empStore.setToken(ws.token || '');
+        console.log(`[App] 🪙 Token from workspace: ${ws.token ? ws.token.slice(0, 20) + '...' : 'EMPTY!'} bossUrl=${ws.bossUrl}`);
         empStore.setPermissions(buildPermissionsMap(ws.cachedPermissions));
         empStore.setAssignedAccounts(ws.cachedAssignedAccounts || []);
         empStore.setEmployees(ws.cachedEmployeesData || []);
 
+        // Init RestQueryService để employee có thể gọi REST API
+        if (ws.bossUrl && ws.token) {
+          try {
+            const mod = require('../services/http/RestQueryService');
+            if (mod?.default?.getInstance) {
+              mod.default.getInstance().init(ws.bossUrl, ws.token);
+            }
+          } catch {}
+        }
+
         // Use snapshot from event payload (merged by main process) - no IPC needed
+        // Snapshot chỉ là dữ liệu cache, KHÔNG đồng nghĩa đang connected
         const snapshot = ws._snapshot;
+        empStore.setBossConnected(!!ws._connected);
         if (snapshot) {
-          empStore.setBossConnected(true);
           if (snapshot.assignedAccounts?.length) empStore.setAssignedAccounts(snapshot.assignedAccounts);
           if (snapshot.permissions?.length) empStore.setPermissions(buildPermissionsMap(snapshot.permissions));
           if (snapshot.employeesData) empStore.setEmployees(snapshot.employeesData);
-        } else {
-          empStore.setBossConnected(!!ws._connected);
         }
       } else {
         empStore.reset();
@@ -527,17 +540,19 @@ export default function App() {
           useAccountStore.getState().setActiveAccount(nextAccounts[0].zalo_id);
         }
 
-        // Reload contacts from local DB (non-blocking, with timeout)
-        for (const acc of nextAccounts) {
-          try {
-            const contactsRes = await Promise.race([
-              ipc.db?.getContacts(acc.zalo_id),
-              new Promise(r => setTimeout(() => r(null), 5000)),
-            ]) as any;
-            if (contactsRes?.contacts) {
-              setContacts(acc.zalo_id, contactsRes.contacts);
-            }
-          } catch {}
+        // Load contacts: local workspace → từ DB; remote workspace → từ REST (để DataAccessor/ConversationList tự load)
+        if (ws.type !== 'remote') {
+          for (const acc of nextAccounts) {
+            try {
+              const contactsRes = await Promise.race([
+                ipc.db?.getContacts(acc.zalo_id),
+                new Promise(r => setTimeout(() => r(null), 5000)),
+              ]) as any;
+              if (contactsRes?.contacts) {
+                setContacts(acc.zalo_id, contactsRes.contacts);
+              }
+            } catch {}
+          }
         }
 
         // Load flags (non-blocking, with timeout)
@@ -570,9 +585,20 @@ export default function App() {
 
   // ─── Handle relay:initialState forwarded from SocketConnectionManager ────────
   // Fired when employee successfully connects to boss - contains permissions + assignedAccounts.
+  // NOTE: SSE watchdog reconnect cũng fire event này → throttle 30s tránh redundant REST calls
+  const lastInitialStateTs = useRef<Record<string, number>>({});
   useEffect(() => {
     const unsub = window.electronAPI?.on('workspace:initialState', async (data: any) => {
       if (!data?.workspaceId) return;
+
+      // Throttle: bỏ qua nếu đã xử lý trong 60s gần nhất (SSE reconnect loop)
+      const now = Date.now();
+      const lastTs = lastInitialStateTs.current[data.workspaceId] || 0;
+      if (now - lastTs < 60_000) {
+        return;
+      }
+      lastInitialStateTs.current[data.workspaceId] = now;
+
       console.log(`[App] workspace:initialState received:`, {
         workspaceId: data.workspaceId,
         assignedAccounts: data.assignedAccounts,
@@ -644,44 +670,32 @@ export default function App() {
       if (cachedAccounts.length > 0) {
         setAccounts(cachedAccounts as any);
         console.log(`[App] Accounts set from initialState: ${cachedAccounts.length} accounts`, cachedAccounts.map(a => ({ zalo_id: a.zalo_id, full_name: a.full_name })));
+
+        // Load conversations từ Boss qua REST API (chỉ khi chưa có)
+        const existingContacts = useChatStore.getState().contacts;
+        const needsLoad = cachedAccounts.some((acc: any) => !existingContacts[acc.zalo_id]?.length);
+        if (needsLoad) {
+          useChatStore.getState().setConversationsLoading(true);
+          (async () => {
+            for (const acc of cachedAccounts) {
+              try {
+                const result = await DataAccessor.getConversations(acc.zalo_id, 50, 0);
+                if (result?.items && result.items.length > 0) {
+                  console.log(`[App] ✅ Loaded ${result.items.length} conversations from REST for ${acc.zalo_id}`);
+                  useChatStore.getState().setContacts(acc.zalo_id, result.items);
+                } else {
+                  console.warn(`[App] ⚠️ REST returned 0 conversations for ${acc.zalo_id}`);
+                }
+              } catch (err) {
+                console.warn(`[App] Failed to load conversations from REST for ${acc.zalo_id}:`, err);
+              }
+            }
+            useChatStore.getState().setConversationsLoading(false);
+          })();
+        }
       } else {
         setAccounts([]);
         console.log(`[App] No accountsData in initialState`);
-      }
-
-      // ── Auto full-sync on first connection (no previous sync) ─────────────
-      const syncAccountIds = assignedAccounts;
-      if (syncAccountIds.length > 0) {
-        try {
-          const syncStatus = await ipc.sync?.getStatus();
-          if (!syncStatus?.lastSyncTs) {
-            // Retry up to 3 lần nếu full sync thất bại (timeout với 100k+ messages)
-            const maxRetries = 3;
-            const doSync = async (attempt: number) => {
-              try {
-                const res = await ipc.sync?.requestFullSync(syncAccountIds);
-                if (res?.success) {
-                  console.log(`[App] ✅ Full sync thành công (attempt ${attempt + 1})`);
-                } else if (attempt < maxRetries - 1) {
-                  console.warn(`[App] ⚠️ Full sync thất bại (attempt ${attempt + 1}): ${res?.error}. Retry sau 10s...`);
-                  await new Promise(r => setTimeout(r, 10000));
-                  return doSync(attempt + 1);
-                } else {
-                  console.error(`[App] ❌ Full sync thất bại sau ${maxRetries} lần: ${res?.error}`);
-                }
-              } catch (err) {
-                if (attempt < maxRetries - 1) {
-                  console.warn(`[App] ⚠️ Full sync exception (attempt ${attempt + 1}): ${err}. Retry sau 10s...`);
-                  await new Promise(r => setTimeout(r, 10000));
-                  return doSync(attempt + 1);
-                } else {
-                  console.error(`[App] ❌ Full sync exception sau ${maxRetries} lần:`, err);
-                }
-              }
-            };
-            doSync(0);
-          }
-        } catch { /* ignore sync status check failure */ }
       }
     });
     return () => unsub?.();
@@ -749,10 +763,24 @@ export default function App() {
       // Update employeeStore.bossConnected if this is the active workspace
       const activeWsId = useWorkspaceStore.getState().activeWorkspaceId;
       if (data.workspaceId === activeWsId) {
-        const empStore = useEmployeeStore.getState();
-        if (empStore.mode === 'employee') {
-          empStore.setBossConnected(!!data.connected);
-          if (data.latency !== undefined) empStore.setLatency(data.latency);
+        useEmployeeStore.getState().setBossConnected(!!data.connected);
+        if (data.latency !== undefined) useEmployeeStore.getState().setLatency(data.latency);
+      }
+    });
+    return () => unsub?.();
+  }, []);
+
+  // ─── Handle employee mode change (disconnect → standalone) ────────
+  useEffect(() => {
+    const unsub = window.electronAPI?.on('employee:modeChanged', (data: any) => {
+      if (data?.mode) {
+        useEmployeeStore.getState().setMode(data.mode);
+        if (data.mode !== 'employee') {
+          useEmployeeStore.getState().setCurrentEmployee(null);
+          useEmployeeStore.getState().setBossConnected(false);
+          useEmployeeStore.getState().setToken('');
+          useEmployeeStore.getState().setPermissions({});
+          useEmployeeStore.getState().setAssignedAccounts([]);
         }
       }
     });
@@ -1037,6 +1065,29 @@ export default function App() {
             empStore.setMode('employee');
             empStore.setCurrentEmployee(buildCurrentEmployeeFromWorkspace(activeWs));
             empStore.setBossUrl(activeWs.bossUrl || '');
+            empStore.setToken(activeWs.token || '');
+            console.log(`[App] 🪙 Recovery token: ${activeWs.token ? activeWs.token.slice(0, 20) + '...' : 'EMPTY!'}`);
+            // Init RestQueryService
+            if (activeWs.bossUrl && activeWs.token) {
+              try {
+                const mod = require('../services/http/RestQueryService');
+                if (mod?.default?.getInstance) {
+                  const rqs = mod.default.getInstance();
+                  rqs.init(activeWs.bossUrl, activeWs.token);
+                  rqs.setOnStatusChange((connected: boolean, latency: number) => {
+                    useEmployeeStore.getState().setBossConnected(connected);
+                    if (latency > 0) useEmployeeStore.getState().setLatency(latency);
+                  });
+                  console.log(`[App] ✅ RestQueryService initialized: ${activeWs.bossUrl}`);
+                } else {
+                  console.warn('[App] ❌ RestQueryService not available');
+                }
+              } catch (e) {
+                console.warn('[App] ❌ RestQueryService init error:', e);
+              }
+            } else {
+              console.warn(`[App] ⚠️ Cannot init RestQueryService: bossUrl=${!!activeWs.bossUrl} token=${!!activeWs.token}`);
+            }
             // Query actual connection status instead of hardcoding false
             // (connectAutoWorkspaces may have already connected by the time init reaches here)
             const connStatus = await ipc.workspace?.getConnectionStatus?.(activeWs.id).catch(() => null);
@@ -1153,10 +1204,7 @@ export default function App() {
         <TopBar />
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center">
-            <svg className="animate-spin w-10 h-10 text-blue-400 mx-auto mb-3" viewBox="0 0 24 24" fill="none">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
+            <Spinner size={10} className="mx-auto mb-3" />
             <p className="text-gray-400 text-sm">Đang khởi động...</p>
           </div>
         </div>
@@ -1233,15 +1281,15 @@ export default function App() {
                               // Message not in DOM - load messages around its timestamp
                               if (!activeAccountId || !activeThreadId) return;
                               try {
-                                const msgRes = await ipc.db?.getMessageById({ zaloId: activeAccountId, msgId });
+                                const msgRes = await DataAccessor.getMessageById({ zaloId: activeAccountId, msgId });
                                 const targetMsg = msgRes?.message;
                                 if (!targetMsg?.timestamp) return;
 
                                 const { setMessages } = useChatStore.getState();
-                                const aroundRes = await ipc.db?.getMessagesAround({
+                                const aroundRes = await DataAccessor.getMessagesAround({
                                   zaloId: activeAccountId,
                                   threadId: activeThreadId,
-                                  timestamp: targetMsg.timestamp,
+                                  msgId: String(targetMsg.msg_id || targetMsg.timestamp),
                                   limit: 80,
                                 });
                                 const aroundMsgs = aroundRes?.messages;
@@ -1488,9 +1536,9 @@ export default function App() {
             setActiveThread(threadId, threadType);
             clearUnread(zaloId, threadId);
             // Load messages
-            ipc.db?.markAsRead({ zaloId, contactId: threadId }).catch(() => {});
+            DataAccessor.markAsRead({ zaloId, contactId: threadId }).catch(() => {});
             sendSeenForThread(zaloId, threadId, threadType);
-            ipc.db?.getMessages({ zaloId, threadId, limit: 50, offset: 0 }).then((res: any) => {
+            DataAccessor.getMessages({ zaloId, threadId, limit: 50, offset: 0 }).then((res: any) => {
               const msgs = res?.messages || [];
               if (msgs.length > 0) {
                 setMessages(zaloId, threadId, [...msgs].reverse());

@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import ipc from '@/lib/ipc';
+import ipc from '@/lib/ipc'
+import DataAccessor from '@/lib/data/DataAccessor';;
 import { PinnedMsg, PinnedNote } from './PinnedMessages';
 import { useChatStore } from '@/store/chatStore';
 import { useAppStore } from '@/store/appStore';
 import { PollDetailView as SharedPollDetailView } from './PollView';
+import { Spinner } from '@/components/common/PageLoading';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -106,7 +108,7 @@ export default function GroupBoardPanel({
     try {
       const [pinsRes, pollsRes] = await Promise.all([
         ipc.db?.getPinnedMessages({ zaloId, threadId }),
-        ipc.db?.getMessagesByType({ zaloId, threadId, msgType: 'group.poll', limit: 100 }),
+        DataAccessor.getMessagesByType({ zaloId, threadId, msgType: 'group.poll', limit: 100 }),
       ]);
 
       if (pinsRes?.success) {
@@ -228,10 +230,7 @@ export default function GroupBoardPanel({
       <div className="flex-1 overflow-y-auto">
         {loading ? (
           <div className="flex items-center justify-center py-16">
-            <svg className="animate-spin w-6 h-6 text-blue-400" viewBox="0 0 24 24" fill="none">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-            </svg>
+            <Spinner size={6} />
           </div>
         ) : displayed.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-gray-500 gap-2">
@@ -477,10 +476,7 @@ function PollBoardCard({ poll, zaloId, threadId }: { poll: NonNullable<BoardItem
       {expanded && (
         loading && !detail ? (
           <div className="flex justify-center py-3 px-4">
-            <svg className="animate-spin w-4 h-4 text-blue-400" viewBox="0 0 24 24" fill="none">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-            </svg>
+            <Spinner size={4} />
           </div>
         ) : detail ? (
           <SharedPollDetailView
@@ -507,10 +503,7 @@ function PollBoardCard({ poll, zaloId, threadId }: { poll: NonNullable<BoardItem
           className="text-xs text-blue-400 hover:text-blue-300 font-semibold transition-colors flex items-center gap-1"
         >
           {loading && expanded ? (
-            <svg className="animate-spin w-3 h-3" viewBox="0 0 24 24" fill="none">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-            </svg>
+            <Spinner size={3} />
           ) : (
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <polyline points={expanded ? '18 15 12 9 6 15' : '6 9 12 15 18 9'}/>

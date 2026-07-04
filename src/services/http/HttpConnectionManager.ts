@@ -110,45 +110,8 @@ class HttpConnectionManager {
             options?.onAccountAccessUpdate?.(data);
         });
 
-        if (options?.onSyncProgress) service.setOnSyncProgress(options.onSyncProgress);
-
-        // Load lastSyncTs from workspace config for auto delta sync on reconnect
-        const ws = WorkspaceManager.getInstance().getWorkspaceById(workspaceId);
-        if (ws?.lastSyncTs) {
-            service.setLastSyncTs(ws.lastSyncTs);
-        }
-
-        // Auto delta sync + snapshot refresh when SSE reconnects after a disconnect
-        service.setOnSSEReconnected(async () => {
-            // Always refresh snapshot first - fixes stale listener_dead state
-            // when Boss's Zalo listeners came online after employee connected
-            try {
-                Logger.log(`[HttpConnectionManager] 🔄 SSE reconnected for "${workspaceId}" - refreshing snapshot`);
-                await service.requestSnapshot();
-            } catch (err: any) {
-                Logger.warn(`[HttpConnectionManager] Snapshot refresh failed for "${workspaceId}": ${err.message}`);
-            }
-
-            // Then delta sync to catch up missed messages
-            const syncTs = service.getLastSyncTs();
-            if (!syncTs) {
-                Logger.log(`[HttpConnectionManager] SSE reconnected for "${workspaceId}" - no lastSyncTs, skipping delta sync`);
-                return;
-            }
-            Logger.log(`[HttpConnectionManager] 🔄 SSE reconnected for "${workspaceId}" - running delta sync since ${new Date(syncTs).toISOString()}`);
-            try {
-                const result = await service.performDeltaSync(syncTs);
-                if (result.success && result.syncTs) {
-                    service.setLastSyncTs(result.syncTs);
-                    // Persist to workspace config so it survives app restart
-                    try {
-                        WorkspaceManager.getInstance().updateWorkspace(workspaceId, { lastSyncTs: result.syncTs } as any);
-                    } catch {}
-                }
-            } catch (err: any) {
-                Logger.warn(`[HttpConnectionManager] Auto delta sync failed for "${workspaceId}": ${err.message}`);
-            }
-        });
+        // Socket.IO tự động reconnect + catch-up (EventBuffer),
+        // không cần refresh snapshot khi reconnect nữa.
 
         const result = await service.connect(bossUrl, token);
         this.connecting.delete(workspaceId);

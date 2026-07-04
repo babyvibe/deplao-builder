@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import { AccountInfo } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
@@ -7,6 +8,7 @@ import AccountSelectorDropdown, { AccountOption } from '../../common/AccountSele
 import AccountMultiDropdown from '../../common/AccountMultiDropdown';
 import { syncZaloLabelsToLocalDB } from '@/lib/labelUtils';
 import { LabelEmojiPicker, KeyboardShortcutInput } from '../../common/LabelEmojiPicker';
+import PageLoading from '@/components/common/PageLoading';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type LabelSource = 'local' | 'zalo';
@@ -159,12 +161,7 @@ function ZaloLabelsSection({
 
   if (!activeZaloId) return <EmptyState icon="☁️" title="Chọn đúng 1 tài khoản" subtitle="Vui lòng chọn chính xác 1 tài khoản để xem nhãn trên Zalo." />;
   if (!isConnected) return <EmptyState icon="🔌" title="Tài khoản chưa kết nối" subtitle="Vui lòng kết nối tài khoản để xem nhãn Zalo." />;
-  if (loading) return (
-    <div className="text-center py-14">
-      <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3"/>
-      <p className="text-gray-500 text-sm">Đang tải nhãn từ Zalo...</p>
-    </div>
-  );
+  if (loading) return <PageLoading variant="skeleton" skeletonVariant="table" />;
   if (!labels.length) return (
     <div className="text-center py-14">
       <p className="text-3xl mb-2">🏷️</p>
@@ -849,7 +846,7 @@ export default function LabelSettings({ accounts, filterAccounts, searchText }: 
   // ─── Fetch ────────────────────────────────────────────────────────────────
   const fetchLocalLabels = async () => {
     try {
-      const res = await ipc.db?.getLocalLabels({});
+      const res = await DataAccessor.getLocalLabels({});
       if (res?.success) setLocalLabels(res.labels || []);
     } catch (err) { console.error(err); }
   };
@@ -900,13 +897,13 @@ export default function LabelSettings({ accounts, filterAccounts, searchText }: 
   const handleDeleteLabel = async (id: number) => {
     const ok = await showConfirm({ title: 'Xóa nhãn?', message: 'Nhãn sẽ bị gỡ khỏi tất cả hội thoại.', variant: 'danger' });
     if (!ok) return;
-    await ipc.db?.deleteLocalLabel({ id });
+    await DataAccessor.deleteLocalLabel({ id });
     fetchLocalLabels(); showNotification('Đã xóa nhãn');
   };
 
   const handleSaveLabel = async (data: Partial<LocalLabel>) => {
     if (!data.name || !data.color) return;
-    await (ipc.db?.upsertLocalLabel as any)({
+    await (DataAccessor.upsertLocalLabel as any)({
       label: {
         id: data.id, name: data.name, color: data.color,
         textColor: data.text_color, emoji: data.emoji || '',
@@ -922,7 +919,7 @@ export default function LabelSettings({ accounts, filterAccounts, searchText }: 
 
   const handleToggleLabelActive = async (item: LocalLabel) => {
     const newVal = (item.is_active ?? 1) === 1 ? 0 : 1;
-    await ipc.db?.setLocalLabelActive({ id: item.id, isActive: newVal });
+    await DataAccessor.setLocalLabelActive({ id: item.id, isActive: newVal });
     fetchLocalLabels();
   };
 
@@ -972,10 +969,10 @@ export default function LabelSettings({ accounts, filterAccounts, searchText }: 
 
   const handleCloneLocalLabels = async (sourceId: string, targetId: string) => {
     if (!sourceId || !targetId || sourceId === targetId) return;
-    const res = await ipc.db?.cloneLocalLabels({ sourceZaloId: sourceId, targetZaloId: targetId });
+    const res = await DataAccessor.cloneLocalLabels({ sourceZaloId: sourceId, targetZaloId: targetId });
     if (res?.success) {
       fetchLocalLabels(); setCloneLabelModal(false);
-      showNotification(`Đã sao chép ${res.count ?? ''} nhãn`);
+      showNotification(`Đã sao chép ${(res as any).count ?? ''} nhãn`);
     } else { showNotification(res?.error || 'Sao chép thất bại', 'error'); }
   };
 
@@ -990,7 +987,7 @@ export default function LabelSettings({ accounts, filterAccounts, searchText }: 
     const [moved] = reordered.splice(from, 1);
     reordered.splice(over, 0, moved);
     for (let i = 0; i < reordered.length; i++) {
-      await ipc.db?.setLocalLabelOrder({ id: reordered[i].id, order: i + 1 });
+      await DataAccessor.setLocalLabelOrder({ id: reordered[i].id, order: i + 1 });
     }
     fetchLocalLabels();
   };

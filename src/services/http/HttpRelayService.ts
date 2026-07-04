@@ -1,12 +1,18 @@
 import * as http from 'http';
 import * as os from 'os';
+import * as path from 'path';
+import * as fs from 'fs';
 import Logger from '../../utils/Logger';
 import EmployeeService from '../employee/EmployeeService';
 import DatabaseService from '../database/DatabaseService';
-import DataSyncService from '../employee/DataSyncService';
 import EventBroadcaster from '../event/EventBroadcaster';
 import ConnectionManager from '../../utils/ConnectionManager';
 import TunnelService from '../tunnel/TunnelService';
+import SocketIOService from '../socket/SocketIOService';
+import { handlers as restHandlers } from './handlers/RestApiHandlers';
+import { handleMediaRequest as handleMediaFileServe } from './handlers/MediaHandler';
+import { libraryHandlers } from './handlers/LibraryHandler';
+import FileStorageService from '../file/FileStorageService';
 
 interface RegisteredEmployee {
     employee_id: string;
@@ -20,8 +26,6 @@ interface RegisteredEmployee {
     ip_address: string;
     connected_at: number;
     consecutiveFailures: number;
-    /** Timestamp until which a heavy sync is in progress - offline check skips during this window */
-    syncingUntil?: number;
 }
 
 interface EmployeeSnapshot {
@@ -67,10 +71,18 @@ class HttpRelayService {
     private pinnedDbPath: string | null = null;
     private offlineCheckTimer: ReturnType<typeof setInterval> | null = null;
 
+    /** REST API response cache: key → { data, ts }.
+     *  Prevents redundant DB queries on every message (labels, flags, pins, etc.),
+     *  which block the main thread via synchronous better-sqlite3 and delay SSE writes. */
+    private restApiCache = new Map<string, { data: any; ts: number }>();
+    private static REST_CACHE_TTL_MS = 1500; // 1.5s cache for frequent read-only queries
+
     /** SSE clients: employeeId → ServerResponse (persistent event stream) */
     private sseClients = new Map<string, http.ServerResponse>();
     /** Keepalive timers for SSE connections */
     private sseKeepaliveTimers = new Map<string, ReturnType<typeof setInterval>>();
+    /** Last successful SSE write timestamp per employee (ms) — detect half-open sockets */
+    private sseLastWriteOk = new Map<string, number>();
     /**
      * Per-employee SSE event queue for WAN mode.
      * When pushViaSSE fails and there is no callbackUrl fallback, events are
@@ -216,6 +228,8 @@ class HttpRelayService {
         'erp:event:noteShared',
         'erp:event:departmentUpdated',
         'erp:event:employeeProfileUpdated',
+        // ─── ERP Phase 2 missing events ──────────────────────────────────
+        'erp:event:employeeProfileDeleted',
         // ─── CRM / Settings real-time sync ────────────────────────────
         'db:localLabelChanged',
         'db:localLabelThreadChanged',
@@ -226,7 +240,15 @@ class HttpRelayService {
         'db:pinnedConversationChanged',
         'db:contactFlagsChanged',
         'db:contactAliasChanged',
+        'db:unreadChanged',
+        'db:conversationDeleted',
+        'db:contactProfileUpdated',
+        'crm:tagChanged',
         'event:friendRequestSent',
+        // ─── Library events ────────────────────────────────────────────
+        'library:itemAdded',
+        'library:itemUpdated',
+        'library:itemDeleted',
         'event:friendRequestRemoved',
         'crm:queueUpdate',
         'crm:queueStatus',
@@ -315,6 +337,10 @@ class HttpRelayService {
         try {
             this.httpServer = http.createServer((req, res) => this.handleHttpRequest(req, res));
 
+            // Attach Socket.IO vào cùng HTTP server (path /socket.io)
+            // Employee dùng WebSocket thay SSE cho real-time event
+            SocketIOService.getInstance().attach(this.httpServer);
+
             this.hookEventBroadcaster();
             this.startOfflineCheck();
 
@@ -342,6 +368,8 @@ class HttpRelayService {
                 this.httpServer = null;
             }
             this.stopOfflineCheck();
+            // Stop Socket.IO
+            SocketIOService.getInstance().stop();
             // Close all SSE streams
             for (const [empId, res] of this.sseClients) {
                 try { res.end(); } catch {}
@@ -350,6 +378,7 @@ class HttpRelayService {
             }
             this.sseClients.clear();
             this.sseKeepaliveTimers.clear();
+            this.sseLastWriteOk.clear();
             // Stop tunnel if active
             if (this.tunnelActive) {
                 TunnelService.stop(this.port).catch(() => {});
@@ -410,6 +439,7 @@ class HttpRelayService {
             if (sseRes) { try { sseRes.end(); } catch {} this.sseClients.delete(employeeId); }
             const kt = this.sseKeepaliveTimers.get(employeeId);
             if (kt) { clearInterval(kt); this.sseKeepaliveTimers.delete(employeeId); }
+            this.sseLastWriteOk.delete(employeeId);
             this.employees.delete(employeeId);
             this.sseEventQueue.delete(employeeId); // clear any pending queue
             // End session in DB for online time tracking
@@ -452,20 +482,9 @@ class HttpRelayService {
             return this.handleSyncSnapshot(req, res);
         }
 
-        // ── Sync endpoints ────────────────────────────────────────────
-        if (req.method === 'GET' && url === '/api/sync/full') {
-            return this.handleSyncFull(req, res);
-        }
-        if (req.method === 'GET' && url.startsWith('/api/sync/delta')) {
-            return this.handleSyncDelta(req, res);
-        }
-
-        // ── Media ─────────────────────────────────────────────────────
-        if (req.method === 'POST' && url === '/api/media/request') {
-            return this.handleMediaRequest(req, res);
-        }
+        // ── Media upload (multipart) ──────────────────────────────────
         if (req.method === 'POST' && url === '/api/media/upload') {
-            return this.handleMediaUpload(req, res);
+            return this.handleMediaUploadMultipart(req, res);
         }
 
         // ── Healthcheck ───────────────────────────────────────────────
@@ -478,6 +497,33 @@ class HttpRelayService {
         // ── SSE event stream ──────────────────────────────────────────
         if (req.method === 'GET' && url === '/api/events/stream') {
             return this.handleSSEStream(req, res);
+        }
+
+        // ── REST API (New employee query/command endpoints) ──────────
+        if (req.method === 'GET' && url.startsWith('/api/boot')) {
+            return this.handleRestApi(req, res);
+        }
+        if (req.method === 'GET' && url.startsWith('/api/query/')) {
+            return this.handleRestApi(req, res);
+        }
+        if (req.method === 'GET' && url.startsWith('/api/search/')) {
+            return this.handleRestApi(req, res);
+        }
+        if (req.method === 'GET' && url.startsWith('/api/media/')) {
+            return this.handleRestApi(req, res);
+        }
+        if (req.method === 'POST' && url.startsWith('/api/command/')) {
+            return this.handleRestApi(req, res);
+        }
+        if ((req.method === 'PUT' || req.method === 'PATCH' || req.method === 'DELETE')
+            && url.startsWith('/api/command/')) {
+            return this.handleRestApi(req, res);
+        }
+        if (req.method === 'GET' && url.startsWith('/api/library/')) {
+            return this.handleRestApi(req, res);
+        }
+        if (req.method === 'POST' && url.startsWith('/api/library/')) {
+            return this.handleRestApi(req, res);
         }
 
         res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -558,7 +604,7 @@ class HttpRelayService {
     private handleHeartbeat(req: http.IncomingMessage, res: http.ServerResponse): void {
         this.readBody(req, (body) => {
             try {
-                const { callbackUrl } = JSON.parse(body);
+                const { callbackUrl, sseAlive } = JSON.parse(body);
                 const employee = this.authenticateRequest(req);
                 if (!employee) {
                     return this.json(res, 401, { success: false, error: 'Unauthorized' });
@@ -568,6 +614,20 @@ class HttpRelayService {
                 employee.consecutiveFailures = 0;
                 if (callbackUrl) {
                     employee.callbackUrl = callbackUrl;
+                }
+
+                // Socket.IO đã thay thế SSE - không cần detect half-open nữa
+                // (heartbeat chỉ để xác nhận employee còn alive)
+                if (false) {
+                    const sseRes = this.sseClients.get(employee.employee_id);
+                    if (sseRes) {
+                        Logger.warn(`[HttpRelayService] 🩺 Employee ${employee.display_name} reports SSE dead - closing half-open connection (events will queue)`);
+                        try { sseRes.end(); } catch {}
+                        this.sseClients.delete(employee.employee_id);
+                        const kt = this.sseKeepaliveTimers.get(employee.employee_id);
+                        if (kt) { clearInterval(kt); this.sseKeepaliveTimers.delete(employee.employee_id); }
+                        this.sseLastWriteOk.delete(employee.employee_id);
+                    }
                 }
 
                 this.json(res, 200, { success: true, ts: Date.now() });
@@ -665,7 +725,186 @@ class HttpRelayService {
             // Use handler registry
             const { ipcHandlerRegistry } = require('../../../electron/ipc/zaloIpc');
             const handler = ipcHandlerRegistry?.get(channel);
+
+            // ── Special: sendVideo from library → do full 3-step upload chain ──
+            if (channel === 'zalo:sendVideo' && params._libraryUuid) {
+                try {
+                    const fs = require('fs');
+                    const path = require('path');
+                    const libItem = this.runOnPinnedDb(() => {
+                        const LibraryService = require('../library/LibraryService').default;
+                        return LibraryService.getInstance().getItem(params._libraryUuid);
+                    });
+                    Logger.log(`[HttpRelayService] 🔄 Video libraryUuid=${params._libraryUuid}: found=${!!libItem}, file_path=${libItem?.file_path}`);
+
+                    if (!libItem || !libItem.file_path || !fs.existsSync(libItem.file_path)) {
+                        Logger.error(`[HttpRelayService] Library video file not found: ${libItem?.file_path}`);
+                        return { success: false, error: 'Không tìm thấy file video trong thư viện' };
+                    }
+
+                    const videoPath = libItem.file_path;
+                    const zaloId = params.zaloId || employee.assigned_accounts[0] || '';
+
+                    // Step 1: Extract video metadata & thumbnail
+                    const { execSync } = require('child_process');
+                    let duration = 0, width = 0, height = 0, thumbPath = '';
+
+                    try {
+                        const ffprobe = require('@ffprobe-installer/ffprobe')?.path || 'ffprobe';
+                        const probeOut = execSync(
+                            `"${ffprobe}" -v quiet -print_format json -show_format -show_streams "${videoPath}"`,
+                            { timeout: 10000 }
+                        ).toString();
+                        const probe = JSON.parse(probeOut);
+                        duration = parseFloat(probe.format?.duration) || 0;
+                        const videoStream = probe.streams?.find((s: any) => s.codec_type === 'video');
+                        width = parseInt(videoStream?.width) || 0;
+                        height = parseInt(videoStream?.height) || 0;
+                    } catch { /* ffprobe unavailable */ }
+
+                    // Try to find/create thumbnail
+                    try {
+                        const thumbDir = path.dirname(videoPath);
+                        thumbPath = path.join(thumbDir, `_thumb_${path.basename(videoPath)}.jpg`);
+                        if (!fs.existsSync(thumbPath)) {
+                            const ffmpegBin = (() => {
+                                try {
+                                    let fp = require('ffmpeg-static') as string;
+                                    if (fp.includes('app.asar') && !fp.includes('app.asar.unpacked')) {
+                                        fp = fp.replace('app.asar', 'app.asar.unpacked');
+                                    }
+                                    return fp;
+                                } catch { return 'ffmpeg'; }
+                            })();
+                            const seekSec = duration > 2 ? 1 : 0;
+                            execSync(
+                                `"${ffmpegBin}" -ss ${seekSec} -i "${videoPath}" -vframes 1 -q:v 2 "${thumbPath}" -y`,
+                                { timeout: 15000 }
+                            );
+                            if (!fs.existsSync(thumbPath)) thumbPath = '';
+                        }
+                    } catch { thumbPath = ''; }
+
+                    // Step 2: Upload video thumb to Zalo
+                    const uploadThumbIpc = ipcHandlerRegistry?.get('zalo:uploadVideoThumb');
+                    let thumbUrl = '';
+                    if (uploadThumbIpc && thumbPath && fs.existsSync(thumbPath)) {
+                        try {
+                            const thumbRes = await uploadThumbIpc(null, {
+                                ...params,
+                                thumbPath,
+                                zaloId,
+                                _fromRelay: true,
+                            });
+                            const resp = thumbRes?.response || thumbRes;
+                            thumbUrl = resp?.normalUrl || resp?.hdUrl || resp?.url || resp?.thumbUrl || resp?.fileUrl || resp?.href || '';
+                        } catch { /* thumb upload failed - send without thumb */ }
+                    }
+
+                    // Step 3: Upload video file to Zalo
+                    const uploadVideoIpc = ipcHandlerRegistry?.get('zalo:uploadVideoFile');
+                    let videoUrl = '';
+                    if (uploadVideoIpc) {
+                        try {
+                            const videoRes = await uploadVideoIpc(null, {
+                                ...params,
+                                videoPath,
+                                zaloId,
+                                _fromRelay: true,
+                            });
+                            const resp = videoRes?.response || videoRes;
+                            videoUrl = resp?.fileUrl || resp?.normalUrl || resp?.hdUrl || resp?.url || '';
+                        } catch (err: any) {
+                            Logger.error(`[HttpRelayService] Video upload error: ${err.message}`);
+                            return { success: false, error: 'Upload video thất bại' };
+                        }
+                    }
+                    if (!videoUrl) {
+                        return { success: false, error: 'Upload video thất bại' };
+                    }
+
+                    // Step 4: Send video message
+                    params.options = {
+                        videoUrl,
+                        thumbnailUrl: thumbUrl || videoUrl,
+                        duration: duration ? Math.round(duration * 1000) : undefined,
+                        width: width || undefined,
+                        height: height || undefined,
+                    };
+                    delete params.fileUrl;
+                    delete params._libraryUuid;
+                    delete params.filePath;
+
+                    const sendVideoHandler = ipcHandlerRegistry?.get('zalo:sendVideo');
+                    if (!sendVideoHandler) {
+                        return { success: false, error: 'sendVideo handler not found' };
+                    }
+                    const sendResult = await sendVideoHandler(null, params);
+                    return sendResult;
+                } catch (err: any) {
+                    Logger.error(`[HttpRelayService] Library video send error: ${err.message}`);
+                    return { success: false, error: err.message };
+                }
+            }
+
             if (handler) {
+                Logger.log(`[HttpRelayService] 🔄 ProxyAction: channel=${channel}, hasLibraryUuid=${!!params._libraryUuid}, hasLibraryUuids=${!!params._libraryUuids}, hasFilePath=${!!params.filePath}, filePathType=${typeof params.filePath}, paramsKeys=${Object.keys(params).join(',')}`);
+
+                // Resolve single library UUID → real file path (cho employee mode)
+                if (params._libraryUuid) {
+                    try {
+                        const libItem = this.runOnPinnedDb(() => {
+                            const LibraryService = require('../library/LibraryService').default;
+                            return LibraryService.getInstance().getItem(params._libraryUuid);
+                        });
+                        Logger.log(`[HttpRelayService] 🔄 Resolve libraryUuid=${params._libraryUuid}: found=${!!libItem}, file_path=${libItem?.file_path}, file_path_type=${typeof libItem?.file_path}`);
+
+                        if (!libItem) {
+                            Logger.error(`[HttpRelayService] ❌ Library item not found for uuid=${params._libraryUuid}`);
+                        } else if (!libItem.file_path) {
+                            Logger.error(`[HttpRelayService] ❌ Library item ${params._libraryUuid} has empty file_path`);
+                        } else if (typeof libItem.file_path !== 'string') {
+                            Logger.error(`[HttpRelayService] ❌ Library item ${params._libraryUuid} file_path is not a string: type=${typeof libItem.file_path}`);
+                        }
+
+                        if (libItem && libItem.file_path) {
+                            if (channel === 'zalo:sendImages') {
+                                params.filePaths = [libItem.file_path];
+                            } else {
+                                params.filePath = libItem.file_path;
+                            }
+                            delete params.fileUrl;
+                            delete params._libraryUuid;
+                        }
+                    } catch (err: any) {
+                        Logger.error(`[HttpRelayService] Library UUID resolve error: ${err.message}`);
+                    }
+                }
+
+                // Resolve array of library UUIDs → file paths (cho employee mode sendImages batch)
+                if (params._libraryUuids && Array.isArray(params._libraryUuids) && params._libraryUuids.length > 0) {
+                    try {
+                        const LibraryService = require('../library/LibraryService').default;
+                        const filePaths: string[] = [];
+                        for (const uuid of params._libraryUuids) {
+                            const libItem = this.runOnPinnedDb(() => LibraryService.getInstance().getItem(uuid));
+                            if (libItem?.file_path) {
+                                filePaths.push(libItem.file_path);
+                            } else {
+                                Logger.warn(`[HttpRelayService] Library item not found or no file_path: uuid=${uuid}`);
+                            }
+                        }
+                        if (filePaths.length > 0) {
+                            params.filePaths = filePaths;
+                            Logger.log(`[HttpRelayService] 🔄 Resolved ${filePaths.length}/${params._libraryUuids.length} library UUIDs → filePaths`);
+                        }
+                        delete params._libraryUuids;
+                        delete params.fileUrl;
+                    } catch (err: any) {
+                        Logger.error(`[HttpRelayService] Library UUIDs array resolve error: ${err.message}`);
+                    }
+                }
+                Logger.log(`[HttpRelayService] 🔄 Calling handler ${channel}: filePath=${params.filePath?.substring?.(0, 50) || '(empty)'}, filePathType=${typeof params.filePath}`);
                 const result = await handler(null, params);
 
                 // Log send actions + broadcast sender info to all workspaces
@@ -829,142 +1068,6 @@ class HttpRelayService {
         }
     }
 
-    private handleSyncFull(req: http.IncomingMessage, res: http.ServerResponse): void {
-        try {
-            const employee = this.authenticateRequest(req);
-            if (!employee) {
-                return this.json(res, 401, { success: false, error: 'Unauthorized' });
-            }
-
-            employee.lastSeen = Date.now();
-            // Give a 5-minute window for large payload export + tunnel transfer
-            employee.syncingUntil = Date.now() + 5 * 60_000;
-
-            Logger.log(`[HttpRelayService] Full sync requested by ${employee.display_name}`);
-            const payload = this.runOnPinnedDb(() =>
-                DataSyncService.getInstance().exportFullSync(employee.assigned_accounts, employee.employee_id)
-            );
-
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: true, payload, syncTs: payload.syncTs }));
-
-            // Reset timestamps after data is queued to OS buffer
-            employee.lastSeen = Date.now();
-            employee.syncingUntil = undefined;
-        } catch (err: any) {
-            Logger.error(`[HttpRelayService] Full sync error: ${err.message}`);
-            this.json(res, 500, { success: false, error: err.message });
-        }
-    }
-
-    private handleSyncDelta(req: http.IncomingMessage, res: http.ServerResponse): void {
-        try {
-            const employee = this.authenticateRequest(req);
-            if (!employee) {
-                return this.json(res, 401, { success: false, error: 'Unauthorized' });
-            }
-
-            employee.lastSeen = Date.now();
-
-            const urlObj = new URL(req.url || '', `http://localhost:${this.port}`);
-            const sinceTs = Number(urlObj.searchParams.get('sinceTs') || '0');
-
-            Logger.log(`[HttpRelayService] Delta sync requested by ${employee.display_name} since ${new Date(sinceTs).toISOString()}`);
-            const payload = this.runOnPinnedDb(() =>
-                DataSyncService.getInstance().exportDeltaSync(employee.assigned_accounts, sinceTs, employee.employee_id)
-            );
-
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: true, payload, syncTs: payload.syncTs }));
-        } catch (err: any) {
-            Logger.error(`[HttpRelayService] Delta sync error: ${err.message}`);
-            this.json(res, 500, { success: false, error: err.message });
-        }
-    }
-
-    // ─── Media handler ────────────────────────────────────────────────
-
-    private handleMediaRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
-        this.readBody(req, (body) => {
-            try {
-                const employee = this.authenticateRequest(req);
-                if (!employee) {
-                    return this.json(res, 401, { success: false, error: 'Unauthorized' });
-                }
-
-                const { filePath } = JSON.parse(body);
-                const fs = require('fs');
-                const path = require('path');
-
-                const FileStorageService = require('../file/FileStorageService').default;
-                const storagePath = FileStorageService.getMediaBasePath?.() || '';
-
-                const resolved = path.resolve(filePath);
-                if (storagePath && !resolved.startsWith(storagePath)) {
-                    return this.json(res, 403, { success: false, error: 'Access denied' });
-                }
-
-                if (!fs.existsSync(resolved)) {
-                    return this.json(res, 404, { success: false, error: 'File not found' });
-                }
-
-                const stat = fs.statSync(resolved);
-                res.writeHead(200, {
-                    'Content-Type': 'application/octet-stream',
-                    'Content-Disposition': `attachment; filename="${path.basename(resolved)}"`,
-                    'Content-Length': stat.size,
-                });
-                fs.createReadStream(resolved).pipe(res);
-            } catch (err: any) {
-                this.json(res, 500, { success: false, error: err.message });
-            }
-        });
-    }
-
-    // ─── Media upload (Employee → Boss) ───────────────────────────────
-
-    /**
-     * Handle media file uploaded from Employee.
-     * Saves file to Boss local storage and returns the absolute path on Boss.
-     * Used when Employee's local file paths are invalid on Boss.
-     */
-    private handleMediaUpload(req: http.IncomingMessage, res: http.ServerResponse): void {
-        this.readBody(req, (body) => {
-            try {
-                const employee = this.authenticateRequest(req);
-                if (!employee) {
-                    return this.json(res, 401, { success: false, error: 'Unauthorized' });
-                }
-
-                const { base64, filename, zaloId } = JSON.parse(body);
-                if (!base64 || !filename) {
-                    return this.json(res, 400, { success: false, error: 'Missing base64 or filename' });
-                }
-
-                const fs = require('fs');
-                const path = require('path');
-                const buffer = Buffer.from(base64, 'base64');
-                const FileStorageService = require('../file/FileStorageService').default;
-
-                let bossPath: string;
-                if (zaloId) {
-                    // Save to account media directory (media/zaloId/date/filename)
-                    bossPath = FileStorageService.saveBuffer(zaloId, buffer, filename);
-                } else {
-                    // Fallback: save to a shared uploads directory
-                    const dir = path.join(FileStorageService.getBaseDir(), '_uploads');
-                    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-                    bossPath = path.join(dir, filename);
-                    fs.writeFileSync(bossPath, buffer);
-                }
-
-                this.json(res, 200, { success: true, bossPath });
-            } catch (err: any) {
-                this.json(res, 500, { success: false, error: err.message });
-            }
-        });
-    }
-
     // ─── SSE stream handler ───────────────────────────────────────────
 
     private handleSSEStream(req: http.IncomingMessage, res: http.ServerResponse): void {
@@ -997,10 +1100,13 @@ class HttpRelayService {
             try { old.end(); } catch {}
             const oldKt = this.sseKeepaliveTimers.get(employee.employee_id);
             if (oldKt) clearInterval(oldKt);
+            this.sseLastWriteOk.delete(employee.employee_id);
         } else if (!old) {
             Logger.log(`[HttpRelayService] ℹ️ First SSE connection for ${employee.display_name} from ${req.socket?.remoteAddress || 'unknown'}`);
         }
         this.sseClients.set(employee.employee_id, res);
+        // Reset health tracking for the new SSE connection
+        this.sseLastWriteOk.set(employee.employee_id, Date.now());
 
         // ── Flush any events queued while SSE was disconnected ──
         const queued = this.sseEventQueue.get(employee.employee_id) || [];
@@ -1025,11 +1131,15 @@ class HttpRelayService {
 
         // Keepalive ping every 25s to prevent proxy/tunnel timeout
         const keepalive = setInterval(() => {
-            try { res.write(': ping\n\n'); } catch {
+            try {
+                res.write(': ping\n\n');
+                this.sseLastWriteOk.set(employee.employee_id, Date.now());
+            } catch {
                 clearInterval(keepalive);
                 if (this.sseClients.get(employee.employee_id) === res) {
                     this.sseClients.delete(employee.employee_id);
                     this.sseKeepaliveTimers.delete(employee.employee_id);
+                    this.sseLastWriteOk.delete(employee.employee_id);
                 }
             }
         }, 25_000);
@@ -1050,22 +1160,1036 @@ class HttpRelayService {
             if (this.sseClients.get(employee.employee_id) === res) {
                 this.sseClients.delete(employee.employee_id);
                 this.sseKeepaliveTimers.delete(employee.employee_id);
+                this.sseLastWriteOk.delete(employee.employee_id);
             }
             Logger.log(`[HttpRelayService] 📡 SSE stream closed for ${employee.display_name}`);
         });
     }
 
+    // ═════════════════════════════════════════════════════════════════
+    // MEDIA UPLOAD (multipart/form-data)
+    // ═════════════════════════════════════════════════════════════════
+
+    /**
+     * Handle media upload via raw binary (Content-Type: application/octet-stream).
+     * Employee sends file binary directly (không base64).
+     * Headers: X-Filename (required), X-Zalo-Id (optional)
+     * Boss saves to media storage, returns absolute path.
+     */
+    private handleMediaUploadMultipart(req: http.IncomingMessage, res: http.ServerResponse): void {
+        const employee = this.authenticateRequest(req);
+        if (!employee) {
+            return this.json(res, 401, { success: false, error: 'Unauthorized' });
+        }
+
+        const filename = req.headers['x-filename'] as string;
+        if (!filename) {
+            return this.json(res, 400, { success: false, error: 'Missing X-Filename header' });
+        }
+        const zaloId = (req.headers['x-zalo-id'] as string) || employee.assigned_accounts[0] || '';
+
+        const FileStorageService = require('../file/FileStorageService').default;
+        const chunks: Buffer[] = [];
+
+        req.on('data', (chunk: Buffer) => chunks.push(chunk));
+        req.on('end', async () => {
+            try {
+                const buffer = Buffer.concat(chunks);
+                if (buffer.length === 0) {
+                    return this.json(res, 400, { success: false, error: 'Empty file' });
+                }
+
+                // Save to Boss storage
+                let bossPath: string;
+                if (zaloId) {
+                    bossPath = await FileStorageService.saveBuffer(zaloId, buffer, filename);
+                } else {
+                    const fs = require('fs');
+                    const path = require('path');
+                    const dir = path.join(FileStorageService.getBaseDir(), '_uploads');
+                    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+                    bossPath = path.join(dir, filename);
+                    fs.writeFileSync(bossPath, buffer);
+                }
+
+                Logger.log(`[HttpRelayService] Binary upload: ${filename} (${(buffer.length / 1024).toFixed(1)}KB) → ${bossPath}`);
+                this.json(res, 200, { success: true, bossPath });
+            } catch (err: any) {
+                Logger.error(`[HttpRelayService] Upload error: ${err.message}`);
+                this.json(res, 500, { success: false, error: err.message });
+            }
+        });
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // REST API HANDLER — dispatch to RestApiHandlers or MediaHandler
+    // ═════════════════════════════════════════════════════════════════
+
+    private handleRestApi(req: http.IncomingMessage, res: http.ServerResponse): void {
+        const url = req.url || '';
+
+        // ── Media serving (không cần auth — tunnel security) ──
+        if (req.method === 'GET' && url.startsWith('/api/media/')) {
+            // Luôn dùng default workspace (Boss) media path, không dùng active workspace
+            // Vì khi employee workspace active, getBaseDir() trả về path của employee
+            // → Boss không tìm thấy file của chính nó → 404
+            let mediaBasePath = '';
+            try {
+                const WorkspaceManager = require('../../utils/WorkspaceManager').default;
+                const wm = WorkspaceManager.getInstance();
+                const defaultWs = wm.getWorkspaceById('default');
+                if (defaultWs && defaultWs.dbPath) {
+                    const dbFolder = path.dirname(wm.resolveDbPath(defaultWs.dbPath));
+                    mediaBasePath = path.join(dbFolder, 'media');
+                }
+            } catch {}
+            if (!mediaBasePath) {
+                mediaBasePath = FileStorageService.getBaseDir?.() || '';
+            }
+            if (!mediaBasePath) {
+                return this.json(res, 500, { error: 'Media path not configured' });
+            }
+            return handleMediaFileServe(req, res, mediaBasePath);
+        }
+
+        // ── Library file/thumb serving (không cần auth — tunnel security, cần runOnPinnedDb) ──
+        if (req.method === 'GET') {
+            const pathname = url.indexOf('?') >= 0 ? url.slice(0, url.indexOf('?')) : url;
+            if (pathname.match(/^\/api\/library\/file\/[a-f0-9-]+$/)) {
+                const uuid = pathname.split('/').pop() || '';
+                this.runOnPinnedDb(() => libraryHandlers.serveFile(req, res, uuid));
+                return;
+            }
+            if (pathname.match(/^\/api\/library\/thumb\/[a-f0-9-]+$/)) {
+                const uuid = pathname.split('/').pop() || '';
+                this.runOnPinnedDb(() => libraryHandlers.serveThumb(req, res, uuid));
+                return;
+            }
+        }
+
+        // ── Các endpoint khác cần auth ──
+        const employee = this.authenticateRequest(req);
+        if (!employee) {
+            return this.json(res, 401, { success: false, error: 'Unauthorized' });
+        }
+
+        // Parse URL để dispatch
+        const method = req.method;
+        let params: any = {};
+
+        // Parse query params từ URL — auto-parse JSON objects/arrays
+        const queryIndex = url.indexOf('?');
+        const pathname = queryIndex >= 0 ? url.slice(0, queryIndex) : url;
+        if (queryIndex >= 0) {
+            const searchParams = new URLSearchParams(url.slice(queryIndex));
+            for (const [k, v] of searchParams) {
+                if ((v.startsWith('{') && v.endsWith('}')) || (v.startsWith('[') && v.endsWith(']'))) {
+                    try { params[k] = JSON.parse(v); continue; } catch {}
+                }
+                params[k] = v;
+            }
+        }
+
+        // ── Điều phối dựa trên URL pattern (chạy trong pinned DB context) ──
+        try {
+            return this.runOnPinnedDb(() => {
+                const _db = DatabaseService.getInstance();
+                console.log(`[HttpRelayService] 🔄 Handling ${method} ${pathname} — DB: ${_db?.getDbPath?.() || 'unknown'}`);
+
+            // Boot
+            if (method === 'GET' && pathname === '/api/boot') {
+                return this.json(res, 200, restHandlers.getBoot(employee, params));
+            }
+
+            // Conversations
+            if (method === 'GET' && pathname === '/api/query/conversations') {
+                return this.json(res, 200, restHandlers.getConversations(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/conversations/updates') {
+                return this.json(res, 200, restHandlers.getConversationsUpdates(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/conversations/flags') {
+                const zaloId = params.zaloId || employee.assigned_accounts[0];
+                if (!zaloId) return this.json(res, 400, { error: 'Missing zaloId' });
+                const rows = this.getCachedRestResult(method, pathname, employee.employee_id,
+                    () => DatabaseService.getInstance().getContactsWithFlags(zaloId) || []);
+                return this.json(res, 200, { success: true, data: { items: rows } });
+            }
+            if (method === 'GET' && pathname.match(/^\/api\/query\/conversations\/[^/]+$/)) {
+                const contactId = pathname.split('/').pop() || '';
+                return this.json(res, 200, restHandlers.getConversationById(employee, { ...params, contactId }));
+            }
+
+            // Messages
+            if (method === 'GET' && pathname === '/api/query/messages/around') {
+                return this.json(res, 200, restHandlers.getMessagesAround(employee, { ...params, msgId: params.msgId }));
+            }
+            if (method === 'GET' && pathname === '/api/query/messages/file') {
+                return this.json(res, 200, restHandlers.getFileMessages(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/messages/media') {
+                return this.json(res, 200, restHandlers.getMediaMessages(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/messages') {
+                return this.json(res, 200, restHandlers.getMessages(employee, params));
+            }
+            if (method === 'GET' && pathname.match(/^\/api\/query\/messages\/[^/]+$/)) {
+                const msgId = pathname.split('/').pop() || '';
+                return this.json(res, 200, restHandlers.getMessageById(employee, { ...params, msgId }));
+            }
+
+            // Search
+            if (method === 'GET' && pathname === '/api/search/messages') {
+                return this.json(res, 200, restHandlers.searchMessages(employee, params));
+            }
+
+            // Friends
+            if (method === 'GET' && pathname === '/api/query/friends') {
+                return this.json(res, 200, restHandlers.getFriends(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/friends/check') {
+                return this.json(res, 200, restHandlers.getFriendCheck(employee, params));
+            }
+
+            // Friend requests
+            if (method === 'GET' && pathname === '/api/query/friend-requests') {
+                return this.json(res, 200, restHandlers.getFriendRequests(employee, params));
+            }
+
+            // Groups
+            if (method === 'GET' && pathname === '/api/query/groups/members') {
+                return this.json(res, 200, restHandlers.getGroupMembers(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/groups/all') {
+                return this.json(res, 200, restHandlers.getAllGroupMembers(employee, params));
+            }
+
+            // CRM
+            if (method === 'GET' && pathname === '/api/query/crm/notes') {
+                return this.json(res, 200, restHandlers.getCRMNotes(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/crm/campaigns') {
+                return this.json(res, 200, restHandlers.getCRMCampaigns(employee, params));
+            }
+
+            // Labels (cached — called redundantly after every message, blocks main thread)
+            if (method === 'GET' && pathname === '/api/query/labels') {
+                return this.json(res, 200, this.getCachedRestResult(method, pathname, employee.employee_id,
+                    () => restHandlers.getLabels(employee, params)));
+            }
+            if (method === 'GET' && pathname === '/api/query/label-threads') {
+                return this.json(res, 200, this.getCachedRestResult(method, pathname, employee.employee_id,
+                    () => restHandlers.getLabelThreads(employee, params)));
+            }
+
+            // Quick messages
+            if (method === 'GET' && pathname === '/api/query/quick-messages') {
+                return this.json(res, 200, restHandlers.getQuickMessages(employee, params));
+            }
+
+            // Drafts
+            if (method === 'GET' && pathname === '/api/query/drafts') {
+                return this.json(res, 200, restHandlers.getDrafts(employee, params));
+            }
+
+            // Links
+            if (method === 'GET' && pathname === '/api/query/links') {
+                return this.json(res, 200, restHandlers.getLinks(employee, params));
+            }
+
+            // Settings
+            if (method === 'GET' && pathname.match(/^\/api\/query\/settings\/[^/]+$/)) {
+                const key = pathname.split('/').pop() || '';
+                return this.json(res, 200, restHandlers.getSetting(employee, { ...params, key }));
+            }
+
+            // Pinned conversations (cached — called redundantly after every message)
+            if (method === 'GET' && pathname === '/api/query/pinned-conversations') {
+                return this.json(res, 200, this.getCachedRestResult(method, pathname, employee.employee_id,
+                    () => restHandlers.getPinnedConversations(employee, params)));
+            }
+
+            // Settings — all
+            if (method === 'GET' && pathname === '/api/query/settings') {
+                const allSettings = DatabaseService.getInstance().query<any>('SELECT key, value FROM app_settings') || [];
+                return this.json(res, 200, { success: true, data: { items: allSettings } });
+            }
+
+            // Analytics / Dashboard
+            if (method === 'GET' && pathname === '/api/query/analytics/dashboard') {
+                return this.json(res, 200, restHandlers.getDashboardOverview(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/analytics/message-volume') {
+                return this.json(res, 200, restHandlers.getMessageVolume(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/analytics/peak-hours') {
+                return this.json(res, 200, restHandlers.getPeakHours(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/analytics/segmentation') {
+                return this.json(res, 200, restHandlers.getContactSegmentation(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/analytics/campaign-comparison') {
+                return this.json(res, 200, restHandlers.getCampaignComparison(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/analytics/friend-requests') {
+                return this.json(res, 200, restHandlers.getFriendRequestAnalytics(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/analytics/contact-growth') {
+                return this.json(res, 200, restHandlers.getContactGrowth(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/analytics/workflows') {
+                return this.json(res, 200, restHandlers.getWorkflowAnalytics(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/analytics/ai') {
+                return this.json(res, 200, restHandlers.getAIAnalytics(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/analytics/response-time') {
+                return this.json(res, 200, restHandlers.getResponseTime(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/analytics/label-usage') {
+                return this.json(res, 200, restHandlers.getLabelUsage(employee, params));
+            }
+
+            // ── Notif settings ──
+            if (method === 'GET' && pathname === '/api/query/settings/notif') {
+                const val = DatabaseService.getInstance().getSetting(`notifSettings_${params.zaloId}`);
+                return this.json(res, 200, { success: true, data: val ? JSON.parse(val) : null });
+            }
+
+            // ── Pinned messages ──
+            if (method === 'GET' && pathname === '/api/query/pinned-messages') {
+                return this.json(res, 200, restHandlers.getPinnedMessages(employee, params));
+            }
+
+            // ── Stickers ──
+            if (method === 'GET' && pathname === '/api/query/sticker-packs') {
+                return this.json(res, 200, restHandlers.getStickerPacksHandler(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/stickers/recent') {
+                return this.json(res, 200, restHandlers.getRecentStickersHandler(employee, params));
+            }
+            if ((method === 'POST' || method === 'GET') && pathname === '/api/query/stickers/by-ids') {
+                return this.json(res, 200, restHandlers.getStickersByIdsHandler(employee, params));
+            }
+
+            // ── CRM tags ──
+            if (method === 'GET' && pathname === '/api/query/crm/tags') {
+                return this.json(res, 200, restHandlers.getCRMTagsHandler(employee, params));
+            }
+
+            // ── Bank cards ──
+            if (method === 'GET' && pathname === '/api/query/bank-cards') {
+                return this.json(res, 200, restHandlers.getBankCardsHandler(employee, params));
+            }
+
+            // ── Proxies ──
+            if (method === 'GET' && pathname === '/api/query/proxies') {
+                return this.json(res, 200, restHandlers.getProxies(employee, params));
+            }
+            if (method === 'GET' && pathname.match(/^\/api\/query\/proxies\/\d+$/)) {
+                const id = pathname.split('/').pop() || '';
+                return this.json(res, 200, restHandlers.getProxyById(employee, { ...params, id }));
+            }
+
+            // ── Friends last fetched ──
+            if (method === 'GET' && pathname === '/api/query/friends/last-fetched') {
+                return this.json(res, 200, restHandlers.getFriendsLastFetchedHandler(employee, params));
+            }
+
+            // ── Stickers extended ──
+            if (method === 'GET' && pathname === '/api/query/stickers/by-id') {
+                return this.json(res, 200, restHandlers.getStickerByIdHandler(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/stickers/keyword') {
+                return this.json(res, 200, restHandlers.getKeywordStickersHandler(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/sticker-packs/summaries') {
+                return this.json(res, 200, restHandlers.getCachedPackSummariesHandler(employee, params));
+            }
+
+            // ── CRM extended ──
+            if (method === 'GET' && pathname === '/api/query/crm/contacts') {
+                return this.json(res, 200, restHandlers.getCRMContactsHandler(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/crm/contacts/stats') {
+                return this.json(res, 200, restHandlers.getContactStatsHandler(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/crm/campaigns/contacts') {
+                return this.json(res, 200, restHandlers.getCampaignContactsHandler(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/crm/campaigns/send-log') {
+                return this.json(res, 200, restHandlers.getSendLogHandler(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/crm/queue-status') {
+                return this.json(res, 200, restHandlers.getQueueStatusHandler(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/crm/campaigns/stats') {
+                return this.json(res, 200, restHandlers.getCampaignStatsHandler(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/crm/activity-stats') {
+                return this.json(res, 200, restHandlers.getActivityStatsHandler(employee, params));
+            }
+
+            // ── Messages extended ──
+            if (method === 'GET' && pathname === '/api/query/messages/unread') {
+                return this.json(res, 200, restHandlers.getUnreadCountHandler(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/messages/by-type') {
+                return this.json(res, 200, restHandlers.getMessagesByTypeHandler(employee, params));
+            }
+
+            // ── Quick Messages all ──
+            if (method === 'GET' && pathname === '/api/query/quick-messages/all') {
+                return this.json(res, 200, restHandlers.getAllQuickMessagesHandler(employee, params));
+            }
+
+            // ── Labels: thread labels ──
+            if (method === 'GET' && pathname === '/api/query/label-threads/thread') {
+                return this.json(res, 200, restHandlers.getThreadLabelsHandler(employee, params));
+            }
+
+            // ── Drafts: single ──
+            if (method === 'GET' && pathname === '/api/query/drafts/single') {
+                return this.json(res, 200, restHandlers.getSingleDraftHandler(employee, params));
+            }
+
+            // ── Workflows ──
+            if (method === 'GET' && pathname === '/api/query/workflows') {
+                return this.json(res, 200, restHandlers.getWorkflows(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/workflows/run-logs') {
+                return this.json(res, 200, restHandlers.getRecentRunLogs(employee, params));
+            }
+            // /api/query/workflows/{id}/run-logs
+            if (method === 'GET' && pathname.match(/^\/api\/query\/workflows\/[^/]+\/run-logs$/)) {
+                const parts = pathname.split('/');
+                const id = parts[4];
+                return this.json(res, 200, restHandlers.getWorkflowRunLogs(employee, { ...params, workflowId: id }));
+            }
+            if (method === 'GET' && pathname.match(/^\/api\/query\/workflows\/[^/]+$/)) {
+                const id = pathname.split('/').pop() || '';
+                return this.json(res, 200, restHandlers.getWorkflowById(employee, { ...params, id }));
+            }
+
+            // ── Integrations ──
+            if (method === 'GET' && pathname === '/api/query/integrations') {
+                return this.json(res, 200, restHandlers.getIntegrations(employee, params));
+            }
+
+            // ── AI Assistants ──
+            if (method === 'GET' && pathname === '/api/query/ai/assistants') {
+                return this.json(res, 200, restHandlers.getAiAssistants(employee, params));
+            }
+            if (method === 'GET' && pathname.match(/^\/api\/query\/ai\/assistants\/([^/]+)\/files$/)) {
+                const id = pathname.split('/')[5];
+                return this.json(res, 200, restHandlers.getAiAssistantFiles(employee, { ...params, assistantId: id, id }));
+            }
+            if (method === 'GET' && pathname.match(/^\/api\/query\/ai\/assistants\/([^/]+)$/)) {
+                const id = pathname.split('/').pop() || '';
+                return this.json(res, 200, restHandlers.getAiAssistant(employee, { ...params, id }));
+            }
+            if (method === 'GET' && pathname === '/api/query/ai/usage-stats') {
+                return this.json(res, 200, restHandlers.getAiUsageStats(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/ai/usage-logs') {
+                return this.json(res, 200, restHandlers.getAiUsageLogs(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/ai/default') {
+                return this.json(res, 200, restHandlers.getAiDefaultAssistant(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/ai/account-assistant') {
+                return this.json(res, 200, restHandlers.getAiAccountAssistant(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/ai/account-assistants') {
+                return this.json(res, 200, restHandlers.getAiAccountAssistants(employee, params));
+            }
+
+            // ── AI Chat & Suggest (async — proxy LLM calls qua Boss) ──
+            if (method === 'POST' && pathname === '/api/command/ai/chat') {
+                this.readBody(req, async (body) => {
+                    try {
+                        const parsed = JSON.parse(body);
+                        const { AIAssistantService } = require('../ai/AIAssistantService');
+                        const result = await AIAssistantService.getInstance().chat(
+                            parsed.assistantId || parsed.params?.assistantId,
+                            parsed.messages || parsed.params?.messages || [],
+                            parsed.structured === true || parsed.params?.structured === true,
+                            parsed.maxTokens || parsed.params?.maxTokens || undefined
+                        );
+                        return this.json(res, 200, { success: true, ...result });
+                    } catch (err: any) {
+                        Logger.error(`[HttpRelayService] AI chat error: ${err.message}`);
+                        return this.json(res, 200, { success: false, error: err.message });
+                    }
+                });
+                return;
+            }
+            if (method === 'POST' && pathname === '/api/command/ai/suggest') {
+                this.readBody(req, async (body) => {
+                    try {
+                        const parsed = JSON.parse(body);
+                        const { AIAssistantService } = require('../ai/AIAssistantService');
+                        const suggestions = await AIAssistantService.getInstance().getSuggestions(
+                            parsed.assistantId || parsed.params?.assistantId,
+                            parsed.chatHistory || parsed.params?.chatHistory || []
+                        );
+                        return this.json(res, 200, { success: true, suggestions });
+                    } catch (err: any) {
+                        Logger.error(`[HttpRelayService] AI suggest error: ${err.message}`);
+                        return this.json(res, 200, { success: false, error: err.message, suggestions: [] });
+                    }
+                });
+                return;
+            }
+
+            // ── COMMAND endpoints (WRITE) ──
+            // Command handlers gọi trực tiếp DatabaseService
+            if (method === 'POST' && pathname.startsWith('/api/command/')) {
+                this.readBody(req, (body) => {
+                    try {
+                        const parsed = JSON.parse(body);
+                        const result = this.executeRestCommand(employee, pathname, { ...params, ...parsed }, 'POST');
+                        return this.json(res, 200, result);
+                    } catch (err: any) {
+                        return this.json(res, 400, { success: false, error: err.message });
+                    }
+                });
+                return;
+            }
+            if ((method === 'PUT' || method === 'PATCH' || method === 'DELETE') && pathname.startsWith('/api/command/')) {
+                this.readBody(req, (body) => {
+                    try {
+                        const parsed = body ? JSON.parse(body) : {};
+                        const result = this.executeRestCommand(employee, pathname, { ...params, ...parsed }, method);
+                        return this.json(res, 200, result);
+                    } catch (err: any) {
+                        return this.json(res, 400, { success: false, error: err.message });
+                    }
+                });
+                return;
+            }
+
+            // ── LIBRARY endpoints ──
+            if (method === 'POST' && pathname === '/api/library/upload') {
+                return libraryHandlers.handleUpload(req, res, employee);
+            }
+            // Employee mode: upload via JSON base64 (DataAccessor gửi qua RestQueryService)
+            if (method === 'POST' && pathname === '/api/library/upload/json') {
+                return libraryHandlers.handleUploadJson(req, res, employee);
+            }
+            if (method === 'GET' && pathname === '/api/library/items') {
+                // Pass boss URL to build absolute fileUrl/thumbUrl for employee
+                const proto = req.headers['x-forwarded-proto'] || 'http';
+                const host = req.headers.host || '';
+                params._bossUrl = `${proto}://${host}`;
+                return this.json(res, 200, libraryHandlers.getItems(employee, params));
+            }
+            if (method === 'GET' && pathname.match(/^\/api\/library\/item\/[a-f0-9-]+$/)) {
+                const uuid = pathname.split('/').pop() || '';
+                const proto = req.headers['x-forwarded-proto'] || 'http';
+                const host = req.headers.host || '';
+                return this.json(res, 200, libraryHandlers.getItem(employee, { ...params, uuid, _bossUrl: `${proto}://${host}` }));
+            }
+            if (method === 'PATCH' && pathname.match(/^\/api\/library\/item\/[a-f0-9-]+$/)) {
+                this.readBody(req, (body) => {
+                    const parsed = JSON.parse(body);
+                    return this.json(res, 200, libraryHandlers.updateItem(employee, { ...params, ...parsed }));
+                });
+                return;
+            }
+            if (method === 'DELETE' && pathname.match(/^\/api\/library\/item\/[a-f0-9-]+$/)) {
+                const uuid = pathname.split('/').pop() || '';
+                return this.json(res, 200, libraryHandlers.deleteItem(employee, { ...params, uuid }));
+            }
+            // Folders
+            if (method === 'GET' && pathname === '/api/library/folders') {
+                return this.json(res, 200, libraryHandlers.getFolders(employee, params));
+            }
+            if (method === 'POST' && pathname === '/api/library/folders') {
+                this.readBody(req, (body) => {
+                    const parsed = JSON.parse(body);
+                    return this.json(res, 200, libraryHandlers.createFolder(employee, { ...params, ...parsed }));
+                });
+                return;
+            }
+            if (method === 'DELETE' && pathname.match(/^\/api\/library\/folders\/\d+$/)) {
+                const id = pathname.split('/').pop() || '';
+                return this.json(res, 200, libraryHandlers.deleteFolder(employee, { ...params, id }));
+            }
+            // Serve media files
+            if (method === 'GET' && pathname.match(/^\/api\/library\/file\/[a-f0-9-]+$/)) {
+                const uuid = pathname.split('/').pop() || '';
+                return libraryHandlers.serveFile(req, res, uuid);
+            }
+            if (method === 'GET' && pathname.match(/^\/api\/library\/thumb\/[a-f0-9-]+$/)) {
+                const uuid = pathname.split('/').pop() || '';
+                return libraryHandlers.serveThumb(req, res, uuid);
+            }
+
+            return this.json(res, 404, { success: false, error: `Unknown endpoint: ${method} ${pathname}` });
+            }); // end runOnPinnedDb
+        } catch (err: any) {
+            Logger.error(`[HttpRelayService] Rest API error: ${err.message}`);
+            this.json(res, 500, { success: false, error: err.message });
+        }
+    }
+
+    /**
+     * Execute a REST command (WRITE operations).
+     * POST/PUT/PATCH/DELETE tới /api/command/*
+     */
+    private executeRestCommand(employee: any, pathname: string, params: any, _method?: string): any {
+        const zaloId = params.zaloId || employee.assigned_accounts?.[0] || '';
+        const db = DatabaseService.getInstance();
+        const httpMethod = _method || 'POST';
+
+        try {
+            // ── Conversations ──
+            if (pathname.match(/^\/api\/command\/conversations\/[^/]+\/flags$/)) {
+                const contactId = pathname.split('/')[3];
+                db.setContactFlags(zaloId, contactId, params.flags || {});
+                EventBroadcaster.emit('db:contactFlagsChanged', { zaloId, contactId, flags: params.flags });
+                return { success: true };
+            }
+            if (pathname.match(/^\/api\/command\/conversations\/[^/]+\/alias$/)) {
+                const contactId = pathname.split('/')[3];
+                db.setContactAlias(zaloId, contactId, params.alias || '');
+                EventBroadcaster.emit('db:contactAliasChanged', { ownerZaloId: zaloId, contactId, alias: params.alias });
+                return { success: true };
+            }
+            // MUST be BEFORE the generic delete pattern — the regex /^\/api\/command\/conversations\/[^/]+$/ would match "update-profile" as a contactId
+            if (pathname === '/api/command/conversations/update-profile') {
+                db.updateContactProfile(zaloId, params.contactId, params.displayName || '', params.avatarUrl || '', params.phone || '', params.contactType || '', params.gender ?? null, params.birthday ?? null);
+                EventBroadcaster.emit('db:contactProfileUpdated', {
+                    ownerZaloId: zaloId, contactId: params.contactId,
+                    displayName: params.displayName, avatarUrl: params.avatarUrl,
+                    phone: params.phone, gender: params.gender, birthday: params.birthday,
+                });
+                return { success: true };
+            }
+            if (pathname.match(/^\/api\/command\/conversations\/[^/]+$/)) {
+                const contactId = pathname.split('/')[3];
+                db.deleteConversation(zaloId, contactId);
+                EventBroadcaster.emit('db:conversationDeleted', { zaloId, contactId, threadId: contactId });
+                return { success: true };
+            }
+
+            // ── CRM Notes ──
+            if (pathname === '/api/command/crm/notes') {
+                const id = db.saveCRMNote({ ...params.note, owner_zalo_id: zaloId });
+                EventBroadcaster.emit('crm:noteChanged', { action: 'save', ownerZaloId: zaloId, id, note: params.note });
+                return { success: true, data: { id } };
+            }
+            if (pathname.match(/^\/api\/command\/crm\/notes\/\d+$/)) {
+                const noteId = parseInt(pathname.split('/').pop() || '0');
+                db.deleteCRMNote(noteId, zaloId);
+                EventBroadcaster.emit('crm:noteChanged', { action: 'delete', ownerZaloId: zaloId, noteId });
+                return { success: true };
+            }
+
+            // ── CRM Campaigns ──
+            if (pathname === '/api/command/crm/campaigns') {
+                const id = db.saveCRMCampaign({ ...params.campaign, owner_zalo_id: zaloId });
+                EventBroadcaster.emit('crm:campaignChanged', { action: 'save', ownerZaloId: zaloId, id, campaign: params.campaign });
+                return { success: true, data: { id } };
+            }
+            if (pathname.match(/^\/api\/command\/crm\/campaigns\/\d+$/)) {
+                const campaignId = parseInt(pathname.split('/').pop() || '0');
+                db.deleteCRMCampaign(campaignId, zaloId);
+                EventBroadcaster.emit('crm:campaignChanged', { action: 'delete', ownerZaloId: zaloId, campaignId });
+                return { success: true };
+            }
+
+            // ── Labels ──
+            if (pathname === '/api/command/labels') {
+                const id = db.upsertLocalLabel(params.label);
+                EventBroadcaster.emit('db:localLabelChanged', { action: 'upsert', label: { ...params.label, id } });
+                return { success: true, data: { id } };
+            }
+            if (pathname.match(/^\/api\/command\/labels\/\d+$/)) {
+                const id = parseInt(pathname.split('/').pop() || '0');
+                db.deleteLocalLabel(id);
+                EventBroadcaster.emit('db:localLabelChanged', { action: 'delete', labelId: id });
+                return { success: true };
+            }
+            if (pathname === '/api/command/label-threads') {
+                if (httpMethod === 'DELETE') {
+                    db.removeLocalLabelFromThread(zaloId, params.labelId, params.threadId);
+                    EventBroadcaster.emit('db:localLabelThreadChanged', { action: 'remove', ownerZaloId: zaloId, labelId: params.labelId, threadId: params.threadId });
+                } else {
+                    db.assignLocalLabelToThread(zaloId, params.labelId, params.threadId);
+                    EventBroadcaster.emit('db:localLabelThreadChanged', { action: 'assign', ownerZaloId: zaloId, labelId: params.labelId, threadId: params.threadId });
+                }
+                return { success: true };
+            }
+
+            // ── Quick Messages ──
+            if (pathname === '/api/command/quick-messages') {
+                const id = db.upsertLocalQuickMessage(zaloId, params.item);
+                EventBroadcaster.emit('db:localQuickMessageChanged', { action: 'upsert', ownerZaloId: zaloId, item: { ...params.item, id } });
+                return { success: true, data: { id } };
+            }
+            if (pathname.match(/^\/api\/command\/quick-messages\/\d+$/)) {
+                const id = parseInt(pathname.split('/').pop() || '0');
+                if (httpMethod === 'DELETE') {
+                    db.deleteLocalQuickMessage(zaloId, id);
+                    EventBroadcaster.emit('db:localQuickMessageChanged', { action: 'delete', id, ownerZaloId: zaloId });
+                }
+                return { success: true };
+            }
+
+            // ── Drafts ──
+            if (pathname.match(/^\/api\/command\/drafts\/[^/]+$/)) {
+                const threadId = pathname.split('/').pop() || '';
+                if (httpMethod === 'DELETE') {
+                    db.deleteDraft(zaloId, threadId);
+                } else {
+                    db.upsertDraft(zaloId, threadId, params.content || '');
+                }
+                return { success: true };
+            }
+
+            // ── Pinned Conversations ──
+            if (pathname === '/api/command/pinned-conversations') {
+                db.setLocalPinnedConversation(zaloId, params.threadId, params.isPinned);
+                EventBroadcaster.emit('db:pinnedConversationChanged', { ownerZaloId: zaloId, threadId: params.threadId, isPinned: !!params.isPinned });
+                return { success: true };
+            }
+
+            // ── Settings ──
+            if (pathname.match(/^\/api\/command\/settings\/[^/]+$/)) {
+                const key = pathname.split('/').pop() || '';
+                db.setSetting(key, params.value || '');
+                return { success: true };
+            }
+
+            // ── Pinned Messages ──
+            if (pathname === '/api/command/pinned-messages') {
+                db.pinMessage(zaloId, params.threadId, params.pin);
+                EventBroadcaster.emit('db:pinnedMessageChanged', { action: 'pin', ownerZaloId: zaloId, threadId: params.threadId, pin: params.pin });
+                return { success: true };
+            }
+            if (pathname.match(/^\/api\/command\/pinned-messages\/[^/]+$/)) {
+                const msgId = pathname.split('/').pop() || '';
+                if (httpMethod === 'DELETE') {
+                    db.unpinMessage(zaloId, params.threadId, msgId);
+                    EventBroadcaster.emit('db:pinnedMessageChanged', { action: 'unpin', ownerZaloId: zaloId, threadId: params.threadId, msgId, zaloId });
+                } else if (msgId === 'bring-to-top') {
+                    db.bringPinnedToTop(zaloId, params.threadId, params.msgId);
+                    EventBroadcaster.emit('db:pinnedMessageChanged', { action: 'bringToTop', ownerZaloId: zaloId, threadId: params.threadId, msgId: params.msgId });
+                }
+                return { success: true };
+            }
+
+            // ── Stickers ──
+            if (pathname === '/api/command/stickers/save') {
+                db.saveStickers(params.stickers || []);
+                return { success: true };
+            }
+            if (pathname === '/api/command/sticker-packs/save') {
+                db.saveStickerPacks(params.packs || []);
+                return { success: true };
+            }
+
+            // ── CRM Tags (query trực tiếp + emit) ──
+            if (pathname === '/api/command/crm/tags') {
+                const tag = params.tag || params;
+                const existing = db.queryOne<any>(`SELECT id FROM crm_tags WHERE owner_zalo_id=? AND name=?`, [zaloId, tag.name]);
+                if (existing) {
+                    db.run(`UPDATE crm_tags SET name=?,color=? WHERE id=?`, [tag.name, tag.color, existing.id]);
+                    EventBroadcaster.emit('crm:tagChanged', { action: 'update', ownerZaloId: zaloId, tag: { ...tag, id: existing.id } });
+                    return { success: true, data: { id: existing.id } };
+                }
+                const rowId = db.runInsert(`INSERT INTO crm_tags (owner_zalo_id,name,color) VALUES (?,?,?)`, [zaloId, tag.name, tag.color]);
+                EventBroadcaster.emit('crm:tagChanged', { action: 'create', ownerZaloId: zaloId, tag: { ...tag, id: rowId } });
+                return { success: true, data: { id: rowId } };
+            }
+            if (pathname.match(/^\/api\/command\/crm\/tags\/\d+$/)) {
+                const id = parseInt(pathname.split('/').pop() || '0');
+                db.run(`DELETE FROM crm_contact_tags WHERE tag_id=?`, [id]);
+                db.run(`DELETE FROM crm_tags WHERE id=?`, [id]);
+                EventBroadcaster.emit('crm:tagChanged', { action: 'delete', ownerZaloId: zaloId, tagId: id });
+                return { success: true };
+            }
+            if (pathname === '/api/command/crm/tags/assign') {
+                db.run(`INSERT OR IGNORE INTO crm_contact_tags (owner_zalo_id,tag_id,contact_id) VALUES (?,?,?)`,
+                    [zaloId, params.tagId, params.contactId]);
+                EventBroadcaster.emit('crm:tagChanged', { action: 'assign', ownerZaloId: zaloId, tagId: params.tagId, contactId: params.contactId });
+                return { success: true };
+            }
+            if (pathname.match(/^\/api\/command\/crm\/tags\/\d+\/contacts\/[^/]+$/)) {
+                const parts = pathname.split('/');
+                const tagId = parseInt(parts[4] || '0');
+                const contactId = parts[6] || '';
+                db.run(`DELETE FROM crm_contact_tags WHERE owner_zalo_id=? AND tag_id=? AND contact_id=?`,
+                    [zaloId, tagId, contactId]);
+                EventBroadcaster.emit('crm:tagChanged', { action: 'remove', ownerZaloId: zaloId, tagId, contactId });
+                return { success: true };
+            }
+
+            // ── Bank Cards ──
+            if (pathname === '/api/command/bank-cards') {
+                const id = db.upsertBankCard(zaloId, { ...params.card, ...params });
+                return { success: true, data: { id } };
+            }
+            if (pathname.match(/^\/api\/command\/bank-cards\/\d+$/)) {
+                const id = parseInt(pathname.split('/').pop() || '0');
+                db.deleteBankCard(zaloId, id);
+                return { success: true };
+            }
+
+            // ── Proxies CRUD ──
+            if (pathname === '/api/command/proxies') {
+                const id = db.saveProxy(params.proxy || params);
+                return { success: true, data: { id } };
+            }
+            if (pathname.match(/^\/api\/command\/proxies\/\d+$/)) {
+                const id = parseInt(pathname.split('/').pop() || '0');
+                db.deleteProxy(id);
+                return { success: true };
+            }
+            if (pathname === '/api/command/accounts/proxy') {
+                // Assign proxy to account: params.zaloId, params.proxyId
+                db.run('UPDATE accounts SET proxy_id=? WHERE zalo_id=?', [params.proxyId || null, params.zaloId || zaloId]);
+                return { success: true };
+            }
+
+            // ── Messages — mark-read, mark-recalled, delete, reaction, local-paths ──
+            if (pathname === '/api/command/messages/mark-read') {
+                db.markAsRead(zaloId, params.contactId);
+                EventBroadcaster.emit('db:unreadChanged', { zaloId, contactId: params.contactId, unread: 0 });
+                return { success: true };
+            }
+            if (pathname === '/api/command/messages/mark-recalled') {
+                db.markMessageRecalled(zaloId, params.msgId);
+                // event:undo đã được relay từ Zalo webhook — emit thêm để đồng bộ
+                EventBroadcaster.emit('event:undo', { zaloId, msgId: params.msgId });
+                return { success: true };
+            }
+            if (pathname === '/api/command/messages/delete') {
+                db.deleteMessages(zaloId, params.msgIds || []);
+                EventBroadcaster.emit('event:delete', { zaloId, msgIds: params.msgIds || [] });
+                return { success: true };
+            }
+            if (pathname === '/api/command/messages/reaction') {
+                db.updateMessageReaction(zaloId, params.msgId, params.userId, params.emoji);
+                EventBroadcaster.emit('event:reaction', { zaloId, reaction: { msgId: params.msgId, uidFrom: params.userId, icon: params.emoji } });
+                return { success: true };
+            }
+            if (pathname === '/api/command/messages/local-paths') {
+                db.updateLocalPaths(zaloId, params.msgId, params.localPaths || {});
+                EventBroadcaster.emit('event:localPath', { zaloId, msgId: params.msgId, threadId: params.threadId || '', localPaths: params.localPaths });
+                return { success: true };
+            }
+
+            // ── Stickers — recent, keyword ──
+            if (pathname === '/api/command/stickers/recent') {
+                db.addRecentSticker(parseInt(params.stickerId) || 0);
+                return { success: true };
+            }
+            if (pathname === '/api/command/stickers/keyword') {
+                db.saveKeywordStickers(params.keyword || '', params.stickerIds || []);
+                return { success: true };
+            }
+
+            // ── CRM — cloneCampaign, updateStatus, addContacts ──
+            if (pathname === '/api/command/crm/campaigns/clone') {
+                const id = db.cloneCRMCampaign(parseInt(params.campaignId) || 0, zaloId, params.includeContacts, params.newName);
+                EventBroadcaster.emit('crm:campaignChanged', { action: 'clone', ownerZaloId: zaloId, campaignId: id });
+                return { success: true, data: { id } };
+            }
+            if (pathname === '/api/command/crm/campaigns/status') {
+                db.updateCRMCampaignStatus(parseInt(params.campaignId) || 0, params.status);
+                EventBroadcaster.emit('crm:campaignChanged', { action: 'status', ownerZaloId: zaloId, campaignId: parseInt(params.campaignId) || 0, status: params.status });
+                return { success: true };
+            }
+            if (pathname === '/api/command/crm/campaigns/contacts') {
+                db.addCampaignContacts(parseInt(params.campaignId) || 0, zaloId, params.contacts || []);
+                return { success: true };
+            }
+
+            // ── Friends — CRUD ──
+            if (pathname === '/api/command/friends/batch') {
+                db.saveFriends(zaloId, params.friends || []);
+                return { success: true };
+            }
+            if (pathname === '/api/command/friends') {
+                db.addFriend(zaloId, params.friend || params);
+                return { success: true };
+            }
+            if (pathname.match(/^\/api\/command\/friends\/[^/]+$/)) {
+                const userId = pathname.split('/').pop() || '';
+                db.removeFriend(zaloId, userId);
+                return { success: true };
+            }
+
+            // ── Friend Requests — CRUD ──
+            if (pathname === '/api/command/friend-requests') {
+                db.upsertFriendRequest(zaloId, params.request || params, params.direction || 'received');
+                return { success: true };
+            }
+            if (pathname.match(/^\/api\/command\/friend-requests\/[^/]+$/)) {
+                const userId = pathname.split('/').pop() || '';
+                db.removeFriendRequest(zaloId, userId, params.direction || 'received');
+                return { success: true };
+            }
+
+            // ── Groups — upsert/remove member ──
+            if (pathname === '/api/command/groups/members/upsert') {
+                db.upsertGroupMember(zaloId, params.groupId, params.member);
+                return { success: true };
+            }
+            if (pathname.match(/^\/api\/command\/groups\/members\/[^/]+$/)) {
+                const memberId = pathname.split('/').pop() || '';
+                db.removeGroupMember(zaloId, params.groupId || params.group_id, memberId);
+                return { success: true };
+            }
+
+            // ── Links ──
+            if (pathname === '/api/command/links') {
+                db.saveLink(zaloId, params.threadId, params.msgId, params.url, params.title, params.domain, params.thumbUrl, parseInt(params.timestamp) || Date.now());
+                return { success: true };
+            }
+
+            // ── Quick Messages — bulk-replace, clone, setActive, setOrder ──
+            if (pathname === '/api/command/quick-messages/bulk-replace') {
+                db.bulkReplaceLocalQuickMessages(zaloId, params.items || []);
+                EventBroadcaster.emit('db:localQuickMessageChanged', { action: 'bulkReplace', ownerZaloId: zaloId });
+                return { success: true };
+            }
+            if (pathname === '/api/command/quick-messages/clone') {
+                const count = db.cloneLocalQuickMessages(params.sourceZaloId, params.targetZaloId);
+                return { success: true, data: { count } };
+            }
+            if (pathname.match(/^\/api\/command\/quick-messages\/\d+\/active$/)) {
+                const id = parseInt(pathname.split('/')[4]);
+                db.setLocalQMActive(id, params.isActive ?? 1);
+                EventBroadcaster.emit('db:localQuickMessageChanged', { action: 'active', id, isActive: params.isActive ?? 1 });
+                return { success: true };
+            }
+            if (pathname.match(/^\/api\/command\/quick-messages\/\d+\/order$/)) {
+                const id = parseInt(pathname.split('/')[4]);
+                db.setLocalQMOrder(id, parseInt(params.order) || 0);
+                EventBroadcaster.emit('db:localQuickMessageChanged', { action: 'reorder', id, order: parseInt(params.order) || 0 });
+                return { success: true };
+            }
+
+            // ── Labels — clone, setActive, setOrder ──
+            if (pathname === '/api/command/labels/clone') {
+                const count = db.cloneLocalLabels(params.sourceZaloId, params.targetZaloId);
+                return { success: true, data: { count } };
+            }
+            if (pathname.match(/^\/api\/command\/labels\/\d+\/active$/)) {
+                const id = parseInt(pathname.split('/')[3]);
+                db.setLocalLabelActive(id, params.isActive ?? 1);
+                EventBroadcaster.emit('db:localLabelChanged', { action: 'active', labelId: id, isActive: params.isActive ?? 1 });
+                return { success: true };
+            }
+            if (pathname.match(/^\/api\/command\/labels\/\d+\/order$/)) {
+                const id = parseInt(pathname.split('/')[3]);
+                db.setLocalLabelOrder(id, parseInt(params.order) || 0);
+                EventBroadcaster.emit('db:localLabelChanged', { action: 'reorder', labelId: id, order: parseInt(params.order) || 0 });
+                return { success: true };
+            }
+
+            // ── Drafts — cleanup ──
+            if (pathname === '/api/command/drafts/cleanup') {
+                db.deleteOldDrafts(parseInt(params.days) || 7);
+                return { success: true };
+            }
+
+            // ── Contacts — updatePhone ──
+            if (pathname === '/api/command/accounts/phone') {
+                db.updateAccountPhone(zaloId, params.phone || '');
+                return { success: true };
+            }
+
+            // ── Workflow CRUD ──
+            if (pathname === '/api/command/workflows') {
+                db.saveWorkflow(params.workflow || params);
+                EventBroadcaster.emit('workflow:executed', { action: 'save', workflowId: params.workflow?.id || params.id });
+                return { success: true };
+            }
+            if (pathname.match(/^\/api\/command\/workflows\/[^/]+\/toggle$/)) {
+                const id = pathname.split('/')[3];
+                db.toggleWorkflow(id, params.enabled !== false);
+                return { success: true };
+            }
+            if (pathname.match(/^\/api\/command\/workflows\/[^/]+$/)) {
+                const id = pathname.split('/').pop() || '';
+                db.deleteWorkflow(id);
+                return { success: true };
+            }
+
+            // ── Integration CRUD ──
+            if (pathname === '/api/command/integrations') {
+                const { IntegrationRegistry } = require('../integrations/IntegrationRegistry');
+                const saved = IntegrationRegistry.getInstance().saveIntegration(params.integration || params);
+                return { success: true, data: saved };
+            }
+            if (pathname.match(/^\/api\/command\/integrations\/[^/]+\/toggle$/)) {
+                const id = pathname.split('/')[3];
+                const { IntegrationRegistry } = require('../integrations/IntegrationRegistry');
+                IntegrationRegistry.getInstance().toggleIntegration(id, params.enabled !== false);
+                return { success: true };
+            }
+            if (pathname.match(/^\/api\/command\/integrations\/[^/]+$/)) {
+                const id = pathname.split('/').pop() || '';
+                const { IntegrationRegistry } = require('../integrations/IntegrationRegistry');
+                IntegrationRegistry.getInstance().deleteIntegration(id);
+                return { success: true };
+            }
+
+            // ── AI Assistant CRUD ──
+            if (pathname === '/api/command/ai/assistants') {
+                const { AIAssistantService } = require('../ai/AIAssistantService');
+                const savedId = AIAssistantService.getInstance().saveAssistant(params.assistant || params);
+                return { success: true, id: savedId };
+            }
+            if (pathname.match(/^\/api\/command\/ai\/assistants\/[^/]+$/)) {
+                const id = pathname.split('/').pop() || '';
+                const { AIAssistantService } = require('../ai/AIAssistantService');
+                AIAssistantService.getInstance().deleteAssistant(id);
+                return { success: true };
+            }
+
+            return { success: false, error: `Unknown command: ${httpMethod} ${pathname}` };
+        } catch (err: any) {
+            Logger.error(`[HttpRelayService] Command error: ${err.message}`);
+            return { success: false, error: err.message };
+        }
+    }
+
+    /** Max ms since last successful SSE write before considering connection stale */
+    private static SSE_STALE_THRESHOLD_MS = 60_000;
+
     /** Push an event via SSE to an employee. Returns true if SSE was available. */
     private pushViaSSE(employeeId: string, channel: string, data: any): boolean {
         const res = this.sseClients.get(employeeId);
         if (!res) return false;
+
+        // Half-open socket detection: if no write has succeeded in > 60s
+        // (keepalive ping hasn't confirmed the connection is healthy),
+        // treat the SSE as stale and fall through to queuing / callback.
+        const lastOk = this.sseLastWriteOk.get(employeeId) || 0;
+        if (lastOk > 0 && Date.now() - lastOk > HttpRelayService.SSE_STALE_THRESHOLD_MS) {
+            Logger.warn(`[HttpRelayService] ⚠️ SSE for ${employeeId} stale (${Date.now() - lastOk}ms since last write) — queuing event`);
+            this.sseClients.delete(employeeId);
+            const kt = this.sseKeepaliveTimers.get(employeeId);
+            if (kt) { clearInterval(kt); this.sseKeepaliveTimers.delete(employeeId); }
+            this.sseLastWriteOk.delete(employeeId);
+            return false;
+        }
+
         try {
             res.write(`data: ${JSON.stringify({ channel, data })}\n\n`);
+            this.sseLastWriteOk.set(employeeId, Date.now());
             return true;
         } catch {
             this.sseClients.delete(employeeId);
             const kt = this.sseKeepaliveTimers.get(employeeId);
             if (kt) { clearInterval(kt); this.sseKeepaliveTimers.delete(employeeId); }
+            this.sseLastWriteOk.delete(employeeId);
             return false;
         }
     }
@@ -1158,21 +2282,28 @@ class HttpRelayService {
     private relayEventToEmployees(channel: string, data: any): void {
         if (!this.running) return;
 
-        // Push to ALL connected employees - no filtering by assigned_accounts.
-        // Each employee saves to their own DB if online.
-        // If offline, they sync later from boss via full/delta sync.
-        for (const emp of this.employees.values()) {
-            if (!this.shouldRelayErpEventToEmployee(channel, data, emp.employee_id)) continue;
+        // Pre-compute zaloId for assigned_accounts filtering
+        const eventZaloId: string | undefined =
+            data?.zaloId || data?.zalo_id ||
+            (channel === 'event:message' ? data?.message?.zaloId : undefined);
 
-            // Prefer SSE (works over tunnel/WAN); fall back to callbackUrl push (LAN only)
-            if (!this.pushViaSSE(emp.employee_id, channel, data)) {
-                if (emp.callbackUrl) {
-                    this.pushToEmployee(emp, channel, data).catch(() => {});
-                } else {
-                    // WAN/SSE mode: no callbackUrl fallback - queue for delivery on reconnect
-                    this.queueSseEvent(emp.employee_id, channel, data);
-                }
+        for (const [empId, emp] of this.employees) {
+            if (!this.shouldRelayErpEventToEmployee(channel, data, empId)) continue;
+
+            // ─── Tối ưu: filter theo assigned_accounts ──────────────
+            // Không gửi event cho employee không được gán account này
+            const assigned = emp.assigned_accounts || [];
+            if (assigned.length > 0 && eventZaloId && !assigned.includes(eventZaloId)) {
+                continue;
             }
+
+            // ─── Socket.IO (transport duy nhất) ──────────────────────
+            // Tất cả employee dùng Socket.IO, không còn SSE fallback.
+            // Event được buffer → EventBuffer → catch-up khi reconnect.
+            // Nếu employee offline → room rỗng → no-op, event ở buffer.
+            try {
+                SocketIOService.getInstance().emitToEmployee(empId, channel, data);
+            } catch {}
         }
     }
 
@@ -1271,12 +2402,6 @@ class HttpRelayService {
                 // ── SSE connection is a live heartbeat - employee is definitely online ──
                 // Refresh lastSeen so the employee doesn't get kicked when SSE eventually drops.
                 if (this.sseClients.has(empId)) {
-                    emp.lastSeen = now;
-                    continue;
-                }
-
-                // ── Active heavy sync in progress - extend grace period ──
-                if (emp.syncingUntil && now < emp.syncingUntil) {
                     emp.lastSeen = now;
                     continue;
                 }
@@ -1449,6 +2574,30 @@ class HttpRelayService {
         res.writeHead(status, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(data));
     }
+
+    /** Cache-aware REST result - skips the synchronous better-sqlite3 query
+     *  if a fresh cached response exists. This prevents main-thread blocking
+     *  when the employee calls many GET endpoints after every message. */
+    private getCachedRestResult(method: string, pathname: string, employeeId: string, fetchFn: () => any): any {
+        if (method !== 'GET') return fetchFn();
+        const cacheKey = `${method}:${pathname}:${employeeId}`;
+        const cached = this.restApiCache.get(cacheKey);
+        if (cached && Date.now() - cached.ts < HttpRelayService.REST_CACHE_TTL_MS) {
+            return cached.data;
+        }
+        const data = fetchFn();
+        this.restApiCache.set(cacheKey, { data, ts: Date.now() });
+        // Prune stale entries every 50 inserts
+        if (this.restApiCache.size > 50) {
+            const now = Date.now();
+            for (const [k, v] of this.restApiCache) {
+                if (now - v.ts > 5000) this.restApiCache.delete(k);
+            }
+        }
+        return data;
+    }
+
+    // ─── Utility ──────────────────────────────────────────────────────
 }
 
 export default HttpRelayService;

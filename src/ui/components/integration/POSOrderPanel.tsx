@@ -7,6 +7,7 @@ import {
 } from './vnDivisions';
 import { adaptOrderForPlatform, type GenericOrderData } from './platformOrderAdapters';
 import { IS_DEV_BUILD } from '../../../configs/BuildConfig';
+import { Spinner } from '@/components/common/PageLoading';
 
 /**
  * POSOrderPanel - Giao diện tạo đơn hàng POS đầy đủ
@@ -639,9 +640,7 @@ export default function POSOrderPanel({
               <svg className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></svg>
               {searching && (
-                <svg className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin w-4 h-4 text-blue-400" viewBox="0 0 24 24" fill="none">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                <Spinner size={4} className="absolute right-3 top-1/2 -translate-y-1/2" />
               )}
             </div>
             <p className="text-[10px] text-gray-500">
@@ -817,9 +816,7 @@ export default function POSOrderPanel({
               className="flex-1 py-3 bg-green-600 hover:bg-green-500 disabled:opacity-50 text-white text-sm font-bold rounded-xl transition-colors">
               {submitting ? (
                 <span className="flex items-center justify-center gap-2">
-                  <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                  <Spinner size={4} />
                   Đang tạo đơn...
                 </span>
               ) : `✅ Tạo đơn hàng · ${formatVND(grandTotal)}`}

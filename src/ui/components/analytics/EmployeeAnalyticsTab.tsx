@@ -5,6 +5,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
 import ipc from '@/lib/ipc';
+import PageLoading from '@/components/common/PageLoading';
 import { toLocalMediaUrl } from '@/lib/localMedia';
 
 // ── Colors ──────────────────────────────────────────────────────────────────
@@ -74,16 +75,6 @@ function formatResponseTime(ms: number): string {
   if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
   if (ms < 3600_000) return `${(ms / 60_000).toFixed(1)}m`;
   return `${(ms / 3600_000).toFixed(1)}h`;
-}
-
-function SkeletonCards({ count = 4 }: { count?: number }) {
-  return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-      {Array.from({ length: count }, (_, i) => (
-        <div key={i} className="h-24 bg-gray-700/30 rounded-xl animate-pulse" />
-      ))}
-    </div>
-  );
 }
 
 // ── MAIN COMPONENT ─────────────────────────────────────────────────────────
@@ -326,7 +317,7 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
     URL.revokeObjectURL(url);
   };
 
-  if (loading) return <SkeletonCards count={8} />;
+  if (loading) return <PageLoading variant="skeleton" skeletonVariant="cards" text="Đang tải thống kê nhân viên..." />;
 
   if (comparison.length === 0) {
     return (

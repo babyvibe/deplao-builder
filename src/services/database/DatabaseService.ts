@@ -114,6 +114,8 @@ class DatabaseService {
 
             this.createTables();
             this.migrate();
+            this.migrateFTS5();
+            this.migrateMediaLibrary();
             this.initErpSchema();
             this.initialized = true;
             Logger.log(`[DatabaseService] Initialized at ${this.dbPath} (better-sqlite3, WAL mode)`);
@@ -238,6 +240,8 @@ class DatabaseService {
             this.dbPath = targetDbPath;
             this.createTables();
             this.migrate();
+            this.migrateFTS5();
+            this.migrateMediaLibrary();
             this.initErpSchema();
             this.initialized = true;
 
@@ -282,6 +286,29 @@ class DatabaseService {
             db = getCachedSecondaryDb(targetDbPath);
             this.dbPath = targetDbPath;
             const result = fn();
+            return result;
+        } finally {
+            db = currentDb;
+            this.dbPath = currentPath;
+        }
+    }
+
+    /**
+     * Async variant of withDbPath — awaits the callback before restoring the DB.
+     * Use this when fn() is async (contains await), otherwise withDbPath restores
+     * the DB before the async operations complete, causing writes to go to the
+     * wrong database.
+     */
+    public async withDbPathAsync<T>(targetDbPath: string, fn: () => Promise<T>): Promise<T> {
+        const currentPath = this.dbPath;
+        const currentDb = db;
+        if (currentPath === targetDbPath) {
+            return fn();
+        }
+        try {
+            db = getCachedSecondaryDb(targetDbPath);
+            this.dbPath = targetDbPath;
+            const result = await fn();
             return result;
         } finally {
             db = currentDb;
@@ -2643,6 +2670,7 @@ class DatabaseService {
     }
 
     public getMessages(ownerZaloId: string, threadId: string, limit = 50, offset = 0, before?: number): Message[] {
+        Logger.log(`[DB:getMessages] DB_PATH=${this.dbPath} owner=${ownerZaloId} thread=${threadId}`);
         if (!this.initialized) return [];
         if (before && before > 0) {
             const msgs = this.query<Message>(
@@ -2762,6 +2790,32 @@ class DatabaseService {
 
     public searchMessages(ownerZaloId: string, query: string): Message[] {
         if (!this.initialized) return [];
+
+        // Try FTS5 first (nhanh hơn ~10-50x)
+        try {
+            const ftsExists = this.query<any>(`SELECT name FROM sqlite_master WHERE type='table' AND name='messages_fts'`);
+            if (ftsExists.length > 0) {
+                // Sanitize FTS5 query
+                const sanitized = query.replace(/['"]/g, '').trim();
+                if (sanitized.length > 0) {
+                    const ftsResults = this.query<any>(
+                        `SELECT m.* FROM messages m
+                         JOIN messages_fts fts ON m.rowid = fts.rowid
+                         WHERE messages_fts MATCH ?
+                         AND m.owner_zalo_id = ?
+                         ORDER BY m.timestamp DESC LIMIT 100`,
+                        [sanitized, ownerZaloId]
+                    );
+                    if (ftsResults.length > 0) {
+                        return ftsResults;
+                    }
+                }
+            }
+        } catch {
+            // FTS5 fallback → LIKE
+        }
+
+        // Fallback: LIKE (chậm hơn nhưng không phụ thuộc FTS5 index)
         return this.query<Message>(
             'SELECT * FROM messages WHERE owner_zalo_id = ? AND content LIKE ? ORDER BY timestamp DESC LIMIT 100',
             [ownerZaloId, `%${query}%`]
@@ -3698,7 +3752,7 @@ class DatabaseService {
     public markAsRead(ownerZaloId: string, contactId: string): void {
         if (!this.initialized) return;
         this.runNoSave('UPDATE contacts SET unread_count = 0 WHERE owner_zalo_id = ? AND contact_id = ?', [ownerZaloId, contactId]);
-        this.runNoSave('UPDATE messages SET status = "read" WHERE owner_zalo_id = ? AND thread_id = ? AND is_sent = 0', [ownerZaloId, contactId]);
+        this.runNoSave('UPDATE messages SET status = \'read\' WHERE owner_zalo_id = ? AND thread_id = ? AND is_sent = 0', [ownerZaloId, contactId]);
         this.save();
     }
 
@@ -7345,6 +7399,102 @@ class DatabaseService {
             `SELECT * FROM fb_crm_contacts WHERE fb_account_id = ? ORDER BY display_name ASC`,
             [fbAccountId]
         );
+    }
+
+    /**
+     * Migration: media library tables
+     */
+    public migrateMediaLibrary(): void {
+        try {
+            // Import LibraryService dynamically to avoid circular dependency
+            const LibraryService = require('../library/LibraryService').default;
+            LibraryService.getInstance().migrate();
+        } catch (err: any) {
+            Logger.warn(`[DatabaseService] Media library migration skipped: ${err.message}`);
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════
+    // FTS5 Migration — Full-text search cho messages
+    // ═════════════════════════════════════════════════════════════════════
+
+    /**
+     * Create FTS5 virtual table for messages + triggers for auto-sync.
+     * Nếu SQLite build không hỗ trợ FTS5, bỏ qua một cách an toàn.
+     */
+    public migrateFTS5(): void {
+        try {
+            // Check if FTS5 is available
+            const ftsCheck = this.query<any>(`SELECT * FROM pragma_compile_options WHERE compile_options LIKE '%ENABLE_FTS5%'`);
+            const ftsSupported = ftsCheck.length > 0;
+
+            if (!ftsSupported) {
+                // Try creating anyway - better-sqlite3 usually bundles FTS5
+                try {
+                    this.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+                        content,
+                        msg_id UNINDEXED,
+                        owner_zalo_id UNINDEXED,
+                        thread_id UNINDEXED,
+                        tokenize='unicode61'
+                    )`);
+                } catch {
+                    Logger.warn('[DatabaseService] FTS5 not supported by this SQLite build - search will use LIKE');
+                    return;
+                }
+            }
+
+            // Check if already exists
+            const existing = this.query<any>(`SELECT name FROM sqlite_master WHERE type='table' AND name='messages_fts'`);
+            if (existing.length > 0) {
+                Logger.log('[DatabaseService] FTS5 table already exists, skipping creation');
+                return;
+            }
+
+            // Create FTS5 table
+            this.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+                content,
+                msg_id UNINDEXED,
+                owner_zalo_id UNINDEXED,
+                thread_id UNINDEXED,
+                tokenize='unicode61'
+            )`);
+
+            // Create triggers for auto-sync
+            this.exec(`
+                CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON messages BEGIN
+                    INSERT INTO messages_fts(rowid, content, msg_id, owner_zalo_id, thread_id)
+                    VALUES (new.rowid, new.content, new.msg_id, new.owner_zalo_id, new.thread_id);
+                END
+            `);
+
+            this.exec(`
+                CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON messages BEGIN
+                    DELETE FROM messages_fts WHERE rowid = old.rowid;
+                END
+            `);
+
+            this.exec(`
+                CREATE TRIGGER IF NOT EXISTS messages_fts_au AFTER UPDATE ON messages BEGIN
+                    DELETE FROM messages_fts WHERE rowid = old.rowid;
+                    INSERT INTO messages_fts(rowid, content, msg_id, owner_zalo_id, thread_id)
+                    VALUES (new.rowid, new.content, new.msg_id, new.owner_zalo_id, new.thread_id);
+                END
+            `);
+
+            // Backfill existing data
+            Logger.log('[DatabaseService] FTS5: backfilling existing messages...');
+            const count = this.queryOne<any>(`SELECT COUNT(*) as n FROM messages`);
+            this.exec(`
+                INSERT INTO messages_fts(rowid, content, msg_id, owner_zalo_id, thread_id)
+                SELECT rowid, content, msg_id, owner_zalo_id, thread_id FROM messages
+                WHERE rowid NOT IN (SELECT rowid FROM messages_fts)
+            `);
+            this.forceFlush();
+            Logger.log(`[DatabaseService] ✅ FTS5 migration complete (${count?.n || 0} messages indexed)`);
+        } catch (err: any) {
+            Logger.warn(`[DatabaseService] FTS5 migration skipped: ${err.message}. Search will use LIKE fallback.`);
+        }
     }
 }
 

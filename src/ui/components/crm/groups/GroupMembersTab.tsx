@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
+import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
@@ -146,11 +147,11 @@ export default function GroupMembersTab() {
   // ── Load groups from contacts (contact_type='group') ──────────────────────
   const loadGroupsFromDB = useCallback(async () => {
     if (!activeAccountId) return;
-    const contactsRes = await ipc.db?.getContacts(activeAccountId);
-    const allContacts: any[] = contactsRes?.contacts ?? contactsRes ?? [];
-    const groupContacts = allContacts.filter((c: any) => c.contact_type === 'group');
+    const convRes = await DataAccessor.getConversations(activeAccountId, 999, 0);
+    const allContacts: any[] = convRes?.items || [];
+    const groupContacts = (allContacts || []).filter((c: any) => c.contact_type === 'group');
 
-    const allMembersRes = await ipc.db?.getAllGroupMembers({ zaloId: activeAccountId });
+    const allMembersRes = await DataAccessor.getAllGroupMembers(activeAccountId);
     const memberRows = allMembersRes?.rows ?? [];
     const countMap: Record<string, number> = {};
     for (const row of memberRows) countMap[row.group_id] = (countMap[row.group_id] || 0) + 1;
@@ -169,7 +170,7 @@ export default function GroupMembersTab() {
   // ── Load members from page_group_member ───────────────────────────────────
   const loadMembersFromDB = useCallback(async (groupId: string) => {
     if (!activeAccountId) return;
-    const res = await ipc.db?.getGroupMembers({ zaloId: activeAccountId, groupId });
+    const res = await DataAccessor.getGroupMembers({ zaloId: activeAccountId, groupId });
     // Filter out non-numeric garbage IDs (e.g. "profiles", "unchangeds_profile") from old bad parses
     const rows = (res?.members ?? []).filter((m: any) => {
       const id = m.member_id?.trim();
@@ -177,8 +178,8 @@ export default function GroupMembersTab() {
     });
 
     // Merge phone numbers from contacts table
-    const contactsRes = await ipc.db?.getContacts(activeAccountId);
-    const allContacts: any[] = contactsRes?.contacts ?? contactsRes ?? [];
+    const convRes = await DataAccessor.getConversations(activeAccountId, 999, 0);
+    const allContacts: any[] = convRes?.items || [];
     const phoneMap: Record<string, string> = {};
     for (const c of allContacts) {
       if (c.contact_id && c.phone) phoneMap[c.contact_id] = c.phone;
@@ -322,7 +323,7 @@ export default function GroupMembersTab() {
       }
 
       // ── Step 2: Save group contact to DB ─────────────────────────────────
-      await ipc.db?.updateContactProfile({
+      await DataAccessor.updateContactProfile({
         zaloId: activeAccountId, contactId: groupId,
         displayName: name, avatarUrl: avatar, phone: '', contactType: 'group',
       });
@@ -349,7 +350,7 @@ export default function GroupMembersTab() {
           avatar: memInfoMap[id]?.avatar || '',
           role: memInfoMap[id]?.role || 0,
         }));
-        await ipc.db?.saveGroupMembers({ zaloId: activeAccountId, groupId, members: initMembers });
+        await DataAccessor.saveGroupMembers({ zaloId: activeAccountId, groupId, members: initMembers });
       }
 
       setLinkScanResult({ groupId, name });
@@ -376,7 +377,7 @@ export default function GroupMembersTab() {
                   updates.push({ memberId, displayName, avatar: av, role: memInfoMap[memberId]?.role ?? 0 });
                   if (phone) {
                     contactSaves.push(
-                      ipc.db?.updateContactProfile({
+                      DataAccessor.updateContactProfile({
                         zaloId: activeAccountId, contactId: memberId,
                         displayName, avatarUrl: av, phone, contactType: 'friend',
                       }) ?? Promise.resolve()
@@ -384,7 +385,7 @@ export default function GroupMembersTab() {
                   }
                 }
               }
-              if (updates.length > 0) await ipc.db?.saveGroupMembers({ zaloId: activeAccountId, groupId, members: updates });
+              if (updates.length > 0) await DataAccessor.saveGroupMembers({ zaloId: activeAccountId, groupId, members: updates });
               if (contactSaves.length > 0) await Promise.all(contactSaves);
             }
           } catch (err) {
@@ -458,7 +459,7 @@ export default function GroupMembersTab() {
   // ── Open campaign picker ──────────────────────────────────────────────────
   const openCampaignPicker = useCallback(async () => {
     if (!activeAccountId) return;
-    const res = await ipc.crm?.getCampaigns({ zaloId: activeAccountId });
+    const res = await DataAccessor.getCRMCampaigns({ zaloId: activeAccountId });
     if (res?.success) {
       const available = (res.campaigns || []).filter((c: any) => c.status !== 'done');
       setLocalCampaigns(available);
@@ -470,10 +471,10 @@ export default function GroupMembersTab() {
   // ── Create new campaign from within picker ────────────────────────────────
   const handleCreateCampaignInPicker = useCallback(async (data: any) => {
     if (!activeAccountId) return;
-    const res = await ipc.crm?.saveCampaign({ zaloId: activeAccountId, campaign: data });
+    const res = await DataAccessor.saveCRMCampaign({ zaloId: activeAccountId, campaign: data });
     if (res?.success) {
       // Refresh local campaign list and auto-select the new one
-      const res2 = await ipc.crm?.getCampaigns({ zaloId: activeAccountId });
+      const res2 = await DataAccessor.getCRMCampaigns({ zaloId: activeAccountId });
       if (res2?.success) {
         const available = (res2.campaigns || []).filter((c: any) => c.status !== 'done');
         setLocalCampaigns(available);
@@ -494,7 +495,7 @@ export default function GroupMembersTab() {
           displayName: m.display_name || m.member_id,
           avatar: m.avatar || '',
         }));
-      await ipc.crm?.addCampaignContacts({ zaloId: activeAccountId, campaignId: pickedCampaignId, contacts });
+      await DataAccessor.addCampaignContacts({ zaloId: activeAccountId, campaignId: pickedCampaignId, contacts });
       setShowCampaignPicker(false);
       setSelectedMemberIds(new Set());
       setPickedCampaignId(null);

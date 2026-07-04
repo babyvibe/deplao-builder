@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
@@ -65,7 +66,7 @@ export function invalidateZaloQuickMessageCache(accountId: string) {
 
 // ─── Local DB helpers ─────────────────────────────────────────────────────────
 async function fetchLocalQuickMessages(zaloId: string): Promise<QuickMessage[]> {
-  const res = await ipc.db?.getLocalQuickMessages({ zaloId });
+  const res = await DataAccessor.getLocalQuickMessages({ zaloId });
   if (!res?.success) return [];
   return (res.items || []).map((r: any) => {
     const mediaObj = r.media || null;
@@ -487,12 +488,12 @@ export function QuickMessageManagerPanel({ onClose, onSelect }: { onClose: () =>
       }
       const mapped = zaloItems.map(i => ({ keyword: i.keyword, title: i.message.title, media: i.media || undefined }));
       if (syncMode === 'replace') {
-        await ipc.db?.bulkReplaceLocalQuickMessages({ zaloId: activeAccountId, items: mapped });
+        await DataAccessor.bulkReplaceLocalQuickMessages({ zaloId: activeAccountId, items: mapped });
         showNotification(`Đã thay thế bằng ${zaloItems.length} tin nhắn từ Zalo!`, 'success');
       } else {
         // merge: upsert từng item, giữ local không bị xóa
         for (const item of mapped) {
-          await ipc.db?.upsertLocalQuickMessage({ zaloId: activeAccountId, item });
+          await DataAccessor.upsertLocalQuickMessage({ zaloId: activeAccountId, item });
         }
         showNotification(`Đã thêm ${zaloItems.length} tin nhắn từ Zalo vào Local!`, 'success');
       }
@@ -521,7 +522,7 @@ export function QuickMessageManagerPanel({ onClose, onSelect }: { onClose: () =>
         ? { localFiles: localMediaFiles }
         : undefined;
       await callApi(
-        () => ipc.db?.upsertLocalQuickMessage({ zaloId: activeAccountId, item: { keyword, title, media: mediaObj } }),
+        () => DataAccessor.upsertLocalQuickMessage({ zaloId: activeAccountId, item: { keyword, title, media: mediaObj } }),
         'Tạo tin nhắn nhanh local thất bại'
       );
       await load(true);
@@ -546,7 +547,7 @@ export function QuickMessageManagerPanel({ onClose, onSelect }: { onClose: () =>
         ? { localFiles: localMediaFiles }
         : undefined;
       await callApi(
-        () => ipc.db?.upsertLocalQuickMessage({ zaloId: activeAccountId, item: { keyword, title, media: mediaObj } }),
+        () => DataAccessor.upsertLocalQuickMessage({ zaloId: activeAccountId, item: { keyword, title, media: mediaObj } }),
         'Cập nhật tin nhắn nhanh local thất bại'
       );
       await load(true);
@@ -574,7 +575,7 @@ export function QuickMessageManagerPanel({ onClose, onSelect }: { onClose: () =>
         invalidateZaloQuickMessageCache(activeAccountId);
       } else {
         await callApi(
-          () => ipc.db?.deleteLocalQuickMessage({ zaloId: activeAccountId, id: item.id }),
+          () => DataAccessor.deleteLocalQuickMessage({ zaloId: activeAccountId, id: item.id }),
           'Xóa tin nhắn nhanh local thất bại'
         );
       }

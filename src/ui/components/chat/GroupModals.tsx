@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore, LabelData } from '@/store/appStore';
 import { useChatStore } from '@/store/chatStore';
+import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 
 // Cache TTL: 12 hour
@@ -30,7 +31,7 @@ function useFriends() {
       const res = await ipc.zalo?.getFriends(auth);
       const list: any[] = Array.isArray(res?.response) ? res.response : [];
       if (list.length > 0) {
-        await ipc.db?.saveFriends({ zaloId: activeAccountId, friends: list });
+        await DataAccessor.saveFriends({ zaloId: activeAccountId, friends: list });
         _sessionFriendsCache.set(activeAccountId, { friends: list, fetchedAt: Date.now() });
         setFriends(list);
       }
@@ -56,7 +57,7 @@ function useFriends() {
       setLoading(true);
       try {
         // 2. Load from DB cache
-        const cached = await ipc.db?.getFriends({ zaloId: activeAccountId });
+        const cached = await DataAccessor.getFriends({ zaloId: activeAccountId });
         if (cancelled) return;
 
         if (cached?.friends?.length) {
@@ -257,8 +258,8 @@ export function CreateGroupModal({ onClose, onCreated, preSelected }: {
   useEffect(() => {
     if (!activeAccountId) return;
     Promise.all([
-      ipc.db?.getLocalLabels({ zaloId: activeAccountId }),
-      ipc.db?.getLocalLabelThreads({ zaloId: activeAccountId }),
+      DataAccessor.getLocalLabels({ zaloId: activeAccountId }),
+      DataAccessor.getLocalLabelThreads({ zaloId: activeAccountId }),
     ]).then(([labelsRes, threadsRes]) => {
       const rawLabels: any[] = (labelsRes?.labels || []).filter((l: any) => l.isActive !== 0);
       const threads: { label_id: number; thread_id: string }[] = threadsRes?.threads || [];
@@ -597,8 +598,8 @@ export function SendCardModal({ threadId, threadType, onClose }: {
   useEffect(() => {
     if (!activeAccountId) return;
     Promise.all([
-      ipc.db?.getLocalLabels({ zaloId: activeAccountId }),
-      ipc.db?.getLocalLabelThreads({ zaloId: activeAccountId }),
+      DataAccessor.getLocalLabels({ zaloId: activeAccountId }),
+      DataAccessor.getLocalLabelThreads({ zaloId: activeAccountId }),
     ]).then(([labelsRes, threadsRes]) => {
       const rawLabels: any[] = (labelsRes?.labels || []).filter((l: any) => l.isActive !== 0);
       const threads: { label_id: number; thread_id: string }[] = threadsRes?.threads || [];

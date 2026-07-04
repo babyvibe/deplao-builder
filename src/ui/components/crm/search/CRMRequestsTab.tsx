@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
 import { useCRMStore } from '@/store/crmStore';
+import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import { extractApiError } from '@/utils/apiError';
 import { UserProfilePopup } from '../../common/UserProfilePopup';
@@ -37,8 +38,8 @@ export default function CRMRequestsTab() {
     let count = 0;
     try {
       const [recRes, sentRes] = await Promise.all([
-        ipc.db?.getFriendRequests({ zaloId: activeAccountId, direction: 'received' }),
-        ipc.db?.getFriendRequests({ zaloId: activeAccountId, direction: 'sent' }),
+        DataAccessor.getFriendRequests({ zaloId: activeAccountId, direction: 'received' }),
+        DataAccessor.getFriendRequests({ zaloId: activeAccountId, direction: 'sent' }),
       ]);
       if (recRes?.requests) {
         setRequests(recRes.requests);
@@ -105,7 +106,7 @@ export default function CRMRequestsTab() {
     try {
       await ipc.zalo?.acceptFriendRequest({ auth, userId });
       showNotification('Đã chấp nhận lời mời!', 'success');
-      await ipc.db?.removeFriendRequest({ zaloId: activeAccountId, userId, direction: 'received' });
+      await DataAccessor.removeFriendRequest({ zaloId: activeAccountId, userId, direction: 'received' });
       setRequests(prev => {
         const next = prev.filter(r => r.userId !== userId);
         setRequestCount(next.length);
@@ -121,7 +122,7 @@ export default function CRMRequestsTab() {
     try {
       await ipc.zalo?.rejectFriendRequest({ auth, userId });
       showNotification('Đã từ chối lời mời', 'info');
-      await ipc.db?.removeFriendRequest({ zaloId: activeAccountId, userId, direction: 'received' });
+      await DataAccessor.removeFriendRequest({ zaloId: activeAccountId, userId, direction: 'received' });
       setRequests(prev => {
         const next = prev.filter(r => r.userId !== userId);
         setRequestCount(next.length);
@@ -137,7 +138,7 @@ export default function CRMRequestsTab() {
     try {
       await ipc.zalo?.undoFriendRequest({ auth, userId });
       showNotification('Đã hủy lời mời kết bạn', 'info');
-      await ipc.db?.removeFriendRequest({ zaloId: activeAccountId, userId, direction: 'sent' });
+      await DataAccessor.removeFriendRequest({ zaloId: activeAccountId, userId, direction: 'sent' });
       setSentRequests(prev => prev.filter(r => (r.userId || r.uid) !== userId));
     } catch (err: any) { showNotification(extractApiError(err, 'Hủy lời mời thất bại'), 'error'); }
   };

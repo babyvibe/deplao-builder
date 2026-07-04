@@ -3,10 +3,12 @@ import { TransformWrapper, TransformComponent, ReactZoomPanPinchRef } from 'reac
 import ipc from '@/lib/ipc';
 import { useAppStore } from '@/store/appStore';
 import { toLocalMediaUrl } from '@/lib/localMedia';
+import { Spinner } from '@/components/common/PageLoading';
 
 export interface MediaViewerImage {
-  src: string;           // remote/view URL
-  displaySrc?: string;   // local display URL (if any)
+  src: string;           // remote/view URL (ưu tiên cao nhất)
+  displaySrc?: string;   // local display URL (nếu có)
+  fallbackSrc?: string;  // fallback URL (Zalo CDN) khi src không load được
   alt?: string;
   localPath?: string;    // absolute local file path (for show-in-folder)
   defaultName?: string;
@@ -50,6 +52,7 @@ export default function MediaViewer({ src, images, initialIndex = 0, alt = 'ản
   }, [currentSrc, imageList]);
   const [isImageLoading, setIsImageLoading] = useState(false);
   const [mainImageError, setMainImageError] = useState(false);
+  const [useFallback, setUseFallback] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(1);
   const [saving, setSaving] = useState(false);
   const transformRef = useRef<ReactZoomPanPinchRef>(null);
@@ -70,7 +73,10 @@ export default function MediaViewer({ src, images, initialIndex = 0, alt = 'ản
   const lastScrolledSrcRef = useRef('');
 
   const current = imageList[currentIndex];
-  const displaySrc = currentSrc || current?.src || ''; // currentSrc IS the displaySrc (local > remote)
+  const primarySrc = currentSrc || current?.displaySrc || current?.src || '';
+  const fallbackSrc = current?.fallbackSrc || '';
+  // Khi primarySrc lỗi → fallback sang fallbackSrc (Zalo CDN)
+  const displaySrc = useFallback && fallbackSrc ? fallbackSrc : primarySrc;
   const viewSrc = current?.src || '';
   const currentAlt = current?.alt || alt;
   const localPath = current?.localPath || '';
@@ -95,6 +101,7 @@ export default function MediaViewer({ src, images, initialIndex = 0, alt = 'ản
     }
     setIsImageLoading(false); // Reset - don't show spinner immediately
     setMainImageError(false);
+    setUseFallback(false);
     repairAttemptedRef.current = false; // Allow repair attempt for new image
 
     // Immediately check if the image is already loaded (cache hit).
@@ -347,7 +354,7 @@ export default function MediaViewer({ src, images, initialIndex = 0, alt = 'ản
             <button onClick={handleSave} disabled={saving} title="Lưu ảnh"
               className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center text-white/80 hover:text-white transition-colors disabled:opacity-40">
               {saving
-                ? <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                ? <Spinner size={3} />
                 : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               }
             </button>
@@ -465,8 +472,13 @@ export default function MediaViewer({ src, images, initialIndex = 0, alt = 'ản
                 onLoad={() => setIsImageLoading(false)}
                 onError={() => {
                   setIsImageLoading(false);
-                  // Attempt auto-repair if we have a local path (corrupted local file)
+                  // Try-cascade: fallback to Zalo CDN URL nếu có
                   const img = imageList[currentIndex];
+                  if (!useFallback && img?.fallbackSrc && img.fallbackSrc !== (current?.displaySrc || current?.src)) {
+                    setUseFallback(true);
+                    return;
+                  }
+                  // Attempt auto-repair if we have a local path (corrupted local file)
                   if (img?.localPath && img?.src && zaloId && img?.msgId && !repairAttemptedRef.current) {
                     repairAttemptedRef.current = true;
                     ipc.file?.repairImage({
@@ -563,7 +575,15 @@ export default function MediaViewer({ src, images, initialIndex = 0, alt = 'ản
                   src={img.displaySrc || img.src}
                   alt={`thumb ${idx + 1}`}
                   className="w-full h-full object-cover"
-                  onError={e => { (e.target as HTMLImageElement).style.opacity = '0.3'; }}
+                  onError={e => {
+                    const target = e.target as HTMLImageElement;
+                    // Try fallbackSrc (Zalo CDN) nếu primary src lỗi
+                    if (img.fallbackSrc && target.src !== img.fallbackSrc) {
+                      target.src = img.fallbackSrc;
+                    } else {
+                      target.style.opacity = '0.3';
+                    }
+                  }}
                 />
               </button>
             ))}

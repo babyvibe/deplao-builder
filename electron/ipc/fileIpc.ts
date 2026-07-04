@@ -2,6 +2,7 @@ import { ipcMain, dialog, shell, app, net } from 'electron';
 import FileStorageService from '../../src/services/file/FileStorageService';
 import DatabaseService from '../../src/services/database/DatabaseService';
 import EventBroadcaster from '../../src/services/event/EventBroadcaster';
+import MediaCacheService from '../../src/services/cache/MediaCacheService';
 import Logger from '../../src/utils/Logger';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -27,6 +28,11 @@ function getFfmpegBin(): string {
 }
 
 export function registerFileIpc() {
+    // Init MediaCacheService cho employee mode
+    try {
+        MediaCacheService.getInstance().init();
+    } catch {}
+
     ipcMain.handle('file:openDialog', async (_event, options: any) => {
         try {
             const result = await dialog.showOpenDialog({
@@ -411,6 +417,101 @@ export function registerFileIpc() {
         }
 
         return { success: true, corrupted };
+    });
+
+    /**
+     * MediaCache: resolve URL với cache-first
+     * Employee: kiểm tra cache local trước, nếu miss thì download background + trả về boss URL
+     */
+    ipcMain.handle('media:resolveUrl', async (_event, { bossUrl, mediaType }: { bossUrl: string; mediaType?: string }) => {
+        try {
+            const cache = MediaCacheService.getInstance();
+            if (!bossUrl) return { success: true, displayUrl: '', fromCache: false };
+
+            // 1. Kiểm tra MediaCacheService trước
+            const cached = cache.hasCache(bossUrl);
+            if (cached) {
+                const result = await cache.resolveUrl(bossUrl, (mediaType || 'image') as any);
+                return { success: true, displayUrl: result.displayUrl, fromCache: true };
+            }
+
+            // 2. Kiểm tra workspace media directory (file đã download từ trước)
+            //    Boss URL pattern: /api/media/{path} → map về workspace media/
+            try {
+                const mediaPath = bossUrl.includes('/api/media/')
+                    ? 'media/' + bossUrl.split('/api/media/')[1].split('?')[0]
+                    : '';
+                if (mediaPath) {
+                    const absPath = FileStorageService.resolveAbsolutePath(mediaPath);
+                    if (absPath && fs.existsSync(absPath)) {
+                        // File tồn tại trong workspace → dùng file:// URL
+                        const normalized = absPath.replace(/\\/g, '/');
+                        const fileUrl = `file:///${normalized.startsWith('/') ? '' : '/'}${normalized}`;
+                        Logger.log(`[fileIpc] media:resolveUrl → workspace hit: ${mediaPath}`);
+                        return { success: true, displayUrl: fileUrl, fromCache: true };
+                    }
+                }
+            } catch {}
+
+            // 3. Cache miss → download background từ Boss
+            const result = await cache.resolveUrl(bossUrl, (mediaType || 'image') as any);
+            return { success: true, displayUrl: result.displayUrl, fromCache: result.fromCache };
+        } catch (err: any) {
+            Logger.error(`[fileIpc] media:resolveUrl error: ${err.message}`);
+            return { success: false, displayUrl: bossUrl, fromCache: false };
+        }
+    });
+
+    /** Check xem URL đã được cache hoặc có trong workspace media chưa (sync, nhanh) */
+    ipcMain.handle('media:hasCache', async (_event, { bossUrl }: { bossUrl: string }) => {
+        try {
+            const cache = MediaCacheService.getInstance();
+            if (cache.hasCache(bossUrl)) return { success: true, cached: true };
+            // Check workspace media directory
+            const mediaPath = bossUrl.includes('/api/media/')
+                ? 'media/' + bossUrl.split('/api/media/')[1].split('?')[0]
+                : '';
+            if (mediaPath) {
+                const absPath = FileStorageService.resolveAbsolutePath(mediaPath);
+                if (absPath && fs.existsSync(absPath)) {
+                    return { success: true, cached: true };
+                }
+            }
+            return { success: true, cached: false };
+        } catch {
+            return { success: true, cached: false };
+        }
+    });
+
+    /**
+     * Batch preload: nhận danh sách Boss URLs, trigger download background
+     * Trả về ngay, không đợi download hoàn tất
+     */
+    ipcMain.handle('media:preloadBatch', async (_event, { urls }: { urls: string[] }) => {
+        try {
+            const cache = MediaCacheService.getInstance();
+            let triggered = 0;
+            for (const url of urls) {
+                if (!url) continue;
+                // Skip nếu đã có trong cache hoặc workspace media
+                if (cache.hasCache(url)) continue;
+                const mediaPath = url.includes('/api/media/')
+                    ? 'media/' + url.split('/api/media/')[1].split('?')[0]
+                    : '';
+                if (mediaPath) {
+                    try {
+                        const absPath = FileStorageService.resolveAbsolutePath(mediaPath);
+                        if (absPath && require('fs').existsSync(absPath)) continue;
+                    } catch {}
+                }
+                // Cache miss → download background
+                cache.resolveUrl(url, 'image').catch(() => {});
+                triggered++;
+            }
+            return { success: true, triggered };
+        } catch (err: any) {
+            return { success: false, error: err.message };
+        }
     });
 
 }

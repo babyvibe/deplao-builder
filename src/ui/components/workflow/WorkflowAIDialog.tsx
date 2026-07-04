@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
+import DataAccessor from '../../lib/data/DataAccessor';
 import ipc from '../../lib/ipc';
 import { NODE_GROUPS, DEFAULT_CONFIGS, getNodeLabel } from './workflowConfig';
 import { useAppStore } from '@/store/appStore';
@@ -123,12 +124,12 @@ export default function WorkflowAIDialog({ currentNodes, currentEdges, channel, 
     (async () => {
       try {
         // Try to get default first
-        const defRes = await ipc.ai?.getDefault();
+        const defRes = await DataAccessor.getDefaultAssistant();
         if (defRes?.success && defRes.assistant) {
           setSelectedAssistantId(defRes.assistant.id);
         }
         // Then list all
-        const listRes = await ipc.ai?.listAssistants();
+        const listRes = await DataAccessor.getAssistants();
         if (listRes?.success) {
           setAssistants(listRes.assistants || []);
           // If no default, pick first

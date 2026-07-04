@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import type { CRMCampaign } from '@/store/crmStore';
 import { showConfirm } from '@/components/common/ConfirmDialog';
+import PageLoading from '@/components/common/PageLoading';
 
 function fmtDelayRange(min: number, max: number): string {
   const fmt = (s: number) => {
@@ -95,7 +96,7 @@ export default function CampaignList({ campaigns, loading, activeId, onSelect, o
       </div>
 
       <div className="flex-1 overflow-y-auto p-3 space-y-2">
-        {loading && [...Array(3)].map((_, i) => <div key={i} className="h-20 bg-gray-700/50 rounded-xl animate-pulse" />)}
+        {loading && <PageLoading variant="skeleton" skeletonVariant="cards" />}
 
         {!loading && filtered.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-gray-500 py-10">

@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 import { useAccountStore } from './accountStore';
+import { useEmployeeStore } from './employeeStore';
+import DataAccessor from '@/lib/data/DataAccessor';
 
 type AppView = 'chat' | 'friends' | 'settings' | 'dashboard' | 'crm' | 'workflow' | 'integration' | 'analytics' | 'erp';
 export type AppTheme = 'dark' | 'light';
@@ -320,13 +322,7 @@ function loadAiQuickPanelContextCountOverride(): number | null {
 
 // ─── Helper: write flag to DB via IPC (fire-and-forget) ─────────────────────
 function persistFlag(zaloId: string, contactId: string, flags: { is_muted?: number; mute_until?: number; is_in_others?: number }) {
-  try {
-    // ipc is imported lazily to avoid circular dependency at module init time
-    const ipc = (window as any).electronAPI?.db;
-    if (ipc?.setContactFlags) {
-      ipc.setContactFlags({ zaloId, contactId, flags }).catch(() => {});
-    }
-  } catch {}
+  DataAccessor.setContactFlags({ zaloId, contactId, flags }).catch(() => {});
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
@@ -489,6 +485,29 @@ export const useAppStore = create<AppStore>((set, get) => ({
       return { labels: cached || [], version: cachedVersion };
     }
 
+    // Employee mode: labels from Boss REST API
+    try {
+      if (useEmployeeStore.getState().mode === 'employee') {
+        const res = await DataAccessor.getLocalLabels({ zaloId });
+        const labels = (res?.labels || []).map((l: any) => ({
+          id: l.id,
+          text: l.name || '',
+          color: l.color || '#6b7280',
+          emoji: l.emoji || '',
+          conversations: [],
+          textKey: `label_${l.id}`,
+          offset: 0,
+          createTime: Date.now(),
+        }));
+        set((s) => ({
+          labels: { ...s.labels, [zaloId]: labels },
+          labelsVersionMap: { ...s.labelsVersionMap, [zaloId]: 0 },
+          labelsFetchedAt: { ...s.labelsFetchedAt, [zaloId]: Date.now() },
+        }));
+        return { labels, version: 0 };
+      }
+    } catch {}
+
     // Fetch from Zalo API
     try {
       const ipc = (window as any).electronAPI;
@@ -534,9 +553,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   // ─── Bulk load flags from DB ─────────────────────────────────────────
   loadFlags: async (zaloId) => {
     try {
-      const ipcDb = (window as any).electronAPI?.db;
-      if (!ipcDb?.getContactsWithFlags) return;
-      const res = await ipcDb.getContactsWithFlags({ zaloId });
+      const res = await DataAccessor.getContactsWithFlags(zaloId);
       if (!res?.success) return;
 
       const newMuted: Record<string, number> = {};
@@ -617,18 +634,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
       notifSettingsOverrides: { ...s.notifSettingsOverrides, [zaloId]: updated },
     }));
     try {
-      const ipc = (window as any).electronAPI?.db;
-      if (ipc?.setNotifSettings) {
-        await ipc.setNotifSettings(zaloId, updated);
-      }
+      await DataAccessor.setNotifSettings(zaloId, updated);
     } catch {}
   },
 
   loadNotifSettingsForAccount: async (zaloId) => {
     try {
-      const ipc = (window as any).electronAPI?.db;
-      if (!ipc?.getNotifSettings) return;
-      const res = await ipc.getNotifSettings(zaloId);
+      const res = await DataAccessor.getNotifSettings(zaloId);
       if (res?.success && res.settings) {
         set((s) => ({
           notifSettingsOverrides: { ...s.notifSettingsOverrides, [zaloId]: res.settings },

@@ -8,8 +8,10 @@ import { MessageItem } from '@/store/chatStore';
 import { useChatStore } from '@/store/chatStore';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
+import { useEmployeeStore } from '@/store/employeeStore';
 import { getCachedBankCard } from '@/lib/bankCardCache';
-import ipc from '@/lib/ipc';
+import ipc from '@/lib/ipc'
+import DataAccessor from '@/lib/data/DataAccessor';;
 import { toLocalMediaUrl } from '@/lib/localMedia';
 import { formatPhone } from '@/utils/phoneUtils';
 import PhoneDisplay from '../common/PhoneDisplay';
@@ -232,7 +234,7 @@ function StickerBubble({ msg }: { msg: any }) {
 
       // Check DB cache (includes unsupported flag)
       try {
-        const res = await ipc.db?.getStickerById({ stickerId });
+        const res = await DataAccessor.getStickerById(stickerId);
         if (res?.sticker) {
           if (res.sticker._unsupported) {
             if (!cancelled) setUnsupported(true);
@@ -262,7 +264,7 @@ function StickerBubble({ msg }: { msg: any }) {
         const stickers: any[] = detailRes?.response || [];
         if (stickers.length && stickers[0]?.stickerUrl) {
           if (!cancelled) setStickerUrl(stickers[0].stickerUrl);
-          ipc.db?.saveStickers({ stickers }).catch(() => {});
+          DataAccessor.saveStickers({ stickers }).catch(() => {});
         } else {
           // Empty result - mark unsupported
           ipc.db?.markStickerUnsupported({ stickerId }).catch(() => {});
@@ -301,12 +303,14 @@ function StickerBubble({ msg }: { msg: any }) {
 
 // ── MediaBubble ───────────────────────────────────────────────────────────────
 function MediaBubble({ msg, isSelf, onView }: { msg: any; isSelf: boolean; onView?: (src: string) => void }) {
-  const [useRemote, setUseRemote] = React.useState(false);
+  const [useFallback, setUseFallback] = React.useState(0); // 0=workspace, 1= boss, 2=cdn
+  const [resolvedUrl, setResolvedUrl] = React.useState<string | null>(null);
   const [loadFailed, setLoadFailed] = React.useState(false);
   const repairAttemptedRef = React.useRef(false);
+  const mode = useEmployeeStore.getState().mode;
 
   const localPathsStr = typeof msg.local_paths === 'string' ? msg.local_paths : JSON.stringify(msg.local_paths ?? '');
-  React.useEffect(() => { setLoadFailed(false); setUseRemote(false); repairAttemptedRef.current = false; }, [localPathsStr]);
+  React.useEffect(() => { setLoadFailed(false); setUseFallback(0); setResolvedUrl(null); repairAttemptedRef.current = false; }, [localPathsStr]);
 
   let localUrl = '';
   try {
@@ -347,10 +351,29 @@ function MediaBubble({ msg, isSelf, onView }: { msg: any; isSelf: boolean; onVie
     } catch {}
   }
 
+  // Resolve URL với cascade: workspace → cache → Boss → CDN
+  React.useEffect(() => {
+    if (!localUrl || mode !== 'employee') {
+      setResolvedUrl(null);
+      return;
+    }
+    let cancelled = false;
+    ipc.file?.resolveMediaUrl(localUrl).then((res) => {
+      if (cancelled) return;
+      if (res?.success && res.fromCache && res.displayUrl) {
+        setResolvedUrl(res.displayUrl);
+      }
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [localUrl, mode]);
+
   // Multi-image grid (FB batch send temp OR single)
   const allUrls = fbLocalUrls.length > 1 ? fbLocalUrls : null;
 
-  const displayUrl = useRemote ? remoteUrl : (localUrl || remoteUrl);
+  // Cascade: resolvedUrl (workspace/cache) → localUrl (Boss) → remoteUrl (CDN)
+  const cascadeUrls = [resolvedUrl, localUrl, remoteUrl].filter(Boolean) as string[];
+  const currentSrc = cascadeUrls[Math.min(useFallback, cascadeUrls.length - 1)] || '';
+  const displayUrl = mode === 'employee' ? currentSrc : (localUrl || remoteUrl);
   const viewUrl = remoteUrl || displayUrl;
 
   if (loadFailed && !allUrls) return <span className="text-xs opacity-60">[Không tải được ảnh]</span>;
@@ -377,7 +400,16 @@ function MediaBubble({ msg, isSelf, onView }: { msg: any; isSelf: boolean; onVie
         className={`max-w-xs max-h-64 object-cover cursor-pointer hover:opacity-90 transition-opacity bg-gray-700/30 w-full${caption ? ' rounded-t-xl' : ' rounded-xl'}`}
         onClick={() => onView?.(viewUrl)}
         onError={() => {
-          if (!useRemote && localUrl && remoteUrl) {
+          // Cascade: thử nguồn tiếp theo nếu employee mode
+          if (mode === 'employee') {
+            const nextIdx = useFallback + 1;
+            if (nextIdx < cascadeUrls.length) {
+              setUseFallback(nextIdx);
+              return;
+            }
+          }
+          // Fallback cũ: switch remote CDN
+          if (!useFallback && localUrl && remoteUrl) {
             // Background repair: xóa file lỗi, tải lại từ CDN cho lần sau
             if (!repairAttemptedRef.current && msg.msg_id) {
               repairAttemptedRef.current = true;
@@ -392,8 +424,11 @@ function MediaBubble({ msg, isSelf, onView }: { msg: any; isSelf: boolean; onVie
                 remoteUrl,
               }).catch(() => {});
             }
-            setUseRemote(true);
-          } else if (!useRemote && remoteUrl && displayUrl !== remoteUrl) setUseRemote(true);
+            setUseFallback(2); // jump to CDN
+          } else if (remoteUrl && displayUrl !== remoteUrl) setUseFallback(2);
+          // Employee mode: Zalo CDN failed but Boss hasn't downloaded yet
+          // → not permanently failed; useEffect on localPathsStr will retry
+          else if (!localUrl && remoteUrl) { /* wait for event:localPath */ }
           else setLoadFailed(true);
         }}
       />
@@ -451,7 +486,13 @@ function ZaloVideoBubble({ msg }: { msg: any }) {
 
   const handlePlay = (e: React.MouseEvent) => {
     e.stopPropagation();
-    // Zalo: open in external player (VLC, etc.)
+    const mode = useEmployeeStore.getState().mode;
+    // Employee mode: open via Boss REST API
+    if (mode === 'employee' && videoUrl && videoUrl.startsWith('http')) {
+      ipc.shell?.openExternal(videoUrl);
+      return;
+    }
+    // Boss/standalone: open in external player (VLC, etc.)
     if (videoLocalPath) ipc.file?.openPath(videoLocalPath);
   };
 

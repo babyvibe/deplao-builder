@@ -6,12 +6,14 @@ import { useAppStore, FONT_SCALE_MIN, FONT_SCALE_MAX, FONT_SCALE_STEP } from '@/
 import { useAccountStore } from '@/store/accountStore';
 import { useUpdateStore } from '@/store/updateStore';
 import { useEmployeeStore } from '@/store/employeeStore';
+import { useWorkspaceStore } from '@/store/workspaceStore';
 import { useChatStore } from '@/store/chatStore';
 import WorkspaceSwitcher from '@/components/common/WorkspaceSwitcher';
 import { useErpNotificationStore } from '@/store/erp/erpNotificationStore';
 import { useErpEmployeeStore } from '@/store/erp/erpEmployeeStore';
 import { useCurrentEmployeeId, useErpPermissions } from '@/hooks/erp/useErpContext';
 import NotificationCenter from '@/features/erp/notifications/NotificationCenter';
+import { Spinner } from '@/components/common/PageLoading';
 
 
 const APP_VERSION: string = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '?';
@@ -39,8 +41,120 @@ export default function TopBar() {
   const macDropdownRef = useRef<HTMLDivElement>(null);
 
   // Employee store
-  const { mode: empMode, currentEmployee, bossConnected, previewEmployeeId, employees } = useEmployeeStore();
+  const { mode: empMode, currentEmployee, bossConnected, bossUrl, latency, previewEmployeeId, employees, setBossConnected, setToken } = useEmployeeStore();
   const previewEmployee = previewEmployeeId ? employees.find((e: any) => e.employee_id === previewEmployeeId) : null;
+
+  // Reconnect popup state
+  const [reconnectOpen, setReconnectOpen] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
+  const [reconnectError, setReconnectError] = useState('');
+  const [savedPassword, setSavedPassword] = useState('');
+  const bossUrlRef = useRef<HTMLInputElement>(null);
+  const usernameRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
+
+  // Load saved password từ localStorage
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('deplao_employee_password');
+      if (raw) setSavedPassword(atob(raw));
+    } catch { /* ignore */ }
+  }, []);
+
+  // Save password khi kết nối thành công
+  const savePassword = useCallback((password: string) => {
+    try {
+      localStorage.setItem('deplao_employee_password', btoa(password));
+      setSavedPassword(password);
+    } catch { /* ignore */ }
+  }, []);
+
+  // ── Ngắt kết nối khỏi BOSS ──────────────────────────────────────────────
+  const [disconnecting, setDisconnecting] = useState(false);
+
+  const handleDisconnect = useCallback(async () => {
+    if (disconnecting) return;
+    setDisconnecting(true);
+    try {
+      // Reset REST client — stop health check, clear token
+      const RestQueryService = (await import('../../../services/http/RestQueryService')).default;
+      RestQueryService.getInstance().reset();
+
+      // Chỉ set disconnected, KHÔNG reset currentEmployee/mode
+      // => giữ nguyên badge + nút kết nối lại trên UI
+      setBossConnected(false);
+      setToken('');
+
+      showNotification('Đã ngắt kết nối khỏi BOSS', 'success');
+    } catch (err: any) {
+      showNotification(err.message || 'Lỗi ngắt kết nối', 'error');
+    } finally {
+      setDisconnecting(false);
+    }
+  }, [disconnecting, showNotification, setBossConnected, setToken]);
+
+  const handleReconnect = useCallback(async () => {
+    setReconnectError('');
+    const bossAddr = bossUrlRef.current?.value.trim();
+    const username = usernameRef.current?.value.trim();
+    const password = passwordRef.current?.value || savedPassword;
+
+    if (!bossAddr) { setReconnectError('Vui lòng nhập địa chỉ BOSS'); return; }
+    if (!username) { setReconnectError('Vui lòng nhập tên đăng nhập'); return; }
+    if (!password) { setReconnectError('Vui lòng nhập mật khẩu'); return; }
+
+    setReconnecting(true);
+    try {
+      const RestQueryService = (await import('../../../services/http/RestQueryService')).default;
+      const loginRes = await RestQueryService.login(bossAddr, username, password);
+      if (!loginRes.success) {
+        setReconnectError(loginRes.error || 'Đăng nhập thất bại');
+        setReconnecting(false);
+        return;
+      }
+
+      // Boss trả về {success, token, employee, snapshot} — KHÔNG có data wrapper
+      const token = (loginRes as any).token || loginRes.data?.token;
+      const employee = (loginRes as any).employee || loginRes.data?.employee;
+      if (!token || !employee) {
+        setReconnectError('Phản hồi từ BOSS không hợp lệ');
+        setReconnecting(false);
+        return;
+      }
+
+      RestQueryService.getInstance().init(bossAddr, token);
+      // Theo dõi trạng thái kết nối RestQueryService → cập nhật header real-time
+      RestQueryService.getInstance().setOnStatusChange((connected, latency) => {
+        useEmployeeStore.getState().setBossConnected(connected);
+        if (latency > 0) useEmployeeStore.getState().setLatency(latency);
+      });
+      await ipc.employee?.setMode('employee');
+      await ipc.employee?.connectToBoss(bossAddr, token);
+
+      const permsMap: Record<string, boolean> = {};
+      if (employee.permissions) {
+        for (const p of employee.permissions) permsMap[p.module] = p.can_access;
+      }
+
+      useEmployeeStore.getState().setCurrentEmployee(employee);
+      useEmployeeStore.getState().setPermissions(permsMap);
+      useEmployeeStore.getState().setAssignedAccounts(employee.assigned_accounts || []);
+      useEmployeeStore.getState().setBossUrl(bossAddr);
+      // Persist bossUrl to workspace cache — không bị cached URL cũ ghi đè
+      ipc.workspace?.update?.(useWorkspaceStore.getState().activeWorkspaceId, { bossUrl: bossAddr } as any).catch(() => {});
+      useEmployeeStore.getState().setBossConnected(true);
+      useEmployeeStore.getState().setToken(token);
+      useEmployeeStore.getState().setMode('employee');
+
+      showNotification(`Đã kết nối lại! Xin chào ${employee.display_name}`, 'success');
+      savePassword(password);
+      setReconnectOpen(false);
+      setReconnecting(false);
+    } catch (err: any) {
+      setReconnectError(err.message || 'Lỗi kết nối');
+      setReconnecting(false);
+    }
+  }, [showNotification]);
 
   // ERP notifications + attendance
   const erpPerms = useErpPermissions();
@@ -103,6 +217,19 @@ export default function TopBar() {
       if (res?.success && res.enabled) setLockScreenEnabled(true);
     });
   }, []);
+
+  // Đóng reconnect popup khi click ra ngoài
+  useEffect(() => {
+    if (!reconnectOpen) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('.reconnect-popup') && !target.closest('.employee-badge')) {
+        setReconnectOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [reconnectOpen]);
 
   // Đóng macOS dropdown khi click ra ngoài
   useEffect(() => {
@@ -190,6 +317,21 @@ export default function TopBar() {
   }, [isMac, setDismissed, updateStatus]);
 
   return (
+    <>
+      <style>{`
+        @keyframes reconnectShake {
+          0%, 100% { transform: translate(0, 0) rotate(0deg); }
+          10%      { transform: translate(-1.5px, 0.8px) rotate(-0.8deg); }
+          20%      { transform: translate(1.2px, -0.5px) rotate(0.6deg); }
+          30%      { transform: translate(-0.8px, -1px) rotate(-0.4deg); }
+          40%      { transform: translate(1.5px, 0.5px) rotate(0.7deg); }
+          50%      { transform: translate(-1px, 1.2px) rotate(-0.5deg); }
+          60%      { transform: translate(0.5px, -0.8px) rotate(0.3deg); }
+          70%      { transform: translate(-1.2px, -0.3px) rotate(-0.6deg); }
+          80%      { transform: translate(0.8px, 1px) rotate(0.4deg); }
+          90%      { transform: translate(-0.5px, -1.2px) rotate(-0.3deg); }
+        }
+      `}</style>
     <div
       className="flex items-center justify-between h-9 bg-gray-900 border-b border-gray-700 flex-shrink-0"
       style={{ WebkitAppRegion: 'drag' } as any}
@@ -201,12 +343,105 @@ export default function TopBar() {
         {/* Workspace switcher - only shows when multiple workspaces exist */}
         <WorkspaceSwitcher />
 
-        {/* Employee mode indicator */}
+        {/* Employee mode indicator + reconnect popup */}
         {empMode === 'employee' && currentEmployee && (
-          <div className="flex items-center gap-1.5 ml-2 px-2 py-0.5 rounded-full bg-gray-800 border border-gray-600">
-            <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${bossConnected ? 'bg-green-400' : 'bg-red-400 animate-pulse'}`} />
-            <span className="text-[11px] text-gray-300">{bossConnected ? 'Connected' : 'Disconnected'}</span>
-            <span className="text-[11px] text-gray-300">- {currentEmployee.display_name}</span>
+          <div className="relative flex items-center gap-2">
+            {/* Status badge (không click được) */}
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-gray-800 border border-gray-600 select-none">
+              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${bossConnected ? 'bg-green-400' : 'bg-red-400 animate-pulse'}`} />
+              <span className="text-[11px] text-gray-300">{bossConnected ? (latency > 0 ? `Online - ${latency}ms` : 'Online') : 'Offline'}</span>
+              <span className="text-[11px] text-gray-300">- {currentEmployee.display_name}</span>
+            </div>
+
+            {/* Nút Ngắt kết nối — chỉ hiện khi đang connected */}
+            {bossConnected && (
+              <button
+                onClick={handleDisconnect}
+                disabled={disconnecting}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gray-700/80 text-gray-400 text-[11px] font-medium transition-all duration-200 hover:bg-red-600/30 hover:text-red-300 hover:border-red-500/30 border border-gray-600/50 disabled:opacity-50"
+                title="Ngắt kết nối khỏi BOSS"
+              >
+                {disconnecting ? (
+                  <span className="w-3 h-3 border-2 border-gray-500 border-t-gray-300 rounded-full animate-spin" />
+                ) : (
+                  <>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0">
+                      <line x1="1" y1="1" x2="23" y2="23" />
+                      <path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55" />
+                      <path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39" />
+                      <path d="M10.71 5.05A16 16 0 0 1 22.56 9" />
+                      <path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88" />
+                      <path d="M8.53 16.11a6 6 0 0 1 6.95 0" />
+                      <line x1="12" y1="20" x2="12.01" y2="20" />
+                    </svg>
+                    <span>Ngắt kết nối</span>
+                  </>
+                )}
+              </button>
+            )}
+
+            {/* Nút Kết nối lại riêng biệt — chỉ hiện khi disconnected */}
+            {!bossConnected && (
+              <button
+                onClick={() => setReconnectOpen(v => !v)}
+                className="employee-badge reconnect-btn relative flex items-center gap-1.5 px-3 py-1 rounded-full bg-green-700/90 text-white text-[11px] font-semibold transition-all duration-300 hover:bg-green-700 hover:shadow-green-400/50 overflow-hidden border border-green-500/40"
+                style={{ animation: 'reconnectShake 0.6s ease-in-out infinite' }}
+              >
+                <span className="relative z-10 flex items-center gap-1.5">
+                  <span className="drop-shadow-[0_0_4px_rgba(34,197,94,0.6)]">🔌</span>
+                  <span className="text-white-important drop-shadow-[0_0_6px_rgba(34,197,94,0.4)]">Kết nối lại</span>
+                </span>
+              </button>
+            )}
+
+            {/* Reconnect popup */}
+            {reconnectOpen && (
+              <div className="reconnect-popup absolute left-0 top-full mt-2 w-72 bg-gray-800 border border-gray-600 rounded-xl shadow-2xl z-[9999] p-4">
+                <p className="text-xs text-gray-400 font-medium mb-2">🔌 Kết nối lại với BOSS</p>
+                <div className="space-y-2">
+                  <input
+                    ref={bossUrlRef}
+                    defaultValue={bossUrl}
+                    placeholder="Địa chỉ BOSS (IP:Port hoặc Tunnel URL)"
+                    className="w-full px-2.5 py-1.5 bg-gray-700 border border-gray-600 rounded-lg text-xs text-gray-200 placeholder-gray-500"
+                  />
+                  <input
+                    ref={usernameRef}
+                    defaultValue={currentEmployee?.username || ''}
+                    placeholder="Tên đăng nhập"
+                    className="w-full px-2.5 py-1.5 bg-gray-700 border border-gray-600 rounded-lg text-xs text-gray-200 placeholder-gray-500"
+                  />
+                  <input
+                    ref={passwordRef}
+                    type="password"
+                    placeholder={savedPassword ? '••••••••' : 'Mật khẩu'}
+                    defaultValue={savedPassword || ''}
+                    onKeyDown={e => e.key === 'Enter' && handleReconnect()}
+                    className="w-full px-2.5 py-1.5 bg-gray-700 border border-gray-600 rounded-lg text-xs text-gray-200 placeholder-gray-500"
+                  />
+                  {savedPassword && (
+                    <p className="text-[10px] text-gray-500 text-right">🔑 Đã lưu mật khẩu</p>
+                  )}
+                  {reconnectError && (
+                    <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-2 py-1">
+                      ⚠️ {reconnectError}
+                    </p>
+                  )}
+                  <button
+                    onClick={handleReconnect}
+                    disabled={reconnecting}
+                    className="w-full py-2 bg-green-600 hover:bg-green-500 text-white text-xs font-medium rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
+                  >
+                    {reconnecting ? (
+                      <>
+                        <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        Đang kết nối...
+                      </>
+                    ) : '🔌 Kết nối lại'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -237,10 +472,7 @@ export default function TopBar() {
             })()}
           >
             {loadingOldMsgs ? (
-              <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-              </svg>
+              <Spinner size={3} />
             ) : (
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="1 4 1 10 7 10"/>
@@ -579,9 +811,8 @@ export default function TopBar() {
           </svg>
         </button>
       </div>
-
-
     </div>
+    </>
   );
 }
 

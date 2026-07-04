@@ -1,17 +1,20 @@
 import React, { useState } from 'react';
 import type { CachedGroupInfo } from '@/store/appStore';
+import { toLocalMediaUrl } from '@/lib/localMedia';
 
 // ─── MemberCell: render 1 ô trong composite grid ─────────────────────────────
 function MemberCell({ member, className }: { member: { avatar: string; displayName: string }; className?: string }) {
+  const avatarUrl = member.avatar ? toLocalMediaUrl(member.avatar) : '';
   return (
     <div className={`overflow-hidden${className ? ' ' + className : ''}`}>
-      {member.avatar ? (
-        <img src={member.avatar} alt="" className="w-full h-full object-cover"
+      {avatarUrl ? (
+        <img src={avatarUrl} alt="" className="w-full h-full object-cover"
           onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
       ) : (
         <div className="w-full h-full bg-purple-600 flex items-center justify-center text-white font-bold"
           style={{ fontSize: 'clamp(6px, 35%, 12px)' }}>
-          {(member.displayName || '?').charAt(0).toUpperCase()}
+          {/* displayName toàn số → show '?' thay vì số đầu tiên */}
+          {/^\d+$/.test(member.displayName) ? '?' : (member.displayName || '?').charAt(0).toUpperCase()}
         </div>
       )}
     </div>
@@ -92,16 +95,18 @@ export default function GroupAvatar({ avatarUrl, groupInfo, name, size = 'md', c
   const { sizeClass, fallbackText } = SIZE_MAP[size];
   const cls = `${sizeClass} ${className}`.trim();
 
-  // 1. Avatar URL → hiển thị ảnh
-  if (avatarUrl && !imgError) {
-    return <img src={avatarUrl} alt="" className={`${cls} rounded-full object-cover flex-shrink-0`} onError={() => setImgError(true)} />;
+  // 1. Avatar URL → hiển thị ảnh (convert local path → Boss REST URL nếu cần)
+  const mainAvatarUrl = avatarUrl ? toLocalMediaUrl(avatarUrl) : '';
+  if (mainAvatarUrl && !imgError) {
+    return <img src={mainAvatarUrl} alt="" className={`${cls} rounded-full object-cover flex-shrink-0`} onError={() => setImgError(true)} />;
   }
 
-  // 2. Composite avatar từ members cache
+  // 2. Composite avatar từ members (lấy tối đa 4 member đầu)
+  // MemberCell tự fallback: avatar → ảnh, không avatar → chữ cái đầu / dấu '?'
   const members = (groupInfo?.members || [])
-    .filter(m => m.avatar && m.userId && m.userId !== 'undefined')
+    .filter(m => m.userId && m.userId !== 'undefined')
     .slice(0, 4)
-    .map(m => ({ avatar: m.avatar, displayName: m.displayName || m.userId }));
+    .map(m => ({ avatar: m.avatar || '', displayName: m.displayName || m.userId }));
 
   if (members.length >= 4) return <Grid4 members={members} sizeClass={cls} />;
   if (members.length === 3) return <Grid3 members={members} sizeClass={cls} />;

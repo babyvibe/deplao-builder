@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import { useAppStore } from '@/store/appStore';
 
@@ -76,9 +77,10 @@ export default function IntegrationDetailPage({ catalogItem, saved, webhookPort,
         credentials,
         settings,
       };
-      const res = await ipc.integration?.save(payload);
-      if (res?.success && res.id) {
-        setSavedId(res.id);
+      const res = await DataAccessor.saveIntegration(payload);
+      const savedId = (res as any)?.data?.id || (res as any)?.id;
+      if (res?.success && savedId) {
+        setSavedId(savedId);
         showNotification('Đã lưu cấu hình!', 'success');
       } else {
         showNotification('Lưu thất bại: ' + (res?.error || 'Lỗi không xác định'), 'error');
@@ -115,7 +117,7 @@ export default function IntegrationDetailPage({ catalogItem, saved, webhookPort,
     if (!confirm(`Xóa tích hợp ${catalogItem.name}? Dữ liệu sẽ mất hoàn toàn.`)) return;
     setDeleting(true);
     try {
-      await ipc.integration?.delete(saved_id);
+      await DataAccessor.deleteIntegration(saved_id);
       showNotification(`Đã xoá tích hợp ${catalogItem.name}`, 'success');
       onBack();
     } catch (e: any) {

@@ -46,7 +46,7 @@ require (
 	golang.org/x/text v0.38.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	maunium.net/go/mautrix v0.28.2-0.20260624170954-7be64ba59220 // indirect
+	maunium.net/go/mautrix v0.28.2-0.20260629130138-eaea4265e627 // indirect
 )
 
 // E2EE Messenger requires a forked mautrix-meta. Clone it next to bridge-e2ee:

@@ -1,4 +1,5 @@
 import DateInputVN from '@/components/common/DateInputVN';
+import PageLoading from '@/components/common/PageLoading';
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
@@ -7,6 +8,7 @@ import {
 import { useCRMStore, ContactTypeFilter } from '@/store/crmStore';
 import { useAppStore, LabelData } from '@/store/appStore';
 import { useAccountStore } from '@/store/accountStore';
+import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 
 // ── Mini stat card ─────────────────────────────────────────────────────────────
@@ -187,14 +189,14 @@ export default function CRMDashboard() {
       if (!customApplied) { setLoadingActivity(false); return; }
       const from = new Date(customApplied.from + 'T00:00:00').getTime();
       const to   = new Date(customApplied.to   + 'T23:59:59.999').getTime();
-      ipc.crm?.getActivityStats({ zaloId: activeAccountId, sinceTs: from, untilTs: to } as any)
+      DataAccessor.getActivityStats({ zaloId: activeAccountId, sinceTs: from, untilTs: to } as any)
         .then(r => setCustomStats(extract(r))).catch(() => {}).finally(() => setLoadingActivity(false));
     } else {
       const curRange  = activityPeriod === 'day' ? getDayRange(0)   : activityPeriod === 'week' ? getWeekRange(0)   : getMonthRange(0);
       const prevRange = activityPeriod === 'day' ? getDayRange(-1)  : activityPeriod === 'week' ? getWeekRange(-1)  : getMonthRange(-1);
       Promise.all([
-        ipc.crm?.getActivityStats({ zaloId: activeAccountId, sinceTs: curRange.from,  untilTs: curRange.to  } as any),
-        ipc.crm?.getActivityStats({ zaloId: activeAccountId, sinceTs: prevRange.from, untilTs: prevRange.to } as any),
+        DataAccessor.getActivityStats({ zaloId: activeAccountId, sinceTs: curRange.from,  untilTs: curRange.to  } as any),
+        DataAccessor.getActivityStats({ zaloId: activeAccountId, sinceTs: prevRange.from, untilTs: prevRange.to } as any),
       ]).then(([cr, pr]) => { setCurStats(extract(cr)); setPrevStats(extract(pr)); })
         .catch(() => {}).finally(() => setLoadingActivity(false));
     }
@@ -214,11 +216,7 @@ export default function CRMDashboard() {
   /** Unified comparison view renderer for day / week / month */
   const renderActivityContent = () => {
     if (loadingActivity) {
-      return (
-        <div className="grid grid-cols-4 gap-2">
-          {[...Array(4)].map((_, i) => <div key={i} className="h-16 bg-gray-700/50 rounded-xl animate-pulse" />)}
-        </div>
-      );
+      return <PageLoading variant="skeleton" skeletonVariant="cards" />;
     }
 
     /* ── Custom date range ── */
@@ -386,18 +384,18 @@ export default function CRMDashboard() {
 
   useEffect(() => {
     if (!activeAccountId) return;
-    ipc.crm?.getContactStats({ zaloId: activeAccountId })
+    DataAccessor.getContactStats({ zaloId: activeAccountId })
       .then(r => { if (r?.success) setContactStats({ total: r.total, friendCount: r.friendCount, noteCount: r.noteCount }); })
       .catch(() => {});
     setLoadingCampStats(true);
-    ipc.crm?.getCampaignStats({ zaloId: activeAccountId, limit: 10 })
+    DataAccessor.getCampaignStats({ zaloId: activeAccountId, limit: 10 })
       .then(r => { if (r?.success) setCampaignStats(r.stats); })
       .catch(() => {})
       .finally(() => setLoadingCampStats(false));
     // Load local labels and their counts
     Promise.all([
-      ipc.db?.getLocalLabels({ zaloId: activeAccountId }),
-      ipc.db?.getLocalLabelThreads({ zaloId: activeAccountId }),
+      DataAccessor.getLocalLabels({ zaloId: activeAccountId }),
+      DataAccessor.getLocalLabelThreads({ zaloId: activeAccountId }),
     ]).then(([labelsRes, threadsRes]) => {
       const lbls = (labelsRes?.labels || []).filter((l: any) => (l?.is_active ?? 1) === 1)
         .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || String(a.name || '').localeCompare(String(b.name || '')));
@@ -642,9 +640,7 @@ export default function CRMDashboard() {
         </h3>
 
         {loadingCampStats ? (
-          <div className="space-y-2">
-            {[...Array(4)].map((_, i) => <div key={i} className="h-9 bg-gray-700/50 rounded-xl animate-pulse" />)}
-          </div>
+          <PageLoading variant="skeleton" skeletonVariant="table" />
         ) : campaignStats.length === 0 ? (
           <div className="text-center py-10 text-gray-500 text-sm">Chưa có chiến dịch nào</div>
         ) : (

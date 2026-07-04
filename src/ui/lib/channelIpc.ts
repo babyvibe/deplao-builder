@@ -4,7 +4,8 @@
  * UI components call this instead of ipc.zalo / ipc.fb directly.
  */
 
-import ipc from './ipc';
+import ipc from './ipc'
+import DataAccessor from '../lib/data/DataAccessor';;
 import { Channel } from '../../configs/channelConfig';
 
 // ─── Send Message ─────────────────────────────────────────────────────────────
@@ -18,6 +19,8 @@ export async function sendMessage(channel: Channel, params: {
   /** Facebook only: quote payload JSON string (from buildQuotePayload).
    *  If provided, replyToMessageId is extracted and passed to FB API. */
   quote?: string | null;
+  /** Zalo only: auth credentials. If omitted, fetched from account store. */
+  auth?: any;
 }): Promise<{ success: boolean; messageId?: string; error?: string }> {
   if (channel === 'facebook') {
     // Map threadType (0=user, 1=group) → typeChat for FB API
@@ -44,10 +47,21 @@ export async function sendMessage(channel: Channel, params: {
     }) ?? { success: false, error: 'FB IPC not available' };
   }
   // Zalo
+  // Try to resolve auth from account store if not provided
+  let auth = params.auth;
+  if (!auth) {
+    try {
+      const { useAccountStore } = require('../store/accountStore');
+      const account = useAccountStore.getState().accounts?.find((a: any) => a.zalo_id === params.accountId);
+      if (account?.cookies) {
+        auth = { cookies: account.cookies, imei: account.imei || '', userAgent: account.user_agent || '' };
+      }
+    } catch {}
+  }
   return ipc.zalo?.sendMessage({
-    zaloId: params.accountId,
+    auth,
     threadId: params.threadId,
-    threadType: params.threadType ?? 0,
+    type: params.threadType ?? 0,
     message: params.body,
     ...params.options,
   }) ?? { success: false, error: 'Zalo IPC not available' };
@@ -261,8 +275,8 @@ export async function getMessages(channel: Channel, params: {
     }) ?? { success: false, error: 'FB IPC not available' };
   }
   // Zalo messages are loaded from local DB via ipc.db
-  return ipc.db?.getMessages?.({
-    ownerZaloId: params.accountId,
+  return DataAccessor.getMessages?.({
+    zaloId: params.accountId,
     threadId: params.threadId,
     limit: params.limit ?? 50,
     offset: params.offset ?? 0,

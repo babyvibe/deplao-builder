@@ -13,9 +13,11 @@ import NodeConfigPanel from './NodeConfigPanel';
 import RunHistoryPanel from './RunHistoryPanel';
 import WorkflowAIDialog from './WorkflowAIDialog';
 import { DEFAULT_CONFIGS, nodeTypeGroup, getNodeLabel } from './workflowConfig';
-import ipc from '../../lib/ipc';
+import ipc from '../../lib/ipc'
+import DataAccessor from '@/lib/data/DataAccessor';;
 import { useAppStore } from '@/store/appStore';
 import type { Channel } from '../../../configs/channelConfig';
+import PageLoading from '../common/PageLoading';
 
 // Use node types from registry (centralized node component mapping)
 const nodeTypes = reactFlowNodeTypes;
@@ -64,7 +66,7 @@ function TestRunModal({ accounts, workflowPageIds, triggerType, onRun, onClose }
     if (!selectedAccount) return;
     setLoadingFriends(true);
     setSelectedFriend(null);
-    ipc.db?.getFriends({ zaloId: selectedAccount }).then((res: any) => {
+    DataAccessor.getFriends({ zaloId: selectedAccount }).then((res: any) => {
       if (res?.success) {
         // Exclude self (the selected account itself)
         const list = (res.friends || []).filter((f: any) => f.userId !== selectedAccount);
@@ -247,6 +249,7 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
     name: '', description: '', enabled: true, channel: 'zalo' as Channel,
     pageIds: [] as string[],   // new: multi-page
   });
+  const [loadingEditor, setLoadingEditor] = useState(true);
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
   const [accounts, setAccounts] = useState<{ zalo_id: string; full_name: string; avatar_url: string; phone?: string; channel?: string }[]>([]);
@@ -273,6 +276,7 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
   // Load workflow
   useEffect(() => {
     if (!workflowId) return;
+    setLoadingEditor(true);
     ipc.workflow?.get(workflowId).then((res: any) => {
       if (!res?.success || !res.workflow) return;
       const wf = res.workflow;
@@ -289,7 +293,8 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
         markerEnd: { type: MarkerType.ArrowClosed },
         style: { stroke: '#4b5563' },
       })));
-    });
+      setLoadingEditor(false);
+    }).catch(() => setLoadingEditor(false));
   }, [workflowId, toRFNode]);
 
   const onConnect = useCallback((params: Connection | Edge) => {
@@ -529,6 +534,8 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
         : [...m.pageIds, zaloId],
     }));
   };
+
+  if (loadingEditor) return <PageLoading text="Đang tải workflow..." />;
 
   return (
     <div className="flex flex-col h-full overflow-hidden">

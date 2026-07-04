@@ -9,7 +9,8 @@
  */
 
 import { useEffect } from 'react';
-import ipc from '../lib/ipc';
+import ipc from '../lib/ipc'
+import DataAccessor from '../lib/data/DataAccessor';;
 import { useChatStore, type MessageItem } from '@/store/chatStore';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
@@ -249,7 +250,7 @@ export function useChatEvents(): void {
           // Fallback: try async DB lookup
           (async () => {
             try {
-              const dbRes = await ipc.db?.getMessageById?.({ zaloId: fbAccountId, msgId: replyToMsgId });
+              const dbRes = await DataAccessor.getMessageById?.({ zaloId: fbAccountId, msgId: replyToMsgId });
               const dbMsg = dbRes?.message;
               if (dbMsg?.content) {
                 const st = useChatStore.getState();

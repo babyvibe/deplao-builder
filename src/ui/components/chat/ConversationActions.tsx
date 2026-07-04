@@ -17,7 +17,8 @@ import React, { useEffect, useState } from 'react';
 import { useChatStore } from '@/store/chatStore';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
-import ipc from '@/lib/ipc';
+import ipc from '@/lib/ipc'
+import DataAccessor from '@/lib/data/DataAccessor';;
 import { showConfirm } from '../common/ConfirmDialog';
 import { extractApiError } from '@/utils/apiError';
 import type { ChannelCapability } from '../../../configs/channelConfig';
@@ -97,7 +98,7 @@ export function DeleteHistoryAction({ threadId, onDeleted }: DeleteHistoryAction
     if (!activeAccountId) return;
     setLoading(true);
     try {
-      await ipc.db?.deleteConversation({ zaloId: activeAccountId, contactId: threadId });
+      await DataAccessor.deleteConversation({ zaloId: activeAccountId, contactId: threadId });
       setMessages(activeAccountId, threadId, []);
       showNotification('Đã xoá lịch sử trò chuyện', 'success');
       onDeleted?.();
@@ -332,7 +333,7 @@ export function RemoveFriendAction({ userId, userName, onRemoved }: RemoveFriend
       if (res?.success !== false) {
         // Xoá khỏi DB local
         if (activeAccountId) {
-          await ipc.db?.removeFriend({ zaloId: activeAccountId, userId }).catch(() => {});
+          await DataAccessor.removeFriend({ zaloId: activeAccountId, userId }).catch(() => {});
         }
         showNotification(`Đã xoá bạn bè ${userName}`, 'success');
         onRemoved?.();

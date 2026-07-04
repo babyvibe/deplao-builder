@@ -3,6 +3,7 @@ import ipc from '@/lib/ipc';
 import { useErpEmployeeStore } from '@/store/erp/erpEmployeeStore';
 import type { ErpNote, NoteShareScope, NoteSharePermission } from '../../../../models/erp';
 import { EmployeeAvatar } from '../shared/ErpBadges';
+import PageLoading from '@/components/common/PageLoading';
 
 interface Props {
   note: ErpNote;
@@ -115,7 +116,7 @@ export default function NoteShareModal({ note, onClose, onSaved }: Props) {
               )}
             </div>
             <div className="flex-1 overflow-y-auto">
-              {loading && <p className="text-xs text-gray-500 p-3">Đang tải...</p>}
+              {loading && <PageLoading variant="inline" size="sm" />}
               {!loading && rows.length === 0 && (
                 <p className="text-xs text-gray-500 p-3 text-center">Chưa chia sẻ với ai. Gõ tên để thêm.</p>
               )}

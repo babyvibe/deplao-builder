@@ -50,6 +50,10 @@ interface EmployeeStore {
     latency: number;
     setLatency: (ms: number) => void;
 
+    // ─── Auth token ────────────────────────────────────────────────
+    token: string;
+    setToken: (token: string) => void;
+
     // ─── Relay server status (when mode === 'boss') ───────────────
     relayRunning: boolean;
     setRelayRunning: (v: boolean) => void;
@@ -57,12 +61,6 @@ interface EmployeeStore {
     setRelayPort: (port: number) => void;
     connectedEmployees: ConnectedEmployee[];
     setConnectedEmployees: (list: ConnectedEmployee[]) => void;
-
-    // ─── Sync ─────────────────────────────────────────────────────
-    syncProgress: { phase: string; percent: number } | null;
-    setSyncProgress: (p: { phase: string; percent: number } | null) => void;
-    lastSyncTime: number | null;
-    setLastSyncTime: (ts: number | null) => void;
 
     // ─── Employee list (boss manages) ────────────────────────────
     employees: any[];
@@ -98,11 +96,10 @@ const initialState = {
     bossConnected: false,
     bossUrl: '',
     latency: 0,
+    token: '',
     relayRunning: false,
     relayPort: 9900,
     connectedEmployees: [] as ConnectedEmployee[],
-    syncProgress: null as { phase: string; percent: number } | null,
-    lastSyncTime: null as number | null,
     employees: [] as any[],
     employeeNameMap: {} as Record<string, string>,
     employeeAvatarMap: {} as Record<string, string>,
@@ -134,11 +131,10 @@ export const useEmployeeStore = create<EmployeeStore>((set, get) => ({
     setBossConnected: (v) => set({ bossConnected: v }),
     setBossUrl: (url) => set({ bossUrl: url }),
     setLatency: (ms) => set({ latency: ms }),
+    setToken: (token) => set({ token }),
     setRelayRunning: (v) => set({ relayRunning: v }),
     setRelayPort: (port) => set({ relayPort: port }),
     setConnectedEmployees: (list) => set({ connectedEmployees: list }),
-    setSyncProgress: (p) => set({ syncProgress: p }),
-    setLastSyncTime: (ts) => set({ lastSyncTime: ts }),
     setEmployees: (list) => set({ employees: list }),
     loadEmployees: async () => {
         if (get().mode === 'employee') {

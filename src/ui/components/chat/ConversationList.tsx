@@ -1,8 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useChatStore } from '@/store/chatStore';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
 import ipc from '@/lib/ipc';
+import DataAccessor from '@/lib/data/DataAccessor';
+import { useEmployeeStore } from '@/store/employeeStore';
 import { sendSeenForThread } from '@/lib/sendSeenHelper';
 import { getFilteredUnreadCount } from '@/lib/badgeUtils';
 import { CreateGroupModal, InviteToGroupModal } from './GroupModals';
@@ -10,6 +12,7 @@ import { showConfirm } from '../common/ConfirmDialog';
 import LabelPicker, { EditLabelsModal } from './LabelPicker';
 import AddFriendModal from '../common/AddFriendModal';
 import GroupAvatar from '../common/GroupAvatar';
+import { Spinner } from '@/components/common/PageLoading';
 import { toLocalMediaUrl } from '@/lib/localMedia';
 import GlobalSearchPanel from './GlobalSearchPanel';
 import useIsMobile from '@/hooks/useIsMobile';
@@ -18,6 +21,7 @@ import { ChannelBadgeOverlay } from '../common/ChannelBadge';
 import { getCapability, channelSupports, type Channel } from '@/../configs/channelConfig';
 import { extractUserProfile } from '../../../utils/profileUtils';
 import { refreshContactAlias } from '../../hooks/useZaloEvents';
+import PageLoading from '@/components/common/PageLoading';
 
 interface LabelData { id: number; text: string; color: string; emoji: string; conversations: string[]; textKey?: string; offset?: number; createTime?: number; }
 interface LocalLabelData {
@@ -68,6 +72,19 @@ function muteUntilToDuration(until: number): number | string {
 export default function ConversationList() {
   const { contacts, setActiveThread, activeThreadId, activeThreadType, setMessages, updateContact, clearUnread, removeContact, drafts, draftTimestamps } = useChatStore();
   const { syncRepliedState, saveAccountThread } = useChatStore();
+
+  // Debug: log khi contacts thay đổi
+  const prevCountRef = useRef(0);
+  useEffect(() => {
+    if (activeAccountId) {
+      const c = contacts[activeAccountId];
+      const count = c?.length || 0;
+      if (count !== prevCountRef.current) {
+        console.log(`[ConversationList] 📋 contacts[${activeAccountId}] ${prevCountRef.current} → ${count} items`, count > 0 ? `sample: ${c[0]?.display_name || ''} keys=${Object.keys(c[0]||{}).join(',')}` : '(empty)');
+        prevCountRef.current = count;
+      }
+    }
+  });
   const { activeAccountId, accounts: allAccountsList, setActiveAccount } = useAccountStore();
   const activeAccountObj = allAccountsList.find(a => a.zalo_id === activeAccountId);
   const isFbLabel = (activeAccountObj?.channel || 'zalo') === 'facebook';
@@ -116,6 +133,23 @@ export default function ConversationList() {
   const moreMenuRef = useRef<HTMLDivElement>(null);
   // Prevents the activeAccountId useEffect from overriding a manual merged-mode selection
   const isManualSelectingRef = React.useRef(false);
+  const isEmp = useEmployeeStore(s => s.mode === 'employee');
+
+  /** Loading state cho initial fetch - tránh hiển thị empty state khi chưa có data */
+  const [initialLoading, setInitialLoading] = useState(true);
+
+  /** Proxy Zalo API calls qua Boss khi ở employee mode */
+  const zaloApi = useCallback(async (method: string, params: any) => {
+    if (isEmp) {
+      const zaloId = params.auth?.zaloId || activeAccountId || '';
+      return ipc.employee?.proxyAction(`zalo:${method}`, {
+        ...params,
+        auth: { zaloId },
+      });
+    }
+    const m = (ipc.zalo as any)?.[method];
+    return m?.(params);
+  }, [isEmp, activeAccountId]);
 
   // ── Pagination: cố định 250 hội thoại mỗi trang, infinite scroll ──────
   const PAGE_SIZE = 250;
@@ -150,8 +184,8 @@ export default function ConversationList() {
   const loadLocalLabelsForAccount = async (zaloId: string) => {
     try {
       const [labelsRes, threadsRes] = await Promise.all([
-        ipc.db?.getLocalLabels({ zaloId }),
-        ipc.db?.getLocalLabelThreads({ zaloId }),
+        DataAccessor.getLocalLabels({ zaloId }),
+        DataAccessor.getLocalLabelThreads({ zaloId }),
       ]);
       const localLabelsRaw = (labelsRes?.labels || [])
         .filter((l: any) => (l?.is_active ?? 1) === 1)
@@ -189,14 +223,14 @@ export default function ConversationList() {
       }).catch(() => {});
       // FIX: getPinConversations returns { conversations: string[], version: number }
       // where each ID is prefixed with 'u' (user) or 'g' (group)
-      ipc.zalo?.getPinConversations(auth).then((res: any) => {
+      zaloApi('getPinConversations', { auth }).then((res: any) => {
         const convIds: string[] = res?.response?.conversations || [];
         setPinnedThreads(new Set(convIds.map((id: string) => id.replace(/^[ug]/, ''))));
       }).catch(() => {});
     }
 
     // Load local pinned conversations from DB
-    ipc.db?.getLocalPinnedConversations({ zaloId: activeAccountId }).then((res: any) => {
+    DataAccessor.getLocalPinnedConversations({ zaloId: activeAccountId }).then((res: any) => {
       setLocalPinnedThreads(new Set(res?.threadIds || []));
     }).catch(() => {});
 
@@ -205,7 +239,60 @@ export default function ConversationList() {
     loadLocalLabelsForAccount(activeAccountId).catch(() => {});
     // Load drafts from DB into store for this account
     useChatStore.getState().loadDrafts(activeAccountId).catch(() => {});
+  }, [activeAccountId, contacts]);
+
+  // ─── Load contacts khi chua co (dac biet employee mode qua REST API) ──
+  // Khi doi workspace tu BOSS → Employee, App.tsx khong load contacts ma
+  // de ConversationList tu load. Neu contacts rong → fetch tu DataAccessor.
+  useEffect(() => {
+    if (!activeAccountId) return;
+    const currentContacts = useChatStore.getState().contacts[activeAccountId];
+    if (currentContacts && currentContacts.length > 0) return;
+    if (useChatStore.getState().conversationsLoading) return;
+
+    const loadContactsForAccount = async () => {
+      useChatStore.getState().setConversationsLoading(true);
+      try {
+        const result = await DataAccessor.getConversations(activeAccountId, 500, 0);
+        if (result?.items?.length) {
+          useChatStore.getState().setContacts(activeAccountId, result.items);
+          console.log(`[ConversationList] Loaded ${result.items.length} contacts for ${activeAccountId} via DataAccessor`);
+        } else {
+          console.warn(`[ConversationList] No contacts returned for ${activeAccountId}`);
+        }
+      } catch (err) {
+        console.warn('[ConversationList] Failed to load contacts:', err);
+      } finally {
+        useChatStore.getState().setConversationsLoading(false);
+      }
+    };
+    loadContactsForAccount();
   }, [activeAccountId]);
+
+  // ─── Clear initial loading khi contacts load lần đầu ───────────────────
+  // Trong employee mode với high ping, tránh hiển thị empty state trước khi fetch xong
+  useEffect(() => {
+    if (!activeAccountId) {
+      setInitialLoading(true);
+      return;
+    }
+    // Nếu contacts đã có data → initial load complete
+    if ((contacts[activeAccountId]?.length || 0) > 0) {
+      setInitialLoading(false);
+      return;
+    }
+    // Safety fallback: clear after 8s
+    const timeout = setTimeout(() => setInitialLoading(false), 8000);
+    return () => clearTimeout(timeout);
+  }, [activeAccountId, contacts]);
+
+  // Watch contacts cho account hiện tại - clear initial loading khi data về
+  useEffect(() => {
+    if (!activeAccountId || !initialLoading) return;
+    if ((contacts[activeAccountId]?.length || 0) > 0) {
+      setInitialLoading(false);
+    }
+  }, [activeAccountId, contacts, initialLoading]);
 
   // Reload local labels when toggled from MessageInput, ChatHeader, CRM, etc.
   useEffect(() => {
@@ -228,7 +315,7 @@ export default function ConversationList() {
       window.removeEventListener('local-labels-changed', handler);
       window.removeEventListener('ui:threadLabelsChanged', handleThreadLabelsChanged);
     };
-  }, [activeAccountId]);
+  }, [activeAccountId, contacts]);
 
   // Listen for Ctrl+K from MessageInput → focus conversation search
   useEffect(() => {
@@ -246,13 +333,13 @@ export default function ConversationList() {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       if (!detail?.zaloId || detail.zaloId !== activeAccountId) return;
-      ipc.db?.getLocalPinnedConversations({ zaloId: activeAccountId }).then((res: any) => {
+      DataAccessor.getLocalPinnedConversations({ zaloId: activeAccountId }).then((res: any) => {
         setLocalPinnedThreads(new Set(res?.threadIds || []));
       }).catch(() => {});
     };
     window.addEventListener('local-pin-changed', handler);
     return () => window.removeEventListener('local-pin-changed', handler);
-  }, [activeAccountId]);
+  }, [activeAccountId, contacts]);
 
   useEffect(() => {
     if (!mergedInboxMode) return;
@@ -298,23 +385,13 @@ export default function ConversationList() {
         // Helper function để load members của 1 group từ DB
         const loadGroupFromDB = async (group: typeof groupsNeedingAvatars[0]): Promise<boolean> => {
           try {
-            const res = await ipc.db?.getGroupMembers({ zaloId: activeAccountId, groupId: group.contact_id });
+            const res = await DataAccessor.getGroupMembers({ zaloId: activeAccountId, groupId: group.contact_id });
             const rows: any[] = res?.members || [];
             const validMembers = rows.filter(r => r.member_id && /^\d+$/.test(r.member_id));
 
             if (validMembers.length >= 1) {
-              // DB có data → update cache
-              if (!group.avatar_url && validMembers.length === 1) {
-                const memberAvatar = validMembers[0]?.avatar || '';
-                if (memberAvatar) {
-                  ipc.db?.updateContactProfile({
-                    zaloId: activeAccountId, contactId: group.contact_id,
-                    displayName: group.display_name || group.contact_id,
-                    avatarUrl: memberAvatar, phone: '', contactType: 'group',
-                  }).catch(() => {});
-                  group.avatar_url = memberAvatar;
-                }
-              }
+              // DB có member data → update cache
+              const hasAvatar = validMembers.some(r => r.avatar);
 
               setGroupInfo(activeAccountId, group.contact_id, {
                 groupId: group.contact_id,
@@ -332,8 +409,28 @@ export default function ConversationList() {
                 settings: undefined,
                 fetchedAt: Date.now(),
               });
-              console.log(`[ConversationList] Group ${group.contact_id}: loaded ${validMembers.length} members from DB`);
-              return true; // Success - no API needed
+              console.log(`[ConversationList] Group ${group.contact_id}: loaded ${validMembers.length} members from DB (avatar=${hasAvatar})`);
+
+              // Nếu có ít nhất 1 member có avatar → không cần API nữa
+              if (hasAvatar) return true;
+
+              // Employee mode: không thể gọi Zalo API, dùng DB data làm fallback
+              // GroupAvatar sẽ hiển thị chữ cho members không có avatar
+              if (useEmployeeStore.getState().mode === 'employee') {
+                console.log(`[ConversationList] Group ${group.contact_id}: employee mode, using DB members (no avatars)`);
+                return true;
+              }
+
+              // Nếu group chỉ có 1 member và member đó có avatar → dùng luôn
+              if (!group.avatar_url && validMembers.length === 1 && validMembers[0]?.avatar) {
+                DataAccessor.updateContactProfile({
+                  zaloId: activeAccountId, contactId: group.contact_id,
+                  displayName: group.display_name || group.contact_id,
+                  avatarUrl: validMembers[0].avatar, phone: '', contactType: 'group',
+                }).catch(() => {});
+                group.avatar_url = validMembers[0].avatar;
+                return true;
+              }
             }
             return false; // Need API
           } catch (err) {
@@ -342,50 +439,61 @@ export default function ConversationList() {
           }
         };
 
-        // STEP 1: Load INITIAL_BATCH đầu tiên (blocking)
-        const initialGroups = groupsNeedingAvatars.slice(0, INITIAL_BATCH);
-        const remainingGroups = groupsNeedingAvatars.slice(INITIAL_BATCH);
-        const groupsNeedingAPI: string[] = [];
-
-        // Load initial batch synchronously
-        for (const group of initialGroups) {
-          const success = await loadGroupFromDB(group);
-          if (!success) {
-            groupsNeedingAPI.push(group.contact_id);
-          }
-        }
-
-        // STEP 2: Load remaining groups in background (non-blocking)
-        if (remainingGroups.length > 0) {
-          console.log(`[ConversationList] Loading ${remainingGroups.length} remaining groups in background...`);
-          
-          // Fire-and-forget background loading
+        // ═══ Employee: fire all in background, progressive update ═══
+        const isEmployee = useEmployeeStore.getState().mode === 'employee';
+        if (isEmployee) {
+          // Background batches with delay, avoid saturating connection pool
           (async () => {
-            for (let i = 0; i < remainingGroups.length; i += BACKGROUND_BATCH) {
-              // Delay between batches to avoid blocking main thread
+            for (let i = 0; i < groupsNeedingAvatars.length; i += BACKGROUND_BATCH) {
               if (i > 0) {
                 await new Promise(resolve => setTimeout(resolve, BACKGROUND_DELAY));
               }
-              
-              const batch = remainingGroups.slice(i, i + BACKGROUND_BATCH);
-              for (const group of batch) {
-                const success = await loadGroupFromDB(group);
-                if (!success) {
-                  groupsNeedingAPI.push(group.contact_id);
-                }
-              }
-            }
-            
-            // After all DB loads complete, do API calls if needed
-            if (groupsNeedingAPI.length > 0) {
-              console.log(`[ConversationList] ${groupsNeedingAPI.length} groups need API call (background)`);
-              await loadGroupsFromAPI(groupsNeedingAPI, activeAccountId);
+              const batch = groupsNeedingAvatars.slice(i, i + BACKGROUND_BATCH);
+              await Promise.all(batch.map(g => loadGroupFromDB(g).catch(() => {})));
             }
           })();
-        } else if (groupsNeedingAPI.length > 0) {
-          // Only initial batch needed API
-          console.log(`[ConversationList] ${groupsNeedingAPI.length} groups need API call`);
-          await loadGroupsFromAPI(groupsNeedingAPI, activeAccountId);
+        } else {
+          // ═══ Boss: initial batch blocking, background batches + API ═══
+          const initialGroups = groupsNeedingAvatars.slice(0, INITIAL_BATCH);
+          const remainingGroups = groupsNeedingAvatars.slice(INITIAL_BATCH);
+          const groupsNeedingAPI: string[] = [];
+
+          // Load initial batch synchronously
+          for (const group of initialGroups) {
+            const success = await loadGroupFromDB(group);
+            if (!success) {
+              groupsNeedingAPI.push(group.contact_id);
+            }
+          }
+
+          // Load remaining groups in background (non-blocking)
+          if (remainingGroups.length > 0) {
+            console.log(`[ConversationList] Loading ${remainingGroups.length} remaining groups in background...`);
+
+            (async () => {
+              for (let i = 0; i < remainingGroups.length; i += BACKGROUND_BATCH) {
+                if (i > 0) {
+                  await new Promise(resolve => setTimeout(resolve, BACKGROUND_DELAY));
+                }
+
+                const batch = remainingGroups.slice(i, i + BACKGROUND_BATCH);
+                for (const group of batch) {
+                  const success = await loadGroupFromDB(group);
+                  if (!success) {
+                    groupsNeedingAPI.push(group.contact_id);
+                  }
+                }
+              }
+
+              if (groupsNeedingAPI.length > 0) {
+                console.log(`[ConversationList] ${groupsNeedingAPI.length} groups need API call (background)`);
+                await loadGroupsFromAPI(groupsNeedingAPI, activeAccountId);
+              }
+            })();
+          } else if (groupsNeedingAPI.length > 0) {
+            console.log(`[ConversationList] ${groupsNeedingAPI.length} groups need API call`);
+            await loadGroupsFromAPI(groupsNeedingAPI, activeAccountId);
+          }
         }
 
       } finally {
@@ -425,7 +533,7 @@ export default function ConversationList() {
           const adminSet    = new Set([creatorId, ...adminIds]);
 
           // Update contact name/avatar
-          await ipc.db?.updateContactProfile({
+          await DataAccessor.updateContactProfile({
             zaloId: accountId, contactId: groupId,
             displayName: groupName, avatarUrl: groupAvatar, phone: '', contactType: 'group',
           }).catch(() => {});
@@ -463,7 +571,7 @@ export default function ConversationList() {
 
           // Reload from DB and update groupInfoCache after each sync phase
           const reloadFromDB = async (isFinal = false) => {
-            const dbRes = await ipc.db?.getGroupMembers({ zaloId: accountId, groupId });
+            const dbRes = await DataAccessor.getGroupMembers({ zaloId: accountId, groupId });
             const rows: any[] = (dbRes?.members ?? []).filter((r: any) => /^\d+$/.test(r.member_id?.trim() ?? ''));
             if (rows.length === 0) return;
 
@@ -473,7 +581,7 @@ export default function ConversationList() {
               const memberAvatar = rows.find((r: any) => r.avatar)?.avatar || '';
               if (memberAvatar) {
                 effectiveAvatar = memberAvatar;
-                ipc.db?.updateContactProfile({
+                DataAccessor.updateContactProfile({
                   zaloId: accountId, contactId: groupId,
                   displayName: groupName, avatarUrl: effectiveAvatar,
                   phone: '', contactType: 'group',
@@ -522,7 +630,7 @@ export default function ConversationList() {
     // Delay 1s để contacts load xong từ DB
     const timer = setTimeout(loadGroupAvatars, 1000);
     return () => clearTimeout(timer);
-  }, [activeAccountId]);
+  }, [activeAccountId, contacts]);
 
   // MERGED MODE: Load group avatars từ DB cho tất cả tài khoản trong merged list
   useEffect(() => {
@@ -552,7 +660,7 @@ export default function ConversationList() {
           const batch = groupsNeedingAvatars.slice(i, i + BATCH_SIZE);
           for (const group of batch) {
             try {
-              const res = await ipc.db?.getGroupMembers({ zaloId, groupId: group.contact_id });
+              const res = await DataAccessor.getGroupMembers({ zaloId, groupId: group.contact_id });
               const rows: any[] = res?.members || [];
               const validMembers = rows.filter(r => r.member_id && /^\d+$/.test(r.member_id));
               if (validMembers.length >= 2) {
@@ -620,7 +728,7 @@ export default function ConversationList() {
 
           // Cập nhật contact với contact_type = 'group'
           updateContact(activeAccountId, { contact_id: gId, display_name: name, avatar_url: avatar, contact_type: 'group' });
-          ipc.db?.updateContactProfile({
+          DataAccessor.updateContactProfile({
             zaloId: activeAccountId,
             contactId: gId,
             displayName: name,
@@ -649,9 +757,9 @@ export default function ConversationList() {
 
           if (members.length > 0) {
             // Check DB trước - nếu đã có members rồi thì bỏ qua
-            const existingMembers = await ipc.db?.getGroupMembers({ zaloId: activeAccountId, groupId: gId }).catch(() => null);
+            const existingMembers = await DataAccessor.getGroupMembers({ zaloId: activeAccountId, groupId: gId }).catch(() => null);
             if (!existingMembers?.members?.length) {
-              ipc.db?.saveGroupMembers({ zaloId: activeAccountId, groupId: gId, members }).catch(() => {});
+              DataAccessor.saveGroupMembers({ zaloId: activeAccountId, groupId: gId, members }).catch(() => {});
             }
           }
 
@@ -953,7 +1061,7 @@ export default function ConversationList() {
     lastLabelsFetchRef.current = now;
     const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
     try {
-      const res = await ipc.zalo?.getLabels({ auth });
+      const res = await zaloApi('getLabels', { auth });
       if (res?.response?.labelData) {
         setLabels(activeAccountId, res.response.labelData);
         setLabelsVersion(res.response.version || 0);
@@ -970,13 +1078,19 @@ export default function ConversationList() {
   };
 
   const handleSelect = async (contactId: string, threadType: number, overrideZaloId?: string) => {
-    const zaloId = overrideZaloId ?? activeAccountId;
+    // Đọc activeAccountId trực tiếp từ store, tránh closure stale
+    const currentAccountId = useAccountStore.getState().activeAccountId || activeAccountId;
+    const zaloId = overrideZaloId || currentAccountId;
+    if (!zaloId) {
+      console.warn(`[ConversationList] handleSelect: no zaloId (activeAccountId=${currentAccountId})`);
+      return;
+    }
     setActiveThread(contactId, threadType);
     // On mobile, switch to chat detail view
     if (isMobile) setMobileShowChat(true);
     if (!zaloId) return;
 
-    ipc.db?.markAsRead({ zaloId, contactId }).catch(() => {});
+    DataAccessor.markAsRead({ zaloId, contactId }).catch(() => {});
     clearUnread(zaloId, contactId);
     // Gửi sự kiện đã đọc cho Zalo
     sendSeenForThread(zaloId, contactId, threadType);
@@ -987,8 +1101,10 @@ export default function ConversationList() {
     // Load labels mỗi lần click hội thoại (debounced 30s) - chỉ ở chế độ thường
     if (!overrideZaloId) loadLabelsIfStale();
 
-    const res = await ipc.db?.getMessages({ zaloId, threadId: contactId, limit: 50, offset: 0 });
-    const dbMessages = res?.messages || [];
+    console.log(`[ConversationList] handleSelect: calling DataAccessor.getMessages zaloId=${zaloId} threadId=${contactId} isEmp=${useEmployeeStore.getState().mode}`);
+    const res = await DataAccessor.getMessages({ zaloId, threadId: contactId, limit: 50, offset: 0 });
+    const dbMessages = res?.messages || res?.items || [];
+    console.log(`[ConversationList] handleSelect: result keys=${Object.keys(res||{}).join(',')} messages=${res?.messages?.length ?? 0} items=${res?.items?.length ?? 0}`);
     if (dbMessages.length > 0) {
       // Build lookup map for reply_to_id → original message content
       const msgLookup = new Map<string, { content: string; type: string }>();
@@ -1014,7 +1130,7 @@ export default function ConversationList() {
         (async () => {
           for (const item of missingLookup) {
             try {
-              const dbRes = await ipc.db?.getMessageById({ zaloId, msgId: item.replyToId });
+              const dbRes = await DataAccessor.getMessageById({ zaloId, msgId: item.replyToId });
               const origMsg = dbRes?.message;
               if (origMsg?.msg_type || origMsg?.content) {
                 const store = useChatStore.getState();
@@ -1041,27 +1157,36 @@ export default function ConversationList() {
       // Sync is_replied dựa trên tin nhắn cuối thực tế
       syncRepliedState(zaloId, contactId, zaloId);
     } else {
-      const acc = overrideZaloId
-        ? useAccountStore.getState().accounts.find(a => a.zalo_id === zaloId)
-        : useAccountStore.getState().getActiveAccount();
-      if (acc && (acc.channel || 'zalo') === 'zalo') {
-        const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
-        ipc.zalo?.getMessageHistory({ auth, zaloId, threadId: contactId, type: threadType, lastMsgId: 0, count: 50 })
-          .then((histRes: any) => {
-            const msgs: any[] = histRes?.response?.data || histRes?.response || [];
-            if (msgs.length > 0) {
-              const converted = msgs.map((m: any) => ({
-                msg_id: m.msgId || String(Date.now() + Math.random()),
-                owner_zalo_id: zaloId!, thread_id: contactId, thread_type: threadType,
-                sender_id: String(m.uidFrom || ''),
-                content: typeof m.data?.content === 'object' ? JSON.stringify(m.data?.content) : String(m.data?.content || ''),
-                msg_type: m.msgType || m.data?.msgType || 'text',
-                timestamp: m.serverTime || Date.now(),
-                is_sent: String(m.uidFrom) === String(zaloId) ? 1 : 0, status: 'received',
-              }));
-              setMessages(zaloId!, contactId, converted.reverse());
-            }
-          }).catch(() => {});
+      // Employee mode: load từ REST API qua DataAccessor
+      const isEmp = useEmployeeStore.getState().mode === 'employee';
+      if (isEmp) {
+        useChatStore.getState().setMessagesLoading(true);
+        try {
+          const result = await DataAccessor.getMessages({ zaloId: zaloId!, threadId: contactId, limit: 50 });
+          const msgs = result?.items || [];
+          console.log(`[ConversationList] handleSelect: loaded ${msgs.length} msgs from REST for ${contactId}`);
+          if (msgs.length > 0) {
+            setMessages(zaloId!, contactId, [...msgs].reverse());
+          }
+          useChatStore.getState().setMessagesLoading(false);
+        } catch (err) {
+          console.warn(`[ConversationList] handleSelect REST error:`, err);
+          useChatStore.getState().setMessagesLoading(false);
+        }
+      } else {
+        // Boss/standalone: fallback — dùng DataAccessor (-> IPC -> DB)
+        console.log(`[ConversationList] handleSelect: boss mode, loading from IPC...`);
+        try {
+          const result = await DataAccessor.getMessages({ zaloId: zaloId!, threadId: contactId, limit: 50 });
+          const msgs = result?.items || [];
+          if (msgs.length > 0) {
+            setMessages(zaloId!, contactId, [...msgs].reverse());
+          } else {
+            console.warn(`[ConversationList] handleSelect: no messages found in DB for ${contactId}`);
+          }
+        } catch (err) {
+          console.warn(`[ConversationList] handleSelect error:`, err);
+        }
       }
     }
 
@@ -1087,11 +1212,11 @@ export default function ConversationList() {
               if (phone) patch.phone = phone;
               if (alias) patch.alias = alias;
               useChatStore.getState().updateContact(zaloId!, patch);
-              ipc.db?.updateContactProfile({
+              DataAccessor.updateContactProfile({
                 zaloId: zaloId!, contactId, displayName, avatarUrl: avatar, phone, gender, birthday,
               }).catch(() => {});
               if (alias) {
-                ipc.db?.setContactAlias({ zaloId: zaloId!, contactId, alias }).catch(() => {});
+                DataAccessor.setContactAlias({ zaloId: zaloId!, contactId, alias }).catch(() => {});
               }
             })
             .catch(() => {});
@@ -1134,8 +1259,8 @@ export default function ConversationList() {
     } else {
       setActiveThread(null);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeAccountId]);
+}, [activeAccountId]);
+
 
   /** Chọn hội thoại trong chế độ Gộp trang - tự động chuyển tài khoản */
   const handleMergedClick = async (contact: import('@/store/chatStore').ContactItem) => {
@@ -1163,7 +1288,7 @@ export default function ConversationList() {
       return;
     }
     const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
-    const result = await ipc.zalo?.setPinConversation({ auth, conversations: [{ threadId: contactId, type: threadType }], isPin: !wasPinned });
+    const result = await zaloApi('setPinConversation', { auth, conversations: [{ threadId: contactId, type: threadType }], isPin: !wasPinned });
     if (result?.success) {
       setPinnedThreads(prev => { const s = new Set(prev); wasPinned ? s.delete(contactId) : s.add(contactId); return s; });
       showNotification(wasPinned ? 'Đã bỏ ghim hội thoại' : 'Đã ghim hội thoại', 'success');
@@ -1176,7 +1301,7 @@ export default function ConversationList() {
   const handleToggleLocalPin = async (contactId: string) => {
     const zId = activeAccountId; if (!zId) return;
     const wasPinned = localPinnedThreads.has(contactId);
-    await ipc.db?.setLocalPinnedConversation({ zaloId: zId, threadId: contactId, isPinned: !wasPinned });
+    await DataAccessor.setLocalPinnedConversation({ zaloId: zId, threadId: contactId, isPinned: !wasPinned });
     setLocalPinnedThreads(prev => { const s = new Set(prev); wasPinned ? s.delete(contactId) : s.add(contactId); return s; });
     showNotification(wasPinned ? 'Đã bỏ ghim khỏi app' : 'Đã ghim trong app', 'success');
     setCtxMenu(null);
@@ -1194,7 +1319,7 @@ export default function ConversationList() {
     const contact = (useChatStore.getState().contacts[zId] || []).find(c => c.contact_id === contactId);
     const threadType = contact?.contact_type === 'group' ? 1 : 0;
     const duration = muteUntilToDuration(until);
-    ipc.zalo?.setMute({ auth, threadId: contactId, threadType, duration, action: 1 }).catch(() => {});
+    zaloApi('setMute', { auth, threadId: contactId, threadType, duration, action: 1 }).catch(() => {});
   };
 
   const handleUnmute = (contactId: string, overrideZaloId?: string) => {
@@ -1208,7 +1333,7 @@ export default function ConversationList() {
     const auth = { cookies: accObj2.cookies, imei: accObj2.imei, userAgent: accObj2.user_agent };
     const contact = (useChatStore.getState().contacts[zId] || []).find(c => c.contact_id === contactId);
     const threadType = contact?.contact_type === 'group' ? 1 : 0;
-    ipc.zalo?.setMute({ auth, threadId: contactId, threadType, action: 3 }).catch(() => {});
+    zaloApi('setMute', { auth, threadId: contactId, threadType, action: 3 }).catch(() => {});
   };
 
   const handleMoveToOthers = (contactId: string, overrideZaloId?: string) => {
@@ -1226,7 +1351,7 @@ export default function ConversationList() {
     const auth = { cookies: accObj.cookies, imei: accObj.imei, userAgent: accObj.user_agent };
     const contact = (useChatStore.getState().contacts[zId] || []).find(c => c.contact_id === contactId);
     const threadType = contact?.contact_type === 'group' ? 1 : 0;
-    ipc.zalo?.setMute({ auth, threadId: contactId, threadType, duration: -1, action: 1 }).catch(() => {});
+    zaloApi('setMute', { auth, threadId: contactId, threadType, duration: -1, action: 1 }).catch(() => {});
   };
 
   const handleRemoveFromOthers = (contactId: string, overrideZaloId?: string) => {
@@ -1243,7 +1368,7 @@ export default function ConversationList() {
     const auth2 = { cookies: accObj2.cookies, imei: accObj2.imei, userAgent: accObj2.user_agent };
     const contact = (useChatStore.getState().contacts[zId] || []).find(c => c.contact_id === contactId);
     const threadType = contact?.contact_type === 'group' ? 1 : 0;
-    ipc.zalo?.setMute({ auth: auth2, threadId: contactId, threadType, action: 3 }).catch(() => {});
+    zaloApi('setMute', { auth: auth2, threadId: contactId, threadType, action: 3 }).catch(() => {});
   };
 
   const handleMarkRead = async (contactId: string, asRead: boolean, overrideZaloId?: string) => {
@@ -1257,13 +1382,13 @@ export default function ConversationList() {
 
     if (asRead) {
       clearUnread(zId, contactId);
-      ipc.db?.markAsRead({ zaloId: zId, contactId }).catch(() => {});
-      if (auth) ipc.zalo?.removeUnreadMark({ auth, threadId: contactId, type: threadType }).catch(() => {});
+      DataAccessor.markAsRead({ zaloId: zId, contactId }).catch(() => {});
+      if (auth) zaloApi('removeUnreadMark', { auth, threadId: contactId, type: threadType }).catch(() => {});
       // sendSeenForThread already has its own channel guard
       sendSeenForThread(zId, contactId, threadType, auth);
     } else {
       useChatStore.getState().updateContact(zId, { contact_id: contactId, unread_count: 1 });
-      if (auth) ipc.zalo?.addUnreadMark({ auth, threadId: contactId, type: threadType }).catch(() => {});
+      if (auth) zaloApi('addUnreadMark', { auth, threadId: contactId, type: threadType }).catch(() => {});
     }
     setCtxMenu(null);
   };
@@ -1285,7 +1410,7 @@ export default function ConversationList() {
 
     // Helper: fetch latest labels from server
     const fetchFreshLabels = async (): Promise<{ labels: any[]; version: number } | null> => {
-      const res = await ipc.zalo?.getLabels({ auth });
+      const res = await zaloApi('getLabels', { auth });
       if (res?.response?.labelData) return { labels: res.response.labelData, version: res.response.version || 0 };
       return null;
     };
@@ -1315,7 +1440,7 @@ export default function ConversationList() {
       labelId: target.id, labelText: target.text || '', labelColor: target.color || '', labelEmoji: target.emoji || '',
       action: alreadyHas ? 'removed' as const : 'assigned' as const,
     }];
-    let result = await ipc.zalo?.updateLabels({ auth, labelData: updated, version: freshVersion, labelDiffs });
+    let result = await zaloApi('updateLabels', { auth, labelData: updated, version: freshVersion, labelDiffs });
 
     if (!result?.success && result?.error?.includes('Outdated')) {
       const retried = await fetchFreshLabels().catch(() => null);
@@ -1329,7 +1454,7 @@ export default function ConversationList() {
           labelId: target.id, labelText: target.text || '', labelColor: target.color || '', labelEmoji: target.emoji || '',
           action: retryAlreadyHas ? 'removed' as const : 'assigned' as const,
         }];
-        result = await ipc.zalo?.updateLabels({ auth, labelData: updated, version: freshVersion, labelDiffs: retryDiffs });
+        result = await zaloApi('updateLabels', { auth, labelData: updated, version: freshVersion, labelDiffs: retryDiffs });
       }
     }
 
@@ -1366,7 +1491,7 @@ export default function ConversationList() {
     if (accObj && (accObj.channel || 'zalo') === 'zalo') {
       try {
         const auth = { cookies: accObj.cookies, imei: accObj.imei, userAgent: accObj.user_agent };
-        const msgRes = await ipc.db?.getMessages({ zaloId: zId, threadId: contactId, limit: 1 });
+        const msgRes = await DataAccessor.getMessages({ zaloId: zId, threadId: contactId, limit: 1 });
         const lastMsg = msgRes?.messages?.[0];
         if (lastMsg) {
           const lastMessage = {
@@ -1379,7 +1504,7 @@ export default function ConversationList() {
       } catch {}
     }
 
-    await ipc.db?.deleteConversation({ zaloId: zId, contactId });
+    await DataAccessor.deleteConversation({ zaloId: zId, contactId });
     removeContact(zId, contactId);
     if (activeThreadId === contactId) setActiveThread(null);
     showNotification('Đã xóa hội thoại', 'success');
@@ -1584,10 +1709,10 @@ export default function ConversationList() {
               const zaloId = msg.owner_zalo_id || activeAccountId;
               if (!zaloId || !msg.thread_id || !msg.timestamp) return;
               try {
-                const aroundRes = await ipc.db?.getMessagesAround({
+                const aroundRes = await DataAccessor.getMessagesAround({
                   zaloId,
                   threadId: msg.thread_id,
-                  timestamp: msg.timestamp,
+                  msgId: String(msg.msg_id || msg.timestamp),
                   limit: 80,
                 });
                 const aroundMsgs = aroundRes?.messages;
@@ -1714,7 +1839,7 @@ export default function ConversationList() {
                               const accObj = useAccountStore.getState().accounts.find(a => a.zalo_id === zaloId);
                               if (!accObj || (accObj.channel || 'zalo') !== 'zalo') continue;
                               const auth = { cookies: accObj.cookies, imei: accObj.imei, userAgent: accObj.user_agent };
-                              const res = await ipc.zalo?.getLabels({ auth });
+                              const res = await zaloApi('getLabels', { auth });
                               if (res?.response?.labelData) setLabels(zaloId, res.response.labelData);
                             }
                             showNotification('Đã cập nhật nhãn cho tất cả tài khoản', 'success');
@@ -1722,7 +1847,7 @@ export default function ConversationList() {
                             const acc = useAccountStore.getState().getActiveAccount();
                             if (!acc || !activeAccountId) return;
                             const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
-                            const res = await ipc.zalo?.getLabels({ auth });
+                            const res = await zaloApi('getLabels', { auth });
                             if (res?.response?.labelData) {
                               setLabels(activeAccountId, res.response.labelData);
                               setLabelsVersion(res.response.version || 0);
@@ -1939,15 +2064,21 @@ export default function ConversationList() {
         {/* Loading spinner overlay - hiện khi đang tải avatar nhóm, không chặn danh sách */}
         {loadingGroupAvatars && (
           <div className="sticky top-0 z-20 flex items-center justify-center py-1.5 bg-gray-850/80 backdrop-blur-sm border-b border-gray-700/40">
-            <svg className="animate-spin h-4 w-4 text-blue-400 mr-2" viewBox="0 0 24 24" fill="none">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-            </svg>
+            <Spinner size={4} className="text-blue-400 mr-2" />
             <span className="text-xs text-gray-400">Đang tải avatar nhóm...</span>
           </div>
         )}
-        {(mergedInboxMode ? (filteredMerged?.length ?? 0) : filtered.length) === 0 ? (
+        {initialLoading && activeAccountId && accountContacts.length === 0 ? (
+          <PageLoading variant="skeleton" skeletonVariant="table" />
+        ) : (mergedInboxMode ? (filteredMerged?.length ?? 0) : filtered.length) === 0 ? (
+          useChatStore.getState().conversationsLoading ? (
+            <div className="flex flex-col items-center justify-center h-full text-gray-500 text-sm gap-2">
+              <span className="w-5 h-5 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
+              <p>Đang tải hội thoại...</p>
+            </div>
+          ) : (
           <div className="flex flex-col items-center justify-center h-full text-gray-500 text-sm"><p>Không có hội thoại</p></div>
+          )
         ) : (mergedInboxMode ? filteredMerged! : filtered).slice(0, displayCount).map((contact) => {
           const threadType = contact.contact_type === 'group' ? 1 : 0;
           const contactZaloId = contact.owner_zalo_id || activeAccountId || '';
@@ -1970,7 +2101,7 @@ export default function ConversationList() {
           return (
             <div key={`${contact.owner_zalo_id}_${contact.contact_id}`}
               className={`relative w-full flex items-center gap-3 px-3 py-2.5 hover:bg-gray-700 transition-colors cursor-pointer ${threadLocalLabelsArr.length > 0 ? 'min-h-[72px]' : 'max-h-[80px] min-h-[80px]'} ${activeThreadId === contact.contact_id && activeAccountId === contact.owner_zalo_id ? 'bg-gray-700' : ''}`}
-              onClick={() => { if (mergedInboxMode) { handleMergedClick(contact); } else { handleSelect(contact.contact_id, threadType); setFilterDropdownOpen(false); } }}
+              onClick={() => { if (mergedInboxMode) { handleMergedClick(contact); } else { handleSelect(contact.contact_id, threadType, contact.owner_zalo_id || activeAccountId); setFilterDropdownOpen(false); } }}
               onMouseEnter={() => setHoveredId(`${contact.owner_zalo_id}_${contact.contact_id}`)}
               onMouseLeave={() => setHoveredId(null)}>
               <div className="relative flex-shrink-0">
@@ -2044,7 +2175,7 @@ export default function ConversationList() {
                   </div>
                 </div>
                 <div className="flex items-center justify-between gap-1 mt-1">
-                  <span className="text-sm text-gray-500 truncate flex items-center gap-1">
+                  <span className="text-sm text-gray-400 truncate flex items-center gap-1">
                     {/* Zalo label icon before lastMessage */}
                     {contactLabels.length > 0 && (
                       <span
@@ -2126,7 +2257,7 @@ export default function ConversationList() {
               const accObj = useAccountStore.getState().accounts.find(a => a.zalo_id === zId);
               if (!accObj) return;
               const auth = { cookies: accObj.cookies, imei: accObj.imei, userAgent: accObj.user_agent };
-              const res = await ipc.zalo?.getLabels({ auth });
+              const res = await zaloApi('getLabels', { auth });
               if (res?.response?.labelData) {
                 setLabels(zId, res.response.labelData);
                 setLabelsVersion(res.response.version || 0);

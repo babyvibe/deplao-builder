@@ -1,7 +1,7 @@
 import * as http from 'http';
 import Logger from '../../utils/Logger';
 import EventBroadcaster from '../event/EventBroadcaster';
-import DataSyncService, { SyncPayload } from '../employee/DataSyncService';
+import SocketIOClient from '../socket/SocketIOClient';
 
 /**
  * HttpClientService - Employee side only.
@@ -9,7 +9,6 @@ import DataSyncService, { SyncPayload } from '../employee/DataSyncService';
  *
  * - Runs a lightweight HTTP server to receive pushed events from Boss
  * - Sends proxy actions to Boss via HTTP POST
- * - Pulls sync data via HTTP GET
  * - Heartbeat every 15s to keep registration alive
  */
 class HttpClientService {
@@ -23,42 +22,16 @@ class HttpClientService {
     private localPort = 9901;
     private workspaceId = '';
 
-    /** SSE connection to boss (replaces local server push model) */
-    private sseReq: any = null;
-    private sseConnected = false;
-    private sseReconnectTimer: ReturnType<typeof setTimeout> | null = null;
-    /** SSE reconnect attempt counter for exponential backoff (3s → 6s → 12s → 24s → 30s cap) */
-    private sseReconnectAttempt = 0;
-    private static SSE_MAX_RECONNECT_DELAY = 30_000;
-    /** Track consecutive heartbeat failures to trigger SSE reconnect */
     private consecutiveHeartbeatFailures = 0;
-
-    /** SSE watchdog - detect silent TCP drops that res.on('end') never fires for */
-    private lastSseDataAt = 0;
-    private sseWatchdogTimer: ReturnType<typeof setInterval> | null = null;
-    private static SSE_WATCHDOG_INTERVAL = 30_000; // check every 30s
-    private static SSE_STALE_THRESHOLD = 60_000;   // 60s without data = stale
-
-    /** Track if SSE was previously connected (for reconnect vs first-connect detection) */
-    private sseWasConnected = false;
-
-    /** Dedicated HTTP agent for SSE connections (keep-alive, isolated from other requests) */
-    private sseAgent: any = null;
-
-    /** Last successful sync timestamp (for auto delta sync on reconnect) */
-    private lastSyncTs = 0;
-
-    /** CallbackUrl for LAN fallback push from boss */
-    private callbackUrl = '';
-
-    /** Max consecutive heartbeat failures before marking disconnected */
     private static MAX_HEARTBEAT_FAILURES = 5;
+    private callbackUrl = '';
 
     private onStatusChange: ((connected: boolean, latency: number) => void) | null = null;
     private onInitialState: ((data: any) => void) | null = null;
     private onAccountAccessUpdate: ((data: any) => void) | null = null;
-    private onSyncProgress: ((phase: string, percent: number) => void) | null = null;
-    private onSSEReconnected: (() => void) | null = null;
+
+    /** Socket.IO client - transport duy nhất cho real-time event */
+    private socketIOClient = new SocketIOClient();
 
     /** Channels to forward to local EventBroadcaster */
     private static FORWARD_CHANNELS = [
@@ -182,10 +155,17 @@ class HttpClientService {
             this.onStatusChange?.(true, 0);
             this.startHeartbeat();
 
-            // 4. Start SSE connection for real-time event stream (primary method)
-            this.connectSSE();
+            // 4. Start Socket.IO for real-time event delivery (primary transport)
+            this.socketIOClient.setWorkspaceId(this.workspaceId);
+            this.socketIOClient.setOnEvent((channel, eventData) => {
+                this.handlePushedEvent(channel, eventData);
+            });
+            this.socketIOClient.setOnStatusChange((connected) => {
+                Logger.log(`[HttpClientService] Socket.IO ${connected ? '🟢' : '🔴'} (workspace=${this.workspaceId})`);
+            });
+            this.socketIOClient.connect(this.bossUrl, this.token);
 
-            // 5. Fetch initial snapshot (SSE will also push it, but fetch as early warmup)
+            // 5. Fetch initial snapshot
             try {
                 const snapshot = await this.httpGet(
                     `${this.bossUrl}/api/sync/snapshot`,
@@ -209,13 +189,10 @@ class HttpClientService {
     public disconnect(): void {
         this.stopHeartbeat();
         this.stopLocalServer();
-        this.disconnectSSE();
-        this.stopSSEWatchdog();
+        this.socketIOClient.disconnect();
         this.onStatusChange = null;
         this.onInitialState = null;
         this.onAccountAccessUpdate = null;
-        this.onSyncProgress = null;
-        this.onSSEReconnected = null;
         this.connected = false;
         this.callbackUrl = '';
         Logger.log('[HttpClientService] Disconnected');
@@ -244,42 +221,27 @@ class HttpClientService {
         );
     }
 
-    // ─── Media request ────────────────────────────────────────────────
-
-    public async requestMedia(filePath: string): Promise<{ success: boolean; data?: Buffer; fileName?: string; error?: string }> {
-        if (!this.connected) {
-            return { success: false, error: 'Not connected' };
-        }
-
-        try {
-            return await this.httpPostRaw(
-                `${this.bossUrl}/api/media/request`,
-                { filePath },
-                { Authorization: `Bearer ${this.token}` },
-                60000
-            );
-        } catch (err: any) {
-            return { success: false, error: err.message };
-        }
-    }
-
     // ─── Media upload (Employee → Boss) ──────────────────────────────
 
     /**
      * Upload a media file from Employee to Boss storage.
      * Boss saves the file and returns its absolute path.
      */
-    public async uploadMedia(base64: string, filename: string, zaloId?: string): Promise<{ success: boolean; bossPath?: string; error?: string }> {
+    public async uploadMedia(buffer: Buffer, filename: string, zaloId?: string): Promise<{ success: boolean; bossPath?: string; error?: string }> {
         if (!this.connected) {
             return { success: false, error: 'Not connected' };
         }
 
         try {
-            return await this.httpPost(
+            return await this.httpPostBinary(
                 `${this.bossUrl}/api/media/upload`,
-                { base64, filename, zaloId },
-                { Authorization: `Bearer ${this.token}` },
-                120000 // 2 phút cho ảnh lớn qua tunnel
+                buffer,
+                {
+                    'Authorization': `Bearer ${this.token}`,
+                    'X-Filename': encodeURIComponent(filename),
+                    ...(zaloId ? { 'X-Zalo-Id': zaloId } : {}),
+                },
+                120000
             );
         } catch (err: any) {
             return { success: false, error: err.message };
@@ -297,23 +259,11 @@ class HttpClientService {
     public setOnAccountAccessUpdate(cb: (data: any) => void): void {
         this.onAccountAccessUpdate = cb;
     }
-    public setOnSyncProgress(cb: (phase: string, percent: number) => void): void {
-        this.onSyncProgress = cb;
-    }
-    public setOnSSEReconnected(cb: () => void): void {
-        this.onSSEReconnected = cb;
-    }
     public setWorkspaceId(id: string): void {
         this.workspaceId = id;
     }
-    public setLastSyncTs(ts: number): void {
-        this.lastSyncTs = ts;
-    }
-    public getLastSyncTs(): number {
-        return this.lastSyncTs;
-    }
 
-    // ─── Data Sync ────────────────────────────────────────────────────
+    // ─── Snapshot ─────────────────────────────────────────────────────
 
     /** Request fresh account/employee snapshot from Boss (for SSE reconnect recovery) */
     public async requestSnapshot(): Promise<{ success: boolean; snapshot?: any; error?: string }> {
@@ -334,126 +284,6 @@ class HttpClientService {
             Logger.log(`[HttpClientService] Snapshot refreshed: assigned=${result.snapshot.assignedAccounts?.length || 0}, online=${result.snapshot.onlineAccounts?.length || 0}`);
             return { success: true, snapshot: result.snapshot };
         } catch (err: any) {
-            return { success: false, error: err.message };
-        }
-    }
-
-    public async requestFullSync(_zaloIds: string[]): Promise<{ success: boolean; payload?: SyncPayload; syncTs?: number; error?: string }> {
-        if (!this.connected) {
-            return { success: false, error: 'Chưa kết nối tới BOSS' };
-        }
-
-        try {
-            this.onSyncProgress?.('Đang yêu cầu dữ liệu...', 0);
-            const result = await this.httpGet(
-                `${this.bossUrl}/api/sync/full`,
-                { Authorization: `Bearer ${this.token}` },
-                600000
-            );
-
-            if (!result?.success) {
-                // Log chi tiết lý do sync thất bại
-                Logger.error(`[HttpClientService] Full sync failed: ${result?.error || 'unknown'}. Boss may have 100k+ messages - try increasing server timeout or reducing batch size.`);
-                return { success: false, error: result?.error || 'Sync failed - dữ liệu quá lớn, vui lòng thử lại' };
-            }
-
-            this.onSyncProgress?.('Đang xử lý dữ liệu...', 50);
-            return { success: true, payload: result.payload, syncTs: result.syncTs };
-        } catch (err: any) {
-            Logger.error(`[HttpClientService] Full sync exception: ${err.message}. Boss may have too many messages - consider paginated sync.`);
-            return { success: false, error: err.message };
-        }
-    }
-
-    public async requestDeltaSync(sinceTs: number): Promise<{ success: boolean; payload?: SyncPayload; syncTs?: number; error?: string }> {
-        if (!this.connected) {
-            return { success: false, error: 'Chưa kết nối tới BOSS' };
-        }
-
-        try {
-            this.onSyncProgress?.('Đang yêu cầu cập nhật...', 0);
-            const result = await this.httpGet(
-                `${this.bossUrl}/api/sync/delta?sinceTs=${sinceTs}`,
-                { Authorization: `Bearer ${this.token}` },
-                600000
-            );
-
-            if (!result?.success) {
-                return { success: false, error: result?.error || 'Delta sync failed' };
-            }
-
-            this.onSyncProgress?.('Đang xử lý cập nhật...', 50);
-            return { success: true, payload: result.payload, syncTs: result.syncTs };
-        } catch (err: any) {
-            return { success: false, error: err.message };
-        }
-    }
-
-    public async performFullSync(zaloIds: string[]): Promise<{ success: boolean; syncTs?: number; error?: string }> {
-        try {
-            this.onSyncProgress?.('Đang tải dữ liệu từ Boss...', 5);
-            const result = await this.requestFullSync(zaloIds);
-            if (!result.success || !result.payload) {
-                this.onSyncProgress?.(`Lỗi: ${result.error}`, 0);
-                return { success: false, error: result.error };
-            }
-
-            this.onSyncProgress?.('Đang nhập dữ liệu...', 55);
-            DataSyncService.getInstance().importFullSync(
-                result.payload,
-                zaloIds,
-                (phase, percent) => {
-                    this.onSyncProgress?.(phase, 55 + Math.round(percent * 0.45));
-                }
-            );
-
-            // Track sync timestamp for auto delta sync on reconnect
-            if (result.syncTs) {
-                this.lastSyncTs = result.syncTs;
-            }
-
-            this.onSyncProgress?.('Hoàn tất đồng bộ!', 100);
-            return { success: true, syncTs: result.syncTs };
-        } catch (err: any) {
-            Logger.error(`[HttpClientService] Full sync error: ${err.message}`);
-            this.onSyncProgress?.(`Lỗi: ${err.message}`, 0);
-            return { success: false, error: err.message };
-        }
-    }
-
-    public async performDeltaSync(sinceTs: number): Promise<{ success: boolean; syncTs?: number; error?: string }> {
-        try {
-            this.onSyncProgress?.('Đang kiểm tra cập nhật...', 5);
-            const result = await this.requestDeltaSync(sinceTs);
-            if (!result.success || !result.payload) {
-                return { success: false, error: result.error };
-            }
-
-            const totalRows = Object.values(result.payload.tables).reduce((s, arr) => s + arr.length, 0);
-            const hasPrivateSnapshots = ['erp_calendar_events', 'erp_event_reminders', 'erp_event_attendees', 'erp_note_folders', 'erp_notes', 'erp_note_shares', 'erp_note_versions', 'erp_note_tag_map', 'erp_note_tags']
-                .some(tableName => Object.prototype.hasOwnProperty.call(result.payload?.tables || {}, tableName));
-            if (totalRows === 0 && !hasPrivateSnapshots) {
-                this.onSyncProgress?.('Không có cập nhật mới', 100);
-                return { success: true, syncTs: result.syncTs };
-            }
-
-            this.onSyncProgress?.('Đang cập nhật dữ liệu...', 50);
-            DataSyncService.getInstance().importDeltaSync(
-                result.payload,
-                (phase, percent) => {
-                    this.onSyncProgress?.(phase, 50 + Math.round(percent * 0.5));
-                }
-            );
-
-            // Track sync timestamp for auto delta sync on reconnect
-            if (result.syncTs) {
-                this.lastSyncTs = result.syncTs;
-            }
-
-            this.onSyncProgress?.('Hoàn tất cập nhật!', 100);
-            return { success: true, syncTs: result.syncTs };
-        } catch (err: any) {
-            Logger.error(`[HttpClientService] Delta sync error: ${err.message}`);
             return { success: false, error: err.message };
         }
     }
@@ -623,10 +453,7 @@ class HttpClientService {
                 }
 
                 // Forward to renderer so useZaloEvents can update the store
-                const activeWsId = WorkspaceManager.getInstance().getActiveWorkspaceId();
-                if (activeWsId === this.workspaceId) {
-                    EventBroadcaster.sendDirect(channel, data);
-                }
+                EventBroadcaster.sendDirect(channel, data);
                 Logger.log(`[HttpClientService] relay:messageSentByEmployee DB update: msgId="${msgId}", threadId="${threadId}", empId="${data.employee_id}"`);
             } catch (err: any) {
                 Logger.warn(`[HttpClientService] relay:messageSentByEmployee error: ${err.message}`);
@@ -659,11 +486,8 @@ class HttpClientService {
                     }
                 });
 
-                // Forward to renderer when this employee workspace is active
-                const activeWsId = WorkspaceManager.getInstance().getActiveWorkspaceId();
-                if (activeWsId === this.workspaceId) {
-                    EventBroadcaster.sendDirect(channel, data);
-                }
+                // Forward to renderer always (worker-specific data already saved to correct DB via withDbPath)
+                EventBroadcaster.sendDirect(channel, data);
             } catch (err: any) {
                 Logger.warn(`[HttpClientService] contactAliasChanged error: ${err.message}`);
             }
@@ -674,18 +498,8 @@ class HttpClientService {
         // (labels, pins, quick messages, CRM, pinned conversations, contact settings)
         if (HttpClientService.FORWARD_CHANNELS.includes(channel)) {
             this.persistRelayConversationEvent(channel, data);
-            // Only forward to renderer when this employee workspace is the active one.
-            try {
-                const WorkspaceManager = require('../../utils/WorkspaceManager').default;
-                const activeWsId = WorkspaceManager.getInstance().getActiveWorkspaceId();
-                if (activeWsId === this.workspaceId) {
-                    EventBroadcaster.sendDirect(channel, data);
-                } else {
-                    Logger.log(`[HttpClientService] Skipping renderer forward for ${channel}: activeWs="${activeWsId}" !== ourWs="${this.workspaceId}"`);
-                }
-            } catch {
-                EventBroadcaster.sendDirect(channel, data);
-            }
+            // Forward to renderer always. Data was persisted to correct DB via withDbPath above.
+            EventBroadcaster.sendDirect(channel, data);
         }
     }
 
@@ -816,228 +630,31 @@ class HttpClientService {
                 });
                 return;
             }
+
+            // ── Event: local path (image/video download complete on boss) ──
+            // Persist the boss-downloaded local_paths to the employee DB so
+            // conversations survive reload and the employee can load the media
+            // via boss REST API (toLocalMediaUrl → boss /api/media/...).
+            // NOTE: no `return` here — the event is also forwarded to renderer
+            // below so the store gets the local_paths update immediately.
+            if (channel === 'event:localPath' && data?.zaloId && data?.msgId && data?.localPaths) {
+                runOnWsDb(() => {
+                    try {
+                        db.updateLocalPaths(data.zaloId, String(data.msgId), data.localPaths);
+                        Logger.log(`[HttpClientService] Persisted event:localPath for msg ${data.msgId}`);
+                    } catch { /* best-effort */ }
+                });
+                // Don't return — fall through to forward to renderer
+            }
         } catch (err: any) {
             Logger.warn(`[HttpClientService] persistRelayConversationEvent error (${channel}): ${err.message}`);
         }
     }
 
-    // ─── SSE client (receive events from Boss) ──────────────────────
+    // ─── Socket.IO client — thay thế toàn bộ SSE ────────────────
+    // HttpClientService dùng SocketIOClient cho real-time event.
+    // SSE đã được xoá. Xem src/services/socket/SocketIOClient.ts
 
-    private connectSSE(): void {
-        if (!this.connected) return;
-        if (this.sseReq) {
-            Logger.warn(`[HttpClientService] connectSSE() called while existing SSE request active - destroying old`);
-            try { this.sseReq.destroy(); } catch {}
-            this.sseReq = null;
-        } else {
-            Logger.log(`[HttpClientService] connectSSE() called (attempt=${this.sseReconnectAttempt})`);
-        }
-        if (this.sseReconnectTimer) {
-            try { this.sseReq.destroy(); } catch {}
-            this.sseReq = null;
-        }
-        if (this.sseReconnectTimer) {
-            clearTimeout(this.sseReconnectTimer);
-            this.sseReconnectTimer = null;
-        }
-
-        try {
-            const urlObj = new URL('/api/events/stream', this.bossUrl);
-            const isHttps = urlObj.protocol === 'https:';
-            const httpModule = isHttps ? require('https') : require('http');
-
-            // Dedicated agent with keepAlive to prevent socket reuse with other requests
-            if (!this.sseAgent) {
-                const AgentClass = isHttps ? httpModule.Agent : httpModule.Agent;
-                this.sseAgent = new AgentClass({ keepAlive: true, keepAliveMsecs: 30000 });
-            }
-
-            const req = httpModule.request(
-                {
-                    hostname: urlObj.hostname,
-                    port: urlObj.port || (isHttps ? 443 : 80),
-                    path: urlObj.pathname,
-                    method: 'GET',
-                    agent: this.sseAgent,
-                    headers: {
-                        Authorization: `Bearer ${this.token}`,
-                        Accept: 'text/event-stream',
-                        'Cache-Control': 'no-cache',
-                        Connection: 'keep-alive',
-                        ...this.getTunnelBypassHeaders(),
-                    },
-                },
-                (res: any) => {
-                    if (res.statusCode !== 200) {
-                        Logger.warn(`[HttpClientService] SSE connect failed: HTTP ${res.statusCode}`);
-                        res.resume();
-                        this.sseConnected = false;
-                        // Schedule reconnect (non-200 was a dead end before)
-                        if (this.connected) {
-                            const delay = Math.min(
-                                5000 * Math.pow(2, this.sseReconnectAttempt),
-                                HttpClientService.SSE_MAX_RECONNECT_DELAY
-                            );
-                            this.sseReconnectAttempt++;
-                            Logger.log(`[HttpClientService] SSE reconnect in ${delay}ms (attempt ${this.sseReconnectAttempt})`);
-                            this.sseReconnectTimer = setTimeout(() => this.connectSSE(), delay);
-                        }
-                        return;
-                    }
-
-                    this.sseConnected = true;
-                    this.sseReconnectAttempt = 0; // Reset backoff on successful connection
-                    this.lastSseDataAt = Date.now();
-                    this.startSSEWatchdog();
-                    Logger.log('[HttpClientService] 📡 SSE stream connected');
-
-                    // Fire reconnect callback (not on first connect, only on reconnect)
-                    if (this.sseWasConnected) {
-                        Logger.log('[HttpClientService] 🔄 SSE reconnected - notifying for delta sync');
-                        try { this.onSSEReconnected?.(); } catch {}
-                    }
-                    this.sseWasConnected = true;
-
-                    let buffer = '';
-                    let eventData = '';
-
-                    res.on('data', (chunk: Buffer) => {
-                        this.lastSseDataAt = Date.now(); // Watchdog: mark SSE alive
-                        buffer += chunk.toString();
-                        const lines = buffer.split('\n');
-                        buffer = lines.pop() || ''; // keep incomplete line
-
-                        for (const line of lines) {
-                            if (line.startsWith('data: ')) {
-                                eventData += line.slice(6);
-                            } else if (line === '' && eventData) {
-                                // Empty line = end of SSE event
-                                try {
-                                    const { channel, data } = JSON.parse(eventData);
-                                    this.handlePushedEvent(channel, data);
-                                } catch { /* ignore malformed events */ }
-                                eventData = '';
-                            }
-                            // Lines starting with ':' are comments/keepalive - also mark alive
-                            else if (line.startsWith(':')) {
-                                this.lastSseDataAt = Date.now();
-                            }
-                        }
-                    });
-
-                    res.on('end', () => {
-                        const aliveMs = this.lastSseDataAt > 0 ? Date.now() - this.lastSseDataAt : -1;
-                        this.sseConnected = false;
-                        this.sseReq = null;
-                        this.stopSSEWatchdog();
-                        Logger.warn(`[HttpClientService] SSE stream ended (alive=${aliveMs}ms, attempt=${this.sseReconnectAttempt})`);
-                        if (this.connected) {
-                            const delay = Math.min(
-                                3000 * Math.pow(2, this.sseReconnectAttempt),
-                                HttpClientService.SSE_MAX_RECONNECT_DELAY
-                            );
-                            this.sseReconnectAttempt++;
-                            this.sseReconnectTimer = setTimeout(() => this.connectSSE(), delay);
-                        }
-                    });
-
-                    res.on('error', (err: Error) => {
-                        this.sseConnected = false;
-                        this.sseReq = null;
-                        this.stopSSEWatchdog();
-                        Logger.warn(`[HttpClientService] SSE stream error: ${err.message}`);
-                        if (this.connected) {
-                            const delay = Math.min(
-                                5000 * Math.pow(2, this.sseReconnectAttempt),
-                                HttpClientService.SSE_MAX_RECONNECT_DELAY
-                            );
-                            this.sseReconnectAttempt++;
-                            this.sseReconnectTimer = setTimeout(() => this.connectSSE(), delay);
-                        }
-                    });
-                }
-            );
-
-            req.on('error', (err: Error) => {
-                this.sseConnected = false;
-                this.sseReq = null;
-                this.stopSSEWatchdog();
-                Logger.warn(`[HttpClientService] SSE request error: ${err.message}`);
-                if (this.connected) {
-                    const delay = Math.min(
-                        5000 * Math.pow(2, this.sseReconnectAttempt),
-                        HttpClientService.SSE_MAX_RECONNECT_DELAY
-                    );
-                    this.sseReconnectAttempt++;
-                    this.sseReconnectTimer = setTimeout(() => this.connectSSE(), delay);
-                }
-            });
-
-            req.end();
-            this.sseReq = req;
-        } catch (err: any) {
-            Logger.error(`[HttpClientService] SSE connect error: ${err.message}`);
-            if (this.connected) {
-                const delay = Math.min(
-                    5000 * Math.pow(2, this.sseReconnectAttempt),
-                    HttpClientService.SSE_MAX_RECONNECT_DELAY
-                );
-                this.sseReconnectAttempt++;
-                this.sseReconnectTimer = setTimeout(() => this.connectSSE(), delay);
-            }
-        }
-    }
-
-    private disconnectSSE(): void {
-        if (this.sseReconnectTimer) {
-            clearTimeout(this.sseReconnectTimer);
-            this.sseReconnectTimer = null;
-        }
-        this.stopSSEWatchdog();
-        if (this.sseReq) {
-            try { this.sseReq.destroy(); } catch {}
-            this.sseReq = null;
-        }
-        if (this.sseAgent) {
-            try { this.sseAgent.destroy(); } catch {}
-            this.sseAgent = null;
-        }
-        this.sseConnected = false;
-        this.sseWasConnected = false;
-        this.sseReconnectAttempt = 0;
-    }
-
-    // ─── SSE Watchdog ────────────────────────────────────────────────
-
-    /**
-     * Start SSE watchdog that detects silent TCP drops.
-     * If no SSE data received for 60s, forces reconnect.
-     * Catches scenarios where res.on('end') never fires (common with tunnels).
-     */
-    private startSSEWatchdog(): void {
-        this.stopSSEWatchdog();
-        this.sseWatchdogTimer = setInterval(() => {
-            if (!this.sseConnected || !this.connected) return;
-            if (this.lastSseDataAt > 0 && Date.now() - this.lastSseDataAt > HttpClientService.SSE_STALE_THRESHOLD) {
-                Logger.warn(`[HttpClientService] ⏰ SSE watchdog: no data for ${Math.round((Date.now() - this.lastSseDataAt) / 1000)}s - forcing reconnect`);
-                this.sseConnected = false;
-                if (this.sseReq) {
-                    try { this.sseReq.destroy(); } catch {}
-                    this.sseReq = null;
-                }
-                // Force immediate reconnect
-                this.sseReconnectAttempt = 0;
-                this.connectSSE();
-            }
-        }, HttpClientService.SSE_WATCHDOG_INTERVAL);
-    }
-
-    private stopSSEWatchdog(): void {
-        if (this.sseWatchdogTimer) {
-            clearInterval(this.sseWatchdogTimer);
-            this.sseWatchdogTimer = null;
-        }
-    }
 
     // ─── Heartbeat ────────────────────────────────────────────────────
 
@@ -1100,11 +717,8 @@ class HttpClientService {
                 Logger.log(`[HttpClientService] Saved relay reaction to active DB (our workspace)`);
             }
 
-            // Forward to renderer only when this employee workspace is the active one
-            const activeWsId = wm.getActiveWorkspaceId();
-            if (activeWsId === this.workspaceId) {
-                EventBroadcaster.sendDirect('event:reaction', { zaloId, reaction });
-            }
+            // Always forward reaction to renderer (dedup-safe like saveRelayMessageToWorkspaceDb)
+            EventBroadcaster.sendDirect('event:reaction', { zaloId, reaction });
         } catch (err: any) {
             Logger.warn(`[HttpClientService] saveRelayReaction error: ${err.message}`);
         }
@@ -1156,10 +770,8 @@ class HttpClientService {
                 ? { zaloId, msgId: msgIds[0], threadId }
                 : { zaloId, msgIds, threadId };
 
-            const activeWsId = wm.getActiveWorkspaceId();
-            if (activeWsId === this.workspaceId) {
-                EventBroadcaster.sendDirect(channel, eventData);
-            }
+            // Always forward recall/delete to renderer (dedup-safe like saveRelayMessageToWorkspaceDb)
+            EventBroadcaster.sendDirect(channel, eventData);
         } catch (err: any) {
             Logger.warn(`[HttpClientService] saveRelayRecall error: ${err.message}`);
         }
@@ -1191,6 +803,9 @@ class HttpClientService {
 
             if (needSwitch) {
                 // Save to a DIFFERENT workspace DB (not the currently active one)
+                // ⚠️ db.saveMessage is async but has NO await inside, so it runs synchronously.
+                // If you add `await`, the withDbPath callback will return a Promise and the DB
+                // will be swapped back before the write completes — use db.queryOtherDb instead.
                 db.withDbPath(targetDbPath!, () => {
                     db.saveMessage(zaloId, message);
                     // Persist employee sender info so it survives conversation reload
@@ -1213,13 +828,13 @@ class HttpClientService {
                 Logger.log(`[HttpClientService] Saved relay message to active DB (our workspace)`);
             }
 
-            // Only send to renderer when THIS employee workspace is the active one.
-            // When boss workspace is active, the boss's broadcastMessage.send() already
-            // sent to renderer - sending again would cause double notification.
-            const activeWsId = wm.getActiveWorkspaceId();
-            if (activeWsId === this.workspaceId) {
-                EventBroadcaster.sendDirect('event:message', { zaloId, message });
-            }
+            // Always forward event:message to renderer.
+            // addMessage in chatStore deduplicates by msg_id (line 226-228),
+            // so double events (Boss direct + SSE relay) are safe.
+            // This ensures the employee workspace UI updates even when
+            // the user is currently viewing another workspace.
+            EventBroadcaster.sendDirect('event:message', { zaloId, message });
+
         } catch (err: any) {
             Logger.warn(`[HttpClientService] saveRelayMessage error: ${err.message}`);
         }
@@ -1233,10 +848,12 @@ class HttpClientService {
 
             const start = Date.now();
             try {
-                // Send callbackUrl for LAN fallback - boss can push via HTTP POST if SSE is down
+                // Send callbackUrl + SSE health for LAN fallback & half-open detection
+                // Boss closes half-open SSE when sseAlive=false → events queue instead of lost
+                const sioConnected = this.socketIOClient.isConnected();
                 const result = await this.httpPost(
                     `${this.bossUrl}/api/auth/heartbeat`,
-                    { callbackUrl: this.callbackUrl },
+                    { callbackUrl: this.callbackUrl, sioConnected },
                     { Authorization: `Bearer ${this.token}` },
                     10000
                 );
@@ -1248,13 +865,7 @@ class HttpClientService {
                 } else {
                     this.consecutiveHeartbeatFailures++;
                     this.onStatusChange?.(false, 0);
-                    // After 2 consecutive failures, force SSE reconnect if stream is down
-                    if (this.consecutiveHeartbeatFailures >= 2 && !this.sseConnected) {
-                        Logger.log(`[HttpClientService] ${this.consecutiveHeartbeatFailures} heartbeat failures, forcing SSE reconnect`);
-                        this.sseReconnectAttempt = 0; // Reset backoff for fresh reconnect attempt
-                        this.connectSSE();
-                    }
-                    // After MAX failures, mark as disconnected so health check can trigger full reconnect
+                    // After MAX failures, mark as disconnected
                     if (this.consecutiveHeartbeatFailures >= HttpClientService.MAX_HEARTBEAT_FAILURES) {
                         Logger.warn(`[HttpClientService] ${this.consecutiveHeartbeatFailures} consecutive heartbeat failures - marking disconnected`);
                         this.connected = false;
@@ -1265,13 +876,7 @@ class HttpClientService {
                 this.latencyMs = 0;
                 this.consecutiveHeartbeatFailures++;
                 this.onStatusChange?.(false, 0);
-                // After 2 consecutive failures, force SSE reconnect if stream is down
-                if (this.consecutiveHeartbeatFailures >= 2 && !this.sseConnected) {
-                    Logger.log(`[HttpClientService] ${this.consecutiveHeartbeatFailures} heartbeat failures (error), forcing SSE reconnect`);
-                    this.sseReconnectAttempt = 0;
-                    this.connectSSE();
-                }
-                // After MAX failures, mark as disconnected so health check can trigger full reconnect
+                // After MAX failures, mark as disconnected
                 if (this.consecutiveHeartbeatFailures >= HttpClientService.MAX_HEARTBEAT_FAILURES) {
                     Logger.warn(`[HttpClientService] ${this.consecutiveHeartbeatFailures} consecutive heartbeat failures (error) - marking disconnected`);
                     this.connected = false;
@@ -1366,6 +971,44 @@ class HttpClientService {
         });
     }
 
+    /** POST binary data (raw Buffer, not JSON) */
+    private httpPostBinary(url: string, data: Buffer, headers: Record<string, string> = {}, timeout = 120000): Promise<any> {
+        return new Promise((resolve, reject) => {
+            try {
+                const urlObj = new URL(url);
+                const isHttps = urlObj.protocol === 'https:';
+                const httpModule = isHttps ? require('https') : require('http');
+
+                const req = httpModule.request(
+                    {
+                        hostname: urlObj.hostname,
+                        port: urlObj.port,
+                        path: urlObj.pathname,
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/octet-stream',
+                            'Content-Length': Buffer.byteLength(data),
+                            ...this.getTunnelBypassHeaders(),
+                            ...headers,
+                        },
+                        timeout,
+                    },
+                    (res: http.IncomingMessage) => {
+                        let body = '';
+                        res.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+                        res.on('end', () => resolve(this.parseJsonResponse(body)));
+                    }
+                );
+
+                req.on('error', (err: Error) => reject(err));
+                req.on('timeout', () => { req.destroy(); reject(new Error('Request timeout')); });
+                req.end(data);
+            } catch (err) {
+                reject(err);
+            }
+        });
+    }
+
     private httpGet(url: string, headers: Record<string, string> = {}, timeout = 15000): Promise<any> {
         return new Promise((resolve, reject) => {
             try {
@@ -1394,57 +1037,6 @@ class HttpClientService {
 
                 req.on('error', (err: Error) => reject(err));
                 req.on('timeout', () => { req.destroy(); reject(new Error('Request timeout')); });
-                req.end();
-            } catch (err) {
-                reject(err);
-            }
-        });
-    }
-
-    private httpPostRaw(url: string, body: any, headers: Record<string, string> = {}, timeout = 60000): Promise<any> {
-        return new Promise((resolve, reject) => {
-            try {
-                const urlObj = new URL(url);
-                const payload = JSON.stringify(body);
-                const isHttps = urlObj.protocol === 'https:';
-                const httpModule = isHttps ? require('https') : require('http');
-
-                const req = httpModule.request(
-                    {
-                        hostname: urlObj.hostname,
-                        port: urlObj.port,
-                        path: urlObj.pathname + urlObj.search,
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Content-Length': Buffer.byteLength(payload),
-                            ...this.getTunnelBypassHeaders(),
-                            ...headers,
-                        },
-                        timeout,
-                    },
-                    (res: http.IncomingMessage) => {
-                        const contentType = res.headers['content-type'] || '';
-                        if (contentType.includes('application/octet-stream')) {
-                            const chunks: Buffer[] = [];
-                            res.on('data', (chunk: Buffer) => chunks.push(chunk));
-                            res.on('end', () => {
-                                const buffer = Buffer.concat(chunks);
-                                const fileName = (res.headers['content-disposition'] || '')
-                                    .match(/filename="?([^"]+)"?/)?.[1] || 'file';
-                                resolve({ success: true, data: buffer, fileName });
-                            });
-                        } else {
-                            let data = '';
-                            res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
-                            res.on('end', () => resolve(this.parseJsonResponse(data)));
-                        }
-                    }
-                );
-
-                req.on('error', (err: Error) => reject(err));
-                req.on('timeout', () => { req.destroy(); reject(new Error('Request timeout')); });
-                req.write(payload);
                 req.end();
             } catch (err) {
                 reject(err);

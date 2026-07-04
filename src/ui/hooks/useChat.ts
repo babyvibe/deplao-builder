@@ -1,10 +1,12 @@
 import { useCallback } from 'react';
 import { useChatStore, MessageItem, ContactItem } from '@/store/chatStore';
 import { useAccountStore } from '@/store/accountStore';
+import { useEmployeeStore } from '@/store/employeeStore';
 import { useAppStore } from '@/store/appStore';
 import ipc from '../lib/ipc';
 import * as channelIpc from '../lib/channelIpc';
 import { sendSeenForThread } from '@/lib/sendSeenHelper';
+import DataAccessor from '../lib/data/DataAccessor';
 
 /**
  * Hook quản lý trạng thái chat - load messages, contacts, gửi tin nhắn
@@ -34,18 +36,20 @@ export function useChat() {
     return { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
   }, [getActiveAccount]);
 
-  /** Tải danh sách hội thoại từ DB */
+  /** Tải danh sách hội thoại từ DB (hoặc REST cho employee) */
   const loadContacts = useCallback(
     async (zaloId: string) => {
       try {
-        const res = await ipc.db?.getContacts(zaloId);
-        if (res?.contacts) setContacts(zaloId, res.contacts);
+        const result = await DataAccessor.getConversations(zaloId, 500, 0);
+        if (result?.items) {
+          setContacts(zaloId, result.items);
+        }
       } catch {}
     },
     [setContacts]
   );
 
-  /** Chọn thread để xem, tải messages từ DB */
+  /** Chọn thread để xem, tải messages từ DB (hoặc REST cho employee) */
   const selectThread = useCallback(
     async (contactId: string, threadType: number) => {
       if (!activeAccountId) return;
@@ -58,7 +62,7 @@ export function useChat() {
       const channel = (contact?.channel || 'zalo') as string;
 
       // Mark as read in DB
-      await ipc.db?.markAsRead({ zaloId: activeAccountId, contactId });
+      await DataAccessor.markAsRead({ zaloId: activeAccountId, contactId });
       // Gửi sự kiện đã đọc: Zalo uses sendSeenForThread, Facebook uses channelIpc
       if (channel === 'facebook') {
         channelIpc.markAsRead('facebook', { accountId: activeAccountId, threadId: contactId }).catch(() => {});
@@ -66,18 +70,29 @@ export function useChat() {
         sendSeenForThread(activeAccountId, contactId, threadType);
       }
 
-      // Load messages from DB
+      // Load messages from DB (or REST)
       try {
-        const res = await ipc.db?.getMessages({
+        const isEmp = useEmployeeStore.getState().mode === 'employee';
+        console.log(`[useChat] selectThread → contact=${contactId} type=${threadType} employee=${isEmp}`);
+        useChatStore.getState().setMessagesLoading(true);
+        const result = await DataAccessor.getMessages({
           zaloId: activeAccountId,
           threadId: contactId,
           limit: 50,
-          offset: 0,
         });
-        if (res?.messages) {
-          setMessages(activeAccountId, contactId, [...res.messages].reverse());
+        useChatStore.getState().setMessagesLoading(false);
+        const msgs = result?.items || result?.messages || [];
+        console.log(`[useChat] getMessages result: items=${result?.items?.length ?? 0} messages=${result?.messages?.length ?? 0} isArray=${Array.isArray(result)} keys=${result ? Object.keys(result).join(',') : 'null'}`);
+        if (msgs.length > 0) {
+          console.log(`[useChat] ✅ Setting ${msgs.length} messages, first=${msgs[0]?.msg_id || msgs[0]?.id || '?'}`);
+          setMessages(activeAccountId, contactId, [...msgs].reverse());
+        } else {
+          console.warn(`[useChat] ⚠️ No messages returned, contactId=${contactId} employee=${isEmp}`);
         }
-      } catch {}
+      } catch (err) {
+        console.error(`[useChat] ❌ selectThread error:`, err);
+        useChatStore.getState().setMessagesLoading(false);
+      }
     },
     [activeAccountId, setActiveThread, clearUnread, setMessages]
   );
@@ -87,14 +102,16 @@ export function useChat() {
     async (threadId: string, currentCount: number) => {
       if (!activeAccountId) return false;
       try {
-        const res = await ipc.db?.getMessages({
+        const result = await DataAccessor.getMessages({
           zaloId: activeAccountId,
           threadId,
           limit: 30,
-          offset: currentCount,
+          before: undefined, // sẽ dùng offset-based tạm thời
         });
-        if (res?.messages?.length > 0) {
-          prependMessages(activeAccountId, threadId, [...res.messages].reverse());
+        // Fallback: nếu REST không trả về items, thử IPC
+        const msgs = result?.items || result?.messages || [];
+        if (msgs.length > 0) {
+          prependMessages(activeAccountId, threadId, [...msgs].reverse());
           return true;
         }
         return false;

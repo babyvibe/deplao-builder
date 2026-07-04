@@ -3,20 +3,33 @@ import DatabaseService from '../../src/services/database/DatabaseService';
 import CRMQueueService from '../../src/services/crm/CRMQueueService';
 import EventBroadcaster from '../../src/services/event/EventBroadcaster';
 import AppModeManager from '../../src/utils/AppModeManager';
+import WorkspaceManager from '../../src/utils/WorkspaceManager';
 import Logger from '../../src/utils/Logger';
 import { proxyToBoss, uploadEmployeeMedia } from './proxyHelper';
+
+function isEmployeeMode(): boolean {
+    try {
+        const activeWs = WorkspaceManager.getInstance().getActiveWorkspace();
+        if (activeWs?.type === 'remote') return true;
+    } catch {}
+    return false;
+}
 
 export function registerCRMIpc(): void {
 
 
     // ─── Notes ─────────────────────────────────────────────────────────────
     ipcMain.handle('crm:getNotes', async (_e, { zaloId, contactId }: { zaloId: string; contactId: string }) => {
-        try { return { success: true, notes: DatabaseService.getInstance().getCRMNotes(zaloId, contactId) }; }
+        try {
+            if (isEmployeeMode()) return { success: true, notes: [] };
+            return { success: true, notes: DatabaseService.getInstance().getCRMNotes(zaloId, contactId) };
+        }
         catch (e: any) { return { success: false, error: e.message }; }
     });
 
     ipcMain.handle('crm:saveNote', async (_e, { zaloId, note }: { zaloId: string; note: any }) => {
         try {
+            if (isEmployeeMode()) proxyToBoss('crm:saveNote', { zaloId, note });
             const id = DatabaseService.getInstance().saveCRMNote({ ...note, owner_zalo_id: zaloId });
             DatabaseService.getInstance().save();
             EventBroadcaster.emit('crm:noteChanged', { action: 'save', ownerZaloId: zaloId, id, note });
@@ -27,6 +40,7 @@ export function registerCRMIpc(): void {
 
     ipcMain.handle('crm:deleteNote', async (_e, { zaloId, noteId }: { zaloId: string; noteId: number }) => {
         try {
+            if (isEmployeeMode()) proxyToBoss('crm:deleteNote', { zaloId, noteId });
             DatabaseService.getInstance().deleteCRMNote(noteId, zaloId);
             DatabaseService.getInstance().save();
             EventBroadcaster.emit('crm:noteChanged', { action: 'delete', ownerZaloId: zaloId, noteId });
@@ -37,18 +51,27 @@ export function registerCRMIpc(): void {
 
     // ─── Contacts ──────────────────────────────────────────────────────────
     ipcMain.handle('crm:getContacts', async (_e, { zaloId, opts }: { zaloId: string; opts?: any }) => {
-        try { return { success: true, ...DatabaseService.getInstance().getCRMContacts(zaloId, opts || {}) }; }
+        try {
+            if (isEmployeeMode()) return { success: true, contacts: [], total: 0 };
+            return { success: true, ...DatabaseService.getInstance().getCRMContacts(zaloId, opts || {}) };
+        }
         catch (e: any) { return { success: false, error: e.message, contacts: [], total: 0 }; }
     });
 
     ipcMain.handle('crm:getContactStats', async (_e, { zaloId }: { zaloId: string }) => {
-        try { return { success: true, ...DatabaseService.getInstance().getContactStats(zaloId) }; }
+        try {
+            if (isEmployeeMode()) return { success: true, total: 0, friendCount: 0, noteCount: 0 };
+            return { success: true, ...DatabaseService.getInstance().getContactStats(zaloId) };
+        }
         catch (e: any) { return { success: false, error: e.message, total: 0, friendCount: 0, noteCount: 0 }; }
     });
 
     // ─── Campaigns ─────────────────────────────────────────────────────────
     ipcMain.handle('crm:getCampaigns', async (_e, { zaloId }: { zaloId: string }) => {
-        try { return { success: true, campaigns: DatabaseService.getInstance().getCRMCampaigns(zaloId) }; }
+        try {
+            if (isEmployeeMode()) return { success: true, campaigns: [] };
+            return { success: true, campaigns: DatabaseService.getInstance().getCRMCampaigns(zaloId) };
+        }
         catch (e: any) { return { success: false, error: e.message }; }
     });
 

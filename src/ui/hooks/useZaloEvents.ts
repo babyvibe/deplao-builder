@@ -4,7 +4,8 @@ import {MessageItem, useChatStore} from '@/store/chatStore';
 import { useAppStore, CachedGroupInfo } from '@/store/appStore';
 import { useCRMStore } from '@/store/crmStore';
 import { useEmployeeStore } from '@/store/employeeStore';
-import ipc from '../lib/ipc';
+import ipc from '../lib/ipc'
+import DataAccessor from '../lib/data/DataAccessor';;
 import { sendSeenForThread } from '@/lib/sendSeenHelper';
 import { playNotificationSound, showDesktopNotification, requestNotificationPermission } from '../utils/NotificationService';
 import { getFilteredUnreadCount } from '@/lib/badgeUtils';
@@ -81,7 +82,7 @@ async function loadAliases(zaloId: string) {
             alias: item.alias,
           });
           // Lưu vào DB để bền vững qua restart
-          ipc.db?.setContactAlias({ zaloId, contactId: item.userId, alias: item.alias }).catch(() => {});
+          DataAccessor.setContactAlias({ zaloId, contactId: item.userId, alias: item.alias }).catch(() => {});
         }
       }
     } catch {}
@@ -403,12 +404,12 @@ export async function fetchContactInfo(zaloId: string, contactId: string): Promi
     });
 
     // Lưu tên thật + gender + birthday vào DB
-    ipc.db?.updateContactProfile({ zaloId, contactId, displayName: realName, avatarUrl, phone, gender, birthday }).catch(() => {});
+    DataAccessor.updateContactProfile({ zaloId, contactId, displayName: realName, avatarUrl, phone, gender, birthday }).catch(() => {});
 
     // Lưu alias vào DB nếu có (field riêng, không overwrite display_name)
     if (resolvedAlias) {
       aliasMap.set(`${zaloId}__${contactId}`, resolvedAlias);
-      ipc.db?.setContactAlias({ zaloId, contactId, alias: resolvedAlias }).catch(() => {});
+      DataAccessor.setContactAlias({ zaloId, contactId, alias: resolvedAlias }).catch(() => {});
     }
   } catch {
     const times = getContactFetchTimes();
@@ -445,7 +446,7 @@ export async function refreshContactAlias(zaloId: string, contactId: string): Pr
       alias: resolvedAlias,
     });
     aliasMap.set(`${zaloId}__${contactId}`, resolvedAlias);
-    ipc.db?.setContactAlias({ zaloId, contactId, alias: resolvedAlias }).catch(() => {});
+    DataAccessor.setContactAlias({ zaloId, contactId, alias: resolvedAlias }).catch(() => {});
     setAliasRefreshTime(aliasCacheKey);
   } catch {
     // On failure, do NOT set the timestamp so it retries next time
@@ -454,6 +455,98 @@ export async function refreshContactAlias(zaloId: string, contactId: string): Pr
 
 // Throttle set: tránh fetch group liên tục trong vòng 60s
 const fetchingGroups = new Set<string>();
+
+// ─── Throttle set: fetch thông tin cá nhân từng thành viên nhóm ──────────────
+const fetchingMemberInfo = new Set<string>();
+
+/**
+ * Fetch individual group member's displayName + avatar using getUserInfo API.
+ * Gọi khi phát hiện tin nhắn nhóm từ sender_id chưa có tên/avatar.
+ * Cập nhật: contact store + groupInfoCache + DB.
+ * Throttle: mỗi member chỉ fetch 1 lần / 60s.
+ */
+async function fetchGroupMemberInfo(zaloId: string, memberId: string, groupId: string): Promise<void> {
+  const key = `${zaloId}__${memberId}`;
+  if (fetchingMemberInfo.has(key)) return;
+  fetchingMemberInfo.add(key);
+  // Clear throttle sau 60s để cho phép refresh sau
+  setTimeout(() => fetchingMemberInfo.delete(key), 60_000);
+
+  try {
+    const account = useAccountStore.getState().accounts.find(a => a.zalo_id === zaloId);
+    if (!account || (account.channel || 'zalo') !== 'zalo') return;
+
+    const auth = { cookies: account.cookies, imei: account.imei, userAgent: account.user_agent };
+    const res = await ipc.zalo?.getUserInfo({ auth, userId: memberId });
+    if (!res?.success || !res.response) return;
+
+    const profile = res.response.changed_profiles?.[memberId];
+    if (!profile) return;
+
+    const displayName = profile.displayName || profile.zaloName || '';
+    const avatar = profile.avatar || '';
+    if (!displayName && !avatar) return;
+
+    // 1. Update contact store để ChatWindow render ngay
+    if (displayName || avatar) {
+      useChatStore.getState().updateContact(zaloId, {
+        contact_id: memberId,
+        ...(displayName ? { display_name: displayName } : {}),
+        ...(avatar ? { avatar_url: avatar } : {}),
+      });
+    }
+
+    // 2. Update groupInfoCache
+    if (displayName || avatar) {
+      const cached = useAppStore.getState().groupInfoCache?.[zaloId]?.[groupId];
+      if (cached?.members) {
+        const members = [...cached.members];
+        const idx = members.findIndex(m => m.userId === memberId);
+        if (idx >= 0) {
+          members[idx] = {
+            ...members[idx],
+            ...(displayName ? { displayName } : {}),
+            ...(avatar ? { avatar } : {}),
+          };
+        } else {
+          members.push({
+            userId: memberId,
+            displayName: displayName || memberId,
+            avatar: avatar || '',
+            role: 0,
+          });
+        }
+        useAppStore.getState().setGroupInfo(zaloId, groupId, {
+          ...cached,
+          members,
+          fetchedAt: Date.now(),
+        });
+      }
+    }
+
+    // 3. Save to DB
+    await DataAccessor.saveGroupMembers({
+      zaloId, groupId,
+      members: [{
+        memberId,
+        displayName: displayName || memberId,
+        avatar: avatar || '',
+        role: 0,
+      }],
+    }).catch(() => {});
+
+    if (displayName || avatar) {
+      DataAccessor.updateContactProfile({
+        zaloId, contactId: memberId,
+        displayName: displayName || memberId,
+        avatarUrl: avatar,
+        phone: '',
+      }).catch(() => {});
+    }
+  } catch (err) {
+    console.warn('[useZaloEvents] fetchGroupMemberInfo error:', err);
+  }
+}
 
 /**
  * Unified: fetch thông tin nhóm (tên, avatar) + danh sách thành viên từ 1 lần API call.
@@ -506,7 +599,7 @@ async function fetchGroupInfoAndMembers(zaloId: string, groupId: string, forceNo
     // 2. Kiểm tra members trong DB
     let hasMembers = false;
     try {
-      const membersRes = await ipc.db?.getGroupMembers({ zaloId, groupId });
+      const membersRes = await DataAccessor.getGroupMembers({ zaloId, groupId });
       hasMembers = (membersRes?.members?.length || 0) > 0;
     } catch {}
 
@@ -535,7 +628,7 @@ async function fetchGroupInfoAndMembers(zaloId: string, groupId: string, forceNo
         ...(avatar ? { avatar_url: avatar } : {}),
         contact_type: 'group',
       });
-      ipc.db?.updateContactProfile({
+      DataAccessor.updateContactProfile({
         zaloId,
         contactId: groupId,
         displayName: name,
@@ -566,7 +659,7 @@ async function fetchGroupInfoAndMembers(zaloId: string, groupId: string, forceNo
         }).filter((m: any) => m.memberId);
 
         if (members.length > 0) {
-          await ipc.db?.saveGroupMembers({ zaloId, groupId, members }).catch(() => {});
+          await DataAccessor.saveGroupMembers({ zaloId, groupId, members }).catch(() => {});
           // Update groupInfoCache
           const cached = useAppStore.getState().groupInfoCache?.[zaloId]?.[groupId];
           useAppStore.getState().setGroupInfo(zaloId, groupId, {
@@ -667,24 +760,11 @@ export function useZaloEvents() {
       // 4. Trên mobile: hiện màn hình chat
       useAppStore.getState().setMobileShowChat(true);
 
-      // 5. Đảm bảo contacts cho account đã được load (để ConversationList hiển thị)
-      const existingContacts = useChatStore.getState().contacts[zaloId];
-      if (!existingContacts || existingContacts.length === 0) {
-        ipc.db?.getContacts(zaloId).then((res: any) => {
-          if (res?.contacts) {
-            useChatStore.getState().setContacts(zaloId, res.contacts);
-          }
-        }).catch(() => {});
-      }
-
+      // 5. Employee mode: không load contacts từ local DB, để REST/DataAccessor lo
       // 6. Navigate đến đúng thread - dùng setTimeout ngắn để đảm bảo
       //    ConversationList effect đã chạy xong (nếu có switch account)
       const applyThread = () => {
         setActiveThread(threadId, threadType);
-        ipc.db?.getMessages({ zaloId, threadId, limit: 50, offset: 0 }).then((res: any) => {
-          const msgs = res?.messages || [];
-          if (msgs.length > 0) setMessages(zaloId, threadId, [...msgs].reverse());
-        }).catch(() => {});
       };
 
       if (activeAccountId !== zaloId) {
@@ -695,7 +775,7 @@ export function useZaloEvents() {
       }
 
       // 7. Clear unread, mark as read, update badge
-      ipc.db?.markAsRead({ zaloId, contactId: threadId }).catch(() => {});
+      DataAccessor.markAsRead({ zaloId, contactId: threadId }).catch(() => {});
       clearUnread(zaloId, threadId);
       sendSeenForThread(zaloId, threadId, threadType);
       ipc.app?.setBadge(Math.max(0, getFilteredUnreadCount()));
@@ -761,7 +841,7 @@ export function useZaloEvents() {
       }
 
       if (currentAccountState.activeAccountId === zaloId) {
-        ipc.db?.getFriendRequests({ zaloId, direction: 'received' }).then((res: any) => {
+        DataAccessor.getFriendRequests({ zaloId, direction: 'received' }).then((res: any) => {
           const count = res?.requests?.length ?? 0;
           useCRMStore.getState().setRequestCount(count);
         }).catch(() => {});
@@ -805,7 +885,7 @@ export function useZaloEvents() {
       const { zaloId, direction } = data || {};
       if (!zaloId || (direction !== 'received' && direction !== 'all')) return;
 
-      ipc.db?.getFriendRequests({ zaloId, direction: 'received' }).then((res: any) => {
+      DataAccessor.getFriendRequests({ zaloId, direction: 'received' }).then((res: any) => {
         const count = res?.requests?.length ?? 0;
         const { activeAccountId } = useAccountStore.getState();
         if (activeAccountId === zaloId) {
@@ -855,7 +935,7 @@ export function useZaloEvents() {
       const { activeAccountId } = useAccountStore.getState();
       if (!tid || !activeAccountId) return;
       clearUnread(activeAccountId, tid);
-      ipc.db?.markAsRead({ zaloId: activeAccountId, contactId: tid }).catch(() => {});
+      DataAccessor.markAsRead({ zaloId: activeAccountId, contactId: tid }).catch(() => {});
       // Gửi sự kiện đã đọc khi cửa sổ được focus lại
       const activeContact = (useChatStore.getState().contacts[activeAccountId] || []).find(c => c.contact_id === tid);
       const focusThreadType = activeContact?.contact_type === 'group' ? 1 : 0;
@@ -1045,7 +1125,7 @@ export function useZaloEvents() {
       const senderAvatar = senderInfo?.avatar || '';
 
       if (!isSelf && !isGroup && realName) {
-        ipc.db?.updateContactProfile({
+        DataAccessor.updateContactProfile({
           zaloId, contactId: threadId, displayName: realName, avatarUrl: senderAvatar,
         }).catch(() => {});
       }
@@ -1067,7 +1147,7 @@ export function useZaloEvents() {
         // Tin nhắn từ chính mình gửi (từ nền tảng khác đồng bộ sang)
         // → đánh dấu đã trả lời + unread = 0 (không cộng unread)
         markReplied(zaloId, threadId);
-        ipc.db?.markAsRead({ zaloId, contactId: threadId }).catch(() => {});
+        DataAccessor.markAsRead({ zaloId, contactId: threadId }).catch(() => {});
       } else if (isSilent) {
         // Tin nhắn cũ (old_messages / getGroupChatHistory) - KHÔNG cộng unread, KHÔNG bắn sound/notification
         // Chỉ lưu message + update contact (đã xử lý ở trên)
@@ -1129,7 +1209,7 @@ export function useZaloEvents() {
         // ────────────────────────────────────────────────────────────────
       } else {
         // Tin nhắn từ người khác gửi vào thread đang mở VÀ cửa sổ đang focus → mark read ngay
-        ipc.db?.markAsRead({ zaloId, contactId: threadId }).catch(() => {});
+        DataAccessor.markAsRead({ zaloId, contactId: threadId }).catch(() => {});
         clearUnread(zaloId, threadId);
         // Gửi sự kiện đã đọc cho Zalo vì đang xem thread này
         sendSeenForThread(zaloId, threadId, isGroup ? 1 : 0);
@@ -1159,6 +1239,19 @@ export function useZaloEvents() {
         setTimeout(() => {
           fetchGroupInfoAndMembers(zaloId, threadId, !hasRealName);
         }, 0);
+
+        // ─── Fetch individual sender info nếu chưa biết tên/avatar ────────────
+        if (!isSelf && uidFrom) {
+          const senderContact = contacts.find(c => c.contact_id === uidFrom);
+          const senderKnown = !!(senderContact?.display_name &&
+            senderContact.display_name !== uidFrom &&
+            !/^\d+$/.test(senderContact.display_name));
+          if (!senderKnown) {
+            setTimeout(() => {
+              fetchGroupMemberInfo(zaloId, uidFrom, threadId);
+            }, 200); // delay nhẹ để group fetch chạy trước
+          }
+        }
       }
     });
 
@@ -1190,7 +1283,7 @@ export function useZaloEvents() {
       if (threadId && targetMsgId) {
         updateMessageReaction(zaloId, threadId, targetMsgId, userId, emoji);
         // Lưu vào DB
-        ipc.db?.updateReaction({ zaloId, msgId: targetMsgId, userId, icon: emoji }).catch(() => {});
+        DataAccessor.updateReaction({ zaloId, msgId: targetMsgId, userId, emoji: emoji }).catch(() => {});
       }
     });
 
@@ -1257,7 +1350,7 @@ export function useZaloEvents() {
         }
         // After contacts loaded, bulk-load group members from DB → populate groupInfoCache
         // so GroupAvatarSmall renders immediately without needing an API call
-        return ipc.db?.getAllGroupMembers({ zaloId: data.zaloId });
+        return DataAccessor.getAllGroupMembers(data.zaloId);
       }).then((gmRes: any) => {
         if (!gmRes?.rows?.length) return;
         // Group rows by group_id
@@ -1429,7 +1522,7 @@ export function useZaloEvents() {
               contact_type: 'group',
             });
             if (newName || newAvt) {
-              ipc.db?.updateContactProfile({
+              DataAccessor.updateContactProfile({
                 zaloId, contactId: groupId,
                 displayName: newName, avatarUrl: newAvt,
                 phone: '', contactType: 'group',

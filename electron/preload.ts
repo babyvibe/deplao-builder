@@ -285,6 +285,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     repairImage: (params: any) => ipcRenderer.invoke('file:repairImage', params),
     validateLocalImages: (items: any) => ipcRenderer.invoke('file:validateLocalImages', items),
     captureScreenshot: () => ipcRenderer.invoke('file:captureScreenshot'),
+    resolveMediaUrl: (bossUrl: string, mediaType?: string) => ipcRenderer.invoke('media:resolveUrl', { bossUrl, mediaType }),
+    hasMediaCache: (bossUrl: string) => ipcRenderer.invoke('media:hasCache', { bossUrl }),
+    preloadMediaBatch: (urls: string[]) => ipcRenderer.invoke('media:preloadBatch', { urls }),
   },
 
 
@@ -428,15 +431,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     startTunnel:         () => ipcRenderer.invoke('relay:startTunnel'),
     stopTunnel:          () => ipcRenderer.invoke('relay:stopTunnel'),
     getTunnelStatus:     () => ipcRenderer.invoke('relay:getTunnelStatus'),
-  },
-
-  // ─── Data Sync (Employee) ──────────────────────────────────────────
-  sync: {
-    requestFullSync:     (zaloIds: string[]) => ipcRenderer.invoke('sync:requestFullSync', { zaloIds }),
-    requestDeltaSync:    (sinceTs?: number) => ipcRenderer.invoke('sync:requestDeltaSync', { sinceTs }),
-    resetEmployeeDB:     (zaloIds: string[]) => ipcRenderer.invoke('sync:resetEmployeeDB', { zaloIds }),
-    getStatus:           () => ipcRenderer.invoke('sync:getStatus'),
-    requestMedia:        (filePath: string) => ipcRenderer.invoke('sync:requestMedia', { filePath }),
   },
 
   // ─── Facebook ─────────────────────────────────────────────────────
@@ -594,6 +588,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setBiometric:     (params: { enabled: boolean }) => ipcRenderer.invoke('lockScreen:setBiometric', params),
     biometricUnlock:  () => ipcRenderer.invoke('lockScreen:biometricUnlock'),
   },
+
+  // ─── Media Library ───────────────────────────────────────────────
+  library: {
+    getItems:    (params: any) => ipcRenderer.invoke('library:getItems', params),
+    upload:      (params: any) => ipcRenderer.invoke('library:upload', params),
+    deleteItem:  (uuid: string) => ipcRenderer.invoke('library:deleteItem', uuid),
+    getFolders:  (params: { zaloId: string; type?: string }) => ipcRenderer.invoke('library:getFolders', params),
+    createFolder:(params: any) => ipcRenderer.invoke('library:createFolder', params),
+    updateItem:  (uuid: string, params: any) => ipcRenderer.invoke('library:updateItem', { uuid, ...params }),
+    renameFolder:(id: number, name: string) => ipcRenderer.invoke('library:renameFolder', { id, name }),
+    deleteFolder:(id: number) => ipcRenderer.invoke('library:deleteFolder', id),
+  },
   on: (channel: string, callback: (...args: any[]) => void) => {
     const validChannels = [
       'event:message',
@@ -633,12 +639,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'relay:employeeListUpdate',
       'relay:messageSentByEmployee',
       'relay:tunnelStatusUpdate',
-      'sync:progress',
       'workspace:switched',
       'workspace:connectionStatus',
       'workspace:initialState',
       'workspace:accountAccessUpdate',
       'workspace:syncComplete',
+      'employee:modeChanged',
       // ─── Facebook events ─────────────────────────────────────────────
       'fb:onMessage',
       'fb:onReaction',
@@ -676,12 +682,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'db:pinnedConversationChanged',
       'db:contactFlagsChanged',
       'db:contactAliasChanged',
+      'db:unreadChanged',
+      'db:conversationDeleted',
+      'db:contactProfileUpdated',
+      'crm:tagChanged',
       'event:friendRequestSent',
       'event:friendRequestRemoved',
       'event:pollVote',
       'erp:event:noteShared',
       'erp:event:departmentUpdated',
       'erp:event:employeeProfileUpdated',
+      'erp:event:employeeProfileDeleted',
+      // ─── Library events ──────────────────────────────────────────
+      'library:itemAdded',
+      'library:itemUpdated',
+      'library:itemDeleted',
     ];
     if (validChannels.includes(channel)) {
       const subscription = (_event: any, ...args: any[]) => callback(...args);

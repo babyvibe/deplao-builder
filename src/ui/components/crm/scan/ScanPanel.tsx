@@ -6,6 +6,7 @@ import ScanResultTable from './ScanResultTable';
 import ScanFiltersPanel from './ScanFiltersPanel';
 import { SCAN_INPUT_CONFIG } from './ScanSessionTypes';
 import ScanHistoryPanel from './ScanHistoryPanel';
+import { Spinner } from '@/components/common/PageLoading';
 import { showConfirm } from '../../common/ConfirmDialog';
 
 const SCAN_WARNING_KEY = 'fb_scan_warning_dismissed';
@@ -816,10 +817,7 @@ export default function ScanPanel({ accountId }: Props) {
                   <span className="flex-shrink-0">{info.icon}</span>
                   <span className={`truncate flex-1 min-w-0 ${isActive ? 'font-medium' : ''}`} title={tab.label}>{tab.label}</span>
                   {tab.scanning && (
-                    <svg className="animate-spin w-3 h-3 text-blue-400 flex-shrink-0" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-                    </svg>
+                    <Spinner size={3} className="flex-shrink-0" />
                   )}
                   {tab.items.length > 0 && !tab.scanning && (
                     <span className="text-[10px] font-mono bg-gray-700/60 text-gray-400 rounded-full px-1.5 py-0.5 leading-none flex-shrink-0">{tab.items.length}</span>
@@ -1316,10 +1314,7 @@ function ActiveTabContent({
             {tab.progress && (
               <div className="flex items-center gap-1.5 text-xs">
                 {tab.scanning && (
-                  <svg className="animate-spin w-3 h-3 text-blue-400 flex-shrink-0" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-                  </svg>
+                  <Spinner size={3} className="flex-shrink-0" />
                 )}
                 {/* <span className={tab.scanning ? 'text-blue-300' : 'text-emerald-400'}>{tab.progress}</span> */}
               </div>

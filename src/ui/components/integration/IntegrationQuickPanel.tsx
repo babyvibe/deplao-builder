@@ -6,7 +6,9 @@
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
+import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
+import { Spinner } from '@/components/common/PageLoading';
 import { useAppStore } from '@/store/appStore';
 import POSOrderPanel from './POSOrderPanel';
 import { IS_DEV_BUILD } from "../../../configs/BuildConfig";
@@ -1163,7 +1165,7 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
       setLoadingIntegrations(false);
       return;
     }
-    ipc.integration?.list().then(res => {
+    DataAccessor.getIntegrations().then(res => {
       if (res?.success) {
         const all = res.integrations || [];
         const connected = all.filter((i: any) => i.enabled && i.connectedAt);
@@ -1338,10 +1340,7 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
         {/* ── Body ────────────────────────────────────────────── */}
         {loadingIntegrations ? (
           <div className="flex-1 flex items-center justify-center">
-            <svg className="animate-spin w-6 h-6 text-blue-400" viewBox="0 0 24 24" fill="none">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-            </svg>
+            <Spinner size={6} />
           </div>
         ) : !hasConnectedIntegrations ? (
           <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
@@ -1592,10 +1591,7 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
                     className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors">
                     {executing ? (
                       <span className="flex items-center justify-center gap-2">
-                        <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-                        </svg>
+                        <Spinner size={4} />
                         Đang thực hiện...
                       </span>
                     ) : `${selectedAction.icon} Thực hiện`}

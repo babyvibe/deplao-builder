@@ -6,10 +6,12 @@ import React from 'react';
 import { useChatStore } from '@/store/chatStore';
 import { useAppStore } from '@/store/appStore';
 import { useAccountStore } from '@/store/accountStore';
-import ipc from '@/lib/ipc';
+import ipc from '@/lib/ipc'
+import DataAccessor from '@/lib/data/DataAccessor';;
 import PhoneDisplay from './PhoneDisplay';
 import GroupAvatarCommon from './GroupAvatar';
 import { FBUserProfilePopup } from './FBUserProfilePopup';
+import { Spinner } from '@/components/common/PageLoading';
 
 // ─── ActionRow ────────────────────────────────────────────────────────────────
 export function ActionRow({ icon, label, onClick, textColor = 'text-gray-300' }: {
@@ -139,7 +141,7 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
           setIsBlocked(!!profile.isBlocked);
           if (resolvedAlias && activeAccountId) {
             useChatStore.getState().updateContact(activeAccountId, { contact_id: userId, alias: resolvedAlias });
-            ipc.db?.setContactAlias({ zaloId: activeAccountId, contactId: userId, alias: resolvedAlias }).catch(() => {});
+            DataAccessor.setContactAlias({ zaloId: activeAccountId, contactId: userId, alias: resolvedAlias }).catch(() => {});
           }
         }
       } catch {}
@@ -244,8 +246,8 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
                         }
                       } catch {}
                     }
-                    ipc.db?.updateContactProfile({ zaloId: activeAccountId, contactId: g.groupId, displayName: groupName, avatarUrl: groupAvt, phone: '', contactType: 'group' }).catch(() => {});
-                    if (members.length) ipc.db?.saveGroupMembers({ zaloId: activeAccountId, groupId: g.groupId, members }).catch(() => {});
+                    DataAccessor.updateContactProfile({ zaloId: activeAccountId, contactId: g.groupId, displayName: groupName, avatarUrl: groupAvt, phone: '', contactType: 'group' }).catch(() => {});
+                    if (members.length) DataAccessor.saveGroupMembers({ zaloId: activeAccountId, groupId: g.groupId, members }).catch(() => {});
                     useAppStore.getState().setGroupInfo(activeAccountId, g.groupId, {
                       groupId: g.groupId, name: groupName, avatar: groupAvt,
                       memberCount: gi.totalMember || members.length,
@@ -367,7 +369,7 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
       setUserInfo((p: any) => ({ ...p, alias: trimmed }));
       if (activeAccountId) {
         useChatStore.getState().updateContact(activeAccountId, { contact_id: userId, alias: trimmed });
-        ipc.db?.setContactAlias({ zaloId: activeAccountId, contactId: userId, alias: trimmed }).catch(() => {});
+        DataAccessor.setContactAlias({ zaloId: activeAccountId, contactId: userId, alias: trimmed }).catch(() => {});
       }
       showNotification('Đã cập nhật tên gợi nhớ', 'success');
     } catch (e: any) { showNotification('Thất bại: ' + e.message, 'error'); }
@@ -395,10 +397,7 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
           <div className="flex-1 overflow-y-auto">
             {mutualGroupsLoading && mutualGroups.length === 0 && (
               <div className="flex items-center justify-center py-8">
-                <svg className="animate-spin w-5 h-5 text-blue-400" viewBox="0 0 24 24" fill="none">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-                </svg>
+                <Spinner size={5} />
               </div>
             )}
             {mutualGroups.map(g => (
@@ -484,10 +483,7 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
           <div className="pl-24 pt-2 pb-3 min-w-0">
             {loading && !userInfo ? (
               <div className="h-8 flex items-center">
-                <svg className="animate-spin w-4 h-4 text-blue-400" viewBox="0 0 24 24" fill="none">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-                </svg>
+                <Spinner size={4} />
               </div>
             ) : editingAlias ? (
               <div className="flex items-center gap-1">

@@ -549,10 +549,12 @@ class EventBroadcaster {
             const rawMsgType = String(message.data?.msgType || '');
             const msgId = message.data?.msgId || '';
 
-            // Skip file/image downloads for reminder and poll messages
-            // Also skip when fromRelay - boss already downloads files and relays event:localPath separately
+            // Skip file/image downloads only for non-media message types
+            // Do NOT skip when fromRelay: Boss needs to download media files
+            // from Zalo CDN even for relayed messages, otherwise the Boss's
+            // /api/media/ endpoint can't serve the file to employees.
             const SKIP_DOWNLOAD_MSG_TYPES = ['chat.ecard', 'group.poll'];
-            const shouldSkipDownload = !!options?.fromRelay || SKIP_DOWNLOAD_MSG_TYPES.includes(rawMsgType);
+            const shouldSkipDownload = SKIP_DOWNLOAD_MSG_TYPES.includes(rawMsgType);
 
             // Card message (danh thiếp): chat.recommended / action contains "recommened"
             const CARD_MSG_TYPES = ['chat.recommended', 'chat.recommend'];

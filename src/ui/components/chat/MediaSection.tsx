@@ -10,7 +10,10 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAccountStore } from '@/store/accountStore';
+import { useEmployeeStore } from '@/store/employeeStore';
+import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
+import { Spinner } from '@/components/common/PageLoading';
 import { toLocalMediaUrl } from '@/lib/localMedia';
 import MediaViewer, { MediaViewerImage } from './MediaViewer';
 
@@ -98,6 +101,7 @@ function buildViewerImages(msgs: any[]): MediaViewerImage[] {
       return {
         src,
         displaySrc: ds,
+        fallbackSrc: remoteSrc || undefined,  // Zalo CDN làm fallback
         localPath,
         defaultName: localPath ? localPath.replace(/.*[/\\]/, '') : `image_${msg?.msg_id || Date.now()}.jpg`,
         msgId: msg?.msg_id ? String(msg.msg_id) : undefined,
@@ -167,13 +171,13 @@ export default function MediaSection({ threadId, onOpenDetail }: {
     setPreviewLoading(true);
     try {
       if (t === 'image') {
-        const r = await ipc.db?.getMediaMessages({ zaloId: activeAccountId, threadId, limit: PREVIEW_IMAGE + 1, offset: 0 });
+        const r = await DataAccessor.getMediaMessages({ zaloId: activeAccountId, threadId, limit: PREVIEW_IMAGE + 1, offset: 0 });
         setPreviewImages(r?.messages || []);
       } else if (t === 'file') {
-        const r = await ipc.db?.getFileMessages({ zaloId: activeAccountId, threadId, limit: PREVIEW_LIST + 1, offset: 0 });
+        const r = await DataAccessor.getFileMessages({ zaloId: activeAccountId, threadId, limit: PREVIEW_LIST + 1, offset: 0 });
         setPreviewFiles(r?.messages || []);
       } else {
-        const r = await ipc.db?.getLinks({ zaloId: activeAccountId, threadId, limit: PREVIEW_LIST + 1, offset: 0 });
+        const r = await DataAccessor.getLinks({ zaloId: activeAccountId, threadId, limit: PREVIEW_LIST + 1, offset: 0 });
         setPreviewLinks(r?.links || []);
       }
     } catch {}
@@ -241,10 +245,7 @@ export default function MediaSection({ threadId, onOpenDetail }: {
       <div className="p-2">
         {previewLoading ? (
           <div className="flex justify-center py-6">
-            <svg className="animate-spin w-4 h-4 text-blue-400" viewBox="0 0 24 24" fill="none">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-            </svg>
+            <Spinner size={4} />
           </div>
         ) : tab === 'image' ? (
           images.length === 0
@@ -378,13 +379,13 @@ function MediaDetailPanel({ threadId, activeAccountId, tab, onBack }: {
     try {
       let newItems: any[] = [];
       if (t === 'image') {
-        const r = await ipc.db?.getMediaMessages({ zaloId: activeAccountId, threadId, limit: PAGE_SIZE, offset });
+        const r = await DataAccessor.getMediaMessages({ zaloId: activeAccountId, threadId, limit: PAGE_SIZE, offset });
         newItems = r?.messages || [];
       } else if (t === 'file') {
-        const r = await ipc.db?.getFileMessages({ zaloId: activeAccountId, threadId, limit: PAGE_SIZE, offset });
+        const r = await DataAccessor.getFileMessages({ zaloId: activeAccountId, threadId, limit: PAGE_SIZE, offset });
         newItems = r?.messages || [];
       } else {
-        const r = await ipc.db?.getLinks({ zaloId: activeAccountId, threadId, limit: PAGE_SIZE, offset });
+        const r = await DataAccessor.getLinks({ zaloId: activeAccountId, threadId, limit: PAGE_SIZE, offset });
         newItems = r?.links || [];
       }
       setItems(prev => pageNum === 0 ? newItems : [...prev, ...newItems]);
@@ -522,10 +523,7 @@ function MediaDetailPanel({ threadId, activeAccountId, tab, onBack }: {
         <div ref={bottomRef} className="h-2" />
         {loading && (
           <div className="flex justify-center py-4">
-            <svg className="animate-spin w-4 h-4 text-blue-400" viewBox="0 0 24 24" fill="none">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-            </svg>
+            <Spinner size={4} />
           </div>
         )}
         {!hasMore && items.length > 0 && (
@@ -559,8 +557,21 @@ function ImageThumb({ msg, onClickImage }: { msg: any; onClickImage?: () => void
 
   const handleClick = () => {
     if (isVideo) {
-      if (localFilePath) ipc.file?.openPath(localFilePath);
-      else if (remoteVideoUrl) ipc.shell?.openExternal(remoteVideoUrl);
+      if (localFilePath) {
+        // Employee mode: open via Boss REST API
+        const mode = useEmployeeStore.getState().mode;
+        if (mode === 'employee') {
+          const mediaUrl = toLocalMediaUrl(localFilePath);
+          if (mediaUrl && mediaUrl.startsWith('http')) {
+            ipc.shell?.openExternal(mediaUrl);
+            return;
+          }
+          // Fallback: try remote CDN URL
+          if (remoteVideoUrl) { ipc.shell?.openExternal(remoteVideoUrl); return; }
+          if (fbAtt?.url) { ipc.shell?.openExternal(fbAtt.url); return; }
+        }
+        ipc.file?.openPath(localFilePath);
+      } else if (remoteVideoUrl) ipc.shell?.openExternal(remoteVideoUrl);
       else if (fbAtt?.url) ipc.shell?.openExternal(fbAtt.url);
     } else if (onClickImage) {
       onClickImage();

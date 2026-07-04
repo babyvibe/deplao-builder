@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useChatStore } from '@/store/chatStore';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
+import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import PhoneDisplay from '../common/PhoneDisplay';
 import { CreateGroupModal } from './GroupModals';
@@ -9,6 +10,7 @@ import GroupInfoPanel from './GroupInfoPanel';
 import MediaSection, { MediaDetailPanel, MediaTab } from './MediaSection';
 import { UserActionSection } from './ConversationActions';
 import { extractUserProfile } from '../../../utils/profileUtils';
+import { Spinner } from '@/components/common/PageLoading';
 import GroupAvatar from '../common/GroupAvatar';
 import { toLocalMediaUrl } from '@/lib/localMedia';
 import { getCapability, type Channel } from '../../../configs/channelConfig';
@@ -85,7 +87,7 @@ function UserConversationInfo() {
   useEffect(() => {
     setIsFriendDB(null);
     if (!activeAccountId || !activeThreadId) return;
-    ipc.db?.isFriend({ zaloId: activeAccountId, userId: activeThreadId })
+    DataAccessor.isFriend({ zaloId: activeAccountId, userId: activeThreadId })
       .then((res: any) => setIsFriendDB(!!res?.isFriend))
       .catch(() => setIsFriendDB(!!(contact?.is_friend)));
   }, [activeAccountId, activeThreadId]);
@@ -105,7 +107,7 @@ function UserConversationInfo() {
     if (!activeAccountId || !activeThreadId) return;
     loadPinStatus();
     // Always load local pin status regardless of channel
-    ipc.db?.getLocalPinnedConversations({ zaloId: activeAccountId })
+    DataAccessor.getLocalPinnedConversations({ zaloId: activeAccountId })
       .then((res: any) => setIsLocalPinned((res?.threadIds || []).includes(activeThreadId)))
       .catch(() => {});
   }, [activeAccountId, activeThreadId]);
@@ -134,32 +136,37 @@ function UserConversationInfo() {
     const hasAvatar = !!ct.avatar_url;
     if (hasRealName && hasAvatar) return; // Đã có đủ thông tin
 
+    setLoading(true);
     if (channel === 'zalo') {
       // Dùng fetchContactInfo có cache 7 ngày + xử lý alias
-      fetchContactInfo(activeAccountId, activeThreadId).catch(() => {});
+      fetchContactInfo(activeAccountId, activeThreadId)
+        .finally(() => setLoading(false))
+        .catch(() => {});
     } else if (channel === 'facebook') {
-      ipc.fb?.getUserInfoFacebookHtml({ accountId: activeAccountId, userId: activeThreadId })
-        .then((res: any) => {
-          if (res?.success && (res.name || res.avatarUrl)) {
+      Promise.all([
+        ipc.fb?.getUserInfoFacebookHtml({ accountId: activeAccountId, userId: activeThreadId }) || Promise.resolve(null),
+        /^\d+$/.test(activeThreadId)
+          ? (ipc.fb?.refreshContactAvatar({ accountId: activeAccountId, userId: activeThreadId }) || Promise.resolve(null))
+          : Promise.resolve(null),
+      ])
+        .then(([infoRes, avatarRes]) => {
+          if (infoRes?.success && (infoRes.name || infoRes.avatarUrl)) {
             const patch: any = { contact_id: activeThreadId, channel: 'facebook' };
-            if (res.name) patch.display_name = res.name;
-            if (res.avatarUrl) patch.avatar_url = res.avatarUrl;
+            if (infoRes.name) patch.display_name = infoRes.name;
+            if (infoRes.avatarUrl) patch.avatar_url = infoRes.avatarUrl;
             useChatStore.getState().updateContact(activeAccountId!, patch);
           }
+          if (avatarRes?.success && avatarRes.avatarUrl) {
+            useChatStore.getState().updateContact(activeAccountId!, {
+              contact_id: activeThreadId,
+              avatar_url: avatarRes.avatarUrl,
+            });
+          }
         })
-        .catch(() => {});
-      if (/^\d+$/.test(activeThreadId)) {
-        ipc.fb?.refreshContactAvatar({ accountId: activeAccountId, userId: activeThreadId })
-          .then((res: any) => {
-            if (res?.success && res.avatarUrl) {
-              useChatStore.getState().updateContact(activeAccountId!, {
-                contact_id: activeThreadId,
-                avatar_url: res.avatarUrl,
-              });
-            }
-          })
-          .catch(() => {});
-      }
+        .catch(() => {})
+        .finally(() => setLoading(false));
+    } else {
+      setLoading(false);
     }
   }, [activeAccountId, activeThreadId, activeThreadType]);
 
@@ -197,16 +204,18 @@ function UserConversationInfo() {
               if (newAvatar) patch.avatar_url = newAvatar;
               if (newPhone) patch.phone = newPhone;
               if (newAlias) patch.alias = newAlias;
-              if (newName || newAvatar || newPhone || newAlias) {
+              if (gender !== null) patch.gender = gender;
+              if (birthday) patch.birthday = birthday;
+              if (newName || newAvatar || newPhone || newAlias || gender !== null || birthday) {
                 updateContact(activeAccountId, patch);
-                await ipc.db?.updateContactProfile({
+                await DataAccessor.updateContactProfile({
                   zaloId: activeAccountId, contactId: activeThreadId,
                   displayName: newName, avatarUrl: newAvatar, phone: newPhone,
                   gender, birthday,
                 });
                 // Lưu alias vào DB (field riêng, không overwrite display_name)
                 if (newAlias) {
-                  ipc.db?.setContactAlias({
+                  DataAccessor.setContactAlias({
                     zaloId: activeAccountId,
                     contactId: activeThreadId,
                     alias: newAlias,
@@ -256,7 +265,7 @@ function UserConversationInfo() {
       // FB / non-Zalo: use local pin only
       if (!activeAccountId) return;
       const newVal = !isLocalPinned;
-      await ipc.db?.setLocalPinnedConversation({ zaloId: activeAccountId, threadId: activeThreadId, isPinned: newVal });
+      await DataAccessor.setLocalPinnedConversation({ zaloId: activeAccountId, threadId: activeThreadId, isPinned: newVal });
       setIsLocalPinned(newVal);
       showNotification(newVal ? 'Đã ghim trong app' : 'Đã bỏ ghim khỏi app', 'success');
       return;
@@ -297,7 +306,7 @@ function UserConversationInfo() {
           contact_id: activeThreadId,
           alias: trimmed,
         });
-        ipc.db?.setContactAlias({
+        DataAccessor.setContactAlias({
           zaloId: activeAccountId,
           contactId: activeThreadId,
           alias: trimmed,
@@ -325,7 +334,7 @@ function UserConversationInfo() {
           for (const item of items) {
             if (item.alias && item.userId) {
               updateContact(activeAccountId, { contact_id: item.userId, alias: item.alias });
-              ipc.db?.setContactAlias({ zaloId: activeAccountId, contactId: item.userId, alias: item.alias }).catch(() => {});
+              DataAccessor.setContactAlias({ zaloId: activeAccountId, contactId: item.userId, alias: item.alias }).catch(() => {});
             }
           }
         }
@@ -340,15 +349,17 @@ function UserConversationInfo() {
           if (newAvatar) patch.avatar_url = newAvatar;
           if (newPhone) patch.phone = newPhone;
           if (newAlias) patch.alias = newAlias;
+          if (gender !== null) patch.gender = gender;
+          if (birthday) patch.birthday = birthday;
           if (Object.keys(patch).length > 1) {
             updateContact(activeAccountId, patch);
-            await ipc.db?.updateContactProfile({
+            await DataAccessor.updateContactProfile({
               zaloId: activeAccountId, contactId: activeThreadId,
               displayName: newName, avatarUrl: newAvatar, phone: newPhone,
               gender, birthday,
             });
             if (newAlias) {
-              ipc.db?.setContactAlias({ zaloId: activeAccountId, contactId: activeThreadId, alias: newAlias }).catch(() => {});
+              DataAccessor.setContactAlias({ zaloId: activeAccountId, contactId: activeThreadId, alias: newAlias }).catch(() => {});
             }
           }
         }
@@ -373,7 +384,7 @@ function UserConversationInfo() {
     if (!activeAccountId || !activeThreadId) return;
     const normalized = phoneInput.trim();
     updateContact(activeAccountId, { contact_id: activeThreadId, phone: normalized || undefined });
-    await ipc.db?.updateContactProfile({
+    await DataAccessor.updateContactProfile({
       zaloId: activeAccountId, contactId: activeThreadId,
       phone: normalized,
       gender: contact?.gender ?? null,
@@ -394,7 +405,7 @@ function UserConversationInfo() {
       return;
     }
     updateContact(activeAccountId, { contact_id: activeThreadId, birthday: val || null });
-    await ipc.db?.updateContactProfile({
+    await DataAccessor.updateContactProfile({
       zaloId: activeAccountId, contactId: activeThreadId,
       phone: contact?.phone || '',
       gender: contact?.gender ?? null,
@@ -409,7 +420,7 @@ function UserConversationInfo() {
   const handleSetGender = async (gender: number | null) => {
     if (!activeAccountId || !activeThreadId) return;
     updateContact(activeAccountId, { contact_id: activeThreadId, gender });
-    await ipc.db?.updateContactProfile({
+    await DataAccessor.updateContactProfile({
       zaloId: activeAccountId, contactId: activeThreadId,
       phone: contact?.phone || '',
       gender,
@@ -499,10 +510,7 @@ function UserConversationInfo() {
         <div className="flex-1 overflow-y-auto">
           {mutualGroupsLoading && mutualGroups.length === 0 && (
             <div className="flex items-center justify-center py-10">
-              <svg className="animate-spin w-5 h-5 text-blue-400" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-              </svg>
+              <Spinner size={5} />
             </div>
           )}
           {mutualGroups.map(g => (
@@ -565,6 +573,18 @@ function UserConversationInfo() {
         )}
       </div>
 
+      {/* Loading overlay */}
+      {loading && (
+        <div className="flex-1 flex items-center justify-center py-20">
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+            <span className="text-xs text-gray-400">Đang tải thông tin...</span>
+          </div>
+        </div>
+      )}
+
+      {!loading && (
+      <>
       {/* Avatar + name */}
       <div className="flex flex-col items-center py-6 px-4 border-b border-gray-700">
         {avatarUrl ? (
@@ -742,6 +762,8 @@ function UserConversationInfo() {
       {/* Create group modal */}
       {createGroupOpen && activeThreadId && (
         <CreateGroupModal preSelected={[activeThreadId]} onClose={() => setCreateGroupOpen(false)} />
+      )}
+      </>
       )}
     </div>
     </>

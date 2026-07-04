@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron';
+import { ipcMain, BrowserWindow } from 'electron';
 import EmployeeService from '../../src/services/employee/EmployeeService';
 import DatabaseService from '../../src/services/database/DatabaseService';
 import AppModeManager from '../../src/utils/AppModeManager';
@@ -237,6 +237,15 @@ export function registerEmployeeIpc(): void {
             HttpClientService.getInstance().disconnect();
             AppModeManager.getInstance().setMode('standalone');
             AppModeManager.getInstance().setEmployeeId(null);
+
+            // Notify renderer to update mode + reset employee store
+            try {
+                const win = BrowserWindow.getAllWindows()[0];
+                if (win && !win.isDestroyed()) {
+                    win.webContents.send('employee:modeChanged', { mode: 'standalone' });
+                }
+            } catch {}
+
             return { success: true };
         } catch (err: any) {
             return { success: false, error: err.message };

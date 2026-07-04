@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useChatStore } from '@/store/chatStore';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore, CachedGroupInfo, GroupMember } from '@/store/appStore';
+import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import { AddMemberToGroupModal } from './GroupModals';
 import { UserProfilePopup } from '../common/UserProfilePopup';
@@ -12,6 +13,7 @@ import MediaSection, { MediaDetailPanel, MediaTab } from './MediaSection';
 import { GroupActionSection } from './ConversationActions';
 import { syncZaloGroups, MemberPlaceholder } from '@/lib/zaloGroupUtils';
 import { getCapability, type Channel, type ChannelCapability } from '../../../configs/channelConfig';
+import { Spinner } from '@/components/common/PageLoading';
 import * as channelIpc from '@/lib/channelIpc';
 
 type PanelView = 'info' | 'members' | 'manage' | 'media' | 'pending';
@@ -131,7 +133,7 @@ export default function GroupInfoPanel() {
   // Load local pin status - cho FB và các kênh không hỗ trợ Zalo API pin
   useEffect(() => {
     if (!activeAccountId || !activeThreadId) return;
-    ipc.db?.getLocalPinnedConversations({ zaloId: activeAccountId })
+    DataAccessor.getLocalPinnedConversations({ zaloId: activeAccountId })
       .then((res: any) => setIsLocalPinned((res?.threadIds || []).includes(activeThreadId)))
       .catch(() => {});
   }, [activeAccountId, activeThreadId]);
@@ -170,7 +172,7 @@ export default function GroupInfoPanel() {
     if (!activeAccountId || !activeThreadId) return;
     const newVal = !isLocalPinned;
     try {
-      await ipc.db?.setLocalPinnedConversation({ zaloId: activeAccountId, threadId: activeThreadId, isPinned: newVal });
+      await DataAccessor.setLocalPinnedConversation({ zaloId: activeAccountId, threadId: activeThreadId, isPinned: newVal });
       setIsLocalPinned(newVal);
       showNotification(newVal ? 'Đã ghim trong app' : 'Đã bỏ ghim khỏi app', 'success');
     } catch (e: any) {
@@ -367,7 +369,7 @@ export default function GroupInfoPanel() {
 
       // Helper: reload enriched members from DB into cache
       const reloadFromDB = async () => {
-        const dbRes = await ipc.db?.getGroupMembers({ zaloId: accountId, groupId: threadId });
+        const dbRes = await DataAccessor.getGroupMembers({ zaloId: accountId, groupId: threadId });
         const rows: any[] = (dbRes?.members ?? []).filter((m: any) => /^\d+$/.test(m.member_id?.trim() ?? ''));
         if (rows.length === 0) return;
         const membersForCache: GroupMember[] = rows.map((m: any) => ({
@@ -594,10 +596,7 @@ export default function GroupInfoPanel() {
 
       {loading && (
         <div className="flex justify-center py-4">
-          <svg className="animate-spin w-5 h-5 text-blue-400" viewBox="0 0 24 24" fill="none">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-          </svg>
+          <Spinner size={5} />
         </div>
       )}
 
@@ -1169,10 +1168,7 @@ function PendingPanel({ groupId, myAccountId, onBack, onCountChange }: {
       {/* Loading */}
       {loading && (
         <div className="flex-1 flex flex-col items-center justify-center gap-3 text-gray-400">
-          <svg className="animate-spin w-8 h-8 text-yellow-400" viewBox="0 0 24 24" fill="none">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-          </svg>
+          <Spinner size={8} className="text-yellow-400" />
           <p className="text-sm">Đang tải danh sách...</p>
         </div>
       )}
@@ -1211,10 +1207,7 @@ function PendingPanel({ groupId, myAccountId, onBack, onCountChange }: {
               disabled={approvingAll}
               className="flex items-center gap-1.5 text-xs font-medium text-green-400 hover:text-green-300 bg-green-500/10 hover:bg-green-500/20 px-2.5 py-1 rounded-full border border-green-500/20 transition-all disabled:opacity-40">
               {approvingAll ? (
-                <svg className="animate-spin w-3 h-3" viewBox="0 0 24 24" fill="none">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-                </svg>
+                <Spinner size={3} />
               ) : (
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
                   <polyline points="20 6 9 17 4 12"/>
@@ -1264,10 +1257,7 @@ function PendingPanel({ groupId, myAccountId, onBack, onCountChange }: {
                     title="Phê duyệt"
                     className="w-8 h-8 rounded-lg bg-green-500/15 hover:bg-green-500/30 border border-green-500/25 text-green-400 hover:text-green-300 flex items-center justify-center transition-all disabled:opacity-40">
                     {processing.has(member.userId) ? (
-                      <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-                      </svg>
+                      <Spinner size={3} />
                     ) : (
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                         <polyline points="20 6 9 17 4 12"/>
@@ -1443,10 +1433,7 @@ function PendingMembersSection({ groupId, isAdmin, channel }: { groupId: string;
                 <button onClick={handleApproveAll} disabled={approvingAll || loading}
                   className="flex items-center gap-1 text-xs font-medium text-green-400 hover:text-green-300 disabled:opacity-40 transition-colors">
                   {approvingAll ? (
-                    <svg className="animate-spin w-3 h-3" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-                    </svg>
+                    <Spinner size={3} />
                   ) : (
                     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
                       <polyline points="20 6 9 17 4 12"/>
@@ -1458,10 +1445,7 @@ function PendingMembersSection({ groupId, isAdmin, channel }: { groupId: string;
               <button onClick={loadPending} disabled={loading || approvingAll}
                 className="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40 transition-colors">
                 {loading ? (
-                  <svg className="animate-spin w-3 h-3 inline" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-                  </svg>
+                  <Spinner size={3} className="inline" />
                 ) : '↻ Tải lại'}
               </button>
             </div>
@@ -1469,10 +1453,7 @@ function PendingMembersSection({ groupId, isAdmin, channel }: { groupId: string;
 
           {loading && pending.length === 0 && (
             <div className="flex justify-center py-6">
-              <svg className="animate-spin w-5 h-5 text-yellow-400" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-              </svg>
+              <Spinner size={5} className="text-yellow-400" />
             </div>
           )}
 
@@ -1521,10 +1502,7 @@ function PendingMembersSection({ groupId, isAdmin, channel }: { groupId: string;
                     title="Phê duyệt"
                     className="w-7 h-7 rounded-lg bg-green-500/15 hover:bg-green-500/30 border border-green-500/20 text-green-400 flex items-center justify-center transition-all disabled:opacity-40">
                     {processing.has(member.userId) ? (
-                      <svg className="animate-spin w-3 h-3" viewBox="0 0 24 24" fill="none">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-                      </svg>
+                      <Spinner size={3} />
                     ) : (
                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                         <polyline points="20 6 9 17 4 12"/>
@@ -1781,7 +1759,7 @@ export function ManagePanel({ groupInfo, groupId, onBack, myAccountId, asModal, 
           <button onClick={handleGetGroupLink} disabled={loadingLink}
             className="w-full py-2 rounded-xl bg-gray-700 hover:bg-gray-600 text-sm text-gray-300 flex items-center justify-center gap-2">
             {loadingLink ? (
-              <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+              <Spinner size={4} />
             ) : (
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/>

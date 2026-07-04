@@ -4,6 +4,7 @@ import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
 import {ZaloIcon, FacebookIcon, TelegramIcon} from '../common/ChannelBadge';
 import cookieGuideImg from '../../../assets/login/hd_login_fb_cookie.png';
+import { Spinner } from '@/components/common/PageLoading';
 
 interface AddAccountModalProps {
   onClose: () => void;
@@ -299,10 +300,7 @@ function ProxySelectStep({
 
       {loading ? (
         <div className="flex justify-center py-6">
-          <svg className="animate-spin w-6 h-6 text-blue-400" viewBox="0 0 24 24" fill="none">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-          </svg>
+          <Spinner size={6} />
         </div>
       ) : proxies.length === 0 ? (
         <div className="text-center py-6 space-y-3">
@@ -388,10 +386,7 @@ function ProxySelectStep({
               }`}
             >
               {testState === 'testing' ? (
-                <><svg className="animate-spin w-3 h-3" viewBox="0 0 24 24" fill="none">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                </svg> Đang test...</>
+                <><Spinner size={3} /> Đang test...</>
               ) : testState === 'ok' ? '✅ Kết nối tốt'
               : testState === 'fail' ? '🔄 Test lại'
               : '🔌 Test ngay'}
@@ -556,10 +551,7 @@ function QRLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId?: n
       {status === 'idle' || status === 'loading' ? (
         <div className="flex flex-col items-center gap-4 py-4">
           <div className="w-48 h-48 bg-gray-700 rounded-xl flex items-center justify-center">
-            <svg className="animate-spin w-8 h-8 text-blue-400" viewBox="0 0 24 24" fill="none">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
+            <Spinner size={8} />
           </div>
           <p className="text-gray-400 text-sm">Đang tạo mã QR...</p>
         </div>
@@ -583,10 +575,7 @@ function QRLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId?: n
         <div className="py-8 flex flex-col items-center gap-3">
           <div className="text-5xl">📱</div>
           <p className="text-green-400 font-medium">Đã quét! Đang xác nhận trên điện thoại...</p>
-          <svg className="animate-spin w-5 h-5 text-green-400" viewBox="0 0 24 24" fill="none">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-          </svg>
+          <Spinner size={5} className="text-green-400" />
         </div>
       )}
 
@@ -768,10 +757,7 @@ function FacebookAccountLoginTab({ onSuccess, proxyId }: { onSuccess: () => void
       >
         {loading ? (
           <span className="flex items-center justify-center gap-2">
-            <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
+            <Spinner size={4} />
             Đang đăng nhập...
           </span>
         ) : '💙 Đăng nhập Facebook'}
@@ -872,10 +858,7 @@ function FacebookCookieLoginTab({ onSuccess, proxyId }: { onSuccess: () => void;
       >
         {loading ? (
           <span className="flex items-center justify-center gap-2">
-            <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
+            <Spinner size={4} />
             Đang đăng nhập...
           </span>
         ) : '💙 Đăng nhập Facebook'}
@@ -1046,10 +1029,7 @@ function CookieLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId
       >
         {loading ? (
           <span className="flex items-center justify-center gap-2">
-            <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
+            <Spinner size={4} />
             Đang đăng nhập...
           </span>
         ) : 'Đăng nhập'}

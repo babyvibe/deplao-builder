@@ -11,12 +11,12 @@
  * │      labels           (getLabels API  → appStore.setLabels)              │
  * │      quickMessages    (getQuickMessageList API → bulkReplaceLocalQM DB)  │
  * │      oldMessages      (requestOldMessages - fire-and-forget via listener)│
- * │      groups → oldGroupMessages (chained: groups sync first,              │
  * │                                 then getGroupChatHistory per group)      │
  * │  → marks account as initialized in localStorage                          │
  * └───────────────────────────────────────────────────────────────────────────┘
  */
 
+import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import { useAppStore } from '@/store/appStore';
 import { useChatStore } from '@/store/chatStore';
@@ -27,7 +27,7 @@ import { extractUserProfile } from '../../utils/profileUtils';
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
-export type InitTask = 'friends' | 'labels' | 'quickMessages' | 'groups' | 'oldMessages' | 'oldGroupMessages';
+export type InitTask = 'friends' | 'labels' | 'quickMessages' | 'groups' | 'oldMessages';
 export type InitTaskStatus = 'pending' | 'running' | 'done' | 'error' | 'skipped';
 
 export interface InitTaskProgress {
@@ -49,7 +49,6 @@ export interface InitNeeds {
   quickMessages: boolean;
   groups: boolean;
   oldMessages: boolean;
-  oldGroupMessages: boolean;
   any: boolean;
 }
 
@@ -162,20 +161,18 @@ function _wasLocalDataRecentlyVerified(zaloId: string): boolean {
 export async function checkAccountInitNeeds(zaloId: string): Promise<InitNeeds> {
   // ── Stage 1: never done / outdated version ────────────────────────────────
   if (!isAccountInitDone(zaloId)) {
-    return { friends: true, labels: true, quickMessages: true, groups: true, oldMessages: true, oldGroupMessages: true, any: true };
   }
 
   // ── Stage 2: done + recently verified ────────────────────────────────────
   if (_wasLocalDataRecentlyVerified(zaloId)) {
-    return { friends: false, labels: false, quickMessages: false, groups: false, oldMessages: false, oldGroupMessages: false, any: false };
   }
 
   // ── Stage 3: done but stale - check actual local DB data ─────────────────
   const [friendsRes, qmRes, contactsRes, localLabelsRes] = await Promise.allSettled([
-    ipc.db?.getFriends({ zaloId }),
-    ipc.db?.getLocalQuickMessages({ zaloId }),
+    DataAccessor.getFriends({ zaloId }),
+    DataAccessor.getLocalQuickMessages({ zaloId }),
     ipc.db?.getContacts(zaloId),
-    ipc.db?.getLocalLabels({ zaloId }),   // local_labels table (user-created labels)
+    DataAccessor.getLocalLabels({ zaloId }),   // local_labels table (user-created labels)
   ]);
 
   const friendCount = friendsRes.status === 'fulfilled'
@@ -189,7 +186,7 @@ export async function checkAccountInitNeeds(zaloId: string): Promise<InitNeeds> 
   const allContacts: any[] = contactsRes.status === 'fulfilled'
     ? (contactsRes.value?.contacts ?? contactsRes.value ?? [])
     : [];
-  const groupCount = allContacts.filter((c: any) => c.contact_type === 'group').length;
+  const groupCount = (allContacts || []).filter((c: any) => c.contact_type === 'group').length;
 
   const localLabelCount = localLabelsRes.status === 'fulfilled'
     ? (localLabelsRes.value?.labels?.length ?? 0)
@@ -201,10 +198,9 @@ export async function checkAccountInitNeeds(zaloId: string): Promise<InitNeeds> 
     quickMessages: qmCount === 0,
     groups:        groupCount === 0,
     oldMessages:       false,  // Session-based - only runs on first init (Stage 1)
-    oldGroupMessages:  false,  // Session-based - only runs on first init (Stage 1)
   };
+  const any = needs.friends || needs.labels || needs.quickMessages || needs.groups || needs.oldMessages;
 
-  const any = needs.friends || needs.labels || needs.quickMessages || needs.groups || needs.oldMessages || needs.oldGroupMessages;
 
   // If everything is present, stamp the verification timestamp now
   // so we skip this Stage-3 pass for the next 24 h.
@@ -237,7 +233,7 @@ async function _syncFriends(
           phoneNumber: f.phoneNumber || f.phone || '',
         }))
         .filter((f) => f.userId);
-      await ipc.db?.saveFriends({ zaloId: activeAccountId, friends: normalized });
+      await DataAccessor.saveFriends({ zaloId: activeAccountId, friends: normalized });
 
       // ── Step 2: Load aliases to update friend display names ──────────────
       onProgress({
@@ -255,7 +251,7 @@ async function _syncFriends(
               contact_id: item.userId,
               alias: item.alias,
             });
-            ipc.db?.setContactAlias({ zaloId: activeAccountId, contactId: item.userId, alias: item.alias }).catch(() => {});
+            DataAccessor.setContactAlias({ zaloId: activeAccountId, contactId: item.userId, alias: item.alias }).catch(() => {});
             aliasCount++;
           }
         }
@@ -285,7 +281,7 @@ async function _syncFriends(
                 const { displayName, avatar, phone, gender, birthday } = extractUserProfile(rawProfile);
                 if (gender !== null || birthday) {
                   saves.push(
-                    ipc.db?.updateContactProfile({
+                    DataAccessor.updateContactProfile({
                       zaloId: activeAccountId,
                       contactId: uid,
                       displayName, avatarUrl: avatar, phone,
@@ -398,7 +394,7 @@ async function _syncQuickMessages(
         title: i.message?.title || '',
         media: i.media || undefined,
       }));
-      await ipc.db?.bulkReplaceLocalQuickMessages({ zaloId: activeAccountId, items: mapped });
+      await DataAccessor.bulkReplaceLocalQuickMessages({ zaloId: activeAccountId, items: mapped });
       onProgress({
         task: 'quickMessages', status: 'done',
         total: items.length, current: items.length,
@@ -406,7 +402,7 @@ async function _syncQuickMessages(
       });
     } else {
       // ── Zalo API returned 0 → try to clone from another account ─────────
-      const allRes = await ipc.db?.getAllLocalQuickMessages();
+      const allRes = await DataAccessor.getAllLocalQuickMessages();
       const others: any[] = (allRes?.items || []).filter(
         (item: any) => item.owner_zalo_id && item.owner_zalo_id !== activeAccountId,
       );
@@ -418,7 +414,7 @@ async function _syncQuickMessages(
           countByAccount[item.owner_zalo_id] = (countByAccount[item.owner_zalo_id] || 0) + 1;
         }
         const [sourceId, cnt] = Object.entries(countByAccount).sort((a, b) => b[1] - a[1])[0];
-        await ipc.db?.cloneLocalQuickMessages({ sourceZaloId: sourceId, targetZaloId: activeAccountId });
+        await DataAccessor.cloneLocalQuickMessages({ sourceZaloId: sourceId, targetZaloId: activeAccountId });
         onProgress({
           task: 'quickMessages', status: 'done',
           total: cnt, current: cnt,
@@ -456,66 +452,6 @@ async function _syncOldMessages(
   }
 }
 
-/**
- * Tải tin nhắn nhóm cũ qua getGroupChatHistory cho tất cả nhóm.
- * Lấy danh sách nhóm từ DB contacts, sau đó gọi API cho từng nhóm.
- */
-async function _syncOldGroupMessages(
-  activeAccountId: string,
-  auth: any,
-  onProgress: (u: InitTaskProgress) => void,
-): Promise<void> {
-  onProgress({ task: 'oldGroupMessages', status: 'running', detail: 'Đang lấy danh sách nhóm...' });
-  try {
-    // Lấy danh sách nhóm từ DB contacts
-    const contactsRes = await ipc.db?.getContacts(activeAccountId);
-    const allContacts: any[] = contactsRes?.contacts ?? contactsRes ?? [];
-    const groups = allContacts.filter((c: any) => c.contact_type === 'group');
-
-    if (groups.length === 0) {
-      onProgress({ task: 'oldGroupMessages', status: 'done', detail: 'Không có nhóm' });
-      return;
-    }
-
-    let successCount = 0;
-    let errorCount = 0;
-    const total = groups.length;
-
-    for (let i = 0; i < groups.length; i++) {
-      const group = groups[i];
-      const groupId = group.contact_id;
-      const groupName = group.display_name || groupId;
-      onProgress({
-        task: 'oldGroupMessages', status: 'running',
-        current: i, total,
-        detail: `Tải tin nhắn: ${groupName} (${i + 1}/${total})`,
-      });
-
-      try {
-        const res = await ipc.zalo?.getGroupChatHistory({ auth, groupId });
-        if (res?.success) {
-          const msgCount = res?.response?.groupMsgsCount ?? 0;
-          successCount++;
-          if (msgCount > 0) {
-            // Small delay between groups to avoid rate limiting
-            await new Promise(r => setTimeout(r, 300));
-          }
-        } else {
-          errorCount++;
-        }
-      } catch {
-        errorCount++;
-      }
-    }
-
-    const detail = errorCount > 0
-      ? `${successCount}/${total} nhóm thành công, ${errorCount} lỗi`
-      : `${successCount}/${total} nhóm`;
-    onProgress({ task: 'oldGroupMessages', status: 'done', current: total, total, detail });
-  } catch (err: any) {
-    onProgress({ task: 'oldGroupMessages', status: 'error', detail: err?.message || 'Lỗi tải tin nhắn nhóm' });
-  }
-}
 
 /**
  * Runs all 6 sync tasks for the given account.
@@ -523,7 +459,6 @@ async function _syncOldGroupMessages(
  * Records completion in localStorage so it never runs again for this account.
  *
  *   friends, labels, quickMessages, oldMessages - run concurrently
- *   groups → oldGroupMessages - chained (old group msgs run AFTER groups sync)
  */
 export async function runAccountInit(opts: AccountInitOptions): Promise<void> {
   const { activeAccountId, auth, onProgress, groupStopRef } = opts;
@@ -536,7 +471,7 @@ export async function runAccountInit(opts: AccountInitOptions): Promise<void> {
   }
 
   // Announce initial status for every task
-  const allTasks: InitTask[] = ['friends', 'labels', 'quickMessages', 'groups', 'oldMessages', 'oldGroupMessages'];
+  const allTasks: InitTask[] = ['friends', 'labels', 'quickMessages', 'groups', 'oldMessages'];
   for (const task of allTasks) {
     onProgress(task, {
       task,
@@ -571,8 +506,8 @@ export async function runAccountInit(opts: AccountInitOptions): Promise<void> {
     );
   }
 
-  // ── Groups + Old group messages (chained: old group msgs run AFTER groups) ──
-  if (needs.groups || needs.oldGroupMessages) {
+  // ── Groups sync ─────────────────────────────────────────────────────
+  if (needs.groups) {
     const groupsChain = async () => {
       // Phase 1: Sync groups (if needed)
       if (needs.groups) {
@@ -610,10 +545,6 @@ export async function runAccountInit(opts: AccountInitOptions): Promise<void> {
         }
       }
 
-      // Phase 2: Load old group messages (after groups are synced)
-      if (needs.oldGroupMessages) {
-        await _syncOldGroupMessages(activeAccountId, auth, (u) => onProgress('oldGroupMessages', u));
-      }
     };
     promises.push(groupsChain());
   }

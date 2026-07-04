@@ -51,7 +51,7 @@ const TASK_META: Record<string, { label: string; icon: string }> = {
   threads:          { label: 'Hội thoại Facebook',    icon: '💬' },
 };
 
-const ZALO_TASKS: InitTask[] = ['friends', 'labels', 'quickMessages', 'groups', 'oldMessages', 'oldGroupMessages'];
+const ZALO_TASKS: InitTask[] = ['friends', 'labels', 'quickMessages', 'groups', 'oldMessages'];
 const FB_TASKS: FBInitTask[] = ['threads'];
 
 

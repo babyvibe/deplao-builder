@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import ipc from '@/lib/ipc';
+import ipc from '@/lib/ipc'
+import DataAccessor from '@/lib/data/DataAccessor';;
 import GroupAvatar from '../common/GroupAvatar';
 import AddFriendModal from '../common/AddFriendModal';
 import { channelSupports } from '@/../configs/channelConfig';
+import { Spinner } from '@/components/common/PageLoading';
 
 // ─── Vietnamese-aware normalization for fuzzy matching ────────────────────────
 function normalizeStr(s: string): string {
@@ -256,7 +258,7 @@ function PhoneResultCard({ result, searching, onOpen, onAddFriend }: {
 }) {
   if (searching) return (
     <div className="mx-3 my-2 p-3 bg-gray-800 rounded-xl border border-gray-700 text-xs text-gray-400 flex items-center gap-2">
-      <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+      <Spinner size={4} />
       Đang tìm kiếm SĐT...
     </div>
   );
@@ -341,14 +343,14 @@ export default function GlobalSearchPanel({
           // Merged mode: load friends from all accounts
           const allFriends: any[] = [];
           for (const zaloId of mergedInboxAccounts) {
-            const res = await ipc.db?.getFriends({ zaloId });
+            const res = await DataAccessor.getFriends({ zaloId });
             if (res?.friends) {
               allFriends.push(...res.friends.map((f: any) => ({ ...f, _ownerZaloId: zaloId })));
             }
           }
           if (!cancelled) setFriendsList(allFriends);
         } else if (activeAccountId) {
-          const res = await ipc.db?.getFriends({ zaloId: activeAccountId });
+          const res = await DataAccessor.getFriends({ zaloId: activeAccountId });
           if (!cancelled && res?.friends) {
             setFriendsList(res.friends.map((f: any) => ({ ...f, _ownerZaloId: activeAccountId })));
           }
@@ -430,7 +432,7 @@ export default function GlobalSearchPanel({
     setSearching(true);
     timerRef.current = setTimeout(async () => {
       try {
-        const res = await ipc.db?.searchMessages({ zaloId: activeAccountId, query: query.trim() });
+        const res = await DataAccessor.searchMessages({ zaloId: activeAccountId, query: query.trim() });
         const allResults = res?.results || [];
         // Filter to only show searchable messages (text and image+text)
         const filtered = allResults.filter((msg: any) => isSearchableMessage(msg.content));
@@ -544,10 +546,7 @@ export default function GlobalSearchPanel({
         {/* Searching spinner */}
         {(searching || phoneSearching) && (
           <div className="flex justify-center items-center py-8 text-gray-500">
-            <svg className="animate-spin w-5 h-5 mr-2" viewBox="0 0 24 24" fill="none">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-            </svg>
+            <Spinner size={5} className="mr-2" />
             <span className="text-sm">Đang tìm kiếm...</span>
           </div>
         )}
@@ -670,10 +669,7 @@ export default function GlobalSearchPanel({
           <>
             {searching && (
               <div className="flex justify-center py-8 text-gray-500">
-                <svg className="animate-spin w-5 h-5" viewBox="0 0 24 24" fill="none">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-                </svg>
+                <Spinner size={5} />
               </div>
             )}
             {!searching && msgResults.length === 0 && query.trim() && (

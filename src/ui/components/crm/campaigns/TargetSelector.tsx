@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import type { LabelData } from '@/store/appStore';
+import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import ZaloLabelBadge from '../tags/ZaloLabelBadge';
 import { formatPhone } from '@/utils/phoneUtils';
@@ -64,8 +65,8 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
   useEffect(() => {
     if (!zaloId) return;
     Promise.all([
-      ipc.db?.getLocalLabels({ zaloId }),
-      ipc.db?.getLocalLabelThreads({ zaloId }),
+      DataAccessor.getLocalLabels({ zaloId }),
+      DataAccessor.getLocalLabelThreads({ zaloId }),
     ]).then(([labelsRes, threadsRes]) => {
       // Filter only active labels (is_active !== 0)
       const labels = (labelsRes?.labels || []).filter((l: any) => (l.is_active ?? 1) !== 0);
@@ -96,14 +97,14 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
   useEffect(() => {
     if (!zaloId) return;
     setLoading(true);
-    ipc.crm?.getContacts({ zaloId, opts: { limit: 99999, offset: 0 } })
-      .then(res => { if (res?.success) setAllContacts(res.contacts); })
+    DataAccessor.getCRMContacts({ zaloId, opts: { limit: 99999, offset: 0 } })
+      .then(res => { if (res?.success) setAllContacts(res.contacts || []); })
       .finally(() => setLoading(false));
   }, [zaloId]);
 
   // Available = not already in campaign
   const available = useMemo(() =>
-    allContacts.filter(c => !existingContactIds.has(c.contact_id)),
+    (allContacts || []).filter(c => !existingContactIds.has(c.contact_id)),
     [allContacts, existingContactIds]
   );
 

@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
+import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore, LabelData } from '@/store/appStore';
@@ -66,7 +67,7 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
   // ── Load local labels ────────────────────────────────────────────────────
   useEffect(() => {
     if (!accountId) return;
-    ipc.db?.getLocalLabels({ zaloId: accountId }).then(res => {
+    DataAccessor.getLocalLabels({ zaloId: accountId }).then(res => {
       if (res?.labels) setLocalLabels(res.labels);
     }).catch(() => {});
   }, [accountId]);
@@ -118,7 +119,7 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
             });
             // Pre-save gender/birthday so they appear in CRM right away
             if (extracted && (extracted.gender !== null || extracted.birthday)) {
-              ipc.db?.updateContactProfile({
+              DataAccessor.updateContactProfile({
                 zaloId: accountId,
                 contactId: user.uid,
                 displayName: extracted.displayName,
@@ -170,7 +171,7 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
       for (let i = 0; i < finalContacts.length; i++) {
         setProcessProgress({ current: i + 1, total: finalContacts.length });
         const c = finalContacts[i];
-        await ipc.db?.updateContactProfile({
+        await DataAccessor.updateContactProfile({
           zaloId: accountId,
           contactId: c.contactId,
           displayName: c.displayName || c.contactId,
@@ -184,7 +185,7 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
       if (tagTab === 'local' && selectedLocalLabelIds.length > 0) {
         for (const labelId of selectedLocalLabelIds) {
           for (const c of finalContacts) {
-            await ipc.db?.assignLocalLabelToThread({ zaloId: accountId, labelId, threadId: c.contactId });
+            await DataAccessor.assignLocalLabelToThread({ zaloId: accountId, labelId, threadId: c.contactId });
           }
         }
         window.dispatchEvent(new CustomEvent('local-labels-changed', { detail: { zaloId: accountId } }));
@@ -266,7 +267,8 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
           {/* ── Phone input mode ───────────────────────────────────────────── */}
           {inputMode === 'phones' && resolvedContacts.length === 0 && (
             <div>
-              <label className="text-xs text-gray-400 mb-1.5 block">
+              <div className="text-red-400 text-xs">Zalo hạn chế bạn tìm kiếm SĐT theo ngày để tránh trục lợi từ tính năng tìm kiếm, nên nhập tối đa 30 số 1 giờ và không quá 100-200 số 1 ngày để hoạt động an toàn.</div>
+              <label className="text-xs text-gray-400 mb-1.5 block mt-2">
                 Nhập danh sách SĐT <span className="text-gray-600">(mỗi dòng 1 số, hoặc cách nhau bởi dấu phẩy)</span>
               </label>
               <textarea

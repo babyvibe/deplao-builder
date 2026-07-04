@@ -4,9 +4,11 @@
  * Layout: cấu hình bên trái, chat preview bên phải.
  */
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import { useAppStore } from '@/store/appStore';
 import {showConfirm} from "@/components/common/ConfirmDialog";
+import { Spinner } from '@/components/common/PageLoading';
 import PromptWizardModal from './PromptWizardModal';
 import { parseStructuredResponse } from '../../../utils/aiUtils';
 
@@ -252,7 +254,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
   const loadData = useCallback(async () => {
     // Load POS integrations for dropdown
     try {
-      const res = await ipc.integration?.list();
+      const res = await DataAccessor.getIntegrations();
       if (res?.success) {
         const posTypes = ['kiotviet', 'haravan', 'sapo', 'nhanh', 'pancake'];
         setPosIntegrations(
@@ -264,7 +266,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
     // Load existing assistant
     if (assistantId) {
       try {
-        const res = await ipc.ai?.getAssistant(assistantId);
+        const res = await DataAccessor.getAssistant(assistantId);
         if (res?.success && res.assistant) {
           const a = res.assistant;
           console.log('[AIAssistantDetailPage] loaded assistant:', {
@@ -291,7 +293,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
 
       // Load files
       try {
-        const res = await ipc.ai?.getFiles(assistantId);
+        const res = await DataAccessor.getAssistantFiles(assistantId);
         if (res?.success) setFiles(res.files || []);
       } catch {}
     }
@@ -360,12 +362,12 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
         pinnedProductsCount: pinnedProducts.length,
         pinnedProductsJsonPreview: payload.pinnedProductsJson?.substring(0, 200),
       });
-      const res = await ipc.ai?.saveAssistant(payload);
+      const res = await DataAccessor.saveAssistant(payload);
       if (res?.success && res.id) {
         setSavedId(res.id);
         showNotification('✅ Đã lưu trợ lý AI!', 'success');
       } else {
-        showNotification('❌ Lưu thất bại: ' + (res?.error || ''), 'error');
+        showNotification('❌ Lưu thất bại: ' + ((res as any)?.error || ''), 'error');
       }
     } catch (e: any) {
       showNotification('❌ Lỗi: ' + e.message, 'error');
@@ -397,7 +399,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
     if (!ok) return;
     setDeleting(true);
     try {
-      await ipc.ai?.deleteAssistant(savedId);
+      await DataAccessor.deleteAssistant(savedId);
       onBack();
     } catch (e: any) {
       showNotification('Lỗi xóa: ' + e.message, 'error');
@@ -422,7 +424,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
       for (const fp of res.filePaths) {
         await ipc.ai?.uploadFile(savedId, fp);
       }
-      const filesRes = await ipc.ai?.getFiles(savedId);
+      const filesRes = await DataAccessor.getAssistantFiles(savedId);
       if (filesRes?.success) setFiles(filesRes.files || []);
       showNotification('✅ Đã tải file lên', 'success');
     } catch (e: any) {
@@ -564,8 +566,8 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
     setReportLoading(true);
     try {
       const [statsRes, logsRes] = await Promise.all([
-        ipc.ai?.getUsageStats({ assistantId: savedId, days: 30 }),
-        ipc.ai?.getUsageLogs({ assistantId: savedId, limit: 50 }),
+        DataAccessor.getUsageStats({ assistantId: savedId, days: 30 }),
+        DataAccessor.getUsageLogs({ assistantId: savedId, limit: 50 }),
       ]);
       if (statsRes?.success) setUsageStats(statsRes.stats || []);
       if (logsRes?.success) setUsageLogs(logsRes.logs || []);
@@ -1193,10 +1195,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
           <div className="flex-1 overflow-y-auto p-3 space-y-3">
             {reportLoading ? (
               <div className="flex items-center justify-center h-20">
-                <svg className="animate-spin w-5 h-5 text-purple-400" viewBox="0 0 24 24" fill="none">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-                </svg>
+                <Spinner size={5} className="text-purple-400" />
               </div>
             ) : (
               <>

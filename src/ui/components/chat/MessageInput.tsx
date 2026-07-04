@@ -2,11 +2,14 @@ import React, {useCallback, useEffect, useLayoutEffect, useRef, useState} from '
 import {useChatStore} from '@/store/chatStore';
 import {useAccountStore} from '@/store/accountStore';
 import {useAppStore} from '@/store/appStore';
-import ipc from '@/lib/ipc';
+import {useEmployeeStore} from '@/store/employeeStore';
+import ipc from '@/lib/ipc'
+import DataAccessor from '@/lib/data/DataAccessor';;
 import AccountAssignmentPopup from './AccountAssignmentPopup';
 import {SendCardModal} from './GroupModals';
 import {CreatePollDialog, NoteViewModal} from './ChatWindow';
 import BankCardModal from './BankCardModal';
+import LibraryPickerModal from './library/LibraryPickerModal';
 import {
   fetchQuickMessages,
   invalidateZaloQuickMessageCache,
@@ -125,6 +128,9 @@ export default function MessageInput() {
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [showCreateNote, setShowCreateNote] = useState(false);
   const [showFormatBar, setShowFormatBar] = useState(false);
+  // Library picker
+  const [showLibraryPicker, setShowLibraryPicker] = useState(false);
+  const [libraryPickerType, setLibraryPickerType] = useState<'image' | 'video' | 'file' | 'all'>('all');
   // Format ranges: mỗi entry = { start, len, st } - theo chuẩn zca-js Style[]
   const [fmtRanges, setFmtRanges] = useState<Array<{ start: number; len: number; st: string }>>([]);
   // Active fmts tại cursor (để highlight toolbar buttons)
@@ -204,6 +210,10 @@ export default function MessageInput() {
   const activeContact = useChatStore(s => (s.contacts[activeAccountId || ''] || []).find(c => c.contact_id === activeThreadId));
   const channelCap = getCapability((activeContact?.channel || 'zalo') as any);
 
+  // Employee mode: check permission to show/hide media features
+  const empMode = useEmployeeStore(s => s.mode);
+  const hasChatPermission = useEmployeeStore(s => s.mode !== 'employee' || !!s.permissions['chat']);
+
   // state
   const [showLocalLabels, setShowLocalLabels] = useState(true);
   const [localLabelExpanded, setLocalLabelExpanded] = useState(false);
@@ -244,8 +254,8 @@ export default function MessageInput() {
 
     try {
       const [labelsRes, threadRes] = await Promise.all([
-        ipc.db?.getLocalLabels({ zaloId: activeAccountId }),
-        ipc.db?.getThreadLocalLabels({ zaloId: activeAccountId, threadId: activeThreadId }),
+        DataAccessor.getLocalLabels({ zaloId: activeAccountId }),
+        DataAccessor.getThreadLocalLabels({ zaloId: activeAccountId, threadId: activeThreadId }),
       ]);
       const labels = (labelsRes?.labels || [])
         .filter((l: any) => (l?.is_active ?? 1) === 1)
@@ -288,7 +298,7 @@ export default function MessageInput() {
     try {
       setAiSuggestionsLoading(true);
       // Get per-account suggestion assistant
-      const accRes = await ipc.ai?.getAccountAssistant(activeAccountId, 'suggestion');
+      const accRes = await DataAccessor.getAccountAssistant(activeAccountId || '', 'suggestion');
       const assistantId = accRes?.assistant?.id;
       if (!assistantId) { setAiSuggestionsLoading(false); return; }
       // Get context message count from assistant
@@ -604,7 +614,7 @@ export default function MessageInput() {
       inlineStickerLastKwRef.current = kw;
       try {
         // Step 1: Check keyword_stickers cache in DB
-        const cacheRes = await ipc.db?.getKeywordStickers?.({ keyword: kw });
+        const cacheRes = await DataAccessor.getKeywordStickers(kw);
         if (cacheRes?.success && cacheRes.stickerIds !== null && cacheRes.stickerIds !== undefined) {
           // Cache hit (including empty array = previously searched with no results)
           if (cacheRes.stickerIds.length === 0) {
@@ -627,7 +637,7 @@ export default function MessageInput() {
         const ids: number[] = idsRes?.response || [];
 
         // Always cache keyword → stickerIds (even empty = no results, so next time skip API)
-        ipc.db?.saveKeywordStickers?.({ keyword: kw, stickerIds: ids }).catch(() => {});
+        DataAccessor.saveKeywordStickers?.({ keyword: kw, stickerIds: ids }).catch(() => {});
 
         if (!ids.length) { setInlineStickerSuggestions([]); return; }
 
@@ -638,7 +648,7 @@ export default function MessageInput() {
 
         // Save ALL stickers to DB cache (for sticker store)
         if (stickers.length) {
-          ipc.db?.saveStickers({ stickers }).catch(() => {});
+          DataAccessor.saveStickers({ stickers }).catch(() => {});
         }
       } catch {
         setInlineStickerSuggestions([]);
@@ -712,7 +722,7 @@ export default function MessageInput() {
         if (!account) { setContactCardLoading(false); return; }
         const auth = { cookies: account.cookies, imei: account.imei, userAgent: account.user_agent };
 
-        const findRes = await ipc.zalo?.findUser({ phone });
+        const findRes = await ipc.zalo?.findUser({ auth, zaloId: activeAccountId, phone });
         const foundUser = findRes?.response || findRes?.data;
         if (foundUser?.userId || foundUser?.uid || foundUser?.id) {
           const uid = foundUser.userId || foundUser.uid || foundUser.id;
@@ -721,7 +731,7 @@ export default function MessageInput() {
           let avatarUrl = foundUser.avatar || foundUser.avatarUrl || foundUser.avatar_url || '';
 
           try {
-            const infoRes = await ipc.zalo?.getUserInfo({ userId: uid });
+            const infoRes = await ipc.zalo?.getUserInfo({ auth, zaloId: activeAccountId, userId: uid });
             if (infoRes?.response) {
               const info = infoRes.response;
               displayName = info.displayName || info.name || displayName;
@@ -887,9 +897,9 @@ export default function MessageInput() {
     setTogglingLocalLabelId(label.id);
     try {
       if (exists) {
-        await ipc.db?.removeLocalLabelFromThread({ zaloId: activeAccountId, labelId: label.id, threadId: activeThreadId, threadType: activeThreadType ?? 0, labelText: label.name || '', labelColor: label.color || '', labelEmoji: label.emoji || '' });
+        await DataAccessor.removeLocalLabelFromThread({ zaloId: activeAccountId, labelId: label.id, threadId: activeThreadId });
       } else {
-        await ipc.db?.assignLocalLabelToThread({ zaloId: activeAccountId, labelId: label.id, threadId: activeThreadId, threadType: activeThreadType ?? 0, labelText: label.name || '', labelColor: label.color || '', labelEmoji: label.emoji || '' });
+        await DataAccessor.assignLocalLabelToThread({ zaloId: activeAccountId, labelId: label.id, threadId: activeThreadId });
       }
       await loadLocalLabelsForThread();
       // Dispatch event so ConversationList & CRM reload local labels
@@ -905,10 +915,10 @@ export default function MessageInput() {
   const handlePinConversation = useCallback(async () => {
     if (!activeAccountId || !activeThreadId) return;
     try {
-      const res = await ipc.db?.getLocalPinnedConversations({ zaloId: activeAccountId });
+      const res = await DataAccessor.getLocalPinnedConversations({ zaloId: activeAccountId });
       const pinnedThreadIds: string[] = res?.threadIds || [];
       const isPinned = pinnedThreadIds.includes(activeThreadId);
-      await ipc.db?.setLocalPinnedConversation({ zaloId: activeAccountId, threadId: activeThreadId, isPinned: !isPinned });
+      await DataAccessor.setLocalPinnedConversation({ zaloId: activeAccountId, threadId: activeThreadId, isPinned: !isPinned });
       showNotification(isPinned ? 'Đã bỏ ghim hội thoại' : 'Đã ghim hội thoại', 'success');
       // Notify ConversationList to refresh pinned state
       window.dispatchEvent(new CustomEvent('local-pin-changed', { detail: { zaloId: activeAccountId } }));
@@ -953,10 +963,10 @@ export default function MessageInput() {
         // Set active thread + clear unread (like ConversationList.handleSelect)
         store.setActiveThread(contactId, threadType);
         store.clearUnread(zaloId, contactId);
-        ipc.db?.markAsRead({ zaloId, contactId }).catch(() => {});
+        DataAccessor.markAsRead({ zaloId, contactId }).catch(() => {});
 
         // Load latest 50 messages from DB so ChatWindow is not blank
-        ipc.db?.getMessages({ zaloId, threadId: contactId, limit: 50, offset: 0 }).then((res: any) => {
+        DataAccessor.getMessages({ zaloId, threadId: contactId, limit: 50, offset: 0 }).then((res: any) => {
           if (res?.messages?.length > 0) {
             const msgs = [...res.messages].reverse();
             useChatStore.getState().setMessages(zaloId, contactId, msgs);
@@ -2191,8 +2201,8 @@ export default function MessageInput() {
     try {
       await ipc.zalo?.sendSticker({ auth, stickerId: sticker.id, threadId: activeThreadId, type: activeThreadType });
       // Save to recent + DB cache
-      await ipc.db?.addRecentSticker({ stickerId: sticker.id });
-      await ipc.db?.saveStickers({ stickers: [sticker] });
+      await DataAccessor.addRecentSticker(sticker.id);
+      await DataAccessor.saveStickers({ stickers: [sticker] });
       // Clear text input + draft sau khi gửi sticker
       setText('');
       setFmtRanges([]);
@@ -2217,8 +2227,8 @@ export default function MessageInput() {
     setSending(true);
     try {
       await ipc.zalo?.sendSticker({ auth, stickerId: sticker.id, threadId: activeThreadId, type: activeThreadType });
-      await ipc.db?.addRecentSticker({ stickerId: sticker.id });
-      await ipc.db?.saveStickers({ stickers: [sticker] });
+      await DataAccessor.addRecentSticker(sticker.id);
+      await DataAccessor.saveStickers({ stickers: [sticker] });
       // Clear the text input after sending sticker
       setText('');
       setFmtRanges([]);
@@ -2867,8 +2877,8 @@ export default function MessageInput() {
       {/* ── Toolbar row ── */}
       <div className="flex items-center gap-1 px-2 pt-2 pb-1 border-b border-gray-700/50">
         {/* Emoji / Biểu cảm */}
-        {/* Sticker */}
-        {channelCap.supportsSticker && (
+        {/* Sticker (ẩn trong employee mode nếu không có permission) */}
+        {channelCap.supportsSticker && hasChatPermission && (
         <div className="relative">
           <ToolbarBtn onClick={handleSendSticker} title="Sticker" active={showStickerPicker}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -2886,27 +2896,48 @@ export default function MessageInput() {
         </div>
         )}
 
-        {/* Gửi ảnh */}
-        {channelCap.supportsImage && (
-        <ToolbarBtn onClick={handleSendImage} title="Gửi ảnh" disabled={sending}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
-          </svg>
-        </ToolbarBtn>
+        {/* Gửi ảnh → mở thư viện (ẩn trong employee mode nếu không có permission) */}
+        {channelCap.supportsImage && hasChatPermission && (
+          <ToolbarBtn
+            onClick={() => {
+              setLibraryPickerType('image');
+              setShowLibraryPicker(true);
+            }}
+            title="Gửi ảnh"
+            disabled={sending}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
+            </svg>
+          </ToolbarBtn>
         )}
 
-        {/* Gửi file */}
-        {channelCap.supportsFile && (
-        <ToolbarBtn onClick={handleSendFile} title="Gửi file" disabled={sending}>
+        {/* Gửi file → mở thư viện (ẩn trong employee mode nếu không có permission) */}
+        {channelCap.supportsFile && hasChatPermission && (
+        <ToolbarBtn
+          onClick={() => {
+            setLibraryPickerType('file');
+            setShowLibraryPicker(true);
+          }}
+          title="Gửi file"
+          disabled={sending}
+        >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
           </svg>
         </ToolbarBtn>
         )}
 
-        {/* Gửi video */}
-        {channelCap.supportsVideo && (
-        <ToolbarBtn onClick={handleSendVideo} title="Gửi video" disabled={sending || isRecording}>
+        {/* Gửi video → mở thư viện (ẩn trong employee mode nếu không có permission) */}
+        {channelCap.supportsVideo && hasChatPermission && (
+        <ToolbarBtn
+          onClick={() => {
+            setLibraryPickerType('video');
+            setShowLibraryPicker(true);
+          }}
+          title="Gửi video"
+          disabled={sending || isRecording}
+        >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <polygon points="23 7 16 12 23 17 23 7"/>
             <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
@@ -2914,7 +2945,8 @@ export default function MessageInput() {
         </ToolbarBtn>
         )}
 
-        {/* Ghi âm giọng nói */}
+        {/* Ghi âm giọng nói (ẩn trong employee mode nếu không có permission) */}
+        {hasChatPermission && (<React.Fragment>
         <ToolbarBtn
           onClick={handleVoiceToggle}
           title={isRecording ? 'Dừng & gửi ghi âm' : 'Ghi âm giọng nói'}
@@ -2950,6 +2982,7 @@ export default function MessageInput() {
             </button>
           </div>
         )}
+        </React.Fragment>)}
 
         {/* Định dạng văn bản */}
         {channelCap.supportsTextStyle && (
@@ -2960,8 +2993,8 @@ export default function MessageInput() {
         </ToolbarBtn>
         )}
 
-        {/* Gửi danh thiếp */}
-        {channelCap.supportsBusinessCard && (
+        {/* Gửi danh thiếp (ẩn trong employee mode nếu không có permission) */}
+        {channelCap.supportsBusinessCard && hasChatPermission && (
         <ToolbarBtn onClick={() => setShowSendCard(true)} title="Gửi danh thiếp" disabled={sending}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <rect x="2" y="4" width="20" height="16" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/>
@@ -2970,8 +3003,8 @@ export default function MessageInput() {
         </ToolbarBtn>
         )}
 
-        {/* Gửi thẻ ngân hàng */}
-        {channelCap.supportsBankCard && (
+        {/* Gửi thẻ ngân hàng (ẩn trong employee mode nếu không có permission) */}
+        {channelCap.supportsBankCard && hasChatPermission && (
         <ToolbarBtn onClick={() => setShowBankCard(true)} title="Gửi thẻ ngân hàng" disabled={sending}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/>
@@ -3485,9 +3518,21 @@ export default function MessageInput() {
           </div>
         );
       })()}
+
+      {/* Library picker modal - mở khi bấm nút ảnh/file/video */}
+      {showLibraryPicker && activeAccountId && activeThreadId && (
+        <LibraryPickerModal
+          zaloId={activeAccountId}
+          threadId={activeThreadId}
+          threadType={activeThreadType}
+          initialType={libraryPickerType}
+          onClose={() => setShowLibraryPicker(false)}
+        />
+      )}
     </div>
   );
 }
+
 
 // ─── Pin context menu (right-click on pinned shortcut) ───────────────────────
 function PinContextMenu({ onEditIcon, onDelete, onClose }: {
@@ -3762,7 +3807,7 @@ function StickerPicker({
 
   // Load recent stickers on open
   useEffect(() => {
-    ipc.db?.getRecentStickers({ limit: 30 }).then((res) => {
+    DataAccessor.getRecentStickers(30).then((res) => {
       if (res?.success && res.stickers?.length) setRecentStickers(res.stickers);
     }).catch(() => {});
   }, []);
@@ -3776,13 +3821,13 @@ function StickerPicker({
   const loadPacksFromDb = async () => {
     try {
       // Try sticker_packs first
-      const res = await ipc.db?.getStickerPacks?.();
+      const res = await DataAccessor.getStickerPacks?.();
       if (res?.success && res.packs?.length) {
         setPacks(res.packs);
         return;
       }
       // Fallback: build from cached stickers grouped by cat_id
-      const sumRes = await ipc.db?.getAllCachedPackSummaries?.();
+      const sumRes = await DataAccessor.getAllCachedPackSummaries?.();
       if (sumRes?.success && sumRes.packs?.length) {
         const builtPacks: StickerPack[] = sumRes.packs.map((p) => ({
           catId: p.catId,
@@ -3819,7 +3864,7 @@ function StickerPicker({
       setSearching(true);
       try {
         // Step 1: Check keyword_stickers cache
-        const cacheRes = await ipc.db?.getKeywordStickers?.({ keyword: kw });
+        const cacheRes = await DataAccessor.getKeywordStickers(kw);
         if (cacheRes?.success && cacheRes.stickerIds?.length) {
           // Cache hit - load sticker details from stickers DB table
           const detailRes = await ipc.db?.getStickersByIds?.({ stickerIds: cacheRes.stickerIds.slice(0, 30) });
@@ -3840,7 +3885,7 @@ function StickerPicker({
         if (!ids.length) { setSearchResults([]); setSearching(false); return; }
 
         // Save keyword → stickerIds mapping
-        ipc.db?.saveKeywordStickers?.({ keyword: kw, stickerIds: ids }).catch(() => {});
+        DataAccessor.saveKeywordStickers?.({ keyword: kw, stickerIds: ids }).catch(() => {});
 
         // Step 3: Get sticker details
         const detailRes = await ipc.zalo?.getStickersDetail({ auth, stickerIds: ids.slice(0, 30) });
@@ -3849,7 +3894,7 @@ function StickerPicker({
 
         // Save ALL stickers to DB cache (cho kho sticker)
         if (stickers.length) {
-          ipc.db?.saveStickers({ stickers }).catch(() => {});
+          DataAccessor.saveStickers({ stickers }).catch(() => {});
 
           // Discover new packs from these stickers and save them
           discoverAndSavePacks(stickers, auth);
@@ -3889,7 +3934,7 @@ function StickerPicker({
       }
 
       if (newPacks.length) {
-        ipc.db?.saveStickerPacks?.({ packs: newPacks }).catch(() => {});
+        DataAccessor.saveStickerPacks?.({ packs: newPacks }).catch(() => {});
         setPacks((prev) => {
           const ids = new Set(prev.map((p) => p.catId));
           return [...prev, ...newPacks.filter((p) => !ids.has(p.catId))];
@@ -3915,7 +3960,7 @@ function StickerPicker({
         try {
           // Check keyword cache first
           let ids: number[] = [];
-          const cacheRes = await ipc.db?.getKeywordStickers?.({ keyword: kw });
+          const cacheRes = await DataAccessor.getKeywordStickers(kw);
           if (cacheRes?.success && cacheRes.stickerIds?.length) {
             ids = cacheRes.stickerIds;
           } else {
@@ -3924,7 +3969,7 @@ function StickerPicker({
             ids = idsRes?.response || [];
             // Cache keyword → stickerIds
             if (ids.length) {
-              ipc.db?.saveKeywordStickers?.({ keyword: kw, stickerIds: ids }).catch(() => {});
+              DataAccessor.saveKeywordStickers?.({ keyword: kw, stickerIds: ids }).catch(() => {});
             }
           }
 
@@ -3942,7 +3987,7 @@ function StickerPicker({
             stickers = detailRes?.response || [];
             // Save to DB
             if (stickers.length) {
-              ipc.db?.saveStickers({ stickers }).catch(() => {});
+              DataAccessor.saveStickers({ stickers }).catch(() => {});
             }
           }
 
@@ -3982,7 +4027,7 @@ function StickerPicker({
         const pack = packsToFetchDetail[i];
         try {
           // Check if we already have enough stickers for this pack in DB
-          const dbPack = await ipc.db?.getStickersByPackId?.({ catId: pack.catId });
+          const dbPack = await DataAccessor.getStickersByPackId(pack.catId);
           if (dbPack?.success && dbPack.stickers?.length >= 5) {
             pack.stickerCount = dbPack.stickers.length;
             pack.thumbUrl = dbPack.stickers[0]?.stickerUrl || pack.thumbUrl;
@@ -3992,7 +4037,7 @@ function StickerPicker({
           const catRes = await ipc.zalo?.getStickerCategoryDetail({ auth, cateId: pack.catId });
           const catStickers: StickerDetail[] = catRes?.response || [];
           if (catStickers.length > 0) {
-            ipc.db?.saveStickers({ stickers: catStickers }).catch(() => {});
+            DataAccessor.saveStickers({ stickers: catStickers }).catch(() => {});
             pack.stickerCount = catStickers.length;
             pack.thumbUrl = catStickers[0]?.stickerUrl || pack.thumbUrl;
           }
@@ -4005,7 +4050,7 @@ function StickerPicker({
 
       // Save packs to DB and update state
       if (allPacks.length) {
-        ipc.db?.saveStickerPacks?.({ packs: allPacks }).catch(() => {});
+        DataAccessor.saveStickerPacks?.({ packs: allPacks }).catch(() => {});
         setPacks(allPacks);
       }
     } catch (err: any) {
@@ -4023,7 +4068,7 @@ function StickerPicker({
 
     // Try from DB cache first
     try {
-      const dbRes = await ipc.db?.getStickersByPackId?.({ catId });
+      const dbRes = await DataAccessor.getStickersByPackId(catId);
       if (dbRes?.success && dbRes.stickers?.length) {
         setPackStickers(dbRes.stickers);
         setLoadingPack(false);
@@ -4039,7 +4084,7 @@ function StickerPicker({
       const stickers: StickerDetail[] = catRes?.response || [];
       setPackStickers(stickers);
       if (stickers.length) {
-        ipc.db?.saveStickers({ stickers }).catch(() => {});
+        DataAccessor.saveStickers({ stickers }).catch(() => {});
       }
     } catch {
       setPackStickers([]);
@@ -4510,4 +4555,6 @@ function ShortcutsPopup({ onClose }: { onClose: () => void }) {
     </div>
   );
 }
+
+
 

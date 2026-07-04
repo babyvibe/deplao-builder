@@ -1,5 +1,9 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
+import PageLoading, { Spinner } from '@/components/common/PageLoading';
+import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
+import { useEmployeeStore } from '@/store/employeeStore';
+import { useWorkspaceStore } from '@/store/workspaceStore';
 import IntegrationDetailPage from './IntegrationDetailPage';
 import AIAssistantPage from './AIAssistantPage';
 
@@ -179,12 +183,13 @@ interface AIAssistantSummary {
 function AISection({ onNavigateAi }: { onNavigateAi: () => void }) {
   const [assistants, setAssistants] = useState<AIAssistantSummary[]>([]);
   const [loadingAi, setLoadingAi] = useState(true);
+  const wsIdAISection = useWorkspaceStore(s => s.activeWorkspaceId);
 
   useEffect(() => {
-    ipc.ai?.listAssistants().then(res => {
+    DataAccessor.getAssistants().then(res => {
       if (res?.success) setAssistants(res.assistants || []);
     }).catch(() => {}).finally(() => setLoadingAi(false));
-  }, []);
+  }, [wsIdAISection]);
 
   const hasAssistants = assistants.length > 0;
 
@@ -253,12 +258,7 @@ function AISection({ onNavigateAi }: { onNavigateAi: () => void }) {
       </div>
 
       {loadingAi ? (
-        <div className="flex items-center justify-center h-24 mb-8">
-          <svg className="animate-spin w-5 h-5 text-blue-400" viewBox="0 0 24 24" fill="none">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-          </svg>
-        </div>
+        <PageLoading variant="inline" text="Đang tải trợ lý AI..." size="sm" />
       ) : hasAssistants ? (
         /* ── Show actual assistant cards ── */
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 mb-6">
@@ -354,10 +354,7 @@ function TunnelStatusCard({ webhookPort, tunnelUrl, tunnelLoading, onToggle, sav
         >
           {tunnelLoading ? (
             <span className="flex items-center gap-1.5">
-              <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-              </svg>
+              <Spinner size={3} />
               Đang kết nối...
             </span>
           ) : tunnelUrl ? '🌐 Đang Online' : '🔒 Bật Tunnel'}
@@ -513,6 +510,9 @@ function IntegrationSection({ sectionKey, catalog, savedList, onSelect }: {
 // ─── Main Component ────────────────────────────────────────────────────────────
 
 export default function IntegrationPage() {
+  const empMode = useEmployeeStore(s => s.mode);
+  const bossConnected = useEmployeeStore(s => s.bossConnected);
+  const isOfflineEmployee = empMode === 'employee' && !bossConnected;
   const [savedList, setSavedList] = useState<SavedIntegration[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedDetail, setSelectedDetail] = useState<{ catalogItem: CatalogItem; saved?: SavedIntegration } | null>(null);
@@ -522,10 +522,13 @@ export default function IntegrationPage() {
   const [tunnelLoading, setTunnelLoading] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
 
+  const workspaceId = useWorkspaceStore(s => s.activeWorkspaceId);
+
   const loadList = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await ipc.integration?.list();
+      // Employee mode: integration list trả về empty từ IPC guard
+      const res = await DataAccessor.getIntegrations();
       if (res?.success) {
         setSavedList(res.integrations || []);
         if (res.webhookPort) setWebhookPort(res.webhookPort);
@@ -536,7 +539,7 @@ export default function IntegrationPage() {
       if (ts?.active) setTunnelUrl(ts.url);
     } catch {}
     setLoading(false);
-  }, []);
+  }, [workspaceId]); // ← reload khi chuyển workspace
 
   useEffect(() => { loadList(); }, [loadList]);
 
@@ -614,13 +617,17 @@ export default function IntegrationPage() {
       <div ref={contentRef} className="flex-1 overflow-y-auto">
         <div className="px-6 py-6 space-y-2">
 
-          {loading ? (
-            <div className="flex items-center justify-center h-40">
-              <svg className="animate-spin w-6 h-6 text-blue-400" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+          {isOfflineEmployee ? (
+            <div className="flex flex-col items-center justify-center h-full py-20 text-center text-gray-500">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" className="text-gray-600 mb-4">
+                <rect x="2" y="2" width="20" height="20" rx="3" />
+                <path d="M9 12h6M12 9v6" />
               </svg>
+              <p className="text-gray-400 font-semibold mb-1">Không có dữ liệu</p>
+              <p className="text-gray-600 text-sm">Mất kết nối tới Boss. Dữ liệu tích hợp không khả dụng.</p>
             </div>
+          ) : loading ? (
+            <PageLoading variant="inline" text="Đang tải tích hợp..." />
           ) : activeTab === 'all' ? (
             /* ── "Tất cả" - AI first, then sections ── */
             <>
@@ -707,10 +714,7 @@ function TopBar({ activeTab, onTabChange, tunnelUrl, tunnelLoading, onTunnelTogg
             title={tunnelUrl ? 'Nhấn để tắt Tunnel' : 'Bật Tunnel để nhận webhook từ internet'}
           >
             {tunnelLoading ? (
-              <svg className="animate-spin w-3 h-3" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-              </svg>
+              <Spinner size={3} />
             ) : tunnelUrl ? (
               <span className="w-2 h-2 rounded-full bg-green-400"/>
             ) : (

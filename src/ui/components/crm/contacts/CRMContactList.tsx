@@ -8,6 +8,7 @@ import ZaloLabelBadge from '../tags/ZaloLabelBadge';
 import { UserProfilePopup } from '@/components/common/UserProfilePopup';
 import PhoneDisplay from '@/components/common/PhoneDisplay';
 import GroupAvatar from '@/components/common/GroupAvatar';
+import PageLoading from '@/components/common/PageLoading';
 
 
 interface CRMContactListProps {
@@ -467,8 +468,8 @@ export default function CRMContactList({
     setExportingCSV(true);
     try {
       // Fetch ALL contacts matching current filter (not just current page)
-      const allContacts = onExportAll ? await onExportAll() : contacts;
-      if (!allContacts.length) return;
+      const allContacts = onExportAll ? await onExportAll() : (contacts || []);
+      if (!allContacts?.length) return;
 
       const headers = ['Tên hiển thị', 'Biệt danh', 'Điện thoại', 'UID', 'Loại', 'Bạn bè', 'Giới tính', 'Sinh nhật', 'Tin nhắn cuối', 'Ghi chú'];
       const rows = allContacts.map((c: any) => {
@@ -646,9 +647,7 @@ export default function CRMContactList({
       {/* Rows */}
       <div className="flex-1 overflow-y-auto">
         {loading ? (
-          <div className="flex flex-col gap-2 p-4">
-            {[...Array(8)].map((_, i) => <div key={i} className="h-10 bg-gray-700/50 rounded-lg animate-pulse" />)}
-          </div>
+          <PageLoading variant="skeleton" skeletonVariant="table" />
         ) : contacts.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-gray-500">
             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mb-3 opacity-40">
