@@ -1,7 +1,8 @@
 import React, { useEffect, useRef } from 'react';
 import ipc from '@/lib/ipc';
 import { toLocalMediaUrl } from '@/lib/localMedia';
-import type { ChannelCapability } from '@/../configs/channelConfig';
+import type { ChannelCapability } from '@/../configs/channelConfig';import { ClipboardListIcon, ReplyIcon } from '@/components/common/icons';
+
 
 interface MessageContextMenuProps {
   x: number;
@@ -249,7 +250,7 @@ export default function MessageContextMenu({
       )}
 
       {(channelCap?.supportsReply ?? true) && (
-        <MenuItem icon="↩" label="Trả lời" onClick={() => { onReply(msg); onClose(); }} />
+        <MenuItem icon={<ReplyIcon className="w-4 h-4" />} label="Trả lời" onClick={() => { onReply(msg); onClose(); }} />
       )}
       {(channelCap?.supportsForward ?? true) && (
         <MenuItem icon="↪" label="Chuyển tiếp" onClick={() => { onForward(msg); onClose(); }} />
@@ -260,7 +261,7 @@ export default function MessageContextMenu({
 
       {/* Sao chép text - cho tin nhắn text và link */}
       {!isFile && !isMedia && !isVideo && (
-        <MenuItem icon="📋" label="Sao chép" onClick={handleCopy} />
+        <MenuItem icon={<ClipboardListIcon className="w-4 h-4" />} label="Sao chép" onClick={handleCopy} />
       )}
 
       {/* Sao chép link - chỉ cho tin nhắn link */}

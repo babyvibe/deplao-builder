@@ -26,6 +26,10 @@ import ScanPanel from './scan/ScanPanel';
 import ScanHistoryTab from './scan/ScanHistoryTab';
 import ScanStatsTab from './scan/ScanStatsTab';
 import { Spinner } from '@/components/common/PageLoading';
+import {
+  CampaignIcon, ChartIcon, ClipboardListIcon, CloudIcon, HardDriveIcon, SearchIcon, SendIcon, UserIcon,
+  UserPlusIcon, UsersIcon, WifiIcon
+} from '@/components/common/icons';
 
 
 // ── Wizard Step Indicator ────────────────────────────────────────────────
@@ -44,12 +48,12 @@ function WizardStepIndicator({ currentStep }: { currentStep: number }) {
                 ? 'bg-blue-600 text-white'
                 : s.num === currentStep
                   ? 'bg-blue-600/20 text-blue-400 border-2 border-blue-500'
-                  : 'bg-gray-700 text-gray-500'
+                  : 'bg-gray-700 text-gray-400'
             }`}>
               {s.num < currentStep ? '✓' : s.num}
             </div>
             <span className={`text-xs font-medium ${
-              s.num <= currentStep ? 'text-gray-200' : 'text-gray-500'
+              s.num <= currentStep ? 'text-gray-200' : 'text-gray-400'
             }`}>{s.label}</span>
           </div>
           {i < steps.length - 1 && (
@@ -658,23 +662,23 @@ export default function CRMPage() {
             return true; // contacts always shown
           }).map(t => (
             <button key={t} onClick={() => store.setTab(t)}
-              className={`px-4 py-1.5 rounded-md text-xs font-medium transition-colors ${store.tab === t ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}>
-              {t === 'search' ? '🔍 Tìm kiếm'
-                : t === 'contacts' ? `👤 Liên hệ${store.totalContacts ? ` (${store.totalContacts})` : ''}`
-                : t === 'groups' ? `👥 Nhóm${store.groupCount ? ` (${store.groupCount})` : ''}`
+              className={`px-4 py-1.5 rounded-md text-xs font-medium flex transition-colors ${store.tab === t ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}>
+              {t === 'search' ? <><SearchIcon className="w-4 h-4 mr-2" /> Tìm kiếm</>
+                : t === 'contacts' ? <><UserIcon className="w-4 h-4 mr-2" /> Liên hệ{store.totalContacts ? ` (${store.totalContacts})` : ''}</>
+                : t === 'groups' ? <><UsersIcon className="w-4 h-4 mr-2" /> Nhóm{store.groupCount ? ` (${store.groupCount})` : ''}</>
                 : t === 'requests' ? (
                   <span className="relative inline-flex items-center gap-1.5">
-                    <span>{`📨 Lời mời${store.requestCount ? ` (${store.requestCount})` : ''}`}</span>
+                    <span className="flex"><UserPlusIcon className="w-4 h-4 mr-2" /> Lời mời{store.requestCount ? ` (${store.requestCount})` : ''}</span>
                     {hasUnreadRequestDot && (
                       <span className="w-2 h-2 bg-red-500 rounded-full border border-gray-900 flex-shrink-0" />
                     )}
                   </span>
                 )
-                : t === 'campaigns' ? `📢 Chiến dịch${store.campaigns.length ? ` (${store.campaigns.length})` : ''}`
-                : t === 'history' ? '📋 Lịch sử'
-                : t === 'scan' ? '📡 Quét dữ liệu'
-                : t === 'scan_history' ? '📋 Lịch sử quét'
-                : t === 'scan_stats' ? '📊 Thống kê'
+                : t === 'campaigns' ? <><CampaignIcon className="w-4 h-4 mr-2" /> Chiến dịch{store.campaigns.length ? ` (${store.campaigns.length})` : ''}</>
+                : t === 'history' ? <><ClipboardListIcon className="w-4 h-4 mr-2" /> Lịch sử</>
+                : t === 'scan' ? <><SearchIcon className="w-4 h-4 mr-2" /> Quét dữ liệu</>
+                : t === 'scan_history' ? <><ClipboardListIcon className="w-4 h-4 mr-2" /> Lịch sử quét</>
+                : t === 'scan_stats' ? <><ChartIcon className="w-4 h-4 mr-2" /> Thống kê</>
                 : t}
             </button>
           ))}
@@ -685,9 +689,7 @@ export default function CRMPage() {
           onClick={() => navigateToAnalytics('overview')}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-gray-400 hover:text-white hover:bg-gray-700/60 transition-colors"
           title="Xem báo cáo & phân tích"
-        >
-          📊
-        </button>
+        ><ChartIcon className="w-4 h-4 inline" /> </button>
         {/* Account selector */}
         <AccountSelectorDropdown
           options={accounts.map(a => ({ id: a.zalo_id, name: a.full_name, phone: a.phone, avatarUrl: a.avatar_url }))}
@@ -784,7 +786,7 @@ export default function CRMPage() {
                     onUpdate={handleUpdateCampaign}
                   />
                 ) : (
-                  <div className="flex flex-col items-center justify-center h-full text-gray-500">
+                  <div className="flex flex-col items-center justify-center h-full text-gray-400">
                     <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mb-3 opacity-30">
                       <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
                     </svg>
@@ -900,13 +902,13 @@ export default function CRMPage() {
           onClick={() => setShowBulkLocalModal(false)}>
           <div className="bg-gray-800 border border-gray-600 rounded-2xl w-80 p-5 shadow-2xl"
             onClick={e => e.stopPropagation()}>
-            <h3 className="font-semibold text-white mb-1">💾 Gán Nhãn Local</h3>
+            <h3 className="font-semibold text-white mb-1"><HardDriveIcon className="w-4 h-4 inline" /> Gán Nhãn Local</h3>
             <p className="text-xs text-gray-400 mb-3">
               Áp dụng cho <span className="text-blue-400 font-medium">{store.selectedContactIds.size}</span> liên hệ đã chọn
-              <span className="text-gray-500 ml-1">(chọn nhiều)</span>
+              <span className="text-gray-400 ml-1">(chọn nhiều)</span>
             </p>
             {localLabels.length === 0 ? (
-              <p className="text-xs text-gray-500 py-4 text-center">Chưa có Nhãn Local nào.</p>
+              <p className="text-xs text-gray-400 py-4 text-center">Chưa có Nhãn Local nào.</p>
             ) : (
               <LocalLabelSelector
                 labels={localLabels}
@@ -937,13 +939,13 @@ export default function CRMPage() {
           onClick={() => setShowBulkZaloModal(false)}>
           <div className="bg-gray-800 border border-gray-600 rounded-2xl w-80 p-5 shadow-2xl"
             onClick={e => e.stopPropagation()}>
-            <h3 className="font-semibold text-white mb-1">☁️ Gán nhãn Zalo</h3>
+            <h3 className="font-semibold text-white mb-1"><CloudIcon className="w-4 h-4 inline" /> Gán nhãn Zalo</h3>
             <p className="text-xs text-gray-400 mb-3">
               Áp dụng cho <span className="text-blue-400 font-medium">{store.selectedContactIds.size}</span> liên hệ đã chọn
-              <span className="text-gray-500 ml-1">(chỉ 1 nhãn / hội thoại)</span>
+              <span className="text-gray-400 ml-1">(chỉ 1 nhãn / hội thoại)</span>
             </p>
             {zaloLabels.length === 0 ? (
-              <p className="text-xs text-gray-500 py-4 text-center">Chưa có nhãn Zalo nào. Hãy đồng bộ nhãn từ header trước.</p>
+              <p className="text-xs text-gray-400 py-4 text-center">Chưa có nhãn Zalo nào. Hãy đồng bộ nhãn từ header trước.</p>
             ) : (
               <ZaloLabelSelector
                 allLabels={zaloLabels}
@@ -996,7 +998,7 @@ export default function CRMPage() {
                     </svg>
                   </div>
                   <p className="text-sm text-gray-300 text-center font-medium">Chưa có chiến dịch phù hợp</p>
-                  <p className="text-xs text-gray-500 text-center leading-relaxed">
+                  <p className="text-xs text-gray-400 text-center leading-relaxed">
                     Tất cả chiến dịch đã hoàn thành hoặc chưa có chiến dịch nào.
                   </p>
                   <button
@@ -1028,7 +1030,7 @@ export default function CRMPage() {
                           }`} />
                           {c.name}
                         </span>
-                        <span className="block text-xs text-gray-500 mt-0.5 pl-3">{c.total_contacts} liên hệ</span>
+                        <span className="block text-xs text-gray-400 mt-0.5 pl-3">{c.total_contacts} liên hệ</span>
                       </button>
                     ))}
                   </div>

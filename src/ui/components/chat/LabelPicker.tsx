@@ -4,6 +4,8 @@ import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
 import ipc from '@/lib/ipc';
 import { Spinner } from '@/components/common/PageLoading';
+import { TagIcon } from '@/components/common/icons';
+
 
 interface LabelPickerProps {
   labels: LabelData[];
@@ -75,7 +77,7 @@ export default function LabelPicker({
 
       {/* Empty state */}
       {labels.length === 0 && (
-        <div className="px-3 py-3 text-xs text-gray-500">
+        <div className="px-3 py-3 text-xs text-gray-400">
           {syncingLabels ? 'Đang tải nhãn...' : 'Chưa có nhãn'}
         </div>
       )}
@@ -169,7 +171,7 @@ export function ActiveLabels({
       {activeLabels.length > maxDisplay && (
         <button
           onClick={onClickPill}
-          className="text-[11px] text-gray-500 hover:text-gray-300 transition-colors"
+          className="text-[11px] text-gray-400 hover:text-gray-300 transition-colors"
         >
           +{activeLabels.length - maxDisplay}
         </button>
@@ -256,7 +258,7 @@ export function EditLabelsModal({ labels, labelsVersion, onClose, onSave, overri
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-6 py-4">
           {editedLabels.length === 0 ? (
-            <div className="text-center text-gray-500 py-8">
+            <div className="text-center text-gray-400 py-8">
               <p>Chưa có nhãn nào</p>
               <button onClick={handleAddLabel} className="mt-4 text-blue-400 hover:text-blue-300">+ Thêm nhãn đầu tiên</button>
             </div>

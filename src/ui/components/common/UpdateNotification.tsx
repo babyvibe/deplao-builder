@@ -1,6 +1,8 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { useAppStore } from '@/store/appStore';
 import { useUpdateStore, UpdateInfo, ProgressInfo, UpdateError, POSTPONE_MS, POSTPONE_OPTIONS } from '@/store/updateStore';
+import { InboxIcon, MonitorIcon, RefreshIcon, SparklesIcon } from '@/components/common/icons';
+
 
 const AUTO_RESTART_SECS = 120;   // đếm ngược 2 phút trước khi tự restart
 const DOWNLOAD_STALL_TIMEOUT_MS = 45_000; // 45s không progress → coi như treo (macOS)
@@ -148,8 +150,8 @@ export function UpdateNotification() {
       {/* Header */}
       <div className="flex items-start justify-between gap-2 mb-2">
         <div>
-          <p className="font-bold text-sm">🆕 Bản cập nhật mới</p>
-          <p className={`text-xs ${isLight ? 'text-gray-500' : 'text-blue-100'}`}>Phiên bản {updateInfo.version}</p>
+          <p className="font-bold text-sm"><SparklesIcon className="w-4 h-4 inline" /> Bản cập nhật mới</p>
+          <p className={`text-xs ${isLight ? 'text-gray-400' : 'text-blue-100'}`}>Phiên bản {updateInfo.version}</p>
         </div>
         {/* Nút hoãn có dropdown - ẩn khi đã tải xong (dùng nút riêng bên dưới) */}
         {status !== 'downloaded' && (
@@ -157,7 +159,7 @@ export function UpdateNotification() {
             <button
               onClick={() => setPostponeOpen(v => !v)}
               className={`w-6 h-6 flex items-center justify-center rounded-full transition-colors text-xs ${
-                isLight ? 'text-gray-400 hover:text-gray-600 hover:bg-gray-100' : 'text-blue-200 hover:text-white hover:bg-white/10'
+                isLight ? 'text-gray-400 hover:text-gray-400 hover:bg-gray-100' : 'text-blue-200 hover:text-white hover:bg-white/10'
               }`}
               title="Hoãn"
             >
@@ -185,7 +187,7 @@ export function UpdateNotification() {
       {/* Đang tải tự động - có progress */}
       {status === 'downloading' && progress && !showStallOrError && (
         <div className="mt-2 space-y-1">
-          <div className={`flex justify-between text-xs ${isLight ? 'text-gray-500' : 'text-blue-100'}`}>
+          <div className={`flex justify-between text-xs ${isLight ? 'text-gray-400' : 'text-blue-100'}`}>
             <span>Đang tải tự động...</span>
             <span>{progress.percent}%</span>
           </div>
@@ -205,7 +207,7 @@ export function UpdateNotification() {
       {/* Đang đợi tải (autoDownload đã bật, chưa có progress, chưa lỗi) */}
       {(status === 'available' || (status === 'downloading' && !progress)) && !showStallOrError && (
         <div className="mt-1 space-y-1">
-          <p className={`text-xs ${isLight ? 'text-gray-500' : 'text-blue-100'}`}>
+          <p className={`text-xs ${isLight ? 'text-gray-400' : 'text-blue-100'}`}>
             ⏳ Đang chuẩn bị tải bản cập nhật...
           </p>
         </div>
@@ -227,8 +229,7 @@ export function UpdateNotification() {
                   ? 'bg-blue-500 hover:bg-blue-600 text-white'
                   : 'bg-white/20 hover:bg-white/30 text-white'
               }`}
-            >
-              🔄 Thử lại
+            ><RefreshIcon className="w-4 h-4 inline" /> Thử lại
             </button>
             {isMac ? (
               <MacDownloadLinks version={updateInfo.version} isLight={isLight} />
@@ -242,8 +243,7 @@ export function UpdateNotification() {
                     ? 'bg-gray-100 hover:bg-gray-200 text-gray-700'
                     : 'bg-white/10 hover:bg-white/20 text-white'
                 }`}
-              >
-                📥 Tải thủ công
+              ><InboxIcon className="w-4 h-4 inline" /> Tải thủ công
               </a>
             )}
           </div>
@@ -253,7 +253,7 @@ export function UpdateNotification() {
       {/* Đã tải xong - đếm ngược tự restart */}
       {status === 'downloaded' && (
         <div className="mt-2 space-y-2">
-          <p className={`text-xs ${isLight ? 'text-gray-500' : 'text-blue-100'}`}>
+          <p className={`text-xs ${isLight ? 'text-gray-400' : 'text-blue-100'}`}>
             ✅ Đã tải xong. Tự khởi động lại sau <strong className={isLight ? 'text-blue-600' : 'text-white'}>{formatCountdown(countdown)}</strong>
           </p>
 
@@ -280,7 +280,7 @@ export function UpdateNotification() {
             <button
               onClick={() => setPostponeOpen(v => !v)}
               className={`w-full text-xs text-center transition-colors ${
-                isLight ? 'text-gray-400 hover:text-gray-600' : 'text-blue-200 hover:text-white'
+                isLight ? 'text-gray-400 hover:text-gray-400' : 'text-blue-200 hover:text-white'
               }`}
             >
               ⏰ Hoãn…
@@ -331,8 +331,7 @@ export function MacDownloadLinks({ version, isLight }: { version: string; isLigh
             ? 'bg-gray-100 hover:bg-gray-200 text-gray-700'
             : 'bg-white/10 hover:bg-white/20 text-white'
         }`}
-      >
-        💻 Intel Mac
+      ><MonitorIcon className="w-4 h-4 inline" /> Intel Mac
       </a>
     </div>
   );

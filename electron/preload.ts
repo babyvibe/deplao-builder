@@ -288,6 +288,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     resolveMediaUrl: (bossUrl: string, mediaType?: string) => ipcRenderer.invoke('media:resolveUrl', { bossUrl, mediaType }),
     hasMediaCache: (bossUrl: string) => ipcRenderer.invoke('media:hasCache', { bossUrl }),
     preloadMediaBatch: (urls: string[]) => ipcRenderer.invoke('media:preloadBatch', { urls }),
+    ensureMediaLocal: (bossUrl: string, mediaType?: string) => ipcRenderer.invoke('file:employeeEnsureMediaLocal', { bossUrl, mediaType }),
   },
 
 

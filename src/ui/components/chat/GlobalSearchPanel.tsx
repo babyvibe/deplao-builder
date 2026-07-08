@@ -5,6 +5,7 @@ import GroupAvatar from '../common/GroupAvatar';
 import AddFriendModal from '../common/AddFriendModal';
 import { channelSupports } from '@/../configs/channelConfig';
 import { Spinner } from '@/components/common/PageLoading';
+import { ChatIcon, CloseIcon, LinkIcon } from '@/components/common/icons';
 
 // ─── Vietnamese-aware normalization for fuzzy matching ────────────────────────
 function normalizeStr(s: string): string {
@@ -78,10 +79,10 @@ function parsePreview(content: string): string {
       if (href && href.includes('://')) {
         try {
           const url = new URL(href);
-          return `🔗 ${url.hostname}`;
+          return `Link: ${url.hostname}`;
         } catch { }
       }
-      return '🔗 Link';
+      return 'Link: ';
     }
     
     // Filter out "0", "null", empty strings from content/msg
@@ -96,7 +97,7 @@ function parsePreview(content: string): string {
     }
     
     const par = (() => { try { return typeof p?.params === 'string' ? JSON.parse(p.params) : (p?.params || {}); } catch { return {}; } })();
-    if (p?.title && (par?.fileSize || par?.fileExt || par?.fileUrl || p?.normalUrl)) return `📂 ${p.title}`;
+    if (p?.title && (par?.fileSize || par?.fileExt || par?.fileUrl || p?.normalUrl)) return `File: ${p.title}`;
     if (p?.href || p?.thumb || par?.rawUrl || par?.hd) return '[Hình ảnh]';
     // Location check: has latitude/longitude in params
     if (par?.latitude || par?.longitude) return p?.description ? `📍 ${p.description}` : '📍 [Vị trí]';
@@ -191,10 +192,10 @@ function ContactResultItem({ contact, query, onClick, groupInfoCache }: {
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-sm text-gray-100 truncate">{highlightText(name, query)}</p>
-        {isGroup && <p className="text-xs text-gray-500 mt-0.5">Nhóm</p>}
+        {isGroup && <p className="text-xs text-gray-400 mt-0.5">Nhóm</p>}
         {contact._isFriendOnly && <p className="text-xs text-green-500 mt-0.5">Bạn bè</p>}
       </div>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-600 opacity-0 group-hover:opacity-100 flex-shrink-0 transition-opacity"><polyline points="9 18 15 12 9 6"/></svg>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-400 opacity-0 group-hover:opacity-100 flex-shrink-0 transition-opacity"><polyline points="9 18 15 12 9 6"/></svg>
     </button>
   );
 }
@@ -240,10 +241,10 @@ function MessageResultItem({ msg, query, contacts, onClick, groupInfoCache }: {
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between gap-2">
           <p className="text-sm text-gray-100 font-medium truncate">{convName}</p>
-          <span className="text-xs text-gray-500 flex-shrink-0">{formatTime(msg.timestamp)}</span>
+          <span className="text-xs text-gray-400 flex-shrink-0">{formatTime(msg.timestamp)}</span>
         </div>
         <p className="text-xs text-gray-400 truncate mt-0.5">
-          {!!msg.is_sent && <span className="text-gray-500">Bạn: </span>}
+          {!!msg.is_sent && <span className="text-gray-400">Bạn: </span>}
           {highlightText(preview, query)}
         </p>
       </div>
@@ -264,7 +265,7 @@ function PhoneResultCard({ result, searching, onOpen, onAddFriend }: {
   );
   if (!result) return null;
   if (result._notFound) return (
-    <div className="mx-3 my-2 p-3 bg-gray-800 rounded-xl border border-gray-700 text-xs text-gray-500">
+    <div className="mx-3 my-2 p-3 bg-gray-800 rounded-xl border border-gray-700 text-xs text-gray-400">
       Không tìm thấy người dùng hoặc người dùng đã chặn tìm kiếm với người lạ
     </div>
   );
@@ -276,7 +277,7 @@ function PhoneResultCard({ result, searching, onOpen, onAddFriend }: {
         : <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-white font-bold flex-shrink-0">{(name || 'U').charAt(0).toUpperCase()}</div>}
       <div className="flex-1 min-w-0">
         <p className="text-sm text-gray-100 truncate font-medium">{name}</p>
-        {result.isBlocked === 1 ? <p className="text-xs text-red-400">🚫 Đã chặn</p>
+        {result.isBlocked === 1 ? <p className="text-xs text-red-400"><CloseIcon className="w-4 h-4 inline" /> Đã chặn</p>
           : result.isFr === 1 ? <p className="text-xs text-green-400">✓ Bạn bè</p>
           : result._sentRequest ? <p className="text-xs text-yellow-400">✓ Đã gửi lời mời</p>
           : <p className="text-xs text-gray-400">Chưa kết bạn</p>}
@@ -285,7 +286,7 @@ function PhoneResultCard({ result, searching, onOpen, onAddFriend }: {
         {result.isBlocked !== 1 && result.isFr !== 1 && !result._sentRequest && (
           <button onClick={onAddFriend} className="bg-blue-600 hover:bg-blue-700 text-white text-xs px-2.5 py-1 rounded-lg transition-colors">+ Kết bạn</button>
         )}
-        <button onClick={onOpen} className="bg-gray-700 hover:bg-gray-600 text-gray-200 text-xs px-2.5 py-1 rounded-lg transition-colors">💬</button>
+        <button onClick={onOpen} className="bg-gray-700 hover:bg-gray-600 text-gray-200 text-xs px-2.5 py-1 rounded-lg transition-colors"><ChatIcon className="w-4 h-4" /></button>
       </div>
     </div>
   );
@@ -528,13 +529,13 @@ export default function GlobalSearchPanel({
       <div className="flex border-b border-gray-700 flex-shrink-0 bg-gray-800/80">
         {TABS.map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
-            className={`flex-1 py-2.5 text-xs font-medium border-b-2 transition-colors ${tab === t.key ? 'border-blue-500 text-blue-400' : 'border-transparent text-gray-500 hover:text-gray-300'}`}>
+            className={`flex-1 py-2.5 text-xs font-medium border-b-2 transition-colors ${tab === t.key ? 'border-blue-500 text-blue-400' : 'border-transparent text-gray-400 hover:text-gray-300'}`}>
             {t.label}
             {t.key === 'contacts' && contactResults.length > 0 && (
-              <span className="ml-1 text-gray-600 text-[11px]">({contactResults.length})</span>
+              <span className="ml-1 text-gray-400 text-[11px]">({contactResults.length})</span>
             )}
             {t.key === 'messages' && msgResults.length > 0 && (
-              <span className="ml-1 text-gray-600 text-[11px]">({msgResults.length >= 50 ? '50+' : msgResults.length})</span>
+              <span className="ml-1 text-gray-400 text-[11px]">({msgResults.length >= 50 ? '50+' : msgResults.length})</span>
             )}
           </button>
         ))}
@@ -545,7 +546,7 @@ export default function GlobalSearchPanel({
 
         {/* Searching spinner */}
         {(searching || phoneSearching) && (
-          <div className="flex justify-center items-center py-8 text-gray-500">
+          <div className="flex justify-center items-center py-8 text-gray-400">
             <Spinner size={5} className="mr-2" />
             <span className="text-sm">Đang tìm kiếm...</span>
           </div>
@@ -647,7 +648,7 @@ export default function GlobalSearchPanel({
         {tab === 'contacts' && !isPhone && (
           <>
             {contactResults.length === 0 && !searching && query.trim() && (
-              <div className="flex flex-col items-center py-16 text-gray-500">
+              <div className="flex flex-col items-center py-16 text-gray-400">
                 <p className="text-sm">Không tìm thấy liên hệ nào</p>
               </div>
             )}
@@ -668,12 +669,12 @@ export default function GlobalSearchPanel({
         {tab === 'messages' && !isPhone && (
           <>
             {searching && (
-              <div className="flex justify-center py-8 text-gray-500">
+              <div className="flex justify-center py-8 text-gray-400">
                 <Spinner size={5} />
               </div>
             )}
             {!searching && msgResults.length === 0 && query.trim() && (
-              <div className="flex flex-col items-center py-16 text-gray-500">
+              <div className="flex flex-col items-center py-16 text-gray-400">
                 <p className="text-sm">Không tìm thấy tin nhắn nào</p>
               </div>
             )}
@@ -692,7 +693,7 @@ export default function GlobalSearchPanel({
 
         {/* Empty state */}
         {isEmpty && (
-          <div className="flex flex-col items-center justify-center py-16 text-gray-500">
+          <div className="flex flex-col items-center justify-center py-16 text-gray-400">
             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mb-3 opacity-30">
               <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
             </svg>
@@ -703,7 +704,7 @@ export default function GlobalSearchPanel({
 
         {/* Initial state */}
         {!query.trim() && !searching && (
-          <div className="flex flex-col items-center justify-center py-16 text-gray-600">
+          <div className="flex flex-col items-center justify-center py-16 text-gray-400">
             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mb-3">
               <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
             </svg>

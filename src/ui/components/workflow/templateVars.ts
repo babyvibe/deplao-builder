@@ -1,3 +1,4 @@
+import { CalendarIcon, LinkIcon, PackageIcon, SendIcon, UserIcon } from '@/components/common/icons';
 /**
  * Template Variable definitions for Workflow Node Config.
  * Mỗi variable là một từ khoá mà người dùng có thể chèn vào config field

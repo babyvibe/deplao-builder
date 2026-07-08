@@ -2,6 +2,8 @@ import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useErpCalendarStore } from '@/store/erp/erpCalendarStore';
 import { ConfirmDialog, ErpModalCard, ErpOverlay } from '../shared/ErpDialogs';
 import type { ErpCalendarEvent, CreateCalendarEventInput } from '../../../../models/erp';
+import { TrashIcon } from '@/components/common/icons';
+
 
 type ViewMode = 'week' | 'month' | 'list';
 
@@ -199,7 +201,7 @@ export default function CalendarPage() {
       {viewMode !== 'list' && (
         <div className="grid grid-cols-7 gap-2 px-4 pt-3 flex-shrink-0">
           {DAYS_VN.map(d => (
-            <div key={d} className="text-[11px] uppercase tracking-wider text-gray-500 text-center">{d}</div>
+            <div key={d} className="text-[11px] uppercase tracking-wider text-gray-400 text-center">{d}</div>
           ))}
         </div>
       )}
@@ -209,28 +211,27 @@ export default function CalendarPage() {
         {viewMode === 'list' ? (
           <div className="space-y-3">
             {listEvents.length === 0 ? (
-              <div className="h-40 rounded-xl border border-gray-700/60 bg-gray-800/40 flex items-center justify-center text-sm text-gray-500">
+              <div className="h-40 rounded-xl border border-gray-700/60 bg-gray-800/40 flex items-center justify-center text-sm text-gray-400">
                 Chưa có sự kiện trong phạm vi đang chọn
               </div>
             ) : (
               listEvents.map(ev => (
                 <div key={ev.id} className="group rounded-xl border border-gray-700/60 bg-gray-800/50 px-4 py-3 flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="text-xs text-gray-500 mb-1">{new Date(ev.start_at).toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' })}</div>
+                    <div className="text-xs text-gray-400 mb-1">{new Date(ev.start_at).toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' })}</div>
                     <button onClick={() => setSelectedEvent(ev)} className="text-left text-sm font-medium text-white hover:text-blue-300 truncate max-w-full">{ev.title}</button>
                     <div className="text-xs text-gray-400 mt-1">
                       {new Date(ev.start_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
                       {ev.end_at && ev.end_at > ev.start_at ? ` → ${new Date(ev.end_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}` : ''}
                     </div>
-                    {ev.location && <div className="text-xs text-gray-500 mt-1">📍 {ev.location}</div>}
+                    {ev.location && <div className="text-xs text-gray-400 mt-1">📍 {ev.location}</div>}
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <span className="w-2.5 h-2.5 rounded-full" style={{ background: ev.color || '#3b82f6' }} />
                     <button
                       onClick={() => setDeleteTarget(ev)}
                       className="inline-flex items-center gap-1 rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-300 opacity-0 pointer-events-none transition-all group-hover:opacity-100 group-hover:pointer-events-auto focus:opacity-100 focus:pointer-events-auto hover:border-red-400/50 hover:bg-red-500/20 hover:text-white"
-                    >
-                      🗑 Xóa
+                    ><TrashIcon className="w-4 h-4 inline" /> Xóa
                     </button>
                   </div>
                 </div>
@@ -261,7 +262,7 @@ export default function CalendarPage() {
                 }}
               >
                 <p className={`text-xs font-semibold mb-1.5 ${
-                  isToday ? 'text-blue-400' : isOther ? 'text-gray-600' : 'text-gray-400'
+                  isToday ? 'text-blue-400' : isOther ? 'text-gray-400' : 'text-gray-400'
                 }`}>
                   {new Date(dayTs).getDate()}
                 </p>
@@ -314,7 +315,7 @@ export default function CalendarPage() {
                 className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
               />
               <div>
-                <label className="text-[11px] text-gray-500 mb-1 block">Bắt đầu</label>
+                <label className="text-[11px] text-gray-400 mb-1 block">Bắt đầu</label>
                 <input
                   type="datetime-local"
                   value={newEvent.start_at ? new Date(newEvent.start_at - new Date(newEvent.start_at).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''}
@@ -332,7 +333,7 @@ export default function CalendarPage() {
               </label>
               {hasEndTime && (
                 <div>
-                  <label className="text-[11px] text-gray-500 mb-1 block">Kết thúc</label>
+                  <label className="text-[11px] text-gray-400 mb-1 block">Kết thúc</label>
                   <input
                     type="datetime-local"
                     value={newEvent.end_at ? new Date(newEvent.end_at - new Date(newEvent.end_at).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''}
@@ -433,13 +434,12 @@ export default function CalendarPage() {
                       {new Date(ev.start_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
                       {ev.end_at && ev.end_at > ev.start_at ? ` → ${new Date(ev.end_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}` : ''}
                     </div>
-                    {ev.description && <div className="text-[11px] text-gray-500 mt-1 whitespace-pre-wrap">{ev.description}</div>}
+                    {ev.description && <div className="text-[11px] text-gray-400 mt-1 whitespace-pre-wrap">{ev.description}</div>}
                   </div>
                   <button
                     onClick={() => setDeleteTarget(ev)}
                     className="inline-flex items-center gap-1 rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-300 hover:border-red-400/50 hover:bg-red-500/20 hover:text-white"
-                  >
-                    🗑 Xóa
+                  ><TrashIcon className="w-4 h-4 inline" /> Xóa
                   </button>
                 </div>
               ))}

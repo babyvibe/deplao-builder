@@ -904,7 +904,7 @@ export const handlers = {
   // ═══════════════════════════════════════════════════════════════
 
   getAiAssistants(_employee: RegisteredEmployee, _params: any): JsonResponse {
-    const { AIAssistantService } = require('../../ai/AIAssistantService');
+    const AIAssistantService = require('../../ai/AIAssistantService').default;
     const assistants = AIAssistantService.getInstance().listAssistants();
     const masked = assistants.map((a: any) => ({ ...a, apiKey: a.apiKey ? '***' : '' }));
     return success({ items: masked });
@@ -912,7 +912,7 @@ export const handlers = {
 
   getAiAssistant(_employee: RegisteredEmployee, params: any): JsonResponse {
     const id = params.id || '';
-    const { AIAssistantService } = require('../../ai/AIAssistantService');
+    const AIAssistantService = require('../../ai/AIAssistantService').default;
     const assistant = AIAssistantService.getInstance().getAssistant(id);
     if (!assistant) return error('Không tìm thấy trợ lý AI');
     return success({ ...assistant, apiKey: assistant.apiKey ? '***' : '' });
@@ -920,13 +920,13 @@ export const handlers = {
 
   getAiAssistantFiles(_employee: RegisteredEmployee, params: any): JsonResponse {
     const assistantId = params.assistantId || params.id || '';
-    const { AIAssistantService } = require('../../ai/AIAssistantService');
+    const AIAssistantService = require('../../ai/AIAssistantService').default;
     const files = AIAssistantService.getInstance().getFiles(assistantId) || [];
     return success({ items: files });
   },
 
   getAiUsageStats(_employee: RegisteredEmployee, params: any): JsonResponse {
-    const { AIAssistantService } = require('../../ai/AIAssistantService');
+    const AIAssistantService = require('../../ai/AIAssistantService').default;
     const stats = AIAssistantService.getInstance().getUsageStats({
       assistantId: params.assistantId,
       days: parseInt(params.days) || 30,
@@ -935,7 +935,7 @@ export const handlers = {
   },
 
   getAiUsageLogs(_employee: RegisteredEmployee, params: any): JsonResponse {
-    const { AIAssistantService } = require('../../ai/AIAssistantService');
+    const AIAssistantService = require('../../ai/AIAssistantService').default;
     const logs = AIAssistantService.getInstance().getUsageLogs({
       assistantId: params.assistantId,
       limit: parseInt(params.limit) || 50,
@@ -944,7 +944,7 @@ export const handlers = {
   },
 
   getAiDefaultAssistant(_employee: RegisteredEmployee, _params: any): JsonResponse {
-    const { AIAssistantService } = require('../../ai/AIAssistantService');
+    const AIAssistantService = require('../../ai/AIAssistantService').default;
     const assistant = AIAssistantService.getInstance().getDefaultAssistant();
     if (!assistant) return success(null);
     return success({ ...assistant, apiKey: assistant.apiKey ? '***' : '' });
@@ -953,7 +953,7 @@ export const handlers = {
   getAiAccountAssistant(_employee: RegisteredEmployee, params: any): JsonResponse {
     const zaloId = params.zaloId || '';
     const role = params.role || 'suggestion';
-    const { AIAssistantService } = require('../../ai/AIAssistantService');
+    const AIAssistantService = require('../../ai/AIAssistantService').default;
     const assistant = AIAssistantService.getInstance().getAssistantForAccount(zaloId, role as any);
     if (!assistant) return success({ assistant: null });
     return success({ assistant: { ...assistant, apiKey: assistant.apiKey ? '***' : '' } });
@@ -961,7 +961,7 @@ export const handlers = {
 
   getAiAccountAssistants(_employee: RegisteredEmployee, params: any): JsonResponse {
     const zaloId = params.zaloId || '';
-    const { AIAssistantService } = require('../../ai/AIAssistantService');
+    const AIAssistantService = require('../../ai/AIAssistantService').default;
     const result = AIAssistantService.getInstance().getAccountAssistants(zaloId);
     return success(result);
   },

@@ -95,7 +95,7 @@ export function VoterListModal({ option, contacts, onClose }: {
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700 flex-shrink-0">
           <div className="flex-1 min-w-0 pr-2">
             <p className="text-sm font-semibold text-gray-100 truncate">{option.content}</p>
-            <p className="text-xs text-gray-500">{voters.length} người bình chọn</p>
+            <p className="text-xs text-gray-400">{voters.length} người bình chọn</p>
           </div>
           <button onClick={onClose}
             className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-white hover:bg-gray-700 transition-colors">
@@ -106,7 +106,7 @@ export function VoterListModal({ option, contacts, onClose }: {
         </div>
         <div className="overflow-y-auto flex-1">
           {voters.length === 0 ? (
-            <p className="text-xs text-gray-500 text-center py-6">Chưa có ai bình chọn</p>
+            <p className="text-xs text-gray-400 text-center py-6">Chưa có ai bình chọn</p>
           ) : voters.map(uid => {
             const c = contacts.find((x: any) => String(x.contact_id) === String(uid));
             const name: string = c?.alias || c?.display_name || '';
@@ -124,7 +124,7 @@ export function VoterListModal({ option, contacts, onClose }: {
                 )}
                 <div className="flex-1 min-w-0">
                   <p className="text-sm text-gray-100 truncate">{name || uid}</p>
-                  {name && <p className="text-[11px] text-gray-500 truncate">{uid}</p>}
+                  {name && <p className="text-[11px] text-gray-400 truncate">{uid}</p>}
                 </div>
               </div>
             );

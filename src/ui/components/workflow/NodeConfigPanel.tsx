@@ -29,13 +29,11 @@ function WebhookUrlField({ field, config, workflowId, update }: {
           <div className="text-xs text-gray-400 mb-1">{field.label}</div>
           {webhookUrl ? (
             <div className="flex items-center gap-2">
-              <code className="flex-1 text-xs bg-gray-900/80 px-2 py-1.5 rounded-lg break-all select-all">
+              <code className="flex-1 text-xs bg-gray-900/80 px-2 py-1.5 rounded-lg break-word select-all">
                 {webhookUrl}
               </code>
               <button onClick={() => { navigator.clipboard.writeText(webhookUrl); }}
-                className="px-2 py-1 bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 rounded-lg text-xs transition-colors" title="Copy URL">
-                📋
-              </button>
+                className="px-2 py-1 bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 rounded-lg text-xs transition-colors" title="Copy URL"><ClipboardListIcon className="w-4 h-4 inline" /> </button>
             </div>
           ) : (
             <div className="space-y-2">
@@ -62,13 +60,12 @@ function WebhookUrlField({ field, config, workflowId, update }: {
                 <button onClick={() => {
                   useAppStore.getState().setView('settings');
                   setTimeout(() => window.dispatchEvent(new CustomEvent('nav:settings', { detail: { tab: 'webhooks' } })), 100);
-                }} className="px-2.5 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg transition-colors">
-                  📖 Hướng dẫn
+                }} className="px-2.5 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg transition-colors"><BookIcon className="w-4 h-4 inline" /> Hướng dẫn
                 </button>
               </div>
             </div>
           )}
-          <div className="flex items-center gap-2 mt-2 text-xs text-gray-500">
+          <div className="flex items-center gap-2 mt-2 text-xs text-gray-400">
             <span>Token: <code className="text-gray-400">{webhookToken.substring(0, 8)}...</code></span>
             <button onClick={async () => {
               const confirmed = await showConfirm({
@@ -84,17 +81,15 @@ function WebhookUrlField({ field, config, workflowId, update }: {
                 setWebhookToken(res.token || '');
                 update('webhookToken', res.token || '');
               }
-            }} className="text-blue-400 hover:text-blue-300 underline" title="Tạo token mới nếu URL bị lộ">
-              🔄 Regenerate
+            }} className="text-blue-400 hover:text-blue-300 underline" title="Tạo token mới nếu URL bị lộ"><RefreshIcon className="w-4 h-4 inline" /> Regenerate
             </button>
           </div>
         </div>
       ) : (
-        <div className="bg-gray-800/60 border border-gray-700/50 rounded-xl p-3 text-yellow-400 text-xs">
-          💡 Lưu workflow để tạo URL webhook tự động.
+        <div className="bg-gray-800/60 border border-gray-700/50 rounded-xl p-3 text-yellow-400 text-xs"><SunIcon className="w-4 h-4 inline" /> Lưu workflow để tạo URL webhook tự động.
         </div>
       )}
-      <p className="text-xs text-gray-500 mt-1">{field.desc}</p>
+      <p className="text-xs text-gray-400 mt-1">{field.desc}</p>
     </div>
   );
 }
@@ -103,6 +98,7 @@ import { showConfirm } from '@/components/common/ConfirmDialog';
 import { getNodeLabel } from './workflowConfig';
 import GroupAvatar from '@/components/common/GroupAvatar';
 import TemplateVarPopup from './TemplateVarPopup';
+import { AlertIcon, ArrowDownIcon, BellIcon, BellOffIcon, BookIcon, BotIcon, CalendarIcon, ChatIcon, ClipboardIcon, ClipboardListIcon, ClockIcon, CloseIcon, DiamondIcon, FlagIcon, GlobeIcon, HardDriveIcon, HelpCircleIcon, InboxIcon, LightningIcon, LinkIcon, PaletteIcon, PluginIcon, RefreshIcon, SearchIcon, SendIcon, ShuffleIcon, StarIcon, SunIcon, TagIcon, TargetIcon, TrashIcon, UserIcon, UsersIcon } from '@/components/common/icons';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -212,9 +208,9 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       key: 'threadType', label: 'Nguồn tin nhắn', type: 'select',
       desc: 'Workflow sẽ lắng nghe tin nhắn từ đâu?',
       options: [
-        { value: 'all', label: '📩 Tất cả (cá nhân + nhóm)' },
-        { value: '0',   label: '👤 Chỉ tin nhắn cá nhân' },
-        { value: '1',   label: '👥 Chỉ tin nhắn nhóm' },
+        { value: 'all', label: 'Tất cả (cá nhân + nhóm)' },
+        { value: '0',   label: 'Chỉ tin nhắn cá nhân' },
+        { value: '1',   label: 'Chỉ tin nhắn nhóm' },
       ],
     },
     {
@@ -230,7 +226,7 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
         { value: 'contains_all', label: 'Phải chứa đủ tất cả từ khóa' },
         { value: 'equals',       label: 'Khớp chính xác nguyên câu' },
         { value: 'starts_with',  label: 'Bắt đầu bằng từ khóa' },
-        { value: 'regex',        label: '🔬 Regex - biểu thức chính quy (nâng cao)' },
+        { value: 'regex',        label: 'Regex - biểu thức chính quy (nâng cao)' },
       ],
     },
     {
@@ -254,7 +250,7 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       advanced: true,
     },
     {
-      key: 'debounceSeconds', label: '⏳ Gom tin nhắn liên tiếp (giây)', type: 'number',
+      key: 'debounceSeconds', label: 'Gom tin nhắn liên tiếp (giây)', type: 'number',
       placeholder: '0',
       desc: 'Chờ N giây sau tin nhắn cuối cùng rồi mới chạy workflow (gom tất cả tin nhắn liên tiếp thành 1 lần xử lý). 0 = chạy ngay mỗi tin. Khuyến nghị 10-15s khi dùng AI trả lời tự động, tránh AI phản hồi từng tin khi khách gõ liên tục.',
       advanced: true,
@@ -266,13 +262,13 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       key: 'eventType', label: 'Sự kiện cần theo dõi', type: 'select',
       desc: 'Chọn loại sự kiện trong nhóm sẽ kích hoạt workflow.',
       options: [
-        { value: 'all',           label: '🔔 Mọi sự kiện nhóm' },
-        { value: 'join',          label: '➕ Thành viên mới tham gia' },
-        { value: 'leave',         label: '➖ Thành viên tự rời nhóm' },
-        { value: 'remove_member', label: '🚫 Thành viên bị xóa khỏi nhóm' },
-        { value: 'update',        label: '✏️ Thông tin nhóm thay đổi' },
-        { value: 'add_admin',     label: '⭐ Thêm quản trị viên mới' },
-        { value: 'remove_admin',  label: '🔻 Xóa quyền quản trị viên' },
+        { value: 'all',           label: 'Mọi sự kiện nhóm' },
+        { value: 'join',          label: 'Thành viên mới tham gia' },
+        { value: 'leave',         label: 'Thành viên tự rời nhóm' },
+        { value: 'remove_member', label: 'Thành viên bị xóa khỏi nhóm' },
+        { value: 'update',        label: 'Thông tin nhóm thay đổi' },
+        { value: 'add_admin',     label: 'Thêm quản trị viên mới' },
+        { value: 'remove_admin',  label: 'Xóa quyền quản trị viên' },
       ],
     },
     {
@@ -287,13 +283,13 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       key: 'reactionType', label: 'Loại cảm xúc', type: 'select',
       desc: 'Workflow chạy khi tin nhắn nhận được cảm xúc nào?',
       options: [
-        { value: 'any', label: '💬 Bất kỳ cảm xúc nào' },
-        { value: '1',   label: '👍 Like' },
-        { value: '2',   label: '❤️ Yêu thích' },
-        { value: '3',   label: '😂 Haha' },
-        { value: '4',   label: '😮 Wow' },
-        { value: '5',   label: '😢 Buồn' },
-        { value: '6',   label: '😡 Giận' },
+        { value: 'any', label: 'Bất kỳ cảm xúc nào' },
+        { value: '1',   label: 'Like' },
+        { value: '2',   label: 'Yêu thích' },
+        { value: '3',   label: 'Haha' },
+        { value: '4',   label: 'Wow' },
+        { value: '5',   label: 'Buồn' },
+        { value: '6',   label: 'Giận' },
       ],
     },
     {
@@ -308,18 +304,18 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       key: 'action', label: 'Khi nào kích hoạt?', type: 'select',
       desc: 'Chọn thời điểm workflow chạy.',
       options: [
-        { value: 'any',      label: '🔄 Cả khi gán và khi gỡ nhãn' },
-        { value: 'assigned', label: '🏷️ Chỉ khi nhãn được gán vào' },
-        { value: 'removed',  label: '🗑️ Chỉ khi nhãn bị gỡ ra' },
+        { value: 'any',      label: 'Cả khi gán và khi gỡ nhãn' },
+        { value: 'assigned', label: 'Chỉ khi nhãn được gán vào' },
+        { value: 'removed',  label: 'Chỉ khi nhãn bị gỡ ra' },
       ],
     },
     {
       key: 'labelSource', label: 'Nguồn nhãn', type: 'select',
       desc: 'Lọc theo loại Nhãn Local hay nhãn Zalo.',
       options: [
-        { value: 'any',   label: '🔄 Cả Local và Zalo' },
-        { value: 'local', label: '🏷️ Chỉ Nhãn Local' },
-        { value: 'zalo',  label: '🏷️ Chỉ nhãn Zalo' },
+        { value: 'any',   label: 'Cả Local và Zalo' },
+        { value: 'local', label: 'Chỉ Nhãn Local' },
+        { value: 'zalo',  label: 'Chỉ nhãn Zalo' },
       ],
     },
     {
@@ -337,10 +333,10 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       key: 'timezone', label: 'Múi giờ', type: 'select',
       desc: 'Múi giờ dùng để tính thời gian chạy.',
       options: [
-        { value: 'Asia/Ho_Chi_Minh', label: '🇻🇳 Việt Nam (UTC+7)' },
-        { value: 'Asia/Bangkok',     label: '🇹🇭 Bangkok (UTC+7)' },
-        { value: 'Asia/Singapore',   label: '🇸🇬 Singapore (UTC+8)' },
-        { value: 'UTC',              label: '🌍 UTC (chuẩn quốc tế)' },
+        { value: 'Asia/Ho_Chi_Minh', label: 'Việt Nam (UTC+7)' },
+        { value: 'Asia/Bangkok',     label: 'Bangkok (UTC+7)' },
+        { value: 'Asia/Singapore',   label: 'Singapore (UTC+8)' },
+        { value: 'UTC',              label: 'UTC (chuẩn quốc tế)' },
       ],
       advanced: true,
     },
@@ -363,9 +359,9 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       key: 'threadType', label: 'Loại hội thoại', type: 'select',
       desc: 'Loại hội thoại đang gửi. Giữ "Tự động" để hệ thống tự nhận biết.',
       options: [
-        { value: '{{ $trigger.threadType }}', label: '🔄 Tự động (theo trigger - khuyến nghị)' },
-        { value: '0', label: '👤 Cá nhân' },
-        { value: '1', label: '👥 Nhóm' },
+        { value: '{{ $trigger.threadType }}', label: 'Tự động (theo trigger - khuyến nghị)' },
+        { value: '0', label: 'Cá nhân' },
+        { value: '1', label: 'Nhóm' },
       ],
       advanced: true,
     },
@@ -386,19 +382,19 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       key: 'threadType', label: 'Loại hội thoại', type: 'select',
       desc: 'Cá nhân (DM) hoặc nhóm. Chọn "Tự động" để lấy từ trigger.',
       options: [
-        { value: '{{ $trigger.threadType }}', label: '🔄 Tự động (theo trigger - khuyến nghị)' },
-        { value: '0', label: '👤 Cá nhân (DM)' },
-        { value: '1', label: '👥 Nhóm' },
+        { value: '{{ $trigger.threadType }}', label: 'Tự động (theo trigger - khuyến nghị)' },
+        { value: '0', label: 'Cá nhân (DM)' },
+        { value: '1', label: 'Nhóm' },
       ],
     },
     {
       key: 'delaySeconds', label: 'Chờ bao lâu trước bước tiếp', type: 'select',
       desc: 'Sau khi gửi "đang gõ", workflow sẽ dừng bấy nhiêu giây rồi mới chạy thẻ tiếp theo (thường là Gửi tin nhắn). Giúp tạo cảm giác tự nhiên như người thật đang soạn.',
       options: [
-        { value: '1',  label: '⚡ 1 giây (nhanh)' },
-        { value: '3',  label: '💬 3 giây (mặc định)' },
-        { value: '5',  label: '✍️ 5 giây (soạn lâu hơn)' },
-        { value: '10', label: '🕐 10 giây (rất lâu)' },
+        { value: '1',  label: '1 giây (nhanh)' },
+        { value: '3',  label: '3 giây (mặc định)' },
+        { value: '5',  label: '5 giây (soạn lâu hơn)' },
+        { value: '10', label: '10 giây (rất lâu)' },
       ],
     },
   ],
@@ -424,8 +420,8 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       key: 'threadType', label: 'Loại hội thoại', type: 'select',
       desc: 'Loại hội thoại đang gửi.',
       options: [
-        { value: '{{ $trigger.threadType }}', label: '🔄 Tự động (theo trigger)' },
-        { value: '0', label: '👤 Cá nhân' }, { value: '1', label: '👥 Nhóm' },
+        { value: '{{ $trigger.threadType }}', label: 'Tự động (theo trigger)' },
+        { value: '0', label: 'Cá nhân' }, { value: '1', label: 'Nhóm' },
       ],
       advanced: true,
     },
@@ -452,8 +448,8 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       key: 'threadType', label: 'Loại hội thoại', type: 'select',
       desc: 'Loại hội thoại đang gửi.',
       options: [
-        { value: '{{ $trigger.threadType }}', label: '🔄 Tự động (theo trigger)' },
-        { value: '0', label: '👤 Cá nhân' }, { value: '1', label: '👥 Nhóm' },
+        { value: '{{ $trigger.threadType }}', label: 'Tự động (theo trigger)' },
+        { value: '0', label: 'Cá nhân' }, { value: '1', label: 'Nhóm' },
       ],
       advanced: true,
     },
@@ -539,8 +535,8 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       key: 'action', label: 'Hành động', type: 'select',
       desc: 'Tắt hoặc bật lại thông báo cho hội thoại.',
       options: [
-        { value: 'mute',   label: '🔕 Tắt thông báo' },
-        { value: 'unmute', label: '🔔 Bật lại thông báo' },
+        { value: 'mute',   label: 'Tắt thông báo' },
+        { value: 'unmute', label: 'Bật lại thông báo' },
       ],
     },
     {
@@ -556,8 +552,8 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
     {
       key: 'threadType', label: 'Loại hội thoại', type: 'select',
       options: [
-        { value: '{{ $trigger.threadType }}', label: '🔄 Tự động (theo trigger)' },
-        { value: '0', label: '👤 Cá nhân' }, { value: '1', label: '👥 Nhóm' },
+        { value: '{{ $trigger.threadType }}', label: 'Tự động (theo trigger)' },
+        { value: '0', label: 'Cá nhân' }, { value: '1', label: 'Nhóm' },
       ],
       advanced: true,
     },
@@ -583,7 +579,7 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
     },
     {
       key: 'toThreadType', label: 'Loại hội thoại đích', type: 'select',
-      options: [{ value: '0', label: '👤 Cá nhân' }, { value: '1', label: '👥 Nhóm' }],
+      options: [{ value: '0', label: 'Cá nhân' }, { value: '1', label: 'Nhóm' }],
       advanced: true,
     },
   ],
@@ -601,7 +597,7 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
     },
     {
       key: 'threadType', label: 'Loại hội thoại', type: 'select',
-      options: [{ value: '0', label: '👤 Cá nhân' }, { value: '1', label: '👥 Nhóm' }],
+      options: [{ value: '0', label: 'Cá nhân' }, { value: '1', label: 'Nhóm' }],
       advanced: true,
     },
   ],
@@ -648,9 +644,9 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       key: 'reactionType', label: 'Loại cảm xúc', type: 'select',
       desc: 'Cảm xúc sẽ được thêm vào tin nhắn.',
       options: [
-        { value: '1', label: '👍 Like' }, { value: '2', label: '❤️ Yêu thích' },
-        { value: '3', label: '😂 Haha' }, { value: '4', label: '😮 Wow' },
-        { value: '5', label: '😢 Buồn' }, { value: '6', label: '😡 Giận' },
+        { value: '1', label: 'Like' }, { value: '2', label: 'Yêu thích' },
+        { value: '3', label: 'Haha' }, { value: '4', label: 'Wow' },
+        { value: '5', label: 'Buồn' }, { value: '6', label: 'Giận' },
       ],
     },
     {
@@ -665,8 +661,8 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       key: 'labelSource', label: 'Loại nhãn', type: 'select',
       desc: 'Chọn Nhãn Local (quản lý trong CRM) hoặc nhãn Zalo (đồng bộ với ứng dụng Zalo).',
       options: [
-        { value: 'local', label: '🏷️ Nhãn Local (quản lý trong app)' },
-        { value: 'zalo',  label: '🏷️ Nhãn Zalo (đồng bộ Zalo)' },
+        { value: 'local', label: 'Nhãn Local (quản lý trong app)' },
+        { value: 'zalo',  label: 'Nhãn Zalo (đồng bộ Zalo)' },
       ],
     },
     {
@@ -686,8 +682,8 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       key: 'labelSource', label: 'Loại nhãn', type: 'select',
       desc: 'Chọn loại nhãn cần gỡ.',
       options: [
-        { value: 'local', label: '🏷️ Nhãn Local (quản lý trong app)' },
-        { value: 'zalo',  label: '🏷️ Nhãn Zalo (đồng bộ Zalo)' },
+        { value: 'local', label: 'Nhãn Local (quản lý trong app)' },
+        { value: 'zalo',  label: 'Nhãn Zalo (đồng bộ Zalo)' },
       ],
     },
     {
@@ -713,17 +709,17 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       key: 'operator', label: 'Điều kiện so sánh', type: 'select',
       desc: 'Quy tắc so sánh giữa hai giá trị.',
       options: [
-        { value: 'contains',     label: '⊇ Có chứa chuỗi' },
-        { value: 'not_contains', label: '⊅ Không chứa chuỗi' },
+        { value: 'contains',     label: 'Có chứa chuỗi' },
+        { value: 'not_contains', label: 'Không chứa chuỗi' },
         { value: 'equals',       label: '= Bằng chính xác' },
-        { value: 'not_equals',   label: '≠ Khác' },
-        { value: 'starts_with',  label: '↳ Bắt đầu bằng' },
-        { value: 'ends_with',    label: '↲ Kết thúc bằng' },
+        { value: 'not_equals',   label: 'Khác' },
+        { value: 'starts_with',  label: 'Bắt đầu bằng' },
+        { value: 'ends_with',    label: 'Kết thúc bằng' },
         { value: 'greater_than', label: '> Lớn hơn (số)' },
         { value: 'less_than',    label: '< Nhỏ hơn (số)' },
-        { value: 'is_empty',     label: '○ Rỗng / trống' },
-        { value: 'not_empty',    label: '● Không rỗng' },
-        { value: 'regex',        label: '🔬 Regex (nâng cao)' },
+        { value: 'is_empty',     label: 'Rỗng / trống' },
+        { value: 'not_empty',    label: 'Không rỗng' },
+        { value: 'regex',        label: 'Regex (nâng cao)' },
       ],
     },
     {
@@ -783,8 +779,8 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       desc: 'Nếu thoả mãn điều kiện này, workflow sẽ dừng.',
       options: [
         { value: 'equals',       label: '= Bằng' }, { value: 'not_equals',   label: '≠ Khác' },
-        { value: 'contains',     label: '⊇ Có chứa' }, { value: 'not_contains', label: '⊅ Không chứa' },
-        { value: 'is_empty',     label: '○ Rỗng' }, { value: 'not_empty',    label: '● Không rỗng' },
+        { value: 'contains',     label: 'Có chứa' }, { value: 'not_contains', label: '⊅ Không chứa' },
+        { value: 'is_empty',     label: 'Rỗng' }, { value: 'not_empty',    label: '● Không rỗng' },
       ],
     },
     {
@@ -826,10 +822,10 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       key: 'format', label: 'Định dạng hiển thị ngày giờ', type: 'select',
       desc: 'Chọn cách hiển thị ngày giờ trong kết quả.',
       options: [
-        { value: 'datetime', label: '📅 Ngày + Giờ   (25/03/2026 14:30)' },
-        { value: 'date',     label: '📆 Chỉ ngày      (25/03/2026)' },
-        { value: 'time',     label: '🕐 Chỉ giờ       (14:30)' },
-        { value: 'full',     label: '🗓️ Đầy đủ        (Thứ Tư, 25/3/2026)' },
+	{ value: 'datetime', label: 'Ngày + Giờ (25/03/2026 14:30)' },
+	{ value: 'date', label: 'Chỉ ngày (25/03/2026)' },
+	{ value: 'time', label: 'Chỉ giờ (14:30)' },
+	{ value: 'full', label: 'Đầy đủ (Thứ Tư, 25/3/2026)' },
       ],
     },
     {
@@ -898,9 +894,9 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       key: 'level', label: 'Mức độ log', type: 'select',
       desc: 'Phân loại mức độ thông điệp.',
       options: [
-        { value: 'info',  label: 'ℹ️ Info - Thông tin bình thường' },
-        { value: 'warn',  label: '⚠️ Warn - Cảnh báo cần chú ý' },
-        { value: 'error', label: '❌ Error - Lỗi nghiêm trọng' },
+        { value: 'info',  label: 'Info - Thông tin bình thường' },
+        { value: 'warn',  label: 'Warn - Cảnh báo cần chú ý' },
+        { value: 'error', label: 'Error - Lỗi nghiêm trọng' },
       ],
     },
   ],
@@ -981,12 +977,12 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       key: 'aiConfigMode', label: 'Cách cấu hình AI', type: 'select',
       desc: 'Chọn trợ lý đã tạo sẵn (nhanh, tiện) hoặc tự nhập API key & model thủ công.',
       options: [
-        { value: 'assistant', label: '🤖 Chọn trợ lý AI đã tạo' },
-        { value: 'manual',    label: '⚙️ Cài đặt thủ công (API key, model...)' },
+        { value: 'assistant', label: 'Chọn trợ lý AI đã tạo' },
+        { value: 'manual',    label: 'Cài đặt thủ công (API key, model...)' },
       ],
     },
     {
-      key: 'assistantId', label: '🤖 Chọn trợ lý AI', type: 'assistant-picker',
+      key: 'assistantId', label: 'Chọn trợ lý AI', type: 'assistant-picker',
       desc: 'Chọn trợ lý đã tạo trong Tích hợp → Trợ lý AI. Sẽ dùng API key, model, system prompt từ trợ lý đó.',
       hideWhenKey: 'aiConfigMode', hideWhenValue: 'manual',
     },
@@ -994,13 +990,13 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       key: 'platform', label: 'Nền tảng AI', type: 'select',
       desc: 'Chọn nhà cung cấp AI. Mỗi nền tảng cần API key riêng.',
       options: [
-        { value: 'openai',   label: '🤖 OpenAI (ChatGPT)' },
-        { value: 'gemini',   label: '💎 Google Gemini' },
-        { value: 'claude',   label: '🟠 Anthropic Claude' },
-        { value: 'deepseek', label: '🔮 Deepseek' },
-        { value: 'grok',     label: '⚡ Grok (xAI)' },
-        { value: 'mistral',  label: '🌀 Mistral AI' },
-        { value: 'openrouter', label: '🔀 OpenRouter' },
+        { value: 'openai',   label: 'OpenAI (ChatGPT)' },
+        { value: 'gemini',   label: 'Google Gemini' },
+        { value: 'claude',   label: 'Anthropic Claude' },
+        { value: 'deepseek', label: 'Deepseek' },
+        { value: 'grok',     label: 'Grok (xAI)' },
+        { value: 'mistral',  label: 'Mistral AI' },
+        { value: 'openrouter', label: 'OpenRouter' },
       ],
       hideWhenKey: 'aiConfigMode', hideWhenValue: 'assistant',
       clearsKeyOnChange: ['model'],
@@ -1010,52 +1006,52 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       desc: 'Chọn model phù hợp với nền tảng đã chọn ở trên.',
       options: [
         // OpenAI
-        { value: 'gpt-5.4',          label: '🤖 GPT-5.4 - Flagship mới nhất (OpenAI)' },
-        { value: 'gpt-5.4-pro',      label: '🤖 GPT-5.4 Pro - Thông minh nhất (OpenAI)' },
-        { value: 'gpt-5.4-mini',     label: '🤖 GPT-5.4 Mini - Code, subagent (OpenAI - khuyến nghị)' },
-        { value: 'gpt-5.4-nano',     label: '🤖 GPT-5.4 Nano - Siêu rẻ (OpenAI)' },
-        { value: 'gpt-5-mini',       label: '🤖 GPT-5 Mini - Cân bằng, giá tốt (OpenAI)' },
-        { value: 'gpt-5-nano',       label: '🤖 GPT-5 Nano - Nhanh, rẻ nhất (OpenAI)' },
-        { value: 'gpt-5',            label: '🤖 GPT-5 - Lý luận mạnh (OpenAI)' },
-        { value: 'o4-mini',          label: '🤖 o4-mini - Lý luận nhanh (OpenAI)' },
-        { value: 'o3',               label: '🤖 o3 - Lý luận mạnh (OpenAI)' },
-        { value: 'gpt-4.1',          label: '🤖 GPT-4.1 - Legacy non-reasoning (OpenAI)' },
+        { value: 'gpt-5.4',          label: 'GPT-5.4 - Flagship mới nhất (OpenAI)' },
+        { value: 'gpt-5.4-pro',      label: 'GPT-5.4 Pro - Thông minh nhất (OpenAI)' },
+        { value: 'gpt-5.4-mini',     label: 'GPT-5.4 Mini - Code, subagent (OpenAI - khuyến nghị)' },
+        { value: 'gpt-5.4-nano',     label: 'GPT-5.4 Nano - Siêu rẻ (OpenAI)' },
+        { value: 'gpt-5-mini',       label: 'GPT-5 Mini - Cân bằng, giá tốt (OpenAI)' },
+        { value: 'gpt-5-nano',       label: 'GPT-5 Nano - Nhanh, rẻ nhất (OpenAI)' },
+        { value: 'gpt-5',            label: 'GPT-5 - Lý luận mạnh (OpenAI)' },
+        { value: 'o4-mini',          label: 'o4-mini - Lý luận nhanh (OpenAI)' },
+        { value: 'o3',               label: 'o3 - Lý luận mạnh (OpenAI)' },
+        { value: 'gpt-4.1',          label: 'GPT-4.1 - Legacy non-reasoning (OpenAI)' },
         // Gemini
-        { value: 'gemini-3.5-flash',        label: '💎 Gemini 3.5 Flash - Mới nhất (Google - khuyến nghị)' },
-        { value: 'gemini-3.1-pro-preview',  label: '💎 Gemini 3.1 Pro Preview - Mạnh nhất (Google)' },
-        { value: 'gemini-3-flash-preview',  label: '💎 Gemini 3 Flash Preview - Nhanh (Google)' },
-        { value: 'gemini-2.5-pro',          label: '💎 Gemini 2.5 Pro - Legacy ổn định (Google)' },
+        { value: 'gemini-3.5-flash',        label: 'Gemini 3.5 Flash - Mới nhất (Google - khuyến nghị)' },
+        { value: 'gemini-3.1-pro-preview',  label: 'Gemini 3.1 Pro Preview - Mạnh nhất (Google)' },
+        { value: 'gemini-3-flash-preview',  label: 'Gemini 3 Flash Preview - Nhanh (Google)' },
+        { value: 'gemini-2.5-pro',          label: 'Gemini 2.5 Pro - Legacy ổn định (Google)' },
         // Claude (Anthropic)
-        { value: 'claude-4.6-sonnet-20260301',  label: '🟠 Claude 4.6 Sonnet - Mới nhất (Anthropic - khuyến nghị)' },
-        { value: 'claude-4.5-sonnet-20260115',  label: '🟠 Claude 4.5 Sonnet - Cân bằng (Anthropic)' },
-        { value: 'claude-4.0-haiku-20260101',   label: '🟠 Claude 4.0 Haiku - Nhanh, rẻ (Anthropic)' },
-        { value: 'claude-4.0-opus-20260101',    label: '🟠 Claude 4.0 Opus - Mạnh nhất gen 4 (Anthropic)' },
-        { value: 'claude-sonnet-4-20250514',    label: '🟠 Claude Sonnet 4 - Legacy (Anthropic)' },
+        { value: 'claude-4.6-sonnet-20260301',  label: 'Claude 4.6 Sonnet - Mới nhất (Anthropic - khuyến nghị)' },
+        { value: 'claude-4.5-sonnet-20260115',  label: 'Claude 4.5 Sonnet - Cân bằng (Anthropic)' },
+        { value: 'claude-4.0-haiku-20260101',   label: 'Claude 4.0 Haiku - Nhanh, rẻ (Anthropic)' },
+        { value: 'claude-4.0-opus-20260101',    label: 'Claude 4.0 Opus - Mạnh nhất gen 4 (Anthropic)' },
+        { value: 'claude-sonnet-4-20250514',    label: 'Claude Sonnet 4 - Legacy (Anthropic)' },
         // Deepseek
-        { value: 'deepseek-v4-flash',  label: '🔮 Deepseek V4 Flash - Mới nhất (Deepseek - khuyến nghị)' },
-        { value: 'deepseek-v4-pro',    label: '🔮 Deepseek V4 Pro - Thinking, mạnh nhất (Deepseek)' },
-        { value: 'deepseek-reasoner',  label: '🔮 Deepseek R1 - Lý luận ổn định (Deepseek)' },
+        { value: 'deepseek-v4-flash',  label: 'Deepseek V4 Flash - Mới nhất (Deepseek - khuyến nghị)' },
+        { value: 'deepseek-v4-pro',    label: 'Deepseek V4 Pro - Thinking, mạnh nhất (Deepseek)' },
+        { value: 'deepseek-reasoner',  label: 'Deepseek R1 - Lý luận ổn định (Deepseek)' },
         // Grok
-        { value: 'grok-4-fast',      label: '⚡ Grok 4 Fast - Nhanh (xAI - khuyến nghị)' },
-        { value: 'grok-4',           label: '⚡ Grok 4 - Flagship (xAI)' },
-        { value: 'grok-4-mini',      label: '⚡ Grok 4 Mini - Lý luận, rẻ (xAI)' },
-        { value: 'grok-4-mini-fast', label: '⚡ Grok 4 Mini Fast - Siêu nhanh (xAI)' },
-        { value: 'grok-3',           label: '⚡ Grok 3 - Legacy ổn định (xAI)' },
+        { value: 'grok-4-fast',      label: 'Grok 4 Fast - Nhanh (xAI - khuyến nghị)' },
+        { value: 'grok-4',           label: 'Grok 4 - Flagship (xAI)' },
+        { value: 'grok-4-mini',      label: 'Grok 4 Mini - Lý luận, rẻ (xAI)' },
+        { value: 'grok-4-mini-fast', label: 'Grok 4 Mini Fast - Siêu nhanh (xAI)' },
+        { value: 'grok-3',           label: 'Grok 3 - Legacy ổn định (xAI)' },
         // Mistral
-        { value: 'mistral-large-2-latest',  label: '🌀 Mistral Large 2 - Mạnh nhất (Mistral - khuyến nghị)' },
-        { value: 'codestral-2-latest',      label: '🌀 Codestral 2 - Code chuyên dụng (Mistral)' },
-        { value: 'mistral-small-3-latest',  label: '🌀 Mistral Small 3 - Nhanh, rẻ (Mistral)' },
-        { value: 'mistral-medium-latest',   label: '🌀 Mistral Medium - Cân bằng (Mistral)' },
-        { value: 'open-mistral-nemo-2',     label: '🌀 Mistral Nemo 2 - Nhẹ (Mistral)' },
+        { value: 'mistral-large-2-latest',  label: 'Mistral Large 2 - Mạnh nhất (Mistral - khuyến nghị)' },
+        { value: 'codestral-2-latest',      label: 'Codestral 2 - Code chuyên dụng (Mistral)' },
+        { value: 'mistral-small-3-latest',  label: 'Mistral Small 3 - Nhanh, rẻ (Mistral)' },
+        { value: 'mistral-medium-latest',   label: 'Mistral Medium - Cân bằng (Mistral)' },
+        { value: 'open-mistral-nemo-2',     label: 'Mistral Nemo 2 - Nhẹ (Mistral)' },
         // OpenRouter
-        { value: 'openrouter/auto',             label: '🔀 Auto Router - Tự chọn model tốt nhất (OpenRouter - khuyến nghị)' },
-        { value: 'openai/gpt-5.4-mini',         label: '🔀 GPT-5.4 Mini - OpenAI qua OpenRouter' },
-        { value: 'anthropic/claude-4.6-sonnet', label: '🔀 Claude 4.6 Sonnet - Anthropic qua OpenRouter' },
-        { value: 'google/gemini-3.5-flash',     label: '🔀 Gemini 3.5 Flash - Google qua OpenRouter' },
-        { value: 'deepseek/deepseek-v4-flash',  label: '🔀 DeepSeek V4 Flash - Rẻ, nhanh (OpenRouter)' },
-        { value: 'meta-llama/llama-4-maverick', label: '🔀 Llama 4 Maverick - Meta, open-source (OpenRouter)' },
-        { value: 'qwen/qwen3-max',              label: '🔀 Qwen3 Max - Alibaba (OpenRouter)' },
-        { value: 'mistralai/mistral-large-2',   label: '🔀 Mistral Large 2 (OpenRouter)' },
+        { value: 'openrouter/auto',             label: 'Auto Router - Tự chọn model tốt nhất (OpenRouter - khuyến nghị)' },
+        { value: 'openai/gpt-5.4-mini',         label: 'GPT-5.4 Mini - OpenAI qua OpenRouter' },
+        { value: 'anthropic/claude-4.6-sonnet', label: 'Claude 4.6 Sonnet - Anthropic qua OpenRouter' },
+        { value: 'google/gemini-3.5-flash',     label: 'Gemini 3.5 Flash - Google qua OpenRouter' },
+        { value: 'deepseek/deepseek-v4-flash',  label: 'DeepSeek V4 Flash - Rẻ, nhanh (OpenRouter)' },
+        { value: 'meta-llama/llama-4-maverick', label: 'Llama 4 Maverick - Meta, open-source (OpenRouter)' },
+        { value: 'qwen/qwen3-max',              label: 'Qwen3 Max - Alibaba (OpenRouter)' },
+        { value: 'mistralai/mistral-large-2',   label: 'Mistral Large 2 (OpenRouter)' },
       ],
       optionsFilter: { key: 'platform', map: {
         openai:   ['gpt-5.4', 'gpt-5.4-pro', 'gpt-5.4-mini', 'gpt-5.4-nano', 'gpt-5-mini', 'gpt-5-nano', 'gpt-5', 'o4-mini', 'o3', 'gpt-4.1'],
@@ -1116,12 +1112,12 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       key: 'aiConfigMode', label: 'Cách cấu hình AI', type: 'select',
       desc: 'Chọn trợ lý đã tạo sẵn (nhanh, tiện) hoặc tự nhập API key & model thủ công.',
       options: [
-        { value: 'assistant', label: '🤖 Chọn trợ lý AI đã tạo' },
-        { value: 'manual',    label: '⚙️ Cài đặt thủ công (API key, model...)' },
+        { value: 'assistant', label: 'Chọn trợ lý AI đã tạo' },
+        { value: 'manual',    label: 'Cài đặt thủ công (API key, model...)' },
       ],
     },
     {
-      key: 'assistantId', label: '🤖 Chọn trợ lý AI', type: 'assistant-picker',
+      key: 'assistantId', label: 'Chọn trợ lý AI', type: 'assistant-picker',
       desc: 'Chọn trợ lý đã tạo trong Tích hợp → Trợ lý AI. Sẽ dùng API key, model, system prompt từ trợ lý đó.',
       hideWhenKey: 'aiConfigMode', hideWhenValue: 'manual',
     },
@@ -1129,13 +1125,13 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       key: 'platform', label: 'Nền tảng AI', type: 'select',
       desc: 'Chọn nhà cung cấp AI.',
       options: [
-        { value: 'openai',   label: '🤖 OpenAI (ChatGPT)' },
-        { value: 'gemini',   label: '💎 Google Gemini' },
-        { value: 'claude',   label: '🟠 Anthropic Claude' },
-        { value: 'deepseek', label: '🔮 Deepseek' },
-        { value: 'grok',     label: '⚡ Grok (xAI)' },
-        { value: 'mistral',  label: '🌀 Mistral AI' },
-        { value: 'openrouter', label: '🔀 OpenRouter' },
+        { value: 'openai',   label: 'OpenAI (ChatGPT)' },
+        { value: 'gemini',   label: 'Google Gemini' },
+        { value: 'claude',   label: 'Anthropic Claude' },
+        { value: 'deepseek', label: 'Deepseek' },
+        { value: 'grok',     label: 'Grok (xAI)' },
+        { value: 'mistral',  label: 'Mistral AI' },
+        { value: 'openrouter', label: 'OpenRouter' },
       ],
       hideWhenKey: 'aiConfigMode', hideWhenValue: 'assistant',
       clearsKeyOnChange: ['model'],
@@ -1161,22 +1157,22 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       key: 'model', label: 'Model AI', type: 'select',
       desc: 'Chọn model phù hợp với nền tảng đã chọn ở trên.',
       options: [
-        { value: 'gpt-5.4-mini',     label: '🤖 GPT-5.4 Mini - Code, subagent (OpenAI - khuyến nghị)' },
-        { value: 'gpt-5-mini',       label: '🤖 GPT-5 Mini - Cân bằng, giá tốt (OpenAI)' },
-        { value: 'gpt-5.4',          label: '🤖 GPT-5.4 - Flagship (OpenAI)' },
-        { value: 'gemini-3.5-flash',        label: '💎 Gemini 3.5 Flash (Google - khuyến nghị)' },
-        { value: 'gemini-3.1-pro-preview',  label: '💎 Gemini 3.1 Pro Preview (Google)' },
-        { value: 'gemini-3-flash-preview',  label: '💎 Gemini 3 Flash Preview (Google)' },
-        { value: 'claude-4.6-sonnet-20260301',  label: '🟠 Claude 4.6 Sonnet (Anthropic - khuyến nghị)' },
-        { value: 'claude-4.0-haiku-20260101',   label: '🟠 Claude 4.0 Haiku - Nhanh (Anthropic)' },
-        { value: 'deepseek-v4-flash',  label: '🔮 Deepseek V4 Flash (Deepseek - khuyến nghị)' },
-        { value: 'deepseek-v4-pro',    label: '🔮 Deepseek V4 Pro - Thinking (Deepseek)' },
-        { value: 'grok-4-fast',      label: '⚡ Grok 4 Fast (xAI - khuyến nghị)' },
-        { value: 'grok-4-mini-fast', label: '⚡ Grok 4 Mini Fast - Siêu nhanh (xAI)' },
-        { value: 'mistral-large-2-latest', label: '🌀 Mistral Large 2 (Mistral - khuyến nghị)' },
-        { value: 'mistral-small-3-latest', label: '🌀 Mistral Small 3 - Nhanh, rẻ (Mistral)' },
-        { value: 'openrouter/auto',            label: '🔀 Auto Router (OpenRouter - khuyến nghị)' },
-        { value: 'deepseek/deepseek-v4-flash', label: '🔀 DeepSeek V4 Flash - Rẻ, nhanh (OpenRouter)' },
+        { value: 'gpt-5.4-mini',     label: 'GPT-5.4 Mini - Code, subagent (OpenAI - khuyến nghị)' },
+        { value: 'gpt-5-mini',       label: 'GPT-5 Mini - Cân bằng, giá tốt (OpenAI)' },
+        { value: 'gpt-5.4',          label: 'GPT-5.4 - Flagship (OpenAI)' },
+        { value: 'gemini-3.5-flash',        label: 'Gemini 3.5 Flash (Google - khuyến nghị)' },
+        { value: 'gemini-3.1-pro-preview',  label: 'Gemini 3.1 Pro Preview (Google)' },
+        { value: 'gemini-3-flash-preview',  label: 'Gemini 3 Flash Preview (Google)' },
+        { value: 'claude-4.6-sonnet-20260301',  label: 'Claude 4.6 Sonnet (Anthropic - khuyến nghị)' },
+        { value: 'claude-4.0-haiku-20260101',   label: 'Claude 4.0 Haiku - Nhanh (Anthropic)' },
+        { value: 'deepseek-v4-flash',  label: 'Deepseek V4 Flash (Deepseek - khuyến nghị)' },
+        { value: 'deepseek-v4-pro',    label: 'Deepseek V4 Pro - Thinking (Deepseek)' },
+        { value: 'grok-4-fast',      label: 'Grok 4 Fast (xAI - khuyến nghị)' },
+        { value: 'grok-4-mini-fast', label: 'Grok 4 Mini Fast - Siêu nhanh (xAI)' },
+        { value: 'mistral-large-2-latest', label: 'Mistral Large 2 (Mistral - khuyến nghị)' },
+        { value: 'mistral-small-3-latest', label: 'Mistral Small 3 - Nhanh, rẻ (Mistral)' },
+        { value: 'openrouter/auto',            label: 'Auto Router (OpenRouter - khuyến nghị)' },
+        { value: 'deepseek/deepseek-v4-flash', label: 'DeepSeek V4 Flash - Rẻ, nhanh (OpenRouter)' },
       ],
       optionsFilter: { key: 'platform', map: {
         openai:   ['gpt-5.4-mini', 'gpt-5-mini', 'gpt-5.4'],
@@ -1696,9 +1692,9 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       key: 'threadType', label: 'Nguồn tin nhắn', type: 'select',
       desc: 'Workflow sẽ lắng nghe tin nhắn từ đâu?',
       options: [
-        { value: 'all', label: '📩 Tất cả (cá nhân + nhóm)' },
-        { value: '0',   label: '👤 Chỉ tin nhắn cá nhân' },
-        { value: '1',   label: '👥 Chỉ tin nhắn nhóm' },
+        { value: 'all', label: 'Tất cả (cá nhân + nhóm)' },
+        { value: '0',   label: 'Chỉ tin nhắn cá nhân' },
+        { value: '1',   label: 'Chỉ tin nhắn nhóm' },
       ],
     },
     {
@@ -1714,7 +1710,7 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
         { value: 'contains_all', label: 'Phải chứa đủ tất cả từ khóa' },
         { value: 'equals',       label: 'Khớp chính xác nguyên câu' },
         { value: 'starts_with',  label: 'Bắt đầu bằng từ khóa' },
-        { value: 'regex',        label: '🔬 Regex - biểu thức chính quy (nâng cao)' },
+        { value: 'regex',        label: 'Regex - biểu thức chính quy (nâng cao)' },
       ],
     },
     {
@@ -1744,7 +1740,7 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       advanced: true,
     },
     {
-      key: 'debounceSeconds', label: '⏳ Gom tin nhắn liên tiếp (giây)', type: 'number',
+      key: 'debounceSeconds', label: 'Gom tin nhắn liên tiếp (giây)', type: 'number',
       placeholder: '0',
       desc: 'Chờ N giây sau tin nhắn cuối cùng rồi mới chạy workflow (gom tất cả tin nhắn liên tiếp thành 1 lần xử lý). 0 = chạy ngay mỗi tin.',
       advanced: true,
@@ -1787,13 +1783,13 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       key: 'reactionType', label: 'Loại cảm xúc', type: 'select',
       desc: 'Workflow chạy khi tin nhắn nhận được cảm xúc nào?',
       options: [
-        { value: 'any', label: '💬 Bất kỳ cảm xúc nào' },
-        { value: '👍',  label: '👍 Like' },
-        { value: '❤️',  label: '❤️ Yêu thích' },
-        { value: '😂',  label: '😂 Haha' },
-        { value: '😮',  label: '😮 Wow' },
-        { value: '😢',  label: '😢 Buồn' },
-        { value: '😡',  label: '😡 Giận' },
+        { value: 'any', label: 'Bất kỳ cảm xúc nào' },
+        { value: '👍',  label: 'Like' },
+        { value: '❤️',  label: 'Yêu thích' },
+        { value: '😂',  label: 'Haha' },
+        { value: '😮',  label: 'Wow' },
+        { value: '😢',  label: 'Buồn' },
+        { value: '😡',  label: 'Giận' },
       ],
     },
     {
@@ -1816,9 +1812,9 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       key: 'eventType', label: 'Sự kiện cần theo dõi', type: 'select',
       desc: 'Chọn loại sự kiện trong nhóm Facebook sẽ kích hoạt workflow.',
       options: [
-        { value: 'all',              label: '🔔 Mọi sự kiện nhóm' },
-        { value: 'participant_added', label: '➕ Thành viên mới tham gia' },
-        { value: 'participant_left',  label: '➖ Thành viên rời nhóm' },
+        { value: 'all',              label: 'Mọi sự kiện nhóm' },
+        { value: 'participant_added', label: 'Thành viên mới tham gia' },
+        { value: 'participant_left',  label: 'Thành viên rời nhóm' },
       ],
     },
     {
@@ -1879,12 +1875,12 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       key: 'emoji', label: 'Biểu tượng cảm xúc', type: 'select',
       desc: 'Chọn emoji reaction để thả vào tin nhắn.',
       options: [
-        { value: '👍', label: '👍 Like' },
-        { value: '❤️', label: '❤️ Yêu thích' },
-        { value: '😂', label: '😂 Haha' },
-        { value: '😮', label: '😮 Wow' },
-        { value: '😢', label: '😢 Buồn' },
-        { value: '😡', label: '😡 Giận' },
+        { value: '👍', label: 'Like' },
+        { value: '❤️', label: 'Yêu thích' },
+        { value: '😂', label: 'Haha' },
+        { value: '😮', label: 'Wow' },
+        { value: '😢', label: 'Buồn' },
+        { value: '😡', label: 'Giận' },
       ],
     },
     {
@@ -2001,8 +1997,8 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       key: 'isTyping', label: 'Trạng thái', type: 'select',
       desc: 'Bật để hiển thị "đang gõ...", tắt để ẩn.',
       options: [
-        { value: 'true', label: '💬 Đang gõ...' },
-        { value: 'false', label: '🙊 Ẩn trạng thái' },
+        { value: 'true', label: 'Đang gõ...' },
+        { value: 'false', label: 'Ẩn trạng thái' },
       ],
     },
   ],
@@ -2082,7 +2078,7 @@ interface Props {
 const inputCls  = 'w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-colors';
 const selectCls = 'w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors cursor-pointer [&>option]:bg-gray-800 [&>option]:text-white';
 const labelCls  = 'text-xs font-semibold text-gray-300 block mb-1';
-const descCls   = 'text-[11px] text-gray-500 mt-1.5 leading-relaxed';
+const descCls   = 'text-[11px] text-gray-400 mt-1.5 leading-relaxed';
 const hintCls   = 'text-[11px] text-blue-400/80 mt-1 leading-relaxed';
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -2176,9 +2172,9 @@ function HtmlEditorField({ value, onChange, placeholder, templateVars }: {
     { icon: 'P',  title: 'Đoạn văn',    action: () => wrap('<p>','</p>'),     cls: '' },
     { icon: '↵',  title: 'Xuống dòng',  action: () => insertLine('<br/>'),    cls: '' },
     { icon: '≡',  title: 'Danh sách',   action: () => insertLine('<ul>\n  <li>Mục 1</li>\n  <li>Mục 2</li>\n</ul>'), cls: '' },
-    { icon: '🔗', title: 'Liên kết',    action: () => wrap('<a href="https://">','</a>'), cls: '' },
+    { icon: <LinkIcon className="w-4 h-4" />, title: 'Liên kết',    action: () => wrap('<a href="https://">','</a>'), cls: '' },
     { icon: '━',  title: 'Đường kẻ',    action: () => insertLine('<hr/>'),    cls: '' },
-    { icon: '🎨', title: 'Màu chữ đỏ',  action: () => wrap('<span style="color:#e11d48">','</span>'), cls: '' },
+    { icon: <PaletteIcon className="w-4 h-4" />, title: 'Màu chữ đỏ',  action: () => wrap('<span style="color:#e11d48">','</span>'), cls: '' },
   ];
 
   return (
@@ -2187,19 +2183,19 @@ function HtmlEditorField({ value, onChange, placeholder, templateVars }: {
       <div className="flex items-stretch bg-gray-800/80 border-b border-gray-700">
         <button type="button" onClick={() => setTab('edit')}
           className={`px-3 py-1.5 text-[11px] font-medium transition-colors border-r border-gray-700
-            ${tab === 'edit' ? 'text-white bg-gray-700/80' : 'text-gray-500 hover:text-gray-300'}`}>
+            ${tab === 'edit' ? 'text-white bg-gray-700/80' : 'text-gray-400 hover:text-gray-300'}`}>
           ✏️ Soạn thảo
         </button>
         <button type="button" onClick={() => setTab('preview')}
           className={`px-3 py-1.5 text-[11px] font-medium transition-colors border-r border-gray-700
-            ${tab === 'preview' ? 'text-white bg-gray-700/80' : 'text-gray-500 hover:text-gray-300'}`}>
+            ${tab === 'preview' ? 'text-white bg-gray-700/80' : 'text-gray-400 hover:text-gray-300'}`}>
           👁 Xem trước
         </button>
         {/* Toolbar - only in edit mode */}
         {tab === 'edit' && (
           <div className="flex items-center gap-0.5 px-1.5 flex-1 overflow-x-auto scrollbar-none">
             {TOOLBAR.map(btn => (
-              <button key={btn.icon} type="button" title={btn.title} onClick={btn.action}
+              <button key={btn.title} type="button" title={btn.title} onClick={btn.action}
                 className={`flex-shrink-0 text-[11px] w-6 h-6 flex items-center justify-center rounded hover:bg-gray-600 text-gray-400 hover:text-white transition-colors ${btn.cls}`}>
                 {btn.icon}
               </button>
@@ -2223,7 +2219,7 @@ function HtmlEditorField({ value, onChange, placeholder, templateVars }: {
           {/* Var chips inside editor */}
           {templateVars && templateVars.length > 0 && (
             <div className="flex flex-wrap gap-1 px-2 pb-2 border-t border-gray-700/50 pt-1.5 bg-gray-800/30">
-              <span className="text-[9px] text-gray-600 self-center mr-0.5">Chèn:</span>
+              <span className="text-[9px] text-gray-400 self-center mr-0.5">Chèn:</span>
               {templateVars.map(v => (
                 <button key={v} type="button"
                   onClick={() => { const tag = `{{ ${v} }}`; insertLine(tag); navigator.clipboard.writeText(tag).catch(() => {}); }}
@@ -2421,7 +2417,7 @@ function LabelPickerModal({
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700 bg-gray-800/50">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-500 to-purple-600 flex items-center justify-center">
-              <span className="text-xl">🏷️</span>
+              <span className="text-xl"><TagIcon className="w-4 h-4" /></span>
             </div>
             <div>
               <h2 className="text-base font-semibold text-white">Chọn nhãn</h2>
@@ -2446,7 +2442,7 @@ function LabelPickerModal({
           {/* ─── Left: Account Sidebar ─── */}
           <div className="w-60 border-r border-gray-700 bg-gray-800/30 flex flex-col">
             <div className="px-3 py-2.5 border-b border-gray-700/50">
-              <span className="text-[10px] text-gray-500 uppercase tracking-wide font-medium">
+              <span className="text-[10px] text-gray-400 uppercase tracking-wide font-medium">
                 Tài khoản
               </span>
             </div>
@@ -2461,12 +2457,10 @@ function LabelPickerModal({
                     : 'hover:bg-gray-700/50 text-gray-400 hover:text-gray-300 border border-transparent'
                 }`}
               >
-                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center text-white text-sm">
-                  📋
-                </div>
+                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center text-white text-sm"><ClipboardListIcon className="w-4 h-4 inline" /> </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-xs font-medium truncate">Tất cả</div>
-                  <div className="text-[10px] text-gray-500">
+                  <div className="text-[10px] text-gray-400">
                     {(activeTab === 'local' ? localOpts : zaloOpts).length} nhãn
                   </div>
                 </div>
@@ -2491,7 +2485,7 @@ function LabelPickerModal({
                       <div className="text-xs font-medium truncate">
                         {acc.full_name || acc.display_name || acc.zalo_id}
                       </div>
-                      <div className="flex items-center gap-1.5 text-[10px] text-gray-500">
+                      <div className="flex items-center gap-1.5 text-[10px] text-gray-400">
                         {acc.phone && <span>{formatPhoneDisplay(acc.phone)}</span>}
                         <span>•</span>
                         <span>{acc.labelCount} nhãn</span>
@@ -2505,7 +2499,7 @@ function LabelPickerModal({
               })}
 
               {accountsWithLabels.length === 0 && (
-                <div className="px-3 py-4 text-center text-xs text-gray-500">
+                <div className="px-3 py-4 text-center text-xs text-gray-400">
                   Không có tài khoản nào có nhãn {activeTab === 'local' ? 'Local' : 'Zalo'}
                 </div>
               )}
@@ -2522,14 +2516,14 @@ function LabelPickerModal({
                 className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-all border-b-2 ${
                   activeTab === 'local'
                     ? 'border-teal-500 text-teal-400 bg-teal-500/5'
-                    : 'border-transparent text-gray-500 hover:text-gray-300 hover:bg-gray-700/30'
+                    : 'border-transparent text-gray-400 hover:text-gray-300 hover:bg-gray-700/30'
                 }`}
               >
-                <span>💾</span>
+                <span><HardDriveIcon className="w-4 h-4" /></span>
                 <span>Nhãn Local</span>
                 {localOpts.length > 0 && (
                   <span className={`text-xs px-2 py-0.5 rounded-full ${
-                    activeTab === 'local' ? 'bg-teal-500/20 text-teal-400' : 'bg-gray-700 text-gray-500'
+                    activeTab === 'local' ? 'bg-teal-500/20 text-teal-400' : 'bg-gray-700 text-gray-400'
                   }`}>
                     {localOpts.length}
                   </span>
@@ -2541,14 +2535,14 @@ function LabelPickerModal({
                 className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-all border-b-2 ${
                   activeTab === 'zalo'
                     ? 'border-purple-500 text-purple-400 bg-purple-500/5'
-                    : 'border-transparent text-gray-500 hover:text-gray-300 hover:bg-gray-700/30'
+                    : 'border-transparent text-gray-400 hover:text-gray-300 hover:bg-gray-700/30'
                 }`}
               >
                 <span>☁️</span>
                 <span>Nhãn Zalo</span>
                 {zaloOpts.length > 0 && (
                   <span className={`text-xs px-2 py-0.5 rounded-full ${
-                    activeTab === 'zalo' ? 'bg-purple-500/20 text-purple-400' : 'bg-gray-700 text-gray-500'
+                    activeTab === 'zalo' ? 'bg-purple-500/20 text-purple-400' : 'bg-gray-700 text-gray-400'
                   }`}>
                     {zaloOpts.length}
                   </span>
@@ -2559,8 +2553,8 @@ function LabelPickerModal({
             {/* Labels List - Single column */}
             <div className="flex-1 overflow-y-auto p-3">
               {filteredLabels.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-gray-500">
-                  <span className="text-4xl mb-3">🏷️</span>
+                <div className="flex flex-col items-center justify-center py-12 text-gray-400">
+                  <span className="text-4xl mb-3 justify-center"><TagIcon className="w-4 h-4" /></span>
                   <p className="text-sm">Không có nhãn nào</p>
                   <p className="text-xs mt-1">
                     {selectedAccountId !== 'all'
@@ -2649,7 +2643,7 @@ function LabelPickerModal({
 
         {/* Footer */}
         <div className="flex items-center justify-between px-5 py-4 border-t border-gray-700 bg-gray-800/50">
-          <div className="text-xs text-gray-500">
+          <div className="text-xs text-gray-400">
             {selected.length > 0 ? (
               <span>Đã chọn <span className="text-white font-medium">{selected.length}</span> nhãn</span>
             ) : (
@@ -2727,7 +2721,7 @@ function LabelPickerField({
   if (options.length === 0) {
     return (
       <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl px-4 py-4 text-center">
-        <div className="text-xl mb-2">🏷️</div>
+        <div className="text-xl mb-2"><TagIcon className="w-4 h-4" /></div>
         <p className="text-yellow-400 text-xs font-medium">Chưa có nhãn nào</p>
         <p className="text-yellow-400/70 text-[11px] mt-1">Vào <b>CRM → Quản lý nhãn</b> để tạo nhãn trước.</p>
       </div>
@@ -2744,13 +2738,13 @@ function LabelPickerField({
       {selected.length > 0 && (
         <div className="px-3 py-3 border-b border-gray-700/50 bg-gray-800/40">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[10px] text-gray-500 uppercase tracking-wide font-medium">
+            <span className="text-[10px] text-gray-400 uppercase tracking-wide font-medium">
               Đã chọn ({selected.length})
             </span>
             <button
               type="button"
               onClick={() => onChange([])}
-              className="text-[10px] text-gray-500 hover:text-red-400 transition-colors"
+              className="text-[10px] text-gray-400 hover:text-red-400 transition-colors"
             >
               Xóa tất cả
             </button>
@@ -2832,7 +2826,7 @@ function LabelPickerField({
       {/* ── Footer hint ── */}
       {selected.length === 0 && (
         <div className="px-3 py-2 bg-gray-800/30 border-t border-gray-700/50">
-          <p className="text-[10px] text-gray-500 text-center">
+          <p className="text-[10px] text-gray-400 text-center">
             {mode === 'single' ? 'Chọn 1 nhãn để áp dụng' : 'Có thể chọn nhiều nhãn • Để trống = áp dụng với mọi nhãn'}
           </p>
         </div>
@@ -3049,7 +3043,7 @@ function ContactPickerModal({
               <h2 className={`text-base font-semibold ${isLight ? 'text-gray-900' : 'text-white'}`}>
                 {contactType === 'group' ? 'Chọn nhóm' : contactType === 'user' ? 'Chọn liên hệ' : 'Chọn liên hệ / nhóm'}
               </h2>
-              <p className={`text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
+              <p className={`text-xs ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
                 Chọn từ danh bạ Zalo
               </p>
             </div>
@@ -3057,7 +3051,7 @@ function ContactPickerModal({
           <button
             onClick={onClose}
             className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
-              isLight ? 'bg-gray-100 hover:bg-gray-200 text-gray-500' : 'bg-gray-700/50 hover:bg-gray-600 text-gray-400 hover:text-white'
+              isLight ? 'bg-gray-100 hover:bg-gray-200 text-gray-400' : 'bg-gray-700/50 hover:bg-gray-600 text-gray-400 hover:text-white'
             }`}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -3073,7 +3067,7 @@ function ContactPickerModal({
             isLight ? 'bg-gray-50 border-gray-200' : 'bg-gray-800/30 border-gray-700'
           }`}>
             <div className={`px-3 py-2.5 border-b ${isLight ? 'border-gray-200' : 'border-gray-700/50'}`}>
-              <span className={`text-[10px] uppercase tracking-wide font-medium ${isLight ? 'text-gray-500' : 'text-gray-500'}`}>
+              <span className={`text-[10px] uppercase tracking-wide font-medium ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
                 Tài khoản
               </span>
             </div>
@@ -3107,7 +3101,7 @@ function ContactPickerModal({
                         {acc.full_name || acc.display_name || acc.zalo_id}
                       </div>
                       {acc.phone && (
-                        <div className={`text-[10px] ${isLight ? 'text-gray-500' : 'text-gray-500'}`}>
+                        <div className={`text-[10px] ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
                           {acc.phone}
                         </div>
                       )}
@@ -3123,7 +3117,7 @@ function ContactPickerModal({
             {/* Search */}
             <div className={`px-4 py-3 border-b ${isLight ? 'border-gray-200' : 'border-gray-700/50'}`}>
               <div className="relative">
-                <svg className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${isLight ? 'text-gray-400' : 'text-gray-500'}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <svg className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${isLight ? 'text-gray-400' : 'text-gray-400'}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                   <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
                 </svg>
                 <input
@@ -3152,16 +3146,16 @@ function ContactPickerModal({
                         ? 'border-blue-500 text-blue-600 bg-blue-50/50'
                         : 'border-blue-500 text-blue-400 bg-blue-500/5'
                       : isLight
-                        ? 'border-transparent text-gray-500 hover:text-gray-700'
-                        : 'border-transparent text-gray-500 hover:text-gray-300'
+                        ? 'border-transparent text-gray-400 hover:text-gray-700'
+                        : 'border-transparent text-gray-400 hover:text-gray-300'
                   }`}
                 >
-                  <span>📋</span>
+                  <span><ClipboardListIcon className="w-4 h-4" /></span>
                   <span>Tất cả</span>
                   <span className={`text-[10px] px-1.5 py-0.5 rounded ${
                     filterTab === 'all'
                       ? isLight ? 'bg-blue-100 text-blue-600' : 'bg-blue-500/20 text-blue-400'
-                      : isLight ? 'bg-gray-200 text-gray-500' : 'bg-gray-700 text-gray-500'
+                      : isLight ? 'bg-gray-200 text-gray-400' : 'bg-gray-700 text-gray-400'
                   }`}>{contacts.length}</span>
                 </button>
                 <button
@@ -3173,16 +3167,16 @@ function ContactPickerModal({
                         ? 'border-green-500 text-green-600 bg-green-50/50'
                         : 'border-green-500 text-green-400 bg-green-500/5'
                       : isLight
-                        ? 'border-transparent text-gray-500 hover:text-gray-700'
-                        : 'border-transparent text-gray-500 hover:text-gray-300'
+                        ? 'border-transparent text-gray-400 hover:text-gray-700'
+                        : 'border-transparent text-gray-400 hover:text-gray-300'
                   }`}
                 >
-                  <span>👤</span>
+                  <span><UserIcon className="w-4 h-4" /></span>
                   <span>Cá nhân</span>
                   <span className={`text-[10px] px-1.5 py-0.5 rounded ${
                     filterTab === 'user'
                       ? isLight ? 'bg-green-100 text-green-600' : 'bg-green-500/20 text-green-400'
-                      : isLight ? 'bg-gray-200 text-gray-500' : 'bg-gray-700 text-gray-500'
+                      : isLight ? 'bg-gray-200 text-gray-400' : 'bg-gray-700 text-gray-400'
                   }`}>{userCount}</span>
                 </button>
                 <button
@@ -3194,16 +3188,16 @@ function ContactPickerModal({
                         ? 'border-purple-500 text-purple-600 bg-purple-50/50'
                         : 'border-purple-500 text-purple-400 bg-purple-500/5'
                       : isLight
-                        ? 'border-transparent text-gray-500 hover:text-gray-700'
-                        : 'border-transparent text-gray-500 hover:text-gray-300'
+                        ? 'border-transparent text-gray-400 hover:text-gray-700'
+                        : 'border-transparent text-gray-400 hover:text-gray-300'
                   }`}
                 >
-                  <span>👥</span>
+                  <span><UsersIcon className="w-4 h-4" /></span>
                   <span>Nhóm</span>
                   <span className={`text-[10px] px-1.5 py-0.5 rounded ${
                     filterTab === 'group'
                       ? isLight ? 'bg-purple-100 text-purple-600' : 'bg-purple-500/20 text-purple-400'
-                      : isLight ? 'bg-gray-200 text-gray-500' : 'bg-gray-700 text-gray-500'
+                      : isLight ? 'bg-gray-200 text-gray-400' : 'bg-gray-700 text-gray-400'
                   }`}>{groupCount}</span>
                 </button>
               </div>
@@ -3232,18 +3226,18 @@ function ContactPickerModal({
 
               {loading ? (
                 <div className="flex items-center justify-center py-12">
-                  <svg className={`animate-spin w-6 h-6 ${isLight ? 'text-gray-400' : 'text-gray-500'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <svg className={`animate-spin w-6 h-6 ${isLight ? 'text-gray-400' : 'text-gray-400'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                     <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
                   </svg>
                 </div>
               ) : filteredContacts.length === 0 && !error ? (
-                <div className={`text-center py-12 ${isLight ? 'text-gray-500' : 'text-gray-500'}`}>
+                <div className={`text-center py-12 ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
                   <span className="text-4xl mb-3 block">{contactType === 'group' ? '👥' : '👤'}</span>
                   <p className="text-sm">Không tìm thấy</p>
                 </div>
               ) : filteredContacts.length === 0 && error ? (
-                <div className={`text-center py-8 ${isLight ? 'text-gray-500' : 'text-gray-500'}`}>
-                  <span className="text-3xl mb-2 block">📭</span>
+                <div className={`text-center py-8 ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
+                  <span className="text-3xl mb-2 block"><InboxIcon className="w-4 h-4" /></span>
                   <p className="text-xs">Không có dữ liệu</p>
                 </div>
               ) : (
@@ -3320,13 +3314,13 @@ function ContactPickerModal({
                             {contact.name}
                           </span>
                         </div>
-                        <div className={`text-[11px] flex items-center gap-2 ${isLight ? 'text-gray-500' : 'text-gray-500'}`}>
+                        <div className={`text-[11px] flex items-center gap-2 ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
                           <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${
                             contact.type === 'group'
                               ? isLight ? 'bg-purple-100 text-purple-700' : 'bg-purple-500/20 text-purple-400'
                               : isLight ? 'bg-blue-100 text-blue-700' : 'bg-blue-500/20 text-blue-400'
                           }`}>
-                            {contact.type === 'group' ? '👥 Nhóm' : '👤 Cá nhân'}
+                            {contact.type === 'group' ? 'Nhóm' : '👤 Cá nhân'}
                           </span>
                           <span className="truncate">ID: {contact.id}</span>
                         </div>
@@ -3360,7 +3354,7 @@ function ContactPickerModal({
           isLight ? 'bg-gray-50 border-gray-200' : 'bg-gray-800/50 border-gray-700'
         }`}>
           <div className="flex items-center gap-2">
-            <span className={`text-xs ${isLight ? 'text-gray-500' : 'text-gray-500'}`}>
+            <span className={`text-xs ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
               {filteredContacts.length} {contactType === 'group' ? 'nhóm' : contactType === 'user' ? 'liên hệ' : 'mục'}
             </span>
             {contactMode === 'multi' && value.length > 0 && (
@@ -3471,7 +3465,7 @@ function ContactPickerField({
               </span>
             ))
           ) : (
-            <span className={`text-xs ${isLight ? 'text-gray-400' : 'text-gray-500'}`}>
+            <span className={`text-xs ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
               {placeholder || 'Nhập ID hoặc chọn từ danh bạ'}
             </span>
           )}
@@ -3498,7 +3492,7 @@ function ContactPickerField({
       {/* Template vars */}
       {templateVars && templateVars.length > 0 && (
         <div className={`px-3 py-2 border-t ${isLight ? 'border-gray-100 bg-gray-50' : 'border-gray-700/50 bg-gray-800/50'}`}>
-          <div className={`text-[10px] mb-1.5 ${isLight ? 'text-gray-500' : 'text-gray-500'}`}>
+          <div className={`text-[10px] mb-1.5 ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
             Hoặc dùng biến:
           </div>
           <div className="flex flex-wrap gap-1">
@@ -3510,7 +3504,7 @@ function ContactPickerField({
                 className={`px-2 py-1 text-[10px] font-mono rounded transition-colors ${
                   value === `{{ ${v} }}`
                     ? isLight ? 'bg-blue-100 text-blue-700' : 'bg-blue-500/30 text-blue-300'
-                    : isLight ? 'bg-gray-100 text-gray-600 hover:bg-gray-200' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+                    : isLight ? 'bg-gray-100 text-gray-400 hover:bg-gray-200' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
                 }`}
               >
                 {`{{ ${v} }}`}
@@ -3640,7 +3634,7 @@ function FilePickerField({
                 <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
                 <polyline points="22 4 12 14.01 9 11.01"/>
               </svg>
-              <span className={`text-[10px] truncate ${isLight ? 'text-gray-600' : 'text-gray-400'}`}>
+              <span className={`text-[10px] truncate ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
                 File: {value.split('\\').pop()}
               </span>
             </>
@@ -3650,7 +3644,7 @@ function FilePickerField({
                 <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
                 <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
               </svg>
-              <span className={`text-[10px] truncate ${isLight ? 'text-gray-600' : 'text-gray-400'}`}>
+              <span className={`text-[10px] truncate ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
                 URL: {value}
               </span>
             </>
@@ -3723,10 +3717,10 @@ function NodePickerModal({
         <div className={`flex items-center justify-between px-5 py-4 border-b ${isLight ? 'border-gray-200' : 'border-gray-700'}`}>
           <div>
             <p className={`text-base font-semibold ${isLight ? 'text-gray-900' : 'text-white'}`}>Chọn dữ liệu từ node</p>
-            <p className={`text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>Click để copy UUID hoặc chèn cú pháp tham chiếu</p>
+            <p className={`text-xs ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>Click để copy UUID hoặc chèn cú pháp tham chiếu</p>
           </div>
           <button onClick={onClose} className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${
-            isLight ? 'hover:bg-gray-100 text-gray-500' : 'hover:bg-gray-700 text-gray-400'
+            isLight ? 'hover:bg-gray-100 text-gray-400' : 'hover:bg-gray-700 text-gray-400'
           }`}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -3737,7 +3731,7 @@ function NodePickerModal({
         {/* Search */}
         <div className={`px-4 py-3 border-b ${isLight ? 'border-gray-200' : 'border-gray-700/50'}`}>
           <div className="relative">
-            <svg className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${isLight ? 'text-gray-400' : 'text-gray-500'}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <svg className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${isLight ? 'text-gray-400' : 'text-gray-400'}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
               <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
             </svg>
             <input
@@ -3755,8 +3749,8 @@ function NodePickerModal({
         {/* Node list */}
         <div className="flex-1 overflow-y-auto p-3 space-y-1">
           {filtered.length === 0 ? (
-            <div className={`text-center py-8 ${isLight ? 'text-gray-500' : 'text-gray-500'}`}>
-              <span className="text-3xl block mb-2">🔍</span>
+            <div className={`text-center py-8 ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
+              <span className="text-3xl block mb-2"><SearchIcon className="w-4 h-4" /></span>
               <p className="text-sm">Không tìm thấy node</p>
             </div>
           ) : (
@@ -3775,11 +3769,11 @@ function NodePickerModal({
                       {n.label}
                       {isCurrent && (
                         <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
-                          isLight ? 'bg-gray-200 text-gray-500' : 'bg-gray-700 text-gray-400'
+                          isLight ? 'bg-gray-200 text-gray-400' : 'bg-gray-700 text-gray-400'
                         }`}>đang chọn</span>
                       )}
                     </div>
-                    <div className={`text-[10px] font-mono truncate mt-0.5 ${isLight ? 'text-gray-400' : 'text-gray-500'}`}>
+                    <div className={`text-[10px] font-mono truncate mt-0.5 ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
                       {n.id}
                     </div>
                   </div>
@@ -3810,7 +3804,7 @@ function NodePickerModal({
 
         {/* Footer */}
         <div className={`px-5 py-3 border-t flex items-center justify-between ${isLight ? 'border-gray-200 bg-gray-50' : 'border-gray-700 bg-gray-800/50'}`}>
-          <span className={`text-[11px] ${isLight ? 'text-gray-500' : 'text-gray-500'}`}>
+          <span className={`text-[11px] ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
             {filtered.length}/{allNodes.length} node
           </span>
           <button onClick={onClose} className={`px-4 py-1.5 text-xs font-medium rounded-lg transition-colors ${
@@ -4236,7 +4230,7 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
             <div className="space-y-1.5">
               {enabledList.map(a => {
                 const isActive = selected === a.id;
-                const platformIcon = a.platform === 'openai' ? '🤖' : a.platform === 'gemini' ? '💎' : a.platform === 'deepseek' ? '🔮' : a.platform === 'grok' ? '⚡' : '🤖';
+                const platformIcon = a.platform === 'openai' ? <BotIcon className="w-4 h-4" /> : a.platform === 'gemini' ? <DiamondIcon className="w-4 h-4" /> : a.platform === 'deepseek' ? <HelpCircleIcon className="w-4 h-4" /> : a.platform === 'grok' ? <LightningIcon className="w-4 h-4" /> : <BotIcon className="w-4 h-4" />;
                 return (
                   <button
                     key={a.id}
@@ -4248,12 +4242,12 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
                         : 'bg-gray-800/60 border-gray-700/50 hover:border-gray-600 hover:bg-gray-800'
                     }`}
                   >
-                    <span className="text-lg flex-shrink-0">{platformIcon}</span>
+                    <span className="flex-shrink-0">{platformIcon}</span>
                     <div className="flex-1 min-w-0">
                       <p className={`text-sm font-medium truncate ${isActive ? 'text-blue-300' : 'text-gray-200'}`}>
                         {a.name}
                       </p>
-                      <p className="text-[10px] text-gray-500 truncate">
+                      <p className="text-[10px] text-gray-400 truncate">
                         {a.platform?.toUpperCase()} • {a.model}
                       </p>
                     </div>
@@ -4270,7 +4264,7 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
         })()}
 
         {field.desc && !isBool && <p className={descCls}>{field.desc}</p>}
-        {field.hint && field.type !== 'json' && <p className={hintCls}>💡 {field.hint}</p>}
+        {field.hint && field.type !== 'json' && <p className={hintCls}><SunIcon className="w-4 h-4 inline" /> {field.hint}</p>}
         {field.templateVars?.length && !isBool && !(field.htmlToggle && config[field.htmlToggle]) && (
           <button
             type="button"
@@ -4306,7 +4300,7 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
         <div className="bg-gray-800/60 border border-gray-700/50 rounded-xl px-4 py-5 text-center">
           <div className="text-2xl mb-2">✅</div>
           <p className="text-gray-300 text-xs font-medium">Node này không cần cấu hình thêm</p>
-          <p className="text-gray-600 text-[11px] mt-1">Chỉ cần kết nối với các node khác là đủ.</p>
+          <p className="text-gray-400 text-[11px] mt-1">Chỉ cần kết nối với các node khác là đủ.</p>
         </div>
       )}
 
@@ -4315,7 +4309,7 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
       {advFields.length > 0 && (
         <div>
           <button type="button" onClick={() => setShowAdvanced(p => !p)}
-            className="w-full flex items-center gap-2 py-1.5 text-gray-500 hover:text-gray-300 transition-colors text-xs">
+            className="w-full flex items-center gap-2 py-1.5 text-gray-400 hover:text-gray-300 transition-colors text-xs">
             <div className="flex-1 h-px bg-gray-700/60" />
             <span className="flex items-center gap-1.5 flex-shrink-0">
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
@@ -4337,7 +4331,7 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
       {/* ── Node references ── */}
       {upstreamNodes.length > 0 && (
         <div className="bg-gray-800/60 rounded-xl px-3 py-2">
-          <p className="text-[11px] text-gray-500 font-medium mb-1.5">Dữ liệu từ node phía trước</p>
+          <p className="text-[11px] text-gray-400 font-medium mb-1.5">Dữ liệu từ node phía trước</p>
           <div className="flex flex-col gap-1.5">
             {upstreamNodes.map(n => {
               const copied = copiedNodeId === n.id;
@@ -4369,14 +4363,14 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
               );
             })}
           </div>
-          <p className="text-[9px] text-gray-600 mt-1">Click để copy <span className="font-mono text-gray-500">{'{{ $node.<UUID>.output }}'}</span></p>
+          <p className="text-[9px] text-gray-400 mt-1">Click để copy <span className="font-mono text-gray-400">{'{{ $node.<UUID>.output }}'}</span></p>
         </div>
       )}
 
       {/* ── Template Variable Popup Trigger ── */}
       <div className="bg-gray-800/60 rounded-xl px-3 py-2">
         <div className="flex items-center justify-between">
-          <p className="text-[11px] text-gray-500 font-medium">🔤 Biến động</p>
+          <p className="text-[11px] text-gray-400 font-medium">🔤 Biến động</p>
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -4394,7 +4388,7 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
             </button>
           </div>
         </div>
-        <p className="text-[9px] text-gray-600 mt-1.5">
+        <p className="text-[9px] text-gray-400 mt-1.5">
           Dùng <code className="text-blue-400 bg-blue-500/10 px-1 rounded text-[9px]">{'{{ }}'}</code> để chèn dữ liệu động từ trigger, ngày giờ, hoặc output của node khác. Click vào nút để xem danh sách đầy đủ.
         </p>
       </div>
@@ -4440,7 +4434,7 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
     <div className="flex items-center gap-1 flex-shrink-0">
       {/* Fullscreen toggle */}
       <button onClick={() => setIsFullscreen(f => !f)} title={isFullscreen ? 'Thu nhỏ (Esc)' : 'Mở rộng toàn màn hình'}
-        className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-500 hover:text-white hover:bg-gray-700 transition-colors">
+        className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 transition-colors">
         {isFullscreen ? (
           /* Compress icon */
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -4457,7 +4451,7 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
       </button>
       {/* Close */}
       <button onClick={onClose} title="Đóng"
-        className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-500 hover:text-white hover:bg-gray-700 transition-colors">
+        className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 transition-colors">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
         </svg>
@@ -4478,7 +4472,7 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
               <span className="text-base">⚙️</span>
               <div className="min-w-0">
                 <p className="text-white text-sm font-semibold truncate">{node.label || getNodeLabel(node.type)}</p>
-                <p className="text-gray-500 text-[11px]">{getNodeLabel(node.type)}</p>
+                <p className="text-gray-400 text-[11px]">{getNodeLabel(node.type)}</p>
               </div>
             </div>
             {headerBtns}
@@ -4513,7 +4507,7 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
           <span className="text-base">⚙️</span>
           <div className="min-w-0">
             <p className="text-white text-sm font-semibold truncate leading-tight">{node.label || getNodeLabel(node.type)}</p>
-            <p className="text-gray-600 text-[11px] truncate">{getNodeLabel(node.type)}</p>
+            <p className="text-gray-400 text-[11px] truncate">{getNodeLabel(node.type)}</p>
           </div>
         </div>
         {headerBtns}

@@ -6,6 +6,7 @@ import { useEmployeeStore } from '@/store/employeeStore';
 import { playNotificationSound, requestNotificationPermission, showDesktopNotification } from '@/utils/NotificationService';
 import { showConfirm } from '../common/ConfirmDialog';
 import { extractApiError } from '@/utils/apiError';
+import { AlertIcon, ArrowRightIcon, BellIcon, BookIcon, ClipboardIcon, FolderIcon, HardDriveIcon, LightningIcon, LinkIcon, LockIcon, MessageIcon, MonitorIcon, PackageIcon, PaletteIcon, RefreshIcon, ShieldIcon, UserIcon, UsersIcon, ClipboardListIcon, GlobeIcon, MinimizeIcon, SmartphoneIcon, StarIcon, SunIcon } from '../common/icons';
 import IntroductionSettings from './IntroductionSettings';
 import ChangelogSettings from './ChangelogSettings';
 import ConversationSettings from './ConversationSettings';
@@ -27,6 +28,9 @@ export default function Settings() {
   const [storagePath, setStoragePath] = useState<string>('');
   const [defaultStoragePath, setDefaultStoragePath] = useState<string>('');
   const [actualDbPath, setActualDbPath] = useState<string>('');
+  const [isEmployee, setIsEmployee] = useState(false);
+  const [mediaCachePath, setMediaCachePath] = useState('');
+  const [mediaCacheSize, setMediaCacheSize] = useState(0);
   const [changingStorage, setChangingStorage] = useState(false);
   // Pending folder with existing data - shown in choice modal
   const [pendingFolder, setPendingFolder] = useState<string | null>(null);
@@ -43,6 +47,11 @@ export default function Settings() {
         setStoragePath(res.path || '');
         setDefaultStoragePath(res.defaultPath || '');
         setActualDbPath(res.actualDbPath || '');
+        setIsEmployee(res.isEmployee || false);
+        if (res.isEmployee) {
+          setMediaCachePath(res.mediaCachePath || '');
+          setMediaCacheSize(res.mediaCacheSize || 0);
+        }
       }
     });
   }, []);
@@ -119,7 +128,7 @@ export default function Settings() {
         setStoragePath(newFolder);
         setActualDbPath(res.newPath || '');
         const msg = res.message || 'Đã đổi thư mục lưu trữ thành công!';
-        const extra = res.mediaError ? ` (⚠️ Media: ${res.mediaError})` : '';
+        const extra = res.mediaError ? ` (Media: ${res.mediaError})` : '';
         showNotification(msg + extra, res.mediaError ? 'warning' : 'success');
       } else {
         showNotification(extractApiError(res, 'Không thể đổi thư mục'), 'error');
@@ -146,19 +155,19 @@ export default function Settings() {
     await applyStorageChange(defaultStoragePath, false);
   };
 
-  const NAV_ITEMS: { id: SettingsTab; icon: string; label: string; requiredPerm?: string }[] = [
-    { id: 'conversation',  icon: '💬', label: 'Hội thoại' },
-    { id: 'appearance',    icon: '🎨', label: 'Giao diện' },
-    { id: 'notifications', icon: '🔔', label: 'Thông báo' },
-    { id: 'accounts',      icon: '👤', label: 'Tài khoản', requiredPerm: 'settings_accounts' },
-    { id: 'proxy',         icon: '🔒', label: 'Proxy' },
-    { id: 'security',      icon: '🛡️', label: 'Bảo mật' },
-    { id: 'webhooks',      icon: '🔗', label: 'Webhooks' },
-    { id: 'employees',     icon: '👥', label: 'Nhân viên', requiredPerm: 'settings_employees' },
-    { id: 'workspace',     icon: '🗂️', label: 'Workspace' },
-    { id: 'storage',       icon: '📁', label: 'Lưu trữ' },
-    { id: 'introduction',  icon: '📖', label: 'Giới thiệu' },
-    { id: 'changelog',     icon: '🗒️', label: 'Log phiên bản' },
+  const NAV_ITEMS: { id: SettingsTab; icon: React.ReactNode; label: string; requiredPerm?: string }[] = [
+    { id: 'conversation',  icon: <MessageIcon className="w-4 h-4" />, label: 'Hội thoại' },
+    { id: 'appearance',    icon: <PaletteIcon className="w-4 h-4" />, label: 'Giao diện' },
+    { id: 'notifications', icon: <BellIcon className="w-4 h-4" />, label: 'Thông báo' },
+    { id: 'accounts',      icon: <UserIcon className="w-4 h-4" />, label: 'Tài khoản', requiredPerm: 'settings_accounts' },
+    { id: 'proxy',         icon: <LockIcon className="w-4 h-4" />, label: 'Proxy' },
+    { id: 'security',      icon: <ShieldIcon className="w-4 h-4" />, label: 'Bảo mật' },
+    { id: 'webhooks',      icon: <LinkIcon className="w-4 h-4" />, label: 'Webhooks' },
+    { id: 'employees',     icon: <UsersIcon className="w-4 h-4" />, label: 'Nhân viên', requiredPerm: 'settings_employees' },
+    { id: 'workspace',     icon: <FolderIcon className="w-4 h-4" />, label: 'Workspace' },
+    { id: 'storage',       icon: <FolderIcon className="w-4 h-4" />, label: 'Lưu trữ' },
+    { id: 'introduction',  icon: <BookIcon className="w-4 h-4" />, label: 'Giới thiệu' },
+    { id: 'changelog',     icon: <ClipboardIcon className="w-4 h-4" />, label: 'Log phiên bản' },
   ];
 
   // Filter nav items by permission - employee/simulation mode may hide certain tabs
@@ -182,7 +191,7 @@ export default function Settings() {
     <div className="flex h-full overflow-hidden">
       {/* ─── Left sidebar ─── */}
       <div className="w-44 flex-shrink-0 border-r border-gray-700 bg-gray-850 flex flex-col py-3 gap-0.5 overflow-y-auto">
-        <p className="px-4 pb-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">Cài đặt</p>
+        <p className="px-4 pb-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">Cài đặt</p>
         {visibleNavItems.map((item, idx) => (
           <React.Fragment key={item.id}>
             <button onClick={() => setActiveTab(item.id)}
@@ -212,7 +221,7 @@ export default function Settings() {
         {/* ── Appearance ── */}
         {activeTab === 'appearance' && (
           <>
-            <h2 className="text-base font-semibold text-white">🎨 Giao diện</h2>
+            <h2 className="text-base font-semibold text-white flex items-center gap-2"><PaletteIcon className="w-4 h-4" /> Giao diện</h2>
             <Section>
               <div className="space-y-4">
                 <div>
@@ -241,7 +250,7 @@ export default function Settings() {
                             <path d="M20 6L9 17l-5-5" stroke="currentColor" fill="none" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
                           </svg>
                         )}
-                        <span className={`text-xs font-medium ${theme === 'dark' ? 'text-blue-400' : 'text-gray-400'}`}>🌙 Tối</span>
+                        <span className={`text-xs font-medium ${theme === 'dark' ? 'text-blue-400' : 'text-gray-400'}`}><MinimizeIcon className="w-4 h-4 inline" /> Tối</span>
                       </div>
                     </button>
 
@@ -268,12 +277,12 @@ export default function Settings() {
                             <path d="M20 6L9 17l-5-5" stroke="currentColor" fill="none" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
                           </svg>
                         )}
-                        <span className={`text-xs font-medium ${theme === 'light' ? 'text-blue-400' : 'text-gray-400'}`}>☀️ Sáng</span>
+                        <span className={`text-xs font-medium ${theme === 'light' ? 'text-blue-400' : 'text-gray-400'}`}><SunIcon className="w-4 h-4 inline" /> Sáng</span>
                       </div>
                     </button>
                   </div>
                 </div>
-                <p className="text-xs text-gray-500 leading-relaxed">
+                <p className="text-xs text-gray-400 leading-relaxed">
                   Thay đổi giao diện áp dụng ngay lập tức và được lưu tự động.
                 </p>
               </div>
@@ -284,7 +293,7 @@ export default function Settings() {
         {/* ── Notifications ── */}
         {activeTab === 'notifications' && (
           <>
-            <h2 className="text-base font-semibold text-white">🔔 Cài đặt thông báo</h2>
+            <h2 className="text-base font-semibold text-white"><BellIcon className="w-4 h-4 inline" /> Cài đặt thông báo</h2>
 
             {/* Account selector */}
             <div className="mb-2">
@@ -294,15 +303,13 @@ export default function Settings() {
                 onChange={e => setSelectedNotifAccount(e.target.value)}
                 className="w-full bg-gray-700 text-white rounded-lg p-2 text-sm border border-gray-600"
               >
-                <option value="__global__">🌐 Mặc định (tất cả tài khoản)</option>
+                <option value="__global__"><GlobeIcon className="w-4 h-4 inline" /> Mặc định (tất cả tài khoản)</option>
                 {accounts.filter(a => (a.channel || 'zalo') === 'zalo').map(acc => (
-                  <option key={acc.zalo_id} value={acc.zalo_id}>
-                    📱 {acc.full_name || acc.zalo_id}
+                  <option key={acc.zalo_id} value={acc.zalo_id}><SmartphoneIcon className="w-4 h-4 inline" /> {acc.full_name || acc.zalo_id}
                   </option>
                 ))}
                 {accounts.filter(a => a.channel === 'facebook').map(acc => (
-                  <option key={acc.zalo_id} value={acc.zalo_id}>
-                    📘 {acc.full_name || acc.zalo_id}
+                  <option key={acc.zalo_id} value={acc.zalo_id}><BookIcon className="w-4 h-4 inline" /> {acc.full_name || acc.zalo_id}
                   </option>
                 ))}
               </select>
@@ -353,8 +360,7 @@ export default function Settings() {
                       )}
                       <div className="flex gap-2 pt-1">
                         <button onClick={() => { if (settings.soundEnabled) playNotificationSound(settings.volume); else showNotification('Hãy bật âm thanh trước', 'info'); }}
-                          className="flex-1 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg transition-colors">
-                          🔊 Test âm thanh
+                          className="flex-1 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg transition-colors"><BellIcon className="w-4 h-4 inline" /> Test âm thanh
                         </button>
                         <button onClick={() => {
                           requestNotificationPermission().then(granted => {
@@ -362,13 +368,13 @@ export default function Settings() {
                             showDesktopNotification('Deplao', 'Đây là thông báo thử nghiệm 🎉');
                           });
                         }} className="flex-1 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg transition-colors">
-                          🖥 Test popup
+                          <MonitorIcon className="w-4 h-4 inline" /> Test popup
                         </button>
                       </div>
                     </>
                   );
                 })()}
-                <p className="text-xs text-gray-500 leading-relaxed">
+                <p className="text-xs text-gray-400 leading-relaxed">
                   * Thông báo không hiện với những hội thoại đã tắt thông báo.<br />
                   * <strong>Windows:</strong> Kiểm tra quyền trong Settings &gt; Notifications.<br />
                   * <strong>macOS:</strong> Kiểm tra trong System Settings &gt; Notifications &gt; Deplao.<br />
@@ -385,30 +391,76 @@ export default function Settings() {
         {/* ── Storage ── */}
         {activeTab === 'storage' && (
           <>
-            <h2 className="text-base font-semibold text-white">📁 Thư mục lưu trữ dữ liệu</h2>
+            <h2 className="text-base font-semibold text-white"><FolderIcon className="w-4 h-4 inline" /> Thư mục lưu trữ dữ liệu</h2>
 
+            {isEmployee ? (
+              // ── Employee mode: chỉ hiển thị cache local, không đổi được Boss storage ──
+              <>
+                <div className="bg-blue-900/20 border border-blue-500/40 rounded-xl p-4 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg"><SunIcon className="w-4 h-4" /></span>
+                    <p className="text-sm font-semibold text-blue-300">Chế độ Nhân viên</p>
+                  </div>
+                  <p className="text-xs text-blue-300/80 leading-relaxed">
+                    Dữ liệu chat, ảnh, file được lấy từ máy chủ (Boss) qua kết nối từ xa.
+                    Thư mục bên dưới là <strong>bộ nhớ đệm (cache) trên máy nhân viên</strong>,
+                    lưu tạm file media (ảnh, video, tài liệu) khi bạn xem để lần sau mở nhanh hơn — <strong>lưu trên ổ cứng, không phải RAM</strong>.
+                    Dữ liệu gốc được quản lý trên máy Boss.
+                  </p>
+                </div>
+                <Section>
+                  <div className="space-y-3">
+                    <div>
+                      <p className="text-xs text-gray-400 mb-1">📍 Cache media (máy nhân viên):</p>
+                      <div className="flex items-center gap-2">
+                        <code className="flex-1 text-xs bg-gray-700 text-green-300 px-2 py-1.5 rounded truncate block">{mediaCachePath || 'Đang tải...'}</code>
+                        {mediaCachePath && (
+                          <button onClick={() => ipc.file?.openPath(mediaCachePath)} className="text-xs text-blue-400 hover:text-blue-300 flex-shrink-0" title="Mở thư mục"><FolderIcon className="w-4 h-4" /></button>
+                        )}
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-400 mb-1"><HardDriveIcon className="w-4 h-4 inline" /> Dung lượng cache:</p>
+                      <p className="text-sm text-gray-200 font-medium">
+                        {mediaCacheSize > 0
+                          ? mediaCacheSize > 1024 * 1024 * 1024
+                            ? `${(mediaCacheSize / 1024 / 1024 / 1024).toFixed(1)} GB`
+                            : `${(mediaCacheSize / 1024 / 1024).toFixed(1)} MB`
+                          : 'Đang tính...'}
+                      </p>
+                    </div>
+                    <p className="text-xs text-gray-400">
+                      Ảnh, video, file được tự động tải về cache khi bạn xem hoặc khi mở hội thoại.
+                      Cache tự động xóa file cũ nhất khi quá 2GB. Có thể xóa thủ công bằng cách mở thư mục cache bên trên.
+                    </p>
+                  </div>
+                </Section>
+              </>
+            ) : (
+              // ── Boss/Standalone mode ──
+              <>
             {/* ── Khuyến nghị đổi ổ lưu trữ ── */}
             <div className="bg-amber-900/20 border border-amber-500/40 rounded-xl p-4 space-y-2">
               <div className="flex items-center gap-2">
-                <span className="text-lg">⚠️</span>
+                <AlertIcon className="w-5 h-5 text-amber-400" />
                 <p className="text-sm font-semibold text-amber-300">Khuyến nghị: Đổi sang ổ khác (không dùng ổ C:)</p>
               </div>
               <ul className="space-y-1.5 pl-1">
                 {[
-                  { icon: '💾', text: 'Ổ C: thường là ổ hệ thống, dung lượng trống ít - tin nhắn, ảnh, video sẽ tích lũy nhanh theo thời gian.' },
-                  { icon: '🔄', text: 'Khi cài lại Windows, toàn bộ dữ liệu trên ổ C: bị xóa. Lưu ở ổ D:, E:... giúp bảo toàn lịch sử chat qua mọi lần cài lại.' },
-                  { icon: '⚡', text: 'Trên máy SSD đa ổ, tách DB sang ổ phụ giảm áp lực I/O cho ổ hệ thống, app chạy mượt hơn.' },
-                  { icon: '📦', text: 'Dễ backup: chỉ cần copy một thư mục sang ổ ngoài / cloud là có toàn bộ dữ liệu.' },
-                  { icon: '🔒', text: 'Tránh bị antivirus/Windows Update can thiệp nhầm vào dữ liệu app khi quét ổ C:.' },
+                  { icon: <HardDriveIcon className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />, text: 'Ổ C: thường là ổ hệ thống, dung lượng trống ít - tin nhắn, ảnh, video sẽ tích lũy nhanh theo thời gian.' },
+                  { icon: <RefreshIcon className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />, text: 'Khi cài lại Windows, toàn bộ dữ liệu trên ổ C: bị xóa. Lưu ở ổ D:, E:... giúp bảo toàn lịch sử chat qua mọi lần cài lại.' },
+                  { icon: <LightningIcon className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />, text: 'Trên máy SSD đa ổ, tách DB sang ổ phụ giảm áp lực I/O cho ổ hệ thống, app chạy mượt hơn.' },
+                  { icon: <PackageIcon className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />, text: 'Dễ backup: chỉ cần copy một thư mục sang ổ ngoài / cloud là có toàn bộ dữ liệu.' },
+                  { icon: <LockIcon className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />, text: 'Tránh bị antivirus/Windows Update can thiệp nhầm vào dữ liệu app khi quét ổ C:.' },
                 ].map((item, i) => (
                   <li key={i} className="flex items-start gap-2 text-xs text-amber-300/80">
-                    <span className="flex-shrink-0 mt-0.5">{item.icon}</span>
+                    {item.icon}
                     <span className="leading-relaxed">{item.text}</span>
                   </li>
                 ))}
               </ul>
               <p className="text-xs text-amber-400 font-medium pt-1">
-                👉 Nhấn <strong>"Chọn thư mục khác"</strong> bên dưới để chuyển sang ổ D:, E:, hoặc ổ ngoài. Dữ liệu sẽ được sao chép tự động.
+                <ArrowRightIcon className="w-3 h-3 inline-block mr-0.5" /> Nhấn <strong>"Chọn thư mục khác"</strong> bên dưới để chuyển sang ổ D:, E:, hoặc ổ ngoài. Dữ liệu sẽ được sao chép tự động.
               </p>
             </div>
             <Section>
@@ -417,7 +469,7 @@ export default function Settings() {
                   <p className="text-xs text-gray-400 mb-1">Thư mục cấu hình:</p>
                   <div className="flex items-center gap-2">
                     <code className="flex-1 text-xs bg-gray-700 text-green-300 px-2 py-1.5 rounded truncate block">{storagePath || 'Đang tải...'}</code>
-                    <button onClick={() => ipc.file?.openPath(storagePath)} className="text-xs text-blue-400 hover:text-blue-300 flex-shrink-0" title="Mở thư mục">📂</button>
+                    <button onClick={() => ipc.file?.openPath(storagePath)} className="text-xs text-blue-400 hover:text-blue-300 flex-shrink-0" title="Mở thư mục"><FolderIcon className="w-4 h-4" /></button>
                   </div>
                 </div>
                 {actualDbPath && (
@@ -429,14 +481,14 @@ export default function Settings() {
                 {/* Cảnh báo nếu DB thực tế khác với config (thường xảy ra sau khi cài lại) */}
                 {actualDbPath && storagePath && !actualDbPath.startsWith(storagePath) && (
                   <div className="bg-red-900/40 border border-red-500/50 rounded-lg p-3">
-                    <p className="text-xs text-red-300 font-semibold mb-1">⚠️ Phát hiện không khớp thư mục!</p>
+                    <p className="text-xs text-red-300 font-semibold mb-1"><AlertIcon className="w-4 h-4 inline" /> Phát hiện không khớp thư mục!</p>
                     <p className="text-xs text-red-200 leading-relaxed">
                       DB đang đọc từ vị trí khác với cấu hình. Điều này thường xảy ra khi nâng cấp Electron làm thay đổi <code>userData</code> path.<br/>
                       Nhấn <strong>Chọn thư mục khác</strong> và trỏ lại đúng thư mục để khôi phục dữ liệu.
                     </p>
                   </div>
                 )}
-                <p className="text-xs text-gray-500">
+                <p className="text-xs text-gray-400">
                   Dữ liệu tin nhắn, liên hệ và cài đặt được lưu trong thư mục này.
                   Khi thay đổi, dữ liệu được sao chép sang vị trí mới và áp dụng ngay (không cần khởi động lại).
                 </p>
@@ -445,9 +497,9 @@ export default function Settings() {
                     className="btn-primary text-white text-sm flex-1 disabled:opacity-50">
                     {changingStorage
                       ? copyProgress > 0
-                        ? `📁 ${copyProgress.toLocaleString()}${copyTotal > 0 ? ` / ${copyTotal.toLocaleString()}` : ''} files…`
+                        ? <><FolderIcon className="w-4 h-4 inline" /> {copyProgress.toLocaleString()}{copyTotal > 0 ? ` / ${copyTotal.toLocaleString()}` : ''} files…</>
                         : 'Đang xử lý...'
-                      : '📂 Chọn thư mục khác'}
+                      : <><FolderIcon className="w-4 h-4 inline" /> Chọn thư mục khác</>}
                   </button>
                   {storagePath && storagePath !== defaultStoragePath && (
                     <button onClick={handleResetStoragePath} className="btn-secondary text-sm">Đặt lại mặc định</button>
@@ -455,6 +507,8 @@ export default function Settings() {
                 </div>
               </div>
             </Section>
+            </>
+          )} {/* end ternary isEmployee */}
           </>
         )}
 
@@ -488,10 +542,10 @@ export default function Settings() {
           {/* Header */}
           <div className="px-5 pt-5 pb-3 border-b border-gray-700">
             <div className="flex items-center gap-3 mb-1">
-              <span className="text-2xl">📂</span>
+              <FolderIcon className="w-6 h-6" />
               <h3 className="text-base font-semibold text-white">Thư mục đã có dữ liệu</h3>
             </div>
-            <p className="text-xs text-gray-400 break-all leading-relaxed mt-1">
+            <p className="text-xs text-gray-400 break-word leading-relaxed mt-1">
               <span className="font-mono text-green-300">{pendingFolder}</span>
             </p>
             <p className="text-xs text-gray-400 mt-2 leading-relaxed">
@@ -508,7 +562,7 @@ export default function Settings() {
               onClick={() => applyStorageChange(pendingFolder, true)}
               className="w-full flex items-start gap-3 p-3.5 rounded-xl border-2 border-blue-500 bg-blue-500/10 hover:bg-blue-500/20 transition-colors text-left disabled:opacity-50"
             >
-              <span className="text-xl flex-shrink-0 mt-0.5">🗄️</span>
+              <HardDriveIcon className="w-5 h-5 flex-shrink-0 mt-0.5" />
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-blue-300">Dùng dữ liệu cũ tại đây</p>
                 <p className="text-xs text-gray-400 mt-0.5 leading-relaxed">
@@ -532,7 +586,7 @@ export default function Settings() {
               }}
               className="w-full flex items-start gap-3 p-3.5 rounded-xl border border-gray-600 hover:bg-gray-700 transition-colors text-left disabled:opacity-50"
             >
-              <span className="text-xl flex-shrink-0 mt-0.5">📋</span>
+              <span className="text-xl flex-shrink-0 mt-0.5"><ClipboardListIcon className="w-4 h-4" /></span>
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-gray-200">Sao chép dữ liệu hiện tại vào đây</p>
                 <p className="text-xs text-gray-400 mt-0.5 leading-relaxed">
@@ -557,7 +611,7 @@ export default function Settings() {
                       </div>
                       <span className="text-xs text-gray-300 font-mono tabular-nums">
                         {copyProgress.toLocaleString()}
-                        {copyTotal > 0 && <span className="text-gray-500"> / {copyTotal.toLocaleString()}</span>}
+                        {copyTotal > 0 && <span className="text-gray-400"> / {copyTotal.toLocaleString()}</span>}
                       </span>
                     </div>
                     {/* Progress bar */}
@@ -568,7 +622,7 @@ export default function Settings() {
                       />
                     </div>
                     {copyTotal > 0 && (
-                      <p className="text-[11px] text-gray-500 mt-1">
+                      <p className="text-[11px] text-gray-400 mt-1">
                         {((copyProgress / copyTotal) * 100).toFixed(0)}% - vui lòng không đóng ứng dụng
                       </p>
                     )}
@@ -613,7 +667,7 @@ function ToggleRow({ title, desc, value, onChange }: { title: string; desc?: str
     <div className="flex items-center justify-between gap-4">
       <div className="flex-1">
         <p className="text-sm text-gray-200 font-medium">{title}</p>
-        {desc && <p className="text-xs text-gray-500 mt-0.5">{desc}</p>}
+        {desc && <p className="text-xs text-gray-400 mt-0.5">{desc}</p>}
       </div>
       <Toggle value={value} onChange={onChange} />
     </div>

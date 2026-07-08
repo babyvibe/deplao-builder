@@ -168,7 +168,7 @@ export function FBUserProfilePopup({ userId, anchorX, anchorY, contacts, activeA
 
         {/* Quick actions */}
         <div className="px-5 py-4 space-y-2">
-          <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Hành động</p>
+          <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Hành động</p>
           <button onClick={handleOpenChat}
             className="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl bg-[#1877F2] hover:bg-[#166fe5] text-white text-sm font-medium transition-colors">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -207,7 +207,7 @@ export function FBUserProfilePopup({ userId, anchorX, anchorY, contacts, activeA
             <h3 className="text-gray-900 font-semibold text-base mb-2">
               {isBlocked ? 'Bỏ chặn người dùng?' : 'Chặn người dùng?'}
             </h3>
-            <p className="text-gray-500 text-sm mb-4">
+            <p className="text-gray-400 text-sm mb-4">
               {isBlocked
                 ? `Bạn có chắc muốn bỏ chặn ${name}?`
                 : `${name} sẽ không thể nhắn tin hoặc gọi cho bạn.`}

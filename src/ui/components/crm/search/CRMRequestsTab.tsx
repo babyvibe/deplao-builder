@@ -6,6 +6,7 @@ import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import { extractApiError } from '@/utils/apiError';
 import { UserProfilePopup } from '../../common/UserProfilePopup';
+import {InboxIcon, SendIcon, UsersIcon} from '@/components/common/icons';
 
 /**
  * CRM Requests Tab - quản lý lời mời kết bạn (nhận được + đã gửi).
@@ -238,12 +239,10 @@ export default function CRMRequestsTab() {
         {/* Sub-tabs */}
         <div className="flex bg-gray-800 rounded-lg p-0.5 mb-3">
           <button onClick={() => setRequestSubTab('received')}
-            className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors ${requestSubTab === 'received' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}>
-            📥 Nhận được{requests.length > 0 ? ` (${requests.length})` : ''}
+            className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors ${requestSubTab === 'received' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}><InboxIcon className="w-4 h-4 inline" /> Nhận được{requests.length > 0 ? ` (${requests.length})` : ''}
           </button>
           <button onClick={() => setRequestSubTab('sent')}
-            className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors ${requestSubTab === 'sent' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}>
-            📤 Đã gửi{sentRequests.length > 0 ? ` (${sentRequests.length})` : ''}
+            className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors ${requestSubTab === 'sent' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}><SendIcon className="w-4 h-4 inline" /> Đã gửi{sentRequests.length > 0 ? ` (${sentRequests.length})` : ''}
           </button>
         </div>
 
@@ -251,14 +250,14 @@ export default function CRMRequestsTab() {
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none">
+              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
               <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
             </svg>
             <input type="text" value={requestSearch} onChange={e => setRequestSearch(e.target.value)}
               placeholder="Tên, SĐT, UID..."
               className="w-full bg-gray-700 border border-gray-600 rounded-full pl-7 pr-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500" />
           </div>
-          <span className="text-xs text-gray-500 flex-shrink-0">
+          <span className="text-xs text-gray-400 flex-shrink-0">
             {requestsLoading ? '...' : (requestSubTab === 'received' ? requests.length : sentRequests.length)} lời mời
           </span>
           <button onClick={refreshRequestsFromApi} disabled={requestsRefreshing}
@@ -275,12 +274,12 @@ export default function CRMRequestsTab() {
       {/* ── Scrollable list ───────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-1.5">
         {requestsLoading ? (
-          <div className="text-center text-gray-500 py-10 text-sm">Đang tải...</div>
+          <div className="text-center text-gray-400 py-10 text-sm">Đang tải...</div>
         ) : requestSubTab === 'received' ? (
           requests.length === 0 ? (
             <div className="text-center py-10">
-              <p className="text-3xl mb-2">📭</p>
-              <p className="text-gray-500 text-sm mb-3">Không có lời mời nào</p>
+              <p className="text-3xl mb-2 justify-items-center"><UsersIcon className="w-4 h-4" /></p>
+              <p className="text-gray-400 text-sm mb-3">Không có lời mời nào</p>
               <button onClick={refreshRequestsFromApi} disabled={requestsRefreshing}
                 className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors">
                 {requestsRefreshing ? 'Đang tải...' : 'Tải từ Zalo'}
@@ -319,7 +318,7 @@ export default function CRMRequestsTab() {
                       <p className="text-sm font-medium text-gray-100 truncate">{name}</p>
                       {msgText
                         ? <p className="text-[11px] text-gray-400 italic truncate mt-0.5">"{msgText}"</p>
-                        : <p className="text-[11px] text-gray-500 mt-0.5">Muốn kết bạn với bạn</p>}
+                        : <p className="text-[11px] text-gray-400 mt-0.5">Muốn kết bạn với bạn</p>}
                     </div>
                     {/* Actions */}
                     <div className="flex gap-1.5 flex-shrink-0">
@@ -339,8 +338,8 @@ export default function CRMRequestsTab() {
         ) : (
           sentRequests.length === 0 ? (
             <div className="text-center py-10">
-              <p className="text-3xl mb-2">📤</p>
-              <p className="text-gray-500 text-sm mb-3">Chưa gửi lời mời nào</p>
+              <p className="text-3xl mb-2"><SendIcon className="w-4 h-4" /></p>
+              <p className="text-gray-400 text-sm mb-3">Chưa gửi lời mời nào</p>
               <button onClick={refreshRequestsFromApi} disabled={requestsRefreshing}
                 className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors">
                 {requestsRefreshing ? 'Đang tải...' : 'Tải từ Zalo'}
@@ -379,7 +378,7 @@ export default function CRMRequestsTab() {
                       <p className="text-sm font-medium text-gray-100 truncate">{name}</p>
                       <div className="flex items-center gap-1.5 mt-0.5">
                         <span className="text-[11px] text-yellow-500">⏳ Chờ chấp nhận</span>
-                        {msgText && <span className="text-[11px] text-gray-500 italic truncate">· "{msgText}"</span>}
+                        {msgText && <span className="text-[11px] text-gray-400 italic truncate">· "{msgText}"</span>}
                       </div>
                     </div>
                     {/* Action */}

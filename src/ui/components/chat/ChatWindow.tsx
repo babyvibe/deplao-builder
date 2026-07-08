@@ -23,6 +23,7 @@ import { toLocalMediaUrl } from '@/lib/localMedia';
 import { formatPhone } from '@/utils/phoneUtils';
 import { PollDetailView as SharedPollDetailView } from './PollView';
 import { useEmployeeStore } from '@/store/employeeStore';
+import { BellIcon, CalendarIcon, ChatIcon, CloudIcon, GiftIcon, GlobeIcon, HardDriveIcon, LinkIcon, PaperclipIcon, PinIcon, StarIcon, SunIcon, TargetIcon, UserCheckIcon, WaveIcon } from '@/components/common/icons';
 
 const EMOJI_TO_REACTION: Record<string, string> = {
   '❤️': 'HEART', '👍': 'LIKE', '😄': 'HAHA', '😮': 'WOW', '😢': 'CRY', '😡': 'ANGRY',
@@ -661,7 +662,7 @@ export default function ChatWindow() {
 
   // ─── Media cache preloader (employee mode) ─────────────────────
   // Khi mo hoi thoai, download background cac file media ve cache local
-  // de lan sau xem khong can load tu Boss
+  // de lan sau xem khong can load tu Boss. Preload ca anh, video, file.
   const preloadScannedRef = useRef(new Set<string>());
   useEffect(() => {
     if (!activeAccountId || !activeThreadId || !threadReady) return;
@@ -673,39 +674,64 @@ export default function ChatWindow() {
     const isEmployee = useEmployeeStore.getState().mode === 'employee';
     if (!isEmployee) return;
 
+    // Helper: extract Boss URLs tu local_paths cua 1 message
+    const extractBossUrls = (msg: any): string[] => {
+      const urls: string[] = [];
+      try {
+        const lp = typeof msg.local_paths === 'string'
+          ? JSON.parse(msg.local_paths || '{}')
+          : (msg.local_paths || {});
+        // Image: lp.main, lp.hd, lp.thumb
+        // Video: lp.file, lp.video, lp.thumb (thumb nho)
+        // File:  lp.file, lp.main
+        const candidates = [lp.main, lp.hd, lp.thumb, lp.file, lp.video];
+        for (const val of candidates) {
+          if (!val || val === 'undefined') continue;
+          const bossUrl = toLocalMediaUrl(val);
+          if (bossUrl && !bossUrl.startsWith('local-media://') && !bossUrl.startsWith('file://') && bossUrl.startsWith('http')) {
+            urls.push(bossUrl);
+          }
+        }
+      } catch {}
+      return urls;
+    };
+
     // Chay async, khong block UI
     (async () => {
       try {
-        // Lay danh sach media messages tu Boss
-        const r = await DataAccessor.getMediaMessages({
+        // ── Lay media messages (anh + video) ──
+        const mediaR = await DataAccessor.getMediaMessages({
           zaloId: activeAccountId!,
           threadId: activeThreadId,
           limit: 50,
           offset: 0,
         });
-        const msgs = r?.messages || [];
-        if (!msgs.length) return;
+        const mediaMsgs = mediaR?.messages || [];
+
+        // ── Lay file messages ──
+        const fileR = await DataAccessor.getFileMessages({
+          zaloId: activeAccountId!,
+          threadId: activeThreadId,
+          limit: 50,
+          offset: 0,
+        });
+        const fileMsgs = fileR?.messages || [];
 
         // Build danh sach Boss URLs de preload
         const bossUrls: string[] = [];
-        for (const msg of msgs) {
-          try {
-            const lp = typeof msg.local_paths === 'string'
-              ? JSON.parse(msg.local_paths || '{}')
-              : (msg.local_paths || {});
-            const lf = lp.main || lp.hd || lp.thumb || '';
-            if (lf) {
-              const bossUrl = toLocalMediaUrl(lf);
-              if (bossUrl && !bossUrl.startsWith('local-media://') && !bossUrl.startsWith('file://')) {
-                bossUrls.push(bossUrl);
-              }
-            }
-          } catch {}
+        for (const msg of mediaMsgs) {
+          bossUrls.push(...extractBossUrls(msg));
+        }
+        for (const msg of fileMsgs) {
+          bossUrls.push(...extractBossUrls(msg));
         }
 
-        if (bossUrls.length > 0) {
-          console.log(`[MediaCache] Preloading ${bossUrls.length} files for thread ${activeThreadId}`);
-          ipc.file?.preloadMediaBatch(bossUrls).catch(() => {});
+        // Dedup URLs (tranh preload cung 1 file 2 lan)
+        const uniqueUrls = [...new Set(bossUrls.filter(Boolean))];
+
+        if (uniqueUrls.length > 0) {
+          console.log(`[MediaCache] Preloading ${uniqueUrls.length} files (${mediaMsgs.length} media, ${fileMsgs.length} files) for thread ${activeThreadId}`);
+          ipc.file?.preloadMediaBatch(uniqueUrls).catch(() => {});
         }
       } catch (err) {
         console.warn('[MediaCache] Preload error:', err);
@@ -1033,6 +1059,7 @@ export default function ChatWindow() {
       let res: any;
       if (isEmployee) {
         const DataAccessor = (await import('../../lib/data/DataAccessor')).default;
+
         const restResult = await DataAccessor.getMessages({
           zaloId: activeAccountId,
           threadId: activeThreadId,
@@ -1289,9 +1316,9 @@ export default function ChatWindow() {
       if (res?.success) setPins(res.pins || []);
       if (overLimit) {
         // Zalo API chỉ hỗ trợ 3 tin ghim - ghim thành công trong ứng dụng nhưng không đồng bộ lên API
-        showNotification('📌 Ghim thành công (chỉ áp dụng trong app - Zalo giới hạn 3 tin ghim)', 'success');
+        showNotification('Đã ghim (chỉ áp dụng trong app - Zalo giới hạn 3 tin ghim)', 'success');
       } else {
-        showNotification('📌 Đã ghim tin nhắn', 'success');
+        showNotification('Đã ghim tin nhắn', 'success');
       }
     } catch (e: any) {
       showNotification('Ghim thất bại: ' + e.message, 'error');
@@ -1669,7 +1696,7 @@ export default function ChatWindow() {
 
   if (!activeThreadId) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center text-gray-500">
+      <div className="flex-1 flex flex-col items-center justify-center text-gray-400">
         <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" className="mb-4 opacity-30">
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
         </svg>
@@ -1702,7 +1729,7 @@ export default function ChatWindow() {
               <line x1="12" y1="3" x2="12" y2="15"/>
             </svg>
             <p className="text-blue-400 font-medium text-sm">Thả file / ảnh để gửi</p>
-            <p className="text-gray-500 text-xs">Hỗ trợ ảnh, video, file</p>
+            <p className="text-gray-400 text-xs">Hỗ trợ ảnh, video, file</p>
           </div>
         </div>
       )}
@@ -1894,9 +1921,9 @@ export default function ChatWindow() {
             </div>
           ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-center px-6 py-12 opacity-60">
-            <div className="text-3xl mb-3">💬</div>
+            <div className="text-3xl mb-3"><ChatIcon className="w-4 h-4" /></div>
             <p className="text-gray-400 text-sm font-medium">Chưa có tin nhắn nào</p>
-            <p className="text-gray-500 text-xs mt-1 max-w-xs">
+            <p className="text-gray-400 text-xs mt-1 max-w-xs">
               Tin nhắn chỉ hiển thị từ lúc kết nối. Hãy gửi tin nhắn mới để bắt đầu.
             </p>
           </div>
@@ -2012,7 +2039,7 @@ export default function ChatWindow() {
               <div key={msg.msg_id + idx} id={`msg-${msg.msg_id}`} className={`flex flex-col mb-0.5 ${isSent ? 'items-end' : 'items-start'}`}>
                 {showTime && (
                   <div className="flex justify-center w-full my-2">
-                    <span className="text-xs text-gray-500 bg-gray-800 px-2 py-0.5 rounded-full">{formatMsgTime(msg.timestamp)}</span>
+                    <span className="text-xs text-gray-400 bg-gray-800 px-2 py-0.5 rounded-full">{formatMsgTime(msg.timestamp)}</span>
                   </div>
                 )}
                 <div className={`flex items-end gap-2 ${isSent ? 'flex-row-reverse' : 'flex-row'}`}>
@@ -2132,7 +2159,7 @@ export default function ChatWindow() {
             >
               {showTime && (
                 <div className="flex justify-center w-full my-2">
-                  <span className="text-xs text-gray-500 bg-gray-800 px-2 py-0.5 rounded-full">
+                  <span className="text-xs text-gray-400 bg-gray-800 px-2 py-0.5 rounded-full">
                     {formatMsgTime(msg.timestamp)}
                   </span>
                 </div>
@@ -2210,18 +2237,12 @@ export default function ChatWindow() {
                     const empStore = useEmployeeStore.getState();
                     const emp = empStore.employees.find((e: any) => e.employee_id === empId);
                     const empName = emp?.display_name || empStore.employeeNameMap[empId] || 'NV';
-                    const empAvatar = emp?.avatar_url || empStore.employeeAvatarMap[empId] || '';
-                    return (
-                      <div className="w-6 h-6 flex-shrink-0 self-end mb-0.5" title={`Gửi bởi: ${empName}`}>
-                        {empAvatar ? (
-                          <img src={empAvatar} alt={empName} className="w-6 h-6 rounded-full object-cover ring-1 ring-purple-500/40" />
-                        ) : (
-                          <div className="w-6 h-6 rounded-full bg-purple-600/30 flex items-center justify-center text-purple-300 text-[10px] font-bold ring-1 ring-purple-500/40">
-                            {(empName || 'N').charAt(0).toUpperCase()}
-                          </div>
-                        )}
-                      </div>
-                    );
+                    const rawAvatar = emp?.avatar_url || empStore.employeeAvatarMap[empId] || '';
+                    // Convert local path → Boss REST URL nếu cần (employee mode)
+                    const empAvatar = rawAvatar && !rawAvatar.startsWith('http')
+                      ? toLocalMediaUrl(rawAvatar)
+                      : rawAvatar;
+                    return <EmployeeAvatar key={empId} name={empName} avatarUrl={empAvatar} />;
                   })()}
 
                   <div className={`flex flex-col ${isEcardMsg ? 'w-full items-center' : isSent ? 'items-end' : 'items-start'} relative min-w-0${hasReactions && !isGroupedStickerFirst ? ' mb-3' : ''}`}>
@@ -2231,8 +2252,8 @@ export default function ChatWindow() {
                     )}
                     <div className={`rounded-2xl text-sm break-words min-w-0 overflow-hidden ${
                       isMediaMsg || isGroupMedia || isFileMsg || isCardMsg || isEcardMsg || isStickerMsg || isBankCardMsg ? '' : isSent
-                        ? 'px-3 py-2 bg-blue-600 text-white rounded-br-sm'
-                        : 'px-3 py-2 bg-gray-700 text-gray-200 rounded-bl-sm'
+                        ? 'px-3 py-2 bg-blue-400/40 text-white border border-blue-200 dark:border-blue-600/50 rounded-br-sm'
+                        : 'px-3 py-2 bg-gray-700 text-gray-200 border border-gray-200 dark:border-gray-600 rounded-bl-sm'
                     }`}>
                     {/* Quote preview - supports both pre-built quote_data and reply_to_id fallback */}
                     {(msg.quote_data || msg.reply_to_id) && (() => {
@@ -2308,7 +2329,7 @@ export default function ChatWindow() {
                             } else if (q.msgType === 'chat.sticker') {
                               quoteDisplayText = '[Sticker]';
                             } else if (q.msgType === 'chat.recommended' || q.msgType === 'chat.link') {
-                              quoteDisplayText = '🔗 [Link]';
+                              quoteDisplayText = '[Link]';
                             } else if (['share.file', 'share.link', 'file'].includes(q.msgType)) {
                               quoteDisplayText = '[File/Link]';
                             } else if (q.msgType === 'chat.todo') {
@@ -2325,10 +2346,10 @@ export default function ChatWindow() {
 
                         return (
                           <div
-                            className={`border-l-2 ${isSent ? 'border-blue-300 bg-blue-500/20' : 'border-gray-400 bg-gray-600/50'} rounded pl-2 pr-1 py-1 mb-1 text-xs opacity-90 cursor-pointer hover:opacity-100 overflow-hidden min-w-0 max-w-full`}
+                            className={`border-l-2 ${isSent ? 'border-blue-200 bg-blue-200/30' : 'border-gray-400 bg-gray-600/50'} rounded pl-2 pr-1 py-1 mb-1 text-xs cursor-pointer hover:opacity-100 overflow-hidden min-w-0 max-w-full`}
                             onClick={() => q.msgId && handleScrollToMsg(String(q.msgId))}
                           >
-                            {q.fromD && <p className={`font-semibold truncate ${isSent ? 'text-blue-100' : 'text-gray-200'}`}>{q.fromD}</p>}
+                            {q.fromD && <p className={`font-semibold truncate ${isSent ? 'text-white' : 'text-gray-200'}`}>{q.fromD}</p>}
                             {isQuotedSticker ? (
                               <QuotedStickerPreview content={quotedStickerContent} />
                             ) : finalImgUrl ? (
@@ -2346,7 +2367,7 @@ export default function ChatWindow() {
                               />
                             ) : null}
                             <p
-                              className="opacity-80 line-clamp-2 break-words whitespace-pre-wrap"
+                              className="line-clamp-2 break-words whitespace-pre-wrap mt-1 mb-1"
                               style={(finalImgUrl || isQuotedSticker) ? { display: 'none' } : undefined}
                             >
                               {quoteDisplayText}
@@ -2705,7 +2726,7 @@ export default function ChatWindow() {
 
         return (
           <div className="px-4 pb-2 flex justify-end items-center gap-1.5">
-            <span className="text-[11px] text-gray-500 mr-0.5">Đã xem</span>
+            <span className="text-[11px] text-gray-400 mr-0.5">Đã xem</span>
             <div className="flex items-center -space-x-1">
               {shown.map((u) => (
                 <div key={u.userId} title={u.name} className="w-4 h-4 rounded-full ring-1 ring-gray-800 overflow-hidden flex-shrink-0">
@@ -3011,7 +3032,7 @@ function PollBubble({ msg, isSent, activeAccountId, threadId }: { msg: any; isSe
         />
       )}
       {expanded && !loading && !pollDetail && (
-        <p className={`px-3 py-2 text-xs ${isSent ? 'text-blue-200' : 'text-gray-500'}`}>Không thể tải chi tiết</p>
+        <p className={`px-3 py-2 text-xs ${isSent ? 'text-blue-200' : 'text-gray-400'}`}>Không thể tải chi tiết</p>
       )}
     </div>
   );
@@ -3110,7 +3131,7 @@ export function CreatePollDialog({ groupId, activeAccountId, channel, onClose }:
                   rows={3}
                   className="w-full bg-gray-800 border border-gray-600 rounded-xl px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 resize-none"
                 />
-                <p className="text-right text-xs text-gray-500 mt-0.5">{question.length}/200</p>
+                <p className="text-right text-xs text-gray-400 mt-0.5">{question.length}/200</p>
               </div>
 
               <div>
@@ -3126,7 +3147,7 @@ export function CreatePollDialog({ groupId, activeAccountId, channel, onClose }:
                       />
                       {options.length > 2 && (
                         <button onClick={() => removeOption(i)}
-                          className="w-7 h-7 flex items-center justify-center text-gray-500 hover:text-red-400 transition-colors">
+                          className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-red-400 transition-colors">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                             <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                           </svg>
@@ -3162,14 +3183,14 @@ export function CreatePollDialog({ groupId, activeAccountId, channel, onClose }:
                   />
                   {expiredTime && (
                     <button onClick={() => setExpiredTime('')}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white">
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white">
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                         <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                       </svg>
                     </button>
                   )}
                 </div>
-                {!expiredTime && <p className="text-xs text-gray-500 mt-1">Không giới hạn thời gian</p>}
+                {!expiredTime && <p className="text-xs text-gray-400 mt-1">Không giới hạn thời gian</p>}
               </div>
 
               <div>
@@ -3220,6 +3241,28 @@ function PollToggle({ label, checked, onChange }: { label: string; checked: bool
         <span className={`absolute top-0.5 left-0 w-4 h-4 bg-white rounded-full shadow transition-transform ${checked ? 'translate-x-5' : 'translate-x-0.5'}`} />
       </button>
     </label>
+  );
+}
+
+// ─── EmployeeAvatar ────────────────────────────────────────────────
+// Hiển thị avatar của nhân viên trong bong bóng chat (bên phải).
+// Nếu avatar load lỗi (404) → fallback sang chữ cái đầu của tên.
+function EmployeeAvatar({ name, avatarUrl }: { name: string; avatarUrl?: string }) {
+  const [imgError, setImgError] = useState(false);
+  if (!avatarUrl || imgError) {
+    return (
+      <div className="w-6 h-6 rounded-full bg-purple-600/30 flex items-center justify-center text-purple-300 text-[10px] font-bold ring-1 ring-purple-500/40 flex-shrink-0 self-end mb-0.5"
+        title={`Gửi bởi: ${name}`}>
+        {(name || 'N').charAt(0).toUpperCase()}
+      </div>
+    );
+  }
+  return (
+    <img src={avatarUrl} alt={name}
+      className="w-6 h-6 rounded-full object-cover ring-1 ring-purple-500/40 flex-shrink-0 self-end mb-0.5"
+      title={`Gửi bởi: ${name}`}
+      onError={() => setImgError(true)}
+    />
   );
 }
 
@@ -3353,9 +3396,9 @@ function extractMediaUrl(msg: any): string {
 function parseQuoteMsg(msg: string, msgType?: string): string {
   if (!msg || msg === 'null') {
     // msg rỗng nhưng msgType cho biết loại → trả về fallback ngay
-    if (msgType === 'chat.recommended' || msgType === 'chat.link') return '🔗 [Link]';
-    if (msgType === 'share.file' || msgType === 'file') return '📎 [File]';
-    if (msgType === 'share.link') return '🔗 [Link]';
+    if (msgType === 'chat.recommended' || msgType === 'chat.link') return '[Link]';
+    if (msgType === 'share.file' || msgType === 'file') return '[File]';
+    if (msgType === 'share.link') return '[Link]';
     if (msgType === 'chat.photo' || msgType === 'photo' || msgType === 'image') return '[Hình ảnh]';
     if (msgType === 'chat.video.msg') return '[Video]';
     if (msgType === 'chat.voice') return '🎤 [Ghi âm]';
@@ -3398,17 +3441,17 @@ function parseQuoteMsg(msg: string, msgType?: string): string {
           let paramsObj = parsed.params;
           if (typeof paramsObj === 'string') { try { paramsObj = JSON.parse(paramsObj); } catch { paramsObj = null; } }
           const title = parsed.title || paramsObj?.mediaTitle || parsed.description;
-          if (title) return `🔗 ${title}`;
+          if (title) return `Link: ${title}`;
         }
       } catch {}
-      return '🔗 [Link]';
+      return '[Link]';
     }
     // Với share.file và share.link → cần parse msg để lấy title
     if (msgType === 'share.file' || msgType === 'share.link' || msgType === 'file') {
       try {
         const parsed = JSON.parse(msg);
         if (parsed && typeof parsed === 'object' && parsed.title) {
-          return `📎 ${parsed.title}`;
+          return `File: ${parsed.title}`;
         }
       } catch {}
       return msgType === 'share.link' ? '[Link]' : '[File]';
@@ -3438,23 +3481,23 @@ function parseQuoteMsg(msg: string, msgType?: string): string {
         // Ưu tiên title gốc (có thể chứa text người dùng), fallback sang mediaTitle
         const mediaTitle = parsed.title || paramsObj?.mediaTitle;
         if (mediaTitle) {
-          return `🔗 ${mediaTitle}`;
+          return `Link: ${mediaTitle}`;
         }
-        return '🔗 [Link]';
+        return '[Link]';
       }
 
       // 3. Kiểm tra FILE/LINK thông thường: có title + href
       if (parsed.title && parsed.href) {
         // Có params.fileSize/fileExt → file
         if (paramsObj?.fileSize || paramsObj?.fileExt) {
-          return `📎 ${parsed.title}`;
+          return `File: ${parsed.title}`;
         }
         // Có params.hd/rawUrl → ảnh (bọc trong link format)
         const hasImageParams = !!(paramsObj?.hd || paramsObj?.rawUrl);
         if (!hasImageParams) {
           // Link thuần túy - ưu tiên title gốc để không mất text do user nhập
           const displayTitle = parsed.title || paramsObj?.mediaTitle;
-          return `🔗 ${displayTitle}`;
+          return `Link: ${displayTitle}`;
         }
         // Có image params → rơi vào case ảnh bên dưới
       }
@@ -3591,9 +3634,9 @@ function FileBubble({ msg, isSent }: { msg: any; isSent: boolean }) {
         if (!fileExt && fileTitle) fileExt = fileTitle.split('.').pop()?.toLowerCase() || '';
       }
     } catch {}
-    // Fallback: extract name from body text like "📎 filename.ext"
+    // Fallback: extract name from body text like "File: filename.ext"
     if (!fileTitle && msg.content) {
-      const m = msg.content.match(/📎\s*(.+)/);
+      const m = msg.content.match(/(?:📎|File:)\s*(.+)/);
       if (m) {
         fileTitle = m[1].trim();
         if (!fileExt) fileExt = fileTitle.split('.').pop()?.toLowerCase() || '';
@@ -3830,7 +3873,7 @@ function MediaBubble({ msg, onView, isSent, allContacts, groupMembersList, onMen
 
   if (loadFailed) {
     return (
-      <div className="flex flex-col items-center justify-center gap-1.5 max-w-xs w-full h-32 rounded-xl bg-gray-700/40 text-gray-500 select-none">
+      <div className="flex flex-col items-center justify-center gap-1.5 max-w-xs w-full h-32 rounded-xl bg-gray-700/40 text-gray-400 select-none">
         <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="opacity-40">
           <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
           <polyline points="21 15 16 10 5 21"/>
@@ -3863,7 +3906,7 @@ function MediaBubble({ msg, onView, isSent, allContacts, groupMembersList, onMen
   if (!displayUrl) {
     // Không có cả remote lẫn local - hiển thị placeholder tĩnh (không animation)
     return (
-      <div className="flex items-center justify-center max-w-xs w-full h-32 rounded-xl bg-gray-700/40 text-gray-500 select-none">
+      <div className="flex items-center justify-center max-w-xs w-full h-32 rounded-xl bg-gray-700/40 text-gray-400 select-none">
         <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="opacity-30">
           <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
           <polyline points="21 15 16 10 5 21"/>
@@ -4031,7 +4074,7 @@ function VideoBubble({ msg, isSent }: { msg: any; isSent: boolean }) {
         />
       ) : (
         <div className="w-full h-full bg-gray-800 flex items-center justify-center">
-          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-600">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-400">
             <polygon points="23 7 16 12 23 17 23 7"/>
             <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
           </svg>
@@ -4448,7 +4491,7 @@ function SingleImageInGroup({ msg, onView, isSelecting: isSelectingProp, isSelec
 
   if (loadFailed || !displayUrl) {
     return (
-      <div className="h-40 flex-1 min-w-0 bg-gray-700/50 flex items-center justify-center text-gray-500 select-none">
+      <div className="h-40 flex-1 min-w-0 bg-gray-700/50 flex items-center justify-center text-gray-400 select-none">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="opacity-30">
           <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
           <polyline points="21 15 16 10 5 21"/>
@@ -4612,7 +4655,7 @@ function StickerBubble({ msg }: { msg: any }) {
     return (
       <div className="w-28 h-28 rounded-xl bg-gray-700/30 border border-gray-600/30 flex flex-col items-center justify-center gap-1">
         <span className="text-2xl opacity-40">🎭</span>
-        <span className="text-[10px] text-gray-500 text-center px-1 leading-tight">Sticker chưa hỗ trợ</span>
+        <span className="text-[10px] text-gray-400 text-center px-1 leading-tight">Sticker chưa hỗ trợ</span>
       </div>
     );
   }
@@ -4874,7 +4917,7 @@ function ReactionPopup({ msg, initialEmoji, contacts, groupMembers, currentUserI
             </div>
           ))}
           {users.length === 0 && (
-            <p className="text-xs text-gray-500 text-center py-6">Chưa có ai thả cảm xúc này</p>
+            <p className="text-xs text-gray-400 text-center py-6">Chưa có ai thả cảm xúc này</p>
           )}
         </div>
       </div>
@@ -4957,7 +5000,7 @@ function EcardBubble({ msg, onManage }: { msg: any; onManage?: () => void }) {
     };
 
     // Extract reminder title from params.notifyTxt or card title
-    const reminderTitle = (params.notifyTxt || title || '').replace(/^[⏰📅🔔⭐📌💡🎯🎉]\s*/, '');
+    const reminderTitle = (params.notifyTxt || title || '').replace(/^(?:[⏰📅🔔⭐📌💡🎯🎉]|Clock:|Calendar:|Bell:|Star:|Pin:|Lightbulb:|Target:)\s*/i, '');
 
     return (
       <div className="flex justify-center w-full my-1">
@@ -5111,7 +5154,7 @@ function LinkBubble({ parsed, isSent }: { parsed: any; isSent: boolean }) {
         )}
 
         {urlLine && (
-          <p className="text-xs text-blue-500 leading-relaxed line-clamp-2 break-all">
+          <p className="text-xs text-blue-500 leading-relaxed line-clamp-2 break-word">
             {urlLine}
           </p>
         )}
@@ -5148,7 +5191,7 @@ function LinkBubble({ parsed, isSent }: { parsed: any; isSent: boolean }) {
             <p className="text-xs text-white leading-snug line-clamp-2">{previewTitle}</p>
           )}
           {derivedDomain && (
-            <p className="text-[11px] text-gray-500 truncate">{derivedDomain}</p>
+            <p className="text-[11px] text-gray-400 truncate">{derivedDomain}</p>
           )}
         </div>
       </button>
@@ -5195,7 +5238,7 @@ function CallBubble({ parsed, isSent }: { parsed: any; isSent: boolean }) {
         </div>
         <div className="flex-1 min-w-0">
           <p className={`text-sm font-semibold ${statusRed ? 'text-red-400' : isSent ? 'text-white' : 'text-gray-200'}`}>{statusLabel}</p>
-          <p className={`text-xs mt-0.5 ${isSent ? 'text-blue-200' : 'text-gray-400'}`}>{callTypeLabel}</p>
+          <p className={`text-xs mt-0.5`}>{callTypeLabel}</p>
         </div>
       </div>
     </div>
@@ -5325,7 +5368,7 @@ function ContactCardBubble({ parsed, isSent, onOpenProfile }: { parsed: any; isS
         <div className="flex-1 min-w-0">
           <p className="text-base font-semibold truncate select-text cursor-text">{title || 'Danh thiếp'}</p>
           {phone && <PhoneDisplay phone={phone} className={`text-sm ${isSent ? 'text-blue-100' : 'text-gray-300'}`} />}
-          <p className={`text-xs mt-1 ${isSent ? 'text-blue-200' : 'text-gray-500'}`}>Danh thiếp Zalo</p>
+          <p className={`text-xs mt-1 ${isSent ? 'text-blue-200' : 'text-gray-400'}`}>Danh thiếp Zalo</p>
         </div>
         {qrCodeUrl && (
           <div className="w-12 h-12 flex-shrink-0">
@@ -5460,7 +5503,7 @@ function applyRtfStyles(text: string, styles: RtfStyle[], mentions?: RtfMention[
     if (cs.mentionUid) {
       cls.push('font-semibold');
       if (onMentionClick && cs.mentionUid !== 'unknown') cls.push('cursor-pointer hover:underline');
-      inlineStyle.color = '#60a5fa';
+      inlineStyle.color = '#5398f3';
     } else if (cs.color) {
       inlineStyle.color = cs.color;
     }
@@ -5476,7 +5519,7 @@ function applyRtfStyles(text: string, styles: RtfStyle[], mentions?: RtfMention[
     i = j;
   }
 
-  return <span className="whitespace-pre-wrap select-text break-all">{nodes}</span>;
+  return <span className="whitespace-pre-wrap select-text break-word">{nodes}</span>;
 }
 
 /** Render normal text, highlighting @mentions in blue, with optional click-to-profile */
@@ -5554,7 +5597,7 @@ function TextWithMentions({
             <span
               key={atIdx}
               className={`font-semibold${uid && onMentionClick ? ' cursor-pointer hover:underline' : ''}`}
-              style={{ color: '#8dc1ff' }}
+              style={{ color: '#5398f3' }}
               onClick={uid && onMentionClick ? (e) => { e.stopPropagation(); onMentionClick(uid, e); } : undefined}
             >{mentionText}</span>
           );
@@ -5577,8 +5620,8 @@ function TextWithMentions({
     }
   }
 
-  if (segments.length === 0) return <span className="whitespace-pre-wrap select-text break-all">{converted}</span>;
-  return <span className="whitespace-pre-wrap select-text break-all">{segments}</span>;
+  if (segments.length === 0) return <span className="whitespace-pre-wrap select-text break-word">{converted}</span>;
+  return <span className="whitespace-pre-wrap select-text break-word">{segments}</span>;
 }
 
 function RtfBubble({
@@ -5620,7 +5663,7 @@ export function ActionRow({ icon, label, onClick, textColor = 'text-gray-300' }:
       className={`w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-700/50 transition-colors text-left ${textColor}`}>
       <span className="flex-shrink-0 text-gray-400">{icon}</span>
       <span className="text-sm">{label}</span>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="ml-auto text-gray-600 flex-shrink-0">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="ml-auto text-gray-400 flex-shrink-0">
         <polyline points="9 18 15 12 9 6"/>
       </svg>
     </button>
@@ -5652,7 +5695,7 @@ function extractMsgText(msg: any): string {
     if (parsed?.msg && typeof parsed.msg === 'string') return parsed.msg;
     if (parsed?.message && typeof parsed.message === 'string') return parsed.message;
     if (parsed?.content && typeof parsed.content === 'string') return parsed.content;
-    if (parsed?.title) return `📂 ${parsed.title}`;
+    if (parsed?.title) return `File: ${parsed.title}`;
     return '[Tin nhắn]';
   } catch { return msg.content || '[Tin nhắn]'; }
 }
@@ -5822,7 +5865,7 @@ function ForwardMessageModal({ messages, contacts, onClose, onForward }: {
 
   const msgCount = messages.length;
   const previewText = msgCount === 1
-    ? (() => { try { const c = messages[0].content; if (!c || c === 'null') return '[Tin nhắn]'; const p = JSON.parse(c); if (typeof p === 'string') return p; if (p?.title) return `📂 ${p.title}`; if (p?.href || p?.thumb) return '[Hình ảnh]'; if (p?.msg) return String(p.msg); return '[Tin nhắn]'; } catch { return messages[0].content || '[Tin nhắn]'; } })()
+    ? (() => { try { const c = messages[0].content; if (!c || c === 'null') return '[Tin nhắn]'; const p = JSON.parse(c); if (typeof p === 'string') return p; if (p?.title) return `File: ${p.title}`; if (p?.href || p?.thumb) return '[Hình ảnh]'; if (p?.msg) return String(p.msg); return '[Tin nhắn]'; } catch { return messages[0].content || '[Tin nhắn]'; } })()
     : `[${msgCount} tin nhắn]`;
 
   const TABS: { key: 'recent' | 'friends' | 'groups' | 'categories'; label: string; icon: React.ReactNode }[] = [
@@ -5897,7 +5940,7 @@ function ForwardMessageModal({ messages, contacts, onClose, onForward }: {
           {TABS.map(t => (
             <button key={t.key}
               onClick={() => { setTab(t.key); setSelectedLabelId(null); }}
-              className={`flex-1 flex items-center justify-center gap-1 py-2.5 text-xs transition-colors border-b-2 ${tab === t.key ? 'border-blue-500 text-blue-400' : 'border-transparent text-gray-500 hover:text-gray-300'}`}
+              className={`flex-1 flex items-center justify-center gap-1 py-2.5 text-xs transition-colors border-b-2 ${tab === t.key ? 'border-blue-500 text-blue-400' : 'border-transparent text-gray-400 hover:text-gray-300'}`}
             >
               {t.icon}
               <span>{t.label}</span>
@@ -5913,11 +5956,11 @@ function ForwardMessageModal({ messages, contacts, onClose, onForward }: {
               <button
                 onClick={() => { setLabelSource('local'); setSelectedLabelId(null); }}
                 className={`text-[11px] px-3 py-1 rounded-full border transition-colors ${labelSource === 'local' ? 'bg-blue-600 border-blue-500 text-white' : 'border-gray-600 text-gray-400 hover:border-gray-500 hover:text-gray-300'}`}
-              >💾 Local</button>
+              ><HardDriveIcon className="w-4 h-4 inline" /> Local</button>
               <button
                 onClick={() => { setLabelSource('zalo'); setSelectedLabelId(null); }}
                 className={`text-[11px] px-3 py-1 rounded-full border transition-colors ${labelSource === 'zalo' ? 'bg-blue-600 border-blue-500 text-white' : 'border-gray-600 text-gray-400 hover:border-gray-500 hover:text-gray-300'}`}
-              >☁️ Zalo</button>
+              ><CloudIcon className="w-4 h-4 inline" /> Zalo</button>
             </div>
 
             {/* Label pills */}
@@ -5971,7 +6014,7 @@ function ForwardMessageModal({ messages, contacts, onClose, onForward }: {
         {/* Contact list */}
         <div className="flex-1 overflow-y-auto">
           {filtered.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-gray-500">
+            <div className="flex flex-col items-center justify-center py-12 text-gray-400">
               <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mb-2 opacity-40"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
               <p className="text-sm">Không tìm thấy</p>
             </div>
@@ -6006,11 +6049,11 @@ function ForwardMessageModal({ messages, contacts, onClose, onForward }: {
                 )}
                 <div className="flex-1 min-w-0">
                   <p className="text-sm text-gray-200 truncate">{c.alias || c.display_name || c.contact_id}
-                    {c.alias && c.display_name && <span className="text-xs text-gray-500 ml-1">({c.display_name})</span>}</p>
+                    {c.alias && c.display_name && <span className="text-xs text-gray-400 ml-1">({c.display_name})</span>}</p>
                   {c.contact_type === 'group'
-                    ? <p className="text-xs text-gray-500">Nhóm</p>
+                    ? <p className="text-xs text-gray-400">Nhóm</p>
                     : c.last_message_time
-                      ? <p className="text-xs text-gray-500">{formatMsgTime(c.last_message_time)}</p>
+                      ? <p className="text-xs text-gray-400">{formatMsgTime(c.last_message_time)}</p>
                       : null}
                   {tab === 'categories' && getContactLabelBadges(c.contact_id)}
                 </div>
@@ -6200,11 +6243,10 @@ export function NoteViewModal({ topicId, initialTitle, groupId, onClose, onNoteP
           <div className="flex border-b border-gray-700 flex-shrink-0 px-4 pt-2 gap-1">
             <button onClick={() => setActiveTab('zalo')}
               className={`px-4 py-1.5 rounded-t-lg text-sm font-medium transition-colors ${activeTab === 'zalo' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700'}`}>
-              ☁️ Zalo
+              <CloudIcon className="w-4 h-4 inline" /> Zalo
             </button>
             <button onClick={() => setActiveTab('local')}
-              className={`px-4 py-1.5 rounded-t-lg text-sm font-medium transition-colors ${activeTab === 'local' ? 'bg-green-600 text-white' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700'}`}>
-              💾 Local
+              className={`px-4 py-1.5 rounded-t-lg text-sm font-medium transition-colors ${activeTab === 'local' ? 'bg-green-600 text-white' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700'}`}><HardDriveIcon className="w-4 h-4 inline" /> Local
             </button>
           </div>
         )}
@@ -6221,7 +6263,7 @@ export function NoteViewModal({ topicId, initialTitle, groupId, onClose, onNoteP
                       {createTime ? ` - ${formatNoteTime(createTime)}` : ''}
                     </p>
                   )}
-                  <p className="text-sm text-gray-100 leading-relaxed whitespace-pre-wrap">{title || <span className="text-gray-500 italic">Không có nội dung</span>}</p>
+                  <p className="text-sm text-gray-100 leading-relaxed whitespace-pre-wrap">{title || <span className="text-gray-400 italic">Không có nội dung</span>}</p>
                 </div>
                 <div className="flex items-center gap-3 px-5 pb-5 pt-2 border-t border-gray-700/50 flex-shrink-0">
                   <button onClick={() => { navigator.clipboard.writeText(title).catch(() => {}); showNotification('Đã sao chép', 'success'); }}
@@ -6249,7 +6291,7 @@ export function NoteViewModal({ topicId, initialTitle, groupId, onClose, onNoteP
                   <div className="flex items-center justify-between py-2 px-3 bg-gray-700/50 rounded-xl">
                     <div>
                       <p className="text-sm text-gray-200 font-medium">Ghim ghi chú</p>
-                      <p className="text-xs text-gray-500">Hiển thị ở đầu hội thoại</p>
+                      <p className="text-xs text-gray-400">Hiển thị ở đầu hội thoại</p>
                     </div>
                     <button type="button" onClick={() => setPinAct(v => !v)}
                       className={`relative w-10 h-5 rounded-full transition-colors flex-shrink-0 ${pinAct ? 'bg-blue-500' : 'bg-gray-600'}`}>
@@ -6279,7 +6321,7 @@ export function NoteViewModal({ topicId, initialTitle, groupId, onClose, onNoteP
                   <Spinner size={5} className="text-green-400" />
                 </div>
               ) : localNotes.length === 0 ? (
-                <p className="text-xs text-gray-500 text-center py-4">Chưa có ghi chú local nào</p>
+                <p className="text-xs text-gray-400 text-center py-4">Chưa có ghi chú local nào</p>
               ) : localNotes.map((note: any) => (
                 <div key={note.id} className="bg-gray-700/50 border border-gray-600/50 rounded-xl p-3 group">
                   {editNoteId === note.id ? (
@@ -6295,7 +6337,7 @@ export function NoteViewModal({ topicId, initialTitle, groupId, onClose, onNoteP
                     <>
                       <p className="text-sm text-gray-200 whitespace-pre-wrap leading-relaxed">{note.content}</p>
                       <div className="flex items-center justify-between mt-2">
-                        <span className="text-[11px] text-gray-500">{formatNoteTime(note.updated_at)}</span>
+                        <span className="text-[11px] text-gray-400">{formatNoteTime(note.updated_at)}</span>
                         <div className="opacity-0 group-hover:opacity-100 flex gap-3 transition-opacity">
                           <button onClick={() => { setEditNoteId(note.id); setEditNoteText(note.content); }} className="text-xs text-blue-400 hover:text-blue-300 transition-colors">Sửa</button>
                           <button onClick={() => handleDeleteLocalNote(note.id)} className="text-xs text-red-400 hover:text-red-300 transition-colors">Xóa</button>
@@ -6621,7 +6663,7 @@ function FriendRequestBar({ zaloId, userId, contact, getAuth, onReady }: {
                   className="w-full bg-gray-700 border border-gray-600 focus:border-blue-500 rounded-xl px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none resize-none transition-colors"
                   onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) handleSendRequest(); }}
                 />
-                <p className="text-right text-[11px] text-gray-500 mt-0.5">{sendMsg.length}/150</p>
+                <p className="text-right text-[11px] text-gray-400 mt-0.5">{sendMsg.length}/150</p>
               </div>
             </div>
 

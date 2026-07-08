@@ -7,44 +7,46 @@ import React, { useState, useCallback } from 'react';
 import ipc from '@/lib/ipc';
 import { useAppStore } from '@/store/appStore';
 import { Spinner } from '@/components/common/PageLoading';
+import { AlertIcon, BookIcon, BotIcon, BrainIcon, CalendarIcon, CampaignIcon, ChatIcon, CheckIcon, ClipboardListIcon, CloseIcon, CoffeeIcon, DollarIcon, EditIcon, FileTextIcon, HeadphonesIcon, HeartIcon, HomeIcon, LightningIcon, MapPinIcon, MonitorIcon, PackageIcon, PaletteIcon, RefreshIcon, RocketIcon, SearchIcon, ShieldIcon, ShoppingCartIcon, SmileIcon, SparklesIcon, StarIcon, SunIcon, TargetIcon, TruckIcon, UserIcon, UsersIcon } from '@/components/common/icons';
+
 
 // ─── Data: Industries ──────────────────────────────────────────────────────────
 
 const INDUSTRIES = [
-  { key: 'fashion',       icon: '👗', label: 'Thời trang',       desc: 'Quần áo, giày dép, phụ kiện' },
-  { key: 'cosmetics',     icon: '💄', label: 'Mỹ phẩm',         desc: 'Skincare, makeup, chăm sóc da' },
-  { key: 'fnb',           icon: '🍜', label: 'F&B',             desc: 'Nhà hàng, quán cafe, đồ uống' },
-  { key: 'education',     icon: '📚', label: 'Giáo dục',        desc: 'Khóa học, đào tạo, trung tâm' },
-  { key: 'realestate',    icon: '🏠', label: 'Bất động sản',    desc: 'Mua bán, cho thuê, dự án' },
-  { key: 'spa',           icon: '💆', label: 'Spa / Thẩm mỹ',  desc: 'Chăm sóc sắc đẹp, thẩm mỹ viện' },
-  { key: 'health',        icon: '🏥', label: 'Sức khỏe',        desc: 'Phòng khám, TPCN, thiết bị y tế' },
-  { key: 'tech',          icon: '💻', label: 'Công nghệ',       desc: 'Phần mềm, SaaS, điện thoại' },
-  { key: 'ecommerce',     icon: '🛒', label: 'E-commerce',      desc: 'Bán hàng online đa ngành' },
-  { key: 'insurance',     icon: '🛡️', label: 'Bảo hiểm',       desc: 'Bảo hiểm nhân thọ, phi nhân thọ' },
-  { key: 'automotive',    icon: '🚗', label: 'Ô tô / Xe máy',  desc: 'Mua bán, sửa chữa, phụ tùng' },
-  { key: 'travel',        icon: '✈️', label: 'Du lịch',         desc: 'Tour, khách sạn, visa' },
+  { key: 'fashion',       icon: <PaletteIcon className="w-4 h-4" />, label: 'Thời trang',       desc: 'Quần áo, giày dép, phụ kiện' },
+  { key: 'cosmetics',     icon: <StarIcon className="w-4 h-4" />, label: 'Mỹ phẩm',         desc: 'Skincare, makeup, chăm sóc da' },
+  { key: 'fnb',           icon: <CoffeeIcon className="w-4 h-4" />, label: 'F&B',             desc: 'Nhà hàng, quán cafe, đồ uống' },
+  { key: 'education',     icon: <BookIcon className="w-4 h-4" />, label: 'Giáo dục',        desc: 'Khóa học, đào tạo, trung tâm' },
+  { key: 'realestate',    icon: <HomeIcon className="w-4 h-4" />, label: 'Bất động sản',    desc: 'Mua bán, cho thuê, dự án' },
+  { key: 'spa',           icon: <SmileIcon className="w-4 h-4" />, label: 'Spa / Thẩm mỹ',  desc: 'Chăm sóc sắc đẹp, thẩm mỹ viện' },
+  { key: 'health',        icon: <HeartIcon className="w-4 h-4" />, label: 'Sức khỏe',        desc: 'Phòng khám, TPCN, thiết bị y tế' },
+  { key: 'tech',          icon: <MonitorIcon className="w-4 h-4" />, label: 'Công nghệ',       desc: 'Phần mềm, SaaS, điện thoại' },
+  { key: 'ecommerce',     icon: <ShoppingCartIcon className="w-4 h-4" />, label: 'E-commerce',      desc: 'Bán hàng online đa ngành' },
+  { key: 'insurance',     icon: <ShieldIcon className="w-4 h-4" />, label: 'Bảo hiểm',       desc: 'Bảo hiểm nhân thọ, phi nhân thọ' },
+  { key: 'automotive',    icon: <TruckIcon className="w-4 h-4" />, label: 'Ô tô / Xe máy',  desc: 'Mua bán, sửa chữa, phụ tùng' },
+  { key: 'travel',        icon: <MapPinIcon className="w-4 h-4" />, label: 'Du lịch',         desc: 'Tour, khách sạn, visa' },
 ] as const;
 
 // ─── Data: Goals ───────────────────────────────────────────────────────────────
 
 const GOALS = [
-  { key: 'sales',        icon: '💰', label: 'Bán hàng (chốt đơn)',          desc: 'Tư vấn → chốt đơn → upsell' },
-  { key: 'consult',      icon: '💡', label: 'Tư vấn sản phẩm',              desc: 'Giải đáp thắc mắc, so sánh SP' },
-  { key: 'support',      icon: '🎧', label: 'Chăm sóc khách hàng',         desc: 'Hỗ trợ sau bán, xử lý khiếu nại' },
-  { key: 'marketing',    icon: '📢', label: 'Seeding / Marketing',          desc: 'Gieo mầm, tạo nhu cầu, remarketing' },
-  { key: 'internal',     icon: '🏢', label: 'Hỗ trợ nội bộ',               desc: 'Trả lời nhân viên, FAQ nội bộ' },
-  { key: 'booking',      icon: '📅', label: 'Đặt lịch hẹn',                desc: 'Booking, nhắc lịch, confirm' },
+  { key: 'sales',        icon: <DollarIcon className="w-4 h-4" />, label: 'Bán hàng (chốt đơn)',          desc: 'Tư vấn → chốt đơn → upsell' },
+  { key: 'consult',      icon: <SunIcon className="w-4 h-4" />, label: 'Tư vấn sản phẩm',              desc: 'Giải đáp thắc mắc, so sánh SP' },
+  { key: 'support',      icon: <HeadphonesIcon className="w-4 h-4" />, label: 'Chăm sóc khách hàng',         desc: 'Hỗ trợ sau bán, xử lý khiếu nại' },
+  { key: 'marketing',    icon: <CampaignIcon className="w-4 h-4" />, label: 'Seeding / Marketing',          desc: 'Gieo mầm, tạo nhu cầu, remarketing' },
+  { key: 'internal',     icon: <HomeIcon className="w-4 h-4" />, label: 'Hỗ trợ nội bộ',               desc: 'Trả lời nhân viên, FAQ nội bộ' },
+  { key: 'booking',      icon: <CalendarIcon className="w-4 h-4" />, label: 'Đặt lịch hẹn',                desc: 'Booking, nhắc lịch, confirm' },
 ] as const;
 
 // ─── Data: Tones ───────────────────────────────────────────────────────────────
 
 const TONES = [
-  { key: 'friendly',      icon: '😊', label: 'Thân thiện',      desc: 'Gần gũi, dễ thương' },
-  { key: 'professional',  icon: '👔', label: 'Chuyên nghiệp',   desc: 'Lịch sự, nghiêm túc' },
-  { key: 'humorous',      icon: '😄', label: 'Hài hước',        desc: 'Vui vẻ, dí dỏm' },
-  { key: 'concise',       icon: '⚡', label: 'Ngắn gọn',        desc: 'Đi thẳng vào vấn đề' },
-  { key: 'detailed',      icon: '📋', label: 'Chi tiết',        desc: 'Giải thích kỹ, từng bước' },
-  { key: 'personalized',  icon: '💖', label: 'Cá nhân hoá',     desc: 'Gọi tên, nhớ sở thích' },
+  { key: 'friendly',      icon: <SmileIcon className="w-4 h-4" />, label: 'Thân thiện',      desc: 'Gần gũi, dễ thương' },
+  { key: 'professional',  icon: <UserIcon className="w-4 h-4" />, label: 'Chuyên nghiệp',   desc: 'Lịch sự, nghiêm túc' },
+  { key: 'humorous',      icon: <SmileIcon className="w-4 h-4" />, label: 'Hài hước',        desc: 'Vui vẻ, dí dỏm' },
+  { key: 'concise',       icon: <LightningIcon className="w-4 h-4" />, label: 'Ngắn gọn',        desc: 'Đi thẳng vào vấn đề' },
+  { key: 'detailed',      icon: <ClipboardListIcon className="w-4 h-4" />, label: 'Chi tiết',        desc: 'Giải thích kỹ, từng bước' },
+  { key: 'personalized',  icon: <HeartIcon className="w-4 h-4" />, label: 'Cá nhân hoá',     desc: 'Gọi tên, nhớ sở thích' },
 ] as const;
 
 // ─── Data: Prompt Templates Library ────────────────────────────────────────────
@@ -52,7 +54,7 @@ const TONES = [
 const PROMPT_TEMPLATES = [
   {
     id: 'cosmetics-sales',
-    icon: '💄',
+    icon: <StarIcon className="w-4 h-4" />,
     label: 'Chatbot chốt đơn mỹ phẩm',
     desc: 'Tư vấn skincare, chốt đơn, upsell combo',
     industry: 'cosmetics',
@@ -79,7 +81,7 @@ const PROMPT_TEMPLATES = [
   },
   {
     id: 'course-consult',
-    icon: '📚',
+    icon: <BookIcon className="w-4 h-4" />,
     label: 'Chatbot tư vấn khóa học',
     desc: 'Tư vấn chương trình, học phí, đăng ký',
     industry: 'education',
@@ -105,7 +107,7 @@ const PROMPT_TEMPLATES = [
   },
   {
     id: 'ecom-support',
-    icon: '🛒',
+    icon: <ShoppingCartIcon className="w-4 h-4" />,
     label: 'Chatbot CSKH e-commerce',
     desc: 'Hỗ trợ đơn hàng, đổi trả, khiếu nại',
     industry: 'ecommerce',
@@ -131,7 +133,7 @@ const PROMPT_TEMPLATES = [
   },
   {
     id: 'realestate-sales',
-    icon: '🏠',
+    icon: <HomeIcon className="w-4 h-4" />,
     label: 'Chatbot bán bất động sản',
     desc: 'Tư vấn dự án, giá, tiến độ, booking',
     industry: 'realestate',
@@ -157,7 +159,7 @@ const PROMPT_TEMPLATES = [
   },
   {
     id: 'upsell-general',
-    icon: '🚀',
+    icon: <RocketIcon className="w-4 h-4" />,
     label: 'Chatbot upsell / cross-sell',
     desc: 'Tăng giá trị đơn hàng, gợi ý sản phẩm liên quan',
     industry: 'ecommerce',
@@ -183,7 +185,7 @@ const PROMPT_TEMPLATES = [
   },
   {
     id: 'spa-booking',
-    icon: '💆',
+    icon: <SmileIcon className="w-4 h-4" />,
     label: 'Chatbot đặt lịch Spa',
     desc: 'Tư vấn dịch vụ, giá, đặt lịch hẹn',
     industry: 'spa',
@@ -212,14 +214,14 @@ const PROMPT_TEMPLATES = [
 // ─── Data: Improve options ─────────────────────────────────────────────────────
 
 const IMPROVE_OPTIONS = [
-  { key: 'close-deal',    icon: '💰', label: 'Tăng tỉ lệ chốt đơn' },
-  { key: 'natural',       icon: '💬', label: 'Trả lời tự nhiên hơn' },
-  { key: 'shorter',       icon: '⚡', label: 'Ngắn gọn hơn' },
-  { key: 'detailed',      icon: '📋', label: 'Chi tiết hơn' },
-  { key: 'friendly',      icon: '😊', label: 'Thân thiện hơn' },
-  { key: 'professional',  icon: '👔', label: 'Chuyên nghiệp hơn' },
-  { key: 'add-upsell',    icon: '🚀', label: 'Thêm kỹ năng upsell' },
-  { key: 'add-objection', icon: '🛡️', label: 'Xử lý từ chối tốt hơn' },
+  { key: 'close-deal',    icon: <DollarIcon className="w-4 h-4" />, label: 'Tăng tỉ lệ chốt đơn' },
+  { key: 'natural',       icon: <ChatIcon className="w-4 h-4" />, label: 'Trả lời tự nhiên hơn' },
+  { key: 'shorter',       icon: <LightningIcon className="w-4 h-4" />, label: 'Ngắn gọn hơn' },
+  { key: 'detailed',      icon: <ClipboardListIcon className="w-4 h-4" />, label: 'Chi tiết hơn' },
+  { key: 'friendly',      icon: <SmileIcon className="w-4 h-4" />, label: 'Thân thiện hơn' },
+  { key: 'professional',  icon: <UserIcon className="w-4 h-4" />, label: 'Chuyên nghiệp hơn' },
+  { key: 'add-upsell',    icon: <RocketIcon className="w-4 h-4" />, label: 'Thêm kỹ năng upsell' },
+  { key: 'add-objection', icon: <ShieldIcon className="w-4 h-4" />, label: 'Xử lý từ chối tốt hơn' },
 ] as const;
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -382,7 +384,7 @@ Prompt phải:
       setEditablePrompt(parsed.full);
       setStep(5);
     } catch (e: any) {
-      showNotification('❌ ' + e.message, 'error');
+      showNotification('Loi: ' + e.message, 'error');
     }
     setGenerating(false);
   };
@@ -407,7 +409,7 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
       setTab('create');
       setStep(5);
     } catch (e: any) {
-      showNotification('❌ ' + e.message, 'error');
+      showNotification('Loi: ' + e.message, 'error');
     }
     setGenerating(false);
   };
@@ -425,7 +427,7 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
       setResult(parsed);
       setEditablePrompt(parsed.full);
     } catch (e: any) {
-      showNotification('❌ ' + e.message, 'error');
+      showNotification('Loi: ' + e.message, 'error');
     }
     setGenerating(false);
   };
@@ -442,9 +444,9 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
       setResult(parsed);
       setEditablePrompt(parsed.full);
       setShowImprove(false);
-      showNotification('✅ Đã cải thiện prompt!', 'success');
+      showNotification('Da cai thien prompt!', 'success');
     } catch (e: any) {
-      showNotification('❌ ' + e.message, 'error');
+      showNotification('Loi: ' + e.message, 'error');
     }
     setImproveLoading(false);
   };
@@ -474,7 +476,7 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
         setEditablePrompt(parsed.full);
       }
     } catch (e: any) {
-      setChatRefineHistory(prev => [...prev, { role: 'assistant', content: `❌ ${e.message}` }]);
+      setChatRefineHistory(prev => [...prev, { role: 'assistant', content: `Loi: ${e.message}` }]);
     }
     setChatRefineLoading(false);
   };
@@ -507,26 +509,26 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
               { name: '', price: '', note: '' },
             ]);
           }
-          showNotification('✅ AI đã gợi ý thông tin!', 'success');
+          showNotification('AI da goi y thong tin!', 'success');
         }
       } catch {
-        showNotification('⚠️ Không parse được gợi ý, hãy nhập thủ công', 'warning');
+        showNotification('Khong parse duoc goi y, hay nhap thu cong', 'warning');
       }
     } catch (e: any) {
-      showNotification('❌ ' + e.message, 'error');
+      showNotification('Loi: ' + e.message, 'error');
     }
     setGenerating(false);
   };
 
   const handleApply = () => {
     onApply(editablePrompt);
-    showNotification('✅ Đã áp dụng prompt!', 'success');
+    showNotification('Da ap dung prompt!', 'success');
     onClose();
   };
 
   const handleCopy = () => {
     navigator.clipboard.writeText(editablePrompt);
-    showNotification('📋 Đã copy prompt!', 'success');
+    showNotification('Da copy prompt!', 'success');
   };
 
   const resetWizard = () => {
@@ -580,23 +582,22 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
       <div className="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl w-[780px] max-h-[88vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
         {/* ─ Header ─ */}
         <div className="px-5 py-3 border-b border-gray-700 flex items-center gap-3 flex-shrink-0">
-          <span className="text-xl">✨</span>
+          <SparklesIcon className="w-5 h-5 text-yellow-400" />
           <div className="flex-1 min-w-0">
             <h2 className="text-sm font-bold text-white">Gợi ý Prompt bằng AI</h2>
-            <p className="text-[10px] text-gray-500">Tạo prompt chuyên nghiệp trong vài phút - không cần biết viết prompt</p>
+            <p className="text-[10px] text-gray-400">Tạo prompt chuyên nghiệp trong vài phút - không cần biết viết prompt</p>
           </div>
           {/* Tab switcher */}
           <div className="flex items-center bg-gray-800 rounded-lg p-0.5 gap-0.5 flex-shrink-0">
             <button onClick={() => { setTab('create'); if (step === 5 && !result) setStep(1); }}
-              className={`px-3 py-1 rounded-md text-xs transition-colors ${tab === 'create' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}>
-              🎨 Tạo mới
+              className={`px-3 py-1 rounded-md text-xs transition-colors ${tab === 'create' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}><PaletteIcon className="w-4 h-4 inline" /> Tạo mới
             </button>
             <button onClick={() => setTab('library')}
               className={`px-3 py-1 rounded-md text-xs transition-colors ${tab === 'library' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}>
-              📚 Thư viện
+              <BookIcon className="w-4 h-4 inline" /> Thu vien
             </button>
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-800">✕</button>
+          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-800"><CloseIcon className="w-4 h-4" /></button>
         </div>
 
         {/* ─ Body ─ */}
@@ -606,7 +607,7 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
               {/* Quick mode bar */}
               <div className="mb-4 p-3 bg-gray-800/60 rounded-xl border border-gray-700/50">
                 <div className="flex items-center gap-2 mb-2">
-                  <span className="text-xs">⚡</span>
+                  <LightningIcon className="w-4 h-4" />
                   <span className="text-xs font-medium text-gray-300">Chế độ nhanh - 1 click ra prompt</span>
                 </div>
                 <div className="flex items-center gap-2">
@@ -618,18 +619,18 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
                     className="w-40 bg-gray-700 border border-gray-600 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"/>
                   <button onClick={handleQuickGenerate} disabled={generating || !assistantId}
                     className="px-3 py-1.5 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white text-xs font-medium rounded-lg transition-all disabled:opacity-50 flex-shrink-0 whitespace-nowrap">
-                    {generating ? '⏳' : '⚡'} Tạo nhanh
+                    {generating ? <Spinner size={4} /> : <LightningIcon className="w-4 h-4" />} Tạo nhanh
                   </button>
                 </div>
                 {!assistantId && (
-                  <p className="text-[10px] text-amber-400 mt-1.5">⚠️ Lưu trợ lý AI trước để sử dụng tính năng gợi ý (cần API Key hoạt động)</p>
+                  <p className="text-[10px] text-amber-400 mt-1.5"><AlertIcon className="w-3 h-3 inline" /> Luu tro ly AI truoc de su dung tinh nang goi y (can API Key hoat dong)</p>
                 )}
               </div>
 
               {/* Divider */}
               <div className="flex items-center gap-3 mb-4">
                 <div className="flex-1 border-t border-gray-700"/>
-                <span className="text-[10px] text-gray-500">hoặc wizard chi tiết</span>
+                <span className="text-[10px] text-gray-400">hoặc wizard chi tiết</span>
                 <div className="flex-1 border-t border-gray-700"/>
               </div>
 
@@ -639,7 +640,7 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
                   <React.Fragment key={s}>
                     <button onClick={() => { if (s < step || (s === step)) setStep(s); }}
                       className={`w-7 h-7 rounded-full text-xs font-bold flex items-center justify-center transition-all ${
-                        s === step ? 'bg-blue-600 text-white scale-110' : s < step ? 'bg-blue-600/30 text-blue-400 cursor-pointer hover:bg-blue-600/50' : 'bg-gray-700 text-gray-500'
+                        s === step ? 'bg-blue-600 text-white scale-110' : s < step ? 'bg-blue-600/30 text-blue-400 cursor-pointer hover:bg-blue-600/50' : 'bg-gray-700 text-gray-400'
                       }`}>{s}</button>
                     {s < 4 && <div className={`flex-1 h-0.5 rounded ${s < step ? 'bg-blue-600/50' : 'bg-gray-700'}`}/>}
                   </React.Fragment>
@@ -650,9 +651,9 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
               {step === 1 && (
                 <div>
                   <h3 className="text-sm font-semibold text-white mb-1">🧱 Bước 1: Chọn ngành nghề</h3>
-                  <p className="text-[10px] text-gray-500 mb-3">Chọn ngành để AI tạo prompt phù hợp nhất</p>
+                  <p className="text-[10px] text-gray-400 mb-3">Chọn ngành để AI tạo prompt phù hợp nhất</p>
                   <input type="text" value={industrySearch} onChange={e => setIndustrySearch(e.target.value)}
-                    placeholder="🔍 Tìm ngành..."
+                    placeholder="Tim ngangh..."
                     className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 mb-3"/>
                   <div className="grid grid-cols-3 gap-2 max-h-[260px] overflow-y-auto pr-1">
                     {filteredIndustries.map(ind => (
@@ -664,7 +665,7 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
                         }`}>
                         <span className="text-xl">{ind.icon}</span>
                         <p className="text-xs font-medium text-white mt-1">{ind.label}</p>
-                        <p className="text-[10px] text-gray-500 mt-0.5">{ind.desc}</p>
+                        <p className="text-[10px] text-gray-400 mt-0.5">{ind.desc}</p>
                       </button>
                     ))}
                     {/* Custom */}
@@ -674,9 +675,9 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
                           ? 'bg-blue-600/20 border-blue-500 ring-1 ring-blue-500/50'
                           : 'bg-gray-800/60 border-gray-700 hover:border-gray-600 hover:bg-gray-800'
                       }`}>
-                      <span className="text-xl">✏️</span>
-                      <p className="text-xs font-medium text-white mt-1">Khác</p>
-                      <p className="text-[10px] text-gray-500 mt-0.5">Tự nhập ngành</p>
+                      <EditIcon className="w-5 h-5" />
+                      <p className="text-xs font-medium text-white mt-1">Khac</p>
+                      <p className="text-[10px] text-gray-400 mt-0.5">Tự nhập ngành</p>
                     </button>
                   </div>
                   {selectedIndustry === 'custom' && (
@@ -691,8 +692,8 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
               {/* ─── Step 2: Goals ─── */}
               {step === 2 && (
                 <div>
-                  <h3 className="text-sm font-semibold text-white mb-1">🎯 Bước 2: Mục tiêu sử dụng AI</h3>
-                  <p className="text-[10px] text-gray-500 mb-3">Có thể chọn nhiều mục tiêu</p>
+                  <h3 className="text-sm font-semibold text-white mb-1"><TargetIcon className="w-4 h-4 inline" /> Bước 2: Mục tiêu sử dụng AI</h3>
+                  <p className="text-[10px] text-gray-400 mb-3">Có thể chọn nhiều mục tiêu</p>
                   <div className="grid grid-cols-2 gap-2">
                     {GOALS.map(g => (
                       <button key={g.key} onClick={() => setSelectedGoals(toggleMulti(selectedGoals, g.key))}
@@ -704,7 +705,7 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
                         <span className="text-xl flex-shrink-0">{g.icon}</span>
                         <div className="min-w-0">
                           <p className="text-xs font-medium text-white">{g.label}</p>
-                          <p className="text-[10px] text-gray-500 mt-0.5">{g.desc}</p>
+                          <p className="text-[10px] text-gray-400 mt-0.5">{g.desc}</p>
                         </div>
                         {selectedGoals.includes(g.key) && <span className="text-blue-400 text-sm flex-shrink-0 ml-auto">✓</span>}
                       </button>
@@ -716,8 +717,8 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
               {/* ─── Step 3: Tone ─── */}
               {step === 3 && (
                 <div>
-                  <h3 className="text-sm font-semibold text-white mb-1">🗣️ Bước 3: Phong cách trả lời</h3>
-                  <p className="text-[10px] text-gray-500 mb-3">Chọn nhiều để phối hợp phong cách → tạo tone prompt</p>
+                  <h3 className="text-sm font-semibold text-white mb-1"><UsersIcon className="w-4 h-4 inline" /> Bước 3: Phong cách trả lời</h3>
+                  <p className="text-[10px] text-gray-400 mb-3">Chọn nhiều để phối hợp phong cách → tạo tone prompt</p>
                   <div className="grid grid-cols-3 gap-2">
                     {TONES.map(t => (
                       <button key={t.key} onClick={() => setSelectedTones(toggleMulti(selectedTones, t.key))}
@@ -728,7 +729,7 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
                         }`}>
                         <span className="text-xl">{t.icon}</span>
                         <p className="text-xs font-medium text-white mt-1">{t.label}</p>
-                        <p className="text-[10px] text-gray-500 mt-0.5">{t.desc}</p>
+                        <p className="text-[10px] text-gray-400 mt-0.5">{t.desc}</p>
                         {selectedTones.includes(t.key) && <span className="text-blue-400 text-xs mt-1 block">✓</span>}
                       </button>
                     ))}
@@ -740,13 +741,13 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
               {step === 4 && (
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <h3 className="text-sm font-semibold text-white">📝 Bước 4: Thông tin bổ sung</h3>
+                    <h3 className="text-sm font-semibold text-white"><EditIcon className="w-4 h-4 inline" /> Bước 4: Thông tin bổ sung</h3>
                     <button onClick={handleAutoFillExtra} disabled={generating || !assistantId}
                       className="text-[10px] px-2.5 py-1 rounded-lg bg-purple-600/20 text-purple-400 hover:bg-purple-600/30 border border-purple-600/30 transition-colors disabled:opacity-50">
-                      {generating ? '⏳ Đang gợi ý...' : '🤖 Tôi chưa có → AI tự đề xuất'}
+                      {generating ? <><Spinner size={3} /> Dang goi y...</> : <><BotIcon className="w-4 h-4 inline" /> Toi chua co → AI tu de xuat</>}
                     </button>
                   </div>
-                  <p className="text-[10px] text-gray-500 mb-3">Tuỳ chọn - thêm thông tin để prompt chính xác hơn. Không cần POS hay file, nhập trực tiếp tại đây.</p>
+                  <p className="text-[10px] text-gray-400 mb-3">Tuỳ chọn - thêm thông tin để prompt chính xác hơn. Không cần POS hay file, nhập trực tiếp tại đây.</p>
                   <div className="space-y-4">
 
                     {/* Product overview */}
@@ -761,18 +762,17 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
                     {/* Structured product lines */}
                     <div>
                       <div className="flex items-center justify-between mb-1.5">
-                        <label className="text-[10px] text-gray-400 flex items-center gap-1">
-                          📦 Danh sách sản phẩm chi tiết
-                          <span className="text-[9px] text-gray-600">(sẽ đính kèm vào prompt)</span>
+                        <label className="text-[10px] text-gray-400 flex items-center gap-1"><PackageIcon className="w-4 h-4 inline" /> Danh sách sản phẩm chi tiết
+                          <span className="text-[9px] text-gray-400">(sẽ đính kèm vào prompt)</span>
                         </label>
-                        <span className="text-[9px] text-gray-600">{productLines.filter(p => p.name.trim()).length} sản phẩm</span>
+                        <span className="text-[9px] text-gray-400">{productLines.filter(p => p.name.trim()).length} sản phẩm</span>
                       </div>
                       <div className="bg-gray-800/80 rounded-xl border border-gray-700/50 overflow-hidden">
                         {/* Table header */}
                         <div className="grid grid-cols-[1fr_140px_1fr_32px] gap-1.5 px-3 py-1.5 bg-gray-800 border-b border-gray-700/50">
-                          <span className="text-[9px] text-gray-500 font-semibold uppercase tracking-wide">Tên sản phẩm</span>
-                          <span className="text-[9px] text-gray-500 font-semibold uppercase tracking-wide">Giá</span>
-                          <span className="text-[9px] text-gray-500 font-semibold uppercase tracking-wide">Ghi chú (mô tả, SKU...)</span>
+                          <span className="text-[9px] text-gray-400 font-semibold uppercase tracking-wide">Tên sản phẩm</span>
+                          <span className="text-[9px] text-gray-400 font-semibold uppercase tracking-wide">Giá</span>
+                          <span className="text-[9px] text-gray-400 font-semibold uppercase tracking-wide">Ghi chú (mô tả, SKU...)</span>
                           <span/>
                         </div>
                         {/* Product rows */}
@@ -792,18 +792,18 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
                                 placeholder="VD: Chiết xuất tự nhiên, best seller..."
                                 className="bg-transparent border-0 text-xs text-gray-400 placeholder-gray-600 focus:outline-none py-1"/>
                               <button onClick={() => { if (productLines.length > 1) setProductLines(productLines.filter((_, i) => i !== idx)); }}
-                                className="w-6 h-6 flex items-center justify-center rounded text-gray-600 hover:text-red-400 hover:bg-red-900/20 transition-colors text-[10px]"
+                                className="w-6 h-6 flex items-center justify-center rounded text-gray-400 hover:text-red-400 hover:bg-red-900/20 transition-colors text-[10px]"
                                 title="Xóa dòng">✕</button>
                             </div>
                           ))}
                         </div>
                         {/* Add row button */}
                         <button onClick={() => setProductLines([...productLines, { name: '', price: '', note: '' }])}
-                          className="w-full px-3 py-1.5 text-[10px] text-gray-500 hover:text-blue-400 hover:bg-gray-700/30 transition-colors border-t border-gray-700/30 flex items-center justify-center gap-1">
+                          className="w-full px-3 py-1.5 text-[10px] text-gray-400 hover:text-blue-400 hover:bg-gray-700/30 transition-colors border-t border-gray-700/30 flex items-center justify-center gap-1">
                           + Thêm sản phẩm
                         </button>
                       </div>
-                      <p className="text-[9px] text-gray-600 mt-1">💡 Nhập tên + giá → AI sẽ biết chính xác sản phẩm để tư vấn. Không cần file hay POS.</p>
+                      <p className="text-[9px] text-gray-400 mt-1"><SunIcon className="w-4 h-4 inline" /> Nhập tên + giá → AI sẽ biết chính xác sản phẩm để tư vấn. Không cần file hay POS.</p>
                     </div>
 
                     {/* Price + USP row */}
@@ -853,8 +853,8 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
               {/* Prompt preview - editable */}
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-sm font-semibold text-white">📄 Prompt đã tạo</h3>
-                  <span className="text-[10px] text-gray-500">{editablePrompt.length} ký tự</span>
+                  <h3 className="text-sm font-semibold text-white"><FileTextIcon className="w-4 h-4 inline" /> Prompt đã tạo</h3>
+                  <span className="text-[10px] text-gray-400">{editablePrompt.length} ký tự</span>
                 </div>
                 <textarea value={editablePrompt} onChange={e => setEditablePrompt(e.target.value)}
                   rows={10}
@@ -868,25 +868,25 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
                   <div className="grid grid-cols-2 gap-2">
                     {result.role && (
                       <div className="bg-gray-800/60 rounded-lg p-3 border border-gray-700/50">
-                        <p className="text-[10px] font-semibold text-blue-400 mb-1">🎯 Vai trò AI</p>
+                        <p className="text-[10px] font-semibold text-blue-400 mb-1"><TargetIcon className="w-4 h-4 inline" /> Vai trò AI</p>
                         <p className="text-[10px] text-gray-400 leading-relaxed whitespace-pre-wrap">{result.role.replace(/^🎯\s*/, '').substring(0, 200)}</p>
                       </div>
                     )}
                     {result.context && (
                       <div className="bg-gray-800/60 rounded-lg p-3 border border-gray-700/50">
-                        <p className="text-[10px] font-semibold text-green-400 mb-1">🧠 Context</p>
+                        <p className="text-[10px] font-semibold text-green-400 mb-1"><BrainIcon className="w-4 h-4 inline" /> Context</p>
                         <p className="text-[10px] text-gray-400 leading-relaxed whitespace-pre-wrap">{result.context.replace(/^🧠\s*/, '').substring(0, 200)}</p>
                       </div>
                     )}
                     {result.tone && (
                       <div className="bg-gray-800/60 rounded-lg p-3 border border-gray-700/50">
-                        <p className="text-[10px] font-semibold text-purple-400 mb-1">🗣️ Tone</p>
+                        <p className="text-[10px] font-semibold text-purple-400 mb-1"><UsersIcon className="w-4 h-4 inline" /> Tone</p>
                         <p className="text-[10px] text-gray-400 leading-relaxed whitespace-pre-wrap">{result.tone.replace(/^🗣️\s*/, '').substring(0, 200)}</p>
                       </div>
                     )}
                     {result.constraints && (
                       <div className="bg-gray-800/60 rounded-lg p-3 border border-gray-700/50">
-                        <p className="text-[10px] font-semibold text-red-400 mb-1">❌ Ràng buộc</p>
+                        <p className="text-[10px] font-semibold text-red-400 mb-1">Rang buoc</p>
                         <p className="text-[10px] text-gray-400 leading-relaxed whitespace-pre-wrap">{result.constraints.replace(/^❌\s*/, '').substring(0, 200)}</p>
                       </div>
                     )}
@@ -897,8 +897,8 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
               {/* Improve panel */}
               {showImprove && (
                 <div className="bg-gray-800/60 rounded-xl p-4 border border-purple-600/30">
-                  <h4 className="text-xs font-semibold text-purple-400 mb-2">✨ Cải thiện prompt</h4>
-                  <p className="text-[10px] text-gray-500 mb-3">Chọn hướng cải thiện - AI sẽ viết lại prompt</p>
+                  <h4 className="text-xs font-semibold text-purple-400 mb-2"><SparklesIcon className="w-4 h-4 inline" /> Cai thien prompt</h4>
+                  <p className="text-[10px] text-gray-400 mb-3">Chọn hướng cải thiện - AI sẽ viết lại prompt</p>
                   <div className="grid grid-cols-2 gap-2">
                     {IMPROVE_OPTIONS.map(opt => (
                       <button key={opt.key} onClick={() => handleImprove(opt.key)} disabled={improveLoading}
@@ -921,12 +921,12 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
               {showChatRefine && (
                 <div className="bg-gray-800/60 rounded-xl border border-blue-600/30 overflow-hidden">
                   <div className="px-4 py-2 border-b border-gray-700/50">
-                    <h4 className="text-xs font-semibold text-blue-400">💬 Chỉnh sửa bằng hội thoại</h4>
-                    <p className="text-[10px] text-gray-500">Chat với AI để tinh chỉnh prompt</p>
+                    <h4 className="text-xs font-semibold text-blue-400"><ChatIcon className="w-4 h-4 inline" /> Chỉnh sửa bằng hội thoại</h4>
+                    <p className="text-[10px] text-gray-400">Chat với AI để tinh chỉnh prompt</p>
                   </div>
                   <div className="max-h-40 overflow-y-auto p-3 space-y-2">
                     {chatRefineHistory.length === 0 && (
-                      <p className="text-[10px] text-gray-600 text-center py-2">VD: "Prompt này hơi cứng", "Thêm phần xử lý từ chối"</p>
+                      <p className="text-[10px] text-gray-400 text-center py-2">VD: "Prompt này hơi cứng", "Thêm phần xử lý từ chối"</p>
                     )}
                     {chatRefineHistory.map((msg, i) => (
                       <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -965,7 +965,7 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
           {/* ─── Library tab ─── */}
           {tab === 'library' && !previewTemplate && (
             <div className="p-5">
-              <p className="text-[10px] text-gray-500 mb-3">Chọn template có sẵn - preview → áp dụng ngay</p>
+              <p className="text-[10px] text-gray-400 mb-3">Chọn template có sẵn - preview → áp dụng ngay</p>
               <div className="grid grid-cols-2 gap-2">
                 {PROMPT_TEMPLATES.map(tpl => (
                   <button key={tpl.id} onClick={() => setPreviewTemplate(tpl)}
@@ -974,7 +974,7 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
                       <span className="text-lg">{tpl.icon}</span>
                       <span className="text-xs font-medium text-white">{tpl.label}</span>
                     </div>
-                    <p className="text-[10px] text-gray-500">{tpl.desc}</p>
+                    <p className="text-[10px] text-gray-400">{tpl.desc}</p>
                   </button>
                 ))}
               </div>
@@ -984,27 +984,26 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
           {/* Library preview */}
           {tab === 'library' && previewTemplate && (
             <div className="p-5 space-y-3">
-              <button onClick={() => setPreviewTemplate(null)} className="text-[10px] text-gray-500 hover:text-white transition-colors flex items-center gap-1">
+              <button onClick={() => setPreviewTemplate(null)} className="text-[10px] text-gray-400 hover:text-white transition-colors flex items-center gap-1">
                 ← Quay lại thư viện
               </button>
               <div className="flex items-center gap-2">
                 <span className="text-xl">{previewTemplate.icon}</span>
                 <div>
                   <h3 className="text-sm font-semibold text-white">{previewTemplate.label}</h3>
-                  <p className="text-[10px] text-gray-500">{previewTemplate.desc}</p>
+                  <p className="text-[10px] text-gray-400">{previewTemplate.desc}</p>
                 </div>
               </div>
               <div className="bg-gray-800 border border-gray-700 rounded-xl px-4 py-3">
                 <pre className="text-[11px] text-gray-300 leading-relaxed whitespace-pre-wrap font-sans">{previewTemplate.prompt}</pre>
               </div>
               <div className="flex items-center gap-2">
-                <button onClick={() => { onApply(previewTemplate.prompt); showNotification('✅ Đã áp dụng template!', 'success'); onClose(); }}
+                <button onClick={() => { onApply(previewTemplate.prompt); showNotification('Da ap dung template!', 'success'); onClose(); }}
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium rounded-lg transition-colors">
-                  ✅ Áp dụng
+                  <CheckIcon className="w-4 h-4 inline" /> Ap dung
                 </button>
-                <button onClick={() => { navigator.clipboard.writeText(previewTemplate.prompt); showNotification('📋 Đã copy!', 'success'); }}
-                  className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white text-xs rounded-lg transition-colors">
-                  📋 Copy
+                <button onClick={() => { navigator.clipboard.writeText(previewTemplate.prompt); showNotification('Da copy!', 'success'); }}
+                  className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white text-xs rounded-lg transition-colors"><ClipboardListIcon className="w-4 h-4 inline" /> Copy
                 </button>
                 <button onClick={() => {
                   setEditablePrompt(previewTemplate.prompt);
@@ -1013,7 +1012,7 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
                   setStep(5);
                 }}
                   className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white text-xs rounded-lg transition-colors">
-                  ✏️ Chỉnh sửa
+                  <EditIcon className="w-4 h-4 inline" /> Chinh sua
                 </button>
               </div>
             </div>
@@ -1031,7 +1030,7 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
                 </button>
               )}
               <div className="flex-1"/>
-              <span className="text-[10px] text-gray-600">Bước {step}/4</span>
+              <span className="text-[10px] text-gray-400">Bước {step}/4</span>
               {step < 4 && (
                 <button onClick={() => setStep((step + 1) as WizardStep)}
                   disabled={step === 1 && !selectedIndustry}
@@ -1042,7 +1041,7 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
               {step === 4 && (
                 <button onClick={handleGenerate} disabled={generating || !assistantId}
                   className="px-4 py-1.5 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white text-xs font-medium rounded-lg transition-all disabled:opacity-50">
-                  {generating ? '⏳ Đang tạo...' : '✨ Tạo prompt'}
+                  {generating ? <><Spinner size={3} /> Dang tao...</> : <><SparklesIcon className="w-4 h-4 inline" /> Tao prompt</>}
                 </button>
               )}
             </>
@@ -1050,34 +1049,31 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
 
           {tab === 'create' && step === 5 && result && (
             <>
-              <button onClick={resetWizard} className="px-3 py-1.5 text-xs text-gray-400 hover:text-white transition-colors">
-                🔄 Làm lại từ đầu
+              <button onClick={resetWizard} className="px-3 py-1.5 text-xs text-gray-400 hover:text-white transition-colors"><RefreshIcon className="w-4 h-4 inline" /> Làm lại từ đầu
               </button>
               <div className="flex-1"/>
               <button onClick={() => setShowChatRefine(!showChatRefine)}
-                className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${showChatRefine ? 'bg-blue-600/20 text-blue-400 border-blue-600/40' : 'text-gray-400 hover:text-white border-gray-600'}`}>
-                💬 Chat chỉnh sửa
+                className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${showChatRefine ? 'bg-blue-600/20 text-blue-400 border-blue-600/40' : 'text-gray-400 hover:text-white border-gray-600'}`}><ChatIcon className="w-4 h-4 inline" /> Chat chỉnh sửa
               </button>
               <button onClick={() => setShowImprove(!showImprove)}
                 className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${showImprove ? 'bg-purple-600/20 text-purple-400 border-purple-600/40' : 'text-gray-400 hover:text-white border-gray-600'}`}>
-                ✨ Cải thiện
+                <SparklesIcon className="w-4 h-4 inline" /> Cai thien
               </button>
               <button onClick={handleRegenerate} disabled={generating}
                 className="px-3 py-1.5 text-xs text-gray-400 hover:text-white border border-gray-600 rounded-lg transition-colors disabled:opacity-50">
-                {generating ? '⏳' : '🔄'} Tạo lại
+                {generating ? <Spinner size={3} /> : <RefreshIcon className="w-4 h-4 inline" />} Tao lai
               </button>
-              <button onClick={handleCopy} className="px-3 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">
-                📋 Copy
+              <button onClick={handleCopy} className="px-3 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"><ClipboardListIcon className="w-4 h-4 inline" /> Copy
               </button>
               <button onClick={handleApply}
                 className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium rounded-lg transition-colors">
-                ✅ Áp dụng
+                <CheckIcon className="w-4 h-4 inline" /> Ap dung
               </button>
             </>
           )}
 
           {tab === 'library' && !previewTemplate && (
-            <div className="flex-1 text-center text-[10px] text-gray-600">{PROMPT_TEMPLATES.length} templates có sẵn</div>
+            <div className="flex-1 text-center text-[10px] text-gray-400">{PROMPT_TEMPLATES.length} templates có sẵn</div>
           )}
         </div>
       </div>

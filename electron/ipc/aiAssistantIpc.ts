@@ -15,13 +15,26 @@ function isEmployeeMode(): boolean {
     return false;
 }
 
+/** Proxy request-response tới Boss (giống wrap() trong zaloIpc) — trả về kết quả từ Boss */
+async function proxyToBossWithResult(channel: string, params: any): Promise<any> {
+    try {
+        const activeWs = WorkspaceManager.getInstance().getActiveWorkspace();
+        if (!activeWs || activeWs.type !== 'remote') throw new Error('Không kết nối tới Boss');
+        const HCM = require('../../src/services/http/HttpConnectionManager').default;
+        return await HCM.getInstance().proxyAction(activeWs.id, channel, { ...params, _fromRelay: true });
+    } catch (err: any) {
+        Logger.warn(`[AIAssistantIpc] proxyToBoss ${channel} failed: ${err.message}`);
+        return { success: false, error: err.message };
+    }
+}
+
 export function registerAIAssistantIpc(): void {
 
   // ─── List all assistants ──────────────────────────────────────────────────
   ipcMain.handle('ai:listAssistants', async () => {
     try {
-            if (isEmployeeMode()) return { success: true, assistants: [] };
-            
+            if (isEmployeeMode()) return await proxyToBossWithResult('ai:listAssistants', {});
+
       const assistants = AIAssistantService.getInstance().listAssistants();
       // Mask API keys for renderer
       const masked = assistants.map(a => ({ ...a, apiKey: a.apiKey ? '***' : '' }));
@@ -35,8 +48,8 @@ export function registerAIAssistantIpc(): void {
   // ─── Get single assistant ──────────────────────────────────────────────────
   ipcMain.handle('ai:getAssistant', async (_e, { id }: { id: string }) => {
     try {
-            if (isEmployeeMode()) return { success: false, error: "Không khả dụng ở chế độ nhân viên" };
-            
+            if (isEmployeeMode()) return await proxyToBossWithResult('ai:getAssistant', { id });
+
       const assistant = AIAssistantService.getInstance().getAssistant(id);
       if (!assistant) return { success: false, error: 'Không tìm thấy trợ lý AI' };
       return { success: true, assistant: { ...assistant, apiKey: assistant.apiKey ? '***' : '' } };
@@ -48,8 +61,8 @@ export function registerAIAssistantIpc(): void {
   // ─── Get default assistant ────────────────────────────────────────────────
   ipcMain.handle('ai:getDefault', async () => {
     try {
-            if (isEmployeeMode()) return { success: false, error: "Không khả dụng ở chế độ nhân viên" };
-            
+            if (isEmployeeMode()) return await proxyToBossWithResult('ai:getDefault', {});
+
       const assistant = AIAssistantService.getInstance().getDefaultAssistant();
       if (!assistant) return { success: true, assistant: null };
       return { success: true, assistant: { ...assistant, apiKey: '***' } };
@@ -87,6 +100,7 @@ export function registerAIAssistantIpc(): void {
   // ─── Test connection ──────────────────────────────────────────────────────
   ipcMain.handle('ai:testAssistant', async (_e, { id }: { id: string }) => {
     try {
+            if (isEmployeeMode()) return await proxyToBossWithResult('ai:testAssistant', { id });
       return await AIAssistantService.getInstance().testConnection(id);
     } catch (e: any) {
       return { success: false, message: e.message };
@@ -96,8 +110,8 @@ export function registerAIAssistantIpc(): void {
   // ─── Get files ────────────────────────────────────────────────────────────
   ipcMain.handle('ai:getFiles', async (_e, { assistantId }: { assistantId: string }) => {
     try {
-            if (isEmployeeMode()) return { success: true, files: [] };
-            
+            if (isEmployeeMode()) return await proxyToBossWithResult('ai:getFiles', { assistantId });
+
       const files = AIAssistantService.getInstance().getFiles(assistantId);
       return { success: true, files };
     } catch (e: any) {
@@ -228,7 +242,7 @@ export function registerAIAssistantIpc(): void {
   // ─── Per-account assistant assignment ──────────────────────────────────────
   ipcMain.handle('ai:getAccountAssistant', async (_e, { zaloId, role }: { zaloId: string; role: 'suggestion' | 'panel' }) => {
     try {
-            if (isEmployeeMode()) return { success: true, assistantId: null };
+            if (isEmployeeMode()) return await proxyToBossWithResult('ai:getAccountAssistant', { zaloId, role });
       const assistant = AIAssistantService.getInstance().getAssistantForAccount(zaloId, role);
       if (!assistant) return { success: true, assistant: null };
       return { success: true, assistant: { ...assistant, apiKey: '***' } };
@@ -249,7 +263,7 @@ export function registerAIAssistantIpc(): void {
 
   ipcMain.handle('ai:getAccountAssistants', async (_e, { zaloId }: { zaloId: string }) => {
     try {
-            if (isEmployeeMode()) return { success: true, assistants: [] };
+            if (isEmployeeMode()) return await proxyToBossWithResult('ai:getAccountAssistants', { zaloId });
       const assignments = AIAssistantService.getInstance().getAccountAssistants(zaloId);
       return { success: true, ...assignments };
     } catch (e: any) {
@@ -260,7 +274,7 @@ export function registerAIAssistantIpc(): void {
   // ─── Usage logs & reporting ────────────────────────────────────────────────
   ipcMain.handle('ai:getUsageLogs', async (_e, opts: any) => {
     try {
-            if (isEmployeeMode()) return { success: true, logs: [] };
+            if (isEmployeeMode()) return await proxyToBossWithResult('ai:getUsageLogs', opts);
       const logs = AIAssistantService.getInstance().getUsageLogs(opts);
       return { success: true, logs };
     } catch (e: any) {
@@ -270,7 +284,7 @@ export function registerAIAssistantIpc(): void {
 
   ipcMain.handle('ai:getUsageStats', async (_e, opts: any) => {
     try {
-            if (isEmployeeMode()) return { success: true, stats: null };
+            if (isEmployeeMode()) return await proxyToBossWithResult('ai:getUsageStats', opts);
       const stats = AIAssistantService.getInstance().getUsageStats(opts);
       return { success: true, stats };
     } catch (e: any) {

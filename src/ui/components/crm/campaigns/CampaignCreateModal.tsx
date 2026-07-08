@@ -3,6 +3,7 @@ import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import { toLocalMediaUrl } from '@/lib/localMedia';
 import { Spinner } from '@/components/common/PageLoading';
+import { AlertIcon, ChartIcon, ChatIcon, ClipboardListIcon, EditIcon, RocketIcon, SendIcon, ShuffleIcon, UserCheckIcon, UsersIcon } from '@/components/common/icons';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -98,11 +99,11 @@ const PC_DELAY_PRESETS = [
   { label: '1-2m',    min: 60,  max: 120 },
 ];
 
-const TYPE_OPTIONS: { value: CampaignType; icon: string; label: string }[] = [
-  { value: 'message',         icon: '💬', label: 'Tin nhắn'   },
-  { value: 'friend_request',  icon: '🤝', label: 'Kết bạn'    },
-  { value: 'invite_to_group', icon: '👥', label: 'Mời nhóm'   },
-  { value: 'mixed',           icon: '🔀', label: 'Hỗn hợp'    },
+const TYPE_OPTIONS: { value: CampaignType; icon: React.ReactNode; label: string }[] = [
+  { value: 'message',         icon: <ChatIcon className="w-4 h-4" />, label: 'Tin nhắn'   },
+  { value: 'friend_request',  icon: <UserCheckIcon className="w-4 h-4" />, label: 'Kết bạn'    },
+  { value: 'invite_to_group', icon: <UsersIcon className="w-4 h-4" />, label: 'Mời nhóm'   },
+  { value: 'mixed',           icon: <ShuffleIcon className="w-4 h-4" />, label: 'Hỗn hợp'    },
 ];
 
 const INVITE_ERROR_LABELS: Record<number, string> = {
@@ -139,7 +140,7 @@ function LivePreview({
       <div className="flex items-center justify-between mb-3 flex-shrink-0">
         <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Xem trước</span>
         {!isFR && blocks.length > 1 && (
-          <span className="text-[10px] text-gray-500">
+          <span className="text-[10px] text-gray-400">
             {mode === 'random' ? '🎲 Random' : '📨 Tất cả'}
           </span>
         )}
@@ -168,7 +169,7 @@ function LivePreview({
           <div className="w-6 h-6 rounded-full bg-blue-600 flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0">Z</div>
           <div className="flex-1 min-w-0">
             <p className="text-[11px] font-semibold text-gray-200 truncate">Nguyễn Văn A</p>
-            <p className="text-[9px] text-gray-500">Zalo</p>
+            <p className="text-[9px] text-gray-400">Zalo</p>
           </div>
         </div>
 
@@ -176,7 +177,7 @@ function LivePreview({
         <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-gray-800">
           {/* Timestamp */}
           <div className="flex justify-center">
-            <span className="text-[9px] text-gray-500 bg-gray-700 px-2 py-0.5 rounded-full">Hôm nay 12:00</span>
+            <span className="text-[9px] text-gray-400 bg-gray-700 px-2 py-0.5 rounded-full">Hôm nay 12:00</span>
           </div>
 
           {(previewText || hasImages) ? (
@@ -204,12 +205,12 @@ function LivePreview({
                   </div>
                 )}
                 {/* Status tick */}
-                <span className="text-[9px] text-gray-500">✓✓ Đã gửi</span>
+                <span className="text-[9px] text-gray-400">✓✓ Đã gửi</span>
               </div>
             </div>
           ) : (
             <div className="flex justify-center py-4">
-              <p className="text-[11px] text-gray-600 italic">
+              <p className="text-[11px] text-gray-400 italic">
                 {isFR ? 'Soạn lời nhắn kết bạn...' : 'Soạn nội dung tin nhắn...'}
               </p>
             </div>
@@ -218,8 +219,7 @@ function LivePreview({
           {/* Friend request chip */}
           {isFR && previewText && (
             <div className="flex justify-center">
-              <div className="border border-blue-500/40 rounded-xl px-3 py-2 text-[11px] text-blue-400 text-center max-w-[90%]">
-                🤝 Lời mời kết bạn gửi kèm nội dung trên
+              <div className="border border-blue-500/40 rounded-xl px-3 py-2 text-[11px] text-blue-400 text-center max-w-[90%]"><UserCheckIcon className="w-4 h-4 inline" /> Lời mời kết bạn gửi kèm nội dung trên
               </div>
             </div>
           )}
@@ -228,7 +228,7 @@ function LivePreview({
 
       {/* Mode explanation */}
       {!isFR && blocks.length > 1 && (
-        <div className="mt-2 px-2 text-[10px] text-gray-500 flex-shrink-0">
+        <div className="mt-2 px-2 text-[10px] text-gray-400 flex-shrink-0">
           {mode === 'random'
             ? `🎲 Mỗi người nhận ngẫu nhiên 1 trong ${blocks.length} nội dung`
             : `📨 Mỗi người nhận cả ${blocks.length} nội dung lần lượt`}
@@ -269,10 +269,10 @@ function GroupPicker({
   return (
     <div className="flex flex-col h-full min-h-0">
       <p className="text-[11px] text-yellow-500 bg-yellow-500/10 border border-yellow-500/20 rounded-lg px-2.5 py-1.5 mb-2 flex-shrink-0">
-        ⚠️ Chỉ mời được bạn bè - Không mời được người lạ
+        <AlertIcon className="w-4 h-4 inline" /> Chỉ mời được bạn bè - Không mời được người lạ
       </p>
       {!zaloId ? (
-        <p className="text-xs text-gray-500 py-4 text-center">Mở modal từ tab Chiến dịch để xem danh sách nhóm</p>
+        <p className="text-xs text-gray-400 py-4 text-center">Mở modal từ tab Chiến dịch để xem danh sách nhóm</p>
       ) : !loaded ? (
         <div className="flex items-center gap-2 text-xs text-gray-400 py-3">
           <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none"><path d="M21 12a9 9 0 1 1-6.219-8.56" stroke="currentColor" strokeWidth="2.5"/></svg>
@@ -282,7 +282,7 @@ function GroupPicker({
         <>
           {/* Search + select all */}
           <div className="flex items-center gap-2 border border-gray-600 rounded-lg px-2.5 py-1.5 mb-2 flex-shrink-0">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-500 flex-shrink-0">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-400 flex-shrink-0">
               <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
             </svg>
             <input value={search} onChange={e => setSearch(e.target.value)}
@@ -325,15 +325,15 @@ function GroupPicker({
               );
             })}
             {visible.length === 0 && (
-              <p className="text-xs text-gray-500 text-center py-4">{groups.length === 0 ? 'Chưa có nhóm nào. Đồng bộ nhóm trước.' : 'Không tìm thấy'}</p>
+              <p className="text-xs text-gray-400 text-center py-4">{groups.length === 0 ? 'Chưa có nhóm nào. Đồng bộ nhóm trước.' : 'Không tìm thấy'}</p>
             )}
           </div>
 
           <details className="mt-2 flex-shrink-0">
-            <summary className="text-[10px] text-gray-600 cursor-pointer hover:text-gray-500 select-none">📋 Mã lỗi thường gặp</summary>
+            <summary className="text-[10px] text-gray-400 cursor-pointer hover:text-gray-400 select-none"><ClipboardListIcon className="w-4 h-4 inline" /> Mã lỗi thường gặp</summary>
             <div className="mt-1 flex flex-wrap gap-1">
               {Object.entries(INVITE_ERROR_LABELS).map(([c, l]) => (
-                <span key={c} className="text-[9px] text-gray-500 bg-gray-700 px-1.5 py-0.5 rounded">{c}: {l}</span>
+                <span key={c} className="text-[9px] text-gray-400 bg-gray-700 px-1.5 py-0.5 rounded">{c}: {l}</span>
               ))}
             </div>
           </details>
@@ -374,7 +374,7 @@ function BlockEditor({
     <div className="flex flex-col gap-2 h-full min-h-0">
       {/* Variable chips */}
       <div className="flex items-center gap-1.5 flex-shrink-0">
-        <span className="text-[10px] text-gray-500">Chèn biến:</span>
+        <span className="text-[10px] text-gray-400">Chèn biến:</span>
         {TEMPLATE_VARS.map(v => (
           <button key={v} type="button" onClick={() => insertVar(v)}
             className="text-[11px] px-2 py-0.5 rounded-full border border-blue-500/30 text-blue-400 hover:bg-blue-500/15 font-mono transition-colors">
@@ -583,9 +583,9 @@ export default function CampaignCreateModal({
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-700 flex-shrink-0">
           <div>
             <h3 className="font-bold text-gray-100 text-[15px]">
-              {editMode ? '✏️ Chỉnh sửa chiến dịch' : '🚀 Tạo chiến dịch mới'}
+              {editMode ? <><EditIcon className="w-4 h-4 inline" /> Chỉnh sửa chiến dịch</> : <><RocketIcon className="w-4 h-4 inline" /> Tạo chiến dịch mới</>}
             </h3>
-            <p className="text-[11px] text-gray-500 mt-0.5">Cấu hình nội dung và phương thức gửi</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">Cấu hình nội dung và phương thức gửi</p>
           </div>
           <button onClick={onClose}
             className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-gray-100 hover:bg-gray-700 transition-colors">
@@ -635,9 +635,9 @@ export default function CampaignCreateModal({
                 <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider block mb-1.5">Hành động</label>
                 <div className="space-y-1">
                   {([
-                    { action: 'message' as MixedAction,         icon: '💬', label: 'Tin nhắn' },
-                    { action: 'friend_request' as MixedAction,  icon: '🤝', label: 'Kết bạn' },
-                    { action: 'invite_to_groups' as MixedAction, icon: '👥', label: 'Mời nhóm' },
+                    { action: 'message' as MixedAction,         icon: <ChatIcon className="w-4 h-4" />, label: 'Tin nhắn' },
+                    { action: 'friend_request' as MixedAction,  icon: <UserCheckIcon className="w-4 h-4" />, label: 'Kết bạn' },
+                    { action: 'invite_to_groups' as MixedAction, icon: <UsersIcon className="w-4 h-4" />, label: 'Mời nhóm' },
                   ]).map(({ action, icon, label }) => {
                     const checked = mixedActions.includes(action);
                     return (
@@ -679,7 +679,7 @@ export default function CampaignCreateModal({
               <button type="button" onClick={() => setCustomDelayMode(!customDelayMode)}
                 className={`flex items-center gap-1 mt-1.5 text-[11px] px-2 py-1 rounded-lg border transition-colors w-full ${
                   customDelayMode ? 'border-blue-500 bg-blue-500/10 text-blue-300'
-                    : 'border-gray-600 text-gray-500 hover:text-gray-300 hover:border-gray-500'
+                    : 'border-gray-600 text-gray-400 hover:text-gray-300 hover:border-gray-500'
                 }`}>
                 <span>{customDelayMode ? '▾' : '▸'}</span> Tùy chỉnh khoảng
               </button>
@@ -689,15 +689,15 @@ export default function CampaignCreateModal({
                     onChange={e => setDelayMin(Math.max(5, parseInt(e.target.value) || 0))}
                     className="w-full bg-gray-900 border border-gray-600 rounded-lg px-2 py-1.5 text-[11px] text-gray-200 focus:outline-none focus:border-blue-500"
                     placeholder="Tối thiểu (s)" />
-                  <span className="text-gray-500 text-xs">→</span>
+                  <span className="text-gray-400 text-xs">→</span>
                   <input type="number" min={delayMin} value={delayMax || ''}
                     onChange={e => setDelayMax(Math.max(delayMin || 5, parseInt(e.target.value) || 0))}
                     className="w-full bg-gray-900 border border-gray-600 rounded-lg px-2 py-1.5 text-[11px] text-gray-200 focus:outline-none focus:border-blue-500"
                     placeholder="Tối đa (s)" />
-                  <span className="text-gray-500 text-[10px] flex-shrink-0">giây</span>
+                  <span className="text-gray-400 text-[10px] flex-shrink-0">giây</span>
                 </div>
               )}
-              <p className="text-[10px] text-gray-500 mt-1">
+              <p className="text-[10px] text-gray-400 mt-1">
                 ⏱ Ngẫu nhiên <span className="text-gray-400 font-medium">{fmtDelayRange(delayMin, delayMax)}</span> giữa các liên hệ
               </p>
             </div>
@@ -723,7 +723,7 @@ export default function CampaignCreateModal({
                 <button type="button" onClick={() => setCustomPcDelayMode(!customPcDelayMode)}
                   className={`flex items-center gap-1 mt-1.5 text-[11px] px-2 py-1 rounded-lg border transition-colors w-full ${
                     customPcDelayMode ? 'border-blue-500 bg-blue-500/10 text-blue-300'
-                      : 'border-gray-600 text-gray-500 hover:text-gray-300 hover:border-gray-500'
+                      : 'border-gray-600 text-gray-400 hover:text-gray-300 hover:border-gray-500'
                   }`}>
                   <span>{customPcDelayMode ? '▾' : '▸'}</span> Tùy chỉnh
                 </button>
@@ -733,15 +733,15 @@ export default function CampaignCreateModal({
                       onChange={e => setPcDelayMin(Math.max(0, parseInt(e.target.value) || 0))}
                       className="w-full bg-gray-900 border border-gray-600 rounded-lg px-2 py-1.5 text-[11px] text-gray-200 focus:outline-none focus:border-blue-500"
                       placeholder="Min (s)" />
-                    <span className="text-gray-500 text-xs">→</span>
+                    <span className="text-gray-400 text-xs">→</span>
                     <input type="number" min={pcDelayMin} value={pcDelayMax ?? ''}
                       onChange={e => setPcDelayMax(Math.max(pcDelayMin || 0, parseInt(e.target.value) || 0))}
                       className="w-full bg-gray-900 border border-gray-600 rounded-lg px-2 py-1.5 text-[11px] text-gray-200 focus:outline-none focus:border-blue-500"
                       placeholder="Max (s)" />
-                    <span className="text-gray-500 text-[10px] flex-shrink-0">giây</span>
+                    <span className="text-gray-400 text-[10px] flex-shrink-0">giây</span>
                   </div>
                 )}
-                <p className="text-[10px] text-gray-500 mt-1">
+                <p className="text-[10px] text-gray-400 mt-1">
                   {pcDelayMin > 0 || pcDelayMax > 0
                     ? `⏱ Ngẫu nhiên ${fmtDelayRange(pcDelayMin, pcDelayMax)} giữa các tin nhắn`
                     : '⏱ Gửi liên tiếp (mặc định ~1s)'}
@@ -751,7 +751,7 @@ export default function CampaignCreateModal({
 
             {/* Daily Send Limit */}
             <div>
-              <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider block mb-1.5">📊 Giới hạn/ngày</label>
+              <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider block mb-1.5"><ChartIcon className="w-4 h-4 inline" /> Giới hạn/ngày</label>
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
                   <input
@@ -763,20 +763,20 @@ export default function CampaignCreateModal({
                     placeholder="Không giới hạn"
                     className="w-full bg-gray-900 border border-gray-600 rounded-lg px-2.5 py-2 text-xs text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-colors"
                   />
-                  <span className="text-[10px] text-gray-500 flex-shrink-0">liên hệ</span>
+                  <span className="text-[10px] text-gray-400 flex-shrink-0">liên hệ</span>
                 </div>
                 <div>
-                  <label className="text-[10px] text-gray-500 block mb-1">Giờ bắt đầu chạy</label>
+                  <label className="text-[10px] text-gray-400 block mb-1">Giờ bắt đầu chạy</label>
                   <input
                     type="time"
                     value={dailyStartTime}
                     onChange={e => setDailyStartTime(e.target.value || '08:00')}
                     className="w-full bg-gray-900 border border-gray-600 rounded-lg px-2.5 py-2 text-xs text-gray-200 focus:outline-none focus:border-blue-500 transition-colors"
                   />
-                  <p className="text-[10px] text-gray-600 mt-0.5">Nếu giờ này đã qua hôm nay, chiến dịch chạy ngay</p>
+                  <p className="text-[10px] text-gray-400 mt-0.5">Nếu giờ này đã qua hôm nay, chiến dịch chạy ngay</p>
                 </div>
               </div>
-              <p className="text-[10px] text-gray-600 mt-1">
+              <p className="text-[10px] text-gray-400 mt-1">
                 {dailyLimit > 0
                   ? `Gửi tối đa ${dailyLimit}/ngày từ ${dailyStartTime}`
                   : 'Gửi không giới hạn (theo token bucket)'}
@@ -785,7 +785,7 @@ export default function CampaignCreateModal({
 
             {/* Warning */}
             <div className="border border-yellow-500/20 rounded-lg p-2.5 mt-auto">
-              <p className="text-[10px] text-yellow-400 font-semibold mb-1">⚠️ Cảnh báo</p>
+              <p className="text-[10px] text-yellow-400 font-semibold mb-1"><AlertIcon className="w-3.5 h-3.5 inline" /> Cảnh báo</p>
               <p className="text-[9px] text-yellow-300/60 leading-relaxed">
                 Hành động càng nhiều, nội dung càng dài, và delay càng ngắn sẽ làm tăng nguy cơ bị Zalo đánh spam. Hãy cân nhắc kỹ lưỡng khi cấu hình chiến dịch, và luôn tuân thủ nguyên tắc cộng đồng của Zalo.
               </p>
@@ -829,8 +829,8 @@ export default function CampaignCreateModal({
                   {contentConfig.blocks.length > 1 && (
                     <div className="flex items-center gap-1 ml-2 flex-shrink-0">
                       {([
-                        { value: 'random' as SendMode, icon: '🎲', label: 'Random' },
-                        { value: 'all' as SendMode,    icon: '📨', label: 'Tất cả' },
+                        { value: 'random' as SendMode, icon: <ShuffleIcon className="w-4 h-4" />, label: 'Random' },
+                        { value: 'all' as SendMode,    icon: <SendIcon className="w-4 h-4" />, label: 'Tất cả' },
                       ]).map(opt => (
                         <button key={opt.value} type="button"
                           onClick={() => setContentConfig(prev => ({ ...prev, mode: opt.value }))}
@@ -847,7 +847,7 @@ export default function CampaignCreateModal({
                 </>
               ) : hasFR && !hasMsg ? (
                 <>
-                  <span className="text-xs font-medium text-gray-300">🤝 Lời nhắn kết bạn</span>
+                  <span className="text-xs font-medium text-gray-300"><UserCheckIcon className="w-4 h-4 inline" /> Lời nhắn kết bạn</span>
                   <div className="flex gap-1">
                     {TEMPLATE_VARS.map(v => (
                       <button key={v} type="button" onClick={() => insertFRVar(v)}
@@ -858,9 +858,9 @@ export default function CampaignCreateModal({
                   </div>
                 </>
               ) : hasInvite && !hasMsg ? (
-                <span className="text-xs font-medium text-gray-300">👥 Chọn nhóm để mời</span>
+                <span className="text-xs font-medium text-gray-300"><UsersIcon className="w-4 h-4 inline" /> Chọn nhóm để mời</span>
               ) : (
-                <span className="text-xs text-gray-500">Editor</span>
+                <span className="text-xs text-gray-400">Editor</span>
               )}
             </div>
 
@@ -880,7 +880,7 @@ export default function CampaignCreateModal({
               {hasFR && hasMsg && (
                 <div className="flex-shrink-0 border-t border-gray-700 pt-3">
                   <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-[11px] font-medium text-gray-400">🤝 Lời nhắn kết bạn</span>
+                    <span className="text-[11px] font-medium text-gray-400"><UserCheckIcon className="w-4 h-4 inline" /> Lời nhắn kết bạn</span>
                     <div className="flex gap-1">
                       {TEMPLATE_VARS.map(v => (
                         <button key={v} type="button" onClick={() => insertFRVar(v)}
@@ -902,7 +902,7 @@ export default function CampaignCreateModal({
                   <textarea ref={friendReqRef} value={friendReqMsg} onChange={e => setFriendReqMsg(e.target.value)}
                     placeholder="Xin chào {name}, tôi muốn kết nối với bạn!"
                     className="flex-1 min-h-0 w-full bg-gray-800 border border-gray-600 rounded-xl px-3 py-2.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500 resize-none transition-colors" />
-                  <p className="text-[10px] text-gray-600 text-right flex-shrink-0">{friendReqMsg.length}/200 ký tự</p>
+                  <p className="text-[10px] text-gray-400 text-right flex-shrink-0">{friendReqMsg.length}/200 ký tự</p>
                 </div>
               )}
 
@@ -916,7 +916,7 @@ export default function CampaignCreateModal({
               {/* Mixed: invite groups at bottom */}
               {hasInvite && hasMsg && (
                 <div className="flex-shrink-0 border-t border-gray-700 pt-3">
-                  <p className="text-[11px] font-medium text-gray-400 mb-2">👥 Nhóm mời</p>
+                  <p className="text-[11px] font-medium text-gray-400 mb-2"><UsersIcon className="w-4 h-4 inline" /> Nhóm mời</p>
                   <GroupPicker zaloId={zaloId} inviteGroupIds={inviteGroupIds} onToggle={toggleGroupId} />
                 </div>
               )}
@@ -938,7 +938,7 @@ export default function CampaignCreateModal({
 
         {/* ── Footer ── */}
         <div className="flex items-center gap-3 px-5 py-3 border-t border-gray-700 flex-shrink-0">
-          <div className="flex-1 text-[11px] text-gray-500">
+          <div className="flex-1 text-[11px] text-gray-400">
             {hasMsg && contentConfig.blocks.length > 1 && (
               <span>{contentConfig.blocks.length} biến thể · {contentConfig.mode === 'random' ? '🎲 random' : '📨 gửi tất cả'}</span>
             )}

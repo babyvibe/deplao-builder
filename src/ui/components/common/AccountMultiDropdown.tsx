@@ -100,7 +100,7 @@ export default function AccountMultiDropdown({
             </div>
           )}
         </div>
-        <span className={`truncate ${fullWidth ? 'flex-1 text-left' : 'max-w-[130px]'} ${selectedIds.length === 0 ? 'text-gray-500' : 'text-white'}`}>
+        <span className={`truncate ${fullWidth ? 'flex-1 text-left' : 'max-w-[130px]'} ${selectedIds.length === 0 ? 'text-gray-400' : 'text-white'}`}>
           {labelText}
         </span>
         <span className="flex-1"></span>
@@ -135,7 +135,7 @@ export default function AccountMultiDropdown({
               )}
             </span>
             <span className="text-xs font-semibold text-gray-200">Chọn tất cả</span>
-            <span className="ml-auto text-[11px] text-gray-500">{selectedIds.length}/{accounts.length}</span>
+            <span className="ml-auto text-[11px] text-gray-400">{selectedIds.length}/{accounts.length}</span>
           </button>
 
           {/* Account rows */}
@@ -158,7 +158,7 @@ export default function AccountMultiDropdown({
                   <AvatarThumb acc={acc} size="md" />
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-semibold text-white truncate leading-tight">{acc.full_name || acc.zalo_id}</p>
-                    {acc.phone && <p className="text-[11px] text-gray-500 truncate">{acc.phone}</p>}
+                    {acc.phone && <p className="text-[11px] text-gray-400 truncate">{acc.phone}</p>}
                   </div>
                 </button>
               );

@@ -41,16 +41,16 @@ export default function ZaloLabelSelector({ allLabels, selectedIds, onChange, si
       >
         {selected.length > 0
           ? selected.map(l => <ZaloLabelBadge key={l.id} label={l} size="xs" />)
-          : <span className="text-xs text-gray-500">Chọn nhãn...</span>}
-        <span className="ml-auto text-gray-500 text-xs">▾</span>
+          : <span className="text-xs text-gray-400">Chọn nhãn...</span>}
+        <span className="ml-auto text-gray-400 text-xs">▾</span>
       </div>
       {open && (
         <div className="absolute top-full left-0 right-0 mt-1 bg-gray-800 border border-gray-600 rounded-xl shadow-xl z-50 max-h-48 overflow-y-auto">
           {allLabels.length === 0 && (
-            <p className="text-xs text-gray-500 p-3 text-center">Chưa có nhãn nào</p>
+            <p className="text-xs text-gray-400 p-3 text-center">Chưa có nhãn nào</p>
           )}
           {singleSelect && (
-            <p className="text-[10px] text-gray-500 px-3 pt-2 pb-1">Zalo chỉ cho 1 nhãn / hội thoại</p>
+            <p className="text-[10px] text-gray-400 px-3 pt-2 pb-1">Zalo chỉ cho 1 nhãn / hội thoại</p>
           )}
           {allLabels.map(label => {
             const isSelected = selectedIds.includes(label.id);

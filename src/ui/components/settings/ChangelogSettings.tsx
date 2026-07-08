@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { BellIcon, BookIcon, BotIcon, BugIcon, ChartIcon, ChatIcon, ClipboardListIcon, CloseIcon, FolderIcon, GlobeIcon, ImageIcon, LightningIcon, LinkIcon, LockIcon, PackageIcon, PluginIcon, RefreshIcon, RepeatIcon, RocketIcon, SendIcon, SparklesIcon, TagIcon, TrashIcon, UserIcon, UsersIcon, WifiIcon, WrenchIcon } from '@/components/common/icons';
 
 interface VersionEntry {
   version: string;
@@ -13,6 +14,17 @@ interface VersionEntry {
 
 // ─── Changelog data - thêm entry mới vào ĐẦU mảng khi có bản cập nhật ────────
 const CHANGELOG: VersionEntry[] = [
+  {
+    version: '26.7.1',
+    date: '07/2026',
+    type: 'patch',
+    highlights: [
+      '🔧 Employee mode: RestQueryService init sớm — fix "Chưa kết nối tới BOSS" khi mới mở app',
+      '📹 Video/file employee: stream trực tiếp từ boss URL, không chờ download hết mới mở',
+      '🎨 Theme: Sửa icon emoji sang SVG để đảm bảo tương thích với mọi thiết bị, màu tin nhắn sửa lại phù hợp hơn.',
+    ],
+    changes: [],
+  },
   {
     version: '26.7.0',
     date: '07/2026',
@@ -730,16 +742,16 @@ const CHANGELOG: VersionEntry[] = [
 const TYPE_STYLES: Record<VersionEntry['type'], { label: string; cls: string }> = {
   major:  { label: 'Major',  cls: 'bg-purple-600/30 text-purple-500 border border-purple-500/30' },
   minor:  { label: 'Minor',  cls: 'bg-blue-600/30 text-blue-500 border border-blue-500/30' },
-  patch:  { label: 'Patch',  cls: 'bg-gray-600/40 text-gray-500 border border-gray-500/30' },
+  patch:  { label: 'Patch',  cls: 'bg-gray-600/40 text-gray-400 border border-gray-500/30' },
   hotfix: { label: 'Hotfix', cls: 'bg-red-600/30 text-red-500 border border-red-500/30' },
 };
 
-const CATEGORY_STYLES: Record<string, { icon: string; label: string; cls: string }> = {
-  new:      { icon: '✨', label: 'Tính năng mới',   cls: 'text-green-400' },
-  improved: { icon: '⚡', label: 'Cải thiện',        cls: 'text-blue-400' },
-  fixed:    { icon: '🐛', label: 'Sửa lỗi',          cls: 'text-amber-400' },
-  removed:  { icon: '🗑️', label: 'Đã xóa',           cls: 'text-red-400' },
-  security: { icon: '🔒', label: 'Bảo mật',          cls: 'text-purple-400' },
+const CATEGORY_STYLES: Record<string, { icon: React.ReactNode; label: string; cls: string }> = {
+  new:      { icon: <SparklesIcon className="w-4 h-4" />, label: 'Tính năng mới',   cls: 'text-green-400' },
+  improved: { icon: <LightningIcon className="w-4 h-4" />, label: 'Cải thiện',        cls: 'text-blue-400' },
+  fixed:    { icon: <BugIcon className="w-4 h-4" />, label: 'Sửa lỗi',          cls: 'text-amber-400' },
+  removed:  { icon: <TrashIcon className="w-4 h-4" />, label: 'Đã xóa',           cls: 'text-red-400' },
+  security: { icon: <LockIcon className="w-4 h-4" />, label: 'Bảo mật',          cls: 'text-purple-400' },
 };
 
 // ─── Main component ───────────────────────────────────────────────────────────
@@ -763,14 +775,14 @@ export default function ChangelogSettings() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-base font-semibold text-white">📋 Log phiên bản</h2>
+        <h2 className="text-base font-semibold text-white"><ClipboardListIcon className="w-4 h-4 inline" /> Log phiên bản</h2>
         <div className="flex gap-2">
           <button onClick={expandAll}
-            className="text-xs text-gray-500 hover:text-gray-300 transition-colors px-2 py-1 rounded-lg hover:bg-gray-700">
+            className="text-xs text-gray-400 hover:text-gray-300 transition-colors px-2 py-1 rounded-lg hover:bg-gray-700">
             Mở rộng tất cả
           </button>
           <button onClick={collapseAll}
-            className="text-xs text-gray-500 hover:text-gray-300 transition-colors px-2 py-1 rounded-lg hover:bg-gray-700">
+            className="text-xs text-gray-400 hover:text-gray-300 transition-colors px-2 py-1 rounded-lg hover:bg-gray-700">
             Thu gọn
           </button>
         </div>
@@ -812,10 +824,10 @@ export default function ChangelogSettings() {
                     </span>
                   )}
                 </span>
-                <span className="text-gray-500 text-xs mr-2">{entry.date}</span>
+                <span className="text-gray-400 text-xs mr-2">{entry.date}</span>
                 <svg
                   width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-                  className={`text-gray-500 flex-shrink-0 transition-transform ${isExpanded ? 'rotate-180' : ''}`}>
+                  className={`text-gray-400 flex-shrink-0 transition-transform ${isExpanded ? 'rotate-180' : ''}`}>
                   <polyline points="6 9 12 15 18 9" />
                 </svg>
               </button>
@@ -844,7 +856,7 @@ export default function ChangelogSettings() {
                         <ul className="space-y-1 pl-1">
                           {group.items.map((item, ii) => (
                             <li key={ii} className="flex items-start gap-2 text-gray-400 text-xs">
-                              <span className="text-gray-600 mt-0.5 flex-shrink-0">-</span>
+                              <span className="text-gray-400 mt-0.5 flex-shrink-0">-</span>
                               {item}
                             </li>
                           ))}

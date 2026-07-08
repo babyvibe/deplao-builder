@@ -24,7 +24,7 @@ function ChartCard({ title, children }: { title: string; children: React.ReactNo
 function MetricCard({ label, value, tone }: { label: string; value: number; tone: string }) {
   return (
     <div className="rounded-xl border border-gray-700/60 bg-gray-800/50 p-4">
-      <div className="text-[11px] uppercase tracking-wider text-gray-500">{label}</div>
+      <div className="text-[11px] uppercase tracking-wider text-gray-400">{label}</div>
       <div className={`text-2xl font-semibold mt-2 ${tone}`}>{value}</div>
     </div>
   );
@@ -295,7 +295,7 @@ export default function ErpReportsPage() {
             {loading ? (
               <PageLoading variant="inline" text="Đang tải báo cáo..." />
             ) : section.items.length === 0 ? (
-              <div className="text-sm text-gray-500">{section.empty}</div>
+              <div className="text-sm text-gray-400">{section.empty}</div>
             ) : (
               <div className="space-y-2">
                 {section.items.map(item => (

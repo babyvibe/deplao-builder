@@ -361,7 +361,7 @@ export function registerZaloIpc() {
     wrap('zalo:getFriendRecommendations', (s) => s.getFriendRecommendations());
 
     wrap('zalo:getAliasList', (s, p) =>
-        s.getAliasList(p.count || 500, p.page || 1)
+        s.getAliasList(p.count || 200, p.page || 1)
     );
 
     wrap('zalo:getFriendRequestStatus', (s, p) =>

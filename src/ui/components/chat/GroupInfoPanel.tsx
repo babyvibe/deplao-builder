@@ -15,6 +15,8 @@ import { syncZaloGroups, MemberPlaceholder } from '@/lib/zaloGroupUtils';
 import { getCapability, type Channel, type ChannelCapability } from '../../../configs/channelConfig';
 import { Spinner } from '@/components/common/PageLoading';
 import * as channelIpc from '@/lib/channelIpc';
+import { ArrowDownIcon, ArrowUpIcon, BellIcon, BellOffIcon, CloseIcon, MapPinIcon, PinIcon, SettingsIcon, TrashIcon, UserIcon, UsersIcon } from '@/components/common/icons';
+
 
 type PanelView = 'info' | 'members' | 'manage' | 'media' | 'pending';
 
@@ -548,7 +550,7 @@ export default function GroupInfoPanel() {
           )}
         </div>
         {groupInfo && groupInfo.memberCount > 0 && (
-          <p className="mt-1 text-gray-500 text-xs">{groupInfo.memberCount} thành viên</p>
+          <p className="mt-1 text-gray-400 text-xs">{groupInfo.memberCount} thành viên</p>
         )}
       </div>
 
@@ -557,7 +559,7 @@ export default function GroupInfoPanel() {
         {/* Mute with dropdown */}
         <div className="relative" ref={muteRef}>
           <GrpActionBtn
-            icon={isMuted ? '🔔' : '🔕'}
+            icon={isMuted ? <BellIcon className="w-4 h-4" /> : <BellOffIcon className="w-4 h-4" />}
             label={isMuted ? 'Bật thông báo' : 'Tắt thông báo'}
             onClick={isMuted ? handleUnmute : () => {
               if (muteRef.current) {
@@ -581,16 +583,16 @@ export default function GroupInfoPanel() {
           )}
         </div>
         {channelCap.supportsPinConversation && (
-          <GrpActionBtn icon={isPinned ? '📌' : '📌'} label={isPinned ? 'Bỏ ghim' : 'Ghim hội thoại'} onClick={handleTogglePin} active={isPinned} />
+          <GrpActionBtn icon={<PinIcon className="w-4 h-4" />} label={isPinned ? 'Bỏ ghim' : 'Ghim hội thoại'} onClick={handleTogglePin} active={isPinned} />
         )}
         {!channelCap.supportsPinConversation && (
-          <GrpActionBtn icon={isLocalPinned ? '📍' : '📍'} label={isLocalPinned ? 'Bỏ ghim app' : 'Ghim trong app'} onClick={handleToggleLocalPin} active={isLocalPinned} />
+          <GrpActionBtn icon={<MapPinIcon className="w-4 h-4" />} label={isLocalPinned ? 'Bỏ ghim app' : 'Ghim trong app'} onClick={handleToggleLocalPin} active={isLocalPinned} />
         )}
         {channelCap.supportsInviteToGroup && (
-          <GrpActionBtn icon="👥" label="Thêm thành viên" onClick={() => setAddMemberOpen(true)} />
+          <GrpActionBtn icon={<UsersIcon className="w-4 h-4" />} label="Thêm thành viên" onClick={() => setAddMemberOpen(true)} />
         )}
         {channelCap.supportsGroupManage && (
-          <GrpActionBtn icon="⚙️" label="Quản lý nhóm" onClick={() => setPanelView('manage')} />
+          <GrpActionBtn icon={<SettingsIcon className="w-4 h-4" />} label="Quản lý nhóm" onClick={() => setPanelView('manage')} />
         )}
       </div>
 
@@ -613,7 +615,7 @@ export default function GroupInfoPanel() {
             </svg>
             <span>{groupInfo.memberCount || groupInfo.members?.length || 0} thành viên</span>
           </div>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-500 group-hover:text-gray-300 transition-colors">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-400 group-hover:text-gray-300 transition-colors">
             <polyline points="9 18 15 12 9 6"/>
           </svg>
         </button>
@@ -639,7 +641,7 @@ export default function GroupInfoPanel() {
               </span>
             )}
           </div>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-500 group-hover:text-gray-300 transition-colors">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-400 group-hover:text-gray-300 transition-colors">
             <polyline points="9 18 15 12 9 6"/>
           </svg>
         </button>
@@ -659,7 +661,7 @@ export default function GroupInfoPanel() {
           </svg>
           <span>Bảng tin nhóm</span>
         </div>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-500 group-hover:text-gray-300 transition-colors">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-400 group-hover:text-gray-300 transition-colors">
           <polyline points="9 18 15 12 9 6"/>
         </svg>
       </button>
@@ -788,7 +790,7 @@ export default function GroupInfoPanel() {
 
 
 // ─── GrpActionBtn ─────────────────────────────────────────────────────────────
-function GrpActionBtn({ icon, label, onClick, active }: { icon: string; label: string; onClick: () => void; active?: boolean }) {
+function GrpActionBtn({ icon, label, onClick, active }: { icon: React.ReactNode; label: string; onClick: () => void; active?: boolean }) {
   return (
     <button onClick={onClick}
       className={`flex flex-col items-center gap-1 py-2 px-1 rounded-xl hover:bg-gray-700 transition-colors text-center`}>
@@ -1003,7 +1005,7 @@ function MembersPanel({ groupInfo, groupId, onBack, onRefresh, myAccountId, chan
             )}
           </div>
         ))}
-        {sorted.length === 0 && <p className="text-xs text-gray-500 text-center py-8">Không có thành viên</p>}
+        {sorted.length === 0 && <p className="text-xs text-gray-400 text-center py-8">Không có thành viên</p>}
       </div>
 
       {/* Context menu for admin actions */}
@@ -1015,20 +1017,17 @@ function MembersPanel({ groupInfo, groupId, onBack, onRefresh, myAccountId, chan
             <p className="text-sm text-white font-medium">{ctxMember.displayName || ctxMember.userId}</p>
           </div>
           <button onClick={() => { onShowProfile?.(ctxMember.userId, (ctxPos?.left ?? 0) + 200, ctxPos?.top ?? 0); setCtxMember(null); }}
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white text-left">
-            👤 Xem thông tin
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white text-left"><UserIcon className="w-4 h-4 inline" /> Xem thông tin
           </button>
           <button onClick={() => handleMakeDeputy(ctxMember)}
             className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white text-left">
-            {ctxMember.role === 2 ? '⬇️ Xóa phó nhóm' : '⬆️ Đặt làm phó nhóm'}
+            {ctxMember.role === 2 ? <><ArrowDownIcon className="w-4 h-4 inline" /> Xóa phó nhóm</> : <><ArrowUpIcon className="w-4 h-4 inline" /> Đặt làm phó nhóm</>}
           </button>
           <button onClick={() => handleBlockMember(ctxMember)}
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-orange-400 hover:bg-gray-700 text-left">
-            🚫 Chặn khỏi nhóm
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-orange-400 hover:bg-gray-700 text-left"><CloseIcon className="w-4 h-4 inline" /> Chặn khỏi nhóm
           </button>
           <button onClick={() => handleRemoveMember(ctxMember)}
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-red-900/30 text-left">
-            🗑 Xóa khỏi nhóm
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-red-900/30 text-left"><TrashIcon className="w-4 h-4 inline" /> Xóa khỏi nhóm
           </button>
           <button onClick={() => setCtxMember(null)}
             className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-400 hover:bg-gray-700 text-left">
@@ -1186,7 +1185,7 @@ function PendingPanel({ groupId, myAccountId, onBack, onCountChange }: {
           </div>
           <div>
             <p className="text-sm font-medium text-gray-300">Không có yêu cầu nào</p>
-            <p className="text-xs text-gray-500 mt-1">Chưa có ai đang chờ được phê duyệt</p>
+            <p className="text-xs text-gray-400 mt-1">Chưa có ai đang chờ được phê duyệt</p>
           </div>
         </div>
       )}
@@ -1246,7 +1245,7 @@ function PendingPanel({ groupId, myAccountId, onBack, onCountChange }: {
                 {/* Info */}
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-gray-100 truncate leading-tight">{member.displayName}</p>
-                  <p className="text-[11px] text-gray-500 truncate font-mono mt-0.5">{member.userId}</p>
+                  <p className="text-[11px] text-gray-400 truncate font-mono mt-0.5">{member.userId}</p>
                 </div>
 
                 {/* Action buttons */}
@@ -1418,7 +1417,7 @@ function PendingMembersSection({ groupId, isAdmin, channel }: { groupId: string;
           )}
         </div>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-          className={`text-gray-500 transition-transform ${expanded ? 'rotate-180' : ''}`}>
+          className={`text-gray-400 transition-transform ${expanded ? 'rotate-180' : ''}`}>
           <polyline points="6 9 12 15 18 9"/>
         </svg>
       </button>
@@ -1427,7 +1426,7 @@ function PendingMembersSection({ groupId, isAdmin, channel }: { groupId: string;
         <div className="pb-3">
           {/* Sub-header: count + reload + approve-all */}
           <div className="flex items-center justify-between px-4 py-1.5 mb-1">
-            <span className="text-xs text-gray-500">{pending.length} người đang chờ</span>
+            <span className="text-xs text-gray-400">{pending.length} người đang chờ</span>
             <div className="flex items-center gap-2">
               {pending.length > 0 && (
                 <button onClick={handleApproveAll} disabled={approvingAll || loading}
@@ -1460,12 +1459,12 @@ function PendingMembersSection({ groupId, isAdmin, channel }: { groupId: string;
           {!loading && pending.length === 0 && (
             <div className="flex flex-col items-center gap-2 py-6 text-center">
               <div className="w-10 h-10 rounded-full bg-gray-700/60 flex items-center justify-center">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-500">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-400">
                   <path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/>
                   <line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/>
                 </svg>
               </div>
-              <p className="text-xs text-gray-500">Không có ai đang chờ duyệt</p>
+              <p className="text-xs text-gray-400">Không có ai đang chờ duyệt</p>
             </div>
           )}
 
@@ -1492,7 +1491,7 @@ function PendingMembersSection({ groupId, isAdmin, channel }: { groupId: string;
 
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-gray-200 truncate leading-tight">{member.displayName}</p>
-                  <p className="text-[11px] text-gray-500 font-mono truncate">{member.userId}</p>
+                  <p className="text-[11px] text-gray-400 font-mono truncate">{member.userId}</p>
                 </div>
 
                 <div className="flex gap-1 flex-shrink-0">
@@ -1698,7 +1697,7 @@ export function ManagePanel({ groupInfo, groupId, onBack, myAccountId, asModal, 
             const isOn = s.inverted ? !val : !!val;
             return (
               <div key={s.key} className="flex items-center justify-between gap-2">
-                <span className={`text-sm flex-1 leading-tight ${isAdmin ? 'text-gray-300' : 'text-gray-500'}`}>{s.label}</span>
+                <span className={`text-sm flex-1 leading-tight ${isAdmin ? 'text-gray-300' : 'text-gray-400'}`}>{s.label}</span>
                 <button
                   onClick={() => isAdmin && handleToggleSetting(s.key, val)}
                   disabled={!isAdmin}
@@ -1714,7 +1713,7 @@ export function ManagePanel({ groupInfo, groupId, onBack, myAccountId, asModal, 
       <div className="border-t border-gray-700 px-4 py-3 space-y-2">
         <p className="text-xs text-gray-400 font-medium mb-2">Chế độ phê duyệt thành viên mới</p>
         <div className="flex items-center justify-between">
-          <span className={`text-sm ${isAdmin ? 'text-gray-300' : 'text-gray-500'}`}>Bật phê duyệt</span>
+          <span className={`text-sm ${isAdmin ? 'text-gray-300' : 'text-gray-400'}`}>Bật phê duyệt</span>
           <button
             onClick={() => isAdmin && handleToggleSetting('joinAppr', settings.joinAppr)}
             disabled={!isAdmin}
@@ -1723,7 +1722,7 @@ export function ManagePanel({ groupInfo, groupId, onBack, myAccountId, asModal, 
           </button>
         </div>
         <div className="flex items-center justify-between">
-          <span className={`text-sm ${isAdmin ? 'text-gray-300' : 'text-gray-500'}`}>Đánh dấu tin nhắn từ trưởng/phó nhóm</span>
+          <span className={`text-sm ${isAdmin ? 'text-gray-300' : 'text-gray-400'}`}>Đánh dấu tin nhắn từ trưởng/phó nhóm</span>
           <button
             onClick={() => isAdmin && handleToggleSetting('signAdminMsg', settings.signAdminMsg)}
             disabled={!isAdmin}
@@ -1732,7 +1731,7 @@ export function ManagePanel({ groupInfo, groupId, onBack, myAccountId, asModal, 
           </button>
         </div>
         <div className="flex items-center justify-between">
-          <span className={`text-sm ${isAdmin ? 'text-gray-300' : 'text-gray-500'}`}>Cho phép thành viên mới đọc tin nhắn gần nhất</span>
+          <span className={`text-sm ${isAdmin ? 'text-gray-300' : 'text-gray-400'}`}>Cho phép thành viên mới đọc tin nhắn gần nhất</span>
           <button
             onClick={() => isAdmin && handleToggleSetting('enableMsgHistory', settings.enableMsgHistory)}
             disabled={!isAdmin}

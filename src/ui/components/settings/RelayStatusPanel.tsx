@@ -2,6 +2,9 @@ import React, { useState, useEffect, useCallback } from 'react';
 import ipc from '@/lib/ipc';
 import { useAppStore } from '@/store/appStore';
 import { useEmployeeStore } from '@/store/employeeStore';
+import { AlertIcon, ClipboardListIcon, CloseIcon, GlobeIcon, HomeIcon, PlayIcon, RocketIcon, UsersIcon } from '@/components/common/icons';
+import { Spinner } from '@/components/common/PageLoading';
+
 
 export default function RelayStatusPanel() {
     const { showNotification } = useAppStore();
@@ -128,7 +131,7 @@ export default function RelayStatusPanel() {
     return (
         <div className="space-y-4">
             {/* ── Header ──────────────────────────────────── */}
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">🖧 Kết nối nhân viên từ xa</p>
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider"><GlobeIcon className="w-4 h-4 inline" /> Kết nối nhân viên từ xa</p>
 
             {/* ── Two equal-level option cards ─────────────────────────── */}
             <div className="grid grid-cols-2 gap-3">
@@ -141,11 +144,11 @@ export default function RelayStatusPanel() {
                 }`}>
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1.5">
-                            <span className="text-base">🏠</span>
+                            <span className="text-base"><HomeIcon className="w-4 h-4" /></span>
                             <span className="text-xs font-semibold text-gray-200">Kết nối LAN</span>
                         </div>
                         <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
-                            relayRunning ? 'bg-green-500/20 text-green-400' : 'bg-gray-700 text-gray-600'
+                            relayRunning ? 'bg-green-500/20 text-green-400' : 'bg-gray-700 text-gray-400'
                         }`}>
                             {relayRunning ? '● Đang chạy' : '○ Tắt'}
                         </span>
@@ -155,8 +158,8 @@ export default function RelayStatusPanel() {
                     <div className="space-y-0.5">
                         <p className="text-[10px] text-green-400">✓ Tốc độ cao, ổn định</p>
                         <p className="text-[10px] text-green-400">✓ Bảo mật - không qua internet</p>
-                        <p className="text-[10px] text-gray-600">✗ Phải cùng mạng nội bộ (LAN / VPN)</p>
-                        <p className="text-[10px] text-gray-600">✗ IP có thể thay đổi nếu dùng DHCP</p>
+                        <p className="text-[10px] text-gray-400">✗ Phải cùng mạng nội bộ (LAN / VPN)</p>
+                        <p className="text-[10px] text-gray-400">✗ IP có thể thay đổi nếu dùng DHCP</p>
                     </div>
 
                     {/* Port input + Start/Stop */}
@@ -171,11 +174,11 @@ export default function RelayStatusPanel() {
                         />
                         {relayRunning ? (
                             <button onClick={handleStop} className="flex-1 py-1 text-xs bg-red-600/80 hover:bg-red-600 text-white-important rounded-lg transition-colors">
-                                ⏹ Tắt
+                                <CloseIcon className="w-4 h-4 inline" /> Tắt
                             </button>
                         ) : (
                             <button onClick={handleStart} disabled={starting} className="flex-1 py-1 text-xs bg-green-600 hover:bg-green-500 text-white rounded-lg transition-colors disabled:opacity-50">
-                                {starting ? '⏳...' : '▶ Bật'}
+                                {starting ? <><Spinner size={3} />...</> : <><PlayIcon className="w-4 h-4 inline" /> Bật</>}
                             </button>
                         )}
                     </div>
@@ -191,14 +194,14 @@ export default function RelayStatusPanel() {
                     {/* LAN addresses */}
                     {relayRunning && localIPs.length > 0 && (
                         <div className="space-y-1 pt-1 border-t border-gray-700/50">
-                            <p className="text-[10px] text-gray-600">Địa chỉ kết nối:</p>
+                            <p className="text-[10px] text-gray-400">Địa chỉ kết nối:</p>
                             {localIPs.map(ip => (
                                 <div key={ip} className="flex items-center gap-1.5">
                                     <code className="flex-1 text-[10px] text-green-300 bg-gray-700 px-1.5 py-0.5 rounded font-mono truncate">{ip}:{relayPort}</code>
                                     <button
                                         onClick={() => { navigator.clipboard.writeText(`${ip}:${relayPort}`); showNotification('Đã copy', 'info'); }}
-                                        className="text-gray-600 hover:text-blue-400 flex-shrink-0" title="Copy"
-                                    >📋</button>
+                                        className="text-gray-400 hover:text-blue-400 flex-shrink-0" title="Copy"
+                                    ><ClipboardListIcon className="w-4 h-4" /></button>
                                 </div>
                             ))}
                         </div>
@@ -215,11 +218,11 @@ export default function RelayStatusPanel() {
                 }`}>
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1.5">
-                            <span className="text-base">🌐</span>
+                            <span className="text-base"><GlobeIcon className="w-4 h-4" /></span>
                             <span className="text-xs font-semibold text-gray-200">Kết nối WAN</span>
                         </div>
                         <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
-                            tunnelActive ? 'bg-blue-500/20 text-blue-400' : 'bg-gray-700 text-gray-600'
+                            tunnelActive ? 'bg-blue-500/20 text-blue-400' : 'bg-gray-700 text-gray-400'
                         }`}>
                             {tunnelActive ? '● Đang chạy' : '○ Tắt'}
                         </span>
@@ -229,14 +232,14 @@ export default function RelayStatusPanel() {
                     <div className="space-y-0.5">
                         <p className="text-[10px] text-green-400">✓ Kết nối từ bất kỳ đâu qua internet</p>
                         <p className="text-[10px] text-green-400">✓ Không cần IP tĩnh hay port forward</p>
-                        <p className="text-[10px] text-gray-600">✗ URL thay đổi mỗi lần bật tunnel</p>
-                        <p className="text-[10px] text-gray-600">✗ Phụ thuộc server localtunnel.me</p>
+                        <p className="text-[10px] text-gray-400">✗ URL thay đổi mỗi lần bật tunnel</p>
+                        <p className="text-[10px] text-gray-400">✗ Phụ thuộc server localtunnel.me</p>
                     </div>
 
                     {/* Toggle button */}
                     {!relayRunning ? (
                         <div className="text-[10px] text-yellow-500/80 bg-yellow-500/8 border border-yellow-500/20 rounded-lg px-2.5 py-2 leading-relaxed">
-                            ⚠️ Cần bật <span className="text-yellow-300 font-medium">LAN server</span> trước khi sử dụng WAN Tunnel
+                            <AlertIcon className="w-4 h-4 inline" /> Cần bật <span className="text-yellow-300 font-medium">LAN server</span> trước khi sử dụng WAN Tunnel
                         </div>
                     ) : (
                         <button
@@ -248,28 +251,28 @@ export default function RelayStatusPanel() {
                                     : 'bg-blue-600 hover:bg-blue-500 text-white-important'
                             }`}
                         >
-                            {tunnelLoading ? '⏳ Đang xử lý...' : tunnelActive ? '⏹ Tắt tunnel' : '🚀 Bật tunnel'}
+                            {tunnelLoading ? <><Spinner size={3} /> Đang xử lý...</> : tunnelActive ? <><CloseIcon className="w-4 h-4 inline" /> Tắt tunnel</> : <><RocketIcon className="w-4 h-4 inline" /> Bật tunnel</>}
                         </button>
                     )}
 
                     {/* Tunnel URL */}
                     {tunnelActive && tunnelUrl && (
                         <div className="space-y-1 pt-1 border-t border-gray-700/50">
-                            <p className="text-[10px] text-gray-600">Địa chỉ kết nối:</p>
+                            <p className="text-[10px] text-gray-400">Địa chỉ kết nối:</p>
                             <div className="flex items-center gap-1.5">
                                 <code className="flex-1 text-[10px] text-blue-300 bg-gray-700 px-1.5 py-0.5 rounded font-mono truncate">{tunnelUrl}</code>
                                 <button
                                     onClick={() => { navigator.clipboard.writeText(tunnelUrl); showNotification('Đã copy tunnel URL', 'info'); }}
-                                    className="text-gray-600 hover:text-blue-400 flex-shrink-0" title="Copy"
-                                >📋</button>
+                                    className="text-gray-400 hover:text-blue-400 flex-shrink-0" title="Copy"
+                                ><ClipboardListIcon className="w-4 h-4" /></button>
                             </div>
-                            <p className="text-[10px] text-yellow-500/70">⚠️ URL thay đổi mỗi lần bật lại</p>
+                            <p className="text-[10px] text-yellow-500/70"><AlertIcon className="w-4 h-4 inline" /> URL thay đổi mỗi lần bật lại</p>
                         </div>
                     )}
 
                     {/* Hint when idle */}
                     {relayRunning && !tunnelActive && (
-                        <p className="text-[10px] text-gray-600 leading-relaxed pt-1 border-t border-gray-700/50">
+                        <p className="text-[10px] text-gray-400 leading-relaxed pt-1 border-t border-gray-700/50">
                             Dùng <span className="text-gray-400">localtunnel</span> - miễn phí, không cần cài đặt thêm. Phù hợp cho nhân viên làm việc từ xa hoặc work-from-home.
                         </p>
                     )}
@@ -279,12 +282,11 @@ export default function RelayStatusPanel() {
             {/* ── Connected employees ─────────────────────────────────── */}
             {relayRunning && (
                 <div className="bg-gray-800 rounded-xl p-3.5 space-y-2">
-                    <p className="text-[11px] text-gray-400 font-medium">
-                        👥 Nhân viên đang online
+                    <p className="text-[11px] text-gray-400 font-medium"><UsersIcon className="w-4 h-4 inline" /> Nhân viên đang online
                         <span className="ml-1.5 text-[10px] bg-gray-700 text-gray-300 px-1.5 py-0.5 rounded-full">{connectedEmployees.length}</span>
                     </p>
                     {connectedEmployees.length === 0 ? (
-                        <p className="text-xs text-gray-600 py-1">Chưa có nhân viên nào kết nối</p>
+                        <p className="text-xs text-gray-400 py-1">Chưa có nhân viên nào kết nối</p>
                     ) : (
                         <div className="space-y-1">
                             {connectedEmployees.map((emp: any, idx: number) => (
@@ -297,7 +299,7 @@ export default function RelayStatusPanel() {
                                     </div>
                                     <div className="flex-1 min-w-0">
                                         <p className="text-xs text-gray-200 font-medium truncate">{emp.display_name}</p>
-                                        <p className="text-[10px] text-gray-600 flex items-center gap-1.5">
+                                        <p className="text-[10px] text-gray-400 flex items-center gap-1.5">
                                             <span>{emp.ip_address} · {timeSince(emp.connected_at)}</span>
                                             {emp.sseConnected && <span className="text-blue-400">● SSE</span>}
                                         </p>
@@ -311,7 +313,7 @@ export default function RelayStatusPanel() {
 
             {/* ── Notes ──────────────────────────────────────────────── */}
             <div className="bg-yellow-500/8 border border-yellow-500/20 rounded-xl p-3 space-y-2">
-                <p className="text-[11px] font-semibold text-yellow-400">⚠️ Lưu ý quan trọng</p>
+                <p className="text-[11px] font-semibold text-yellow-400"><AlertIcon className="w-4 h-4 inline" /> Lưu ý quan trọng</p>
                 <ul className="text-[11px] text-gray-400 space-y-1.5 leading-relaxed">
                     <li><span className="text-gray-300 font-medium">Server tắt khi đóng app</span> - nhân viên bị ngắt kết nối, cần bật lại và đăng nhập lại sau mỗi lần restart.</li>
                     <li><span className="text-gray-300 font-medium">LAN - IP động</span>: Khuyến nghị đặt IP tĩnh để nhân viên không cần đổi địa chỉ sau mỗi lần restart.</li>

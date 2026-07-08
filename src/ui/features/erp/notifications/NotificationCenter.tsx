@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { useErpNotificationStore } from '@/store/erp/erpNotificationStore';
 import { useCurrentEmployeeId, useErpPermissions } from '@/hooks/erp/useErpContext';
 import { useUpdateStore, POSTPONE_MS, POSTPONE_OPTIONS } from '@/store/updateStore';
+import { DownloadIcon, MonitorIcon, RefreshIcon, SparklesIcon } from '@/components/common/icons';
+
 
 interface Props { onClose?: () => void; }
 
@@ -24,11 +26,11 @@ export default function NotificationCenter({ onClose }: Props) {
 
   const updateStatusLabel = () => {
     switch (status) {
-      case 'downloaded': return { text: '✅ Đã tải xong – sẵn sàng cài đặt', color: 'text-green-400' };
-      case 'downloading': return { text: progress ? `⬇ Đang tải… ${progress.percent.toFixed(0)}%` : '⬇ Đang tải…', color: 'text-blue-300' };
+      case 'downloaded': return { text: 'Đã tải xong – sẵn sàng cài đặt', color: 'text-green-400' };
+      case 'downloading': return { text: progress ? `Đang tải… ${progress.percent.toFixed(0)}%` : 'Đang tải…', color: 'text-blue-300' };
       case 'error':
-      case 'stalled':    return { text: '⚠️ Tải thất bại – nhấn để thử lại', color: 'text-red-400' };
-      default:           return { text: '🆕 Bản cập nhật sẵn sàng tải', color: 'text-yellow-300' };
+      case 'stalled':    return { text: 'Tải thất bại – nhấn để thử lại', color: 'text-red-400' };
+      default:           return { text: 'Bản cập nhật sẵn sàng tải', color: 'text-yellow-300' };
     }
   };
 
@@ -79,7 +81,7 @@ export default function NotificationCenter({ onClose }: Props) {
         {hasUpdate && updateInfo && (
           <div className="border-b border-gray-700 bg-blue-950/40 p-3">
             <div className="flex items-start gap-2.5">
-              <div className="mt-0.5 w-8 h-8 flex-shrink-0 rounded-full bg-orange-500/20 flex items-center justify-center text-base">🆕</div>
+              <div className="mt-0.5 w-8 h-8 flex-shrink-0 rounded-full bg-orange-500/20 flex items-center justify-center text-base"><SparklesIcon className="w-4 h-4" /></div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between gap-1">
                   <span className="text-xs font-semibold text-white">Phiên bản {updateInfo.version}</span>
@@ -134,14 +136,14 @@ export default function NotificationCenter({ onClose }: Props) {
                         href={`https://deplaoapp.com/file/Deplao-${updateInfo.version}.dmg`}
                         target="_blank" rel="noopener noreferrer"
                         className="flex-1 py-1 rounded-lg bg-gray-600 hover:bg-gray-500 text-white text-[11px] text-center font-semibold transition-colors no-underline"
-                      >💻 Intel Mac</a>
+                      ><MonitorIcon className="w-4 h-4 inline" /> Intel Mac</a>
                     </>
                   ) : (
                     <button
                       onClick={handleUpdateAction}
                       className="flex-1 py-1 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-[11px] font-semibold transition-colors"
                     >
-                      {status === 'error' || status === 'stalled' ? '🔄 Thử lại' : '⬇ Tải ngay'}
+                      {status === 'error' || status === 'stalled' ? <><RefreshIcon className="w-4 h-4 inline" /> Thử lại</> : <><DownloadIcon className="w-4 h-4 inline" /> Tải ngay</>}
                     </button>
                   )}
                 </div>
@@ -154,14 +156,14 @@ export default function NotificationCenter({ onClose }: Props) {
         {erpPerms.can('erp.access') && (
           <>
             {groups.length === 0 && !hasUpdate && (
-              <div className="p-6 text-center text-gray-500 text-xs">Chưa có thông báo</div>
+              <div className="p-6 text-center text-gray-400 text-xs">Chưa có thông báo</div>
             )}
             {groups.length === 0 && hasUpdate && (
-              <div className="p-3 text-center text-gray-600 text-[11px]">Không có thông báo ERP</div>
+              <div className="p-3 text-center text-gray-400 text-[11px]">Không có thông báo ERP</div>
             )}
             {groups.map(g => (
               <div key={g.label}>
-                <div className="sticky top-0 px-3 py-1 text-[10px] uppercase tracking-wide text-gray-500 bg-gray-800/95">
+                <div className="sticky top-0 px-3 py-1 text-[10px] uppercase tracking-wide text-gray-400 bg-gray-800/95">
                   {g.label}
                 </div>
                 {g.items.map(n => (
@@ -175,13 +177,13 @@ export default function NotificationCenter({ onClose }: Props) {
                     <div className="flex-1 min-w-0">
                       <div className="text-xs text-gray-200 font-medium truncate">{n.title}</div>
                       {n.body && <div className="text-[11px] text-gray-400 truncate">{n.body}</div>}
-                      <div className="text-[10px] text-gray-500 mt-0.5">{formatTime(n.created_at)}</div>
+                      <div className="text-[10px] text-gray-400 mt-0.5">{formatTime(n.created_at)}</div>
                     </div>
                     <div className="flex items-center gap-0.5 flex-shrink-0">
                       {!n.read && (
                         <button
                           onClick={(e) => { e.stopPropagation(); markRead([n.id]); }}
-                          className="w-5 h-5 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-blue-500/20 text-gray-500 hover:text-blue-400 transition-all"
+                          className="w-5 h-5 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-blue-500/20 text-gray-400 hover:text-blue-400 transition-all"
                           title="Đánh dấu đã đọc"
                         >
                           <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
@@ -191,7 +193,7 @@ export default function NotificationCenter({ onClose }: Props) {
                       )}
                       <button
                         onClick={(e) => { e.stopPropagation(); deleteNotifications([n.id]); }}
-                        className="w-5 h-5 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-gray-500 hover:text-red-400 transition-all"
+                        className="w-5 h-5 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-gray-400 hover:text-red-400 transition-all"
                         title="Xoá thông báo này"
                       >
                         <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
@@ -207,7 +209,7 @@ export default function NotificationCenter({ onClose }: Props) {
         )}
 
         {!erpPerms.can('erp.access') && isEmpty && (
-          <div className="p-6 text-center text-gray-500 text-xs">Chưa có thông báo</div>
+          <div className="p-6 text-center text-gray-400 text-xs">Chưa có thông báo</div>
         )}
       </div>
     </div>

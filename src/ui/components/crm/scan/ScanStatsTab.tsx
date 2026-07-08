@@ -1,6 +1,8 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import ipc from '@/lib/ipc';
 import PageLoading from '@/components/common/PageLoading';
+import { AwardIcon, ChartIcon, ChatIcon, EditIcon, PackageIcon, SearchIcon, TrendingUpIcon, UsersIcon } from '@/components/common/icons';
+
 
 interface Props {
   accountId: string;
@@ -44,7 +46,7 @@ export default function ScanStatsTab({ accountId }: Props) {
 
   if (!stats) {
     return (
-      <div className="flex items-center justify-center h-full text-gray-500 text-sm">Không có dữ liệu</div>
+      <div className="flex items-center justify-center h-full text-gray-400 text-sm">Không có dữ liệu</div>
     );
   }
 
@@ -62,7 +64,7 @@ export default function ScanStatsTab({ accountId }: Props) {
   return (
     <div className="flex-1 overflow-y-auto p-5 space-y-5">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-bold text-white">📊 Thống kê quét dữ liệu</h2>
+        <h2 className="text-lg font-bold text-white"><ChartIcon className="w-4 h-4 inline" /> Thống kê quét dữ liệu</h2>
         <button onClick={loadStats} className="p-1.5 rounded hover:bg-gray-700 text-gray-400 hover:text-white" title="Làm mới">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M21 2v6h-6M3 12a9 9 0 0115.36-6.36L21 8M3 22v-6h6M21 12a9 9 0 01-15.36 6.36L3 16"/>
@@ -117,7 +119,7 @@ export default function ScanStatsTab({ accountId }: Props) {
               <span className={`text-lg font-bold ${successRate >= 80 ? 'text-green-400' : successRate >= 50 ? 'text-yellow-400' : 'text-red-400'}`}>
                 {successRate}%
               </span>
-              <span className="text-[9px] text-gray-500 -mt-0.5">thành công</span>
+              <span className="text-[9px] text-gray-400 -mt-0.5">thành công</span>
             </div>
           </div>
 
@@ -137,7 +139,7 @@ export default function ScanStatsTab({ accountId }: Props) {
             {/* Items */}
             <div>
               <div className="flex items-center justify-between mb-1">
-                <span className="text-xs text-gray-400">📦 Dữ liệu đã quét</span>
+                <span className="text-xs text-gray-400"><PackageIcon className="w-4 h-4 inline" /> Dữ liệu đã quét</span>
                 <span className="text-sm font-bold text-purple-400">{stats.totalItems.toLocaleString()}</span>
               </div>
               <div className="w-full h-2.5 bg-gray-700 rounded-full overflow-hidden">
@@ -174,23 +176,23 @@ export default function ScanStatsTab({ accountId }: Props) {
       {/* Row 1: Summary cards */}
       <div className="grid grid-cols-4 gap-4">
         <div className="bg-gray-800 rounded-xl p-4 border border-gray-700/50">
-          <div className="text-[11px] text-gray-500 uppercase tracking-wider">Tổng số tab</div>
+          <div className="text-[11px] text-gray-400 uppercase tracking-wider">Tổng số tab</div>
           <div className="text-2xl font-bold text-white mt-1">{stats.totalTabs}</div>
         </div>
         <div className="bg-gray-800 rounded-xl p-4 border border-gray-700/50">
-          <div className="text-[11px] text-gray-500 uppercase tracking-wider">Dữ liệu đã quét</div>
+          <div className="text-[11px] text-gray-400 uppercase tracking-wider">Dữ liệu đã quét</div>
           <div className="text-2xl font-bold text-blue-400 mt-1">{stats.totalItems.toLocaleString()}</div>
         </div>
         <div className="bg-gray-800 rounded-xl p-4 border border-gray-700/50">
-          <div className="text-[11px] text-gray-500 uppercase tracking-wider">Tổng request</div>
+          <div className="text-[11px] text-gray-400 uppercase tracking-wider">Tổng request</div>
           <div className="text-2xl font-bold text-purple-400 mt-1">{totalRequests.toLocaleString()}</div>
         </div>
         <div className="bg-gray-800 rounded-xl p-4 border border-gray-700/50">
-          <div className="text-[11px] text-gray-500 uppercase tracking-wider">Tỷ lệ thành công</div>
+          <div className="text-[11px] text-gray-400 uppercase tracking-wider">Tỷ lệ thành công</div>
           <div className={`text-2xl font-bold mt-1 ${successRate >= 80 ? 'text-green-400' : successRate >= 50 ? 'text-yellow-400' : 'text-red-400'}`}>
             {successRate}%
           </div>
-          <div className="text-[10px] text-gray-500 mt-0.5">
+          <div className="text-[10px] text-gray-400 mt-0.5">
             <span className="text-green-400">✓ {stats.successCount}</span>
             {' / '}
             <span className="text-red-400">✗ {stats.errorCount}</span>
@@ -204,7 +206,7 @@ export default function ScanStatsTab({ accountId }: Props) {
         <div className="bg-gray-800 rounded-xl p-4 border border-gray-700/50">
           <h3 className="text-sm font-semibold text-gray-200 mb-3">📂 Theo loại quét</h3>
           {Object.keys(stats.byType).length === 0 ? (
-            <p className="text-xs text-gray-500 py-4 text-center">Chưa có dữ liệu</p>
+            <p className="text-xs text-gray-400 py-4 text-center">Chưa có dữ liệu</p>
           ) : (
             <>
               {/* Vertical bar chart */}
@@ -222,7 +224,7 @@ export default function ScanStatsTab({ accountId }: Props) {
                         <div className="w-full rounded-t-md overflow-hidden" style={{ height: `${heightPct}%` }}>
                           <div className={`w-full h-full ${colors[colorIdx]} opacity-80 hover:opacity-100 transition-opacity`} />
                         </div>
-                        <span className="text-[9px] text-gray-500 truncate w-full text-center leading-tight" title={typeLabels[type] || type}>
+                        <span className="text-[9px] text-gray-400 truncate w-full text-center leading-tight" title={typeLabels[type] || type}>
                           {(typeLabels[type] || type).split(' ').pop()}
                         </span>
                       </div>
@@ -246,9 +248,9 @@ export default function ScanStatsTab({ accountId }: Props) {
 
         {/* Top tabs */}
         <div className="bg-gray-800 rounded-xl p-4 border border-gray-700/50">
-          <h3 className="text-sm font-semibold text-gray-200 mb-3">🏆 Top tab nhiều dữ liệu nhất</h3>
+          <h3 className="text-sm font-semibold text-gray-200 mb-3"><AwardIcon className="w-4 h-4 inline" /> Top tab nhiều dữ liệu nhất</h3>
           {stats.topTabs.length === 0 ? (
-            <p className="text-xs text-gray-500 py-4 text-center">Chưa có dữ liệu</p>
+            <p className="text-xs text-gray-400 py-4 text-center">Chưa có dữ liệu</p>
           ) : (
             <div className="space-y-2.5">
               {stats.topTabs.map((tab, idx) => {
@@ -258,7 +260,7 @@ export default function ScanStatsTab({ accountId }: Props) {
                   <div key={tab.id}>
                     <div className="flex items-center justify-between mb-1">
                       <div className="flex items-center gap-2 min-w-0">
-                        <span className={`text-xs font-mono ${idx === 0 ? 'text-yellow-400' : idx === 1 ? 'text-gray-300' : idx === 2 ? 'text-orange-400' : 'text-gray-500'}`}>
+                        <span className={`text-xs font-mono ${idx === 0 ? 'text-yellow-400' : idx === 1 ? 'text-gray-300' : idx === 2 ? 'text-orange-400' : 'text-gray-400'}`}>
                           #{idx + 1}
                         </span>
                         <span className="text-xs text-gray-300 truncate">{tab.name}</span>
@@ -282,7 +284,7 @@ export default function ScanStatsTab({ accountId }: Props) {
       {/* Row 3: Success/Error bar */}
       {totalRequests > 0 && (
         <div className="bg-gray-800 rounded-xl p-4 border border-gray-700/50">
-          <h3 className="text-sm font-semibold text-gray-200 mb-3">📈 Tỷ lệ thành công / thất bại</h3>
+          <h3 className="text-sm font-semibold text-gray-200 mb-3"><TrendingUpIcon className="w-4 h-4 inline" /> Tỷ lệ thành công / thất bại</h3>
           <div className="h-6 bg-gray-700 rounded-full overflow-hidden flex">
             {stats.successCount > 0 && (
               <div

@@ -24,6 +24,7 @@ import { useWorkspaceStore } from '@/store/workspaceStore';
 import { syncZaloGroups, SyncGroupsProgress } from './zaloGroupUtils';
 import { syncZaloLabelsToLocalDB } from './labelUtils';
 import { extractUserProfile } from '../../utils/profileUtils';
+import { fetchAllAliases } from './zaloAliasUtils';
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -243,8 +244,7 @@ async function _syncFriends(
       });
       let aliasCount = 0;
       try {
-        const aliasRes = await ipc.zalo?.getAliasList({ auth, count: 5000 });
-        const aliasItems: { userId: string; alias: string }[] = aliasRes?.response?.items || [];
+        const aliasItems = await fetchAllAliases(auth);
         for (const item of aliasItems) {
           if (item.alias && item.userId) {
             useChatStore.getState().updateContact(activeAccountId, {

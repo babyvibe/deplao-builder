@@ -15,7 +15,10 @@ import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import { Spinner } from '@/components/common/PageLoading';
 import { toLocalMediaUrl } from '@/lib/localMedia';
+import { ensureMediaLocal } from '@/lib/employeeMediaSync';
 import MediaViewer, { MediaViewerImage } from './MediaViewer';
+import { ChartIcon, EditIcon, FileTextIcon } from '@/components/common/icons';
+
 
 const PAGE_SIZE = 50;
 const PREVIEW_IMAGE = 6;
@@ -113,14 +116,14 @@ function buildViewerImages(msgs: any[]): MediaViewerImage[] {
 
 export function getFileIcon(ext: string): string {
   const e = (ext || '').toLowerCase();
-  if (['pdf'].includes(e)) return '📄';
-  if (['doc', 'docx'].includes(e)) return '📝';
-  if (['xls', 'xlsx', 'csv'].includes(e)) return '📊';
-  if (['ppt', 'pptx'].includes(e)) return '📑';
-  if (['zip', 'rar', '7z', 'tar', 'gz'].includes(e)) return '🗜️';
-  if (['mp4', 'avi', 'mov', 'mkv'].includes(e)) return '🎬';
-  if (['mp3', 'wav', 'ogg'].includes(e)) return '🎵';
-  return '📂';
+  if (['pdf'].includes(e)) return 'PDF:';
+  if (['doc', 'docx'].includes(e)) return 'Document:';
+  if (['xls', 'xlsx', 'csv'].includes(e)) return 'Sheet:';
+  if (['ppt', 'pptx'].includes(e)) return 'Slide:';
+  if (['zip', 'rar', '7z', 'tar', 'gz'].includes(e)) return 'Archive:';
+  if (['mp4', 'avi', 'mov', 'mkv'].includes(e)) return 'Video:';
+  if (['mp3', 'wav', 'ogg'].includes(e)) return 'Audio:';
+  return 'File:';
 }
 
 export function formatFileSize(bytes: string | number): string {
@@ -235,7 +238,7 @@ export default function MediaSection({ threadId, onOpenDetail }: {
         {(['image', 'file', 'link'] as Tab[]).map(t => (
           <button key={t} onClick={() => setTab(t)}
             className={`flex-1 py-2 text-xs font-medium transition-colors ${
-              tab === t ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-500 hover:text-gray-300'
+              tab === t ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-gray-300'
             }`}>
             {TAB_LABELS[t]}
           </button>
@@ -305,7 +308,7 @@ export default function MediaSection({ threadId, onOpenDetail }: {
 
 // ─── Empty state ──────────────────────────────────────────────────────────────
 function EmptyState({ label }: { label: string }) {
-  return <p className="text-xs text-gray-500 text-center py-6">Chưa có {label}</p>;
+  return <p className="text-xs text-gray-400 text-center py-6">Chưa có {label}</p>;
 }
 
 // ─── "Xem tất cả" button ──────────────────────────────────────────────────────
@@ -437,7 +440,7 @@ function MediaDetailPanel({ threadId, activeAccountId, tab, onBack }: {
         {(['image', 'file', 'link'] as Tab[]).map(t => (
           <button key={t} onClick={() => setActiveTab(t)}
             className={`flex-1 py-2 text-xs font-medium transition-colors ${
-              activeTab === t ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-500 hover:text-gray-300'
+              activeTab === t ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-gray-300'
             }`}>
             {TAB_LABELS[t]}
           </button>
@@ -473,7 +476,7 @@ function MediaDetailPanel({ threadId, activeAccountId, tab, onBack }: {
           return (
             <div className="px-2 pb-2">
               {displayableItems.length === 0 && !loading ? (
-                <p className="text-xs text-gray-500 text-center py-8">Chưa có ảnh/video</p>
+                <p className="text-xs text-gray-400 text-center py-8">Chưa có ảnh/video</p>
               ) : (
                 groupByDateLabel(displayableItems).map(group => (
                   <div key={group.label} className="mb-3">
@@ -508,14 +511,14 @@ function MediaDetailPanel({ threadId, activeAccountId, tab, onBack }: {
         {/* File list */}
         {activeTab === 'file' && (
           items.length === 0 && !loading
-            ? <p className="text-xs text-gray-500 text-center py-8">Chưa có file đính kèm</p>
+            ? <p className="text-xs text-gray-400 text-center py-8">Chưa có file đính kèm</p>
             : items.map((msg, i) => <FileRow key={i} msg={msg} />)
         )}
 
         {/* Link list */}
         {activeTab === 'link' && (
           items.length === 0 && !loading
-            ? <p className="text-xs text-gray-500 text-center py-8">Chưa có link</p>
+            ? <p className="text-xs text-gray-400 text-center py-8">Chưa có link</p>
             : items.map((link, i) => <LinkRow key={i} link={link} />)
         )}
 
@@ -527,7 +530,7 @@ function MediaDetailPanel({ threadId, activeAccountId, tab, onBack }: {
           </div>
         )}
         {!hasMore && items.length > 0 && (
-          <p className="text-[11px] text-gray-600 text-center py-3">Đã hiển thị tất cả</p>
+          <p className="text-[11px] text-gray-400 text-center py-3">Đã hiển thị tất cả</p>
         )}
       </div>
 
@@ -555,27 +558,46 @@ function ImageThumb({ msg, onClickImage }: { msg: any; onClickImage?: () => void
   // For FB videos, CDN URL is the remote video URL
   const fbAtt = isFB ? extractFBAttachment(msg) : null;
 
-  const handleClick = () => {
+  const handleClick = async () => {
     if (isVideo) {
-      if (localFilePath) {
-        // Employee mode: open via Boss REST API
-        const mode = useEmployeeStore.getState().mode;
-        if (mode === 'employee') {
-          const mediaUrl = toLocalMediaUrl(localFilePath);
-          if (mediaUrl && mediaUrl.startsWith('http')) {
-            ipc.shell?.openExternal(mediaUrl);
-            return;
+      const mode = useEmployeeStore.getState().mode;
+      if (mode === 'employee') {
+        // Employee: download video từ Boss → local cache → mở
+        if (localFilePath) {
+          const bossUrl = toLocalMediaUrl(localFilePath);
+          if (bossUrl) {
+            const { localPath } = await ensureMediaLocal(bossUrl, 'video');
+            if (localPath) {
+              await ipc.file?.openPath(localPath);
+              return;
+            }
           }
-          // Fallback: try remote CDN URL
-          if (remoteVideoUrl) { ipc.shell?.openExternal(remoteVideoUrl); return; }
-          if (fbAtt?.url) { ipc.shell?.openExternal(fbAtt.url); return; }
         }
+        // Fallback: try remote CDN URL
+        if (remoteVideoUrl) { ipc.shell?.openExternal(remoteVideoUrl); return; }
+        if (fbAtt?.url) { ipc.shell?.openExternal(fbAtt.url); return; }
+        return;
+      }
+      // Boss/standalone
+      if (localFilePath) {
         ipc.file?.openPath(localFilePath);
       } else if (remoteVideoUrl) ipc.shell?.openExternal(remoteVideoUrl);
       else if (fbAtt?.url) ipc.shell?.openExternal(fbAtt.url);
     } else if (onClickImage) {
       onClickImage();
     } else {
+      const mode = useEmployeeStore.getState().mode;
+      if (mode === 'employee' && localFilePath) {
+        // Employee: download ảnh trước → mở
+        const bossUrl = toLocalMediaUrl(localFilePath);
+        if (bossUrl) {
+          const { localPath } = await ensureMediaLocal(bossUrl, 'image');
+          if (localPath) {
+            await ipc.file?.openPath(localPath);
+            return;
+          }
+        }
+      }
       if (localFilePath) ipc.file?.openPath(localFilePath);
       else if (url) ipc.shell?.openExternal(url);
     }
@@ -619,7 +641,19 @@ function ImageThumb({ msg, onClickImage }: { msg: any; onClickImage?: () => void
       {/* Zalo: folder button for local files */}
       {!isFB && localFilePath && (
         <button
-          onClick={e => { e.stopPropagation(); ipc.file?.showItemInFolder(localFilePath); }}
+          onClick={async e => {
+            e.stopPropagation();
+            const mode = useEmployeeStore.getState().mode;
+            if (mode === 'employee') {
+              // Employee: download trước → show in folder
+              const bossUrl = toLocalMediaUrl(localFilePath);
+              if (bossUrl) {
+                const { localPath } = await ensureMediaLocal(bossUrl, isVideo ? 'video' : 'image');
+                if (localPath) { ipc.file?.showItemInFolder(localPath); return; }
+              }
+            }
+            ipc.file?.showItemInFolder(localFilePath);
+          }}
           title="Mở thư mục"
           className="absolute top-0.5 right-0.5 w-5 h-5 bg-black/60 rounded flex items-center justify-center opacity-0 group-hover/img:opacity-100 transition-opacity"
         >
@@ -668,13 +702,25 @@ function FileRow({ msg }: { msg: any }) {
   return (
     <div className="flex items-center gap-2 px-3 py-2 hover:bg-gray-700 transition-colors group/file">
       <button
-        onClick={() => { if (localPath) ipc.file?.openPath(localPath); else if (href) ipc.shell?.openExternal(href); }}
+        onClick={async () => {
+          const mode = useEmployeeStore.getState().mode;
+          if (mode === 'employee' && localPath) {
+            // Employee: download file từ Boss → local → mở
+            const bossUrl = toLocalMediaUrl(localPath);
+            if (bossUrl) {
+              const { localPath: cachedPath } = await ensureMediaLocal(bossUrl, 'file');
+              if (cachedPath) { await ipc.file?.openPath(cachedPath); return; }
+            }
+          }
+          if (localPath) ipc.file?.openPath(localPath);
+          else if (href) ipc.shell?.openExternal(href);
+        }}
         className="flex items-center gap-2.5 flex-1 min-w-0 text-left"
       >
         <span className="text-xl flex-shrink-0">{getFileIcon(ext)}</span>
         <div className="flex-1 min-w-0">
           <p className="text-sm text-gray-200 truncate font-medium">{title}</p>
-          <p className="text-[11px] text-gray-500">{sizeStr && `${sizeStr} · `}{dateStr}</p>
+          <p className="text-[11px] text-gray-400">{sizeStr && `${sizeStr} · `}{dateStr}</p>
         </div>
       </button>
       {/* FB: download button pointing to CDN */}
@@ -682,7 +728,7 @@ function FileRow({ msg }: { msg: any }) {
         <button
           onClick={() => ipc.shell?.openExternal(href)}
           title="Tải về"
-          className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-500 hover:text-white hover:bg-gray-600 opacity-0 group-hover/file:opacity-100 transition-all flex-shrink-0"
+          className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-600 opacity-0 group-hover/file:opacity-100 transition-all flex-shrink-0"
         >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
@@ -694,9 +740,19 @@ function FileRow({ msg }: { msg: any }) {
       {/* Zalo: open folder button */}
       {!isFB && localPath && (
         <button
-          onClick={() => ipc.file?.showItemInFolder(localPath)}
+          onClick={async () => {
+            const mode = useEmployeeStore.getState().mode;
+            if (mode === 'employee') {
+              const bossUrl = toLocalMediaUrl(localPath);
+              if (bossUrl) {
+                const { localPath: cachedPath } = await ensureMediaLocal(bossUrl, 'file');
+                if (cachedPath) { ipc.file?.showItemInFolder(cachedPath); return; }
+              }
+            }
+            ipc.file?.showItemInFolder(localPath);
+          }}
           title="Mở thư mục"
-          className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-500 hover:text-white hover:bg-gray-600 opacity-0 group-hover/file:opacity-100 transition-all flex-shrink-0"
+          className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-600 opacity-0 group-hover/file:opacity-100 transition-all flex-shrink-0"
         >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
@@ -721,7 +777,7 @@ function LinkRow({ link }: { link: any }) {
           <img src={link.thumb_url} alt="" className="w-full h-full object-cover"
             onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
         ) : (
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-500">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-400">
             <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/>
             <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>
           </svg>
@@ -730,12 +786,12 @@ function LinkRow({ link }: { link: any }) {
       {/* Text */}
       <div className="flex-1 min-w-0">
         <p className="text-sm text-gray-200 truncate font-medium">{link.title || link.url}</p>
-        <p className="text-[11px] text-gray-500 truncate">{link.domain || link.url}</p>
-        <p className="text-[11px] text-gray-600">{dateStr}</p>
+        <p className="text-[11px] text-gray-400 truncate">{link.domain || link.url}</p>
+        <p className="text-[11px] text-gray-400">{dateStr}</p>
       </div>
       {/* External icon */}
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-        className="flex-shrink-0 text-gray-600 group-hover/link:text-gray-400 transition-colors">
+        className="flex-shrink-0 text-gray-400 group-hover/link:text-gray-400 transition-colors">
         <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/>
         <polyline points="15 3 21 3 21 9"/>
         <line x1="10" y1="14" x2="21" y2="3"/>

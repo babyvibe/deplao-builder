@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import ipc from '@/lib/ipc';
+import { ClipboardListIcon, KeyIcon, LockIcon, ShieldIcon } from '@/components/common/icons';
 
 type Tab = 'security' | 'recovery' | 'disable';
 
@@ -149,7 +150,7 @@ export default function LockScreenSettings() {
   };
 
   // ─── Tab button helper ───────────────────────────────────────────────────
-  const TabBtn = ({ id, label, icon }: { id: Tab; label: string; icon: string }) => (
+  const TabBtn = ({ id, label, icon }: { id: Tab; label: string; icon: React.ReactNode }) => (
     <button
       onClick={() => { setTab(id); clearMessages(); setRecoveryView('idle'); setPassword(''); }}
       className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg transition-all ${
@@ -190,7 +191,7 @@ export default function LockScreenSettings() {
     return (
       <div className="space-y-4">
         <h2 className="text-base font-semibold text-white flex items-center gap-2">
-          <span>🛡️</span> Bảo mật
+          <span><ShieldIcon className="w-4 h-4" /></span> Bảo mật
         </h2>
 
         <div className="bg-gray-800 rounded-xl p-4">
@@ -215,8 +216,7 @@ export default function LockScreenSettings() {
             <button
               onClick={() => handleCopyKey(savedRecoveryKey)}
               className="flex-1 py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium rounded-lg transition-colors"
-            >
-              📋 Sao chép
+            ><ClipboardListIcon className="w-4 h-4 inline" /> Sao chép
             </button>
           </div>
 
@@ -258,7 +258,7 @@ export default function LockScreenSettings() {
     return (
       <div className="space-y-4">
         <h2 className="text-base font-semibold text-white flex items-center gap-2">
-          <span>🛡️</span> Bảo mật
+          <span><ShieldIcon className="w-4 h-4" /></span> Bảo mật
         </h2>
 
         <div className="bg-gray-800 rounded-xl p-4">
@@ -283,8 +283,7 @@ export default function LockScreenSettings() {
           <button
             onClick={() => handleCopyKey(recoveryKey)}
             className="w-full py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium rounded-lg transition-colors"
-          >
-            📋 Sao chép Recovery Key
+          ><ClipboardListIcon className="w-4 h-4 inline" /> Sao chép Recovery Key
           </button>
         </div>
 
@@ -302,7 +301,7 @@ export default function LockScreenSettings() {
     return (
       <div className="space-y-4">
         <h2 className="text-base font-semibold text-white flex items-center gap-2">
-          <span>🛡️</span> Bảo mật
+          <span><ShieldIcon className="w-4 h-4" /></span> Bảo mật
         </h2>
 
         <div className="bg-gray-800 rounded-xl p-4">
@@ -354,7 +353,7 @@ export default function LockScreenSettings() {
   return (
     <div className="space-y-4">
       <h2 className="text-base font-semibold text-white flex items-center gap-2">
-        <span>🛡️</span> Bảo mật
+        <span><ShieldIcon className="w-4 h-4" /></span> Bảo mật
       </h2>
 
       {/* Status bar */}
@@ -372,9 +371,9 @@ export default function LockScreenSettings() {
 
       {/* Tab bar */}
       <div className="flex gap-1.5 bg-gray-800/60 rounded-xl p-1">
-        <TabBtn id="security" label="Đổi MK" icon="🔑" />
-        <TabBtn id="recovery" label="Recovery" icon="🗝️" />
-        <TabBtn id="disable" label="Tắt khoá" icon="🔓" />
+        <TabBtn id="security" label="Đổi MK" icon={<KeyIcon className="w-4 h-4" />} />
+        <TabBtn id="recovery" label="Recovery" icon={<KeyIcon className="w-4 h-4" />} />
+        <TabBtn id="disable" label="Tắt khoá" icon={<LockIcon className="w-4 h-4" />} />
       </div>
 
       {/* ── Tab: Security (change password + biometric) ─────────────────── */}

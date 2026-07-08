@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import ipc from '@/lib/ipc';
+import { AlertIcon, BellIcon, BotIcon, ClipboardListIcon, CreditCardIcon, EditIcon, GlobeIcon, LightningIcon, LinkIcon, PackageIcon, SunIcon, UsersIcon } from '@/components/common/icons';
+import { Spinner } from '@/components/common/PageLoading';
 
 type TunnelState = {
   active: boolean;
@@ -12,7 +14,7 @@ interface WebhookService {
   key: string;
   port: number;
   label: string;
-  icon: string;
+  icon: React.ReactNode;
   description: string;
   uses: string[];
   guideTitle: string;
@@ -87,15 +89,15 @@ export default function TunnelSettings() {
       key: 'integration',
       port: intPort,
       label: 'Tích hợp & Thanh toán',
-      icon: '🔗',
+      icon: <LinkIcon className="w-4 h-4" />,
       description: 'Nhận webhook thanh toán (Casso, SePay) và dữ liệu từ các nền tảng POS, vận chuyển.',
       uses: [
-        '💳 Nhận thông báo chuyển khoản VietQR từ Casso / SePay → trigger workflow thanh toán',
-        '📦 Đồng bộ đơn hàng, khách hàng từ KiotViet, Sapo, Haravan, GHN, GHTK',
+        'Nhận thông báo chuyển khoản VietQR từ Casso / SePay → trigger workflow thanh toán',
+        'Đồng bộ đơn hàng, khách hàng từ KiotViet, Sapo, Haravan, GHN, GHTK',
       ],
-      guideTitle: '🔗 Hướng dẫn: Webhook Thanh toán (Casso / SePay)',
+      guideTitle: 'Hướng dẫn: Webhook Thanh toán (Casso / SePay)',
       guideSteps: [
-        'Bật nút "🔗 Tích hợp & Thanh toán" bên trên để tạo tunnel Internet',
+        'Bật nút "Tích hợp & Thanh toán" bên trên để tạo tunnel Internet',
         'Vào module Tích hợp, thêm kết nối Casso hoặc SePay',
         'Sao chép URL webhook hiển thị ở trên, dán vào ứng dụng Casso/SePay',
         'Khi có người chuyển khoản, Deplao nhận webhook → trigger workflow "Khi nhận thanh toán"',
@@ -109,16 +111,16 @@ export default function TunnelSettings() {
       key: 'workflow',
       port: wfPort,
       label: 'Workflow Webhook',
-      icon: '⚡',
+      icon: <LightningIcon className="w-4 h-4" />,
       description: 'Cho phép bên thứ 3 gọi API để kích hoạt workflow của bạn.',
       uses: [
-        '🔔 Website, app bắn dữ liệu sang → tự động xử lý qua workflow',
-        '🤖 Tiếp nhận đơn hàng, feedback, lead, callback từ dịch vụ bên ngoài',
-        '🔗 Tích hợp với bất kỳ hệ thống nào hỗ trợ webhook (Zapier, Make, ...)',
+        'Website, app bắn dữ liệu sang → tự động xử lý qua workflow',
+        'Tiếp nhận đơn hàng, feedback, lead, callback từ dịch vụ bên ngoài',
+        'Tích hợp với bất kỳ hệ thống nào hỗ trợ webhook (Zapier, Make, ...)',
       ],
-      guideTitle: '⚡ Hướng dẫn: Webhook trong Workflow',
+      guideTitle: 'Hướng dẫn: Webhook trong Workflow',
       guideSteps: [
-        'Bật nút "⚡ Workflow Webhook" bên trên để tạo tunnel Internet',
+        'Bật nút "Workflow Webhook" bên trên để tạo tunnel Internet',
         'Vào module Workflow, tạo kịch bản mới, chọn trigger "Webhook bên ngoài"',
         'Lưu kịch bản → URL webhook tự động được tạo trong phần cấu hình node',
         'Copy URL đó gửi cho đối tác / hệ thống bên thứ 3',
@@ -127,7 +129,7 @@ export default function TunnelSettings() {
       ],
       guideExtra: (
         <div className="bg-blue-900/20 border border-blue-500/30 rounded-lg px-3 py-2 mt-2">
-          <p className="text-[11px] text-blue-300 font-medium">📝 Ví dụ dữ liệu webhook từ website:</p>
+          <p className="text-[11px] text-blue-300 font-medium"><EditIcon className="w-4 h-4 inline" /> Ví dụ dữ liệu webhook từ website:</p>
           <pre className="text-[11px] text-gray-400 bg-gray-950 rounded px-2 py-1.5 mt-1 overflow-x-auto font-mono">
 {`POST /api/workflow/webhook/a1b2c3
 {
@@ -175,12 +177,12 @@ export default function TunnelSettings() {
 
   return (
     <div className="space-y-6">
-      <h2 className="text-base font-semibold text-white">🔗 Webhooks</h2>
+      <h2 className="text-base font-semibold text-white"><LinkIcon className="w-4 h-4 inline" /> Webhooks</h2>
 
       {/* ─── Tunnel là gì? ─── */}
       <div className="rounded-xl p-4 space-y-3 border border-amber-600 dark:border-0">
         <div className="flex items-center gap-2">
-          <span className="text-lg">🌐</span>
+          <span className="text-lg"><GlobeIcon className="w-4 h-4" /></span>
           <p className="text-sm font-semibold ">Tunnel - công nghệ hoạt động phía sau Webhook</p>
         </div>
         <p className="text-xs dark:text-gray-400 leading-relaxed">
@@ -192,13 +194,12 @@ export default function TunnelSettings() {
           Deplao dùng <strong className="text-blue-600 dark:text-blue-300">Cloudflare Quick Tunnel</strong> (miễn phí, không cần tài khoản)
           để tạo các URL này. Mỗi nhóm webhook có một URL riêng.
         </p>
-        <div className="dark:bg-amber-900/20 border rounded-lg px-3 py-2 space-y-1.5">
-          <p className="text-xs font-medium ">
-            💡 Nếu bạn chỉ dùng Deplao trong mạng LAN (cùng WiFi) thì <strong>không cần bật tunnel</strong>.
+        <div className="border rounded-lg px-3 py-2 space-y-1.5">
+          <p className="text-xs font-medium "><SunIcon className="w-4 h-4 inline" /> Nếu bạn chỉ dùng Deplao trong mạng LAN (cùng WiFi) thì <strong>không cần bật tunnel</strong>.
             Chỉ bật khi cần nhận dữ liệu từ Internet.
           </p>
           <p className="text-[11px] leading-relaxed">
-            ⚠️ Tunnel chỉ hoạt động khi app đang chạy. Khi bạn tắt máy hoặc đóng app, tunnel ngừng
+            <AlertIcon className="w-4 h-4 inline" /> Tunnel chỉ hoạt động khi app đang chạy. Khi bạn tắt máy hoặc đóng app, tunnel ngừng
             và URL cũ không còn dùng được. Khi khởi động lại, bạn phải bật lại tunnel và sẽ nhận được
             <strong> địa chỉ URL mới</strong>. Các bên thứ 3 đang dùng URL cũ sẽ cần được cập nhật.
           </p>
@@ -246,16 +247,14 @@ export default function TunnelSettings() {
             {/* URL */}
             {state.active && state.url && (
               <div className="bg-gray-900/60 rounded-lg px-3 py-2">
-                <p className="text-[11px] text-gray-500 mb-0.5">🌐 URL webhook gốc:</p>
+                <p className="text-[11px] text-gray-400 mb-0.5"><GlobeIcon className="w-4 h-4 inline" /> URL webhook gốc:</p>
                 <div className="flex items-center gap-2">
-                  <code className="flex-1 text-xs text-green-300 break-all select-all font-mono">{state.url}</code>
+                  <code className="flex-1 text-xs text-green-300 break-word select-all font-mono">{state.url}</code>
                   <button
                     onClick={() => navigator.clipboard.writeText(state.url!)}
                     className="text-blue-400 hover:text-blue-300 text-xs flex-shrink-0"
                     title="Copy URL"
-                  >
-                    📋
-                  </button>
+                  ><ClipboardListIcon className="w-4 h-4 inline" /> </button>
                 </div>
               </div>
             )}
@@ -263,13 +262,13 @@ export default function TunnelSettings() {
             {/* Error */}
             {state.error && (
               <div className="bg-red-900/30 border border-red-500/40 rounded-lg px-3 py-2">
-                <p className="text-xs text-red-300">⚠️ {state.error}</p>
+                <p className="text-xs text-red-300"><AlertIcon className="w-4 h-4 inline" /> {state.error}</p>
               </div>
             )}
 
             {/* Uses */}
             <div className="bg-gray-900/40 rounded-lg px-3 py-2 space-y-1">
-              <p className="text-[11px] text-gray-500 font-medium">Dùng để:</p>
+              <p className="text-[11px] text-gray-400 font-medium">Dùng để:</p>
               {svc.uses.map((item, i) => (
                 <p key={i} className="text-xs text-gray-400 leading-relaxed">{item}</p>
               ))}
@@ -303,7 +302,7 @@ export default function TunnelSettings() {
                   }}
                   className="px-2.5 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 disabled:opacity-30 text-white rounded-lg transition-colors"
                 >
-                  {portSaving === svc.key ? '⏳' : 'Lưu'}
+                  {portSaving === svc.key ? <Spinner size={3} /> : 'Lưu'}
                 </button>
                 {state.active && (
                   <p className="text-xs text-yellow-400">Tắt tunnel trước khi đổi port</p>
@@ -317,7 +316,7 @@ export default function TunnelSettings() {
       {/* ─── Employee Relay note ─── */}
       <div className="bg-gray-800 rounded-xl p-4">
         <div className="flex items-start gap-3">
-          <span className="text-lg flex-shrink-0 mt-0.5">👥</span>
+          <span className="text-lg flex-shrink-0 mt-0.5"><UsersIcon className="w-4 h-4" /></span>
           <div className="space-y-1.5">
             <p className="text-sm font-medium text-white">Kết nối nhân viên từ xa</p>
             <p className="text-xs text-gray-400 leading-relaxed">
@@ -332,8 +331,8 @@ export default function TunnelSettings() {
       {/* ─── Hướng dẫn chi tiết ─── */}
       {services.map(svc => (
         <div key={`guide-${svc.key}`} className="bg-gray-800 rounded-xl p-4 space-y-2">
-          <p className="text-sm font-semibold text-white">{svc.guideTitle}</p>
-          <ol className="space-y-1.5 pl-4 list-decimal text-xs text-gray-400 leading-relaxed">
+          <p className="font-semibold text-white">{svc.guideTitle}</p>
+          <ol className="space-y-1.5 pl-4 list-decimal text-gray-400 leading-relaxed">
             {svc.guideSteps.map((step, i) => (
               <li key={i}>{step}</li>
             ))}

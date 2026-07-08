@@ -2,6 +2,8 @@ import React, { memo } from 'react';
 import { Handle, Position, NodeProps, useReactFlow, BaseEdge, EdgeLabelRenderer, getBezierPath, EdgeProps } from 'reactflow';
 import { GROUP_COLORS, getNodeLabel } from '../workflowConfig';
 import { useAppStore } from '@/store/appStore';
+import { BellIcon, BellOffIcon, BotIcon, ChartIcon, EditIcon, ImageIcon, LightningIcon, PaperclipIcon, PlayIcon, SearchIcon, StarIcon, TagIcon, TargetIcon, UserIcon, UsersIcon } from '@/components/common/icons';
+
 
 // ─── Custom deletable edge ────────────────────────────────────────────────────
 
@@ -44,7 +46,7 @@ export const CustomDeletableEdge = memo((props: EdgeProps) => {
                 ? 'bg-red-500 border-2 border-red-400 text-white opacity-100 scale-110'
                 : isLight
                   ? 'bg-white border border-gray-300 text-gray-400 opacity-0 hover:!opacity-100 hover:bg-red-500 hover:border-red-400 hover:text-white hover:scale-110'
-                  : 'bg-gray-800 border border-gray-600 text-gray-500 opacity-0 hover:!opacity-100 hover:bg-red-500 hover:border-red-400 hover:text-white hover:scale-110',
+                  : 'bg-gray-800 border border-gray-600 text-gray-400 opacity-0 hover:!opacity-100 hover:bg-red-500 hover:border-red-400 hover:text-white hover:scale-110',
             ].join(' ')}
           >
             <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
@@ -83,7 +85,7 @@ function NodeBase({ data, color, children }: { data: any; color: string; childre
         {/* Delete button - visible on hover */}
         <button
           onClick={handleDelete}
-          className="w-4 h-4 rounded flex items-center justify-center opacity-0 group-hover/node:opacity-100 transition-opacity hover:bg-red-500/30 text-gray-500 hover:text-red-400 flex-shrink-0"
+          className="w-4 h-4 rounded flex items-center justify-center opacity-0 group-hover/node:opacity-100 transition-opacity hover:bg-red-500/30 text-gray-400 hover:text-red-400 flex-shrink-0"
           title="Xóa node"
         >
           <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
@@ -92,7 +94,7 @@ function NodeBase({ data, color, children }: { data: any; color: string; childre
         </button>
       </div>
       {children && (
-        <div className={`px-3 py-2 text-[11px] leading-tight ${isLight ? 'text-gray-600' : 'text-gray-400'}`}>{children}</div>
+        <div className={`px-3 py-2 text-[11px] leading-tight ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>{children}</div>
       )}
     </div>
   );
@@ -104,7 +106,8 @@ export const TriggerNode = memo(({ data }: NodeProps) => {
   return (
     <div style={{ background: 'transparent' }}>
       <NodeBase data={data} color={color}>
-        <span className={isLight ? 'text-violet-600' : 'text-violet-300'}>⚡ {getTriggerSummary(data)}</span>
+        <span className={`inline-flex items-center gap-1 ${isLight ? 'text-violet-600' : 'text-violet-300'}`}>
+          <LightningIcon className="w-3 h-3" /> {getTriggerSummary(data)}</span>
       </NodeBase>
       <Handle type="source" position={Position.Bottom} id="default" style={{ background: color }} />
     </div>
@@ -205,7 +208,7 @@ export const OutputNode = memo(({ data }: NodeProps) => {
         </span>
       </div>
       {cfg.body && (
-        <span className="text-gray-500 text-[9px] truncate">body: {truncate(String(cfg.body), 24)}</span>
+        <span className="text-gray-400 text-[9px] truncate">body: {truncate(String(cfg.body), 24)}</span>
       )}
     </div>
   ) : isLog ? (
@@ -213,7 +216,7 @@ export const OutputNode = memo(({ data }: NodeProps) => {
       <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded leading-none flex-shrink-0
         ${cfg.level === 'error' ? 'bg-red-500/20 text-red-500 border border-red-500/30' :
           cfg.level === 'warn'  ? 'bg-yellow-500/20 text-yellow-500 border border-yellow-500/30' :
-          'bg-gray-500/20 text-gray-500 border border-gray-500/30'}`}>
+          'bg-gray-500/20 text-gray-400 border border-gray-500/30'}`}>
         {(cfg.level || 'info').toUpperCase()}
       </span>
       <span className={`${textClass} text-[11px] truncate`}>
@@ -275,29 +278,29 @@ function getActionSummary(data: any): string {
   const cfg = data.config || {};
   switch (data.type) {
     case 'zalo.sendMessage':         return truncate(cfg.message, 30) || 'Gửi tin nhắn';
-    case 'zalo.sendTyping':          return `⌨️ Đang gõ… rồi chờ ${cfg.delaySeconds || 3}s`;
-    case 'zalo.sendImage':           return cfg.filePath ? `🖼 ${truncate(cfg.filePath, 26)}` : '🖼 Gửi ảnh';
-    case 'zalo.sendFile':            return cfg.filePath ? `📎 ${truncate(cfg.filePath, 26)}` : '📎 Gửi file';
-    case 'zalo.findUser':            return `🔍 ${cfg.phone || '...'}`;
-    case 'zalo.getUserInfo':         return `👤 ${cfg.userId || '{{ $trigger.fromId }}'}`;
-    case 'zalo.acceptFriendRequest': return '✅ Chấp nhận kết bạn';
-    case 'zalo.rejectFriendRequest': return '❌ Từ chối kết bạn';
-    case 'zalo.sendFriendRequest':   return `➕ Kết bạn ${cfg.userId || '...'}`;
-    case 'zalo.addToGroup':          return `👥➕ ${cfg.userId || '...'}`;
-    case 'zalo.removeFromGroup':     return `👥➖ ${cfg.userId || '...'}`;
-    case 'zalo.setMute':             return cfg.action === 'unmute' ? '🔔 Bật thông báo' : '🔕 Tắt thông báo';
-    case 'zalo.forwardMessage':      return `↪️ → ${cfg.toThreadId || '...'}`;
-    case 'zalo.undoMessage':         return '↩️ Thu hồi tin nhắn';
-    case 'zalo.createPoll':          return `📊 ${truncate(cfg.question, 24) || 'Tạo bình chọn'}`;
-    case 'zalo.getMessageHistory':   return `🕓 Lấy ${cfg.count || 20} tin nhắn`;
-    case 'zalo.addReaction':         return `😊 React tin nhắn`;
+    case 'zalo.sendTyping':          return `Đang gõ… rồi chờ ${cfg.delaySeconds || 3}s`;
+    case 'zalo.sendImage':           return cfg.filePath ? `Ảnh: ${truncate(cfg.filePath, 26)}` : 'Gửi ảnh';
+    case 'zalo.sendFile':            return cfg.filePath ? `File: ${truncate(cfg.filePath, 26)}` : 'Gửi file';
+    case 'zalo.findUser':            return `Tìm: ${cfg.phone || '...'}`;
+    case 'zalo.getUserInfo':         return `User: ${cfg.userId || '{{ $trigger.fromId }}'}`;
+    case 'zalo.acceptFriendRequest': return 'Chấp nhận kết bạn';
+    case 'zalo.rejectFriendRequest': return 'Từ chối kết bạn';
+    case 'zalo.sendFriendRequest':   return `Kết bạn: ${cfg.userId || '...'}`;
+    case 'zalo.addToGroup':          return `Thêm: ${cfg.userId || '...'}`;
+    case 'zalo.removeFromGroup':     return `Xóa: ${cfg.userId || '...'}`;
+    case 'zalo.setMute':             return cfg.action === 'unmute' ? 'Bật thông báo' : 'Tắt thông báo';
+    case 'zalo.forwardMessage':      return `Chuyển → ${cfg.toThreadId || '...'}`;
+    case 'zalo.undoMessage':         return 'Thu hồi tin nhắn';
+    case 'zalo.createPoll':          return `Poll: ${truncate(cfg.question, 24) || 'Tạo bình chọn'}`;
+    case 'zalo.getMessageHistory':   return `Lấy ${cfg.count || 20} tin nhắn`;
+    case 'zalo.addReaction':         return 'React tin nhắn';
     case 'zalo.assignLabel': {
       const cnt = Array.isArray(cfg.labelIds) && cfg.labelIds.length;
-      return `🏷️ Gắn ${cnt ? `${cnt} nhãn` : 'nhãn'} (${cfg.labelSource === 'zalo' ? 'Zalo' : 'Local'})`;
+      return `Gắn ${cnt ? `${cnt} nhãn` : 'nhãn'} (${cfg.labelSource === 'zalo' ? 'Zalo' : 'Local'})`;
     }
     case 'zalo.removeLabel': {
       const cnt = Array.isArray(cfg.labelIds) && cfg.labelIds.length;
-      return `🏷️ Gỡ ${cnt ? `${cnt} nhãn` : 'nhãn'} (${cfg.labelSource === 'zalo' ? 'Zalo' : 'Local'})`;
+      return `Gỡ ${cnt ? `${cnt} nhãn` : 'nhãn'} (${cfg.labelSource === 'zalo' ? 'Zalo' : 'Local'})`;
     }
     default: return '';
   }
@@ -338,20 +341,20 @@ function getOutputSummary(data: any): string {
 function getIntegrationSummary(data: any): string {
   const cfg = data.config || {};
   switch (data.type) {
-    case 'sheets.appendRow':  return `📊 Ghi → ${truncate(cfg.sheetName || cfg.spreadsheetId, 22) || 'Sheet'}`;
-    case 'sheets.readValues': return `📊 Đọc ${truncate(cfg.range, 22) || 'range...'}`;
-    case 'sheets.updateCell': return `📊 Cập nhật ${cfg.range || '...'}`;
+    case 'sheets.appendRow':  return `Ghi → ${truncate(cfg.sheetName || cfg.spreadsheetId, 22) || 'Sheet'}`;
+    case 'sheets.readValues': return `Đọc ${truncate(cfg.range, 22) || 'range...'}`;
+    case 'sheets.updateCell': return `Cập nhật ${cfg.range || '...'}`;
     case 'ai.generateText':   {
-      const platformEmoji = cfg.platform === 'gemini' ? '💎' : cfg.platform === 'deepseek' ? '🔮' : cfg.platform === 'grok' ? '⚡' : '🤖';
-      return `${platformEmoji} ${truncate(cfg.prompt, 28) || 'AI sinh nội dung'}`;
+      const platformName = cfg.platform ? cfg.platform.toUpperCase() : 'AI';
+      return `${platformName}: ${truncate(cfg.prompt, 28) || 'Sinh nội dung'}`;
     }
     case 'ai.classify':       {
-      const platformEmoji = cfg.platform === 'gemini' ? '💎' : cfg.platform === 'deepseek' ? '🔮' : cfg.platform === 'grok' ? '⚡' : '🏷';
-      return `${platformEmoji} Phân loại: ${truncate(cfg.categories, 20) || '...'}`;
-    }    case 'notify.telegram':   return `✈️ → ${truncate(cfg.chatId, 18) || 'Chat ID...'}`;
-    case 'notify.discord':    return `🎮 ${truncate(cfg.webhookUrl ? 'Discord webhook' : 'Chưa có webhook', 28)}`;
-    case 'notify.email':      return `📧 → ${truncate(cfg.to, 24) || 'Email...'}`;
-    case 'notify.notion':     return `📝 Notion ${truncate(cfg.databaseId, 16) || 'DB...'}`;
+      const platformName = cfg.platform ? cfg.platform.toUpperCase() : 'AI';
+      return `${platformName} Phân loại: ${truncate(cfg.categories, 20) || '...'}`;
+    }    case 'notify.telegram':   return `Telegram → ${truncate(cfg.chatId, 18) || 'Chat ID...'}`;
+    case 'notify.discord':    return `${truncate(cfg.webhookUrl ? 'Discord webhook' : 'Chưa có webhook', 28)}`;
+    case 'notify.email':      return `Email → ${truncate(cfg.to, 24) || 'Email...'}`;
+    case 'notify.notion':     return `Notion ${truncate(cfg.databaseId, 16) || 'DB...'}`;
     default: return '';
   }
 }

@@ -14,6 +14,7 @@ import { useErpEmployeeStore } from '@/store/erp/erpEmployeeStore';
 import { useCurrentEmployeeId, useErpPermissions } from '@/hooks/erp/useErpContext';
 import NotificationCenter from '@/features/erp/notifications/NotificationCenter';
 import { Spinner } from '@/components/common/PageLoading';
+import { AlertIcon, KeyIcon, MonitorIcon, PluginIcon, RefreshIcon, StarIcon } from '@/components/common/icons';
 
 
 const APP_VERSION: string = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '?';
@@ -106,6 +107,7 @@ export default function TopBar() {
     setReconnecting(true);
     try {
       const RestQueryService = (await import('../../../services/http/RestQueryService')).default;
+
       const loginRes = await RestQueryService.login(bossAddr, username, password);
       if (!loginRes.success) {
         setReconnectError(loginRes.error || 'Đăng nhập thất bại');
@@ -338,7 +340,7 @@ export default function TopBar() {
     >
       <div className="flex items-center gap-2 px-3" style={{ WebkitAppRegion: 'no-drag' } as any}>
         <span className="text-blue-400 font-bold text-sm">Deplao</span>
-        <span className="text-gray-500 text-xs">v{APP_VERSION}</span>
+        <span className="text-gray-400 text-xs">v{APP_VERSION}</span>
 
         {/* Workspace switcher - only shows when multiple workspaces exist */}
         <WorkspaceSwitcher />
@@ -387,9 +389,9 @@ export default function TopBar() {
                 className="employee-badge reconnect-btn relative flex items-center gap-1.5 px-3 py-1 rounded-full bg-green-700/90 text-white text-[11px] font-semibold transition-all duration-300 hover:bg-green-700 hover:shadow-green-400/50 overflow-hidden border border-green-500/40"
                 style={{ animation: 'reconnectShake 0.6s ease-in-out infinite' }}
               >
-                <span className="relative z-10 flex items-center gap-1.5">
-                  <span className="drop-shadow-[0_0_4px_rgba(34,197,94,0.6)]">🔌</span>
-                  <span className="text-white-important drop-shadow-[0_0_6px_rgba(34,197,94,0.4)]">Kết nối lại</span>
+                <span className="relative z-10 flex items-center gap-1.5 text-white-important">
+                  <span className="drop-shadow-[0_0_4px_rgba(34,197,94,0.6)]"><PluginIcon className="w-4 h-4" /></span>
+                  <span className="drop-shadow-[0_0_6px_rgba(34,197,94,0.4)]">Kết nối lại</span>
                 </span>
               </button>
             )}
@@ -397,7 +399,7 @@ export default function TopBar() {
             {/* Reconnect popup */}
             {reconnectOpen && (
               <div className="reconnect-popup absolute left-0 top-full mt-2 w-72 bg-gray-800 border border-gray-600 rounded-xl shadow-2xl z-[9999] p-4">
-                <p className="text-xs text-gray-400 font-medium mb-2">🔌 Kết nối lại với BOSS</p>
+                <p className="text-xs text-gray-400 font-medium mb-2"><PluginIcon className="w-4 h-4 inline" /> Kết nối lại với BOSS</p>
                 <div className="space-y-2">
                   <input
                     ref={bossUrlRef}
@@ -420,11 +422,11 @@ export default function TopBar() {
                     className="w-full px-2.5 py-1.5 bg-gray-700 border border-gray-600 rounded-lg text-xs text-gray-200 placeholder-gray-500"
                   />
                   {savedPassword && (
-                    <p className="text-[10px] text-gray-500 text-right">🔑 Đã lưu mật khẩu</p>
+                    <p className="text-[10px] text-gray-400 text-right"><KeyIcon className="w-4 h-4 inline" /> Đã lưu mật khẩu</p>
                   )}
                   {reconnectError && (
                     <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-2 py-1">
-                      ⚠️ {reconnectError}
+                      <AlertIcon className="w-3 h-3 inline text-red-400" /> {reconnectError}
                     </p>
                   )}
                   <button
@@ -504,7 +506,7 @@ export default function TopBar() {
               <div className="absolute right-0 top-full mt-1 w-56 bg-gray-800 border border-gray-600 rounded-xl shadow-2xl z-[9999] overflow-hidden">
                 <div className="px-3 py-2 border-b border-gray-700">
                   <p className="text-xs text-gray-400">Cập nhật v{updateInfo.version}</p>
-                  <p className="text-[10px] text-gray-500 mt-0.5">Chọn bản phù hợp với máy Mac của bạn</p>
+                  <p className="text-[10px] text-gray-400 mt-0.5">Chọn bản phù hợp với máy Mac của bạn</p>
                 </div>
                 <a
                   href={`https://deplaoapp.com/file/Deplao-${updateInfo.version}-arm64.dmg`}
@@ -516,7 +518,7 @@ export default function TopBar() {
                   <span className="text-base">🍎</span>
                   <div>
                     <p className="text-xs font-semibold">Apple Silicon</p>
-                    <p className="text-[10px] text-gray-500">MacBook Chip M</p>
+                    <p className="text-[10px] text-gray-400">MacBook Chip M</p>
                   </div>
                 </a>
                 <a
@@ -526,10 +528,10 @@ export default function TopBar() {
                   onClick={() => setMacDropdownOpen(false)}
                   className="flex items-center gap-2.5 px-3 py-2.5 text-sm text-gray-200 hover:bg-blue-600/20 hover:text-white transition-colors no-underline"
                 >
-                  <span className="text-base">💻</span>
+                  <span className="text-base"><MonitorIcon className="w-4 h-4" /></span>
                   <div>
                     <p className="text-xs font-semibold">Intel Mac</p>
-                    <p className="text-[10px] text-gray-500">MacBook Chip Intel</p>
+                    <p className="text-[10px] text-gray-400">MacBook Chip Intel</p>
                   </div>
                 </a>
                 {/* Thử cập nhật tự động */}
@@ -541,7 +543,7 @@ export default function TopBar() {
                   }}
                   className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-gray-400 hover:bg-gray-700 hover:text-gray-200 transition-colors border-t border-gray-700"
                 >
-                  <span className="text-base">🔄</span>
+                  <span className="text-base"><RefreshIcon className="w-4 h-4" /></span>
                   <p className="text-xs">Thử cập nhật tự động</p>
                 </button>
               </div>
@@ -604,7 +606,7 @@ export default function TopBar() {
         <button
           onClick={() => ipc.shell?.openExternal(SUPPORT_GITHUB_URL)}
           className="w-9 h-9 flex items-center justify-center text-gray-400 hover:bg-gray-700 hover:text-yellow-400 transition-colors relative group/gh"
-          title={"⭐ Star Deplao trên GitHub\nDự án mã nguồn mở - Ủng hộ team bằng cách ghé thăm và thả sao nhé!"}
+          title={"Star Deplao trên GitHub\nDự án mã nguồn mở - Ủng hộ team bằng cách ghé thăm và thả sao nhé!"}
         >
           <span className="relative">
             {/* GitHub icon */}
@@ -703,8 +705,8 @@ export default function TopBar() {
                     [&::-webkit-slider-thumb]:shadow-md"
                 />
                 <div className="flex justify-between mt-1">
-                  <span className="text-[10px] text-gray-500">12px</span>
-                  <span className="text-[10px] text-gray-500">24px</span>
+                  <span className="text-[10px] text-gray-400">12px</span>
+                  <span className="text-[10px] text-gray-400">24px</span>
                 </div>
               </div>
 
@@ -723,7 +725,7 @@ export default function TopBar() {
                 </svg>
                 <div>
                   <p className="text-xs font-medium">Hướng dẫn sử dụng</p>
-                  <p className="text-[10px] text-gray-500">Tính năng & thao tác cơ bản</p>
+                  <p className="text-[10px] text-gray-400">Tính năng & thao tác cơ bản</p>
                 </div>
               </button>
 
@@ -743,7 +745,7 @@ export default function TopBar() {
                 </svg>
                 <div>
                   <p className="text-xs font-medium">Báo lỗi</p>
-                  <p className="text-[10px] text-gray-500">Gửi phản hồi & báo cáo lỗi</p>
+                  <p className="text-[10px] text-gray-400">Gửi phản hồi & báo cáo lỗi</p>
                 </div>
               </button>
 
@@ -765,7 +767,7 @@ export default function TopBar() {
                 </svg>
                 <div>
                   <p className="text-xs font-medium">☕ Donate Coffee</p>
-                  <p className="text-[10px] text-gray-500">Các bác có thể ủng hộ em mua token AI để fix bug nhé!</p>
+                  <p className="text-[10px] text-gray-400">Các bác có thể ủng hộ em mua token AI để fix bug nhé!</p>
                 </div>
               </button>
             </div>

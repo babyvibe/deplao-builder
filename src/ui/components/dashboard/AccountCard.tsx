@@ -9,6 +9,7 @@ import PhoneDisplay from '../common/PhoneDisplay';
 import { showConfirm } from '../common/ConfirmDialog';
 import { extractApiError } from '@/utils/apiError';
 import ChannelBadge from '../common/ChannelBadge';
+import { PhoneIcon } from '@/components/common/icons';
 import { Spinner } from '@/components/common/PageLoading';
 import type { Channel } from '@/../configs/channelConfig';
 
@@ -246,7 +247,7 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
     if (acc.isConnected) {
       return { label: 'Đang kết nối', cls: 'bg-yellow-900/40 text-yellow-400 border border-yellow-700/50', dot: 'bg-yellow-400 animate-pulse' };
     }
-    return { label: 'Offline', cls: 'bg-gray-700/50 text-gray-500 border border-gray-600/50', dot: 'bg-gray-500' };
+    return { label: 'Offline', cls: 'bg-gray-700/50 text-gray-400 border border-gray-600/50', dot: 'bg-gray-500' };
   })();
 
   return (
@@ -288,12 +289,12 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
               </span>
             )}
           </p>
-          <p className="text-xs text-gray-500 truncate">
+          <p className="text-xs text-gray-400 truncate">
             {isFacebook ? `${acc.facebook_id || acc.zalo_id}` : acc.zalo_id}
           </p>
           {acc.phone && (
             <p className="text-xs text-gray-400 truncate mt-0.5">
-              📞 <PhoneDisplay phone={acc.phone} className="text-xs text-gray-400" />
+              <PhoneIcon className="w-3 h-3 inline" /> <PhoneDisplay phone={acc.phone} className="text-xs text-gray-400" />
             </p>
           )}
         </div>

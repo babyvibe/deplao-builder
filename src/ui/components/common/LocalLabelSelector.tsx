@@ -72,15 +72,15 @@ export default function LocalLabelSelector({
                 <span className="truncate max-w-[60px]">{l.name}</span>
               </span>
             ))
-          : <span className="text-xs text-gray-500">{placeholder}</span>}
-        <span className="ml-auto text-gray-500 text-xs">▾</span>
+          : <span className="text-xs text-gray-400">{placeholder}</span>}
+        <span className="ml-auto text-gray-400 text-xs">▾</span>
       </div>
 
       {/* Dropdown */}
       {open && (
         <div className="absolute top-full left-0 right-0 mt-1 bg-gray-800 border border-gray-600 rounded-xl shadow-xl z-50 max-h-48 overflow-y-auto">
           {labels.length === 0 && (
-            <p className="text-xs text-gray-500 p-3 text-center">{emptyText}</p>
+            <p className="text-xs text-gray-400 p-3 text-center">{emptyText}</p>
           )}
           {labels.map(label => {
             const isSelected = selectedIds.includes(label.id);
@@ -110,7 +110,7 @@ export default function LocalLabelSelector({
                 {label.emoji && <span className="text-xs">{label.emoji}</span>}
                 <span className="text-sm text-white truncate">{label.name}</span>
                 {isToggling && (
-                  <span className="ml-auto text-[10px] text-gray-500 animate-pulse">...</span>
+                  <span className="ml-auto text-[10px] text-gray-400 animate-pulse">...</span>
                 )}
               </button>
             );

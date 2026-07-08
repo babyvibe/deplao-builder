@@ -7,7 +7,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppStore, QuickChatTarget } from '@/store/appStore';
 import { useAccountStore } from '@/store/accountStore';
 import { useChatStore, MessageItem } from '@/store/chatStore';
-import ipc from '@/lib/ipc'
+import ipc from '@/lib/ipc';
+import { MessageCircleIcon } from '@/components/common/icons';
 import DataAccessor from '@/lib/data/DataAccessor';;
 import { sendSeenForThread } from '@/lib/sendSeenHelper';
 import { toLocalMediaUrl } from '@/lib/localMedia';
@@ -93,7 +94,7 @@ function AccountSelector({ accounts, selectedId, onSelect }: {
               : <div className="w-5 h-5 rounded-full bg-blue-600 flex items-center justify-center text-white text-[9px] font-bold flex-shrink-0">{info(sel).name.charAt(0)}</div>}
             <span className="text-gray-300 truncate max-w-[100px]">{info(sel).name}</span>
           </>
-        ) : <span className="text-gray-500">Chọn TK</span>}
+        ) : <span className="text-gray-400">Chọn TK</span>}
         <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"
           className={`flex-shrink-0 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`}>
           <polyline points="6 9 12 15 18 9"/>
@@ -102,7 +103,7 @@ function AccountSelector({ accounts, selectedId, onSelect }: {
 
       {open && (
         <div className="absolute top-full right-0 mt-1 bg-gray-800 border border-gray-600 rounded-xl shadow-2xl z-[200] min-w-[220px] py-1 overflow-hidden">
-          <p className="text-[11px] text-gray-500 px-3 pt-2 pb-1.5 font-semibold uppercase tracking-wide">Gửi từ tài khoản</p>
+          <p className="text-[11px] text-gray-400 px-3 pt-2 pb-1.5 font-semibold uppercase tracking-wide">Gửi từ tài khoản</p>
           {accounts.map(a => {
             const { name, sub } = info(a);
             return (
@@ -116,7 +117,7 @@ function AccountSelector({ accounts, selectedId, onSelect }: {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm text-gray-200 font-medium truncate">{name}</p>
-                  <p className="text-[11px] text-gray-500 truncate">{sub}</p>
+                  <p className="text-[11px] text-gray-400 truncate">{sub}</p>
                 </div>
                 {selectedId === a.zalo_id && (
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-blue-400 flex-shrink-0">
@@ -174,7 +175,7 @@ function QuickMsgPicker({ getAuth, accountId, onSelect, onClose }: {
       </div>
       <div className="flex-1 overflow-y-auto py-1">
         {loading && <div className="flex justify-center py-5"><div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"/></div>}
-        {!loading && filtered.length === 0 && <p className="text-xs text-gray-500 text-center py-5">Không có tin nhắn nhanh</p>}
+        {!loading && filtered.length === 0 && <p className="text-xs text-gray-400 text-center py-5">Không có tin nhắn nhanh</p>}
         {filtered.map(item => {
           const hasLocalMedia = item._localMedia && item._localMedia.length > 0;
           const imgCount = hasLocalMedia ? item._localMedia!.filter(f => f.type === 'image').length : (item.media?.items?.length ?? 0);
@@ -237,12 +238,12 @@ function RecipientRow({ zaloId, contacts, accounts, onSelect }: {
   return (
     <div className="relative border-b border-gray-700 bg-gray-900 flex-shrink-0">
       <div className="flex items-center gap-2 px-3 py-2.5">
-        <span className="text-xs text-gray-500 font-semibold flex-shrink-0">Đến:</span>
+        <span className="text-xs text-gray-400 font-semibold flex-shrink-0">Đến:</span>
         <input ref={inputRef} value={query} onChange={e => setQuery(e.target.value)}
           placeholder="Nhập tên, số điện thoại, UID…"
           className="flex-1 bg-transparent text-sm text-white placeholder-gray-600 focus:outline-none min-w-0"/>
         {searching && <div className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin flex-shrink-0"/>}
-        {query && <button onClick={() => setQuery('')} className="text-gray-500 hover:text-gray-300 flex-shrink-0">
+        {query && <button onClick={() => setQuery('')} className="text-gray-400 hover:text-gray-300 flex-shrink-0">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>}
       </div>
@@ -256,7 +257,7 @@ function RecipientRow({ zaloId, contacts, accounts, onSelect }: {
                 : <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0 ${c.contact_type==='group'?'bg-purple-600':'bg-blue-600'}`}>{(c.alias||c.display_name||'?').charAt(0).toUpperCase()}</div>}
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-gray-100 truncate">{c.alias||c.display_name||c.contact_id}</p>
-                <p className="text-[11px] text-gray-500 truncate">{c.contact_type==='group'?'Nhóm':(c.phone||c.contact_id)}</p>
+                <p className="text-[11px] text-gray-400 truncate">{c.contact_type==='group'?'Nhóm':(c.phone||c.contact_id)}</p>
               </div>
             </button>
           ))}
@@ -595,11 +596,11 @@ export default function QuickChatModal() {
                   <p className="text-sm font-semibold text-gray-100 truncate leading-tight">{target.displayName}</p>
                   {(() => {
                     const phone = target.phone || allContacts.find(c => c.contact_id === target.userId)?.phone || '';
-                    return phone ? <p className="text-[11px] text-gray-500 leading-none truncate mt-0.5">{formatPhone(phone)}</p> : null;
+                    return phone ? <p className="text-[11px] text-gray-400 leading-none truncate mt-0.5">{formatPhone(phone)}</p> : null;
                   })()}
                 </div>
                 <button onClick={() => { setTarget(null); setLocalMsgs([]); }}
-                  className="text-[11px] text-gray-500 hover:text-gray-300 px-1.5 py-0.5 rounded hover:bg-gray-700 transition-colors flex-shrink-0 whitespace-nowrap">
+                  className="text-[11px] text-gray-400 hover:text-gray-300 px-1.5 py-0.5 rounded hover:bg-gray-700 transition-colors flex-shrink-0 whitespace-nowrap">
                   đổi
                 </button>
               </>
@@ -647,7 +648,7 @@ export default function QuickChatModal() {
           {msgsLoading && <div className="flex justify-center py-8"><div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"/></div>}
 
           {!target && !msgsLoading && (
-            <div className="flex flex-col items-center justify-center h-full text-gray-600">
+            <div className="flex flex-col items-center justify-center h-full text-gray-400">
               <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" className="mb-2 opacity-20">
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
               </svg>
@@ -656,10 +657,10 @@ export default function QuickChatModal() {
           )}
 
           {target && !msgsLoading && localMsgs.length === 0 && (
-            <div className="flex flex-col items-center justify-center h-full text-gray-500">
-              <div className="text-3xl mb-2">💬</div>
+            <div className="flex flex-col items-center justify-center h-full text-gray-400">
+              <MessageCircleIcon className="w-8 h-8 mb-2 opacity-40" />
               <p className="text-sm">Chưa có tin nhắn</p>
-              <p className="text-xs mt-1 text-gray-600">Gửi tin nhắn đầu tiên cho {target.displayName}</p>
+              <p className="text-xs mt-1 text-gray-400">Gửi tin nhắn đầu tiên cho {target.displayName}</p>
             </div>
           )}
 
@@ -671,7 +672,7 @@ export default function QuickChatModal() {
               const showTime = idx === 0 || (msg.timestamp - localMsgs[idx - 1].timestamp > 5 * 60 * 1000);
               return (
                 <div key={msg.msg_id}>
-                  {showTime && <div className="text-center text-[11px] text-gray-600 py-1">{fmtTime(msg.timestamp)}</div>}
+                  {showTime && <div className="text-center text-[11px] text-gray-400 py-1">{fmtTime(msg.timestamp)}</div>}
                   <SharedMessageContent
                     msg={msg}
                     isSelf={isSelf}
@@ -701,7 +702,7 @@ export default function QuickChatModal() {
               </div>
             ))}
             <button onClick={() => setPendingQMMedia(null)}
-              className="ml-auto text-[11px] text-gray-500 hover:text-red-400 transition-colors px-1">✕</button>
+              className="ml-auto text-[11px] text-gray-400 hover:text-red-400 transition-colors px-1">✕</button>
           </div>
         )}
 
@@ -807,7 +808,7 @@ export default function QuickChatModal() {
                       <div className="max-h-64 overflow-y-auto p-2 space-y-2.5">
                         {Object.entries(EMOJI_CATEGORIES).map(([category, emojis]) => (
                           <div key={category}>
-                            <p className="text-[10px] text-gray-500 font-medium mb-1 px-1">{category}</p>
+                            <p className="text-[10px] text-gray-400 font-medium mb-1 px-1">{category}</p>
                             <div className="grid grid-cols-8 gap-0.5">
                               {emojis.map((em, idx) => (
                                 <button key={`${category}-${em}-${idx}`} onMouseDown={e => { e.preventDefault(); insertText(em); setShowEmoji(false); }}
@@ -842,7 +843,7 @@ export default function QuickChatModal() {
                   }
                 }}
                 data-placeholder={target ? 'Nhập tin nhắn… (Enter gửi)' : 'Chọn người nhận trước…'}
-                className={`min-h-[40px] max-h-[120px] overflow-y-auto bg-gray-800 border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors leading-relaxed empty:before:content-[attr(data-placeholder)] empty:before:text-gray-500 empty:before:pointer-events-none ${!target?'opacity-40 cursor-not-allowed':''}`}
+                className={`min-h-[40px] max-h-[120px] overflow-y-auto bg-gray-800 border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors leading-relaxed empty:before:content-[attr(data-placeholder)] empty:before:text-gray-400 empty:before:pointer-events-none ${!target?'opacity-40 cursor-not-allowed':''}`}
               />
             </div>
 
@@ -866,7 +867,7 @@ export default function QuickChatModal() {
             )}
           </div>
 
-          <div className="text-[11px] text-gray-600 px-3 py-1">
+          <div className="text-[11px] text-gray-400 px-3 py-1">
             Shift+Enter xuống dòng · Ctrl + Shift + N mở tính năng nhanh
           </div>
         </div>

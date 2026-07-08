@@ -56,7 +56,7 @@ export default function AddFriendModal({ displayName, avatar, sending, onConfirm
           className="w-full bg-gray-700 border border-gray-600 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 resize-none mb-1"
           placeholder="Lời nhắn kết bạn..."
         />
-        <p className="text-[11px] text-gray-600 text-right mb-3">{msg.length}/200 · Ctrl+Enter để gửi</p>
+        <p className="text-[11px] text-gray-400 text-right mb-3">{msg.length}/200 · Ctrl+Enter để gửi</p>
 
         {/* Actions */}
         <div className="flex gap-2">

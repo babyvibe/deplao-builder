@@ -8,6 +8,7 @@ import { extractApiError } from '@/utils/apiError';
 import PhoneDisplay from '../../common/PhoneDisplay';
 import { UserProfilePopup } from '../../common/UserProfilePopup';
 import AddFriendModal from '../../common/AddFriendModal';
+import { CloseIcon, HomeIcon, SmartphoneIcon, UsersIcon } from '@/components/common/icons';
 
 /**
  * CRM Search Tab - tìm kiếm người dùng theo SĐT + gợi ý kết bạn.
@@ -173,7 +174,7 @@ export default function CRMSearchTab() {
           </div>
           <div className="flex gap-2">
             {isBlocked
-              ? <span className="flex-1 text-center text-sm text-red-400 py-2 border border-red-700 rounded-lg">🚫 Đã chặn</span>
+              ? <span className="flex-1 text-center text-sm text-red-400 py-2 border border-red-700 rounded-lg"><CloseIcon className="w-4 h-4 inline" /> Đã chặn</span>
               : isAlreadyFriend
                 ? <span className="flex-1 text-center text-sm text-green-400 py-2 border border-green-700 rounded-lg">✓ Đã là bạn bè</span>
                 : <button onClick={() => openAddFriendModal(searchResult.uid, searchResult.display_name || searchResult.zalo_name, searchResult.avatar)} className="btn-primary text-white flex-1 text-sm">Kết bạn</button>}
@@ -188,7 +189,7 @@ export default function CRMSearchTab() {
         </div>
       )}
       {!searching && searchPhone && searchResult === null && (
-        <p className="text-gray-500 text-sm text-center">Không tìm thấy người dùng</p>
+        <p className="text-gray-400 text-sm text-center">Không tìm thấy người dùng</p>
       )}
 
       {/* ── Gợi ý kết bạn carousel ── */}
@@ -212,7 +213,7 @@ export default function CRMSearchTab() {
             ))}
           </div>
         ) : recommendations.filter(r => !dismissedRecs.has(r.userId)).length === 0 ? (
-          <p className="text-xs text-gray-500 text-center py-4">Không có gợi ý nào</p>
+          <p className="text-xs text-gray-400 text-center py-4">Không có gợi ý nào</p>
         ) : (
           <div className="flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory"
             style={{ scrollbarWidth: 'thin', scrollbarColor: '#4B5563 transparent' }}>
@@ -224,7 +225,7 @@ export default function CRMSearchTab() {
                 const isJsonMsg = rawMsg.trim().startsWith('{') || rawMsg.trim().startsWith('[');
                 const msg = isJsonMsg ? '' : rawMsg;
                 const way = rec.recommInfo?.suggestWay;
-                const reason = msg || (way === 1 ? '📱 Từ danh bạ' : way === 2 ? '👥 Bạn chung' : way === 3 ? '🏢 Cùng nơi làm việc' : '✨ Gợi ý cho bạn');
+                const reason = msg || (way === 1 ? 'Từ danh bạ' : way === 2 ? 'Bạn chung' : way === 3 ? 'Cùng nơi làm việc' : 'Gợi ý cho bạn');
                 const phone = rec.phoneNumber || '';
                 return (
                   <div key={rec.userId}
@@ -242,8 +243,8 @@ export default function CRMSearchTab() {
                     </button>
                     <div className="text-center w-full min-w-0">
                       <p className="text-xs font-semibold text-gray-100 truncate leading-tight">{name}</p>
-                      {phone && <p className="text-[11px] text-gray-500 truncate mt-0.5">{phone}</p>}
-                      <p className="text-[11px] text-gray-500 truncate mt-0.5 italic" title={reason}>{reason}</p>
+                      {phone && <p className="text-[11px] text-gray-400 truncate mt-0.5">{phone}</p>}
+                      <p className="text-[11px] text-gray-400 truncate mt-0.5 italic" title={reason}>{reason}</p>
                     </div>
                     <div className="flex gap-1.5 w-full mt-auto">
                       <button onClick={() => openAddFriendModal(rec.userId, name, rec.avatar || '')}

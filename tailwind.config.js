@@ -4,7 +4,7 @@ module.exports = {
     './index.html',
     './src/ui/**/*.{js,ts,jsx,tsx}',
   ],
-  darkMode: 'class',
+  darkMode: ['selector', '[data-theme="dark"]'],
   theme: {
     extend: {
       colors: {

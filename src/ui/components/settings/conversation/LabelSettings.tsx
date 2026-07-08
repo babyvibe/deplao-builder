@@ -9,6 +9,7 @@ import AccountMultiDropdown from '../../common/AccountMultiDropdown';
 import { syncZaloLabelsToLocalDB } from '@/lib/labelUtils';
 import { LabelEmojiPicker, KeyboardShortcutInput } from '../../common/LabelEmojiPicker';
 import PageLoading from '@/components/common/PageLoading';
+import { AlertIcon, CheckIcon, ClipboardListIcon, CloudIcon, CloseIcon, EditIcon, HardDriveIcon, InboxIcon, PluginIcon, RefreshIcon, TagIcon } from '@/components/common/icons';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type LabelSource = 'local' | 'zalo';
@@ -26,12 +27,12 @@ export interface LocalLabel {
 }
 
 // ─── Shared mini-components ───────────────────────────────────────────────────
-function EmptyState({ icon, title, subtitle }: { icon: string; title: string; subtitle: string }) {
+function EmptyState({ icon, title, subtitle }: { icon: React.ReactNode; title: string; subtitle: string }) {
   return (
     <div className="text-center py-14">
       <p className="text-3xl mb-2">{icon}</p>
       <p className="text-gray-400 text-sm font-medium">{title}</p>
-      <p className="text-gray-600 text-xs mt-1">{subtitle}</p>
+      <p className="text-gray-400 text-xs mt-1">{subtitle}</p>
     </div>
   );
 }
@@ -62,7 +63,7 @@ function LabelRow({
     <div className={`bg-gray-900 border rounded-xl p-3 hover:border-gray-600 transition-colors ${isDragging ? 'opacity-40' : ''} ${isActive ? 'border-gray-700/80' : 'border-gray-700/30 opacity-60'}`}>
       <div className="flex items-center gap-3">
         {/* Drag handle */}
-        <div className="cursor-grab text-gray-600 hover:text-gray-400 select-none shrink-0" title="Kéo để sắp xếp">
+        <div className="cursor-grab text-gray-400 hover:text-gray-400 select-none shrink-0" title="Kéo để sắp xếp">
           <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor">
             <circle cx="3" cy="2.5" r="1.2"/><circle cx="7" cy="2.5" r="1.2"/>
             <circle cx="3" cy="7" r="1.2"/><circle cx="7" cy="7" r="1.2"/>
@@ -82,13 +83,13 @@ function LabelRow({
           </span>
         )}
         {(item.sort_order ?? 0) > 0 && (
-          <span className="text-[9px] text-gray-600 font-mono bg-gray-800 px-1 rounded shrink-0">#{item.sort_order}</span>
+          <span className="text-[9px] text-gray-400 font-mono bg-gray-800 px-1 rounded shrink-0">#{item.sort_order}</span>
         )}
         <div className="flex-1 min-w-0" />
         {/* Actions */}
         <div className="flex items-center gap-0.5 shrink-0">
           <button onClick={onToggleActive} title={isActive ? 'Tắt' : 'Bật'}
-            className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${isActive ? 'text-green-400 hover:bg-green-500/10' : 'text-gray-600 hover:bg-gray-700 hover:text-gray-400'}`}>
+            className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${isActive ? 'text-green-400 hover:bg-green-500/10' : 'text-gray-400 hover:bg-gray-700 hover:text-gray-400'}`}>
             {isActive
               ? <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"/><polyline points="9 12 11 14 15 10"/></svg>
               : <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/></svg>
@@ -126,10 +127,10 @@ function LabelRow({
                 </div>
               )}
               <span className="text-[11px] text-gray-400 truncate max-w-[140px]">{name}</span>
-              {phone && <span className="text-[11px] text-gray-500">· {phone}</span>}
+              {phone && <span className="text-[11px] text-gray-400">· {phone}</span>}
             </div>
           );
-        }) : <span className="text-[11px] text-gray-600 italic">Chưa gắn tài khoản nào</span>}
+        }) : <span className="text-[11px] text-gray-400 italic">Chưa gắn tài khoản nào</span>}
       </div>
     </div>
   );
@@ -159,12 +160,12 @@ function ZaloLabelsSection({
     setEditingIdx(null);
   };
 
-  if (!activeZaloId) return <EmptyState icon="☁️" title="Chọn đúng 1 tài khoản" subtitle="Vui lòng chọn chính xác 1 tài khoản để xem nhãn trên Zalo." />;
-  if (!isConnected) return <EmptyState icon="🔌" title="Tài khoản chưa kết nối" subtitle="Vui lòng kết nối tài khoản để xem nhãn Zalo." />;
+  if (!activeZaloId) return <EmptyState icon={<CloudIcon className="w-4 h-4" />} title="Chọn đúng 1 tài khoản" subtitle="Vui lòng chọn chính xác 1 tài khoản để xem nhãn trên Zalo." />;
+  if (!isConnected) return <EmptyState icon={<PluginIcon className="w-4 h-4" />} title="Tài khoản chưa kết nối" subtitle="Vui lòng kết nối tài khoản để xem nhãn Zalo." />;
   if (loading) return <PageLoading variant="skeleton" skeletonVariant="table" />;
   if (!labels.length) return (
     <div className="text-center py-14">
-      <p className="text-3xl mb-2">🏷️</p>
+      <p className="text-3xl mb-2"><TagIcon className="w-4 h-4" /></p>
       <p className="text-gray-400 text-sm font-medium">Chưa có nhãn trên Zalo</p>
       <button onClick={onRefresh} className="mt-3 text-xs text-blue-400 hover:text-blue-300 underline">Tải lại</button>
     </div>
@@ -172,7 +173,7 @@ function ZaloLabelsSection({
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2 pb-1">
-        <span className="text-xs text-gray-500">{labels.length} nhãn trên Zalo</span>
+        <span className="text-xs text-gray-400">{labels.length} nhãn trên Zalo</span>
         <div className="flex-1"/>
         {onSyncToLocal && (
           <button onClick={onSyncToLocal}
@@ -209,7 +210,7 @@ function ZaloLabelsSection({
                   className="h-8 w-10 rounded cursor-pointer bg-transparent border border-gray-600" title="Màu nhãn" />
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-[11px] text-gray-500">Xem trước:</span>
+                <span className="text-[11px] text-gray-400">Xem trước:</span>
                 <div className="px-2 py-1 rounded-lg flex items-center gap-1 text-xs" style={{ backgroundColor: editForm.color }}>
                   <span>{editForm.emoji || '🏷️'}</span>
                   <span className="font-semibold text-white">{editForm.text || 'Nhãn'}</span>
@@ -408,7 +409,7 @@ function LabelModal({ initialData, accounts, filterAccounts, onClose, onSave }: 
                 onClick={() => setForm({ ...form, is_active: (form.is_active ?? 1) === 1 ? 0 : 1 })}
                 className={`w-full py-2 rounded-lg border text-sm font-medium transition-colors
                   ${(form.is_active ?? 1) === 1 ? 'border-green-600 bg-green-900/30 text-green-400 hover:bg-green-900/50' : 'border-gray-600 bg-gray-700 text-gray-400 hover:bg-gray-600'}`}
-              >{(form.is_active ?? 1) === 1 ? '✅ Hoạt động' : '⭕ Tắt'}</button>
+              >{(form.is_active ?? 1) === 1 ? <><CheckIcon className="w-4 h-4 inline" /> Hoạt động</> : <><CloseIcon className="w-4 h-4 inline" /> Tắt</>}</button>
             </div>
           </div>
           
@@ -416,14 +417,14 @@ function LabelModal({ initialData, accounts, filterAccounts, onClose, onSave }: 
           <div>
             <label className="block text-xs text-gray-400 mb-1.5">
               Phím tắt gắn/gỡ nhanh
-              <span className="text-gray-500 ml-1">(tùy chọn)</span>
+              <span className="text-gray-400 ml-1">(tùy chọn)</span>
             </label>
             <KeyboardShortcutInput
               value={form.shortcut || ''}
               onChange={(shortcut) => setForm({ ...form, shortcut })}
               placeholder="VD: Ctrl + M, Shift + 1, Alt + L..."
             />
-            <p className="text-[11px] text-gray-500 mt-1.5 italic">
+            <p className="text-[11px] text-gray-400 mt-1.5 italic">
               * Khi đang xem hội thoại, nhấn phím tắt để gắn/gỡ nhãn này nhanh chóng.
             </p>
           </div>
@@ -440,9 +441,9 @@ function LabelModal({ initialData, accounts, filterAccounts, onClose, onSave }: 
               placeholder="Chọn tài khoản áp dụng..."
             />
             {selectedPages.size === 0 && (
-              <p className="text-[11px] text-red-400/80 mt-1.5">⚠️ Chọn ít nhất 1 tài khoản.</p>
+              <p className="text-[11px] text-red-400/80 mt-1.5"><AlertIcon className="w-4 h-4 inline" /> Chọn ít nhất 1 tài khoản.</p>
             )}
-            <p className="text-[11px] text-gray-500 mt-1.5 italic">* Nhãn sẽ hiện trong menu phân loại của các tài khoản được chọn.</p>
+            <p className="text-[11px] text-gray-400 mt-1.5 italic">* Nhãn sẽ hiện trong menu phân loại của các tài khoản được chọn.</p>
           </div>
         </div>
         <div className="px-5 py-3 border-t border-gray-700 flex justify-end gap-2 shrink-0">
@@ -471,8 +472,8 @@ function ZaloLabelsSyncModal({ zaloCount, accountName, onClose, onSave }: {
         </div>
         <div className="p-5 space-y-3">
           <div className="bg-blue-900/20 rounded-lg px-3 py-2.5 border border-blue-800/30 space-y-0.5">
-            <p className="text-xs text-blue-300">☁️ Tài khoản: <strong>{accountName}</strong></p>
-            <p className="text-xs text-blue-300">🏷️ Số nhãn sẽ đồng bộ: <strong>{zaloCount}</strong></p>
+            <p className="text-xs text-blue-300"><CloudIcon className="w-4 h-4 inline" /> Tài khoản: <strong>{accountName}</strong></p>
+            <p className="text-xs text-blue-300"><TagIcon className="w-4 h-4 inline" /> Số nhãn sẽ đồng bộ: <strong>{zaloCount}</strong></p>
           </div>
           <p className="text-xs text-gray-400 font-medium pt-1">Chọn chế độ đồng bộ:</p>
           <button onClick={() => onSave('merge')}
@@ -482,7 +483,7 @@ function ZaloLabelsSyncModal({ zaloCount, accountName, onClose, onSave }: {
           </button>
           <button onClick={() => onSave('replace')}
             className="w-full bg-gray-700 hover:bg-red-900/30 border border-gray-600 hover:border-red-700/50 rounded-xl p-3.5 text-left transition-colors">
-            <p className="text-sm font-semibold text-red-300">🔄 Thay thế hoàn toàn (Replace)</p>
+            <p className="text-sm font-semibold text-red-300"><RefreshIcon className="w-4 h-4 inline" /> Thay thế hoàn toàn (Replace)</p>
             <p className="text-xs text-gray-400 mt-0.5">Xóa toàn bộ Nhãn Local của tài khoản và thay bằng nhãn từ Zalo.</p>
           </button>
         </div>
@@ -554,18 +555,18 @@ function ZaloLabelsEditModal({ zaloId, accountName, initialLabels, buildAuth, on
     <ModalWrapper onClose={onClose}>
       <div className="bg-gray-800 rounded-xl w-full max-w-lg border border-gray-700 shadow-2xl flex flex-col max-h-[85vh]" onClick={e => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-gray-700 flex justify-between items-center shrink-0">
-          <h3 className="text-white font-medium">✏️ Chỉnh sửa nhãn Zalo</h3>
+          <h3 className="text-white font-medium"><EditIcon className="w-4 h-4 inline" /> Chỉnh sửa nhãn Zalo</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-white">✕</button>
         </div>
         <div className="px-5 py-2.5 border-b border-gray-700/50 bg-blue-900/10 shrink-0">
           <p className="text-xs text-blue-300 flex items-center gap-1.5">
-            <span>☁️</span> Tài khoản: <strong>{accountName}</strong>
-            <span className="ml-auto text-[11px] text-gray-600 font-mono">ver {version}</span>
+            <span><CloudIcon className="w-4 h-4 inline" /></span> Tài khoản: <strong>{accountName}</strong>
+            <span className="ml-auto text-[11px] text-gray-400 font-mono">ver {version}</span>
           </p>
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-2 min-h-0">
           {labels.length === 0 && !addingNew && (
-            <div className="text-center py-8 text-gray-500 text-sm">Chưa có nhãn nào. Nhấn "Thêm nhãn mới" để tạo.</div>
+            <div className="text-center py-8 text-gray-400 text-sm">Chưa có nhãn nào. Nhấn "Thêm nhãn mới" để tạo.</div>
           )}
           {labels.map((label, idx) => (
             <div key={idx} className={`bg-gray-900 border rounded-xl p-3 transition-colors ${editIdx === idx ? 'border-blue-600/50' : 'border-gray-700/80'}`}>
@@ -584,7 +585,7 @@ function ZaloLabelsEditModal({ zaloId, accountName, initialLabels, buildAuth, on
                       className="h-8 w-10 rounded cursor-pointer bg-transparent border border-gray-600" title="Màu nhãn" />
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-[11px] text-gray-500">Xem trước:</span>
+                    <span className="text-[11px] text-gray-400">Xem trước:</span>
                     <div className="px-2 py-1 rounded-lg flex items-center gap-1 text-xs" style={{ backgroundColor: label.color || '#3b82f6' }}>
                       <span>{label.emoji || label.icon || '🏷️'}</span>
                       <span className="font-semibold text-white">{label.text || label.name || 'Nhãn'}</span>
@@ -642,7 +643,7 @@ function ZaloLabelsEditModal({ zaloId, accountName, initialLabels, buildAuth, on
               </div>
               {newLabel.name && (
                 <div className="flex items-center gap-2">
-                  <span className="text-[11px] text-gray-500">Xem trước:</span>
+                  <span className="text-[11px] text-gray-400">Xem trước:</span>
                   <div className="px-2 py-1 rounded-lg flex items-center gap-1 text-xs" style={{ backgroundColor: newLabel.color }}>
                     <span>{newLabel.icon}</span>
                     <span className="font-semibold text-white">{newLabel.name}</span>
@@ -658,17 +659,17 @@ function ZaloLabelsEditModal({ zaloId, accountName, initialLabels, buildAuth, on
             </div>
           ) : (
             <button onClick={() => setAddingNew(true)}
-              className="w-full py-2.5 border-2 border-dashed border-gray-700 hover:border-blue-600/50 text-gray-500 hover:text-blue-400 rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5">
+              className="w-full py-2.5 border-2 border-dashed border-gray-700 hover:border-blue-600/50 text-gray-400 hover:text-blue-400 rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
               Thêm nhãn mới
             </button>
           )}
         </div>
         {saveError && (
-          <div className="mx-5 mb-2 px-3 py-2 bg-red-950 border border-red-800 rounded-lg text-xs text-red-300 shrink-0">❌ {saveError}</div>
+          <div className="mx-5 mb-2 px-3 py-2 bg-red-950 border border-red-800 rounded-lg text-xs text-red-300 shrink-0"><CloseIcon className="w-4 h-4 inline" /> {saveError}</div>
         )}
         <div className="px-5 py-3 border-t border-gray-700 flex justify-between items-center shrink-0">
-          <span className="text-[11px] text-gray-600">{labels.length} nhãn</span>
+          <span className="text-[11px] text-gray-400">{labels.length} nhãn</span>
           <div className="flex gap-2">
             <button onClick={onClose} className="px-4 py-2 text-gray-400 hover:text-white text-sm">Hủy</button>
             <button onClick={handleSave} disabled={saving}
@@ -710,30 +711,28 @@ function CloneLabelsModal({ accounts, onClose, onSave }: {
           <button onClick={onClose} className="text-gray-400 hover:text-white">✕</button>
         </div>
         <div className="p-5 space-y-4">
-          <p className="text-xs text-gray-400 bg-gray-700/50 rounded-lg px-3 py-2 border border-gray-600">
-            📋 Sao chép toàn bộ Nhãn Local từ tài khoản nguồn sang tài khoản đích.
+          <p className="text-xs text-gray-400 bg-gray-700/50 rounded-lg px-3 py-2 border border-gray-600"><ClipboardListIcon className="w-4 h-4 inline" /> Sao chép toàn bộ Nhãn Local từ tài khoản nguồn sang tài khoản đích.
           </p>
           <div>
             <label className="block text-xs text-gray-400 mb-1.5">Từ tài khoản (Nguồn)</label>
             <AccountSelectorDropdown position="up-left" fullWidth options={sourceOptions} activeId={source} onSelect={setSource} placeholder="Chọn tài khoản nguồn..." />
           </div>
-          <div className="flex justify-center text-xl text-gray-600">⬇️</div>
+          <div className="flex justify-center text-xl text-gray-400">⬇️</div>
           <div>
             <label className="block text-xs text-gray-400 mb-1.5">Sang tài khoản (Đích)</label>
             {targetOptions.length === 0
-              ? <p className="text-xs text-gray-500 italic px-2">Không có tài khoản đích khả dụng</p>
+              ? <p className="text-xs text-gray-400 italic px-2">Không có tài khoản đích khả dụng</p>
               : <AccountSelectorDropdown position="up-left" fullWidth options={targetOptions} activeId={target} onSelect={setTarget} placeholder="Chọn tài khoản đích..." />
             }
           </div>
           <div className="bg-yellow-900/20 border border-yellow-800/30 rounded-lg px-3 py-2">
-            <p className="text-xs text-yellow-400/90">⚠️ Nhãn hiện có ở tài khoản đích sẽ bị <strong>ghi đè hoàn toàn</strong>.</p>
+            <p className="text-xs text-yellow-400/90"><AlertIcon className="w-4 h-4 inline" /> Nhãn hiện có ở tài khoản đích sẽ bị <strong>ghi đè hoàn toàn</strong>.</p>
           </div>
         </div>
         <div className="px-5 py-3 border-t border-gray-700 flex justify-end gap-2">
           <button onClick={onClose} className="px-4 py-2 text-gray-400 hover:text-white text-sm">Hủy</button>
           <button onClick={() => onSave(source, target)} disabled={!valid}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg disabled:opacity-40 disabled:cursor-not-allowed">
-            📋 Sao chép nhãn
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg disabled:opacity-40 disabled:cursor-not-allowed"><ClipboardListIcon className="w-4 h-4 inline" /> Sao chép nhãn
           </button>
         </div>
       </div>
@@ -747,24 +746,24 @@ function LabelHelpModal({ onClose }: { onClose: () => void }) {
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60]" onClick={onClose}>
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-6 max-w-lg w-full mx-4 shadow-2xl relative" onClick={e => e.stopPropagation()}>
         <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 hover:text-white">✕</button>
-        <h3 className="text-lg font-bold text-white mb-4">🏷️ Hướng dẫn - Quản lý nhãn</h3>
+        <h3 className="text-lg font-bold text-white mb-4"><TagIcon className="w-4 h-4 inline" /> Hướng dẫn - Quản lý nhãn</h3>
 
         {/* Comparison table */}
         <div className="grid grid-cols-2 gap-3 mb-5 text-xs">
           {/* Local */}
           <div className="bg-blue-950/40 border border-blue-800/40 rounded-xl p-3.5">
-            <p className="font-bold text-blue-400 mb-2.5 flex items-center gap-1.5">💾 Local <span className="text-[11px] font-normal text-blue-500/70 bg-blue-900/30 px-1.5 py-0.5 rounded">Khuyến nghị</span></p>
+            <p className="font-bold text-blue-400 mb-2.5 flex items-center gap-1.5"><HardDriveIcon className="w-4 h-4 inline" /> Local <span className="text-[11px] font-normal text-blue-500/70 bg-blue-900/30 px-1.5 py-0.5 rounded">Khuyến nghị</span></p>
             <ul className="space-y-1.5 text-gray-300">
               <li className="flex items-start gap-1.5"><span className="text-green-400 mt-0.5 shrink-0">✓</span><span><strong className="text-white">Không giới hạn</strong> số lượng nhãn tạo ra</span></li>
               <li className="flex items-start gap-1.5"><span className="text-green-400 mt-0.5 shrink-0">✓</span><span><strong className="text-white">Không giới hạn</strong> số nhãn gắn vào 1 hội thoại</span></li>
               <li className="flex items-start gap-1.5"><span className="text-green-400 mt-0.5 shrink-0">✓</span><span>Dùng chung cho nhiều tài khoản</span></li>
               <li className="flex items-start gap-1.5"><span className="text-green-400 mt-0.5 shrink-0">✓</span><span>Tuỳ chỉnh màu sắc, emoji, thứ tự</span></li>
-              <li className="flex items-start gap-1.5"><span className="text-yellow-500 mt-0.5 shrink-0">−</span><span className="text-gray-500">Không đồng bộ điện thoại Zalo</span></li>
+              <li className="flex items-start gap-1.5"><span className="text-yellow-500 mt-0.5 shrink-0">−</span><span className="text-gray-400">Không đồng bộ điện thoại Zalo</span></li>
             </ul>
           </div>
           {/* Zalo */}
           <div className="bg-gray-900/60 border border-gray-700/60 rounded-xl p-3.5">
-            <p className="font-bold text-gray-400 mb-2.5">☁️ Zalo</p>
+            <p className="font-bold text-gray-400 mb-2.5"><CloudIcon className="w-4 h-4 inline" /> Zalo</p>
             <ul className="space-y-1.5 text-gray-400">
               <li className="flex items-start gap-1.5"><span className="text-red-400 mt-0.5 shrink-0">✗</span><span><strong className="text-red-300">Chỉ gắn được 1 nhãn</strong> vào 1 hội thoại</span></li>
               <li className="flex items-start gap-1.5"><span className="text-red-400 mt-0.5 shrink-0">✗</span><span>Số lượng nhãn tạo ra bị giới hạn</span></li>
@@ -774,11 +773,11 @@ function LabelHelpModal({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className="border-t border-gray-700 pt-4 space-y-1.5 text-xs text-gray-400">
-          <p className="text-gray-300 font-semibold mb-2">📋 Các tính năng</p>
-          <p>💾 <strong className="text-gray-300">Local:</strong> Tạo/sửa/xóa nhãn, gắn nhiều nhãn vào 1 hội thoại, dùng chung nhiều tài khoản.</p>
-          <p>☁️ <strong className="text-gray-300">Zalo:</strong> Xem & quản lý nhãn trực tiếp trên server Zalo. Cần tài khoản kết nối.</p>
-          <p>📥 <strong className="text-gray-300">Đồng bộ về Local:</strong> Kéo nhãn Zalo về Local (Merge hoặc Replace).</p>
-          <p>📋 <strong className="text-gray-300">Sao chép:</strong> Copy toàn bộ Nhãn Local từ tài khoản A sang B.</p>
+          <p className="text-gray-300 font-semibold mb-2"><ClipboardListIcon className="w-4 h-4 inline" /> Các tính năng</p>
+          <p><HardDriveIcon className="w-4 h-4 inline" /> <strong className="text-gray-300">Local:</strong> Tạo/sửa/xóa nhãn, gắn nhiều nhãn vào 1 hội thoại, dùng chung nhiều tài khoản.</p>
+          <p><CloudIcon className="w-4 h-4 inline" /> <strong className="text-gray-300">Zalo:</strong> Xem & quản lý nhãn trực tiếp trên server Zalo. Cần tài khoản kết nối.</p>
+          <p><InboxIcon className="w-4 h-4 inline" /> <strong className="text-gray-300">Đồng bộ về Local:</strong> Kéo nhãn Zalo về Local (Merge hoặc Replace).</p>
+          <p><ClipboardListIcon className="w-4 h-4 inline" /> <strong className="text-gray-300">Sao chép:</strong> Copy toàn bộ Nhãn Local từ tài khoản A sang B.</p>
           <p>↕️ <strong className="text-gray-300">Kéo thả:</strong> Kéo icon ⠿ để sắp xếp thứ tự hiển thị.</p>
         </div>
       </div>
@@ -999,8 +998,8 @@ export default function LabelSettings({ accounts, filterAccounts, searchText }: 
       <div className="bg-gray-800/30 px-4 py-2 border-b border-gray-800 flex items-center gap-2">
         <div className="flex bg-gray-800 rounded-lg p-0.5 gap-0.5">
           {([
-            { id: 'local' as const, label: '💾 Local' },
-            ...(!allFB ? [{ id: 'zalo' as const, label: '☁️ Zalo' }] : []),
+            { id: 'local' as const, label: 'Local' },
+            ...(!allFB ? [{ id: 'zalo' as const, label: 'Zalo' }] : []),
           ] as const).map(src => (
             <button key={src.id} onClick={() => setLabelSource(src.id)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap
@@ -1010,7 +1009,7 @@ export default function LabelSettings({ accounts, filterAccounts, searchText }: 
         </div>
         {/* Help button - right next to tabs */}
         <button onClick={() => setShowHelp(true)} title="Hướng dẫn sử dụng"
-          className="p-1.5 hover:bg-gray-700 rounded-full text-gray-500 hover:text-blue-400 transition-colors">
+          className="p-1.5 hover:bg-gray-700 rounded-full text-gray-400 hover:text-blue-400 transition-colors">
           <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>
           </svg>
@@ -1019,8 +1018,7 @@ export default function LabelSettings({ accounts, filterAccounts, searchText }: 
         <div className="ml-auto pb-2 flex items-center gap-2">
           {effectiveLabelSource === 'local' && (<>
             <button onClick={() => setCloneLabelModal(true)}
-              className="bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 border border-gray-600">
-              📋 Sao chép
+              className="bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 border border-gray-600"><ClipboardListIcon className="w-4 h-4 inline" /> Sao chép
             </button>
             <button onClick={() => setLabelModal({ open: true, data: null })}
               className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5">
@@ -1030,8 +1028,7 @@ export default function LabelSettings({ accounts, filterAccounts, searchText }: 
           </>)}
           {effectiveLabelSource === 'zalo' && activeZaloId && isConnected && (
             <button onClick={() => fetchZaloLabels(activeZaloId)}
-              className="bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 border border-gray-600">
-              🔄 Tải lại
+              className="bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 border border-gray-600"><RefreshIcon className="w-4 h-4 inline" /> Tải lại
             </button>
           )}
         </div>
@@ -1042,7 +1039,7 @@ export default function LabelSettings({ accounts, filterAccounts, searchText }: 
         {/* Local Labels */}
         {effectiveLabelSource === 'local' && (
           filteredLabels.length === 0
-            ? <EmptyState icon="🏷️" title="Chưa có nhãn" subtitle='Nhấn "Thêm nhãn" để tạo nhãn phân loại hội thoại.' />
+            ? <EmptyState icon={<TagIcon className="w-4 h-4" />} title="Chưa có nhãn" subtitle='Nhấn "Thêm nhãn" để tạo nhãn phân loại hội thoại.' />
             : filteredLabels.map((item, idx) => (
               <div key={item.id} draggable
                 onDragStart={() => { labelDragFromRef.current = idx; labelDragOverRef.current = idx; setLabelDragging(idx); }}

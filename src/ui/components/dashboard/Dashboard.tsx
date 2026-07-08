@@ -9,6 +9,7 @@ import MergedInboxModal from './MergedInboxModal';
 import EmployeeLoginModal from './EmployeeLoginModal';
 import ipc from '@/lib/ipc';
 import PageLoading from '@/components/common/PageLoading';
+import { BugIcon, HomeIcon, RefreshIcon, SunIcon, TargetIcon, UserIcon, UsersIcon } from '@/components/common/icons';
 
 const SUPPORT_GITHUB_URL = 'https://github.com/babyvibe/deplao-builder';
 
@@ -101,7 +102,7 @@ export default function Dashboard() {
 
   if (accounts.length === 0) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center text-gray-500 gap-4">
+      <div className="flex-1 flex flex-col items-center justify-center text-gray-400 gap-4">
         <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" className="opacity-20">
           <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />
           <circle cx="9" cy="7" r="4" />
@@ -120,7 +121,7 @@ export default function Dashboard() {
         ) : activeWs?.type === 'remote' || empMode === 'employee' ? (
           <>
             <p className="text-lg font-medium text-gray-300">Chưa có trang nào được quản lý</p>
-            <p className="text-sm text-gray-500">Liên hệ BOSS để được gán tài khoản Zalo vào workspace này.</p>
+            <p className="text-sm text-gray-400">Liên hệ BOSS để được gán tài khoản Zalo vào workspace này.</p>
             <div className="flex items-center gap-3 mt-2">
             </div>
           </>
@@ -138,8 +139,7 @@ export default function Dashboard() {
         <button
             onClick={() => setEmployeeLoginOpen(true)}
             className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-200 border border-gray-600 transition-colors"
-        >
-          👤 Đăng nhập dành cho nhân viên
+        ><UserIcon className="w-4 h-4 inline" /> Đăng nhập dành cho nhân viên
         </button>
         <button
           onClick={() => ipc.shell?.openExternal(SUPPORT_GITHUB_URL)}
@@ -160,14 +160,13 @@ export default function Dashboard() {
       {/* Header + search */}
       <div className="flex items-center gap-3 mb-4 flex-wrap">
         <h2 className="text-lg font-semibold text-white">Dashboard</h2>
-        <span className="text-xs text-gray-500 bg-gray-700/50 px-2 py-0.5 rounded-full">
+        <span className="text-xs text-gray-400 bg-gray-700/50 px-2 py-0.5 rounded-full">
           {accounts.length} tài khoản
         </span>
         {isSimulating && (() => {
           const simEmp = useEmployeeStore.getState().getPreviewEmployee();
           return simEmp ? (
-            <span className="text-xs text-amber-300 bg-amber-900/30 border border-amber-700/40 px-2.5 py-0.5 rounded-full flex items-center gap-1.5">
-              🔄 Giả lập: {simEmp.display_name}
+            <span className="text-xs text-amber-300 bg-amber-900/30 border border-amber-700/40 px-2.5 py-0.5 rounded-full flex items-center gap-1.5"><RefreshIcon className="w-4 h-4 inline" /> Giả lập: {simEmp.display_name}
             </span>
           ) : null;
         })()}
@@ -192,7 +191,7 @@ export default function Dashboard() {
                   </svg>
                 </button>
                 <div className="absolute top-full right-0 mt-2 w-64 bg-gray-800 border border-gray-600/60 rounded-xl shadow-2xl p-3 z-50 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 pointer-events-none">
-                  <p className="text-xs font-semibold text-gray-200 flex items-center gap-1.5">🔵 Chế độ gộp đang bật</p>
+                  <p className="text-xs font-semibold text-gray-200 flex items-center gap-1.5"><TargetIcon className="w-4 h-4 inline" /> Chế độ gộp đang bật</p>
                   <p className="text-[11px] text-gray-400 mt-1.5 leading-relaxed">
                     Đang xem <span className="text-blue-400 font-medium">tất cả hội thoại</span> từ {accounts.length} tài khoản trong cùng một danh sách.
                     Nhấn nút này hoặc chọn lại tài khoản cụ thể để <span className="text-gray-300">thoát chế độ gộp</span>.
@@ -213,20 +212,20 @@ export default function Dashboard() {
                   Gộp tài khoản
                 </button>
                 <div className="absolute top-full right-0 mt-2 w-72 bg-gray-800 border border-gray-600/60 rounded-xl shadow-2xl p-3 z-50 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 pointer-events-none">
-                  <p className="text-xs font-semibold text-gray-200 flex items-center gap-1.5">👥 Gộp hội thoại đa tài khoản</p>
+                  <p className="text-xs font-semibold text-gray-200 flex items-center gap-1.5"><UsersIcon className="w-4 h-4 inline" /> Gộp hội thoại đa tài khoản</p>
                   <p className="text-[11px] text-gray-400 mt-1.5 leading-relaxed">
                     Xem và trả lời tin nhắn từ <span className="text-amber-400 font-medium">tất cả tài khoản</span> trong cùng một danh sách hội thoại - không cần chuyển qua lại.
                   </p>
                   <div className="border-t border-gray-700 pt-2 mt-2 space-y-1">
-                    <div className="flex items-center gap-2 text-[10px] text-gray-500">
+                    <div className="flex items-center gap-2 text-[10px] text-gray-400">
                       <span className="text-green-400">✓</span>
                       <span>Gộp tin nhắn từ {accounts.length} tài khoản hiện có</span>
                     </div>
-                    <div className="flex items-center gap-2 text-[10px] text-gray-500">
+                    <div className="flex items-center gap-2 text-[10px] text-gray-400">
                       <span className="text-green-400">✓</span>
                       <span>Trả lời đúng tài khoản ngay trong ô chat</span>
                     </div>
-                    <div className="flex items-center gap-2 text-[10px] text-gray-500">
+                    <div className="flex items-center gap-2 text-[10px] text-gray-400">
                       <span className="text-green-400">✓</span>
                       <span>Tiết kiệm thời gian, không bỏ lỡ tin nhắn</span>
                     </div>
@@ -256,7 +255,7 @@ export default function Dashboard() {
             {/* Tooltip */}
             <div className="absolute top-full right-0 mt-2 w-72 bg-gray-800 border border-gray-600/60 rounded-xl shadow-2xl p-3 z-50 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 pointer-events-none">
               <div className="flex items-start gap-2 mb-2">
-                <span className="text-lg">🏠</span>
+                <span className="text-lg"><HomeIcon className="w-4 h-4" /></span>
                 <div>
                   <p className="text-xs font-semibold text-gray-200">Tạo workspace mới</p>
                   <p className="text-[11px] text-gray-400 mt-1 leading-relaxed">
@@ -266,12 +265,12 @@ export default function Dashboard() {
                 </div>
               </div>
               <div className="border-t border-gray-700 pt-2 mt-2 space-y-1.5">
-                <div className="flex items-center gap-2 text-[10px] text-gray-500">
-                  <span className="w-4 h-4 rounded bg-purple-900/40 flex items-center justify-center text-purple-400">🏠</span>
+                <div className="flex items-center gap-2 text-[10px] text-gray-400">
+                  <span className="w-4 h-4 rounded bg-purple-900/40 flex items-center justify-center text-purple-400"><HomeIcon className="w-4 h-4" /></span>
                   <span><span className="text-gray-300">Boss (Local)</span> - Quản lý trực tiếp, lưu DB trên máy</span>
                 </div>
-                <div className="flex items-center gap-2 text-[10px] text-gray-500">
-                  <span className="w-4 h-4 rounded bg-blue-900/40 flex items-center justify-center text-blue-400">👤</span>
+                <div className="flex items-center gap-2 text-[10px] text-gray-400">
+                  <span className="w-4 h-4 rounded bg-blue-900/40 flex items-center justify-center text-blue-400"><UserIcon className="w-4 h-4" /></span>
                   <span><span className="text-gray-300">Nhân viên (Remote)</span> - Kết nối tới máy Boss từ xa</span>
                 </div>
               </div>
@@ -292,21 +291,21 @@ export default function Dashboard() {
               Hỗ trợ, báo lỗi
             </button>
             <div className="absolute top-full right-0 mt-2 w-[300px] bg-gray-800 border border-gray-600/60 rounded-xl shadow-2xl p-3.5 z-50 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 pointer-events-none">
-              <p className="text-xs font-semibold text-gray-200 flex items-center gap-1.5">🐛 Báo lỗi & Đóng góp</p>
+              <p className="text-xs font-semibold text-gray-200 flex items-center gap-1.5"><BugIcon className="w-4 h-4 inline" /> Báo lỗi & Đóng góp</p>
               <p className="text-[11px] text-gray-400 mt-1.5 leading-relaxed">
                 Gặp lỗi hoặc có góp ý? Hãy gửi trên GitHub - chúng tôi sẽ xử lý nhanh nhất có thể.
               </p>
               <div className="border-t border-gray-700 pt-2 mt-2.5 space-y-1.5">
-                <p className="text-[10px] text-amber-400 font-medium mb-1">💡 Mẹo để được hỗ trợ nhanh:</p>
-                <div className="flex items-start gap-2 text-[10px] text-gray-500">
+                <p className="text-[10px] text-amber-400 font-medium mb-1"><SunIcon className="w-4 h-4 inline" /> Mẹo để được hỗ trợ nhanh:</p>
+                <div className="flex items-start gap-2 text-[10px] text-gray-400">
                   <span className="text-amber-400 flex-shrink-0 mt-px">1.</span>
                   <span>Mô tả <span className="text-gray-300">các bước thao tác</span> cụ thể dẫn đến lỗi</span>
                 </div>
-                <div className="flex items-start gap-2 text-[10px] text-gray-500">
+                <div className="flex items-start gap-2 text-[10px] text-gray-400">
                   <span className="text-amber-400 flex-shrink-0 mt-px">2.</span>
                   <span>Đính kèm <span className="text-gray-300">ảnh chụp màn hình</span> hoặc <span className="text-gray-300">video quay màn hình</span></span>
                 </div>
-                <div className="flex items-start gap-2 text-[10px] text-gray-500">
+                <div className="flex items-start gap-2 text-[10px] text-gray-400">
                   <span className="text-amber-400 flex-shrink-0 mt-px">3.</span>
                   <span>Ghi rõ <span className="text-gray-300">phiên bản ứng dụng</span> (góc trái thanh trên)</span>
                 </div>
@@ -346,7 +345,7 @@ export default function Dashboard() {
       </div>
 
       {!q && (
-        <p className="text-xs text-gray-500 mb-3 flex items-center gap-1">
+        <p className="text-xs text-gray-400 mb-3 flex items-center gap-1">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/>
             <polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/>
@@ -360,13 +359,13 @@ export default function Dashboard() {
       {!q && accounts.length > 0 && (
         <div className="flex items-center gap-2 mt-6 mb-3">
           <h3 className="text-sm font-semibold text-gray-300"> Tài khoản</h3>
-          <span className="text-[10px] text-gray-500 bg-gray-700/50 px-2 py-0.5 rounded-full">{accounts.length}</span>
+          <span className="text-[10px] text-gray-400 bg-gray-700/50 px-2 py-0.5 rounded-full">{accounts.length}</span>
           <div className="flex-1 border-t border-gray-700/50" />
         </div>
       )}
 
       {filtered.length === 0 ? (
-        <div className="text-center text-gray-500 py-12">
+        <div className="text-center text-gray-400 py-12">
           <p className="text-sm">Không tìm thấy tài khoản "{search}"</p>
         </div>
       ) : (

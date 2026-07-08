@@ -5,6 +5,8 @@ import { useEmployeeStore } from '@/store/employeeStore';
 import { useAppStore } from '@/store/appStore';
 import ipc from '@/lib/ipc';
 import { ConfirmDialog, ErpModalCard, ErpOverlay } from '../shared/ErpDialogs';
+import { BotIcon, ChartIcon, ChatIcon, EditIcon, LightningIcon, LinkIcon, LockIcon, SettingsIcon, TrashIcon, TrendingUpIcon, UserIcon } from '@/components/common/icons';
+
 import {
   ERP_DATE_FILTER_OPTIONS,
   getDefaultCustomRange,
@@ -24,14 +26,14 @@ import {
 } from '../../../../models/erp/Permission';
 
 const EMPLOYEE_MODULES = [
-  { key: 'chat', label: 'Chat', icon: '💬', desc: 'Gửi / nhận tin nhắn' },
-  { key: 'crm', label: 'CRM', icon: '📊', desc: 'Quản lý khách hàng' },
-  { key: 'workflow', label: 'Workflow', icon: '⚡', desc: 'Tự động hoá' },
-  { key: 'integration', label: 'Tích hợp', icon: '🔗', desc: 'POS / Shipping / dịch vụ ngoài' },
-  { key: 'analytics', label: 'Thống kê', icon: '📈', desc: 'Báo cáo phân tích' },
-  { key: 'ai_assistant', label: 'AI', icon: '🤖', desc: 'Trợ lý AI' },
-  { key: 'settings_accounts', label: 'QL tài khoản Zalo', icon: '👤', desc: 'Phần cài đặt tài khoản' },
-  { key: 'settings_employees', label: 'QL nhân viên', icon: '🧑‍💼', desc: 'Phần cài đặt nhân viên' },
+  { key: 'chat', label: 'Chat', icon: <ChatIcon className="w-4 h-4" />, desc: 'Gửi / nhận tin nhắn' },
+  { key: 'crm', label: 'CRM', icon: <ChartIcon className="w-4 h-4" />, desc: 'Quản lý khách hàng' },
+  { key: 'workflow', label: 'Workflow', icon: <LightningIcon className="w-4 h-4" />, desc: 'Tự động hoá' },
+  { key: 'integration', label: 'Tích hợp', icon: <LinkIcon className="w-4 h-4" />, desc: 'POS / Shipping / dịch vụ ngoài' },
+  { key: 'analytics', label: 'Thống kê', icon: <TrendingUpIcon className="w-4 h-4" />, desc: 'Báo cáo phân tích' },
+  { key: 'ai_assistant', label: 'AI', icon: <BotIcon className="w-4 h-4" />, desc: 'Trợ lý AI' },
+  { key: 'settings_accounts', label: 'QL tài khoản Zalo', icon: <UserIcon className="w-4 h-4" />, desc: 'Phần cài đặt tài khoản' },
+  { key: 'settings_employees', label: 'QL nhân viên', icon: <UserIcon className="w-4 h-4" />, desc: 'Phần cài đặt nhân viên' },
 ] as const;
 
 const EMPLOYEE_MODULE_KEYS = new Set<string>(EMPLOYEE_MODULES.map(module => module.key));
@@ -316,7 +318,7 @@ function EmployeesTab() {
       <div className="flex items-start justify-between gap-3 mb-3">
         <div>
           <h3 className="text-sm font-semibold text-white">Danh sách nhân sự ({rows.length})</h3>
-          <p className="text-[11px] text-gray-500 mt-1">Dữ liệu tài khoản đồng bộ trực tiếp với mục <span className="text-gray-300">Cài đặt → Nhân viên</span>; ERP chỉ bổ sung hồ sơ nội bộ.</p>
+          <p className="text-[11px] text-gray-400 mt-1">Dữ liệu tài khoản đồng bộ trực tiếp với mục <span className="text-gray-300">Cài đặt → Nhân viên</span>; ERP chỉ bổ sung hồ sơ nội bộ.</p>
         </div>
         <div className="flex items-center gap-2 self-start">
           <button
@@ -360,7 +362,7 @@ function EmployeesTab() {
               <tr key={employee?.employee_id || profile?.employee_id} className="text-gray-200 hover:bg-gray-700/30 align-top">
                 <td className="px-3 py-2">
                   <div className="font-medium">{employee?.display_name || getEmpName(profile?.employee_id)}</div>
-                  <div className="text-[11px] text-gray-500 mt-0.5">
+                  <div className="text-[11px] text-gray-400 mt-0.5">
                     {employee?.username ? `@${employee.username}` : 'Chưa có tài khoản đăng nhập'}
                   </div>
                   <div className="flex flex-wrap gap-1 mt-1">
@@ -380,7 +382,7 @@ function EmployeesTab() {
                     return (
                       <div>
                         <span className={`px-2 py-0.5 rounded-full text-[10px] ${getRoleBadgeClass(resolvedRole)}`}>{getRoleLabel(resolvedRole)}</span>
-                        <div className="text-[10px] text-gray-500 mt-1">🔐 {moduleCount} module · ⚙️ {actionOverrideCount} action riêng</div>
+                        <div className="text-[10px] text-gray-400 mt-1"><LockIcon className="w-4 h-4 inline" /> {moduleCount} module · <SettingsIcon className="w-4 h-4 inline" /> {actionOverrideCount} action riêng</div>
                       </div>
                     );
                   })()}
@@ -389,20 +391,18 @@ function EmployeesTab() {
                   <div className="flex items-center justify-end gap-2 text-[11px]">
                     {(canManageEmployees || profile?.employee_id === currentEmployeeId) && (employee || profile) && (
                       <ActionIconButton onClick={() => setEditorState({ employee, profile })} title="Sửa nhân sự" color="text-blue-400 hover:text-blue-300">
-                        ✏️
+                        <EditIcon className="w-4 h-4" />
                       </ActionIconButton>
                     )}
                     {canManageEmployees && (
-                      <ActionIconButton onClick={() => setDeleteTarget({ employee, profile })} title="Xóa nhân sự" color="text-red-400 hover:text-red-300">
-                        🗑️
-                      </ActionIconButton>
+                      <ActionIconButton onClick={() => setDeleteTarget({ employee, profile })} title="Xóa nhân sự" color="text-red-400 hover:text-red-300"><TrashIcon className="w-4 h-4 inline" /> </ActionIconButton>
                     )}
                   </div>
                 </td>
               </tr>
             ))}
             {rows.length === 0 && (
-              <tr><td colSpan={6} className="px-3 py-6 text-center text-gray-500">Chưa có nhân sự nào</td></tr>
+              <tr><td colSpan={6} className="px-3 py-6 text-center text-gray-400">Chưa có nhân sự nào</td></tr>
             )}
           </tbody>
         </table>
@@ -433,7 +433,7 @@ function EmployeesTab() {
             <div className="flex items-start justify-between gap-3 mb-4">
               <div>
                 <h3 className="text-white font-semibold">Biểu đồ cây theo role</h3>
-                <p className="text-[11px] text-gray-500 mt-1">Hiển thị cấu trúc role ERP → phòng ban → từng nhân sự để rà nhanh phân tầng nhân sự.</p>
+                <p className="text-[11px] text-gray-400 mt-1">Hiển thị cấu trúc role ERP → phòng ban → từng nhân sự để rà nhanh phân tầng nhân sự.</p>
               </div>
               <button onClick={() => setRoleTreeOpen(false)} className="text-gray-400 hover:text-white">✕</button>
             </div>
@@ -532,7 +532,7 @@ function EmployeeEditorModal({ employee, profile, departments, positions, canMan
         <div className="space-y-4 text-xs">
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
           <div className="space-y-3">
-            <div className="text-[11px] uppercase tracking-wider text-gray-500">Tài khoản</div>
+            <div className="text-[11px] uppercase tracking-wider text-gray-400">Tài khoản</div>
             <Field label="Tên hiển thị">
               <input value={accountForm.display_name} onChange={e => setAccountForm({ ...accountForm, display_name: e.target.value })} className="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-white" />
             </Field>
@@ -564,7 +564,7 @@ function EmployeeEditorModal({ employee, profile, departments, positions, canMan
           </div>
 
           <div className="space-y-3">
-            <div className="text-[11px] uppercase tracking-wider text-gray-500">Hồ sơ ERP</div>
+            <div className="text-[11px] uppercase tracking-wider text-gray-400">Hồ sơ ERP</div>
             <Field label="Phòng ban">
               <select value={profileForm.department_id ?? ''} onChange={e => setProfileForm({ ...profileForm, department_id: e.target.value ? Number(e.target.value) : null })} className="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-white">
                 <option value="">- không -</option>
@@ -588,15 +588,15 @@ function EmployeeEditorModal({ employee, profile, departments, positions, canMan
           </div>
 
           <div className="space-y-3">
-            <div className="text-[11px] uppercase tracking-wider text-gray-500">Phân quyền</div>
+            <div className="text-[11px] uppercase tracking-wider text-gray-400">Phân quyền</div>
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
             <div className="rounded-xl border border-gray-700/60 bg-gray-900/30 p-3">
               <div className="flex items-center justify-between gap-2 mb-3">
                 <div>
                   <div className="text-xs font-semibold text-white">Quyền module Deplao</div>
-                  <div className="text-[11px] text-gray-500 mt-1">Áp dụng cho các module ngoài ERP khi nhân viên đăng nhập.</div>
+                  <div className="text-[11px] text-gray-400 mt-1">Áp dụng cho các module ngoài ERP khi nhân viên đăng nhập.</div>
                 </div>
-                {!canConfigureModulePermissions && <span className="text-[10px] text-gray-500">Chỉ quản lý mới được chỉnh</span>}
+                {!canConfigureModulePermissions && <span className="text-[10px] text-gray-400">Chỉ quản lý mới được chỉnh</span>}
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                 {EMPLOYEE_MODULES.map(module => (
@@ -608,7 +608,7 @@ function EmployeeEditorModal({ employee, profile, departments, positions, canMan
                     <span className="text-base">{module.icon}</span>
                     <div className="min-w-0">
                       <div className="text-xs text-gray-100 font-medium">{module.label}</div>
-                      <div className="text-[10px] text-gray-500 truncate">{module.desc}</div>
+                      <div className="text-[10px] text-gray-400 truncate">{module.desc}</div>
                     </div>
                   </label>
                 ))}
@@ -619,14 +619,14 @@ function EmployeeEditorModal({ employee, profile, departments, positions, canMan
               <div className="flex items-center justify-between gap-2 mb-3">
                 <div>
                   <div className="text-xs font-semibold text-white">Quyền action ERP</div>
-                  <div className="text-[11px] text-gray-500 mt-1">Role hiện tại: <span className="text-gray-300">{getRoleLabel(effectiveRole)}</span>. Có thể ghi đè riêng từng action.</div>
+                  <div className="text-[11px] text-gray-400 mt-1">Role hiện tại: <span className="text-gray-300">{getRoleLabel(effectiveRole)}</span>. Có thể ghi đè riêng từng action.</div>
                 </div>
-                {!canManageEmployees && <span className="text-[10px] text-gray-500">Chỉ quản lý mới được chỉnh</span>}
+                {!canManageEmployees && <span className="text-[10px] text-gray-400">Chỉ quản lý mới được chỉnh</span>}
               </div>
               <div className="space-y-3 max-h-[360px] overflow-auto pr-1">
                 {ERP_PERMISSION_GROUPS.map(group => (
                   <div key={group.id} className="rounded-lg border border-gray-700/70 bg-gray-800/50 p-3 space-y-2">
-                    <div className="text-[11px] uppercase tracking-wider text-gray-500">{group.label}</div>
+                    <div className="text-[11px] uppercase tracking-wider text-gray-400">{group.label}</div>
                     {group.actions.map(action => {
                       const meta = ERP_PERMISSION_META[action];
                       const inheritedAllowed = ERP_PERMISSIONS[action].includes(effectiveRole);
@@ -634,8 +634,8 @@ function EmployeeEditorModal({ employee, profile, departments, positions, canMan
                         <div key={action} className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_170px] gap-2 items-start">
                           <div>
                             <div className="text-xs text-gray-100 font-medium">{meta.label}</div>
-                            <div className="text-[10px] text-gray-500 mt-0.5">{meta.description}</div>
-                            <div className="text-[10px] text-gray-600 mt-1">Mặc định theo role: {inheritedAllowed ? 'Cho phép' : 'Chặn'} · Role được phép: {ERP_PERMISSIONS[action].join(', ')}</div>
+                            <div className="text-[10px] text-gray-400 mt-0.5">{meta.description}</div>
+                            <div className="text-[10px] text-gray-400 mt-1">Mặc định theo role: {inheritedAllowed ? 'Cho phép' : 'Chặn'} · Role được phép: {ERP_PERMISSIONS[action].join(', ')}</div>
                           </div>
                           <select
                             disabled={!canManageEmployees}
@@ -679,7 +679,7 @@ function EmployeeEditorModal({ employee, profile, departments, positions, canMan
             shouldUpdateAccount: hasAccount,
           })} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded">Lưu</button>
         </div>
-        {(employee?.employee_id || profile?.employee_id) && <div className="text-[10px] text-gray-500 mt-2">Employee ID: {employee?.employee_id || profile?.employee_id}</div>}
+        {(employee?.employee_id || profile?.employee_id) && <div className="text-[10px] text-gray-400 mt-2">Employee ID: {employee?.employee_id || profile?.employee_id}</div>}
       </ErpModalCard>
     </ErpOverlay>
   );
@@ -708,7 +708,7 @@ function ActionIconButton({ children, onClick, title, color = 'text-gray-400 hov
 function RoleTreePanel({ roleTree }: { roleTree: any[] }) {
   if (roleTree.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-gray-700 bg-gray-900/30 px-4 py-8 text-center text-sm text-gray-500">
+      <div className="rounded-xl border border-dashed border-gray-700 bg-gray-900/30 px-4 py-8 text-center text-sm text-gray-400">
         Chưa có dữ liệu role để dựng cây nhân sự
       </div>
     );
@@ -717,14 +717,14 @@ function RoleTreePanel({ roleTree }: { roleTree: any[] }) {
   return (
     <div>
       <div className="flex items-center justify-end mb-3">
-        <div className="text-[11px] text-gray-500">{roleTree.length} nhánh role đang có dữ liệu</div>
+        <div className="text-[11px] text-gray-400">{roleTree.length} nhánh role đang có dữ liệu</div>
       </div>
       <div className="grid grid-cols-1 2xl:grid-cols-2 gap-4">
         {roleTree.map(branch => (
           <div key={branch.role} className="rounded-xl border border-gray-700/60 bg-gray-900/30 p-4">
             <div className="flex items-center justify-between gap-3 mb-3">
               <div>
-                <div className="text-[11px] uppercase tracking-wider text-gray-500">Role ERP</div>
+                <div className="text-[11px] uppercase tracking-wider text-gray-400">Role ERP</div>
                 <div className="text-sm font-semibold text-white mt-1">{branch.label}</div>
               </div>
               <span className={`px-2 py-1 rounded-full text-[10px] font-medium ${branch.badgeClass}`}>{branch.count} nhân sự</span>
@@ -744,15 +744,15 @@ function RoleTreePanel({ roleTree }: { roleTree: any[] }) {
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
                             <div className="text-sm text-white font-medium truncate">{member.name}</div>
-                            <div className="text-[11px] text-gray-500 mt-0.5 truncate">
+                            <div className="text-[11px] text-gray-400 mt-0.5 truncate">
                               {member.username ? `@${member.username}` : 'Chưa có tài khoản'} · {member.positionName}
                             </div>
                           </div>
                           {!member.hasAccount && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-yellow-600/20 text-yellow-300">Thiếu tài khoản</span>}
                         </div>
-                        <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-gray-500">
-                          <span>🔐 {member.moduleCount} module</span>
-                          <span>⚙️ {member.actionOverrideCount} action riêng</span>
+                        <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-gray-400">
+                          <span><LockIcon className="w-4 h-4 inline" /> {member.moduleCount} module</span>
+                          <span><SettingsIcon className="w-4 h-4 inline" /> {member.actionOverrideCount} action riêng</span>
                         </div>
                       </div>
                     ))}
@@ -792,22 +792,22 @@ function DepartmentsTab() {
             <div>
               <div className="text-sm text-white font-medium">{d.name}</div>
               {d.description && <div className="text-xs text-gray-400 mt-0.5">{d.description}</div>}
-              <div className="text-[10px] text-gray-500 mt-0.5">{(d as any).employeeCount ?? 0} nhân sự</div>
+              <div className="text-[10px] text-gray-400 mt-0.5">{(d as any).employeeCount ?? 0} nhân sự</div>
             </div>
             {perms.can('department.manage') && (
               <div className="flex gap-1">
                 <button onClick={async () => {
                   const name = prompt('Tên phòng ban mới', d.name);
                   if (name && name !== d.name) await updateDepartment(d.id, { name });
-                }} className="text-blue-400 hover:text-blue-300 text-xs" title="Sửa phòng ban">✏️</button>
+                }} className="text-blue-400 hover:text-blue-300 text-xs" title="Sửa phòng ban"><EditIcon className="w-4 h-4" /></button>
                 <button onClick={async () => {
                   if (confirm(`Xóa phòng ban "${d.name}"?`)) await deleteDepartment(d.id);
-                }} className="text-red-400 hover:text-red-300 text-xs" title="Xóa phòng ban">🗑️</button>
+                }} className="text-red-400 hover:text-red-300 text-xs" title="Xóa phòng ban"><TrashIcon className="w-4 h-4" /></button>
               </div>
             )}
           </div>
         ))}
-        {departments.length === 0 && <div className="text-center text-gray-500 text-xs py-6">Chưa có phòng ban</div>}
+        {departments.length === 0 && <div className="text-center text-gray-400 text-xs py-6">Chưa có phòng ban</div>}
       </div>
 
       {creating && (
@@ -844,7 +844,7 @@ function PositionsTab() {
       <div className="flex items-center justify-between mb-3">
         <div>
           <h3 className="text-sm font-semibold text-white">Chức vụ ({positions.length})</h3>
-          <p className="text-[11px] text-gray-500 mt-1">Quản lý danh mục chức vụ để gán nhanh cho hồ sơ nhân sự ERP.</p>
+          <p className="text-[11px] text-gray-400 mt-1">Quản lý danh mục chức vụ để gán nhanh cho hồ sơ nhân sự ERP.</p>
         </div>
         {perms.can('position.manage') && (
           <button onClick={() => setCreating(true)} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded">
@@ -858,7 +858,7 @@ function PositionsTab() {
           <div key={position.id} className="bg-gray-800 border border-gray-700 rounded-lg p-3 flex items-center justify-between gap-3">
             <div>
               <div className="text-sm text-white font-medium">{position.name}</div>
-              <div className="text-[11px] text-gray-500 mt-0.5">
+              <div className="text-[11px] text-gray-400 mt-0.5">
                 {departments.find(d => d.id === position.department_id)?.name || 'Toàn công ty'} · Cấp {position.level ?? 0}
               </div>
             </div>
@@ -869,16 +869,16 @@ function PositionsTab() {
                   if (!nextName?.trim()) return;
                   const nextLevel = prompt('Cấp bậc', String(position.level ?? 0));
                   await updatePosition(position.id, { name: nextName.trim(), level: Number(nextLevel || 0) });
-                }} className="text-blue-400 hover:text-blue-300" title="Sửa chức vụ">✏️</button>
+                }} className="text-blue-400 hover:text-blue-300" title="Sửa chức vụ"><EditIcon className="w-4 h-4" /></button>
                 <button onClick={async () => {
                   if (!confirm(`Xóa chức vụ "${position.name}"?`)) return;
                   await deletePosition(position.id);
-                }} className="text-red-400 hover:text-red-300" title="Xóa chức vụ">🗑️</button>
+                }} className="text-red-400 hover:text-red-300" title="Xóa chức vụ"><TrashIcon className="w-4 h-4" /></button>
               </div>
             )}
           </div>
         ))}
-        {positions.length === 0 && <div className="text-center text-gray-500 text-xs py-6">Chưa có chức vụ nào</div>}
+        {positions.length === 0 && <div className="text-center text-gray-400 text-xs py-6">Chưa có chức vụ nào</div>}
       </div>
 
       {creating && (
@@ -987,12 +987,12 @@ function AttendanceTab() {
             <div className="text-sm text-white">
               {todayAttendance?.check_in_at
                 ? <>Check-in: <span className="text-green-400">{new Date(todayAttendance.check_in_at).toLocaleTimeString()}</span></>
-                : <span className="text-gray-500">Chưa check-in</span>}
+                : <span className="text-gray-400">Chưa check-in</span>}
             </div>
             <div className="text-sm text-white mt-1">
               {todayAttendance?.check_out_at
                 ? <>Check-out: <span className="text-blue-400">{new Date(todayAttendance.check_out_at).toLocaleTimeString()}</span></>
-                : <span className="text-gray-500">Chưa check-out</span>}
+                : <span className="text-gray-400">Chưa check-out</span>}
             </div>
           </div>
           <div className="flex gap-2">
@@ -1014,9 +1014,9 @@ function AttendanceTab() {
         <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
           <div>
             <div className="text-sm font-semibold text-white">Bộ lọc chấm công</div>
-            <div className="text-[11px] text-gray-500 mt-1">Lọc theo nhân sự, phòng ban, chức vụ, quyền ERP và ngày ghi nhận công.</div>
+            <div className="text-[11px] text-gray-400 mt-1">Lọc theo nhân sự, phòng ban, chức vụ, quyền ERP và ngày ghi nhận công.</div>
           </div>
-          <div className="text-[11px] text-gray-500">{filteredAttendanceList.length} bản ghi phù hợp</div>
+          <div className="text-[11px] text-gray-400">{filteredAttendanceList.length} bản ghi phù hợp</div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
         {canViewOthers && (
@@ -1079,7 +1079,7 @@ function AttendanceTab() {
                   {(canViewOthers || scope === 'all' || !!employeeFilter) && (
                     <td className="px-3 py-2">
                       <div className="font-medium">{getEmpName(a.employee_id)}</div>
-                      <div className="text-[10px] text-gray-500 mt-0.5">{meta?.departmentName || 'Chưa gán phòng ban'} · {meta?.positionName || 'Chưa gán chức vụ'} · {getRoleLabel(meta?.role)}</div>
+                      <div className="text-[10px] text-gray-400 mt-0.5">{meta?.departmentName || 'Chưa gán phòng ban'} · {meta?.positionName || 'Chưa gán chức vụ'} · {getRoleLabel(meta?.role)}</div>
                     </td>
                   )}
                   <td className="px-3 py-2">{a.date}</td>
@@ -1090,7 +1090,7 @@ function AttendanceTab() {
               );
             })}
             {filteredAttendanceList.length === 0 && (
-              <tr><td colSpan={(canViewOthers || scope === 'all' || !!employeeFilter) ? 5 : 4} className="px-3 py-6 text-center text-gray-500">Chưa có dữ liệu</td></tr>
+              <tr><td colSpan={(canViewOthers || scope === 'all' || !!employeeFilter) ? 5 : 4} className="px-3 py-6 text-center text-gray-400">Chưa có dữ liệu</td></tr>
             )}
           </tbody>
         </table>
@@ -1146,9 +1146,9 @@ function LeaveTab() {
         <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
           <div>
             <div className="text-sm font-semibold text-white">Bộ lọc nghỉ phép</div>
-            <div className="text-[11px] text-gray-500 mt-1">Lọc đơn theo phòng ban, chức vụ, quyền ERP và ngày tạo đơn.</div>
+            <div className="text-[11px] text-gray-400 mt-1">Lọc đơn theo phòng ban, chức vụ, quyền ERP và ngày tạo đơn.</div>
           </div>
-          <div className="text-[11px] text-gray-500">{filteredMyLeaves.length}{canApprove ? ` / ${filteredPendingLeaves.length}` : ''} bản ghi hiển thị</div>
+          <div className="text-[11px] text-gray-400">{filteredMyLeaves.length}{canApprove ? ` / ${filteredPendingLeaves.length}` : ''} bản ghi hiển thị</div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <select value={departmentFilter} onChange={e => setDepartmentFilter(e.target.value)} className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white">
@@ -1226,7 +1226,7 @@ function LeaveTable({ rows, showActor, approvable, onDecide, onCancel, getEmploy
               {showActor && (
                 <td className="px-3 py-2">
                   <div className="font-medium text-gray-100">{meta?.name || l.requester_id}</div>
-                  <div className="text-[10px] text-gray-500 mt-0.5">{meta?.departmentName || 'Chưa gán phòng ban'} · {meta?.positionName || 'Chưa gán chức vụ'} · {getRoleLabel(meta?.role)}</div>
+                  <div className="text-[10px] text-gray-400 mt-0.5">{meta?.departmentName || 'Chưa gán phòng ban'} · {meta?.positionName || 'Chưa gán chức vụ'} · {getRoleLabel(meta?.role)}</div>
                 </td>
               )}
               <td className="px-3 py-2">{l.leave_type}</td>
@@ -1256,7 +1256,7 @@ function LeaveTable({ rows, showActor, approvable, onDecide, onCancel, getEmploy
             </tr>
           );})}
           {(!rows || rows.length === 0) && (
-            <tr><td colSpan={showActor ? 8 : 7} className="px-3 py-6 text-center text-gray-500">Không có đơn nào</td></tr>
+            <tr><td colSpan={showActor ? 8 : 7} className="px-3 py-6 text-center text-gray-400">Không có đơn nào</td></tr>
           )}
         </tbody>
       </table>

@@ -10,10 +10,11 @@ import { useAppStore, LabelData } from '@/store/appStore';
 import { useAccountStore } from '@/store/accountStore';
 import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
+import { CampaignIcon, ChartIcon, ChatIcon, CheckIcon, CloudIcon, EditIcon, GhostIcon, HardDriveIcon, InboxIcon, PlayIcon, SendIcon, ShuffleIcon, TagIcon, UserCheckIcon, UserIcon, UsersIcon } from '@/components/common/icons';
 
 // ── Mini stat card ─────────────────────────────────────────────────────────────
 function MiniStat({ icon, label, value, sub, color = 'blue', onClick }: {
-  icon: string; label: string; value: string | number; sub?: string; color?: string;
+  icon: React.ReactNode; label: string; value: string | number; sub?: string; color?: string;
   onClick?: () => void;
 }) {
   const bg: Record<string, string> = {
@@ -31,7 +32,7 @@ function MiniStat({ icon, label, value, sub, color = 'blue', onClick }: {
         <span className="text-[11px] text-gray-400 leading-tight">{label}</span>
       </div>
       <span className="text-xl font-bold text-white leading-tight">{value}</span>
-      {sub && <span className="text-[11px] text-gray-500 mt-0.5">{sub}</span>}
+      {sub && <span className="text-[11px] text-gray-400 mt-0.5">{sub}</span>}
     </>
   );
   if (onClick) {
@@ -224,11 +225,11 @@ export default function CRMDashboard() {
       return (
         <div>
           <div className="flex items-center flex-wrap gap-2 mb-3">
-            <label className="text-[11px] text-gray-500">Từ</label>
+            <label className="text-[11px] text-gray-400">Từ</label>
             <DateInputVN value={customFrom} max={customTo}
               onChange={e => { setCustomFrom(e.target.value); setCustomError(''); }}
               className="bg-gray-700 border border-gray-600 rounded-lg px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-blue-500" />
-            <label className="text-[11px] text-gray-500">Đến</label>
+            <label className="text-[11px] text-gray-400">Đến</label>
             <DateInputVN value={customTo} min={customFrom} max={todayStr}
               onChange={e => { setCustomTo(e.target.value); setCustomError(''); }}
               className="bg-gray-700 border border-gray-600 rounded-lg px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-blue-500" />
@@ -242,16 +243,16 @@ export default function CRMDashboard() {
             <div className="grid grid-cols-4 gap-2">
               <MiniStat icon="🗨️" label="Hội thoại" value={customStats.conversationCount}
                 sub={`${customApplied.from} → ${customApplied.to}`} color="blue" />
-              <MiniStat icon="📨" label="Tổng tin nhắn" value={customStats.messageCount} color="purple" />
-              <MiniStat icon="📤" label="Đã gửi" value={customStats.sentCount}
+              <MiniStat icon={<SendIcon className="w-4 h-4" />} label="Tổng tin nhắn" value={customStats.messageCount} color="purple" />
+              <MiniStat icon={<SendIcon className="w-4 h-4" />} label="Đã gửi" value={customStats.sentCount}
                 sub={customStats.messageCount > 0 ? `${Math.round(customStats.sentCount / customStats.messageCount * 100)}% tổng` : '-'}
                 color="green" />
-              <MiniStat icon="📥" label="Đã nhận" value={customStats.receivedCount}
+              <MiniStat icon={<InboxIcon className="w-4 h-4" />} label="Đã nhận" value={customStats.receivedCount}
                 sub={customStats.messageCount > 0 ? `${Math.round(customStats.receivedCount / customStats.messageCount * 100)}% tổng` : '-'}
                 color="yellow" />
             </div>
           ) : (
-            <p className="text-xs text-gray-500 text-center py-4">Chọn khoảng thời gian và nhấn <strong className="text-gray-400">Xem</strong></p>
+            <p className="text-xs text-gray-400 text-center py-4">Chọn khoảng thời gian và nhấn <strong className="text-gray-400">Xem</strong></p>
           )}
         </div>
       );
@@ -276,15 +277,15 @@ export default function CRMDashboard() {
       return v >= 0 ? `+${v}%` : `${v}%`;
     };
     const pctColor = (cur: number, prev: number) =>
-      prev === 0 ? 'text-gray-500' : cur >= prev ? 'text-emerald-400' : 'text-red-400';
+      prev === 0 ? 'text-gray-400' : cur >= prev ? 'text-emerald-400' : 'text-red-400';
     const pctArrow = (cur: number, prev: number) =>
       prev === 0 ? '' : cur > prev ? '▲' : cur < prev ? '▼' : '→';
 
     const METRICS = [
       { key: 'conversationCount' as const, icon: '🗨️', label: 'Hội thoại' },
-      { key: 'messageCount'      as const, icon: '📨', label: 'Tin nhắn' },
-      { key: 'sentCount'         as const, icon: '📤', label: 'Đã gửi' },
-      { key: 'receivedCount'     as const, icon: '📥', label: 'Đã nhận' },
+      { key: 'messageCount'      as const, icon: <SendIcon className="w-4 h-4" />, label: 'Tin nhắn' },
+      { key: 'sentCount'         as const, icon: <SendIcon className="w-4 h-4" />, label: 'Đã gửi' },
+      { key: 'receivedCount'     as const, icon: <InboxIcon className="w-4 h-4" />, label: 'Đã nhận' },
     ];
 
     const chartData = METRICS.map(m => ({
@@ -300,13 +301,13 @@ export default function CRMDashboard() {
           <span className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-sm bg-blue-500 inline-block" />
             <span className="text-blue-300 font-medium">{cfg.curLabel}</span>
-            <span className="text-gray-500">{cfg.curDate}</span>
+            <span className="text-gray-400">{cfg.curDate}</span>
           </span>
           <span className="text-gray-700">|</span>
           <span className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-sm bg-gray-500 inline-block" />
             <span className="text-gray-400 font-medium">{cfg.prevLabel}</span>
-            <span className="text-gray-500">{cfg.prevDate}</span>
+            <span className="text-gray-400">{cfg.prevDate}</span>
           </span>
         </div>
 
@@ -330,9 +331,9 @@ export default function CRMDashboard() {
                   )}
                 </div>
                 <div className="flex items-center gap-1 mt-1">
-                  <span className="text-[11px] text-gray-600">vs</span>
-                  <span className="text-[11px] text-gray-500 font-medium">{prev}</span>
-                  <span className="text-[11px] text-gray-600">{cfg.prevLabel.toLowerCase()}</span>
+                  <span className="text-[11px] text-gray-400">vs</span>
+                  <span className="text-[11px] text-gray-400 font-medium">{prev}</span>
+                  <span className="text-[11px] text-gray-400">{cfg.prevLabel.toLowerCase()}</span>
                 </div>
                 {/* Mini split bar */}
                 <div className="mt-1.5 flex gap-0.5 h-1">
@@ -454,25 +455,25 @@ export default function CRMDashboard() {
       <div className="grid grid-cols-2 gap-4">
         {/* ...existing contacts and campaigns cards... */}
         <div className="bg-gray-800/50 border border-gray-700 rounded-2xl p-4">
-          <h3 className="text-[14px] font-semibold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-            <span>👥</span> Liên hệ
+          <h3 className="text-[14px] font-semibold text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+            <span><UsersIcon className="w-4 h-4" /></span> Liên hệ
           </h3>
           {(() => {
             const realTotal = totalContacts + (groupCount || 0);
             return (
               <div className="grid grid-cols-2 gap-2">
-                <MiniStat icon="👤" label="Tổng liên hệ" value={realTotal}
+                <MiniStat icon={<UserIcon className="w-4 h-4" />} label="Tổng liên hệ" value={realTotal}
                   sub={groupCount > 0 ? `Gồm ${groupCount} nhóm` : undefined}
                   color="blue"
                   onClick={() => handleNavigateContacts([])} />
-                <MiniStat icon="🤝" label="Bạn bè" value={friendCount}
+                <MiniStat icon={<UserCheckIcon className="w-4 h-4" />} label="Bạn bè" value={friendCount}
                   sub={`${realTotal > 0 ? Math.round(friendCount / realTotal * 100) : 0}% tổng`}
                   color="green"
                   onClick={() => handleNavigateContacts(['friend'])} />
-                <MiniStat icon="👻" label="Chưa kết bạn" value={totalContacts - friendCount}
+                <MiniStat icon={<GhostIcon className="w-4 h-4" />} label="Chưa kết bạn" value={totalContacts - friendCount}
                   color="gray"
                   onClick={() => handleNavigateContacts(['non_friend'])} />
-                <MiniStat icon="📝" label="Có ghi chú" value={noteCount}
+                <MiniStat icon={<EditIcon className="w-4 h-4" />} label="Có ghi chú" value={noteCount}
                   color="yellow"
                   onClick={() => handleNavigateContacts(['has_notes'])} />
               </div>
@@ -481,13 +482,13 @@ export default function CRMDashboard() {
         </div>
 
         <div className="bg-gray-800/50 border border-gray-700 rounded-2xl p-4">
-          <h3 className="text-[14px] font-semibold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-            <span>📢</span> Chiến dịch ({campaigns.length})
+          <h3 className="text-[14px] font-semibold text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+            <span><CampaignIcon className="w-4 h-4" /></span> Chiến dịch ({campaigns.length})
           </h3>
           <div className="grid grid-cols-2 gap-2">
-            <MiniStat icon="▶️" label="Đang chạy"   value={activeCamps}  color="green" />
+            <MiniStat icon={<PlayIcon className="w-4 h-4" />} label="Đang chạy"   value={activeCamps}  color="green" />
             <MiniStat icon="⏸"  label="Tạm dừng"    value={pausedCamps}  color="yellow" />
-            <MiniStat icon="✅" label="Hoàn thành"  value={doneCamps}    color="purple" />
+            <MiniStat icon={<CheckIcon className="w-4 h-4" />} label="Hoàn thành"  value={doneCamps}    color="purple" />
             <MiniStat icon="✉️" label="Tổng tin đã gửi" value={totalSent}
               sub={[totalFailed > 0 ? `${totalFailed} lỗi` : '', totalPending > 0 ? `${totalPending} chờ` : ''].filter(Boolean).join(' · ') || 'không lỗi'}
               color="blue" />
@@ -498,8 +499,8 @@ export default function CRMDashboard() {
       {/* ── Row 2: Activity Stats ── */}
       <div className="bg-gray-800/50 border border-gray-700 rounded-2xl p-4">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-[14px] font-semibold text-gray-500 uppercase tracking-wider flex items-center gap-1.5">
-            <span>💬</span> Hoạt động hội thoại
+          <h3 className="text-[14px] font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+            <span><ChatIcon className="w-4 h-4" /></span> Hoạt động hội thoại
           </h3>
           <div className="flex bg-gray-700/60 rounded-lg p-0.5 gap-0.5">
             {([
@@ -525,18 +526,18 @@ export default function CRMDashboard() {
       {(localLabels.length > 0 || zaloLabels.length > 0) && (
         <div className="bg-gray-800/50 border border-gray-700 rounded-2xl p-4">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-[14px] font-semibold text-gray-500 uppercase tracking-wider flex items-center gap-1.5">
-              <span>🏷️</span> Nhãn
+            <h3 className="text-[14px] font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+              <span><TagIcon className="w-4 h-4" /></span> Nhãn
             </h3>
             <div className="flex bg-gray-700/60 rounded-lg p-0.5 gap-0.5">
               <button onClick={() => setLabelSubTab('local')}
                 className={`px-3 py-1 rounded-md text-[11px] font-medium transition-colors ${
                   labelSubTab === 'local' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'
-                }`}>💾 Local</button>
+                }`}><HardDriveIcon className="w-4 h-4 inline" /> Local</button>
               <button onClick={() => setLabelSubTab('zalo')}
                 className={`px-3 py-1 rounded-md text-[11px] font-medium transition-colors ${
                   labelSubTab === 'zalo' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'
-                }`}>☁️ Zalo</button>
+                }`}><CloudIcon className="w-4 h-4 inline" /> Zalo</button>
             </div>
           </div>
 
@@ -547,7 +548,7 @@ export default function CRMDashboard() {
             const totalLocalConvs = localLabelData.reduce((s, l) => s + l.value, 0);
 
             return localLabelData.length === 0 ? (
-              <p className="text-xs text-gray-500 py-4 text-center">Chưa có Nhãn Local nào. Vào Cài đặt → Nhãn để tạo.</p>
+              <p className="text-xs text-gray-400 py-4 text-center">Chưa có Nhãn Local nào. Vào Cài đặt → Nhãn để tạo.</p>
             ) : (
               <div className="flex gap-5 items-start">
                 {/* Donut */}
@@ -564,7 +565,7 @@ export default function CRMDashboard() {
                     </ResponsiveContainer>
                     <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
                       <span className="text-xl font-bold text-white">{totalLocalConvs}</span>
-                      <span className="text-[9px] text-gray-500 mt-0.5">hội thoại</span>
+                      <span className="text-[9px] text-gray-400 mt-0.5">hội thoại</span>
                     </div>
                   </div>
                 ) : null}
@@ -581,7 +582,7 @@ export default function CRMDashboard() {
                         {l.emoji && <span className="text-xs flex-shrink-0">{l.emoji}</span>}
                         <span className="flex-1 text-xs text-gray-300 truncate">{l.name}</span>
                         <span className="text-xs font-bold text-blue-400 group-hover:text-blue-300 flex-shrink-0 group-hover:underline">{l.value}</span>
-                        {totalLocalConvs > 0 && <span className="text-[11px] text-gray-600 flex-shrink-0">{pct}%</span>}
+                        {totalLocalConvs > 0 && <span className="text-[11px] text-gray-400 flex-shrink-0">{pct}%</span>}
                       </button>
                     );
                   })}
@@ -604,7 +605,7 @@ export default function CRMDashboard() {
                   </ResponsiveContainer>
                   <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
                     <span className="text-xl font-bold text-white">{totalLabelConvs}</span>
-                    <span className="text-[9px] text-gray-500 mt-0.5">hội thoại</span>
+                    <span className="text-[9px] text-gray-400 mt-0.5">hội thoại</span>
                   </div>
                 </div>
                 <div className="flex-1 grid grid-cols-2 gap-1.5 content-start max-h-44 overflow-y-auto pr-1">
@@ -620,14 +621,14 @@ export default function CRMDashboard() {
                         <span className="text-xs font-bold text-blue-400 group-hover:text-blue-300 flex-shrink-0 group-hover:underline">
                           {l.value}
                         </span>
-                        <span className="text-[11px] text-gray-600 flex-shrink-0">{pct}%</span>
+                        <span className="text-[11px] text-gray-400 flex-shrink-0">{pct}%</span>
                       </button>
                     );
                   })}
                 </div>
               </div>
             ) : (
-              <p className="text-xs text-gray-500 py-4 text-center">{zaloLabels.length > 0 ? 'Các nhãn Zalo chưa có hội thoại nào' : 'Chưa có nhãn Zalo'}</p>
+              <p className="text-xs text-gray-400 py-4 text-center">{zaloLabels.length > 0 ? 'Các nhãn Zalo chưa có hội thoại nào' : 'Chưa có nhãn Zalo'}</p>
             )
           )}
         </div>
@@ -635,14 +636,14 @@ export default function CRMDashboard() {
 
       {/* ── Row 4: Top 10 campaign stats ── */}
       <div className="bg-gray-800/50 border border-gray-700 rounded-2xl p-4">
-        <h3 className="text-[14px] font-semibold text-gray-500 uppercase tracking-wider mb-4 flex items-center gap-1.5">
-          <span>📊</span> Thống kê 10 chiến dịch gần nhất
+        <h3 className="text-[14px] font-semibold text-gray-400 uppercase tracking-wider mb-4 flex items-center gap-1.5">
+          <span><ChartIcon className="w-4 h-4" /></span> Thống kê 10 chiến dịch gần nhất
         </h3>
 
         {loadingCampStats ? (
           <PageLoading variant="skeleton" skeletonVariant="table" />
         ) : campaignStats.length === 0 ? (
-          <div className="text-center py-10 text-gray-500 text-sm">Chưa có chiến dịch nào</div>
+          <div className="text-center py-10 text-gray-400 text-sm">Chưa có chiến dịch nào</div>
         ) : (
           <>
             {/* Bar chart */}
@@ -665,7 +666,7 @@ export default function CRMDashboard() {
             <div className="overflow-x-auto rounded-xl border border-gray-700/50">
               <table className="w-full text-xs border-collapse">
                 <thead>
-                  <tr className="text-[11px] text-gray-500 bg-gray-800/80">
+                  <tr className="text-[11px] text-gray-400 bg-gray-800/80">
                     <th className="text-left py-2.5 px-3 font-medium">Chiến dịch</th>
                     <th className="text-center py-2.5 px-2 font-medium">Loại</th>
                     <th className="text-right py-2.5 px-2 font-medium">Tổng KH</th>
@@ -684,7 +685,7 @@ export default function CRMDashboard() {
                       <tr key={c.id} className="border-t border-gray-700/50 hover:bg-gray-800/40 transition-colors">
                         <td className="py-2.5 px-3">
                           <p className="text-gray-200 font-medium truncate max-w-[180px]">{c.name}</p>
-                          <p className="text-[11px] text-gray-600 mt-0.5">
+                          <p className="text-[11px] text-gray-400 mt-0.5">
                             {new Date(c.created_at).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: '2-digit' })}
                           </p>
                         </td>
@@ -698,21 +699,21 @@ export default function CRMDashboard() {
                         <td className="py-2.5 px-2 text-right text-gray-300 font-semibold">{c.total_contacts}</td>
                         <td className="py-2.5 px-2 text-right">
                           <span className="text-green-400 font-semibold">{c.sent_count}</span>
-                          <span className="text-gray-600 text-[11px] ml-1">({sentPct}%)</span>
+                          <span className="text-gray-400 text-[11px] ml-1">({sentPct}%)</span>
                           <ProgressBar value={sentPct} color="#22c55e" />
                         </td>
                         <td className="py-2.5 px-2 text-right">
                           {c.failed_count > 0 ? (
                             <>
                               <span className="text-red-400 font-semibold">{c.failed_count}</span>
-                              <span className="text-gray-600 text-[11px] ml-1">({failPct}%)</span>
+                              <span className="text-gray-400 text-[11px] ml-1">({failPct}%)</span>
                               <ProgressBar value={failPct} color="#ef4444" />
                             </>
                           ) : <span className="text-gray-700">-</span>}
                         </td>
                         <td className="py-2.5 px-2 text-right">
                           <span className="text-blue-400 font-semibold">{c.replied_count}</span>
-                          <span className="text-gray-600 text-[11px] ml-1">({replyPct}%)</span>
+                          <span className="text-gray-400 text-[11px] ml-1">({replyPct}%)</span>
                           <ProgressBar value={replyPct} color="#3b82f6" />
                         </td>
                         <td className="py-2.5 px-3 text-right">
@@ -732,7 +733,7 @@ export default function CRMDashboard() {
 
       {/* Empty state */}
       {totalContacts === 0 && campaigns.length === 0 && zaloLabels.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-16 text-gray-500">
+        <div className="flex flex-col items-center justify-center py-16 text-gray-400">
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" className="mb-3 opacity-30">
             <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
             <circle cx="9" cy="7" r="4"/>

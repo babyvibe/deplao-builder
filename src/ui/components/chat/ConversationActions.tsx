@@ -63,11 +63,11 @@ export function DangerActionRow({
       </div>
       <div className="flex-1 min-w-0">
         <p className={`text-sm ${textColor}`}>{label}</p>
-        {sublabel && <p className="text-[11px] text-gray-500 mt-0.5 truncate">{sublabel}</p>}
+        {sublabel && <p className="text-[11px] text-gray-400 mt-0.5 truncate">{sublabel}</p>}
       </div>
       {rightEl ?? (
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-          className="text-gray-600 flex-shrink-0">
+          className="text-gray-400 flex-shrink-0">
           <polyline points="9 18 15 12 9 6"/>
         </svg>
       )}

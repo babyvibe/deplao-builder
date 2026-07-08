@@ -62,7 +62,7 @@ export default function NoteList({ notes, onSave, onDelete }: NoteListProps) {
             <>
               <p className="text-xs text-gray-200 whitespace-pre-wrap">{note.content}</p>
               <div className="flex items-center justify-between mt-1.5">
-                <span className="text-[11px] text-gray-500">{fmt(note.updated_at)}</span>
+                <span className="text-[11px] text-gray-400">{fmt(note.updated_at)}</span>
                 <div className="opacity-0 group-hover:opacity-100 flex gap-2 transition-opacity">
                   <button onClick={() => { setEditId(note.id); setEditText(note.content); }}
                     className="text-[11px] text-blue-400 hover:text-blue-300">Sửa</button>
@@ -75,7 +75,7 @@ export default function NoteList({ notes, onSave, onDelete }: NoteListProps) {
         </div>
       ))}
 
-      {notes.length === 0 && <p className="text-xs text-gray-500 text-center py-2">Chưa có ghi chú nào</p>}
+      {notes.length === 0 && <p className="text-xs text-gray-400 text-center py-2">Chưa có ghi chú nào</p>}
     </div>
   );
 }

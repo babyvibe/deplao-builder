@@ -60,7 +60,7 @@ export default function NodePalette({ channel }: Props) {
       <div className="px-3 py-3 border-b border-gray-700/60 flex-shrink-0">
         <p className="text-xs font-semibold text-gray-400 mb-2">Kéo node vào canvas</p>
         <div className="flex items-center gap-2 bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 focus-within:border-blue-500 transition-colors">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-500 flex-shrink-0">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-400 flex-shrink-0">
             <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
           </svg>
           <input
@@ -70,7 +70,7 @@ export default function NodePalette({ channel }: Props) {
             className="flex-1 bg-transparent text-xs text-white placeholder-gray-500 focus:outline-none"
           />
           {search && (
-            <button onClick={() => setSearch('')} className="text-gray-500 hover:text-white transition-colors">
+            <button onClick={() => setSearch('')} className="text-gray-400 hover:text-white transition-colors">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
               </svg>
@@ -94,7 +94,7 @@ export default function NodePalette({ channel }: Props) {
               </span>
               <svg
                 width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
-                className={`text-gray-600 transition-transform ${collapsed[group.label] ? '-rotate-90' : ''}`}
+                className={`text-gray-400 transition-transform ${collapsed[group.label] ? '-rotate-90' : ''}`}
               >
                 <polyline points="6 9 12 15 18 9"/>
               </svg>
@@ -111,7 +111,7 @@ export default function NodePalette({ channel }: Props) {
                     className={`cursor-grab active:cursor-grabbing mb-1 rounded-xl px-2.5 py-2 bg-gray-800/60 border border-gray-700/60 transition-all select-none ${GROUP_HOVER[group.label] || 'hover:border-gray-500 hover:bg-gray-700/60'}`}
                   >
                     <p className="text-xs text-white font-medium leading-tight">{item.label}</p>
-                    <p className="text-[10px] text-gray-500 leading-tight mt-0.5">{item.desc}</p>
+                    <p className="text-[10px] text-gray-400 leading-tight mt-0.5">{item.desc}</p>
                   </div>
                 ))}
               </div>
@@ -120,7 +120,7 @@ export default function NodePalette({ channel }: Props) {
         ))}
 
         {filtered.length === 0 && (
-          <p className="text-xs text-gray-600 text-center py-6">Không tìm thấy node</p>
+          <p className="text-xs text-gray-400 text-center py-6">Không tìm thấy node</p>
         )}
       </div>
     </div>

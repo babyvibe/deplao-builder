@@ -60,27 +60,27 @@ export default function QueueStatusBar({ status, maxTokens: maxTokensProp = 60 }
 
       {/* Token bar */}
       <div className="flex items-center gap-1.5 flex-shrink-0">
-        <span className="text-gray-500">Hạn mức:</span>
+        <span className="text-gray-400">Hạn mức:</span>
         <div className="w-24 h-1.5 bg-gray-700 rounded-full overflow-hidden">
           <div className={`h-full rounded-full transition-all duration-500 ${tokenColor}`}
             style={{ width: `${tokenPct}%` }} />
         </div>
         <span className={`font-medium tabular-nums ${tokenTextColor}`}>
           {status.tokens}/{maxTokens}
-          <span className="text-gray-600 font-normal"> /giờ</span>
+          <span className="text-gray-400 font-normal"> /giờ</span>
         </span>
       </div>
 
       {/* Elapsed since last send */}
       {status.lastSentAt > 0 && elapsedSec > 0 && (
-        <span className="text-gray-500 flex-shrink-0">
+        <span className="text-gray-400 flex-shrink-0">
           ⏱ Gửi lần cuối: <span className="text-blue-400 font-medium">{fmtElapsed(elapsedSec)}</span> trước
         </span>
       )}
 
       {/* Last sent timestamp */}
       {status.lastSentAt > 0 && (
-        <span className="text-gray-600 ml-auto flex-shrink-0">
+        <span className="text-gray-400 ml-auto flex-shrink-0">
           {new Date(status.lastSentAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
         </span>
       )}

@@ -9,6 +9,8 @@ import { EmployeeAvatar, RichContentPreview } from '../shared/ErpBadges';
 import { ConfirmDialog, ErpModalCard, ErpOverlay } from '../shared/ErpDialogs';
 import { ERP_DATE_FILTER_OPTIONS, getDefaultCustomRange, resolveErpDateRange, type ErpDateFilterPreset } from '../shared/erpDateFilters';
 import type { CreateCalendarEventInput, ErpCalendarEvent, ErpTask } from '../../../../models/erp';
+import { AlertIcon, CalendarIcon, CheckIcon, CloseIcon, TargetIcon, UsersIcon } from '@/components/common/icons';
+
 
 const STATUS_LABELS: Record<string, string> = {
   todo: 'Cần làm',
@@ -221,10 +223,10 @@ export default function TaskInboxPage() {
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>
             <h3 className="text-sm font-semibold text-white">Tổng quan công việc của tôi</h3>
-            <p className="text-[11px] text-gray-500 mt-1">Vai trò hiện tại: <span className="text-gray-300">{roleLabel(perms.role)}</span></p>
+            <p className="text-[11px] text-gray-400 mt-1">Vai trò hiện tại: <span className="text-gray-300">{roleLabel(perms.role)}</span></p>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-[11px] uppercase tracking-wider text-gray-500">Thời gian</span>
+            <span className="text-[11px] uppercase tracking-wider text-gray-400">Thời gian</span>
             <select
               value={dateFilter}
               onChange={e => setDateFilter(e.target.value as ErpDateFilterPreset)}
@@ -268,12 +270,12 @@ export default function TaskInboxPage() {
         <div className="space-y-3">
           <div className="flex items-center justify-between gap-2">
             <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Task trong giai đoạn đã chọn</div>
-            <div className="text-[11px] text-gray-500">{taskList.length} / {relevantTasks.length} task hiển thị</div>
+            <div className="text-[11px] text-gray-400">{taskList.length} / {relevantTasks.length} task hiển thị</div>
           </div>
 
           {taskList.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-40 text-gray-600 bg-gray-800/40 border border-gray-700/50 rounded-xl">
-              <span className="text-3xl mb-2">✅</span>
+            <div className="flex flex-col items-center justify-center h-40 text-gray-400 bg-gray-800/40 border border-gray-700/50 rounded-xl">
+              <span className="mb-2"><CheckIcon className="w-8 h-8" /></span>
               <p className="text-sm">Không có task nào trong giai đoạn này</p>
             </div>
           ) : (
@@ -300,15 +302,14 @@ export default function TaskInboxPage() {
                     </div>
                   )}
                   <div className="flex items-center gap-3 mt-2 text-[11px] text-gray-400 flex-wrap">
-                    <span className="font-medium">{task.priority === 'urgent' ? '🔴' : task.priority === 'high' ? '🟠' : task.priority === 'normal' ? '🔵' : '⚪'} {task.priority}</span>
+                    <span className="font-medium"><span className={`inline-block w-2.5 h-2.5 rounded-full ${task.priority === 'urgent' ? 'bg-red-500' : task.priority === 'high' ? 'bg-orange-500' : task.priority === 'normal' ? 'bg-blue-500' : 'bg-gray-400'}`} /> {task.priority}</span>
                     {task.due_date && (
-                      <span className={overdue ? 'text-red-300 font-medium' : 'text-gray-400'}>
-                        📅 {new Date(task.due_date).toLocaleDateString('vi-VN')}
+                      <span className={overdue ? 'text-red-300 font-medium' : 'text-gray-400'}><CalendarIcon className="w-4 h-4 inline" /> {new Date(task.due_date).toLocaleDateString('vi-VN')}
                       </span>
                     )}
                     {!!task.assignees?.length && (
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <span>👥</span>
+                        <span><UsersIcon className="w-4 h-4" /></span>
                         {task.assignees.slice(0, 3).map(employeeId => (
                           <EmployeeAvatar key={`${task.id}-${employeeId}`} employeeId={employeeId} size={18} showName />
                         ))}
@@ -345,7 +346,7 @@ export default function TaskInboxPage() {
           </div>
           <div className="bg-gray-800/50 border border-gray-700/60 rounded-xl p-3 space-y-2">
             {events.length === 0 ? (
-              <div className="text-sm text-gray-500 py-6 text-center">Không có sự kiện trong khoảng thời gian hiện tại</div>
+              <div className="text-sm text-gray-400 py-6 text-center">Không có sự kiện trong khoảng thời gian hiện tại</div>
             ) : (
               events.slice(0, 12).map(event => (
                 <button
@@ -359,7 +360,7 @@ export default function TaskInboxPage() {
                     <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: event.color || '#3b82f6' }} />
                   </div>
                   <p className="text-xs text-gray-300 mt-1">{new Date(event.start_at).toLocaleString('vi-VN')}</p>
-                  {event.location && <p className="text-[11px] text-gray-500 mt-1">📍 {event.location}</p>}
+                  {event.location && <p className="text-[11px] text-gray-400 mt-1">📍 {event.location}</p>}
                 </button>
               ))
             )}
@@ -402,7 +403,7 @@ export default function TaskInboxPage() {
                 className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
               />
               <div>
-                <label className="text-[11px] text-gray-500 mb-1 block">Bắt đầu</label>
+                <label className="text-[11px] text-gray-400 mb-1 block">Bắt đầu</label>
                 <input
                   type="datetime-local"
                   value={eventDraft.start_at ? new Date(eventDraft.start_at - new Date(eventDraft.start_at).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''}
@@ -424,7 +425,7 @@ export default function TaskInboxPage() {
               </label>
               {hasEndTime && (
                 <div>
-                  <label className="text-[11px] text-gray-500 mb-1 block">Kết thúc</label>
+                  <label className="text-[11px] text-gray-400 mb-1 block">Kết thúc</label>
                   <input
                     type="datetime-local"
                     value={eventDraft.end_at ? new Date(eventDraft.end_at - new Date(eventDraft.end_at).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''}

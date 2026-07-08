@@ -315,6 +315,7 @@ declare global {
         resolveMediaUrl: (bossUrl: string, mediaType?: string) => Promise<{ success: boolean; displayUrl: string; fromCache: boolean }>;
         hasMediaCache: (bossUrl: string) => Promise<{ success: boolean; cached: boolean }>;
         preloadMediaBatch: (urls: string[]) => Promise<{ success: boolean; triggered: number; error?: string }>;
+        ensureMediaLocal: (bossUrl: string, mediaType?: string) => Promise<{ success: boolean; displayUrl: string; localPath?: string; fromCache: boolean; error?: string }>;
       };
       app: {
         setBadge: (count: number) => void;
@@ -453,7 +454,7 @@ declare global {
         loginRemote: (bossUrl: string, username: string, password: string) => Promise<{ success: boolean; token?: string; employee?: any; error?: string }>;
       };
       relay: {
-        startServer: (port?: number) => Promise<{ success: boolean; port?: number; error?: string }>;
+        startServer: (port?: number) => Promise<{ success: boolean; port?: number; host?: string; error?: string }>;
         stopServer: () => Promise<{ success: boolean; error?: string }>;
         getServerStatus: () => Promise<{ success: boolean; running?: boolean; port?: number; connectedEmployees?: any[]; localIPs?: string[]; tunnelActive?: boolean; tunnelUrl?: string | null; error?: string }>;
         kickEmployee: (employeeId: string) => Promise<{ success: boolean; error?: string }>;

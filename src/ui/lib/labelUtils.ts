@@ -7,6 +7,7 @@
 
 import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
+import { TagIcon } from '@/components/common/icons';
 
 /**
  * Extract the display name from a Zalo label object.

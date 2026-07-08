@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
+import { FolderIcon } from '@/components/common/icons';
+
 
 interface Props {
   onClose: () => void;
@@ -53,7 +55,7 @@ export default function MergedInboxModal({ onClose }: Props) {
               <h2 className="text-base font-semibold text-white">Chế độ Gộp tài khoản</h2>
               <p className="text-xs text-gray-400 mt-0.5">Xem tất cả hội thoại từ nhiều tài khoản trong 1 nơi</p>
             </div>
-            <button onClick={onClose} className="ml-auto text-gray-500 hover:text-gray-300 transition-colors">
+            <button onClick={onClose} className="ml-auto text-gray-400 hover:text-gray-300 transition-colors">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
               </svg>
@@ -100,14 +102,14 @@ export default function MergedInboxModal({ onClose }: Props) {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-gray-200 truncate">{acc.full_name || acc.zalo_id}</p>
-                    <p className="text-[11px] text-gray-500 truncate">
+                    <p className="text-[11px] text-gray-400 truncate">
                       {acc.phone || acc.zalo_id}
                       {acc.is_business ? ' • 💼 Business' : ''}
                     </p>
                   </div>
                   {/* Connected status */}
                   <span className={`text-[11px] px-1.5 py-0.5 rounded-full flex-shrink-0 ${
-                    acc.isConnected ? 'bg-green-900/50 text-green-400' : 'bg-gray-700 text-gray-500'
+                    acc.isConnected ? 'bg-green-900/50 text-green-400' : 'bg-gray-700 text-gray-400'
                   }`}>
                     {acc.isConnected ? 'Online' : 'Offline'}
                   </span>

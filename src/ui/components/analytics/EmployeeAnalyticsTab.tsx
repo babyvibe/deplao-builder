@@ -5,8 +5,11 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
 import ipc from '@/lib/ipc';
-import PageLoading from '@/components/common/PageLoading';
+import PageLoading, { Spinner } from '@/components/common/PageLoading';
 import { toLocalMediaUrl } from '@/lib/localMedia';
+import { ActivityIcon, ChartIcon, ChatIcon, ClipboardListIcon, ClockIcon, FolderIcon, InboxIcon, PieChartIcon, RefreshIcon, TrendingUpIcon, UsersIcon } from '@/components/common/icons';
+
+
 
 // ── Colors ──────────────────────────────────────────────────────────────────
 const EMPLOYEE_COLORS = [
@@ -37,7 +40,7 @@ interface Props {
 
 // ── Shared UI ───────────────────────────────────────────────────────────────
 function KPICard({ icon, label, value, sub, color = 'blue' }: {
-  icon: string; label: string; value: string | number; sub?: string; color?: string;
+  icon: React.ReactNode; label: string; value: string | number; sub?: string; color?: string;
 }) {
   const bg: Record<string, string> = {
     blue: 'from-blue-500/10 to-blue-600/5 border-blue-500/20',
@@ -56,15 +59,15 @@ function KPICard({ icon, label, value, sub, color = 'blue' }: {
         <span className="text-xs text-gray-400 font-medium">{label}</span>
       </div>
       <span className="text-2xl font-bold text-white">{typeof value === 'number' ? value.toLocaleString('vi-VN') : value}</span>
-      {sub && <span className="text-[11px] text-gray-500">{sub}</span>}
+      {sub && <span className="text-[11px] text-gray-400">{sub}</span>}
     </div>
   );
 }
 
-function Section({ title, children, className = '' }: { title: string; children: React.ReactNode; className?: string }) {
+function Section({ title, children, className = '' }: { title: React.ReactNode; children: React.ReactNode; className?: string }) {
   return (
     <div className={`bg-gray-800/60 border border-white/5 rounded-2xl p-5 ${className}`}>
-      <h3 className="text-sm font-semibold text-gray-200 mb-4">{title}</h3>
+      <h3 className="text-sm font-semibold text-gray-200 mb-4 flex items-center gap-1.5">{title}</h3>
       {children}
     </div>
   );
@@ -321,8 +324,8 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
 
   if (comparison.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-16 text-gray-500">
-        <span className="text-4xl mb-3">👥</span>
+      <div className="flex flex-col items-center justify-center py-16 text-gray-400">
+        <span className="text-4xl mb-3"><UsersIcon className="w-4 h-4" /></span>
         <p className="text-sm">Chưa có nhân viên nào. Vào <span className="text-blue-400">Cài đặt → Quản lý nhân viên</span> để thêm.</p>
       </div>
     );
@@ -397,7 +400,7 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
                       {/* Name + role */}
                       <div className="flex-1 text-left min-w-0">
                         <p className="text-xs text-gray-200 font-medium truncate">{emp.display_name}</p>
-                        <p className="text-[9px] text-gray-500">{emp.role === 'boss' ? 'Boss' : 'Nhân viên'}{!emp.is_active ? ' · Tắt' : ''}</p>
+                        <p className="text-[9px] text-gray-400">{emp.role === 'boss' ? 'Boss' : 'Nhân viên'}{!emp.is_active ? ' · Tắt' : ''}</p>
                       </div>
                       {/* Color dot */}
                       <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: empColorMap[emp.employee_id] }} />
@@ -413,8 +416,7 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
         <button
           onClick={handleExportCSV}
           className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-200 px-2.5 py-1.5 rounded-lg hover:bg-gray-700 border border-gray-700 transition-colors"
-        >
-          📥 Xuất CSV
+        ><InboxIcon className="w-4 h-4 inline" /> Xuất CSV
         </button>
         <button
           onClick={loadData}
@@ -422,30 +424,30 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
           className="text-[11px] text-gray-400 hover:text-gray-200 px-2 py-1.5 rounded-lg hover:bg-gray-700 transition-colors"
           title="Làm mới"
         >
-          {loading ? '⏳' : '🔄'}
+          {loading ? <Spinner size={3} /> : <RefreshIcon className="w-4 h-4" />}
         </button>
       </div>
 
       {/* ── KPI Summary ──────────────────────────────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        <KPICard icon="👥" label="Nhân viên" value={filteredComparison.length}
+        <KPICard icon={<UsersIcon className="w-4 h-4" />} label="Nhân viên" value={filteredComparison.length}
           sub={`${filteredComparison.filter(e => e.is_active).length} hoạt động`} color="blue" />
-        <KPICard icon="💬" label="Tổng tin gửi" value={totals.messages_sent}
+        <KPICard icon={<ChatIcon className="w-4 h-4" />} label="Tổng tin gửi" value={totals.messages_sent}
           sub={`${periodDays} ngày`} color="green" />
-        <KPICard icon="🗂️" label="Hội thoại xử lý" value={totals.conversations}
+        <KPICard icon={<FolderIcon className="w-4 h-4" />} label="Hội thoại xử lý" value={totals.conversations}
           sub="tổng cộng" color="purple" />
-        <KPICard icon="⏱️" label="TB phản hồi" value={formatResponseTime(avgResponseTime)}
+        <KPICard icon={<ClockIcon className="w-4 h-4" />} label="TB phản hồi" value={formatResponseTime(avgResponseTime)}
           sub="trung bình team" color="cyan" />
-        <KPICard icon="🕐" label="Tổng giờ online" value={`${totals.online_hours}h`}
+        <KPICard icon={<ClockIcon className="w-4 h-4" />} label="Tổng giờ online" value={`${totals.online_hours}h`}
           sub={`TB ${filteredComparison.length > 0 ? (totals.online_hours / filteredComparison.length).toFixed(1) : 0}h/NV`} color="amber" />
       </div>
 
       {/* ── Row 1: Comparison bars + Pie charts ──────────────────── */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
         {/* Bar: Messages per employee */}
-        <Section title="📊 So sánh tin nhắn & hội thoại">
+        <Section title={<><ChartIcon className="w-4 h-4" />  So sánh tin nhắn & hội thoại</>}>
           {barCompData.length === 0 ? (
-            <p className="text-xs text-gray-500 text-center py-8">Chưa có dữ liệu</p>
+            <p className="text-xs text-gray-400 text-center py-8">Chưa có dữ liệu</p>
           ) : (
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
@@ -459,9 +461,9 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
                     return (
                       <div className="bg-gray-800 border border-gray-600 rounded-xl px-3 py-2 text-xs shadow-xl">
                         <p className="text-white font-medium mb-1">{d.name}</p>
-                        <p className="text-blue-400">💬 {d.messages} tin gửi</p>
-                        <p className="text-green-400">🗂️ {d.conversations} hội thoại</p>
-                        <p className="text-amber-400">🕐 {d.online}h online</p>
+                        <p className="text-blue-400"><ChatIcon className="w-4 h-4 inline" /> {d.messages} tin gửi</p>
+                        <p className="text-green-400"><FolderIcon className="w-4 h-4 inline" /> {d.conversations} hội thoại</p>
+                        <p className="text-amber-400"><ClockIcon className="w-4 h-4 inline" /> {d.online}h online</p>
                       </div>
                     );
                   }} />
@@ -475,9 +477,9 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
 
         {/* Pie: Message share + Online share */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Section title="🥧 Phân bổ tin nhắn">
+          <Section title={<><PieChartIcon className="w-4 h-4" />  Phân bổ tin nhắn</>}>
             {msgPieData.length === 0 ? (
-              <p className="text-xs text-gray-500 text-center py-8">Chưa có dữ liệu</p>
+              <p className="text-xs text-gray-400 text-center py-8">Chưa có dữ liệu</p>
             ) : (
               <div className="h-48">
                 <ResponsiveContainer width="100%" height="100%">
@@ -505,9 +507,9 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
             )}
           </Section>
 
-          <Section title="🕐 Phân bổ giờ online">
+          <Section title={<><ClockIcon className="w-4 h-4" />  Phân bổ giờ online</>}>
             {onlinePieData.length === 0 ? (
-              <p className="text-xs text-gray-500 text-center py-8">Chưa có dữ liệu</p>
+              <p className="text-xs text-gray-400 text-center py-8">Chưa có dữ liệu</p>
             ) : (
               <div className="h-48">
                 <ResponsiveContainer width="100%" height="100%">
@@ -539,9 +541,9 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
 
       {/* ── Row 2: Message timeline + Online timeline ────────────── */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-        <Section title="📈 Tin nhắn theo ngày (so sánh nhân viên)">
+        <Section title={<><TrendingUpIcon className="w-4 h-4" />  Tin nhắn theo ngày (so sánh nhân viên)</>}>
           {msgTimelineChart.length === 0 ? (
-            <p className="text-xs text-gray-500 text-center py-8">Chưa có dữ liệu</p>
+            <p className="text-xs text-gray-400 text-center py-8">Chưa có dữ liệu</p>
           ) : (
             <div className="h-56">
               <ResponsiveContainer width="100%" height="100%">
@@ -575,9 +577,9 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
           )}
         </Section>
 
-        <Section title="🕐 Giờ online theo ngày (so sánh nhân viên)">
+        <Section title={<><ClockIcon className="w-4 h-4" />  Giờ online theo ngày (so sánh nhân viên)</>}>
           {onlineTimelineChart.length === 0 ? (
-            <p className="text-xs text-gray-500 text-center py-8">Chưa có dữ liệu</p>
+            <p className="text-xs text-gray-400 text-center py-8">Chưa có dữ liệu</p>
           ) : (
             <div className="h-56">
               <ResponsiveContainer width="100%" height="100%">
@@ -614,9 +616,9 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
 
       {/* ── Row 3: Response time comparison + Radar ───────────────── */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-        <Section title="⏱️ Xếp hạng tốc độ phản hồi">
+        <Section title={<><ClockIcon className="w-4 h-4" />  Xếp hạng tốc độ phản hồi</>}>
           {responseBarData.length === 0 ? (
-            <p className="text-xs text-gray-500 text-center py-8">Chưa có dữ liệu phản hồi</p>
+            <p className="text-xs text-gray-400 text-center py-8">Chưa có dữ liệu phản hồi</p>
           ) : (
             <div className="h-56">
               <ResponsiveContainer width="100%" height="100%">
@@ -648,9 +650,9 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
           )}
         </Section>
 
-        <Section title="🕸️ So sánh đa chiều nhân viên">
+        <Section title={<><ActivityIcon className="w-4 h-4" />  So sánh đa chiều nhân viên</>}>
           {radarData.length === 0 || filteredComparison.length < 2 ? (
-            <p className="text-xs text-gray-500 text-center py-8">Cần ít nhất 2 nhân viên có dữ liệu</p>
+            <p className="text-xs text-gray-400 text-center py-8">Cần ít nhất 2 nhân viên có dữ liệu</p>
           ) : (
             <div className="h-56">
               <ResponsiveContainer width="100%" height="100%">
@@ -690,9 +692,9 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
 
       {/* ── Row 4: Response distribution + Hourly activity ────────── */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-        <Section title={`📊 Phân bổ thời gian phản hồi${!isAll ? ` - ${filterLabel}` : ''}`}>
+        <Section title={<><ChartIcon className="w-4 h-4" /> Phân bổ thời gian phản hồi{!isAll ? ` - ${filterLabel}` : ''}</>}>
           {responseDistChart.every(r => r.count === 0) ? (
-            <p className="text-xs text-gray-500 text-center py-8">Chưa có dữ liệu</p>
+            <p className="text-xs text-gray-400 text-center py-8">Chưa có dữ liệu</p>
           ) : (
             <div className="h-52">
               <ResponsiveContainer width="100%" height="100%">
@@ -721,9 +723,9 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
           )}
         </Section>
 
-        <Section title={`🕐 Hoạt động theo giờ${!isAll ? ` - ${filterLabel}` : ''}`}>
+        <Section title={<><ClockIcon className="w-4 h-4" /> Hoạt động theo giờ{!isAll ? ` - ${filterLabel}` : ''}</>}>
           {hourlyChart.every(r => r.count === 0) ? (
-            <p className="text-xs text-gray-500 text-center py-8">Chưa có dữ liệu</p>
+            <p className="text-xs text-gray-400 text-center py-8">Chưa có dữ liệu</p>
           ) : (
             <div className="h-52">
               <ResponsiveContainer width="100%" height="100%">
@@ -749,11 +751,11 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
       </div>
 
       {/* ── Row 5: Detailed table ────────────────────────────────── */}
-      <Section title="📋 Bảng chi tiết nhân viên">
+      <Section title={<><ClipboardListIcon className="w-4 h-4" /> Bảng chi tiết nhân viên</>}>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
-              <tr className="text-gray-500 border-b border-gray-700">
+              <tr className="text-gray-400 border-b border-gray-700">
                 <th className="text-left py-2.5 px-3 font-medium">#</th>
                 <th className="text-left py-2.5 px-3 font-medium">Nhân viên</th>
                 <th className="text-left py-2.5 px-3 font-medium">Vai trò</th>
@@ -771,7 +773,7 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
                 return (
                   <tr key={emp.employee_id}
                     className={`border-b border-gray-700/50 hover:bg-gray-700/30 transition-colors ${!emp.is_active ? 'opacity-50' : ''}`}>
-                    <td className="py-2.5 px-3 text-gray-500 font-mono">{idx + 1}</td>
+                    <td className="py-2.5 px-3 text-gray-400 font-mono">{idx + 1}</td>
                     <td className="py-2.5 px-3">
                       <div className="flex items-center gap-2">
                         <div className="w-7 h-7 rounded-full bg-gray-600 flex items-center justify-center text-[10px] flex-shrink-0 overflow-hidden"
@@ -796,7 +798,7 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
                     <td className="text-right py-2.5 px-3 text-gray-300 font-mono font-medium">{emp.messages_sent.toLocaleString('vi-VN')}</td>
                     <td className="text-right py-2.5 px-3 text-gray-300 font-mono">{emp.conversations_handled}</td>
                     <td className="text-right py-2.5 px-3">
-                      <span className={`font-medium ${emp.avg_response_time_ms > 300_000 ? 'text-red-400' : emp.avg_response_time_ms > 120_000 ? 'text-amber-400' : emp.avg_response_time_ms > 0 ? 'text-green-400' : 'text-gray-500'}`}>
+                      <span className={`font-medium ${emp.avg_response_time_ms > 300_000 ? 'text-red-400' : emp.avg_response_time_ms > 120_000 ? 'text-amber-400' : emp.avg_response_time_ms > 0 ? 'text-green-400' : 'text-gray-400'}`}>
                         {formatResponseTime(emp.avg_response_time_ms)}
                       </span>
                     </td>

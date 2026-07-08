@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import ipc from '@/lib/ipc';
 import qrCodeImg from '../../../assets/donate/qr.png';
+import { AlertIcon, AwardIcon, BookIcon, BotIcon, BriefcaseIcon, BugIcon, CalendarIcon, CampaignIcon, ChartIcon, ChatIcon, CheckCircleIcon, CheckIcon, CircleIcon, ClipboardIcon, ClipboardListIcon, ClockIcon, CloseIcon, CoffeeIcon, CreditCardIcon, CrownIcon, DiamondIcon, DollarIcon, EditIcon, FileTextIcon, FolderIcon, GiftIcon, GlobeIcon, HardDriveIcon, HeartIcon, HomeIcon, ImageIcon, LightningIcon, LinkIcon, LockIcon, MegaphoneIcon, MenuIcon, PackageIcon, PaperclipIcon, PhoneIcon, PinIcon, PluginIcon, PlusIcon, RefreshIcon, ReplyIcon, RepeatIcon, RocketIcon, SearchIcon, SendIcon, SettingsIcon, ShieldIcon, ShoppingCartIcon, ShuffleIcon, SlidersIcon, SmileIcon, SmartphoneIcon, SparklesIcon, StarIcon, StoreIcon, SunIcon, TagIcon, TargetIcon, TrashIcon, TrendingUpIcon, TruckIcon, UserCheckIcon, UserIcon, UsersIcon, WrenchIcon } from '@/components/common/icons';
 
 type FeatureId =
   | 'overview'
@@ -23,28 +24,28 @@ type FeatureId =
 
 interface Feature {
   id: FeatureId;
-  icon: string;
+  icon: React.ReactNode;
   label: string;
 }
 
 const FEATURES: Feature[] = [
-  { id: 'overview',     icon: '🏠', label: 'Tổng quan' },
-  { id: 'dashboard',    icon: '📊', label: 'Dashboard' },
-  { id: 'multiAccount', icon: '👤', label: 'Đa tài khoản' },
-  { id: 'messaging',    icon: '💬', label: 'Quản lý tin nhắn' },
-  { id: 'crm',          icon: '👥', label: 'CRM & Khách hàng' },
-  { id: 'workflow',     icon: '⚙️', label: 'Workflow tự động' },
-  { id: 'integration-pos', icon: '🛒', label: 'Tích hợp POS' },
-  { id: 'integration-payment', icon: '💳', label: 'Tích hợp thanh toán' },
-  { id: 'integration-shipping', icon: '📦', label: 'Tích hợp vận chuyển' },
-  { id: 'ai-assistant', icon: '🤖', label: 'Trợ lý AI' },
-  { id: 'analytics',    icon: '📈', label: 'Báo cáo & Phân tích' },
-  { id: 'erp',          icon: '🗂️', label: 'ERP quản trị nội bộ' },
-  { id: 'employees',    icon: '🧑‍💼', label: 'Cài đặt nhân viên & workspace' },
-  { id: 'security',     icon: '🔒', label: 'Bảo mật & Dữ liệu' },
-  { id: 'policy',       icon: '📜', label: 'Chính sách pháp lý' },
-  { id: 'bugreport',    icon: '🐛', label: 'Hướng dẫn báo lỗi' },
-  { id: 'donate',       icon: '☕', label: 'Donate & Ủng hộ' },
+  { id: 'overview',     icon: <HomeIcon className="w-4 h-4" />, label: 'Tổng quan' },
+  { id: 'dashboard',    icon: <ChartIcon className="w-4 h-4" />, label: 'Dashboard' },
+  { id: 'multiAccount', icon: <UserIcon className="w-4 h-4" />, label: 'Đa tài khoản' },
+  { id: 'messaging',    icon: <ChatIcon className="w-4 h-4" />, label: 'Quản lý tin nhắn' },
+  { id: 'crm',          icon: <UsersIcon className="w-4 h-4" />, label: 'CRM & Khách hàng' },
+  { id: 'workflow',     icon: <LightningIcon className="w-4 h-4" />, label: 'Workflow tự động' },
+  { id: 'integration-pos', icon: <ShoppingCartIcon className="w-4 h-4" />, label: 'Tích hợp POS' },
+  { id: 'integration-payment', icon: <CreditCardIcon className="w-4 h-4" />, label: 'Tích hợp thanh toán' },
+  { id: 'integration-shipping', icon: <PackageIcon className="w-4 h-4" />, label: 'Tích hợp vận chuyển' },
+  { id: 'ai-assistant', icon: <BotIcon className="w-4 h-4" />, label: 'Trợ lý AI' },
+  { id: 'analytics',    icon: <TrendingUpIcon className="w-4 h-4" />, label: 'Báo cáo & Phân tích' },
+  { id: 'erp',          icon: <FolderIcon className="w-4 h-4" />, label: 'ERP quản trị nội bộ' },
+  { id: 'employees',    icon: <UserIcon className="w-4 h-4" />, label: 'Cài đặt nhân viên & workspace' },
+  { id: 'security',     icon: <LockIcon className="w-4 h-4" />, label: 'Bảo mật & Dữ liệu' },
+  { id: 'policy',       icon: <FileTextIcon className="w-4 h-4" />, label: 'Chính sách pháp lý' },
+  { id: 'bugreport',    icon: <BugIcon className="w-4 h-4" />, label: 'Hướng dẫn báo lỗi' },
+  { id: 'donate',       icon: <CoffeeIcon className="w-4 h-4" />, label: 'Donate & Ủng hộ' },
 ];
 
 function Badge({ text, color }: { text: string; color: string }) {
@@ -84,7 +85,7 @@ function StepList({ steps }: { steps: { title: string; desc: string }[] }) {
           </span>
           <div>
             <p className="text-gray-300 text-xs font-semibold">{s.title}</p>
-            <p className="text-gray-500 text-xs mt-0.5" dangerouslySetInnerHTML={{ __html: s.desc }} />
+            <p className="text-gray-400 text-xs mt-0.5" dangerouslySetInnerHTML={{ __html: s.desc }} />
           </div>
         </li>
       ))}
@@ -106,7 +107,7 @@ function OverviewPanel() {
   return (
     <div className="space-y-4">
       <div className="flex items-start gap-3">
-        <span className="text-4xl leading-none">🤖</span>
+        <span className="text-4xl leading-none"><BotIcon className="w-4 h-4" /></span>
         <div>
           <h3 className="text-white font-bold text-base">Deplao</h3>
           <p className="text-gray-400 text-xs mt-0.5">Phần mềm desktop quản lý Zalo & Facebook cá nhân Đa tài khoản tích hợp CRM, ERP, POS, Workflow và AI Assistant giúp đội nhóm bán hàng, chăm sóc khách hàng và marketing trên Zalo và Facebook vận hành tập trung trong một ứng dụng duy nhất.</p>
@@ -117,25 +118,25 @@ function OverviewPanel() {
       </div>
 
       <Card>
-        <SectionTitle>🎯 Ứng dụng được xây dựng cho ai?</SectionTitle>
+        <SectionTitle><TargetIcon className="w-4 h-4 inline" /> Ứng dụng được xây dựng cho ai?</SectionTitle>
         <div className="space-y-2">
           {([
-            ['🏢', 'Doanh nghiệp vừa và nhỏ (SME)', 'Quản lý nhiều tài khoản Zalo/Facebook cùng lúc, phân công nhân viên chăm sóc từng kênh, theo dõi hiệu suất qua báo cáo tập trung.'],
-            ['📣', 'Marketing Agency / Freelancer Marketing', 'Chạy chiến dịch gửi tin hàng loạt, quản lý danh sách khách hàng của nhiều client, tự động hóa nuture lead qua Zalo & Facebook.'],
-            ['🛒', 'Shop online / Kinh doanh thương mại điện tử', 'Nhận đơn, CSKH, gửi thông báo đơn hàng và tương tác với khách qua Zalo & Facebook - kết nối trực tiếp với POS, GHN, VNPay.'],
-            ['📞', 'Sales & Telesales', 'Quản lý pipeline khách hàng trên Zalo & Facebook, tự động gửi follow-up, lọc khách theo trạng thái chiến dịch và tương tác gần nhất.'],
-            ['🎓', 'Trung tâm đào tạo / Giáo dục', 'Gửi thông báo lịch học, nhắc học viên, chăm sóc phụ huynh hàng loạt, phân nhóm theo lớp/khóa học.'],
-            ['🏥', 'Phòng khám / Spa / Làm đẹp', 'Nhắc lịch hẹn tự động, gửi chăm sóc sau dịch vụ, chúc mừng sinh nhật khách hàng đúng ngày để tạo thiện cảm và kéo khách quay lại.'],
-            ['🍜', 'F&B / Nhà hàng / Quán ăn', 'Gửi ưu đãi theo ngày đặc biệt, xây dựng nhóm khách hàng thân thiết, kết nối POS để tự động hóa thông báo đơn hàng.'],
-            ['🤝', 'Team/Đội nhóm bán hàng nhiều người', 'Boss cấp tài khoản nhân viên, phân quyền từng người được xem/làm gì, theo dõi hiệu suất làm việc qua báo cáo nhân viên.'],
-            ['💼', 'Đại lý / Nhà phân phối', 'Quản lý mạng lưới đại lý qua Zalo, tự động cập nhật giá/sản phẩm mới, phân nhóm đại lý theo khu vực bằng nhãn và workflow.'],
-            ['📱', 'Content Creator / KOC / KOL', 'Quản lý tin nhắn từ follower, tự động trả lời câu hỏi thường gặp bằng AI, nuture audience thành khách hàng mua hàng.'],
-          ] as [string,string,string][]).map(([icon, title, desc], i) => (
+            { icon: <HomeIcon className="w-5 h-5" />, title: 'Doanh nghiệp vừa và nhỏ (SME)', desc: 'Quản lý nhiều tài khoản Zalo/Facebook cùng lúc, phân công nhân viên chăm sóc từng kênh, theo dõi hiệu suất qua báo cáo tập trung.' },
+            { icon: <MegaphoneIcon className="w-5 h-5" />, title: 'Marketing Agency / Freelancer Marketing', desc: 'Chạy chiến dịch gửi tin hàng loạt, quản lý danh sách khách hàng của nhiều client, tự động hóa nuture lead qua Zalo & Facebook.' },
+            { icon: <ShoppingCartIcon className="w-5 h-5" />, title: 'Shop online / Kinh doanh thương mại điện tử', desc: 'Nhận đơn, CSKH, gửi thông báo đơn hàng và tương tác với khách qua Zalo & Facebook - kết nối trực tiếp với POS, GHN, VNPay.' },
+            { icon: <PhoneIcon className="w-5 h-5" />, title: 'Sales & Telesales', desc: 'Quản lý pipeline khách hàng trên Zalo & Facebook, tự động gửi follow-up, lọc khách theo trạng thái chiến dịch và tương tác gần nhất.' },
+            { icon: <AwardIcon className="w-5 h-5" />, title: 'Trung tâm đào tạo / Giáo dục', desc: 'Gửi thông báo lịch học, nhắc học viên, chăm sóc phụ huynh hàng loạt, phân nhóm theo lớp/khóa học.' },
+            { icon: <HeartIcon className="w-5 h-5" />, title: 'Phòng khám / Spa / Làm đẹp', desc: 'Nhắc lịch hẹn tự động, gửi chăm sóc sau dịch vụ, chúc mừng sinh nhật khách hàng đúng ngày để tạo thiện cảm và kéo khách quay lại.' },
+            { icon: <CoffeeIcon className="w-5 h-5" />, title: 'F&B / Nhà hàng / Quán ăn', desc: 'Gửi ưu đãi theo ngày đặc biệt, xây dựng nhóm khách hàng thân thiết, kết nối POS để tự động hóa thông báo đơn hàng.' },
+            { icon: <UsersIcon className="w-5 h-5" />, title: 'Team/Đội nhóm bán hàng nhiều người', desc: 'Boss cấp tài khoản nhân viên, phân quyền từng người được xem/làm gì, theo dõi hiệu suất làm việc qua báo cáo nhân viên.' },
+            { icon: <BriefcaseIcon className="w-5 h-5" />, title: 'Đại lý / Nhà phân phối', desc: 'Quản lý mạng lưới đại lý qua Zalo, tự động cập nhật giá/sản phẩm mới, phân nhóm đại lý theo khu vực bằng nhãn và workflow.' },
+            { icon: <SmartphoneIcon className="w-5 h-5" />, title: 'Content Creator / KOC / KOL', desc: 'Quản lý tin nhắn từ follower, tự động trả lời câu hỏi thường gặp bằng AI, nuture audience thành khách hàng mua hàng.' },
+          ]).map((item, i) => (
             <div key={i} className="flex gap-2.5 bg-gray-700/30 rounded-lg p-2.5">
-              <span className="text-base flex-shrink-0 mt-0.5">{icon}</span>
+              <span className="flex-shrink-0 mt-0.5 text-gray-300">{item.icon}</span>
               <div>
-                <p className="text-gray-200 text-[11px] font-semibold">{title}</p>
-                <p className="text-gray-500 text-[11px] mt-0.5 leading-relaxed">{desc}</p>
+                <p className="text-gray-200 text-[11px] font-semibold">{item.title}</p>
+                <p className="text-gray-400 text-[11px] mt-0.5 leading-relaxed">{item.desc}</p>
               </div>
             </div>
           ))}
@@ -143,18 +144,18 @@ function OverviewPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>✨ Tính năng nổi bật</SectionTitle>
+        <SectionTitle><SparklesIcon className="w-4 h-4 inline" /> Tính năng nổi bật</SectionTitle>
         <div className="grid grid-cols-2 gap-2">
           {[
-            { icon: '👤', text: 'Đa tài khoản Zalo & Facebook' },
-            { icon: '💬', text: 'Quản lý hội thoại tập trung' },
-            { icon: '👥', text: 'CRM khách hàng' },
-            { icon: '⚙️', text: 'Workflow tự động hoá' },
-            { icon: '🤖', text: 'Trợ lý AI' },
-            { icon: '🏪', text: 'Kết nối POS, thanh toán, vận chuyển' },
-            { icon: '🗂️', text: 'ERP quản trị nội bộ' },
-            { icon: '🧑‍💼', text: 'Cài đặt nhân viên & workspace' },
-            { icon: '📊', text: 'Báo cáo thống kê' },
+            { icon: <UserIcon className="w-4 h-4" />, text: 'Đa tài khoản Zalo & Facebook' },
+            { icon: <ChatIcon className="w-4 h-4" />, text: 'Quản lý hội thoại tập trung' },
+            { icon: <UsersIcon className="w-4 h-4" />, text: 'CRM khách hàng' },
+            { icon: <SettingsIcon className="w-4 h-4" />, text: 'Workflow tự động hoá' },
+            { icon: <BotIcon className="w-4 h-4" />, text: 'Trợ lý AI' },
+            { icon: <StoreIcon className="w-4 h-4" />, text: 'Kết nối POS, thanh toán, vận chuyển' },
+            { icon: <FolderIcon className="w-4 h-4" />, text: 'ERP quản trị nội bộ' },
+            { icon: <UserIcon className="w-4 h-4" />, text: 'Cài đặt nhân viên & workspace' },
+            { icon: <ChartIcon className="w-4 h-4" />, text: 'Báo cáo thống kê' },
           ].map((f, i) => (
             <div key={i} className="flex items-center gap-2 bg-gray-700/40 rounded-lg px-3 py-2">
               <span className="text-sm">{f.icon}</span>
@@ -165,7 +166,7 @@ function OverviewPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>💡 Yêu cầu hệ thống</SectionTitle>
+        <SectionTitle><SunIcon className="w-4 h-4 inline" /> Yêu cầu hệ thống</SectionTitle>
         <BulletList items={[
           'Windows 10/11 (64-bit) hoặc MacOS - đề xuất chạy trên PC/máy chủ ổn định',
           'RAM tối thiểu: <strong class="text-gray-200">4 GB</strong> (đề xuất 8 GB trở lên)',
@@ -181,7 +182,7 @@ function MultiAccountPanel() {
   return (
     <div className="space-y-4">
       <Card>
-        <SectionTitle>👤 Đăng nhập nhiều tài khoản Zalo & Facebook</SectionTitle>
+        <SectionTitle><UserIcon className="w-4 h-4 inline" /> Đăng nhập nhiều tài khoản Zalo & Facebook</SectionTitle>
         <Paragraph>
           Deplao cho phép bạn đăng nhập và quản lý <strong className="text-white font-semibold">không giới hạn tài khoản Zalo và Facebook</strong> trong một giao diện duy nhất.
           Mỗi tài khoản hoạt động độc lập, an toàn và không ảnh hưởng lẫn nhau.
@@ -197,9 +198,9 @@ function MultiAccountPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>🔒 Proxy - Chọn proxy trước khi đăng nhập</SectionTitle>
+        <SectionTitle><LockIcon className="w-4 h-4 inline" /> Proxy - Chọn proxy trước khi đăng nhập</SectionTitle>
         <div className="flex items-center gap-3 bg-blue-900/20 border border-blue-700/40 rounded-lg px-3 py-2 mb-2">
-          <span className="text-blue-400 text-sm flex-shrink-0">✨</span>
+          <SparklesIcon className="text-blue-400 w-4 h-4 flex-shrink-0" />
           <p className="text-blue-300 text-xs font-medium">Mỗi tài khoản Zalo có thể dùng proxy riêng - không ảnh hưởng lẫn nhau</p>
         </div>
         <Paragraph>
@@ -216,9 +217,9 @@ function MultiAccountPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>🔀 Chế độ Gộp trang</SectionTitle>
+        <SectionTitle><ShuffleIcon className="w-4 h-4 inline" /> Chế độ Gộp trang</SectionTitle>
         <div className="flex items-center gap-3 bg-blue-900/20 border border-blue-700/40 rounded-lg px-3 py-2 mb-2">
-          <span className="text-blue-400 text-sm flex-shrink-0">✨</span>
+          <SparklesIcon className="text-blue-400 w-4 h-4 flex-shrink-0" />
           <p className="text-blue-300 text-xs font-medium">Tính năng độc quyền - quản lý nhiều Zalo chỉ trong một hộp thư duy nhất</p>
         </div>
         <Paragraph>
@@ -239,7 +240,7 @@ function MultiAccountPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>⚠️ Lưu ý quan trọng</SectionTitle>
+        <SectionTitle><AlertIcon className="w-4 h-4 inline" /> Lưu ý quan trọng</SectionTitle>
         <BulletList items={[
           'Tài khoản Zalo phải là tài khoản <strong class="text-gray-200">cá nhân hoặc tài khoản doanh nghiệp</strong> hợp lệ',
           'App không hỗ trợ tài khoản đã bị Zalo khóa hoặc giới hạn tính năng',
@@ -256,7 +257,7 @@ function MessagingPanel() {
   return (
     <div className="space-y-4">
       <Card>
-        <SectionTitle>💬 Hộp thư tập trung - Danh sách hội thoại</SectionTitle>
+        <SectionTitle><ChatIcon className="w-4 h-4 inline" /> Hộp thư tập trung - Danh sách hội thoại</SectionTitle>
         <Paragraph>
           Toàn bộ hội thoại từ tất cả tài khoản Zalo cá nhân & Facebook cá nhân (beta) hiển thị trong một màn hình duy nhất.
           Hệ thống bộ lọc giúp bạn tập trung vào đúng hội thoại cần xử lý ngay lập tức.
@@ -273,35 +274,35 @@ function MessagingPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>✏️ Soạn tin nhắn - Đầy đủ tính năng Zalo</SectionTitle>
+        <SectionTitle><EditIcon className="w-4 h-4 inline" /> Soạn tin nhắn - Đầy đủ tính năng Zalo</SectionTitle>
         <div className="grid grid-cols-2 gap-2">
           {[
-            { icon: '📝', feat: 'Định dạng văn bản', desc: 'In đậm, in nghiêng, gạch chân, gạch ngang' },
-            { icon: '😊', feat: 'Emoji & Sticker', desc: 'Bộ emoji đầy đủ + sticker Zalo' },
-            { icon: '🖼', feat: 'Gửi ảnh & video', desc: 'Từ file hoặc dán từ clipboard' },
-            { icon: '📎', feat: 'Gửi file đính kèm', desc: 'Mọi định dạng file' },
-            { icon: '↩️', feat: 'Trả lời (Reply)', desc: 'Reply trực tiếp vào tin nhắn cụ thể' },
+            { icon: <EditIcon className="w-4 h-4" />, feat: 'Định dạng văn bản', desc: 'In đậm, in nghiêng, gạch chân, gạch ngang' },
+            { icon: <SmileIcon className="w-4 h-4" />, feat: 'Emoji & Sticker', desc: 'Bộ emoji đầy đủ + sticker Zalo' },
+            { icon: <ImageIcon className="w-4 h-4" />, feat: 'Gửi ảnh & video', desc: 'Từ file hoặc dán từ clipboard' },
+            { icon: <PaperclipIcon className="w-4 h-4" />, feat: 'Gửi file đính kèm', desc: 'Mọi định dạng file' },
+            { icon: <ReplyIcon className="w-4 h-4" />, feat: 'Trả lời (Reply)', desc: 'Reply trực tiếp vào tin nhắn cụ thể' },
             { icon: '@', feat: 'Tag thành viên', desc: 'Gõ @ để tag trong nhóm (gợi ý tự động)' },
-            { icon: '📊', feat: 'Tạo bình chọn', desc: 'Tạo poll trong nhóm Zalo' },
-            { icon: '📝', feat: 'Ghi chú nhóm', desc: 'Tạo & xem note được ghim trong nhóm' },
-            { icon: '⏰', feat: 'Nhắc nhở', desc: 'Đặt reminder ngay trong hội thoại' },
-            { icon: '📇', feat: 'Gửi danh thiếp', desc: 'Share thông tin liên hệ qua card' },
+            { icon: <ChartIcon className="w-4 h-4" />, feat: 'Tạo bình chọn', desc: 'Tạo poll trong nhóm Zalo' },
+            { icon: <EditIcon className="w-4 h-4" />, feat: 'Ghi chú nhóm', desc: 'Tạo & xem note được ghim trong nhóm' },
+            { icon: <ClockIcon className="w-4 h-4" />, feat: 'Nhắc nhở', desc: 'Đặt reminder ngay trong hội thoại' },
+            { icon: <ClipboardIcon className="w-4 h-4" />, feat: 'Gửi danh thiếp', desc: 'Share thông tin liên hệ qua card' },
           ].map((f, i) => (
             <div key={i} className="bg-gray-700/30 rounded-lg px-2.5 py-2">
               <p className="text-gray-200 text-[11px] font-medium">{f.icon} {f.feat}</p>
-              <p className="text-gray-500 text-[11px] mt-0.5">{f.desc}</p>
+              <p className="text-gray-400 text-[11px] mt-0.5">{f.desc}</p>
             </div>
           ))}
         </div>
       </Card>
 
       <Card>
-        <SectionTitle>⚡ Tin nhắn nhanh (Quick Messages)</SectionTitle>
+        <SectionTitle><LightningIcon className="w-4 h-4 inline" /> Tin nhắn nhanh (Quick Messages)</SectionTitle>
         <Paragraph>
           Lưu sẵn các mẫu tin nhắn thường dùng, gõ <code style={{color:'#86efac',background:'#1f2937',padding:'0.0625rem 0.3125rem',borderRadius:'0.1875rem'}}>/từ_khóa</code> để gợi ý và gửi ngay - tiết kiệm thời gian soạn tin lặp lại mỗi ngày.
         </Paragraph>
         <div className="flex items-center gap-3 bg-green-900/20 border border-green-700/40 rounded-lg px-3 py-2 mb-1">
-          <span className="text-green-400 text-sm flex-shrink-0">🏆</span>
+          <span className="text-green-400 text-sm flex-shrink-0"><AwardIcon className="w-4 h-4" /></span>
           <p className="text-green-300 text-xs"><strong>Không giới hạn</strong> số lượng mẫu tin - Zalo gốc chỉ cho lưu <strong>1 tin nhắn nhanh</strong></p>
         </div>
         <BulletList items={[
@@ -313,9 +314,9 @@ function MessagingPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>📌 Tin nhắn ghim & Ghi chú nhóm</SectionTitle>
+        <SectionTitle><PinIcon className="w-4 h-4 inline" /> Tin nhắn ghim & Ghi chú nhóm</SectionTitle>
         <div className="flex items-center gap-3 bg-green-900/20 border border-green-700/40 rounded-lg px-3 py-2 mb-1">
-          <span className="text-green-400 text-sm flex-shrink-0">🏆</span>
+          <span className="text-green-400 text-sm flex-shrink-0"><AwardIcon className="w-4 h-4" /></span>
           <p className="text-green-300 text-xs"><strong>Ghim không giới hạn</strong> số tin nhắn - Zalo gốc chỉ cho ghim tối đa <strong>3 tin</strong> mỗi hội thoại</p>
         </div>
         <BulletList items={[
@@ -328,7 +329,7 @@ function MessagingPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>⏰ Nhắc nhở trong hội thoại (Reminders)</SectionTitle>
+        <SectionTitle><ClockIcon className="w-4 h-4 inline" /> Nhắc nhở trong hội thoại (Reminders)</SectionTitle>
         <BulletList items={[
           'Đặt nhắc nhở trực tiếp trong bất kỳ hội thoại nào (cá nhân hoặc nhóm)',
           'Chọn thời gian cụ thể, emoji và màu sắc cho nhắc nhở',
@@ -338,7 +339,7 @@ function MessagingPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>📁 Kho media & File đính kèm</SectionTitle>
+        <SectionTitle><FolderIcon className="w-4 h-4 inline" /> Kho media & File đính kèm</SectionTitle>
         <BulletList items={[
           'Panel thông tin hội thoại (bên phải) tổng hợp toàn bộ ảnh, video, file đã chia sẻ',
           'Lọc theo loại media: Ảnh · Video · File',
@@ -348,22 +349,22 @@ function MessagingPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>⚙️ Menu tin nhắn & Hành động nhanh</SectionTitle>
+        <SectionTitle><SettingsIcon className="w-4 h-4 inline" /> Menu tin nhắn & Hành động nhanh</SectionTitle>
         <Paragraph>
           Chuột phải (hoặc hover) vào bất kỳ tin nhắn nào để mở menu hành động:
         </Paragraph>
         <BulletList items={[
-          '😀 React bằng emoji (36 emoji nhanh có sẵn)',
-          '↩️ Trả lời tin nhắn cụ thể (Reply)',
+          'React bằng emoji (36 emoji nhanh có sẵn)',
+          'Trả lời tin nhắn cụ thể (Reply)',
           '↪️ Chuyển tiếp (Forward) sang hội thoại khác',
-          '📌 Ghim / Bỏ ghim tin nhắn',
-          '📋 Sao chép nội dung tin nhắn',
-          '🗑️ Thu hồi (Recall) hoặc xóa tin nhắn',
+          'Ghim / Bỏ ghim tin nhắn',
+          'Sao chép nội dung tin nhắn',
+          'Thu hồi (Recall) hoặc xóa tin nhắn',
         ]} />
       </Card>
 
       <Card>
-        <SectionTitle>👤 Panel thông tin liên hệ & Nhóm</SectionTitle>
+        <SectionTitle><UserIcon className="w-4 h-4 inline" /> Panel thông tin liên hệ & Nhóm</SectionTitle>
         <BulletList items={[
           '<strong class="text-gray-200">Biệt danh:</strong> Đặt biệt danh riêng cho từng liên hệ (chỉ hiển thị trong app)',
           '<strong class="text-gray-200">Nhóm chung:</strong> Xem danh sách nhóm mà bạn và liên hệ đều là thành viên',
@@ -375,9 +376,9 @@ function MessagingPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>⚠️ Hạn chế cần lưu ý</SectionTitle>
+        <SectionTitle><AlertIcon className="w-4 h-4 inline" /> Hạn chế cần lưu ý</SectionTitle>
         <div className="flex items-start gap-3 bg-yellow-900/20 border border-yellow-700/40 rounded-lg px-3 py-2.5">
-          <span className="text-yellow-400 text-sm flex-shrink-0 mt-0.5">⚠️</span>
+          <span className="text-yellow-400 text-sm flex-shrink-0 mt-0.5"><AlertIcon className="w-4 h-4" /></span>
           <div className="space-y-1">
             <p className="text-yellow-300 text-xs font-semibold">Không hỗ trợ nghe & gọi (thoại / video call)</p>
             <p className="text-gray-400 text-xs leading-relaxed">
@@ -397,7 +398,7 @@ function ErpPanel() {
     <div className="space-y-4">
       <Card>
         <div className="flex items-start gap-3">
-          <span className="text-3xl leading-none">🗂️</span>
+          <span className="text-3xl leading-none"><FolderIcon className="w-4 h-4" /></span>
           <div>
             <SectionTitle>ERP quản trị nội bộ - giao việc, lịch, note, nhân sự</SectionTitle>
             <Paragraph>
@@ -415,7 +416,7 @@ function ErpPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>✅ Task & giao việc nội bộ</SectionTitle>
+        <SectionTitle><CheckIcon className="w-4 h-4 inline" /> Task & giao việc nội bộ</SectionTitle>
         <BulletList items={[
           '<strong class="text-gray-200">Kanban / Danh sách / Của tôi:</strong> theo dõi công việc theo trạng thái, deadline và người phụ trách',
           '<strong class="text-gray-200">Task detail đầy đủ:</strong> mô tả rich text, checklist, bình luận, người thực hiện, người theo dõi, file đính kèm',
@@ -425,7 +426,7 @@ function ErpPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>🗓️ Lịch làm việc & nhắc việc</SectionTitle>
+        <SectionTitle><CalendarIcon className="w-4 h-4 inline" /> Lịch làm việc & nhắc việc</SectionTitle>
         <BulletList items={[
           'Tạo lịch cá nhân hoặc sự kiện làm việc nội bộ ngay trong app',
           'Mở nhanh chi tiết sự kiện để xem, sửa hoặc xóa giống trải nghiệm lịch chính',
@@ -435,7 +436,7 @@ function ErpPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>📝 Notes nghiệp vụ & tài liệu nội bộ</SectionTitle>
+        <SectionTitle><EditIcon className="w-4 h-4 inline" /> Notes nghiệp vụ & tài liệu nội bộ</SectionTitle>
         <BulletList items={[
           '<strong class="text-gray-200">Ghi chú theo thư mục:</strong> lưu SOP, mẫu câu, quy trình và tài liệu vận hành',
           '<strong class="text-gray-200">Riêng tư theo workspace:</strong> note mặc định là dữ liệu riêng, chỉ chia sẻ khi người tạo chủ động chia sẻ',
@@ -445,7 +446,7 @@ function ErpPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>🧑‍💼 Quản lý nhân sự & quyền truy cập ERP</SectionTitle>
+        <SectionTitle><UsersIcon className="w-4 h-4 inline" /> Quản lý nhân sự & quyền truy cập ERP</SectionTitle>
         <BulletList items={[
           'Quản lý vai trò ERP giữa owner / admin / manager / member / guest',
           'Phân quyền để nhân viên chỉ thấy đúng module và dữ liệu được cấp phép',
@@ -455,7 +456,7 @@ function ErpPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>💡 Khi nào nên dùng ERP trong Deplao?</SectionTitle>
+        <SectionTitle><SunIcon className="w-4 h-4 inline" /> Khi nào nên dùng ERP trong Deplao?</SectionTitle>
         <BulletList items={[
           'Khi bạn muốn <strong class="text-gray-200">giao việc từ ngay sau hội thoại khách hàng</strong> mà không cần chuyển sang app khác',
           'Khi boss cần nhìn được <strong class="text-gray-200">ai đang làm gì, ai theo dõi việc gì, việc nào sắp quá hạn</strong>',
@@ -471,7 +472,7 @@ function CrmPanel() {
   return (
     <div className="space-y-4">
       <Card>
-        <SectionTitle>👥 Danh sách liên hệ & Tìm kiếm nâng cao</SectionTitle>
+        <SectionTitle><UsersIcon className="w-4 h-4 inline" /> Danh sách liên hệ & Tìm kiếm nâng cao</SectionTitle>
         <Paragraph>
           Toàn bộ <strong className="text-gray-200">bạn bè cá nhân</strong> và <strong className="text-gray-200">thành viên các nhóm Zalo</strong> bạn đang tham gia
           đều được đồng bộ tự động vào CRM. Mỗi liên hệ có thể lưu đầy đủ hồ sơ bao gồm ảnh đại diện, tên, số điện thoại,
@@ -489,21 +490,21 @@ function CrmPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>👥 Quản lý thành viên nhóm Zalo</SectionTitle>
+        <SectionTitle><UsersIcon className="w-4 h-4 inline" /> Quản lý thành viên nhóm Zalo</SectionTitle>
         <BulletList items={[
           'Xem danh sách toàn bộ thành viên trong từng nhóm Zalo',
           'Tìm kiếm thành viên theo tên trong nhóm',
           'Chọn thành viên để thêm nhanh vào chiến dịch',
         ]} />
         <div className="mt-3 space-y-2">
-          <p className="text-white font-semibold text-xs">🔍 Quét thành viên nhóm nâng cao</p>
+          <p className="text-white font-semibold text-xs"><SearchIcon className="w-4 h-4 inline" /> Quét thành viên nhóm nâng cao</p>
           <BulletList items={[
             '<strong class="text-gray-200">Quét thành viên nhóm ẩn:</strong> Với các nhóm lớn, Zalo chỉ trả về một phần thành viên trong danh sách thông thường. Tính năng quét nâng cao gửi thêm request để lấy toàn bộ thành viên thực tế - bao gồm cả những thành viên bị ẩn do giới hạn API.',
             '<strong class="text-gray-200">Quét nhóm chưa tham gia:</strong> Nhập Link nhóm Zalo (link mời) để quét danh sách thành viên của nhóm mà tài khoản <em>chưa là thành viên</em> - không cần tham gia nhóm vẫn lấy được danh sách.',
             '<strong class="text-gray-200">Xuất danh sách:</strong> Sau khi quét xong, có thể thêm toàn bộ hoặc chọn lọc thành viên vào chiến dịch CRM hoặc danh sách gửi tin.',
           ]} />
           <div className="bg-yellow-900/20 border border-yellow-700/40 rounded-lg px-3 py-2 mt-1">
-            <p className="text-yellow-300 text-[11px] font-semibold mb-1">⚠️ Lưu ý khi quét</p>
+            <p className="text-yellow-300 text-[11px] font-semibold mb-1"><AlertIcon className="w-4 h-4 inline" /> Lưu ý khi quét</p>
             <BulletList items={[
               'Quét nhóm lớn (hàng nghìn thành viên) mất nhiều thời gian - không đóng cửa sổ trong khi quét.',
               'Quét nhóm chưa tham gia yêu cầu link mời còn hiệu lực và nhóm không đặt chế độ phê duyệt kín hoàn toàn.',
@@ -514,7 +515,7 @@ function CrmPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>🏷️ Nhãn Zalo (Label) - Phân nhóm thông minh</SectionTitle>
+        <SectionTitle><TagIcon className="w-4 h-4 inline" /> Nhãn Zalo (Label) - Phân nhóm thông minh</SectionTitle>
         <Paragraph>
           Nhãn được đồng bộ trực tiếp từ tính năng nhãn chính thức của Zalo.
           Khi bạn gán nhãn trong app, nhãn sẽ hiển thị luôn trên ứng dụng Zalo điện thoại.
@@ -529,7 +530,7 @@ function CrmPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>📝 Ghi chú nội bộ (Notes)</SectionTitle>
+        <SectionTitle><EditIcon className="w-4 h-4 inline" /> Ghi chú nội bộ (Notes)</SectionTitle>
         <BulletList items={[
           'Thêm ghi chú riêng cho từng liên hệ (khách hàng không thấy)',
           'Chỉnh sửa hoặc xóa ghi chú bất kỳ lúc nào',
@@ -540,13 +541,13 @@ function CrmPanel() {
 
 
       <Card>
-        <SectionTitle>🎂 Chăm sóc khách hàng theo Giới tính & Ngày sinh & Tương tác cuối</SectionTitle>
+        <SectionTitle><GiftIcon className="w-4 h-4 inline" /> Chăm sóc khách hàng theo Giới tính & Ngày sinh & Tương tác cuối</SectionTitle>
         <Paragraph>
           Dữ liệu giới tính và ngày sinh trong hồ sơ liên hệ mở ra khả năng <strong className="text-gray-200">cá nhân hoá chiến dịch</strong> -
           gửi đúng người, đúng thời điểm để tăng tỷ lệ phản hồi và giữ chân khách hàng cũ.
         </Paragraph>
         <div className="space-y-2">
-          <p className="text-xs text-gray-300 font-semibold">💡 Gợi ý chiến dịch chăm sóc:</p>
+          <p className="text-xs text-gray-300 font-semibold"><SunIcon className="w-4 h-4 inline" /> Gợi ý chiến dịch chăm sóc:</p>
           <div className="space-y-1.5">
             {([
               ['🎂', 'Chúc mừng sinh nhật theo ngày', 'Lọc liên hệ có ngày sinh = hôm nay (hoặc trong tuần) → tạo campaign gửi lời chúc + ưu đãi cá nhân hoá. Tỷ lệ mở và phản hồi sinh nhật thường cao nhất trong năm.'],
@@ -558,36 +559,35 @@ function CrmPanel() {
                   <span className="text-base flex-shrink-0 mt-0.5">{icon}</span>
                   <div>
                     <p className="text-gray-200 text-[11px] font-semibold">{title}</p>
-                    <p className="text-gray-500 text-[11px] mt-0.5 leading-relaxed">{desc}</p>
+                    <p className="text-gray-400 text-[11px] mt-0.5 leading-relaxed">{desc}</p>
                   </div>
                 </div>
             ))}
           </div>
         </div>
         <div className="mt-2 bg-blue-700/60 border border-blue-700/30 rounded-lg px-3 py-2">
-          <p className="text-gray-300 text-[11px] leading-relaxed">
-            📌 <strong>Cách dùng:</strong> CRM → Danh sách liên hệ → Bộ lọc → chọn <em>"Sinh nhật hôm nay / tuần này / tháng này"</em> hoặc <em>"Giới tính"</em>
+          <p className="text-gray-300 text-[11px] leading-relaxed"><PinIcon className="w-4 h-4 inline" /> <strong>Cách dùng:</strong> CRM → Danh sách liên hệ → Bộ lọc → chọn <em>"Sinh nhật hôm nay / tuần này / tháng này"</em> hoặc <em>"Giới tính"</em>
             → Chọn hết → Thêm vào chiến dịch → Soạn nội dung cá nhân hoá → Gửi.
           </p>
         </div>
       </Card>
 
       <Card>
-        <SectionTitle>🚀 Chiến dịch gửi tin (Campaign)</SectionTitle>
+        <SectionTitle><RocketIcon className="w-4 h-4 inline" /> Chiến dịch gửi tin (Campaign)</SectionTitle>
         <Paragraph>
           Campaign là công cụ gửi tin / thực hiện hành động Zalo hàng loạt có kiểm soát,
           với delay cấu hình được để tránh bị Zalo giới hạn.
         </Paragraph>
         <div className="grid grid-cols-2 gap-2 my-1">
           {[
-            { icon: '💬', type: 'Gửi tin nhắn', desc: 'Text, ảnh, file tới danh sách liên hệ' },
-            { icon: '🤝', type: 'Kết bạn', desc: 'Gửi lời mời kết bạn hàng loạt' },
-            { icon: '👥', type: 'Mời vào nhóm', desc: 'Thêm danh sách liên hệ vào nhóm Zalo' },
-            { icon: '🔀', type: 'Hỗn hợp', desc: 'Kết hợp nhiều loại hành động' },
+            { icon: <ChatIcon className="w-4 h-4" />, type: 'Gửi tin nhắn', desc: 'Text, ảnh, file tới danh sách liên hệ' },
+            { icon: <UserCheckIcon className="w-4 h-4" />, type: 'Kết bạn', desc: 'Gửi lời mời kết bạn hàng loạt' },
+            { icon: <UsersIcon className="w-4 h-4" />, type: 'Mời vào nhóm', desc: 'Thêm danh sách liên hệ vào nhóm Zalo' },
+            { icon: <ShuffleIcon className="w-4 h-4" />, type: 'Hỗn hợp', desc: 'Kết hợp nhiều loại hành động' },
           ].map((c, i) => (
             <div key={i} className="bg-gray-700/40 rounded-lg p-2.5">
               <p className="text-xs text-gray-200 font-semibold">{c.icon} {c.type}</p>
-              <p className="text-[11px] text-gray-500 mt-0.5">{c.desc}</p>
+              <p className="text-[11px] text-gray-400 mt-0.5">{c.desc}</p>
             </div>
           ))}
         </div>
@@ -607,7 +607,7 @@ function WorkflowPanel() {
   return (
     <div className="space-y-4">
       <Card>
-        <SectionTitle>⚙️ Workflow Engine - Tự động hoá không cần code</SectionTitle>
+        <SectionTitle><SettingsIcon className="w-4 h-4 inline" /> Workflow Engine - Tự động hoá không cần code</SectionTitle>
         <Paragraph>
           Workflow là hệ thống Tự động hoá dạng kéo-thả theo mô hình <strong className="text-white font-semibold">Trigger → Node → Action</strong>.
           Mỗi workflow chạy nền liên tục 24/7, xử lý sự kiện và thực hiện hành động theo logic bạn thiết lập.
@@ -621,7 +621,7 @@ function WorkflowPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>🟣 Triggers - Sự kiện kích hoạt</SectionTitle>
+        <SectionTitle><TargetIcon className="w-4 h-4 inline" /> Triggers - Sự kiện kích hoạt</SectionTitle>
         <BulletList items={[
           '<strong class="text-gray-200">Tin nhắn mới</strong> - kích hoạt khi nhận tin, lọc theo từ khóa, loại hội thoại (cá nhân/nhóm)',
           '<strong class="text-gray-200">Lời mời kết bạn</strong> - khi có người gửi friend request đến tài khoản',
@@ -634,37 +634,37 @@ function WorkflowPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>🔵 Zalo Actions - Hành động trực tiếp trên Zalo</SectionTitle>
+        <SectionTitle><TargetIcon className="w-4 h-4 inline" /> Zalo Actions - Hành động trực tiếp trên Zalo</SectionTitle>
         <div className="grid grid-cols-2 gap-1.5">
           {[
-            ['💬 Gửi tin nhắn', 'Text với biến động, template'],
-            ['⌨️ Gửi đang gõ + delay', 'Giả lập typing trước khi gửi'],
-            ['🖼 Gửi ảnh', 'Từ file cục bộ hoặc URL'],
-            ['📎 Gửi file', 'File đính kèm bất kỳ định dạng'],
-            ['🔍 Tìm user theo SĐT', 'Tra cứu Zalo UID từ số điện thoại'],
-            ['👤 Lấy thông tin user', 'Profile, tên, avatar của bất kỳ UID'],
-            ['✅ Chấp nhận kết bạn', 'Auto-accept friend request'],
-            ['❌ Từ chối kết bạn', 'Auto-reject friend request'],
-            ['➕ Gửi lời mời kết bạn', 'Gửi FR đến UID hoặc SĐT'],
-            ['👥 Thêm vào nhóm', 'Thêm UID vào nhóm Zalo'],
-            ['🚫 Xóa khỏi nhóm', 'Kick thành viên ra khỏi nhóm'],
-            ['🔇 Tắt thông báo', 'Mute/unmute một hội thoại'],
-            ['↩️ Chuyển tiếp tin', 'Forward tin nhắn sang hội thoại khác'],
-            ['↩ Thu hồi tin nhắn', 'Undo/unsend tin vừa gửi'],
-            ['📊 Tạo bình chọn', 'Tạo poll trong nhóm Zalo'],
-            ['📜 Lấy lịch sử chat', 'Đọc N tin nhắn gần nhất'],
-            ['😀 Thêm cảm xúc', 'React emoji vào tin nhắn'],
+            ['Gửi tin nhắn', 'Text với biến động, template'],
+            ['Gửi đang gõ + delay', 'Giả lập typing trước khi gửi'],
+            ['Gửi ảnh', 'Từ file cục bộ hoặc URL'],
+            ['Gửi file', 'File đính kèm bất kỳ định dạng'],
+            ['Tìm user theo SĐT', 'Tra cứu Zalo UID từ số điện thoại'],
+            ['Lấy thông tin user', 'Profile, tên, avatar của bất kỳ UID'],
+            ['Chấp nhận kết bạn', 'Auto-accept friend request'],
+            ['Từ chối kết bạn', 'Auto-reject friend request'],
+            ['Gửi lời mời kết bạn', 'Gửi FR đến UID hoặc SĐT'],
+            ['Thêm vào nhóm', 'Thêm UID vào nhóm Zalo'],
+            ['Xóa khỏi nhóm', 'Kick thành viên ra khỏi nhóm'],
+            ['Tắt thông báo', 'Mute/unmute một hội thoại'],
+            ['Chuyển tiếp tin', 'Forward tin nhắn sang hội thoại khác'],
+            ['Thu hồi tin nhắn', 'Undo/unsend tin vừa gửi'],
+            ['Tạo bình chọn', 'Tạo poll trong nhóm Zalo'],
+            ['Lấy lịch sử chat', 'Đọc N tin nhắn gần nhất'],
+            ['Thêm cảm xúc', 'React emoji vào tin nhắn'],
           ].map(([action, desc], i) => (
             <div key={i} className="bg-gray-700/30 rounded-lg px-2.5 py-1.5">
               <p className="text-gray-200 text-[11px] font-medium">{action}</p>
-              <p className="text-gray-500 text-[11px]">{desc}</p>
+              <p className="text-gray-400 text-[11px]">{desc}</p>
             </div>
           ))}
         </div>
       </Card>
 
       <Card>
-        <SectionTitle>🟡 Logic - Điều kiện & Điều khiển luồng</SectionTitle>
+        <SectionTitle><StarIcon className="w-4 h-4 inline" /> Logic - Điều kiện & Điều khiển luồng</SectionTitle>
         <BulletList items={[
           '<strong class="text-gray-200">IF điều kiện</strong> - rẽ nhánh True/False dựa trên giá trị biến, nội dung tin nhắn',
           '<strong class="text-gray-200">Switch nhiều nhánh</strong> - xử lý nhiều case khác nhau trong một node',
@@ -676,7 +676,7 @@ function WorkflowPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>🟢 Tích hợp Google Sheets</SectionTitle>
+        <SectionTitle><CheckCircleIcon className="w-4 h-4 inline" /> Tích hợp Google Sheets</SectionTitle>
         <BulletList items={[
           '<strong class="text-gray-200">Ghi thêm dòng</strong> - Append dữ liệu mới vào cuối sheet (lưu lead, đơn hàng...)',
           '<strong class="text-gray-200">Đọc dữ liệu</strong> - Đọc giá trị các ô để dùng làm điều kiện hoặc nội dung tin',
@@ -685,7 +685,7 @@ function WorkflowPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>🟣 AI</SectionTitle>
+        <SectionTitle><TargetIcon className="w-4 h-4 inline" /> AI</SectionTitle>
         <BulletList items={[
           '<strong class="text-gray-200">Tạo nội dung AI</strong> - Sinh câu trả lời, tóm tắt, viết lại nội dung bằng GPT với prompt tùy chỉnh',
           '<strong class="text-gray-200">Phân loại văn bản</strong> - Phân tích ý định hoặc cảm xúc của tin nhắn (mua hàng / hỏi giá / khiếu nại...)',
@@ -693,7 +693,7 @@ function WorkflowPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>🟠 Thông báo & Tích hợp ngoài</SectionTitle>
+        <SectionTitle><AlertIcon className="w-4 h-4 inline" /> Thông báo & Tích hợp ngoài</SectionTitle>
         <BulletList items={[
           '<strong class="text-gray-200">Gửi Telegram Bot</strong> - Nhận cảnh báo hoặc báo cáo ngay trên Telegram',
           '<strong class="text-gray-200">Gửi Discord</strong> - Đẩy thông báo vào kênh Discord của nhóm',
@@ -704,7 +704,7 @@ function WorkflowPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>⚠️ Lưu ý khi dùng Workflow</SectionTitle>
+        <SectionTitle><AlertIcon className="w-4 h-4 inline" /> Lưu ý khi dùng Workflow</SectionTitle>
         <BulletList items={[
           'Workflow chạy hoàn toàn cục bộ - app phải đang chạy thì workflow mới hoạt động',
           'Dùng node <strong class="text-gray-200">Chờ N giây</strong> giữa các tin nhắn để tránh Zalo rate-limit',
@@ -720,38 +720,38 @@ function IntegrationPOSPanel() {
   return (
     <div className="space-y-4">
       <Card>
-        <SectionTitle>🛒 Tích hợp POS / Bán hàng</SectionTitle>
+        <SectionTitle><ShoppingCartIcon className="w-4 h-4 inline" /> Tích hợp POS / Bán hàng</SectionTitle>
         <Paragraph>
           Kết nối Deplao với phần mềm quản lý bán hàng (POS) cho phép tra cứu đơn hàng, khách hàng, sản phẩm
           ngay trong khung chat Zalo - không cần chuyển qua lại giữa các ứng dụng.
           Bạn cũng có thể tạo đơn hàng trực tiếp từ hội thoại hoặc tự động hoá qua Workflow.
         </Paragraph>
         <div className="flex items-center gap-3 bg-blue-900/20 border border-blue-700/40 rounded-lg px-3 py-2">
-          <span className="text-blue-400 text-sm flex-shrink-0">💡</span>
+          <span className="text-blue-400 text-sm flex-shrink-0"><SunIcon className="w-4 h-4" /></span>
           <p className="text-blue-300 text-xs font-medium">Sau khi kết nối, các nút tra cứu nhanh sẽ xuất hiện trong Quick Panel bên phải khung chat.</p>
         </div>
       </Card>
 
       <Card>
-        <SectionTitle>📋 Các nền tảng POS hỗ trợ</SectionTitle>
+        <SectionTitle><ClipboardListIcon className="w-4 h-4 inline" /> Các nền tảng POS hỗ trợ</SectionTitle>
         <div className="grid grid-cols-2 gap-2">
           {[
-            { icon: '🛒', name: 'KiotViet', desc: 'Tra cứu đơn hàng, khách hàng, sản phẩm. Tạo đơn hàng từ chat hoặc workflow.', setup: 'Cần Client ID, Client Secret, Retailer Name từ KiotViet Admin.' },
-            { icon: '🏪', name: 'Haravan', desc: 'Quản lý đơn hàng, kho, khách hàng TMĐT. Tra cứu theo SĐT ngay trong chat.', setup: 'Dùng API Token từ Haravan Custom App hoặc API Key legacy.' },
-            { icon: '🟢', name: 'Sapo', desc: 'Bán hàng đa kênh. Tra cứu đơn, khách hàng, sản phẩm Sapo.', setup: 'Cần API Key + Secret Key + Store Domain từ Sapo.' },
-            { icon: '⚡', name: 'Nhanh.vn', desc: 'Quản lý đơn hàng, kho, khách hàng đa kênh.', setup: 'Cần App ID, Business ID, Access Token v3.' },
-            { icon: '🥞', name: 'Pancake POS', desc: 'Quản lý đơn hàng, tra cứu và tạo đơn trong chat.', setup: 'Cần API Key và Shop ID từ Pancake.' },
+            { icon: <ShoppingCartIcon className="w-4 h-4" />, name: 'KiotViet', desc: 'Tra cứu đơn hàng, khách hàng, sản phẩm. Tạo đơn hàng từ chat hoặc workflow.', setup: 'Cần Client ID, Client Secret, Retailer Name từ KiotViet Admin.' },
+            { icon: <StoreIcon className="w-4 h-4" />, name: 'Haravan', desc: 'Quản lý đơn hàng, kho, khách hàng TMĐT. Tra cứu theo SĐT ngay trong chat.', setup: 'Dùng API Token từ Haravan Custom App hoặc API Key legacy.' },
+            { icon: <CheckCircleIcon className="w-4 h-4" />, name: 'Sapo', desc: 'Bán hàng đa kênh. Tra cứu đơn, khách hàng, sản phẩm Sapo.', setup: 'Cần API Key + Secret Key + Store Domain từ Sapo.' },
+            { icon: <LightningIcon className="w-4 h-4" />, name: 'Nhanh.vn', desc: 'Quản lý đơn hàng, kho, khách hàng đa kênh.', setup: 'Cần App ID, Business ID, Access Token v3.' },
+            { icon: <MenuIcon className="w-4 h-4" />, name: 'Pancake POS', desc: 'Quản lý đơn hàng, tra cứu và tạo đơn trong chat.', setup: 'Cần API Key và Shop ID từ Pancake.' },
           ].map((p, i) => (
             <div key={i} className="bg-gray-700/30 rounded-lg p-2.5">
               <p className="text-gray-200 text-[11px] font-medium">{p.icon} {p.name}</p>
-              <p className="text-gray-500 text-[11px] mt-0.5 leading-relaxed">{p.desc}</p>
+              <p className="text-gray-400 text-[11px] mt-0.5 leading-relaxed">{p.desc}</p>
             </div>
           ))}
         </div>
       </Card>
 
       <Card>
-        <SectionTitle>🔧 Hướng dẫn kết nối POS</SectionTitle>
+        <SectionTitle><WrenchIcon className="w-4 h-4 inline" /> Hướng dẫn kết nối POS</SectionTitle>
         <StepList steps={[
           { title: 'Mở Công cụ → Tích hợp', desc: 'Vào sidebar chọn <strong class="text-gray-200">Công cụ → Tích hợp</strong>, chọn tab <strong class="text-gray-200">POS / Bán hàng</strong>.' },
           { title: 'Chọn nền tảng POS', desc: 'Nhấn vào nền tảng bạn đang dùng (KiotViet, Haravan, Sapo...).' },
@@ -762,28 +762,28 @@ function IntegrationPOSPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>⚡ Tính năng sau khi kết nối POS</SectionTitle>
+        <SectionTitle><LightningIcon className="w-4 h-4 inline" /> Tính năng sau khi kết nối POS</SectionTitle>
         <div className="grid grid-cols-2 gap-2">
           {[
-            { icon: '🔍', name: 'Tra cứu đơn hàng', desc: 'Nhập mã đơn hoặc SĐT khách → thông tin đơn hàng hiện ra ngay trong chat.' },
-            { icon: '👤', name: 'Tra cứu khách hàng', desc: 'Xem lịch sử mua hàng, tổng chi tiêu, công nợ của khách.' },
-            { icon: '📦', name: 'Tra cứu sản phẩm', desc: 'Tìm sản phẩm theo tên/mã - hiển thị giá, tồn kho, hình ảnh.' },
-            { icon: '➕', name: 'Tạo đơn hàng', desc: 'Tạo đơn hàng mới cho khách ngay trong hội thoại Zalo.' },
-            { icon: '⚙️', name: 'Tích hợp Workflow', desc: 'Workflow tự động tra cứu thông tin khi nhận tin nhắn từ khách.' },
-            { icon: '📊', name: 'Đồng bộ dữ liệu', desc: 'Dữ liệu đơn hàng, khách hàng đồng bộ realtime từ POS.' },
+            { icon: <SearchIcon className="w-4 h-4" />, name: 'Tra cứu đơn hàng', desc: 'Nhập mã đơn hoặc SĐT khách → thông tin đơn hàng hiện ra ngay trong chat.' },
+            { icon: <UserIcon className="w-4 h-4" />, name: 'Tra cứu khách hàng', desc: 'Xem lịch sử mua hàng, tổng chi tiêu, công nợ của khách.' },
+            { icon: <PackageIcon className="w-4 h-4" />, name: 'Tra cứu sản phẩm', desc: 'Tìm sản phẩm theo tên/mã - hiển thị giá, tồn kho, hình ảnh.' },
+            { icon: <PlusIcon className="w-4 h-4" />, name: 'Tạo đơn hàng', desc: 'Tạo đơn hàng mới cho khách ngay trong hội thoại Zalo.' },
+            { icon: <SettingsIcon className="w-4 h-4" />, name: 'Tích hợp Workflow', desc: 'Workflow tự động tra cứu thông tin khi nhận tin nhắn từ khách.' },
+            { icon: <ChartIcon className="w-4 h-4" />, name: 'Đồng bộ dữ liệu', desc: 'Dữ liệu đơn hàng, khách hàng đồng bộ realtime từ POS.' },
           ].map((f, i) => (
             <div key={i} className="bg-gray-700/30 rounded-lg p-2.5">
               <p className="text-gray-200 text-[11px] font-medium">{f.icon} {f.name}</p>
-              <p className="text-gray-500 text-[11px] mt-0.5">{f.desc}</p>
+              <p className="text-gray-400 text-[11px] mt-0.5">{f.desc}</p>
             </div>
           ))}
         </div>
       </Card>
 
       <Card>
-        <SectionTitle>🔁 Ví dụ: Workflow với POS</SectionTitle>
+        <SectionTitle><RepeatIcon className="w-4 h-4 inline" /> Ví dụ: Workflow với POS</SectionTitle>
         <div className="bg-gray-900/60 rounded-lg border border-gray-700/50 p-3 space-y-1.5">
-          <p className="text-gray-200 text-[11px] font-semibold">📌 Khi khách nhắn "Kiểm tra đơn hàng"</p>
+          <p className="text-gray-200 text-[11px] font-semibold"><PinIcon className="w-4 h-4 inline" /> Khi khách nhắn "Kiểm tra đơn hàng"</p>
           <BulletList items={[
             '<strong class="text-gray-200">Trigger:</strong> Tin nhắn mới chứa từ khóa "đơn hàng"',
             '<strong class="text-gray-200">Action 1:</strong> Tra cứu đơn hàng POS theo SĐT khách',
@@ -794,7 +794,7 @@ function IntegrationPOSPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>⚠️ Lưu ý</SectionTitle>
+        <SectionTitle><AlertIcon className="w-4 h-4 inline" /> Lưu ý</SectionTitle>
         <BulletList items={[
           'API Key và credential cần lấy từ trang quản trị của nền tảng POS tương ứng',
           'Mỗi nền tảng có giới hạn rate-limit riêng - không gọi API quá nhiều lần trong thời gian ngắn',
@@ -809,31 +809,31 @@ function IntegrationPaymentPanel() {
   return (
     <div className="space-y-4">
       <Card>
-        <SectionTitle>💳 Tích hợp Thanh toán - Tự động xác nhận chuyển khoản</SectionTitle>
+        <SectionTitle><CreditCardIcon className="w-4 h-4 inline" /> Tích hợp Thanh toán - Tự động xác nhận chuyển khoản</SectionTitle>
         <Paragraph>
           Kết nối Deplao với các cổng thanh toán để nhận thông báo ngay khi có giao dịch chuyển khoản vào tài khoản ngân hàng.
           Kết hợp Workflow để tự động xác nhận đơn hàng, gửi tin cảm ơn và kích hoạt các bước chăm sóc tiếp theo -
           không cần ngồi kiểm tra sao kê thủ công.
         </Paragraph>
         <div className="flex items-center gap-3 bg-blue-900/20 border border-blue-700/40 rounded-lg px-3 py-2">
-          <span className="text-blue-400 text-sm flex-shrink-0">💡</span>
+          <span className="text-blue-400 text-sm flex-shrink-0"><SunIcon className="w-4 h-4" /></span>
           <p className="text-blue-300 text-xs font-medium">Kết hợp Tunnel công khai để nhận webhook thanh toán từ bên ngoài mà không cần VPS.</p>
         </div>
       </Card>
 
       <Card>
-        <SectionTitle>📋 Các nền tảng thanh toán hỗ trợ</SectionTitle>
+        <SectionTitle><ClipboardListIcon className="w-4 h-4 inline" /> Các nền tảng thanh toán hỗ trợ</SectionTitle>
         <div className="space-y-2">
           {[
-            { icon: '💳', name: 'Casso', desc: 'Nền tảng tổng hợp giao dịch VietQR hàng đầu. Nhận webhook realtime khi có chuyển khoản vào bất kỳ ngân hàng nào.', setup: 'Casso API Key (lấy từ Casso Dashboard). Webhook Secret (tuỳ chọn).' },
-            { icon: '💰', name: 'SePay', desc: 'Giải pháp webhook thanh toán. Tự động phát hiện giao dịch chuyển khoản và gửi thông báo.', setup: 'SePay API Key + Webhook Secret Key.' },
+            { icon: <CreditCardIcon className="w-4 h-4" />, name: 'Casso', desc: 'Nền tảng tổng hợp giao dịch VietQR hàng đầu. Nhận webhook realtime khi có chuyển khoản vào bất kỳ ngân hàng nào.', setup: 'Casso API Key (lấy từ Casso Dashboard). Webhook Secret (tuỳ chọn).' },
+            { icon: <DollarIcon className="w-4 h-4" />, name: 'SePay', desc: 'Giải pháp webhook thanh toán. Tự động phát hiện giao dịch chuyển khoản và gửi thông báo.', setup: 'SePay API Key + Webhook Secret Key.' },
           ].map((p, i) => (
             <div key={i} className="bg-gray-700/30 rounded-lg p-3">
               <div className="flex items-start gap-3">
                 <span className="text-lg flex-shrink-0">{p.icon}</span>
                 <div>
                   <p className="text-gray-200 text-[11px] font-medium">{p.name}</p>
-                  <p className="text-gray-500 text-[11px] mt-0.5 leading-relaxed">{p.desc}</p>
+                  <p className="text-gray-400 text-[11px] mt-0.5 leading-relaxed">{p.desc}</p>
                   <div className="bg-gray-800/60 rounded px-2 py-1 mt-1.5">
                     <p className="text-gray-400 text-[10px]">
                       <strong className="text-gray-300">Cấu hình:</strong> {p.setup}
@@ -847,7 +847,7 @@ function IntegrationPaymentPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>🔧 Hướng dẫn kết nối thanh toán</SectionTitle>
+        <SectionTitle><WrenchIcon className="w-4 h-4 inline" /> Hướng dẫn kết nối thanh toán</SectionTitle>
         <StepList steps={[
           { title: 'Lấy API Key từ nền tảng', desc: 'Vào Casso Dashboard hoặc SePay Dashboard → Tạo API Key mới. Copy key vào clipboard.' },
           { title: 'Mở Công cụ → Tích hợp', desc: 'Chọn tab <strong class="text-gray-200">Thanh toán</strong> → Nhấn vào Casso hoặc SePay.' },
@@ -859,9 +859,9 @@ function IntegrationPaymentPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>🔁 Ví dụ: Workflow với thanh toán</SectionTitle>
+        <SectionTitle><RepeatIcon className="w-4 h-4 inline" /> Ví dụ: Workflow với thanh toán</SectionTitle>
         <div className="bg-gray-900/60 rounded-lg border border-gray-700/50 p-3 space-y-1.5">
-          <p className="text-gray-200 text-[11px] font-semibold">📌 Khi nhận được chuyển khoản</p>
+          <p className="text-gray-200 text-[11px] font-semibold"><PinIcon className="w-4 h-4 inline" /> Khi nhận được chuyển khoản</p>
           <BulletList items={[
             '<strong class="text-gray-200">Trigger:</strong> Webhook thanh toán (Casso/SePay)',
             '<strong class="text-gray-200">Action 1:</strong> Tra cứu đơn hàng POS theo nội dung chuyển khoản',
@@ -873,7 +873,7 @@ function IntegrationPaymentPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>🌐 Tunnel là gì và tại sao cần?</SectionTitle>
+        <SectionTitle><GlobeIcon className="w-4 h-4 inline" /> Tunnel là gì và tại sao cần?</SectionTitle>
         <Paragraph>
           Deplao chạy webhook server trên máy tính cá nhân (cục bộ). Để Casso/SePay có thể gửi webhook đến máy bạn,
           máy cần có một địa chỉ công khai trên Internet. Tunnel (Cloudflare Quick Tunnel) tạo một URL công khai
@@ -887,7 +887,7 @@ function IntegrationPaymentPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>⚠️ Lưu ý</SectionTitle>
+        <SectionTitle><AlertIcon className="w-4 h-4 inline" /> Lưu ý</SectionTitle>
         <BulletList items={[
           'App phải đang chạy thì webhook mới hoạt động - tắt app là webhook không nhận được',
           'Mỗi lần khởi động lại app, cần bật lại Tunnel (nếu đã tắt trước đó)',
@@ -903,34 +903,34 @@ function IntegrationShippingPanel() {
   return (
     <div className="space-y-4">
       <Card>
-        <SectionTitle>📦 Tích hợp Vận chuyển - Tạo & Tra cứu vận đơn tự động</SectionTitle>
+        <SectionTitle><PackageIcon className="w-4 h-4 inline" /> Tích hợp Vận chuyển - Tạo & Tra cứu vận đơn tự động</SectionTitle>
         <Paragraph>
           Kết nối Deplao với các đơn vị vận chuyển để tạo đơn giao hàng, tra cứu trạng thái vận đơn
           ngay trong hội thoại Zalo. Khi khách hỏi "đơn hàng tới đâu rồi?", Workflow tự động tra cứu và trả lời -
           không cần copy tracking ID qua các tab trình duyệt.
         </Paragraph>
         <div className="flex items-center gap-3 bg-blue-900/20 border border-blue-700/40 rounded-lg px-3 py-2">
-          <span className="text-blue-400 text-sm flex-shrink-0">💡</span>
+          <span className="text-blue-400 text-sm flex-shrink-0"><SunIcon className="w-4 h-4" /></span>
           <p className="text-blue-300 text-xs font-medium">Tích hợp vận chuyển hoạt động tốt nhất khi kết hợp với POS để tự động tạo đơn giao sau khi xác nhận thanh toán.</p>
         </div>
       </Card>
 
       <Card>
-        <SectionTitle>📋 Các đơn vị vận chuyển hỗ trợ</SectionTitle>
+        <SectionTitle><ClipboardListIcon className="w-4 h-4 inline" /> Các đơn vị vận chuyển hỗ trợ</SectionTitle>
         <div className="space-y-2">
           {[
-            { icon: '📦', name: 'GHN Express', desc: 'Giao Hàng Nhanh - tạo đơn, tra cứu vận đơn, tính phí giao hàng.', token: 'Token GHN + Shop ID', note: 'Hỗ trợ Sandbox để test thử trước khi dùng thật.' },
-            { icon: '🚚', name: 'GHTK', desc: 'Giao Hàng Tiết Kiệm - tạo đơn, tra cứu trạng thái giao hàng.', token: 'GHTK API Token', note: 'Phù hợp đơn hàng giá trị thấp, giao hàng tiết kiệm.' },
+            { icon: <PackageIcon className="w-4 h-4" />, name: 'GHN Express', desc: 'Giao Hàng Nhanh - tạo đơn, tra cứu vận đơn, tính phí giao hàng.', token: 'Token GHN + Shop ID', note: 'Hỗ trợ Sandbox để test thử trước khi dùng thật.' },
+            { icon: <TruckIcon className="w-4 h-4" />, name: 'GHTK', desc: 'Giao Hàng Tiết Kiệm - tạo đơn, tra cứu trạng thái giao hàng.', token: 'GHTK API Token', note: 'Phù hợp đơn hàng giá trị thấp, giao hàng tiết kiệm.' },
           ].map((p, i) => (
             <div key={i} className="bg-gray-700/30 rounded-lg p-3">
               <div className="flex items-start gap-3">
                 <span className="text-lg flex-shrink-0">{p.icon}</span>
                 <div>
                   <p className="text-gray-200 text-[11px] font-medium">{p.name}</p>
-                  <p className="text-gray-500 text-[11px] mt-0.5 leading-relaxed">{p.desc}</p>
+                  <p className="text-gray-400 text-[11px] mt-0.5 leading-relaxed">{p.desc}</p>
                   <div className="flex gap-2 mt-1.5 flex-wrap">
                     <span className="bg-gray-800/60 text-gray-400 text-[10px] px-2 py-0.5 rounded">{p.token}</span>
-                    <span className="bg-blue-900/30 text-blue-400 text-[10px] px-2 py-0.5 rounded">💡 {p.note}</span>
+                    <span className="bg-blue-900/30 text-blue-400 text-[10px] px-2 py-0.5 rounded"><SunIcon className="w-4 h-4 inline" /> {p.note}</span>
                   </div>
                 </div>
               </div>
@@ -940,7 +940,7 @@ function IntegrationShippingPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>🔧 Hướng dẫn kết nối vận chuyển</SectionTitle>
+        <SectionTitle><WrenchIcon className="w-4 h-4 inline" /> Hướng dẫn kết nối vận chuyển</SectionTitle>
         <StepList steps={[
           { title: 'Lấy Token từ đơn vị vận chuyển', desc: 'Đăng nhập GHN/GHTK → Quản lý API → Tạo Token mới. Copy Token + Shop ID.' },
           { title: 'Mở Công cụ → Tích hợp', desc: 'Chọn tab <strong class="text-gray-200">Vận chuyển</strong> → Nhấn GHN hoặc GHTK.' },
@@ -951,26 +951,26 @@ function IntegrationShippingPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>⚡ Tính năng sau khi kết nối</SectionTitle>
+        <SectionTitle><LightningIcon className="w-4 h-4 inline" /> Tính năng sau khi kết nối</SectionTitle>
         <div className="grid grid-cols-2 gap-2">
           {[
-            { icon: '📋', name: 'Tạo vận đơn', desc: 'Nhập thông tin giao hàng → tạo đơn ngay trong chat.' },
-            { icon: '🔍', name: 'Tra cứu vận đơn', desc: 'Nhập mã vận đơn → xem trạng thái, lịch trình giao hàng.' },
-            { icon: '💰', name: 'Tính phí giao hàng', desc: 'Tính trước phí vận chuyển dựa trên địa chỉ, trọng lượng.' },
-            { icon: '🔁', name: 'Workflow tự động', desc: 'Tự động tạo đơn vận chuyển sau khi xác nhận thanh toán.' },
+            { icon: <ClipboardListIcon className="w-4 h-4" />, name: 'Tạo vận đơn', desc: 'Nhập thông tin giao hàng → tạo đơn ngay trong chat.' },
+            { icon: <SearchIcon className="w-4 h-4" />, name: 'Tra cứu vận đơn', desc: 'Nhập mã vận đơn → xem trạng thái, lịch trình giao hàng.' },
+            { icon: <DollarIcon className="w-4 h-4" />, name: 'Tính phí giao hàng', desc: 'Tính trước phí vận chuyển dựa trên địa chỉ, trọng lượng.' },
+            { icon: <RepeatIcon className="w-4 h-4" />, name: 'Workflow tự động', desc: 'Tự động tạo đơn vận chuyển sau khi xác nhận thanh toán.' },
           ].map((f, i) => (
             <div key={i} className="bg-gray-700/30 rounded-lg p-2.5">
               <p className="text-gray-200 text-[11px] font-medium">{f.icon} {f.name}</p>
-              <p className="text-gray-500 text-[11px] mt-0.5">{f.desc}</p>
+              <p className="text-gray-400 text-[11px] mt-0.5">{f.desc}</p>
             </div>
           ))}
         </div>
       </Card>
 
       <Card>
-        <SectionTitle>🔁 Ví dụ: Workflow vận chuyển</SectionTitle>
+        <SectionTitle><RepeatIcon className="w-4 h-4 inline" /> Ví dụ: Workflow vận chuyển</SectionTitle>
         <div className="bg-gray-900/60 rounded-lg border border-gray-700/50 p-3 space-y-1.5">
-          <p className="text-gray-200 text-[11px] font-semibold">📌 Khi khách hỏi "Đơn hàng tới đâu rồi?"</p>
+          <p className="text-gray-200 text-[11px] font-semibold"><PinIcon className="w-4 h-4 inline" /> Khi khách hỏi "Đơn hàng tới đâu rồi?"</p>
           <BulletList items={[
             '<strong class="text-gray-200">Trigger:</strong> Tin nhắn chứa "đơn hàng", "shipping", "giao hàng"',
             '<strong class="text-gray-200">Action 1:</strong> Tra cứu đơn hàng POS theo SĐT khách → lấy mã vận đơn',
@@ -981,7 +981,7 @@ function IntegrationShippingPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>⚠️ Lưu ý</SectionTitle>
+        <SectionTitle><AlertIcon className="w-4 h-4 inline" /> Lưu ý</SectionTitle>
         <BulletList items={[
           'Nên dùng môi trường Sandbox của GHN để test trước khi chuyển sang Production',
           'Token GHN/GHTK có thể hết hạn - cần refresh định kỳ nếu gặp lỗi xác thực',
@@ -996,38 +996,38 @@ function AIAssistantPanel() {
   return (
     <div className="space-y-4">
       <Card>
-        <SectionTitle>🤖 Trợ lý AI - Tăng tốc chăm sóc khách hàng</SectionTitle>
+        <SectionTitle><BotIcon className="w-4 h-4 inline" /> Trợ lý AI - Tăng tốc chăm sóc khách hàng</SectionTitle>
         <Paragraph>
           Trợ lý AI trong Deplao cho phép bạn tạo nhiều chatbot AI với tính cách, prompt và mục đích khác nhau.
           Mỗi trợ lý có thể được gán cho một hội thoại cụ thể hoặc dùng trong Workflow để tự động trả lời tin nhắn.
         </Paragraph>
         <div className="flex items-center gap-3 bg-blue-900/20 border border-blue-700/40 rounded-lg px-3 py-2">
-          <span className="text-blue-400 text-sm flex-shrink-0">✨</span>
+          <SparklesIcon className="text-blue-400 w-4 h-4 flex-shrink-0" />
           <p className="text-blue-300 text-xs font-medium">Hỗ trợ đa dạng model: GPT, Gemini, Claude, Deepseek,... tuỳ chọn theo nhu cầu và ngân sách.</p>
         </div>
       </Card>
 
       <Card>
-        <SectionTitle>📋 Tính năng Trợ lý AI</SectionTitle>
+        <SectionTitle><ClipboardListIcon className="w-4 h-4 inline" /> Tính năng Trợ lý AI</SectionTitle>
         <div className="grid grid-cols-2 gap-2">
           {[
-            { icon: '👤', name: 'Đa trợ lý', desc: 'Tạo nhiều trợ lý với prompt riêng - mỗi trợ lý phục vụ mục đích khác nhau.' },
-            { icon: '💬', name: 'Chat trong hội thoại', desc: 'Gán trợ lý vào hội thoại - AI tự động hỗ trợ khi có tin nhắn mới.' },
-            { icon: '⚙️', name: 'Workflow node AI', desc: 'Node AI trong Workflow: tạo nội dung, phân loại tin nhắn, tóm tắt hội thoại.' },
-            { icon: '📊', name: 'Báo cáo sử dụng', desc: 'Theo dõi token, request, chi phí ước tính theo từng trợ lý.' },
-            { icon: '🔌', name: 'Nhiều model', desc: 'GPT, Gemini, Claude, Deepseek, Claude - chọn model phù hợp.' },
-            { icon: '📝', name: 'Custom Prompt', desc: 'Viết prompt tùy chỉnh cho từng trợ lý - định hình phong cách trả lời.' },
+            { icon: <UserIcon className="w-4 h-4" />, name: 'Đa trợ lý', desc: 'Tạo nhiều trợ lý với prompt riêng - mỗi trợ lý phục vụ mục đích khác nhau.' },
+            { icon: <ChatIcon className="w-4 h-4" />, name: 'Chat trong hội thoại', desc: 'Gán trợ lý vào hội thoại - AI tự động hỗ trợ khi có tin nhắn mới.' },
+            { icon: <SettingsIcon className="w-4 h-4" />, name: 'Workflow node AI', desc: 'Node AI trong Workflow: tạo nội dung, phân loại tin nhắn, tóm tắt hội thoại.' },
+            { icon: <ChartIcon className="w-4 h-4" />, name: 'Báo cáo sử dụng', desc: 'Theo dõi token, request, chi phí ước tính theo từng trợ lý.' },
+            { icon: <PluginIcon className="w-4 h-4" />, name: 'Nhiều model', desc: 'GPT, Gemini, Claude, Deepseek, Claude - chọn model phù hợp.' },
+            { icon: <EditIcon className="w-4 h-4" />, name: 'Custom Prompt', desc: 'Viết prompt tùy chỉnh cho từng trợ lý - định hình phong cách trả lời.' },
           ].map((f, i) => (
             <div key={i} className="bg-gray-700/30 rounded-lg p-2.5">
               <p className="text-gray-200 text-[11px] font-medium">{f.icon} {f.name}</p>
-              <p className="text-gray-500 text-[11px] mt-0.5">{f.desc}</p>
+              <p className="text-gray-400 text-[11px] mt-0.5">{f.desc}</p>
             </div>
           ))}
         </div>
       </Card>
 
       <Card>
-        <SectionTitle>🔧 Hướng dẫn sử dụng Trợ lý AI</SectionTitle>
+        <SectionTitle><WrenchIcon className="w-4 h-4 inline" /> Hướng dẫn sử dụng Trợ lý AI</SectionTitle>
         <StepList steps={[
           { title: 'Cấu hình API Key', desc: 'Vào <strong class="text-gray-200">Cài đặt → AI Assistant</strong> - nhập API Key của OpenAI hoặc Gemini.' },
           { title: 'Tạo trợ lý', desc: 'Nhấn <strong class="text-gray-200">"Tạo trợ lý mới"</strong> → đặt tên, viết prompt mô tả tính cách và nhiệm vụ.' },
@@ -1040,7 +1040,7 @@ function AIAssistantPanel() {
       {/* ─── 9Router section ───────────────────────────────────────────────── */}
       <div className="border-t border-gray-700/50 pt-4">
         <div className="flex items-start gap-3 mb-4">
-          <span className="text-3xl leading-none">🔄</span>
+          <span className="text-3xl leading-none"><RefreshIcon className="w-4 h-4" /></span>
           <div>
             <h3 className="text-white font-bold text-base">Tích hợp 9Router - Proxy AI giá rẻ & miễn phí</h3>
             <p className="text-gray-400 text-xs mt-0.5 leading-relaxed">
@@ -1056,7 +1056,7 @@ function AIAssistantPanel() {
         </div>
 
         <Card>
-          <SectionTitle>🎯 Tại sao dùng 9Router với Deplao?</SectionTitle>
+          <SectionTitle><TargetIcon className="w-4 h-4 inline" /> Tại sao dùng 9Router với Deplao?</SectionTitle>
           <BulletList items={[
             '<strong class="text-gray-200">Giảm 30-50% chi phí AI</strong> - 9Router tự động chọn provider rẻ nhất cho mỗi request',
             '<strong class="text-gray-200">Quản lý tập trung</strong> - Một API key duy nhất cho tất cả model, quên chuyện key hết hạn hay leak key',
@@ -1066,38 +1066,7 @@ function AIAssistantPanel() {
         </Card>
 
         <Card>
-          <SectionTitle>📦 Cài đặt 9Router</SectionTitle>
-          <div className="space-y-2 mb-3">
-            <div className="bg-gray-900/60 border border-blue-700/40 rounded-lg p-3 space-y-2">
-              <p className="text-gray-200 text-xs font-semibold">⚡ Hướng dẫn nhanh - 2 lệnh trong Terminal:</p>
-              <div className="bg-gray-900/80 border border-gray-700 rounded-lg p-2.5 font-mono text-xs space-y-1.5">
-                <div className="flex items-center gap-2">
-                  <span className="w-5 h-5 rounded-full bg-green-900/40 text-green-400 flex items-center justify-center text-[10px] font-bold flex-shrink-0">1</span>
-                  <code className="text-green-400">npm install -g 9router</code>
-                  <span className="text-gray-500 text-[10px]">← Cài đặt 9Router</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="w-5 h-5 rounded-full bg-blue-900/40 text-blue-400 flex items-center justify-center text-[10px] font-bold flex-shrink-0">2</span>
-                  <code className="text-blue-400">9router</code>
-                  <span className="text-gray-500 text-[10px]">← Chạy 9Router (giữ cửa sổ Terminal mở)</span>
-                </div>
-              </div>
-              <p className="text-gray-500 text-[10px]">
-                Sau khi chạy, Dashboard mở tại <strong className="text-gray-400">http://localhost:20128</strong>
-              </p>
-            </div>
-          </div>
-          <StepList steps={[
-            { title: 'Cài Node.js (nếu chưa có)', desc: 'Tải và cài Node.js phiên bản 18+ từ <strong class="text-gray-200">https://nodejs.org</strong>. Kiểm tra: <code style={{color:"#86efac",background:"#1f2937",padding:"1px 5px",borderRadius:"3px"}}>node -v</code>' },
-            { title: 'Cài đặt 9Router', desc: 'Mở Terminal (CMD/PowerShell) và chạy: <code style={{color:"#86efac",background:"#1f2937",padding:"1px 5px",borderRadius:"3px"}}>npm install -g 9router</code>' },
-            { title: 'Chạy 9Router', desc: 'Sau khi cài xong, gõ lệnh: <code style={{color:"#86efac",background:"#1f2937",padding:"1px 5px",borderRadius:"3px"}}>9router</code> - giữ Terminal chạy nền.' },
-            { title: 'Kết nối Provider', desc: 'Mở Dashboard tại <strong class="text-gray-200">http://localhost:20128</strong> → Settings → Add Provider → nhập API Key (OpenAI, Claude, Gemini...).' },
-            { title: 'Dùng trong Deplao', desc: 'Vào <strong class="text-gray-200">Cài đặt → Giới thiệu → Trợ lý AI</strong> hoặc <strong class="text-gray-200">Tích hợp → Trợ lý AI</strong>, chọn nền tảng <strong class="text-gray-200">9Router</strong> và chọn model miễn phí.' },
-          ]} />
-        </Card>
-
-        <Card>
-          <SectionTitle>🖼️ Hướng dẫn chi tiết các bước setup 9Router FREE</SectionTitle>
+          <SectionTitle><ImageIcon className="w-4 h-4 inline" /> Hướng dẫn chi tiết các bước setup 9Router FREE</SectionTitle>
           <div className="space-y-3">
             {/* Step 1 */}
             <div className="bg-gray-900/40 border border-gray-700/60 rounded-xl p-3.5 flex items-start gap-3.5 hover:border-blue-700/50 transition-colors group">
@@ -1128,7 +1097,7 @@ function AIAssistantPanel() {
                 <div className="bg-gray-900/80 rounded-lg px-3 py-2 border border-gray-700/60">
                   <code className="text-green-400 text-xs font-mono select-all">npm install -g 9router</code>
                 </div>
-                <p className="text-gray-500 text-[10px] mt-1">Đợi ~10-30s cho đến khi thấy dòng <code className="text-gray-400">added X packages</code></p>
+                <p className="text-gray-400 text-[10px] mt-1">Đợi ~10-30s cho đến khi thấy dòng <code className="text-gray-400">added X packages</code></p>
               </div>
             </div>
 
@@ -1146,7 +1115,7 @@ function AIAssistantPanel() {
                 <div className="bg-gray-900/80 rounded-lg px-3 py-2 border border-gray-700/60">
                   <code className="text-blue-400 text-xs font-mono select-all">9router</code>
                 </div>
-                <p className="text-gray-500 text-[10px] mt-1">
+                <p className="text-gray-400 text-[10px] mt-1">
                   ⏳ Lần đầu chạy có thể hơi lâu - đợi đến khi thấy <strong className="text-gray-400">Dashboard ready at http://localhost:20128</strong>
                 </p>
               </div>
@@ -1158,7 +1127,7 @@ function AIAssistantPanel() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-gray-200 text-xs font-semibold">Cấu hình trong Deplao</span>
-                  <span className="text-[10px] text-green-400 bg-green-900/30 px-1.5 py-0.5 rounded-full">done ✅</span>
+                  <span className="text-[10px] text-green-400 bg-green-900/30 px-1.5 py-0.5 rounded-full"><CheckIcon className="w-3 h-3 inline" /> done</span>
                 </div>
                 <p className="text-gray-400 text-[11px] leading-relaxed">
                   Vào <strong className="text-gray-300">Cài đặt → Giới thiệu → Trợ lý AI</strong> (hoặc <strong className="text-gray-300">Tích hợp → Trợ lý AI</strong>), tạo trợ lý mới,
@@ -1172,7 +1141,7 @@ function AIAssistantPanel() {
           {/* Issue #31 reference */}
           <div className="mt-3 bg-blue-900/20 border border-blue-700/40 rounded-lg px-3.5 py-2.5">
             <div className="flex items-start gap-2.5">
-              <span className="text-blue-400 text-sm flex-shrink-0 mt-0.5">💡</span>
+              <span className="text-blue-400 text-sm flex-shrink-0 mt-0.5"><SunIcon className="w-4 h-4" /></span>
               <div>
                 <p className="text-blue-300 text-[11px] font-semibold">Model tự động đồng bộ từ 9Router</p>
                 <p className="text-gray-400 text-[10px] leading-relaxed mt-0.5">
@@ -1191,7 +1160,7 @@ function AIAssistantPanel() {
         </Card>
 
         <Card>
-          <SectionTitle>🔧 Cấu hình trong Deplao</SectionTitle>
+          <SectionTitle><WrenchIcon className="w-4 h-4 inline" /> Cấu hình trong Deplao</SectionTitle>
           <Paragraph>
             Sau khi đã cài đặt và chạy 9Router, cấu hình Deplao để sử dụng 9Router làm proxy AI:
           </Paragraph>
@@ -1219,34 +1188,7 @@ function AIAssistantPanel() {
         </Card>
 
         <Card>
-          <SectionTitle>📋 Danh sách model 9Router thường dùng</SectionTitle>
-          <div className="grid grid-cols-2 gap-2">
-            {[
-              { icon: '🟢', name: 'gpt-4o-mini', cost: 'Rẻ nhất', note: 'Chat cơ bản, CSKH' },
-              { icon: '🟡', name: 'gpt-4o', cost: 'Trung bình', note: 'Tư vấn bán hàng' },
-              { icon: '🟣', name: 'gpt-4o-chatgptselect', cost: 'Rẻ', note: 'Từ ChatGPT Plus' },
-              { icon: '🔴', name: 'claude-3-haiku', cost: 'Rẻ', note: 'Phân tích nhanh' },
-              { icon: '🔵', name: 'claude-3.5-sonnet', cost: 'Cao', note: 'Nghiệp vụ phức tạp' },
-              { icon: '🟤', name: 'gemini-2.0-flash', cost: 'Rất rẻ', note: 'Đa phương tiện' },
-              { icon: '⚪', name: 'deepseek-chat', cost: 'Rất rẻ', note: 'Code, logic' },
-              { icon: '🟠', name: 'qwen2.5-72b', cost: 'Rẻ', note: 'Tiếng Trung, đa năng' },
-            ].map((m, i) => (
-              <div key={i} className="bg-gray-700/30 rounded-lg p-2.5">
-                <div className="flex items-center justify-between">
-                  <p className="text-gray-200 text-[11px] font-medium font-mono">{m.icon} {m.name}</p>
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
-                    m.cost === 'Rất rẻ' || m.cost === 'Rẻ nhất' ? 'bg-green-900/40 text-green-400' :
-                    m.cost === 'Cao' ? 'bg-red-900/40 text-red-400' : 'bg-yellow-900/40 text-yellow-400'
-                  }`}>{m.cost}</span>
-                </div>
-                <p className="text-gray-500 text-[10px] mt-0.5">{m.note}</p>
-              </div>
-            ))}
-          </div>
-        </Card>
-
-        <Card>
-          <SectionTitle>💡 Mẹo & Lưu ý</SectionTitle>
+          <SectionTitle><SunIcon className="w-4 h-4 inline" /> Mẹo & Lưu ý</SectionTitle>
           <BulletList items={[
             '<strong class="text-gray-200">9Router phải chạy cùng lúc với Deplao</strong> - nếu tắt 9Router, AI request qua 9Router sẽ thất bại',
             '<strong class="text-gray-200">Dashboard 9Router</strong> mở tại <strong class="text-gray-200">http://localhost:20128</strong> - theo dõi request, chi phí, provider health',
@@ -1281,19 +1223,19 @@ function AnalyticsPanel() {
   return (
     <div className="space-y-4">
       <Card>
-        <SectionTitle>📈 Báo cáo & Phân tích - Nắm bắt toàn diện hoạt động</SectionTitle>
+        <SectionTitle><TrendingUpIcon className="w-4 h-4 inline" /> Báo cáo & Phân tích - Nắm bắt toàn diện hoạt động</SectionTitle>
         <Paragraph>
           Trang Báo cáo tổng hợp mọi dữ liệu hoạt động trên Zalo thành biểu đồ trực quan,
           giúp bạn đánh giá hiệu quả kinh doanh, chăm sóc khách hàng và Tự động hoá.
         </Paragraph>
         <div className="flex items-center gap-3 bg-blue-900/20 border border-blue-700/40 rounded-lg px-3 py-2">
-          <span className="text-blue-400 text-sm flex-shrink-0">📊</span>
+          <span className="text-blue-400 text-sm flex-shrink-0"><ChartIcon className="w-4 h-4" /></span>
           <p className="text-blue-300 text-xs font-medium">Truy cập: Sidebar → Báo cáo - hoặc nhấn icon biểu đồ trên thanh điều hướng.</p>
         </div>
       </Card>
 
       <Card>
-        <SectionTitle>🎛️ Bộ lọc dữ liệu linh hoạt</SectionTitle>
+        <SectionTitle><SlidersIcon className="w-4 h-4 inline" /> Bộ lọc dữ liệu linh hoạt</SectionTitle>
         <BulletList items={[
           '<strong class="text-gray-200">Chọn tài khoản:</strong> Xem báo cáo cho từng tài khoản Zalo riêng lẻ hoặc tất cả cùng lúc',
           '<strong class="text-gray-200">Khoảng thời gian:</strong> Hôm nay · Hôm qua · 7 ngày · 30 ngày · 90 ngày · Tuỳ chọn ngày bắt đầu - kết thúc',
@@ -1302,30 +1244,30 @@ function AnalyticsPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>📊 Tab Tổng quan</SectionTitle>
+        <SectionTitle><ChartIcon className="w-4 h-4 inline" /> Tab Tổng quan</SectionTitle>
         <Paragraph>
           Bảng KPI tổng hợp - nhìn nhanh mọi chỉ số quan trọng trong một màn hình.
         </Paragraph>
         <div className="grid grid-cols-2 gap-2 mt-1">
           {[
-            { icon: '💬', kpi: 'Tin nhắn hôm nay', desc: 'Gửi & nhận, so sánh hôm qua' },
-            { icon: '📨', kpi: 'Tổng tin nhắn', desc: 'Toàn kỳ, chia gửi/nhận' },
-            { icon: '👥', kpi: 'Liên hệ & Nhóm', desc: 'Tổng bạn bè, nhóm Zalo' },
-            { icon: '📢', kpi: 'Chiến dịch', desc: 'Tổng & đang chạy' },
-            { icon: '🤝', kpi: 'Lời mời kết bạn', desc: 'Gửi & nhận trong kỳ' },
-            { icon: '⚡', kpi: 'Workflow', desc: 'Số lần chạy & tỉ lệ thành công' },
-            { icon: '🤖', kpi: 'AI request', desc: 'Số request & token tiêu thụ' },
+            { icon: <ChatIcon className="w-4 h-4" />, kpi: 'Tin nhắn hôm nay', desc: 'Gửi & nhận, so sánh hôm qua' },
+            { icon: <SendIcon className="w-4 h-4" />, kpi: 'Tổng tin nhắn', desc: 'Toàn kỳ, chia gửi/nhận' },
+            { icon: <UsersIcon className="w-4 h-4" />, kpi: 'Liên hệ & Nhóm', desc: 'Tổng bạn bè, nhóm Zalo' },
+            { icon: <CampaignIcon className="w-4 h-4" />, kpi: 'Chiến dịch', desc: 'Tổng & đang chạy' },
+            { icon: <UserCheckIcon className="w-4 h-4" />, kpi: 'Lời mời kết bạn', desc: 'Gửi & nhận trong kỳ' },
+            { icon: <LightningIcon className="w-4 h-4" />, kpi: 'Workflow', desc: 'Số lần chạy & tỉ lệ thành công' },
+            { icon: <BotIcon className="w-4 h-4" />, kpi: 'AI request', desc: 'Số request & token tiêu thụ' },
           ].map((k, i) => (
             <div key={i} className="bg-gray-700/30 rounded-lg px-2.5 py-2">
               <p className="text-gray-200 text-[11px] font-medium">{k.icon} {k.kpi}</p>
-              <p className="text-gray-500 text-[11px] mt-0.5">{k.desc}</p>
+              <p className="text-gray-400 text-[11px] mt-0.5">{k.desc}</p>
             </div>
           ))}
         </div>
       </Card>
 
       <Card>
-        <SectionTitle>💬 Tab Tin nhắn</SectionTitle>
+        <SectionTitle><ChatIcon className="w-4 h-4 inline" /> Tab Tin nhắn</SectionTitle>
         <BulletList items={[
           '<strong class="text-gray-200">Biểu đồ lượng tin nhắn:</strong> Area chart gửi/nhận theo ngày - nhận diện xu hướng tăng/giảm',
           '<strong class="text-gray-200">Heatmap giờ cao điểm:</strong> Ma trận Thứ × Giờ - tìm khung giờ khách hàng tương tác nhiều nhất',
@@ -1335,7 +1277,7 @@ function AnalyticsPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>👥 Tab Liên hệ</SectionTitle>
+        <SectionTitle><UsersIcon className="w-4 h-4 inline" /> Tab Liên hệ</SectionTitle>
         <BulletList items={[
           '<strong class="text-gray-200">Phân khúc liên hệ:</strong> Biểu đồ tròn phân loại theo bạn bè / nhóm / người lạ',
           '<strong class="text-gray-200">Phân bố nhãn:</strong> Pie chart phân bổ liên hệ theo từng nhãn Zalo',
@@ -1346,7 +1288,7 @@ function AnalyticsPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>🏷️ Tab Nhãn</SectionTitle>
+        <SectionTitle><TagIcon className="w-4 h-4 inline" /> Tab Nhãn</SectionTitle>
         <BulletList items={[
           '<strong class="text-gray-200">Timeline gán nhãn:</strong> Biểu đồ số lần gán nhãn theo ngày - theo dõi hoạt động phân loại',
           '<strong class="text-gray-200">Top nhãn được dùng:</strong> Bảng xếp hạng nhãn theo số lần sử dụng kèm emoji & màu sắc',
@@ -1355,7 +1297,7 @@ function AnalyticsPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>📢 Tab Chiến dịch</SectionTitle>
+        <SectionTitle><CampaignIcon className="w-4 h-4 inline" /> Tab Chiến dịch</SectionTitle>
         <BulletList items={[
           '<strong class="text-gray-200">Danh sách chiến dịch:</strong> Tên, loại, trạng thái (Chạy / Dừng / Xong / Nháp), tiến độ',
           '<strong class="text-gray-200">Chỉ số hiệu quả:</strong> Tổng gửi · Thành công · Thất bại · Đã phản hồi - tỷ lệ delivery & reply',
@@ -1364,7 +1306,7 @@ function AnalyticsPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>⚡ Tab Workflow</SectionTitle>
+        <SectionTitle><LightningIcon className="w-4 h-4 inline" /> Tab Workflow</SectionTitle>
         <BulletList items={[
           '<strong class="text-gray-200">Tổng số lần chạy:</strong> Thành công / Lỗi / Tỷ lệ thành công - đánh giá độ ổn định',
           '<strong class="text-gray-200">Thời gian trung bình:</strong> Thời gian thực thi trung bình mỗi lần chạy',
@@ -1374,7 +1316,7 @@ function AnalyticsPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>🤖 Tab AI</SectionTitle>
+        <SectionTitle><BotIcon className="w-4 h-4 inline" /> Tab AI</SectionTitle>
         <BulletList items={[
           '<strong class="text-gray-200">Tổng request & token:</strong> Prompt tokens, completion tokens - ước tính chi phí sử dụng',
           '<strong class="text-gray-200">Phân bổ theo model:</strong> Pie chart - GPT, Gemini, Claude, Deepseek... đang dùng bao nhiêu',
@@ -1384,21 +1326,21 @@ function AnalyticsPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>🧑‍💼 Tab Nhân viên</SectionTitle>
+        <SectionTitle><UsersIcon className="w-4 h-4 inline" /> Tab Nhân viên</SectionTitle>
         <Paragraph>
           Tab dành riêng cho Boss - theo dõi hiệu suất và hoạt động của từng nhân viên theo khoảng thời gian tùy chọn.
           Yêu cầu đã có ít nhất 1 nhân viên đã kết nối Relay Server.
         </Paragraph>
         <div className="grid grid-cols-2 gap-2 mt-1">
           {[
-            { icon: '💬', kpi: 'Tổng tin nhắn gửi', desc: 'Số tin nhắn thực tế mỗi nhân viên đã gửi' },
-            { icon: '🕐', kpi: 'Giờ online', desc: 'Tổng thời gian kết nối relay trong kỳ' },
-            { icon: '⚡', kpi: 'Thời gian phản hồi', desc: 'Trung bình từ lúc nhận đến khi trả lời' },
-            { icon: '🗣️', kpi: 'Hội thoại xử lý', desc: 'Số thread khác nhau đã nhắn tin' },
+            { icon: <ChatIcon className="w-4 h-4" />, kpi: 'Tổng tin nhắn gửi', desc: 'Số tin nhắn thực tế mỗi nhân viên đã gửi' },
+            { icon: <ClockIcon className="w-4 h-4" />, kpi: 'Giờ online', desc: 'Tổng thời gian kết nối relay trong kỳ' },
+            { icon: <LightningIcon className="w-4 h-4" />, kpi: 'Thời gian phản hồi', desc: 'Trung bình từ lúc nhận đến khi trả lời' },
+            { icon: <UsersIcon className="w-4 h-4" />, kpi: 'Hội thoại xử lý', desc: 'Số thread khác nhau đã nhắn tin' },
           ].map((k, i) => (
             <div key={i} className="bg-gray-700/30 rounded-lg px-2.5 py-2">
               <p className="text-gray-200 text-[11px] font-medium">{k.icon} {k.kpi}</p>
-              <p className="text-gray-500 text-[11px] mt-0.5">{k.desc}</p>
+              <p className="text-gray-400 text-[11px] mt-0.5">{k.desc}</p>
             </div>
           ))}
         </div>
@@ -1412,8 +1354,7 @@ function AnalyticsPanel() {
           '<strong class="text-gray-200">Bảng xếp hạng:</strong> Danh sách nhân viên sắp xếp theo tin nhắn hoặc giờ online - kèm badge màu sắc và avatar.',
         ]} />
         <div className="mt-2 bg-blue-900/20 border border-blue-700/30 rounded-lg px-3 py-2">
-          <p className="text-blue-300 text-[11px]">
-            💡 Dữ liệu được tính theo phiên kết nối relay thực tế - kể cả phiên kéo dài qua nhiều ngày đều được tính chính xác.
+          <p className="text-blue-300 text-[11px]"><SunIcon className="w-4 h-4 inline" /> Dữ liệu được tính theo phiên kết nối relay thực tế - kể cả phiên kéo dài qua nhiều ngày đều được tính chính xác.
           </p>
         </div>
       </Card>
@@ -1425,7 +1366,7 @@ function DashboardPanel() {
   return (
     <div className="space-y-4">
       <Card>
-        <SectionTitle>📊 Dashboard - Quản lý tài khoản</SectionTitle>
+        <SectionTitle><ChartIcon className="w-4 h-4 inline" /> Dashboard - Quản lý tài khoản</SectionTitle>
         <Paragraph>
           Dashboard là trang chủ khi mở app, hiển thị trạng thái tất cả tài khoản Zalo
           và các thao tác quản lý nhanh: kết nối, ngắt kết nối, gộp trang và quản trị tài khoản.
@@ -1441,7 +1382,7 @@ function DashboardPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>📤 Xuất dữ liệu</SectionTitle>
+        <SectionTitle><SendIcon className="w-4 h-4 inline" /> Xuất dữ liệu</SectionTitle>
         <BulletList items={[
           'Xuất danh sách liên hệ CRM ra file CSV / Excel',
           'Lọc theo tài khoản Zalo, nhãn khách hàng',
@@ -1456,7 +1397,7 @@ function SecurityPanel() {
   return (
     <div className="space-y-4">
       <Card>
-        <SectionTitle>🔒 Bảo mật tài khoản & Dữ liệu</SectionTitle>
+        <SectionTitle><LockIcon className="w-4 h-4 inline" /> Bảo mật tài khoản & Dữ liệu</SectionTitle>
         <Paragraph>
           Deplao được xây dựng theo kiến trúc toàn bộ dữ liệu được xử lý và lưu trữ ngay trên máy tính của bạn.
         </Paragraph>
@@ -1469,15 +1410,15 @@ function SecurityPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>💾 Lưu ý quan trọng về dung lượng lưu trữ</SectionTitle>
+        <SectionTitle><HardDriveIcon className="w-4 h-4 inline" /> Lưu ý quan trọng về dung lượng lưu trữ</SectionTitle>
         <div className="flex items-start gap-3 bg-yellow-900/20 border border-yellow-700/40 rounded-lg px-3 py-3 mb-2">
-          <span className="text-yellow-400 text-lg flex-shrink-0">⚠️</span>
+          <span className="text-yellow-400 text-lg flex-shrink-0"><AlertIcon className="w-5 h-5" /></span>
           <div className="space-y-1.5">
             <p className="text-yellow-300 text-xs font-semibold">Mặc định dữ liệu lưu tại ổ C - có thể đầy nhanh!</p>
             <p className="text-gray-400 text-xs leading-relaxed">
               Theo mặc định, toàn bộ tin nhắn, ảnh, video, file đính kèm được lưu tại
               <code style={{color:'#86efac',background:'#1f2937',padding:'0.0625rem 0.375rem',borderRadius:'0.25rem',margin:'0 0.1875rem'}}>C:\Users\...\AppData\Roaming\Deplao</code>.
-              Với nhiều tài khoản Zalo hoạt động, <strong style={{color:'#fbbf24'}}>thư mục media có thể chiếm vài GB đến hàng chục GB</strong> sau vài tháng sử dụng,
+              Với nhiều tài khoản Zalo hoạt động, <strong className={"text-white"}>thư mục media có thể chiếm vài GB đến hàng chục GB</strong> sau vài tháng sử dụng,
               đặc biệt khi nhận nhiều ảnh và video từ nhóm Zalo.
             </p>
           </div>
@@ -1492,7 +1433,7 @@ function SecurityPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>🛡️ Khuyến nghị bảo mật</SectionTitle>
+        <SectionTitle><ShieldIcon className="w-4 h-4 inline" /> Khuyến nghị bảo mật</SectionTitle>
         <BulletList items={[
           'Đặt thư mục lưu trữ dữ liệu ở ổ đĩa riêng (D, E...) và sao lưu định kỳ',
           'Không chia sẻ file dữ liệu app (.db) cho người khác',
@@ -1503,21 +1444,21 @@ function SecurityPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>📦 Nơi lưu trữ dữ liệu</SectionTitle>
+        <SectionTitle><PackageIcon className="w-4 h-4 inline" /> Nơi lưu trữ dữ liệu</SectionTitle>
         <Paragraph>
           Mặc định, dữ liệu được lưu tại thư mục <code style={{color:'#86efac',background:'#1f2937',padding:'0.0625rem 0.375rem',borderRadius:'0.25rem'}}>%AppData%\Deplao</code> trên Windows (ổ C).
           Bạn có thể thay đổi sang bất kỳ thư mục nào trong <strong className="text-white font-semibold">Cài đặt → Lưu trữ</strong>.
         </Paragraph>
         <div className="grid grid-cols-2 gap-2 mt-2">
           {[
-            { label: 'Database (tin nhắn, danh bạ)', size: '~50–500 MB', icon: '🗃️' },
-            { label: 'Media (ảnh, video, file)', size: '1 GB – 50+ GB', icon: '🖼️' },
-            { label: 'Cài đặt & phiên đăng nhập', size: '< 1 MB', icon: '⚙️' },
-            { label: 'Log ứng dụng', size: '~10–50 MB', icon: '📋' },
+            { label: 'Database (tin nhắn, danh bạ)', size: '~50–500 MB', icon: <FolderIcon className="w-4 h-4" /> },
+            { label: 'Media (ảnh, video, file)', size: '1 GB – 50+ GB', icon: <ImageIcon className="w-4 h-4" /> },
+            { label: 'Cài đặt & phiên đăng nhập', size: '< 1 MB', icon: <SettingsIcon className="w-4 h-4" /> },
+            { label: 'Log ứng dụng', size: '~10–50 MB', icon: <ClipboardListIcon className="w-4 h-4" /> },
           ].map((item, i) => (
             <div key={i} className="bg-gray-700/30 rounded-lg px-2.5 py-2">
               <p className="text-gray-200 text-[11px] font-medium">{item.icon} {item.label}</p>
-              <p className="text-gray-500 text-[11px] mt-0.5">Ước tính: {item.size}</p>
+              <p className="text-gray-400 text-[11px] mt-0.5">Ước tính: {item.size}</p>
             </div>
           ))}
         </div>
@@ -1530,7 +1471,7 @@ function EmployeesPanel() {
   return (
     <div className="space-y-4">
       <div className="flex items-start gap-3">
-        <span className="text-4xl leading-none">🧑‍💼</span>
+        <span className="text-4xl leading-none"><UsersIcon className="w-8 h-8" /></span>
         <div>
           <h3 className="text-white font-bold text-base">Cài đặt nhân viên & Workspace</h3>
           <p className="text-gray-400 text-xs mt-0.5">Cho phép nhiều nhân viên truy cập và xử lý tin nhắn từ máy riêng - có phân quyền chi tiết</p>
@@ -1543,7 +1484,7 @@ function EmployeesPanel() {
       </div>
 
       <Card>
-        <SectionTitle>🏢 Mô hình hoạt động</SectionTitle>
+        <SectionTitle><HomeIcon className="w-4 h-4 inline" /> Mô hình hoạt động</SectionTitle>
         <Paragraph>
           Deplao hỗ trợ mô hình <strong>1 Boss - nhiều nhân viên</strong>: Boss chạy app trên máy chủ, bật Relay Server,
           nhân viên kết nối từ máy riêng qua <strong>mạng nội bộ (LAN)</strong> hoặc <strong>từ xa qua WAN / Cloudflare Tunnel</strong>.
@@ -1551,19 +1492,19 @@ function EmployeesPanel() {
         </Paragraph>
         <div className="grid grid-cols-2 gap-2 mt-2">
           {[
-            { icon: '👑', label: 'Boss', desc: 'Toàn quyền, cài đặt nhân viên & tài khoản Zalo, bật Relay + Tunnel' },
-            { icon: '👷', label: 'Nhân viên', desc: 'Truy cập theo phân quyền, kết nối qua LAN hoặc WAN từ bất kỳ đâu' },
+            { icon: <CrownIcon className="w-4 h-4" />, label: 'Boss', desc: 'Toàn quyền, cài đặt nhân viên & tài khoản Zalo, bật Relay + Tunnel' },
+            { icon: <HardDriveIcon className="w-4 h-4" />, label: 'Nhân viên', desc: 'Truy cập theo phân quyền, kết nối qua LAN hoặc WAN từ bất kỳ đâu' },
           ].map((r, i) => (
             <div key={i} className="bg-gray-700/30 rounded-lg p-3 space-y-1">
               <p className="text-gray-200 text-xs font-semibold">{r.icon} {r.label}</p>
-              <p className="text-gray-500 text-[11px]">{r.desc}</p>
+              <p className="text-gray-400 text-[11px]">{r.desc}</p>
             </div>
           ))}
         </div>
       </Card>
 
       <Card>
-        <SectionTitle>🖧 Relay Server - Cầu nối Boss ↔ Nhân viên</SectionTitle>
+        <SectionTitle><GlobeIcon className="w-4 h-4 inline" /> Relay Server - Cầu nối Boss ↔ Nhân viên</SectionTitle>
         <Paragraph>
           Boss bật <strong>Relay Server</strong> trong <em>Cài đặt → Nhân viên → Relay Server</em>.
           Server lắng nghe trên một cổng (mặc định 9900). Nhân viên có thể kết nối qua <strong>LAN</strong> (cùng mạng nội bộ)
@@ -1571,12 +1512,12 @@ function EmployeesPanel() {
         </Paragraph>
         <div className="grid grid-cols-2 gap-2 mt-1 mb-3">
           {[
-            { icon: '🏠', mode: 'Chế độ LAN', desc: 'Nhân viên và boss cùng mạng Wi-Fi / văn phòng. Nhân viên nhập IP nội bộ (VD: 192.168.1.10:9900).' },
-            { icon: '🌍', mode: 'Chế độ WAN', desc: 'Boss bật Cloudflare Tunnel → nhận URL công khai (*.trycloudflare.com). Nhân viên nhập URL đó để kết nối từ xa.' },
+            { icon: <HomeIcon className="w-4 h-4" />, mode: 'Chế độ LAN', desc: 'Nhân viên và boss cùng mạng Wi-Fi / văn phòng. Nhân viên nhập IP nội bộ (VD: 192.168.1.10:9900).' },
+            { icon: <GlobeIcon className="w-4 h-4" />, mode: 'Chế độ WAN', desc: 'Boss bật Cloudflare Tunnel → nhận URL công khai (*.trycloudflare.com). Nhân viên nhập URL đó để kết nối từ xa.' },
           ].map((m, i) => (
             <div key={i} className="bg-gray-700/30 rounded-lg p-3 space-y-1">
               <p className="text-gray-200 text-[11px] font-semibold">{m.icon} {m.mode}</p>
-              <p className="text-gray-500 text-[11px] leading-relaxed">{m.desc}</p>
+              <p className="text-gray-400 text-[11px] leading-relaxed">{m.desc}</p>
             </div>
           ))}
         </div>
@@ -1588,7 +1529,7 @@ function EmployeesPanel() {
           { title: 'Làm việc bình thường', desc: 'Nhân viên xem hội thoại, gửi tin nhắn được phân công - mọi thao tác đều đi qua relay về máy boss.' },
         ]} />
         <div className="mt-3 bg-blue-900/20 border border-blue-700/40 rounded-lg px-3 py-2.5 space-y-1.5">
-          <p className="text-blue-300 text-[11px] font-semibold">🌐 Cloudflare Tunnel - không cần cấu hình router hay VPS</p>
+          <p className="text-blue-300 text-[11px] font-semibold"><GlobeIcon className="w-4 h-4 inline" /> Cloudflare Tunnel - không cần cấu hình router hay VPS</p>
           <BulletList items={[
             'Tunnel dùng Cloudflare Quick Tunnel miễn phí - không cần tài khoản, không giới hạn băng thông.',
             'URL tunnel thay đổi mỗi lần bật - hãy copy URL mới và gửi lại cho nhân viên sau mỗi lần restart.',
@@ -1596,7 +1537,7 @@ function EmployeesPanel() {
           ]} />
         </div>
         <div className="mt-2 bg-yellow-900/20 border border-yellow-700/40 rounded-lg px-3 py-2.5 space-y-1.5">
-          <p className="text-yellow-300 text-[11px] font-semibold">⚠️ Lưu ý khi restart app boss</p>
+          <p className="text-yellow-300 text-[11px] font-semibold"><AlertIcon className="w-4 h-4 inline" /> Lưu ý khi restart app boss</p>
           <BulletList items={[
             '<strong class="text-gray-300">Server tự dừng</strong> khi đóng app - nhân viên bị ngắt kết nối, cần đăng nhập lại.',
             '<strong class="text-gray-300">IP LAN có thể thay đổi</strong> nếu DHCP cấp IP mới - khuyến nghị đặt IP tĩnh cho máy boss.',
@@ -1606,7 +1547,7 @@ function EmployeesPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>👤 Tạo & Quản lý tài khoản nhân viên</SectionTitle>
+        <SectionTitle><UserIcon className="w-4 h-4 inline" /> Tạo & Quản lý tài khoản nhân viên</SectionTitle>
         <BulletList items={[
           '<strong class="text-gray-200">Tạo nhân viên:</strong> Cài đặt → Nhân viên → Danh sách → "Thêm nhân viên" → nhập tên đăng nhập, mật khẩu, tên hiển thị.',
           '<strong class="text-gray-200">Phân tài khoản Zalo:</strong> Mỗi nhân viên chỉ thấy các tài khoản Zalo được boss gán - bảo mật và rõ ràng trách nhiệm.',
@@ -1616,37 +1557,36 @@ function EmployeesPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>🔐 Phân quyền chi tiết</SectionTitle>
+        <SectionTitle><LockIcon className="w-4 h-4 inline" /> Phân quyền chi tiết</SectionTitle>
         <Paragraph>
           Boss có thể bật/tắt từng module riêng lẻ cho mỗi nhân viên. Nhân viên chỉ thấy và truy cập được những gì được phép.
         </Paragraph>
         <div className="grid grid-cols-2 gap-1.5 mt-2">
           {[
-            { icon: '💬', mod: 'Chat', desc: 'Xem và gửi tin nhắn' },
-            { icon: '👥', mod: 'CRM', desc: 'Quản lý khách hàng, nhãn' },
-            { icon: '⚙️', mod: 'Workflow', desc: 'Xem và kích hoạt workflow' },
-            { icon: '🔗', mod: 'Tích hợp', desc: 'Dùng panel tích hợp' },
-            { icon: '📈', mod: 'Báo cáo', desc: 'Xem analytics, thống kê' },
-            { icon: '👤', mod: 'Bạn bè', desc: 'Xem danh sách liên hệ' },
+            { icon: <ChatIcon className="w-4 h-4" />, mod: 'Chat', desc: 'Xem và gửi tin nhắn' },
+            { icon: <UsersIcon className="w-4 h-4" />, mod: 'CRM', desc: 'Quản lý khách hàng, nhãn' },
+            { icon: <SettingsIcon className="w-4 h-4" />, mod: 'Workflow', desc: 'Xem và kích hoạt workflow' },
+            { icon: <LinkIcon className="w-4 h-4" />, mod: 'Tích hợp', desc: 'Dùng panel tích hợp' },
+            { icon: <TrendingUpIcon className="w-4 h-4" />, mod: 'Báo cáo', desc: 'Xem analytics, thống kê' },
+            { icon: <UserIcon className="w-4 h-4" />, mod: 'Bạn bè', desc: 'Xem danh sách liên hệ' },
           ].map((p, i) => (
             <div key={i} className="flex items-center gap-2 bg-gray-700/30 rounded-lg px-2.5 py-2">
               <span className="text-sm">{p.icon}</span>
               <div>
                 <p className="text-gray-200 text-[11px] font-medium">{p.mod}</p>
-                <p className="text-gray-500 text-[10px]">{p.desc}</p>
+                <p className="text-gray-400 text-[10px]">{p.desc}</p>
               </div>
             </div>
           ))}
         </div>
         <div className="mt-2 bg-blue-900/20 border border-blue-700/30 rounded-lg px-3 py-2">
-          <p className="text-blue-300 text-[11px]">
-            💡 Khi nhân viên không có quyền vào một trang, app tự động chuyển về <strong>Dashboard</strong> - không xảy ra lỗi hay lộ dữ liệu.
+          <p className="text-blue-300 text-[11px]"><SunIcon className="w-4 h-4 inline" /> Khi nhân viên không có quyền vào một trang, app tự động chuyển về <strong>Dashboard</strong> - không xảy ra lỗi hay lộ dữ liệu.
           </p>
         </div>
       </Card>
 
       <Card>
-        <SectionTitle>📊 Báo cáo nhân viên</SectionTitle>
+        <SectionTitle><ChartIcon className="w-4 h-4 inline" /> Báo cáo nhân viên</SectionTitle>
         <Paragraph>
           Module <strong>Báo cáo → Nhân viên</strong> cho phép boss theo dõi hiệu suất từng nhân viên theo khoảng thời gian tùy chọn.
         </Paragraph>
@@ -1660,7 +1600,7 @@ function EmployeesPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>🔄 Đồng bộ dữ liệu Boss ↔ Nhân viên</SectionTitle>
+        <SectionTitle><RefreshIcon className="w-4 h-4 inline" /> Đồng bộ dữ liệu Boss ↔ Nhân viên</SectionTitle>
         <BulletList items={[
           'Tin nhắn boss nhận/gửi được relay đến nhân viên theo thời gian thực.',
           'Chuyển giữa workspace boss ↔ nhân viên: app tự kiểm tra quyền và chuyển hướng về Dashboard nếu trang hiện tại không được phép.',
@@ -1674,7 +1614,7 @@ function PolicyPanel() {
   return (
     <div className="space-y-4">
       <div className="bg-blue-900/20 border border-blue-700/40 rounded-xl p-4">
-        <p className="text-blue-300 text-xs font-semibold mb-1">📜 Chính sách sử dụng & Tuyên bố miễn trách nhiệm pháp lý</p>
+        <p className="text-blue-300 text-xs font-semibold mb-1"><FileTextIcon className="w-4 h-4 inline" /> Chính sách sử dụng & Tuyên bố miễn trách nhiệm pháp lý</p>
         <p className="text-gray-400 text-[11px]">Phiên bản 1.0 - có hiệu lực từ ngày 01/01/2025</p>
       </div>
 
@@ -1683,7 +1623,7 @@ function PolicyPanel() {
         <Paragraph>
           Deplao là phần mềm hỗ trợ quản lý giao tiếp trên nền tảng Zalo dành cho mục đích
           <strong className="text-white font-semibold"> kinh doanh hợp pháp</strong>, chăm sóc khách hàng và Tự động hoá quy trình làm việc.
-          Phần mềm <strong style={{color:'#fbbf24'}}>không được thiết kế</strong> và <strong style={{color:'#fbbf24'}}>không khuyến khích sử dụng</strong> cho các hành vi:
+          Phần mềm <strong className={"text-white"}>không được thiết kế</strong> và <strong className={"text-white"}>không khuyến khích sử dụng</strong> cho các hành vi:
         </Paragraph>
         <BulletList items={[
           'Gửi tin nhắn spam, quảng cáo hàng loạt không có sự đồng ý của người nhận',
@@ -1746,7 +1686,7 @@ function BugReportPanel() {
   return (
     <div className="space-y-4">
       <div className="flex items-start gap-3">
-        <span className="text-3xl leading-none">🐛</span>
+        <span className="text-3xl leading-none"><BugIcon className="w-4 h-4" /></span>
         <div>
           <h3 className="text-white font-bold text-base">Báo lỗi & Hướng dẫn</h3>
           <p className="text-gray-400 text-xs mt-0.5 leading-relaxed">
@@ -1772,7 +1712,7 @@ function BugReportPanel() {
       </div>
 
       <Card>
-        <SectionTitle>📝 Quy trình báo lỗi - 5 bước</SectionTitle>
+        <SectionTitle><EditIcon className="w-4 h-4 inline" /> Quy trình báo lỗi - 5 bước</SectionTitle>
         <StepList steps={[
           {
             title: '1. Tái hiện lỗi',
@@ -1798,7 +1738,7 @@ function BugReportPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>📖 Ví dụ: Báo cáo lỗi chất lượng cao</SectionTitle>
+        <SectionTitle><BookIcon className="w-4 h-4 inline" /> Ví dụ: Báo cáo lỗi chất lượng cao</SectionTitle>
         <div className="bg-gray-900/60 rounded-lg border border-gray-700/50 p-3 space-y-2 text-xs">
           <div className="flex items-center gap-2">
             <span className="bg-red-900/40 text-red-300 text-[10px] px-2 py-0.5 rounded-full font-medium">bug</span>
@@ -1823,22 +1763,22 @@ function BugReportPanel() {
           </p>
           <div className="bg-green-900/20 border border-green-700/30 rounded-lg p-2 mt-2">
             <p className="text-[11px] text-green-300">
-              ✅ Báo cáo này có: bước tái hiện chính xác, so sánh kết quả, thông tin môi trường đủ để xác định lỗi.
+              <CheckIcon className="w-4 h-4 inline" /> Báo cáo này có: bước tái hiện chính xác, so sánh kết quả, thông tin môi trường đủ để xác định lỗi.
             </p>
           </div>
         </div>
       </Card>
 
       <Card>
-        <SectionTitle>🔍 Các loại lỗi thường gặp</SectionTitle>
+        <SectionTitle><SearchIcon className="w-4 h-4 inline" /> Các loại lỗi thường gặp</SectionTitle>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {[
-            { icon: '🔴', type: 'Lỗi crash / treo app', tips: 'Mô tả thao tác cuối trước khi crash. Chụp screenshot lỗi. Kiểm tra Console (Ctrl+Shift+I).' },
-            { icon: '🟡', type: 'Lỗi giao diện / hiển thị', tips: 'Screenshot so sánh hiện tại vs mong đợi. Ghi OS, độ phân giải màn hình.' },
-            { icon: '🔵', type: 'Lỗi kết nối / đồng bộ', tips: 'Ghi thời điểm lỗi. Kiểm tra mạng. Thử đăng nhập lại. Gửi screenshot trạng thái.' },
-            { icon: '🟣', type: 'Lỗi tích hợp bên thứ 3', tips: 'Ghi rõ tích hợp nào. Kiểm tra API key. Mô tả expected vs actual response.' },
-            { icon: '🟠', type: 'Lỗi Workflow không chạy', tips: 'Screenshot flow designer. Ghi trigger + action. Kiểm tra log "Chạy gần đây".' },
-            { icon: '⚪', type: 'Hiệu năng chậm / lag', tips: 'Ghi quy mô dữ liệu. Mô tả thao tác bị chậm. So sánh với phiên bản trước.' },
+            { icon: <CloseIcon className="w-4 h-4" />, type: 'Lỗi crash / treo app', tips: 'Mô tả thao tác cuối trước khi crash. Chụp screenshot lỗi. Kiểm tra Console (Ctrl+Shift+I).' },
+            { icon: <StarIcon className="w-4 h-4" />, type: 'Lỗi giao diện / hiển thị', tips: 'Screenshot so sánh hiện tại vs mong đợi. Ghi OS, độ phân giải màn hình.' },
+            { icon: <TargetIcon className="w-4 h-4" />, type: 'Lỗi kết nối / đồng bộ', tips: 'Ghi thời điểm lỗi. Kiểm tra mạng. Thử đăng nhập lại. Gửi screenshot trạng thái.' },
+            { icon: <TargetIcon className="w-4 h-4" />, type: 'Lỗi tích hợp bên thứ 3', tips: 'Ghi rõ tích hợp nào. Kiểm tra API key. Mô tả expected vs actual response.' },
+            { icon: <AlertIcon className="w-4 h-4" />, type: 'Lỗi Workflow không chạy', tips: 'Screenshot flow designer. Ghi trigger + action. Kiểm tra log "Chạy gần đây".' },
+            { icon: <CircleIcon className="w-4 h-4" />, type: 'Hiệu năng chậm / lag', tips: 'Ghi quy mô dữ liệu. Mô tả thao tác bị chậm. So sánh với phiên bản trước.' },
           ].map((item, i) => (
             <div key={i} className="bg-gray-700/30 rounded-lg p-2.5 border border-gray-600/30">
               <div className="flex items-center gap-1.5 mb-1">
@@ -1852,7 +1792,7 @@ function BugReportPanel() {
       </Card>
 
       <Card>
-        <SectionTitle>🚫 Những điều KHÔNG nên làm</SectionTitle>
+        <SectionTitle><CloseIcon className="w-4 h-4 inline" /> Những điều KHÔNG nên làm</SectionTitle>
         <BulletList items={[
           'Gửi issue chỉ ghi "app bị lỗi" mà không có mô tả chi tiết',
           'Gửi nhiều issue trùng lặp - hãy kiểm tra issue đã tồn tại trước',
@@ -1869,7 +1809,7 @@ function DonateCoffeePanel() {
   return (
     <div className="space-y-4">
       <div className="flex items-start gap-3">
-        <span className="text-3xl leading-none">☕</span>
+        <span className="text-3xl leading-none"><CoffeeIcon className="w-8 h-8" /></span>
         <div>
           <h3 className="text-white font-bold text-base">Donate & Ủng hộ</h3>
           <p className="text-gray-400 text-xs mt-0.5 leading-relaxed">
@@ -1882,14 +1822,14 @@ function DonateCoffeePanel() {
 
       {/* QR Code placeholder */}
       <Card>
-        <SectionTitle>📱 Quét mã QR - Ủng hộ qua chuyển khoản</SectionTitle>
+        <SectionTitle><SmartphoneIcon className="w-4 h-4 inline" /> Quét mã QR - Ủng hộ qua chuyển khoản</SectionTitle>
         <Paragraph>
           Quét mã QR bên dưới bằng app ngân hàng để ủng hộ đội ngũ phát triển.
           Mọi đóng góp đều được ghi nhận và biết ơn!
         </Paragraph>
         <div className="flex justify-center mt-3">
           <div className="w-60 h-60 bg-gray-700/60 rounded-2xl border-2 border-dashed border-gray-600 flex flex-col items-center justify-center gap-2 select-none">
-            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-gray-500">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-gray-400">
               <rect x="3" y="3" width="7" height="7"/>
               <rect x="14" y="3" width="7" height="7"/>
               <rect x="14" y="14" width="7" height="7"/>
@@ -1897,8 +1837,8 @@ function DonateCoffeePanel() {
               <line x1="3" y1="10" x2="3" y2="14"/>
               <line x1="21" y1="10" x2="21" y2="14"/>
             </svg>
-            <span className="text-xs text-gray-500">QR Code</span>
-            <span className="text-[10px] text-gray-600 text-center px-4">
+            <span className="text-xs text-gray-400">QR Code</span>
+            <span className="text-[10px] text-gray-400 text-center px-4">
               <img src={qrCodeImg} alt="QR Code" className="w-full h-full object-contain" />
             </span>
           </div>
@@ -1907,19 +1847,19 @@ function DonateCoffeePanel() {
 
       {/* Nhận Job */}
       <Card>
-        <SectionTitle>💼 Nhận dự án - Team nhận làm phần mềm theo yêu cầu</SectionTitle>
+        <SectionTitle><FolderIcon className="w-4 h-4 inline" /> Nhận dự án - Team nhận làm phần mềm theo yêu cầu</SectionTitle>
         <Paragraph>
           Ngoài Deplao, team còn nhận phát triển phần mềm theo yêu cầu riêng (custom software development).
           Nếu bạn cần một công cụ quản lý, tự động hoá hoặc bất cứ giải pháp công nghệ nào, đừng ngần ngại liên hệ!
         </Paragraph>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-1">
           {[
-            { icon: '🛠️', title: 'Phần mềm desktop', desc: 'Ứng dụng Electron, React, TypeScript cho Windows/macOS' },
-            { icon: '🌐', title: 'Web app & API', desc: 'Backend Node.js, React, PHP,... database quản lý doanh nghiệp' },
-            { icon: '🤖', title: 'Tự động hoá & Bot', desc: 'Zalo bot, Facebook bot, Telegram bot, workflow automation' },
-            { icon: '📊', title: 'CRM & ERP', desc: 'Hệ thống quản lý khách hàng, nhân viên, bán hàng riêng' },
-            { icon: '🔌', title: 'Tích hợp API', desc: 'Kết nối POS, thanh toán, vận chuyển, webhook, third-party' },
-            { icon: '📱', title: 'AI & Chatbot', desc: 'Tích hợp GPT, Gemini, xử lý ngôn ngữ tự nhiên, phân loại' },
+            { icon: <WrenchIcon className="w-4 h-4" />, title: 'Phần mềm desktop', desc: 'Ứng dụng Electron, React, TypeScript cho Windows/macOS' },
+            { icon: <GlobeIcon className="w-4 h-4" />, title: 'Web app & API', desc: 'Backend Node.js, React, PHP,... database quản lý doanh nghiệp' },
+            { icon: <BotIcon className="w-4 h-4" />, title: 'Tự động hoá & Bot', desc: 'Zalo bot, Facebook bot, Telegram bot, workflow automation' },
+            { icon: <ChartIcon className="w-4 h-4" />, title: 'CRM & ERP', desc: 'Hệ thống quản lý khách hàng, nhân viên, bán hàng riêng' },
+            { icon: <PluginIcon className="w-4 h-4" />, title: 'Tích hợp API', desc: 'Kết nối POS, thanh toán, vận chuyển, webhook, third-party' },
+            { icon: <SmartphoneIcon className="w-4 h-4" />, title: 'AI & Chatbot', desc: 'Tích hợp GPT, Gemini, xử lý ngôn ngữ tự nhiên, phân loại' },
           ].map((item, i) => (
             <div key={i} className="bg-gray-700/30 rounded-lg p-2.5 border border-gray-600/30">
               <div className="flex items-center gap-1.5 mb-1">
@@ -1961,7 +1901,7 @@ function DonateCoffeePanel() {
             </div>
           </div>
           <div className="flex items-center gap-2.5 bg-gray-700/40 rounded-lg px-3 py-2.5">
-            <span className="text-base">📘</span>
+            <span className="text-base"><BookIcon className="w-4 h-4" /></span>
             <div>
               <p className="text-xs text-gray-200 font-medium">Facebook</p>
               <button
@@ -2034,7 +1974,7 @@ export default function IntroductionSettings({ initialSubtab }: IntroductionSett
 
   return (
     <div className="space-y-3">
-      <h2 className="text-base font-semibold text-white">📖 Giới thiệu & Hướng dẫn sử dụng</h2>
+      <h2 className="text-base font-semibold text-white"><BookIcon className="w-4 h-4 inline" /> Giới thiệu & Hướng dẫn sử dụng</h2>
 
       <div className="flex gap-0 border border-gray-700 rounded-xl overflow-hidden" style={{ minHeight: '30rem' }}>
         {/* Left: Feature tabs */}

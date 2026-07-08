@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import ipc from '@/lib/ipc';
 import { useAppStore } from '@/store/appStore';
 import { useWorkspaceStore } from '@/store/workspaceStore';
-import { Spinner } from '@/components/common/PageLoading';
+import { Spinner } from '@/components/common/PageLoading';import { UserIcon } from '@/components/common/icons';
+
 
 /** Build normalized Boss URL - handles both IP:Port and full tunnel URL */
 function buildBossUrl(address: string, port: string): string {
@@ -54,7 +55,7 @@ export default function EmployeeLoginModal({ onClose }: Props) {
       const res = await ipc.workspace?.create({
         name: wsName,
         type: 'remote',
-        icon: '👤',
+        icon: "User",
         bossUrl,
         token: loginRes.token,
         employeeId: loginRes.employee?.employee_id,
@@ -106,7 +107,7 @@ export default function EmployeeLoginModal({ onClose }: Props) {
       <div className="bg-gray-800 rounded-2xl w-full max-w-md shadow-2xl border border-gray-700" onClick={e => e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
-          <h2 className="text-white font-semibold">👤 Đăng nhập nhân viên</h2>
+          <h2 className="text-white font-semibold"><UserIcon className="w-4 h-4 inline" /> Đăng nhập nhân viên</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-white">
             <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
               <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"/>

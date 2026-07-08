@@ -3,6 +3,8 @@ import ipc from '@/lib/ipc';
 import { useWorkspaceStore, WorkspaceInfo } from '@/store/workspaceStore';
 import { useAppStore } from '@/store/appStore';
 import { showConfirm } from '../common/ConfirmDialog';
+import { HomeIcon, LinkIcon, PluginIcon, PlusIcon, SunIcon, UserIcon } from '@/components/common/icons';
+
 
 /**
  * Build a normalized Boss URL from an address input and optional port.
@@ -70,7 +72,7 @@ export default function WorkspaceSettings() {
             <div className="flex items-center justify-between">
                 <div>
                     <h3 className="text-sm font-semibold text-gray-200">Quản lý Workspace</h3>
-                    <p className="text-xs text-gray-500 mt-0.5">
+                    <p className="text-xs text-gray-400 mt-0.5">
                         Mỗi workspace có dữ liệu, tài khoản Zalo và cài đặt riêng biệt.
                     </p>
                 </div>
@@ -79,7 +81,7 @@ export default function WorkspaceSettings() {
                         onClick={() => setShowCreateForm(true)}
                         className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors"
                     >
-                        <span>➕</span> Thêm workspace
+                        <PlusIcon className="w-4 h-4" /> Thêm workspace
                     </button>
                 )}
             </div>
@@ -119,7 +121,7 @@ export default function WorkspaceSettings() {
 
             {/* Info */}
             <div className="rounded-xl bg-blue-600/10 border border-blue-600/20 p-3 text-xs text-blue-300 space-y-1">
-                <p className="font-medium">💡 Hướng dẫn</p>
+                <p className="font-medium"><SunIcon className="w-4 h-4 inline" /> Hướng dẫn</p>
                 <p className="text-blue-500">
                     • <strong>Local workspace</strong>: Chạy trực tiếp trên máy này - kết nối Zalo trực tiếp, có thể bật relay server cho nhân viên.
                 </p>
@@ -154,7 +156,7 @@ function WorkspaceCard({ workspace, isActive, connectionStatus, onSwitch, onEdit
                 : 'bg-gray-800/60 border-gray-700/60 hover:border-gray-600'
         }`}>
             <div className="flex items-start gap-3">
-                <span className="text-2xl mt-0.5 flex-shrink-0">{workspace.icon || (isRemote ? '👤' : '🏠')}</span>
+                <span className="text-2xl mt-0.5 flex-shrink-0">{workspace.icon || (isRemote ? <UserIcon className="w-6 h-6" /> : <HomeIcon className="w-6 h-6" />)}</span>
 
                 <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -169,11 +171,11 @@ function WorkspaceCard({ workspace, isActive, connectionStatus, onSwitch, onEdit
                                 ? 'bg-purple-600/20 text-purple-300'
                                 : 'bg-gray-700 text-gray-400'
                         }`}>
-                            {isRemote ? '👤 Remote' : '🏠 Local'}
+                            {isRemote ? 'Remote' : 'Local'}
                         </span>
                         {isRemote && (
                             <span className={`flex items-center gap-1 text-[10px] font-medium ${
-                                isConnected ? 'text-green-400' : 'text-gray-500'
+                                isConnected ? 'text-green-400' : 'text-gray-400'
                             }`}>
                                 <span className={`w-1.5 h-1.5 rounded-full ${
                                     isConnected ? 'bg-green-400' : 'bg-gray-600'
@@ -188,18 +190,16 @@ function WorkspaceCard({ workspace, isActive, connectionStatus, onSwitch, onEdit
 
                     <div className="mt-1 space-y-0.5">
                         {isRemote && workspace.employeeName && (
-                            <p className="text-[11px] text-gray-500">
-                                👤 {workspace.employeeName}
-                                {workspace.employeeUsername && <span className="text-gray-600"> (@{workspace.employeeUsername})</span>}
+                            <p className="text-[11px] text-gray-400"><UserIcon className="w-4 h-4 inline" /> {workspace.employeeName}
+                                {workspace.employeeUsername && <span className="text-gray-400"> (@{workspace.employeeUsername})</span>}
                             </p>
                         )}
                         {isRemote && workspace.bossUrl && (
-                            <p className="text-[11px] text-gray-600 truncate">
-                                🔗 {workspace.bossUrl.replace(/^https?:\/\//, '')}
+                            <p className="text-[11px] text-gray-400 truncate"><LinkIcon className="w-4 h-4 inline" /> {workspace.bossUrl.replace(/^https?:\/\//, '')}
                             </p>
                         )}
                         {!isRemote && workspace.dbPath && (
-                            <p className="text-[11px] text-gray-600 font-mono truncate">{workspace.dbPath}</p>
+                            <p className="text-[11px] text-gray-400 font-mono truncate">{workspace.dbPath}</p>
                         )}
                     </div>
                 </div>
@@ -215,7 +215,7 @@ function WorkspaceCard({ workspace, isActive, connectionStatus, onSwitch, onEdit
                     )}
                     <button
                         onClick={onEdit}
-                        className="p-1.5 text-gray-500 hover:text-gray-300 hover:bg-gray-700 rounded-lg transition-colors"
+                        className="p-1.5 text-gray-400 hover:text-gray-300 hover:bg-gray-700 rounded-lg transition-colors"
                         title="Chỉnh sửa"
                     >
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -226,7 +226,7 @@ function WorkspaceCard({ workspace, isActive, connectionStatus, onSwitch, onEdit
                     {workspace.id !== 'default' && (
                         <button
                             onClick={onDelete}
-                            className="p-1.5 text-gray-500 hover:text-red-400 hover:bg-red-600/10 rounded-lg transition-colors"
+                            className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-red-600/10 rounded-lg transition-colors"
                             title="Xóa"
                         >
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -347,7 +347,7 @@ function CreateWorkspaceForm({ onCreated, onCancel }: { onCreated: () => void; o
                     <input
                         value={icon}
                         onChange={e => setIcon(e.target.value)}
-                        placeholder="🏠"
+                        placeholder="Icon (VD: 🏠)"
                         className="w-12 text-center text-sm bg-gray-700 border border-gray-600 rounded-lg px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500"
                     />
                     <input
@@ -361,21 +361,21 @@ function CreateWorkspaceForm({ onCreated, onCancel }: { onCreated: () => void; o
                 </div>
 
                 <div>
-                    <label className="block text-[11px] text-gray-500 mb-1">Loại workspace</label>
+                    <label className="block text-[11px] text-gray-400 mb-1">Loại workspace</label>
                     <select
                         value={type}
                         onChange={e => setType(e.target.value as any)}
                         className="w-full text-xs bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-1.5 text-gray-300 focus:outline-none focus:border-blue-500"
                     >
-                        <option value="local">🏠 Local (Boss / Standalone)</option>
-                        <option value="remote">👤 Remote (Nhân viên)</option>
+                        <option value="local"><HomeIcon className="w-4 h-4 inline" /> Local (Boss / Standalone)</option>
+                        <option value="remote"><UserIcon className="w-4 h-4 inline" /> Remote (Nhân viên)</option>
                     </select>
                 </div>
             </div>
 
             {type === 'remote' && (
                 <div className="space-y-2 pt-1 border-t border-gray-700">
-                    <p className="text-[11px] text-gray-500">Kết nối tới Boss (nhập IP, Port, tài khoản nhân viên)</p>
+                    <p className="text-[11px] text-gray-400">Kết nối tới Boss (nhập IP, Port, tài khoản nhân viên)</p>
                     <div className="flex gap-2">
                         <input
                             value={ip}
@@ -558,7 +558,7 @@ function EditWorkspaceForm({ workspace, connectionStatus, onSaved, onCancel }: {
                 <input
                     value={icon}
                     onChange={e => setIcon(e.target.value)}
-                    placeholder="🏠"
+                    placeholder="Icon (VD: 🏠)"
                     className="w-12 text-center text-sm bg-gray-700 border border-gray-600 rounded-lg px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500"
                 />
                 <input
@@ -574,8 +574,8 @@ function EditWorkspaceForm({ workspace, connectionStatus, onSaved, onCancel }: {
             {isRemote && (
                 <div className="space-y-2 pt-1 border-t border-gray-700">
                     <div className="flex items-center justify-between">
-                        <p className="text-[11px] text-gray-500">Kết nối boss</p>
-                        <span className={`flex items-center gap-1 text-[10px] font-medium ${isConnected ? 'text-green-400' : 'text-gray-500'}`}>
+                        <p className="text-[11px] text-gray-400">Kết nối boss</p>
+                        <span className={`flex items-center gap-1 text-[10px] font-medium ${isConnected ? 'text-green-400' : 'text-gray-400'}`}>
                             <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-green-400' : 'bg-gray-600'}`} />
                             {isConnected ? `Online${connectionStatus?.latency ? ` · ${connectionStatus.latency}ms` : ''}` : 'Offline'}
                         </span>
@@ -612,9 +612,8 @@ function EditWorkspaceForm({ workspace, connectionStatus, onSaved, onCancel }: {
                     />
 
                     {workspace.employeeName && (
-                        <p className="text-[11px] text-gray-500">
-                            👤 Đăng nhập: <span className="text-gray-400">{workspace.employeeName}</span>
-                            {workspace.employeeUsername && <span className="text-gray-600"> (@{workspace.employeeUsername})</span>}
+                        <p className="text-[11px] text-gray-400"><UserIcon className="w-4 h-4 inline" /> Đăng nhập: <span className="text-gray-400">{workspace.employeeName}</span>
+                            {workspace.employeeUsername && <span className="text-gray-400"> (@{workspace.employeeUsername})</span>}
                         </p>
                     )}
 
@@ -642,7 +641,7 @@ function EditWorkspaceForm({ workspace, connectionStatus, onSaved, onCancel }: {
                                 disabled={connecting}
                                 className="text-xs text-green-300 border border-green-500/40 hover:bg-green-600/10 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-40"
                             >
-                                {connecting ? 'Đang đăng nhập & kết nối...' : '🔌 Đăng nhập & Kết nối'}
+                                {connecting ? 'Đang đăng nhập & kết nối...' : <><LinkIcon className="w-4 h-4 inline" /> Đăng nhập & Kết nối</>}
                             </button>
                         )}
                     </div>

@@ -7,6 +7,8 @@ import { ConfirmDialog, ErpModalCard, ErpOverlay } from '../shared/ErpDialogs';
 import { ERP_DATE_FILTER_OPTIONS, getDefaultCustomRange, resolveErpDateRange, type ErpDateFilterPreset } from '../shared/erpDateFilters';
 import { EmployeeAvatar, RichContentPreview } from '../shared/ErpBadges';
 import type { ErpTask, ErpTaskPriority, ErpTaskStatus } from '../../../../models/erp';
+import { AlertIcon, ChatIcon, CircleIcon, CloseIcon, TargetIcon } from '@/components/common/icons';
+
 
 const STATUS_COLS: { id: ErpTaskStatus; label: string; color: string }[] = [
   { id: 'todo',      label: 'Cần làm',    color: 'bg-gray-700/50 border-gray-600' },
@@ -16,11 +18,11 @@ const STATUS_COLS: { id: ErpTaskStatus; label: string; color: string }[] = [
   { id: 'cancelled', label: 'Huỷ',        color: 'bg-gray-800/50 border-gray-700' },
 ];
 
-const PRIORITY_META: Record<string, { color: string; label: string; icon: string }> = {
-  low: { color: 'text-gray-400', label: 'Thấp', icon: '⚪' },
-  normal: { color: 'text-blue-400', label: 'Bình thường', icon: '🔵' },
-  high: { color: 'text-orange-400', label: 'Cao', icon: '🟠' },
-  urgent: { color: 'text-red-400', label: 'Khẩn cấp', icon: '🔴' },
+const PRIORITY_META: Record<string, { color: string; label: string; icon: React.ReactNode }> = {
+  low: { color: 'text-gray-400', label: 'Thấp', icon: <CircleIcon className="w-4 h-4" /> },
+  normal: { color: 'text-blue-400', label: 'Bình thường', icon: <TargetIcon className="w-4 h-4" /> },
+  high: { color: 'text-orange-400', label: 'Cao', icon: <AlertIcon className="w-4 h-4" /> },
+  urgent: { color: 'text-red-400', label: 'Khẩn cấp', icon: <CloseIcon className="w-4 h-4" /> },
 };
 
 const STATUS_LABELS: Record<ErpTaskStatus, string> = {
@@ -222,7 +224,7 @@ export default function TaskBoardPage() {
                       <button
                         onClick={(e) => { e.stopPropagation(); setDeleteTarget(task); }}
                         title="Xoá task"
-                        className="absolute top-1 right-1 w-5 h-5 flex items-center justify-center rounded text-[11px] text-gray-500 hover:text-red-400 hover:bg-gray-700/80 opacity-0 group-hover:opacity-100 transition-opacity"
+                        className="absolute top-1 right-1 w-5 h-5 flex items-center justify-center rounded text-[11px] text-gray-400 hover:text-red-400 hover:bg-gray-700/80 opacity-0 group-hover:opacity-100 transition-opacity"
                       >✕</button>
 
                       <p className="text-xs text-gray-200 font-medium leading-snug mb-1 pr-5">{task.title}</p>
@@ -231,16 +233,16 @@ export default function TaskBoardPage() {
                           <RichContentPreview source={task.description} compact className="text-[11px] text-gray-400" />
                         </div>
                       )}
-                      <p className="text-[10px] text-gray-500">{STATUS_LABELS[task.status]}</p>
+                      <p className="text-[10px] text-gray-400">{STATUS_LABELS[task.status]}</p>
                       <div className="flex items-center gap-2 mt-1.5">
                         <span className={`text-[10px] font-medium ${PRIORITY_META[task.priority]?.color || 'text-gray-400'}`}>
                           {(PRIORITY_META[task.priority]?.icon || '⚪')} {PRIORITY_META[task.priority]?.label || task.priority}
                         </span>
                         {!!task.comment_count && (
-                          <span className="text-[10px] text-gray-500">💬 {task.comment_count}</span>
+                          <span className="text-[10px] text-gray-400"><ChatIcon className="w-4 h-4 inline" /> {task.comment_count}</span>
                         )}
                         {task.due_date && (
-                          <span className={`text-[10px] ml-auto ${task.due_date < Date.now() ? 'text-red-400' : 'text-gray-500'}`}>
+                          <span className={`text-[10px] ml-auto ${task.due_date < Date.now() ? 'text-red-400' : 'text-gray-400'}`}>
                             {new Date(task.due_date).toLocaleDateString('vi-VN', { month: 'short', day: 'numeric' })}
                           </span>
                         )}
@@ -250,7 +252,7 @@ export default function TaskBoardPage() {
                           {task.assignees.slice(0, 3).map((employeeId: string) => (
                             <EmployeeAvatar key={employeeId} employeeId={employeeId} size={18} showName />
                           ))}
-                          {task.assignees.length > 3 && <span className="text-[10px] text-gray-500">+{task.assignees.length - 3}</span>}
+                          {task.assignees.length > 3 && <span className="text-[10px] text-gray-400">+{task.assignees.length - 3}</span>}
                         </div>
                       )}
                       {!!task.watchers?.length && (
@@ -270,7 +272,7 @@ export default function TaskBoardPage() {
                               style={{ width: `${((task.checklist_done || 0) / task.checklist_total) * 100}%` }}
                             />
                           </div>
-                          <span className="text-[9px] text-gray-500">{task.checklist_done}/{task.checklist_total}</span>
+                          <span className="text-[9px] text-gray-400">{task.checklist_done}/{task.checklist_total}</span>
                         </div>
                       ) : null}
                     </div>
@@ -279,7 +281,7 @@ export default function TaskBoardPage() {
                   {/* Quick add button */}
                   <button
                     onClick={() => setEditorState({ status: col.id })}
-                    className="w-full text-left text-xs text-gray-600 hover:text-gray-400 hover:bg-gray-700/40 px-2 py-1.5 rounded-lg transition-colors"
+                    className="w-full text-left text-xs text-gray-400 hover:text-gray-400 hover:bg-gray-700/40 px-2 py-1.5 rounded-lg transition-colors"
                   >
                     + Thêm task
                   </button>

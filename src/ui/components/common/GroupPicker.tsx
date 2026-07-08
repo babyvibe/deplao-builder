@@ -186,7 +186,7 @@ const GroupPicker: React.FC<GroupPickerProps> = ({
                 {selectedGroup.name}
               </div>
               {selectedGroup.memberCount && (
-                <div className={`text-[10px] ${isLight ? 'text-gray-500' : 'text-gray-500'}`}>
+                <div className={`text-[10px] ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
                   {selectedGroup.memberCount} thành viên
                 </div>
               )}
@@ -195,7 +195,7 @@ const GroupPicker: React.FC<GroupPickerProps> = ({
               <button
                 onClick={handleClear}
                 className={`p-1 rounded-full transition-colors ${
-                  isLight ? 'hover:bg-gray-200 text-gray-400' : 'hover:bg-gray-700 text-gray-500'
+                  isLight ? 'hover:bg-gray-200 text-gray-400' : 'hover:bg-gray-700 text-gray-400'
                 }`}
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -250,7 +250,7 @@ const GroupPicker: React.FC<GroupPickerProps> = ({
       {/* Template vars */}
       {templateVars && templateVars.length > 0 && (
         <div className={`px-3 py-2 border-t ${isLight ? 'border-gray-100 bg-gray-50' : 'border-gray-700/50 bg-gray-800/50'}`}>
-          <div className={`text-[10px] mb-1.5 ${isLight ? 'text-gray-500' : 'text-gray-500'}`}>
+          <div className={`text-[10px] mb-1.5 ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
             Hoặc dùng biến:
           </div>
           <div className="flex flex-wrap gap-1">
@@ -265,7 +265,7 @@ const GroupPicker: React.FC<GroupPickerProps> = ({
                 className={`px-2 py-1 text-[10px] font-mono rounded transition-colors ${
                   value === `{{ ${v} }}`
                     ? isLight ? 'bg-blue-100 text-blue-700' : 'bg-blue-500/30 text-blue-300'
-                    : isLight ? 'bg-gray-100 text-gray-600 hover:bg-gray-200' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+                    : isLight ? 'bg-gray-100 text-gray-400 hover:bg-gray-200' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
                 }`}
               >
                 {`{{ ${v} }}`}
@@ -281,7 +281,7 @@ const GroupPicker: React.FC<GroupPickerProps> = ({
           isLight ? 'border-gray-200 bg-white' : 'border-gray-700 bg-gray-900'
         }`}>
           {loading ? (
-            <div className={`px-4 py-3 text-center text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
+            <div className={`px-4 py-3 text-center text-xs ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
               <span className="animate-pulse">Đang tải nhóm...</span>
             </div>
           ) : error ? (
@@ -289,7 +289,7 @@ const GroupPicker: React.FC<GroupPickerProps> = ({
               {error}
             </div>
           ) : filteredGroups.length === 0 ? (
-            <div className={`px-4 py-3 text-center text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
+            <div className={`px-4 py-3 text-center text-xs ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
               Không tìm thấy nhóm nào
             </div>
           ) : (
@@ -315,7 +315,7 @@ const GroupPicker: React.FC<GroupPickerProps> = ({
                     {group.name}
                   </div>
                   {group.memberCount && (
-                    <div className={`text-[10px] ${isLight ? 'text-gray-500' : 'text-gray-500'}`}>
+                    <div className={`text-[10px] ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
                       {group.memberCount} thành viên
                     </div>
                   )}

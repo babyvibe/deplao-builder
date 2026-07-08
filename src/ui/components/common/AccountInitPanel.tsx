@@ -18,6 +18,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAccountStore } from '@/store/accountStore';
+import { ChatIcon, CheckIcon, ClipboardListIcon, LightningIcon, SendIcon, TagIcon, UserCheckIcon, UsersIcon } from '@/components/common/icons';
 import {
   runAccountInit,
   checkAccountInitNeeds,
@@ -40,15 +41,15 @@ import {
 type AnyTaskStatus = InitTaskStatus | FBInitTaskStatus;
 type AnyTaskProgress = InitTaskProgress | FBInitTaskProgress;
 
-const TASK_META: Record<string, { label: string; icon: string }> = {
-  friends:          { label: 'Danh sách bạn bè',      icon: '🤝' },
-  labels:           { label: 'Nhãn hội thoại',        icon: '🏷️' },
-  quickMessages:    { label: 'Tin nhắn nhanh',        icon: '⚡' },
-  groups:           { label: 'Nhóm Zalo',              icon: '👥' },
-  oldMessages:      { label: 'Tin nhắn cũ',           icon: '📨' },
-  oldGroupMessages: { label: 'Tin nhắn nhóm cũ',     icon: '📋' },
+const TASK_META: Record<string, { label: string; icon: React.ReactNode }> = {
+  friends:          { label: 'Danh sách bạn bè',      icon: <UserCheckIcon className="w-4 h-4" /> },
+  labels:           { label: 'Nhãn hội thoại',        icon: <TagIcon className="w-4 h-4" /> },
+  quickMessages:    { label: 'Tin nhắn nhanh',        icon: <LightningIcon className="w-4 h-4" /> },
+  groups:           { label: 'Nhóm Zalo',              icon: <UsersIcon className="w-4 h-4" /> },
+  oldMessages:      { label: 'Tin nhắn cũ',           icon: <SendIcon className="w-4 h-4" /> },
+  oldGroupMessages: { label: 'Tin nhắn nhóm cũ',     icon: <ClipboardListIcon className="w-4 h-4" /> },
   // Facebook tasks
-  threads:          { label: 'Hội thoại Facebook',    icon: '💬' },
+  threads:          { label: 'Hội thoại Facebook',    icon: <ChatIcon className="w-4 h-4" /> },
 };
 
 const ZALO_TASKS: InitTask[] = ['friends', 'labels', 'quickMessages', 'groups', 'oldMessages'];
@@ -83,7 +84,7 @@ function StatusIcon({ status }: { status: InitTaskStatus }) {
   );
   // skipped
   return (
-    <svg className="w-4 h-4 text-gray-600 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <svg className="w-4 h-4 text-gray-400 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <polyline points="20 6 9 17 4 12" />
     </svg>
   );
@@ -186,7 +187,7 @@ export default function AccountInitPanel({ accountId, onClose }: Props) {
         <span className="text-xs text-white font-medium">
           {allDone ? 'Khởi tạo xong' : `Đang khởi tạo... ${overallPct}%`}
         </span>
-        <span className="text-gray-500 text-[10px]">▲</span>
+        <span className="text-gray-400 text-[10px]">▲</span>
       </button>
     );
   }
@@ -203,19 +204,19 @@ export default function AccountInitPanel({ accountId, onClose }: Props) {
             : <svg className="animate-spin w-4 h-4 text-blue-400 flex-shrink-0" viewBox="0 0 24 24" fill="none"><path d="M21 12a9 9 0 1 1-6.219-8.56" stroke="currentColor" strokeWidth="2.5" /></svg>
           }
           <span className="text-sm font-semibold text-white truncate">
-            {allDone ? '✅ Khởi tạo hoàn tất' : 'Đang khởi tạo tài khoản'}
+            {allDone ? <><CheckIcon className="w-4 h-4 inline" /> Khởi tạo hoàn tất</> : 'Đang khởi tạo tài khoản'}
           </span>
         </div>
         {/* Minimize */}
         <button onClick={() => setMinimized(true)} title="Thu nhỏ"
-          className="p-1 rounded text-gray-500 hover:text-gray-300 hover:bg-gray-700 transition-colors flex-shrink-0">
+          className="p-1 rounded text-gray-400 hover:text-gray-300 hover:bg-gray-700 transition-colors flex-shrink-0">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <line x1="5" y1="12" x2="19" y2="12" />
           </svg>
         </button>
         {/* Stop groups + close */}
         <button onClick={() => { abortRef.current.current = true; onClose(); }} title="Dừng và đóng"
-          className="p-1 rounded text-gray-500 hover:text-gray-300 hover:bg-gray-700 transition-colors flex-shrink-0">
+          className="p-1 rounded text-gray-400 hover:text-gray-300 hover:bg-gray-700 transition-colors flex-shrink-0">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
           </svg>
@@ -226,7 +227,7 @@ export default function AccountInitPanel({ accountId, onClose }: Props) {
       {!allDone && tasksNeeded.length > 0 && (
         <div className="px-4 pt-3 pb-1">
           <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[11px] text-gray-500">Tiến độ tổng</span>
+            <span className="text-[11px] text-gray-400">Tiến độ tổng</span>
             <span className="text-[11px] text-blue-400 font-semibold">{overallPct}%</span>
           </div>
           <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
@@ -265,11 +266,11 @@ export default function AccountInitPanel({ accountId, onClose }: Props) {
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-medium text-white leading-tight">{meta.label}</p>
                   {p.detail && (
-                    <p className="text-[11px] text-gray-500 truncate leading-tight mt-0.5">{p.detail}</p>
+                    <p className="text-[11px] text-gray-400 truncate leading-tight mt-0.5">{p.detail}</p>
                   )}
                 </div>
                 {!isSkipped && p.current !== undefined && p.total !== undefined && p.total > 0 && (
-                  <span className="text-[10px] text-gray-600 flex-shrink-0 tabular-nums">
+                  <span className="text-[10px] text-gray-400 flex-shrink-0 tabular-nums">
                     {p.current}/{p.total}
                   </span>
                 )}
@@ -286,13 +287,13 @@ export default function AccountInitPanel({ accountId, onClose }: Props) {
                   </div>
                   {p.groupProgress && (
                     <div className="flex items-center justify-between mt-0.5">
-                      <span className="text-[10px] text-gray-600">
+                      <span className="text-[10px] text-gray-400">
                         {p.groupProgress.phase === 'members'
                           ? `Thành viên: ${p.groupProgress.current}/${p.groupProgress.total}`
                           : `Nhóm: ${p.groupProgress.current}/${p.groupProgress.total}`}
                       </span>
                       {p.groupProgress.phase === 'members' && (p.groupProgress.groupTotal ?? 0) > 0 && (
-                        <span className="text-[10px] text-gray-600 tabular-nums">
+                        <span className="text-[10px] text-gray-400 tabular-nums">
                           Nhóm {p.groupProgress.groupCurrent}/{p.groupProgress.groupTotal}
                         </span>
                       )}
@@ -319,7 +320,7 @@ export default function AccountInitPanel({ accountId, onClose }: Props) {
 
       {/* ── Footer ── */}
       <div className="px-4 pb-3">
-        <p className="text-[10px] text-gray-600 leading-relaxed">
+        <p className="text-[10px] text-gray-400 leading-relaxed">
           {allDone
             ? 'Hoàn tất - panel tự đóng sau vài giây.'
             : 'Bạn có thể tiếp tục dùng ứng dụng trong khi khởi tạo.'}

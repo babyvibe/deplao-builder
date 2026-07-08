@@ -7,6 +7,8 @@ import { callApi, extractApiError } from '@/utils/apiError';
 import { showConfirm } from '../common/ConfirmDialog';
 import { toLocalMediaUrl } from '@/lib/localMedia';
 import { getCapability, type Channel } from '@/../configs/channelConfig';
+import { ImageIcon, PlayIcon } from '@/components/common/icons';
+
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export type LocalMediaFile = {
@@ -247,7 +249,7 @@ function QuickMessageDialog({
             <div className="flex flex-col gap-2">
               <div className="flex items-center gap-2">
                 <span className="text-xs text-gray-400 font-medium">Media đính kèm</span>
-                <span className="text-xs text-gray-500">({localMediaFiles.length} file)</span>
+                <span className="text-xs text-gray-400">({localMediaFiles.length} file)</span>
               </div>
               {/* Previews grid */}
               {localMediaFiles.length > 0 && (
@@ -271,7 +273,7 @@ function QuickMessageDialog({
                         )}
                         {/* Type badge */}
                         <span className="absolute bottom-1 left-1 text-[9px] bg-black/70 text-white px-1 py-0.5 rounded font-medium z-10">
-                          {f.type === 'video' ? '▶ Video' : '🖼 Ảnh'}
+                          {f.type === 'video' ? <><PlayIcon className="w-3 h-3 inline" /> Video</> : <><ImageIcon className="w-3 h-3 inline" /> Ảnh</>}
                         </span>
                         {/* Remove button */}
                         <button
@@ -305,7 +307,7 @@ function QuickMessageDialog({
                   </button>
                 )}
               </div>
-              <p className="text-[11px] text-gray-500 leading-relaxed">
+              <p className="text-[11px] text-gray-400 leading-relaxed">
                 Khi chọn tin nhắn nhanh này, ảnh/video sẽ được gửi tự động kèm theo nội dung.
                 <br/>
                 Thứ tự: Ảnh/video sẽ được gửi trước text
@@ -670,13 +672,13 @@ export function QuickMessageManagerPanel({ onClose, onSelect }: { onClose: () =>
               <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
             </div>
           ) : items.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-10 text-gray-500 text-xs gap-2 px-4 text-center">
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-600">
+            <div className="flex flex-col items-center justify-center py-10 text-gray-400 text-xs gap-2 px-4 text-center">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-400">
                 <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
               </svg>
               Chưa có tin nhắn nhanh nào.
               {mode === 'local' && channelCap.supportsQuickMessages && (
-                <span className="text-gray-600">
+                <span className="text-gray-400">
                   Chuyển sang tab <strong className="text-gray-400">Zalo</strong> và nhấn <strong className="text-gray-400">Đồng bộ</strong> để import
                 </span>
               )}
@@ -808,7 +810,7 @@ export function QuickMessageDropdown({
       {/* Items */}
       <div className="overflow-y-auto flex-1">
         {filtered.length === 0 ? (
-          <p className="text-xs text-gray-500 text-center py-4">Không tìm thấy tin nhắn nhanh</p>
+          <p className="text-xs text-gray-400 text-center py-4">Không tìm thấy tin nhắn nhanh</p>
         ) : (
           filtered.map((item, idx) => (
             <button key={item.id} onMouseDown={e => { e.preventDefault(); onSelect(item); }}
@@ -864,7 +866,7 @@ export function QuickMessageDropdown({
 
       {/* Hint */}
       <div className="px-4 py-2 border-t border-gray-700 flex-shrink-0 bg-gray-800/80">
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-gray-400">
           Gợi ý: Nhập <kbd className="bg-gray-700 text-gray-300 text-xs px-1.5 py-0.5 rounded">/</kbd> ở đầu ô chat để hiển thị danh sách tin nhắn nhanh.
         </p>
       </div>

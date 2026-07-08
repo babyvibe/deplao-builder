@@ -3,6 +3,8 @@ import { useWorkspaceStore, WorkspaceInfo } from '@/store/workspaceStore';
 import ipc from '@/lib/ipc';
 import { useAppStore } from '@/store/appStore';
 import { Spinner } from '@/components/common/PageLoading';
+import { HomeIcon, UserIcon, SettingsIcon } from '@/components/common/icons';
+
 
 /** Build normalized Boss URL - handles both IP:Port and full tunnel URL */
 function buildBossUrl(address: string, port: string): string {
@@ -99,14 +101,14 @@ export default function WorkspaceSwitcher() {
                 disabled={isSwitching}
                 className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all
                     ${isSwitching
-                        ? 'bg-gray-700/50 text-gray-500 cursor-wait'
+                        ? 'bg-gray-700/50 text-gray-400 cursor-wait'
                         : 'bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-600/50'
                     }`}
             >
                 {isSwitching ? (
                     <Spinner size={3} />
                 ) : (
-                    <span className="text-sm">{activeWs?.icon || '🏠'}</span>
+                    <span className="text-sm flex items-center gap-1">{activeWs?.icon || <HomeIcon className="w-4 h-4" />}</span>
                 )}
                 <span className="max-w-[100px] truncate">{activeWs?.name || 'Workspace'}</span>
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="opacity-50">
@@ -168,7 +170,7 @@ export default function WorkspaceSwitcher() {
                                     }}
                                     className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-gray-400 hover:text-gray-200 hover:bg-gray-700/50 rounded-lg transition-colors"
                                 >
-                                    <span>⚙️</span>
+                                    <SettingsIcon className="w-4 h-4" />
                                     <span>Quản lý workspace</span>
                                 </button>
                             </>
@@ -199,7 +201,7 @@ function WorkspaceRow({ workspace, isActive, connectionStatus, unreadCount, onCl
                     : 'hover:bg-gray-700/40 border-l-2 border-transparent'
                 }`}
         >
-            <span className="text-base flex-shrink-0">{workspace.icon || (workspace.type === 'local' ? '🏠' : '👤')}</span>
+            <span className="text-base flex-shrink-0">{workspace.icon || (workspace.type === 'local' ? <HomeIcon className="w-4 h-4" /> : <UserIcon className="w-4 h-4" />)}</span>
             <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5">
                     <span className={`text-xs font-medium truncate ${isActive ? 'text-blue-300' : 'text-gray-200'}`}>
@@ -210,14 +212,14 @@ function WorkspaceRow({ workspace, isActive, connectionStatus, unreadCount, onCl
                     )}
                 </div>
                 <div className="flex items-center gap-2 mt-0.5">
-                    <span className="text-[10px] text-gray-500">
+                    <span className="text-[10px] text-gray-400">
                         {workspace.type === 'local' ? 'Boss' : `Nhân viên`}
                     </span>
                     {workspace.type === 'remote' && connectionStatus && (
                         <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${connectionStatus.connected ? 'bg-green-400' : 'bg-red-400'}`} />
                     )}
                     {workspace.type === 'remote' && workspace.employeeName && (
-                        <span className="text-[10px] text-gray-600 truncate">→ {workspace.employeeName}</span>
+                        <span className="text-[10px] text-gray-400 truncate">→ {workspace.employeeName}</span>
                     )}
                 </div>
             </div>
@@ -319,8 +321,8 @@ function CreateWorkspaceInline({ onCreated, onCancel }: { onCreated: () => void;
                     onChange={e => setType(e.target.value as any)}
                     className="text-[11px] bg-gray-700 border border-gray-600 rounded-lg px-2 py-1 text-gray-300 focus:outline-none"
                 >
-                    <option value="local">🏠 Local (Boss)</option>
-                    <option value="remote">👤 Remote (Nhân viên)</option>
+                    <option value="local"><HomeIcon className="w-4 h-4 inline" /> Local (Boss)</option>
+                    <option value="remote"><UserIcon className="w-4 h-4 inline" /> Remote (Nhân viên)</option>
                 </select>
             </div>
             {type === 'remote' && (

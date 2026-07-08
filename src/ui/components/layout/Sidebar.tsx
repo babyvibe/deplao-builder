@@ -7,6 +7,7 @@ import ChannelBadge from '../common/ChannelBadge';
 import { useVisibleAccounts } from '@/hooks/useVisibleAccounts';
 import { hasUnseenSettingsTabs } from '@/utils/settingsSeenTabs';
 import { useErpPermissions } from '@/hooks/erp/useErpContext';
+import { BellIcon, BookIcon, BotIcon, BrainIcon, CampaignIcon, ChartIcon, ChatIcon, CheckIcon, CloudIcon, CreditCardIcon, DiamondIcon, DollarIcon, EditIcon, FileTextIcon, FolderIcon, GlobeIcon, HelpCircleIcon, LightningIcon, LinkIcon, LightbulbIcon, MailIcon, MessageCircleIcon, PackageIcon, RefreshIcon, SaveIcon, SearchIcon, SettingsIcon, ShoppingCartIcon, SmartphoneIcon, StoreIcon, SunIcon, TagIcon, TrendingUpIcon, TruckIcon, UserIcon, UsersIcon, WaveIcon } from '@/components/common/icons';
 
 
 interface SidebarProps {
@@ -286,9 +287,7 @@ export default function Sidebar({ onAddAccount }: SidebarProps) {
                       className="absolute -bottom-1 -left-1 bg-amber-500 text-white text-[7px] font-bold rounded-full border border-gray-900 z-10 leading-none flex items-center justify-center"
                       style={{ minWidth: '0.875rem', height: '0.875rem', padding: '0 0.125rem' }}
                       title="Zalo Business"
-                    >
-                      💼
-                    </span>
+                    ><FolderIcon className="w-4 h-4 inline" /> </span>
                   ) : null}
 
                   {/* ── Channel badge (Zalo/Facebook) ── */}
@@ -498,7 +497,7 @@ function NavFlyout({ icon, label, active, items, onGuide }: { icon: string; labe
         >
           {/* Header */}
           <div className="px-3 py-1.5 border-b border-gray-700/60 mb-1">
-            <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">{label}</span>
+            <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">{label}</span>
           </div>
           {items.map((item) => (
             <button
@@ -527,7 +526,7 @@ function NavFlyout({ icon, label, active, items, onGuide }: { icon: string; labe
                 onClick={() => { onGuide(); setOpen(false); }}
                 className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-gray-400 hover:bg-gray-700 hover:text-gray-200 transition-colors"
               >
-                <span className="w-5 h-5 flex items-center justify-center flex-shrink-0 text-sm">📖</span>
+                <span className="w-5 h-5 flex items-center justify-center flex-shrink-0 text-sm"><BookIcon className="w-4 h-4" /></span>
                 <span className="text-xs font-medium whitespace-nowrap">Hướng dẫn sử dụng</span>
               </button>
             </>
@@ -636,13 +635,14 @@ function NavIcon({ name }: { name: string }) {
 const TOOLS_GUIDE = [
   {
     id: 'crm' as const,
-    icon: '📊', title: 'CRM - Quản lý khách hàng',
-    color: 'border-blue-500/40 bg-blue-900/10',
-    badgeColor: 'bg-blue-600/30 text-blue-300',
+    icon: <ChartIcon className="w-4 h-4" />, title: 'CRM - Quản lý khách hàng',
+    color: 'border-blue-500/40 bg-blue-900/30',
+    badgeColor: 'bg-gray-800 text-gray-300',
     purpose: 'Quản lý toàn bộ danh sách liên hệ Zalo, phân loại khách hàng bằng nhãn, ghi chú nội bộ, và chạy chiến dịch nhắn tin hàng loạt - biến Zalo thành CRM chuyên nghiệp.',
     sections: [
       {
-        title: '👥 Quản lý liên hệ',
+        icon: <UsersIcon className="w-4 h-4 inline" />,
+        title: 'Quản lý liên hệ',
         items: [
           'Xem tất cả liên hệ theo tài khoản Zalo: bạn bè, nhóm, stranger (người lạ)',
           'Bộ lọc nâng cao: theo nhãn, trạng thái (đã nhắn / chưa nhắn), loại liên hệ, thời gian',
@@ -651,7 +651,8 @@ const TOOLS_GUIDE = [
         ],
       },
       {
-        title: '🏷️ Hệ thống nhãn kép',
+        icon: <TagIcon className="w-4 h-4 inline" />,
+        title: 'Hệ thống nhãn kép',
         items: [
           'Nhãn Zalo (Zalo Label): đồng bộ 2 chiều với app Zalo trên điện thoại - gán từ Deplao, thấy trên Zalo và ngược lại',
           'Nhãn Local: nhãn riêng của Deplao, tùy biến màu sắc + emoji, không giới hạn số lượng',
@@ -660,7 +661,8 @@ const TOOLS_GUIDE = [
         ],
       },
       {
-        title: '📝 Ghi chú nội bộ (Notes)',
+        icon: <FileTextIcon className="w-4 h-4 inline" />,
+        title: 'Ghi chú nội bộ (Notes)',
         items: [
           'Thêm ghi chú riêng cho từng liên hệ - khách hàng không thấy được',
           'Chỉnh sửa / xóa ghi chú bất kỳ lúc nào',
@@ -668,7 +670,8 @@ const TOOLS_GUIDE = [
         ],
       },
       {
-        title: '📢 Chiến dịch nhắn tin hàng loạt',
+        icon: <CampaignIcon className="w-4 h-4 inline" />,
+        title: 'Chiến dịch nhắn tin hàng loạt',
         items: [
           'Tạo chiến dịch: chọn đối tượng theo nhãn / bộ lọc → soạn mẫu tin → gửi',
           'Hỗ trợ biến động: chèn tên khách, SĐT, nhãn... vào nội dung tin nhắn tự động',
@@ -681,13 +684,14 @@ const TOOLS_GUIDE = [
   },
   {
     id: 'workflow' as const,
-    icon: '⚙️', title: 'Workflow - Tự động hoá',
-    color: 'border-purple-500/40 bg-purple-900/10',
-    badgeColor: 'bg-purple-600/30 text-gray-300',
+    icon: <LightningIcon className="w-4 h-4" />, title: 'Workflow - Tự động hoá',
+    color: 'border-purple-500/40 bg-purple-900/30',
+    badgeColor: 'bg-gray-800 text-gray-300',
     purpose: 'Tạo các luồng xử lý tự động bằng giao diện kéo-thả trực quan: nhận sự kiện → xử lý logic → thực hiện hành động. Không cần viết code, có sẵn 20+ mẫu workflow.',
     sections: [
       {
-        title: '⚡ Trigger - 8 loại sự kiện kích hoạt',
+        icon: <LightningIcon className="w-4 h-4 inline" />,
+        title: 'Trigger - 8 loại sự kiện kích hoạt',
         items: [
           'Khi nhận tin nhắn: lọc theo từ khóa, loại hội thoại (cá nhân/nhóm), regex',
           'Khi có lời mời kết bạn → tự động chấp nhận + gửi lời chào',
@@ -700,7 +704,8 @@ const TOOLS_GUIDE = [
         ],
       },
       {
-        title: '💬 Action - 15+ thao tác trên Zalo',
+        icon: <MessageCircleIcon className="w-4 h-4 inline" />,
+        title: 'Action - 15+ thao tác trên Zalo',
         items: [
           'Gửi tin nhắn văn bản (hỗ trợ biến động {{ tên }}, {{ sdt }}...)',
           'Hiệu ứng "đang gõ..." + delay → tạo cảm giác tự nhiên như người thật',
@@ -712,7 +717,8 @@ const TOOLS_GUIDE = [
         ],
       },
       {
-        title: '🧠 Logic & Dữ liệu',
+        icon: <BrainIcon className="w-4 h-4 inline" />,
+        title: 'Logic & Dữ liệu',
         items: [
           'Rẽ nhánh IF/ELSE: kiểm tra điều kiện → chạy nhánh tương ứng',
           'Switch: phân nhiều nhánh theo giá trị (VD: phân loại câu hỏi)',
@@ -722,7 +728,8 @@ const TOOLS_GUIDE = [
         ],
       },
       {
-        title: '🤖 AI & Tích hợp ngoài',
+        icon: <BotIcon className="w-4 h-4 inline" />,
+        title: 'AI & Tích hợp ngoài',
         items: [
           'AI tạo nội dung: ChatGPT, Gemini, Deepseek, Grok - chatbot thông minh',
           'AI phân loại tin nhắn: tự nhận diện hỏi giá / khiếu nại / hỗ trợ kỹ thuật...',
@@ -732,7 +739,8 @@ const TOOLS_GUIDE = [
         ],
       },
       {
-        title: '🏪 POS & Vận chuyển trong Workflow',
+        icon: <StoreIcon className="w-4 h-4 inline" />,
+        title: 'POS & Vận chuyển trong Workflow',
         items: [
           'KiotViet / Haravan / Sapo / Nhanh: tra cứu KH, đơn hàng, sản phẩm, tạo đơn',
           'GHN / GHTK: tạo đơn vận chuyển, tra cứu vận đơn - ngay trong luồng tự động',
@@ -743,13 +751,14 @@ const TOOLS_GUIDE = [
   },
   {
     id: 'integration' as const,
-    icon: '🔗', title: 'Tích hợp - Kết nối bên thứ 3',
-    color: 'border-green-500/40 bg-green-900/10',
-    badgeColor: 'bg-green-600/30 text-green-500',
+    icon: <LinkIcon className="w-4 h-4" />, title: 'Tích hợp - Kết nối bên thứ 3',
+    color: 'border-green-500/40 bg-green-900/30',
+    badgeColor: 'bg-gray-800 text-gray-300',
     purpose: 'Kết nối Deplao với hệ sinh thái bán hàng, thanh toán, vận chuyển Việt Nam. Tra cứu dữ liệu ngay trong khung chat, nhận webhook tự động, kết hợp Workflow để xử lý end-to-end.',
     sections: [
       {
-        title: '🛒 POS / Bán hàng (4 nền tảng)',
+        icon: <ShoppingCartIcon className="w-4 h-4 inline" />,
+        title: 'POS / Bán hàng (4 nền tảng)',
         items: [
           'KiotViet: tra cứu khách hàng, đơn hàng, sản phẩm, tạo đơn - phổ biến nhất VN',
           'Haravan: nền tảng TMĐT, tra cứu đơn hàng online, khách hàng',
@@ -759,7 +768,8 @@ const TOOLS_GUIDE = [
         ],
       },
       {
-        title: '💳 Thanh toán (2 nền tảng)',
+        icon: <CreditCardIcon className="w-4 h-4 inline" />,
+        title: 'Thanh toán (2 nền tảng)',
         items: [
           'Casso: kết nối ngân hàng, nhận webhook khi có chuyển khoản mới - realtime',
           'SePay (VietQR): tương tự Casso, hỗ trợ nhiều ngân hàng VN',
@@ -768,14 +778,16 @@ const TOOLS_GUIDE = [
         ],
       },
       {
-        title: '🚚 Vận chuyển (2 nền tảng)',
+        icon: <TruckIcon className="w-4 h-4 inline" />,
+        title: 'Vận chuyển (2 nền tảng)',
         items: [
           'GHN Express: tạo đơn giao hàng, tra cứu mã vận đơn + trạng thái',
           'GHTK: tạo đơn + tra cứu tracking - đối soát COD',
         ],
       },
       {
-        title: '🌐 Tunnel - Mở kết nối ra internet',
+        icon: <GlobeIcon className="w-4 h-4 inline" />,
+        title: 'Tunnel - Mở kết nối ra internet',
         items: [
           'Bật thủ công khi cần: tạo URL công khai (https://xxx.loca.lt) trỏ về app',
           'Cho phép bên ngoài (Casso, SePay, n8n cloud...) gửi webhook về Deplao',
@@ -784,7 +796,8 @@ const TOOLS_GUIDE = [
         ],
       },
       {
-        title: '⚡ Shortcut tra cứu nhanh',
+        icon: <LightningIcon className="w-4 h-4 inline" />,
+        title: 'Shortcut tra cứu nhanh',
         items: [
           'Ghim các nút tra cứu POS/vận chuyển ngay trên thanh công cụ chat',
           'Bấm 1 lần → tra cứu đơn hàng / khách hàng theo SĐT người đang chat',
@@ -799,67 +812,113 @@ const TOOLS_GUIDE = [
 
 const COMBO_SCENARIOS = [
   {
-    icon: '💰',
+    icon: <DollarIcon className="w-4 h-4" />,
     title: 'Xác nhận thanh toán tự động',
     tags: ['Tích hợp', 'Workflow'],
     color: 'border-emerald-500/30',
-    flow: ['🔗 SePay/Casso nhận CK', '⚙️ Trigger payment', '📝 Ghép tin "Cảm ơn {tên}, đơn #{mã} đã nhận {số tiền}"', '💬 Gửi tin Zalo', '🏷️ Gắn nhãn "Đã TT"'],
+    flow: [
+      { icon: <LinkIcon className="w-3 h-3" />, text: 'SePay/Casso nhận CK' },
+      { icon: <SettingsIcon className="w-3 h-3" />, text: 'Trigger payment' },
+      { icon: <EditIcon className="w-3 h-3" />, text: 'Ghép tin "Cảm ơn {tên}, đơn #{mã} đã nhận {số tiền}"' },
+      { icon: <MessageCircleIcon className="w-3 h-3" />, text: 'Gửi tin Zalo' },
+      { icon: <TagIcon className="w-3 h-3" />, text: 'Gắn nhãn "Đã TT"' },
+    ],
     desc: 'Khách chuyển khoản → Deplao nhận webhook từ ngân hàng → Workflow tự động gửi tin xác nhận + gắn nhãn CRM.',
   },
   {
-    icon: '🤖',
+    icon: <BotIcon className="w-4 h-4" />,
     title: 'Chatbot AI tư vấn bán hàng',
     tags: ['Workflow', 'AI'],
     color: 'border-violet-500/30',
-    flow: ['💬 Khách nhắn hỏi', '🧠 AI phân loại (hỏi giá / CSKH / khiếu nại)', '🤖 ChatGPT trả lời theo ngữ cảnh', '⌨️ Typing + delay', '💬 Gửi phản hồi'],
+    flow: [
+      { icon: <MessageCircleIcon className="w-3 h-3" />, text: 'Khách nhắn hỏi' },
+      { icon: <BrainIcon className="w-3 h-3" />, text: 'AI phân loại (hỏi giá / CSKH / khiếu nại)' },
+      { icon: <BotIcon className="w-3 h-3" />, text: 'ChatGPT trả lời theo ngữ cảnh' },
+      { icon: <EditIcon className="w-3 h-3" />, text: 'Typing + delay' },
+      { icon: <MessageCircleIcon className="w-3 h-3" />, text: 'Gửi phản hồi' },
+    ],
     desc: 'Khách nhắn tin → AI tự phân loại câu hỏi → ChatGPT sinh nội dung trả lời phù hợp → gửi tự động với hiệu ứng đang gõ.',
   },
   {
-    icon: '👋',
+    icon: <WaveIcon className="w-4 h-4" />,
     title: 'Chào mừng + phân loại khách mới',
     tags: ['Workflow', 'CRM'],
     color: 'border-blue-500/30',
-    flow: ['👤 Nhận lời mời KB', '✅ Auto chấp nhận', '💬 Gửi tin chào', '🏷️ Gắn nhãn "Khách mới"', '📊 Ghi Google Sheets'],
+    flow: [
+      { icon: <UserIcon className="w-3 h-3" />, text: 'Nhận lời mời KB' },
+      { icon: <CheckIcon className="w-3 h-3" />, text: 'Auto chấp nhận' },
+      { icon: <MessageCircleIcon className="w-3 h-3" />, text: 'Gửi tin chào' },
+      { icon: <TagIcon className="w-3 h-3" />, text: 'Gắn nhãn "Khách mới"' },
+      { icon: <TrendingUpIcon className="w-3 h-3" />, text: 'Ghi Google Sheets' },
+    ],
     desc: 'Khi có người gửi kết bạn → auto accept → gửi lời chào + menu dịch vụ → gắn nhãn CRM → ghi thông tin vào Sheets.',
   },
   {
-    icon: '🛒',
+    icon: <ShoppingCartIcon className="w-4 h-4" />,
     title: 'Tra cứu đơn hàng ngay trong chat',
     tags: ['Tích hợp', 'Workflow'],
     color: 'border-orange-500/30',
-    flow: ['💬 Khách nhắn "đơn hàng"', '🔍 KiotViet tra SĐT', '📝 Ghép kết quả', '💬 Gửi thông tin đơn'],
+    flow: [
+      { icon: <MessageCircleIcon className="w-3 h-3" />, text: 'Khách nhắn "đơn hàng"' },
+      { icon: <SearchIcon className="w-3 h-3" />, text: 'KiotViet tra SĐT' },
+      { icon: <EditIcon className="w-3 h-3" />, text: 'Ghép kết quả' },
+      { icon: <MessageCircleIcon className="w-3 h-3" />, text: 'Gửi thông tin đơn' },
+    ],
     desc: 'Khách hỏi về đơn hàng → Workflow tự tra cứu KiotViet/Haravan theo SĐT → gửi lại thông tin đơn chi tiết.',
   },
   {
-    icon: '📢',
+    icon: <CampaignIcon className="w-4 h-4" />,
     title: 'Chiến dịch remarketing theo nhãn',
     tags: ['CRM', 'Workflow'],
     color: 'border-pink-500/30',
-    flow: ['📊 Lọc KH nhãn "Chưa mua"', '📢 Tạo chiến dịch', '📝 Soạn tin ưu đãi', '💬 Gửi hàng loạt (60 tin/h)', '📈 Theo dõi phản hồi'],
+    flow: [
+      { icon: <ChartIcon className="w-3 h-3" />, text: 'Lọc KH nhãn "Chưa mua"' },
+      { icon: <CampaignIcon className="w-3 h-3" />, text: 'Tạo chiến dịch' },
+      { icon: <EditIcon className="w-3 h-3" />, text: 'Soạn tin ưu đãi' },
+      { icon: <MessageCircleIcon className="w-3 h-3" />, text: 'Gửi hàng loạt (60 tin/h)' },
+      { icon: <TrendingUpIcon className="w-3 h-3" />, text: 'Theo dõi phản hồi' },
+    ],
     desc: 'Lọc danh sách khách có nhãn cụ thể → tạo chiến dịch với nội dung cá nhân hóa → gửi tự động + theo dõi kết quả.',
   },
   {
-    icon: '📦',
+    icon: <PackageIcon className="w-4 h-4" />,
     title: 'Đặt hàng + giao hàng tự động',
     tags: ['Tích hợp', 'Workflow'],
     color: 'border-cyan-500/30',
-    flow: ['💬 Khách nhắn "MUA"', '🛒 Tạo đơn KiotViet', '🚚 Tạo vận đơn GHN', '💬 Gửi mã tracking', '📊 Ghi Sheets'],
+    flow: [
+      { icon: <MessageCircleIcon className="w-3 h-3" />, text: 'Khách nhắn "MUA"' },
+      { icon: <ShoppingCartIcon className="w-3 h-3" />, text: 'Tạo đơn KiotViet' },
+      { icon: <TruckIcon className="w-3 h-3" />, text: 'Tạo vận đơn GHN' },
+      { icon: <MessageCircleIcon className="w-3 h-3" />, text: 'Gửi mã tracking' },
+      { icon: <TrendingUpIcon className="w-3 h-3" />, text: 'Ghi Sheets' },
+    ],
     desc: 'Khách nhắn từ khóa → Workflow tạo đơn trên POS → tạo vận đơn GHN/GHTK → gửi mã tracking cho khách.',
   },
   {
-    icon: '🔔',
+    icon: <BellIcon className="w-4 h-4" />,
     title: 'Thông báo đa kênh khi có đơn mới',
     tags: ['Workflow', 'Tích hợp'],
     color: 'border-amber-500/30',
-    flow: ['💰 Nhận thanh toán', '💬 Gửi tin Zalo cho KH', '📲 Thông báo Telegram cho admin', '📧 Email cho kế toán', '📝 Ghi Notion'],
+    flow: [
+      { icon: <DollarIcon className="w-3 h-3" />, text: 'Nhận thanh toán' },
+      { icon: <MessageCircleIcon className="w-3 h-3" />, text: 'Gửi tin Zalo cho KH' },
+      { icon: <BellIcon className="w-3 h-3" />, text: 'Thông báo Telegram cho admin' },
+      { icon: <MailIcon className="w-3 h-3" />, text: 'Email cho kế toán' },
+      { icon: <EditIcon className="w-3 h-3" />, text: 'Ghi Notion' },
+    ],
     desc: 'Một sự kiện → nhiều hành động: xác nhận cho khách trên Zalo + thông báo admin qua Telegram + ghi log vào Notion/Email.',
   },
   {
-    icon: '🏷️',
+    icon: <TagIcon className="w-4 h-4" />,
     title: 'Tự động gắn nhãn theo nội dung chat',
     tags: ['Workflow', 'AI', 'CRM'],
     color: 'border-rose-500/30',
-    flow: ['💬 Khách nhắn tin', '🧠 AI phân loại nội dung', '🏷️ Gắn nhãn tương ứng', '📊 CRM cập nhật'],
+    flow: [
+      { icon: <MessageCircleIcon className="w-3 h-3" />, text: 'Khách nhắn tin' },
+      { icon: <BrainIcon className="w-3 h-3" />, text: 'AI phân loại nội dung' },
+      { icon: <TagIcon className="w-3 h-3" />, text: 'Gắn nhãn tương ứng' },
+      { icon: <ChartIcon className="w-3 h-3" />, text: 'CRM cập nhật' },
+    ],
     desc: 'AI đọc tin nhắn → phân loại (hỏi giá / khiếu nại / khen / hỏi giao hàng) → tự động gắn nhãn CRM phù hợp.',
   },
 ];
@@ -877,7 +936,7 @@ function ToolsGuideModal({ onClose }: { onClose: () => void }) {
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-700/60 flex-shrink-0">
           <div>
             <h2 className="text-base font-bold text-white flex items-center gap-2">
-              <span>📖</span> Hướng dẫn - Công cụ nâng cao
+              <span><BookIcon className="w-4 h-4" /></span> Hướng dẫn - Công cụ nâng cao
             </h2>
             <p className="text-[11px] text-gray-400 mt-0.5">Mô tả chi tiết tính năng và cách phối hợp các công cụ</p>
           </div>
@@ -889,22 +948,22 @@ function ToolsGuideModal({ onClose }: { onClose: () => void }) {
         {/* Tabs */}
         <div className="flex border-b border-gray-700/60 px-2 flex-shrink-0 overflow-x-auto gap-0.5">
           {([
-            { id: 'overview', label: '💡 Tổng quan' },
-            { id: 'crm', label: '📊 CRM' },
-            { id: 'workflow', label: '⚙️ Workflow' },
-            { id: 'integration', label: '🔗 Tích hợp' },
-            { id: 'combo', label: '🔄 Kết hợp' },
+            { id: 'overview', icon: <LightbulbIcon className="w-3.5 h-3.5" />, label: 'Tổng quan' },
+            { id: 'crm', icon: <ChartIcon className="w-3.5 h-3.5" />, label: 'CRM' },
+            { id: 'workflow', icon: <SettingsIcon className="w-3.5 h-3.5" />, label: 'Workflow' },
+            { id: 'integration', icon: <LinkIcon className="w-3.5 h-3.5" />, label: 'Tích hợp' },
+            { id: 'combo', icon: <RefreshIcon className="w-3.5 h-3.5" />, label: 'Kết hợp' },
           ] as const).map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`px-3 py-2.5 text-[11px] font-medium whitespace-nowrap border-b-2 transition-colors ${
+              className={`px-3 py-2.5 text-[11px] flex font-medium whitespace-nowrap border-b-2 transition-colors ${
                 activeTab === tab.id
                   ? 'border-blue-500 text-blue-400'
                   : 'border-transparent text-gray-400 hover:text-gray-200'
               }`}
             >
-              {tab.label}
+              {tab.icon} <span className="ml-1">{tab.label}</span>
             </button>
           ))}
         </div>
@@ -916,18 +975,18 @@ function ToolsGuideModal({ onClose }: { onClose: () => void }) {
           {activeTab === 'overview' && (
             <>
               <div className="bg-gray-700/30 rounded-xl p-4 flex items-start gap-3">
-                <span className="text-2xl leading-none">💡</span>
+                <span className="text-2xl leading-none"><SunIcon className="w-4 h-4" /></span>
                 <div className="space-y-2">
                   <p className="text-gray-300 text-xs leading-relaxed">
                     Ba công cụ <strong className="text-white">CRM</strong>, <strong className="text-white">Workflow</strong> và <strong className="text-white">Tích hợp</strong> phối
                     hợp với nhau tạo thành hệ thống tự động hoá hoàn chỉnh:
                   </p>
                   <div className="flex items-center gap-2 text-[11px] flex-wrap">
-                    <span className="bg-green-900/40 text-white px-2.5 py-1 rounded-lg border border-green-700/40">🔗 Tích hợp nhận dữ liệu</span>
-                    <span className="text-gray-600">→</span>
-                    <span className="bg-purple-900/40 text-white px-2.5 py-1 rounded-lg border border-purple-700/40">⚙️ Workflow xử lý logic</span>
-                    <span className="text-gray-600">→</span>
-                    <span className="bg-blue-900/40 text-blue-300 px-2.5 py-1 rounded-lg border border-blue-700/40">📊 CRM quản lý KH</span>
+                    <span className="bg-green-900/30 text-white px-2.5 py-1 rounded-lg border border-green-700/40"><LinkIcon className="w-4 h-4 inline" /> Tích hợp nhận dữ liệu</span>
+                    <span className="text-gray-400">→</span>
+                    <span className="bg-purple-900/30 text-white px-2.5 py-1 rounded-lg border border-purple-700/40"><SettingsIcon className="w-3.5 h-3.5 inline" /> Workflow xử lý logic</span>
+                    <span className="text-gray-400">→</span>
+                    <span className="bg-blue-900/30 text-blue-300 px-2.5 py-1 rounded-lg border border-blue-700/40"><ChartIcon className="w-4 h-4 inline" /> CRM quản lý KH</span>
                   </div>
                 </div>
               </div>
@@ -942,13 +1001,13 @@ function ToolsGuideModal({ onClose }: { onClose: () => void }) {
                   <div className="flex items-center gap-2 mb-2">
                     <span className="text-lg">{tool.icon}</span>
                     <h3 className="text-sm font-bold text-white">{tool.title}</h3>
-                    <span className="text-gray-600 ml-auto text-[10px]">Bấm để xem chi tiết →</span>
+                    <span className="text-gray-400 ml-auto text-[10px]">Bấm để xem chi tiết →</span>
                   </div>
-                  <p className="text-xs text-gray-400 leading-relaxed">{tool.purpose}</p>
+                  <p className="text-sm text-gray-400 leading-relaxed">{tool.purpose}</p>
                   <div className="flex flex-wrap gap-1.5 mt-2">
                     {tool.sections.map((s, j) => (
-                      <span key={j} className={`text-[10px] px-2 py-0.5 rounded-full ${tool.badgeColor}`}>
-                        {s.title.split(' ').slice(1).join(' ')}
+                      <span key={j} className={`text-[12px] px-2 py-0.5 rounded-full ${tool.badgeColor}`}>
+                        {s.title}
                       </span>
                     ))}
                   </div>
@@ -961,9 +1020,9 @@ function ToolsGuideModal({ onClose }: { onClose: () => void }) {
                 className="w-full border border-amber-500/30 bg-amber-900/10 rounded-xl p-4 text-left hover:bg-amber-900/20 transition-colors"
               >
                 <div className="flex items-center gap-2 mb-2">
-                  <span className="text-lg">🔄</span>
+                  <span className="text-lg"><RefreshIcon className="w-4 h-4" /></span>
                   <h3 className="text-sm font-bold text-white">{COMBO_SCENARIOS.length} kịch bản kết hợp thực tế</h3>
-                  <span className="text-gray-600 ml-auto text-[10px]">Bấm để xem →</span>
+                  <span className="text-gray-400 ml-auto text-[10px]">Bấm để xem →</span>
                 </div>
                 <p className="text-xs text-gray-400">Xem các ví dụ phối hợp CRM + Workflow + Tích hợp trong thực tế kinh doanh.</p>
               </button>
@@ -985,7 +1044,7 @@ function ToolsGuideModal({ onClose }: { onClose: () => void }) {
 
                 {tool.sections.map((section, i) => (
                   <div key={i} className="space-y-2">
-                    <h4 className="text-xs font-bold text-gray-300">{section.title}</h4>
+                    <h4 className="text-xs font-bold text-gray-300 flex items-center gap-1.5">{section.icon} {section.title}</h4>
                     <ul className="space-y-1 pl-1">
                       {section.items.map((item, j) => (
                         <li key={j} className="flex items-start gap-2 text-xs text-gray-400">
@@ -999,7 +1058,7 @@ function ToolsGuideModal({ onClose }: { onClose: () => void }) {
 
                 {/* Related combos */}
                 <div className="border-t border-gray-700/60 pt-4 mt-2">
-                  <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-2">🔄 Kịch bản kết hợp liên quan</p>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2"><RefreshIcon className="w-4 h-4 inline" /> Kịch bản kết hợp liên quan</p>
                   <div className="space-y-2">
                     {COMBO_SCENARIOS.filter(c =>
                       (activeTab === 'crm' && c.tags.includes('CRM')) ||
@@ -1051,8 +1110,8 @@ function ToolsGuideModal({ onClose }: { onClose: () => void }) {
                   <div className="flex items-center gap-1.5 text-[10px] flex-wrap pt-1">
                     {combo.flow.map((step, j) => (
                       <React.Fragment key={j}>
-                        {j > 0 && <span className="text-gray-600">→</span>}
-                        <span className="bg-gray-800 text-gray-300 px-2 py-0.5 rounded-md border border-gray-700/60 whitespace-nowrap">{step}</span>
+                        {j > 0 && <span className="text-gray-400">→</span>}
+                        <span className="bg-gray-800 text-gray-300 px-2 py-0.5 rounded-md border border-gray-700/60 whitespace-nowrap inline-flex items-center gap-1">{step.icon} {step.text}</span>
                       </React.Fragment>
                     ))}
                   </div>

@@ -252,7 +252,7 @@ export function RichContentPreview({
   compact?: boolean;
 }) {
   if (!source?.trim()) {
-    return <p className={`text-xs text-gray-500 italic ${className ?? ''}`}>Chưa có nội dung chi tiết</p>;
+    return <p className={`text-xs text-gray-400 italic ${className ?? ''}`}>Chưa có nội dung chi tiết</p>;
   }
 
   return (

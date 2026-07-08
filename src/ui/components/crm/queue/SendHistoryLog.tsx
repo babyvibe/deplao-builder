@@ -4,6 +4,7 @@ import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import { useAccountStore } from '@/store/accountStore';
 import { formatPhone } from '@/utils/phoneUtils';
+import { CampaignIcon, ChatIcon, ClipboardListIcon, SearchIcon, UserCheckIcon, UsersIcon } from '@/components/common/icons';
 
 interface SendLogEntry {
   id: number;
@@ -61,8 +62,8 @@ function DebugModal({ log, onClose }: { log: SendLogEntry; onClose: () => void }
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-700 flex-shrink-0">
           <div>
-            <h3 className="text-sm font-semibold text-white">🔍 Debug Log #{log.id}</h3>
-            <p className="text-[11px] text-gray-500 mt-0.5">
+            <h3 className="text-sm font-semibold text-white"><SearchIcon className="w-4 h-4 inline" /> Debug Log #{log.id}</h3>
+            <p className="text-[11px] text-gray-400 mt-0.5">
               {log.display_name || log.contact_id}
               {log.phone ? ` · ${formatPhone(log.phone)}` : ''}
               {' · '}Chiến dịch {campName}
@@ -94,24 +95,24 @@ function DebugModal({ log, onClose }: { log: SendLogEntry; onClose: () => void }
 
           {/* Message */}
           <div>
-            <p className="text-[11px] text-gray-500 uppercase tracking-wide mb-1.5">Nội dung gửi</p>
-            <div className="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2.5 text-xs text-gray-200 whitespace-pre-wrap break-all">
+            <p className="text-[11px] text-gray-400 uppercase tracking-wide mb-1.5">Nội dung gửi</p>
+            <div className="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2.5 text-xs text-gray-200 whitespace-pre-wrap break-word">
               {log.message || '(trống)'}
             </div>
           </div>
 
           {/* Request */}
           <div>
-            <p className="text-[11px] text-gray-500 uppercase tracking-wide mb-1.5">Data Request</p>
-            <pre className="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2.5 text-[11px] text-green-300 overflow-x-auto whitespace-pre-wrap break-all leading-relaxed max-h-48 overflow-y-auto">
+            <p className="text-[11px] text-gray-400 uppercase tracking-wide mb-1.5">Data Request</p>
+            <pre className="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2.5 text-[11px] text-green-300 overflow-x-auto whitespace-pre-wrap break-word leading-relaxed max-h-48 overflow-y-auto">
               {tryFmtJson(log.data_request)}
             </pre>
           </div>
 
           {/* Response */}
           <div>
-            <p className="text-[11px] text-gray-500 uppercase tracking-wide mb-1.5">Data Response</p>
-            <pre className="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2.5 text-[11px] text-blue-300 overflow-x-auto whitespace-pre-wrap break-all leading-relaxed max-h-48 overflow-y-auto">
+            <p className="text-[11px] text-gray-400 uppercase tracking-wide mb-1.5">Data Response</p>
+            <pre className="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2.5 text-[11px] text-blue-300 overflow-x-auto whitespace-pre-wrap break-word leading-relaxed max-h-48 overflow-y-auto">
               {tryFmtJson(log.data_response)}
             </pre>
           </div>
@@ -285,11 +286,11 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
 
       {/* Header */}
       <div className="flex items-center gap-3 px-5 py-3 border-b border-gray-700 flex-shrink-0">
-        <h3 className="text-sm font-semibold text-white">📋 Lịch sử gửi</h3>
+        <h3 className="text-sm font-semibold text-white"><ClipboardListIcon className="w-4 h-4 inline" /> Lịch sử gửi</h3>
         <div className="flex items-center gap-2 text-xs">
           <span className="text-green-400">{sentCount} đã gửi</span>
           {failedCount > 0 && <span className="text-red-400">{failedCount} lỗi</span>}
-          <span className="text-gray-500">/ {logs.length} tổng</span>
+          <span className="text-gray-400">/ {logs.length} tổng</span>
         </div>
         <div className="ml-auto flex items-center gap-2">
           {filtered.length > 0 && (
@@ -312,7 +313,7 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
       <div className="flex items-center gap-2 px-5 py-2 border-b border-gray-700 flex-shrink-0 flex-wrap">
         {/* Search */}
         <div className="relative">
-          <svg width="12" height="12" className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500"
+          <svg width="12" height="12" className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"
             viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
           </svg>
@@ -330,22 +331,21 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
               placeholder="Tên chiến dịch..."
               className="bg-transparent pl-3 pr-1 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none w-36" />
             {filterCampaignName && (
-              <button onClick={clearCampaignFilter} className="pr-2.5 text-gray-500 hover:text-white text-xs flex-shrink-0">✕</button>
+              <button onClick={clearCampaignFilter} className="pr-2.5 text-gray-400 hover:text-white text-xs flex-shrink-0">✕</button>
             )}
           </div>
           {showSuggestions && suggestions.length > 0 && (
             <div className="absolute top-full left-0 mt-1 bg-gray-800 border border-gray-600 rounded-xl shadow-xl z-50 min-w-[200px] max-h-48 overflow-y-auto">
               {suggestions.map(c => (
                 <button key={c.id} onClick={() => selectCampaign(c)}
-                  className="w-full text-left px-3 py-2 text-xs text-gray-200 hover:bg-gray-700 transition-colors truncate">
-                  📢 {c.name}
+                  className="w-full text-left px-3 py-2 text-xs text-gray-200 hover:bg-gray-700 transition-colors truncate"><CampaignIcon className="w-4 h-4 inline" /> {c.name}
                 </button>
               ))}
             </div>
           )}
           {showSuggestions && filterCampaignName.trim() && suggestions.length === 0 && (
             <div className="absolute top-full left-0 mt-1 bg-gray-800 border border-gray-600 rounded-xl shadow-xl z-50 px-3 py-2 min-w-[200px]">
-              <p className="text-xs text-gray-500">Không tìm thấy chiến dịch</p>
+              <p className="text-xs text-gray-400">Không tìm thấy chiến dịch</p>
             </div>
           )}
         </div>
@@ -360,7 +360,7 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
             className="bg-gray-700 border border-gray-600 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500 w-32" />
           {(dateFrom || dateTo) && (
             <button onClick={() => { setDateFrom(''); setDateTo(''); setPage(0); }}
-              className="text-gray-500 hover:text-white text-xs" title="Xóa lọc ngày">✕</button>
+              className="text-gray-400 hover:text-white text-xs" title="Xóa lọc ngày">✕</button>
           )}
         </div>
 
@@ -380,12 +380,12 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
           onChange={e => { setFilterSendType(e.target.value as typeof filterSendType); setPage(0); }}
           className="bg-gray-700 border border-gray-600 rounded-full text-xs text-gray-300 px-2.5 py-1.5 focus:outline-none focus:border-blue-500 flex-shrink-0">
           <option value="all">Tất cả loại</option>
-          <option value="message">💬 Tin nhắn</option>
-          <option value="friend_request">🤝 Kết bạn</option>
-          <option value="invite_to_group">👥 Mời nhóm</option>
+          <option value="message"><ChatIcon className="w-4 h-4 inline" /> Tin nhắn</option>
+          <option value="friend_request"><UserCheckIcon className="w-4 h-4 inline" /> Kết bạn</option>
+          <option value="invite_to_group"><UsersIcon className="w-4 h-4 inline" /> Mời nhóm</option>
         </select>
 
-        <span className="ml-auto text-xs text-gray-500">{filtered.length} kết quả</span>
+        <span className="ml-auto text-xs text-gray-400">{filtered.length} kết quả</span>
       </div>
 
       {/* Table */}
@@ -393,7 +393,7 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
         {loading ? (
           <div className="p-5 space-y-2">{[...Array(8)].map((_, i) => <div key={i} className="h-9 bg-gray-700/50 rounded animate-pulse" />)}</div>
         ) : paged.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-gray-500 py-16">
+          <div className="flex flex-col items-center justify-center h-full text-gray-400 py-16">
             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mb-3 opacity-40">
               <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l5.414 5.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2z"/>
             </svg>
@@ -406,7 +406,7 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
         ) : (
           <>
             {/* Column headers - added debug col at end */}
-            <div className="grid grid-cols-[1fr_2fr_1fr_90px_80px_28px] gap-2 px-5 py-2 text-[11px] text-gray-500 border-b border-gray-700 sticky top-0 bg-gray-900 z-10">
+            <div className="grid grid-cols-[1fr_2fr_1fr_90px_80px_28px] gap-2 px-5 py-2 text-[11px] text-gray-400 border-b border-gray-700 sticky top-0 bg-gray-900 z-10">
               <span>Người nhận</span>
               <span>Nội dung</span>
               <span>Chiến dịch</span>
@@ -435,9 +435,9 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
                       )}
                     </div>
                     {phone
-                      ? <p className="text-gray-500 text-[11px] font-mono truncate">{phone}</p>
+                      ? <p className="text-gray-400 text-[11px] font-mono truncate">{phone}</p>
                       : log.contact_id && log.contact_id !== log.display_name
-                        ? <p className="text-gray-600 font-mono text-[11px] truncate">{log.contact_id}</p>
+                        ? <p className="text-gray-400 font-mono text-[11px] truncate">{log.contact_id}</p>
                         : null
                     }
                   </div>
@@ -447,38 +447,38 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
                     {log.error && <p className="text-red-400 text-[11px] truncate">⚠ {log.error}</p>}
                   </div>
                   {/* Campaign */}
-                  <span className="text-gray-500 truncate self-center">
+                  <span className="text-gray-400 truncate self-center">
                     {campaignName || (log.campaign_id ? `#${log.campaign_id} - Đã xoá` : '-')}
                   </span>
                   {/* Send type badge - 3 types only */}
                   <span className="flex-shrink-0 self-center">
                     {sendType === 'friend_request' ? (
-                      <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-400 border border-purple-500/30">🤝 Kết bạn</span>
+                      <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-400 border border-purple-500/30"><UserCheckIcon className="w-4 h-4 inline" /> Kết bạn</span>
                     ) : sendType === 'invite_to_group' ? (
-                      <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-orange-500/20 text-orange-400 border border-orange-500/30">👥 Mời nhóm</span>
+                      <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-orange-500/20 text-orange-400 border border-orange-500/30"><UsersIcon className="w-4 h-4 inline" /> Mời nhóm</span>
                     ) : (
-                      <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">💬 Tin nhắn</span>
+                      <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30"><ChatIcon className="w-4 h-4 inline" /> Tin nhắn</span>
                     )}
                   </span>
                   {/* Status + time */}
                   <div className="text-right self-center">
                     <div className="flex items-center justify-center">
                         <span className={`block font-medium ${log.status === 'sent' ? 'text-green-400' : 'text-red-400'}`}>
-                          {log.status === 'sent' ? '✓ Đã gửi' : '✕ Thất bại'}
+                          {log.status === 'sent' ? '✓ Đã gửi' : '✕ Lỗi'}
                         </span>
                         <span>
                         <button
                             onClick={() => setDebugLog(log)}
                             title="Xem data request / response"
-                            className="opacity-0 group-hover:opacity-100 transition-opacity w-5 h-5 rounded flex items-center justify-center text-gray-500 hover:text-blue-400 hover:bg-blue-500/10">
-                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            className="transition-opacity w-5 h-5 rounded flex items-center justify-center text-gray-400 hover:text-blue-400 hover:bg-blue-500/10">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <polyline points="16 18 22 12 16 6"/>
                             <polyline points="8 6 2 12 8 18"/>
                           </svg>
                         </button>
                       </span>
                     </div>
-                    <span className="text-[11px] text-gray-600">{fmt(log.sent_at)}</span>
+                    <span className="text-[11px] text-gray-400">{fmt(log.sent_at)}</span>
                   </div>
                 </div>
               );

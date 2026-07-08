@@ -6,11 +6,13 @@ import { useCRMStore } from '@/store/crmStore';
 import { useEmployeeStore } from '@/store/employeeStore';
 import ipc from '../lib/ipc'
 import DataAccessor from '../lib/data/DataAccessor';;
+import { fetchAllAliases } from '../lib/zaloAliasUtils';
 import { sendSeenForThread } from '@/lib/sendSeenHelper';
 import { playNotificationSound, showDesktopNotification, requestNotificationPermission } from '../utils/NotificationService';
 import { getFilteredUnreadCount } from '@/lib/badgeUtils';
 import Logger from "../../utils/Logger";
 import { extractUserProfile } from "../../utils/profileUtils";
+import { BellIcon, ChartIcon, EditIcon, ImageIcon, LinkIcon, SendIcon, UserCheckIcon, WaveIcon, WifiIcon } from '@/components/common/icons';
 
 // ─── Contact fetch cache (7 ngày) ────────────────────────────────────────────
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -70,10 +72,8 @@ async function loadAliases(zaloId: string) {
       const account = useAccountStore.getState().accounts.find((a) => a.zalo_id === zaloId);
       if (!account) return;
       const auth = { cookies: account.cookies, imei: account.imei, userAgent: account.user_agent };
-      const res = await ipc.zalo?.getAliasList({ auth, count: 5000 });
-      if (!res?.success) return;
-      const items: { userId: string; alias: string }[] = res?.response?.items || [];
-      for (const item of items) {
+      const aliasItems = await fetchAllAliases(auth);
+      for (const item of aliasItems) {
         if (item.alias && item.userId) {
           aliasMap.set(`${zaloId}__${item.userId}`, item.alias);
           // Push alias vào chatStore (field alias riêng, KHÔNG overwrite display_name)

@@ -732,7 +732,10 @@ html[data-theme="light"] .bg-blue-500\/20 { background-color: rgba(219,234,254,0
 html[data-theme="light"] .bg-blue-500\/15 { background-color: rgba(219,234,254,0.30); }
 html[data-theme="light"] .bg-blue-500\/10 { background-color: rgba(219,234,254,0.25); }
 html[data-theme="light"] .bg-blue-500\/5  { background-color: rgba(219,234,254,0.15); }
+html[data-theme="light"] .bg-blue-400\/60 { background-color: rgba(219,234,254,0.75); }
+html[data-theme="light"] .bg-blue-400\/50 { background-color: rgba(219,234,254,0.65); }
 html[data-theme="light"] .bg-blue-400\/40 { background-color: rgba(219,234,254,0.55); }
+html[data-theme="light"] .bg-blue-400\/30 { background-color: rgba(219,234,254,0.45); }
 html[data-theme="light"] .bg-blue-400\/70 { background-color: rgba(191,219,254,0.7); }
 
 /* indigo ── */

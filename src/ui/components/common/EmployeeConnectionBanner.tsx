@@ -1,6 +1,7 @@
 import React from 'react';
 import { useEmployeeStore } from '@/store/employeeStore';
-import { useAppStore } from '@/store/appStore';
+import { useAppStore } from '@/store/appStore';import { ChartIcon, KeyIcon, RefreshIcon, SmartphoneIcon } from '@/components/common/icons';
+
 
 /**
  * Small banner at the top when in Employee mode.
@@ -34,15 +35,14 @@ export default function EmployeeConnectionBanner() {
                             {previewEmp?.display_name?.charAt(0)?.toUpperCase() || '?'}
                         </div>
                     )}
-                    <span className="font-semibold text-amber-100">
-                        🔄 Đang giả lập: {previewEmp?.display_name || 'Nhân viên'}
+                    <span className="font-semibold text-amber-100"><RefreshIcon className="w-4 h-4 inline" /> Đang giả lập: {previewEmp?.display_name || 'Nhân viên'}
                     </span>
                 </div>
 
                 {/* Stats */}
                 <div className="flex items-center gap-3 text-[11px] text-amber-300/70">
-                    <span>📱 {assignedCount} TK Zalo</span>
-                    <span title={permModules.join(', ')}>🔑 {permCount} modules</span>
+                    <span><SmartphoneIcon className="w-4 h-4 inline" /> {assignedCount} TK Zalo</span>
+                    <span title={permModules.join(', ')}><KeyIcon className="w-4 h-4 inline" /> {permCount} modules</span>
                     <span>@{previewEmp?.username}</span>
                 </div>
 
@@ -53,8 +53,7 @@ export default function EmployeeConnectionBanner() {
                     onClick={() => useAppStore.getState().setView('dashboard')}
                     className="flex items-center gap-1 text-[11px] font-medium text-amber-300/80 hover:text-amber-100 px-2 py-0.5 rounded-md hover:bg-amber-800/30 transition-colors"
                     title="Xem Dashboard với góc nhìn nhân viên"
-                >
-                    📊 Dashboard NV
+                ><ChartIcon className="w-4 h-4 inline" /> Dashboard NV
                 </button>
 
                 {/* Exit button */}

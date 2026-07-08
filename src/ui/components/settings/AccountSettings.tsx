@@ -4,6 +4,7 @@ import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
 import { showConfirm } from '../common/ConfirmDialog';
 import { extractApiError } from '@/utils/apiError';
+import { FolderIcon, GlobeIcon, HardDriveIcon, SettingsIcon, TrashIcon, UserIcon } from '@/components/common/icons';
 
 function Section({ children }: { children: React.ReactNode }) {
   return (
@@ -70,7 +71,7 @@ export default function AccountSettings() {
 
   const handleDeleteAccount = async (zaloId: string) => {
     const ok = await showConfirm({
-      title: deleteWithData ? '⚠️ Xoá tài khoản và tất cả dữ liệu?' : 'Xoá tài khoản này?',
+      title: deleteWithData ? 'Xoá tài khoản và tất cả dữ liệu?' : 'Xoá tài khoản này?',
       message: deleteWithData
         ? 'Tài khoản, tin nhắn, hội thoại, danh bạ, khách hàng, file media, nhãn, ghi chú và tất cả dữ liệu CRM sẽ bị XOÁ VĨNH VIỄN. Không thể khôi phục!'
         : 'Tài khoản sẽ bị xoá khỏi ứng dụng. Bạn cần đăng nhập lại để thêm lại. Dữ liệu tin nhắn và media được giữ lại.',
@@ -94,7 +95,7 @@ export default function AccountSettings() {
   return (
     <>
       <div className="flex items-center gap-3">
-        <h2 className="text-base font-semibold text-white">👤 Tài khoản đã đăng nhập</h2>
+        <h2 className="text-base font-semibold text-white"><UserIcon className="w-4 h-4 inline" /> Tài khoản đã đăng nhập</h2>
       </div>
       <Section>
         <div className="space-y-2">
@@ -110,7 +111,7 @@ export default function AccountSettings() {
                       {(acc.channel || 'zalo') === 'facebook' ? 'FB' : 'Zalo'}
                     </span>
                   </div>
-                  <p className="text-xs text-gray-500">{acc.zalo_id}</p>
+                  <p className="text-xs text-gray-400">{acc.zalo_id}</p>
                 </div>
                 <span className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0 ${acc.isOnline ? 'bg-green-900/50 text-green-400' : 'bg-gray-600 text-gray-400'}`}>
                   {acc.isOnline ? 'Online' : 'Offline'}
@@ -136,7 +137,7 @@ export default function AccountSettings() {
               </div>
             </div>
           ))}
-          {accounts.length === 0 && <p className="text-gray-500 text-sm">Chưa có tài khoản nào</p>}
+          {accounts.length === 0 && <p className="text-gray-400 text-sm">Chưa có tài khoản nào</p>}
         </div>
       </Section>
 
@@ -147,7 +148,7 @@ export default function AccountSettings() {
             {/* Header */}
             <div className="px-5 pt-5 pb-3 border-b border-gray-700">
               <div className="flex items-center gap-3 mb-1">
-                <span className="text-2xl">⚙️</span>
+                <SettingsIcon className="w-6 h-6" />
                 <h3 className="text-base font-semibold text-white">Cài đặt tài khoản</h3>
               </div>
               <p className="text-xs text-gray-400 mt-1">
@@ -159,13 +160,13 @@ export default function AccountSettings() {
             <div className="p-5 space-y-5">
               {/* Auto-delete media */}
               <div>
-                <p className="text-sm font-semibold text-gray-200 mb-3">📁 Tự động xoá media</p>
+                <p className="text-sm font-semibold text-gray-200 mb-3"><FolderIcon className="w-4 h-4 inline" /> Tự động xoá media</p>
                 {configLoaded ? (
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-sm text-gray-300">Bật tự động xoá</p>
-                        <p className="text-xs text-gray-500">Xoá file media cũ hơn số ngày cài đặt</p>
+                        <p className="text-xs text-gray-400">Xoá file media cũ hơn số ngày cài đặt</p>
                       </div>
                       <Toggle
                         value={localConfig.enabled}
@@ -187,13 +188,13 @@ export default function AccountSettings() {
                         <span className="text-xs text-gray-400 flex-shrink-0">ngày</span>
                       </div>
                     </div>
-                    <p className="text-[11px] text-gray-500 leading-relaxed">
+                    <p className="text-[11px] text-gray-400 leading-relaxed">
                       Hệ thống sẽ tự động kiểm tra và xoá media cũ mỗi ngày một lần (3:00 AM).
                       Khi lưu, thao tác dọn dẹp sẽ được chạy ngay lập tức.
                     </p>
                   </div>
                 ) : (
-                  <div className="flex items-center gap-2 text-xs text-gray-500 py-3">
+                  <div className="flex items-center gap-2 text-xs text-gray-400 py-3">
                     <div className="w-3 h-3 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />
                     Đang tải cấu hình...
                   </div>
@@ -214,7 +215,7 @@ export default function AccountSettings() {
                 disabled={savingMedia || !configLoaded}
                 className="flex-1 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-500 rounded-xl transition-colors disabled:opacity-50"
               >
-                {savingMedia ? 'Đang lưu...' : '💾 Lưu & chạy ngay'}
+                {savingMedia ? 'Đang lưu...' : 'Lưu & chạy ngay'}
               </button>
             </div>
           </div>
@@ -228,7 +229,7 @@ export default function AccountSettings() {
             {/* Header */}
             <div className="px-5 pt-5 pb-3 border-b border-gray-700">
               <div className="flex items-center gap-3 mb-1">
-                <span className="text-2xl">🗑️</span>
+                <span className="text-2xl"><TrashIcon className="w-4 h-4" /></span>
                 <h3 className="text-base font-semibold text-white">Xoá tài khoản</h3>
               </div>
               <p className="text-xs text-gray-400 mt-1">
@@ -286,7 +287,7 @@ export default function AccountSettings() {
                 onClick={() => handleDeleteAccount(deleteModalAcc)}
                 className={`flex-1 py-2 text-sm font-medium text-white rounded-xl transition-colors ${deleteWithData ? 'bg-red-600 hover:bg-red-500' : 'bg-orange-600 hover:bg-orange-500'}`}
               >
-                {deleteWithData ? '🗑️ Xoá tất cả' : 'Xoá tài khoản'}
+                {deleteWithData ? <><TrashIcon className="w-4 h-4 inline" /> Xoá tất cả</> : 'Xoá tài khoản'}
               </button>
             </div>
           </div>

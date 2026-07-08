@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import type { CRMCampaign } from '@/store/crmStore';
 import { showConfirm } from '@/components/common/ConfirmDialog';
 import PageLoading from '@/components/common/PageLoading';
+import { CalendarIcon, ClipboardListIcon, ShuffleIcon, TrashIcon, UserCheckIcon, UsersIcon } from '@/components/common/icons';
 
 function fmtDelayRange(min: number, max: number): string {
   const fmt = (s: number) => {
@@ -75,7 +76,7 @@ export default function CampaignList({ campaigns, loading, activeId, onSelect, o
       {/* Filters */}
       <div className="px-3 pt-2.5 pb-2 border-b border-gray-700 flex-shrink-0 space-y-2">
         <div className="relative">
-          <svg width="12" height="12" className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500"
+          <svg width="12" height="12" className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"
             viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
           </svg>
@@ -99,7 +100,7 @@ export default function CampaignList({ campaigns, loading, activeId, onSelect, o
         {loading && <PageLoading variant="skeleton" skeletonVariant="cards" />}
 
         {!loading && filtered.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full text-gray-500 py-10">
+          <div className="flex flex-col items-center justify-center h-full text-gray-400 py-10">
             <p className="text-sm">{search || filterStatus !== 'all' ? 'Không tìm thấy chiến dịch' : 'Chưa có chiến dịch nào'}</p>
             {!search && filterStatus === 'all' && (
               <button onClick={onCreate} className="mt-3 text-xs text-blue-400 hover:text-blue-300">Tạo chiến dịch đầu tiên →</button>
@@ -118,15 +119,15 @@ export default function CampaignList({ campaigns, loading, activeId, onSelect, o
                   <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                     {/* Campaign type badge */}
                     {c.campaign_type === 'friend_request' && (
-                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-400 border border-purple-500/30">🤝 Kết bạn</span>
+                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-400 border border-purple-500/30"><UserCheckIcon className="w-4 h-4 inline" /> Kết bạn</span>
                     )}
                     {c.campaign_type === 'invite_to_group' && (
-                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-orange-500/20 text-orange-400 border border-orange-500/30">👥 Mời nhóm</span>
+                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-orange-500/20 text-orange-400 border border-orange-500/30"><UsersIcon className="w-4 h-4 inline" /> Mời nhóm</span>
                     )}
                     {c.campaign_type === 'mixed' && (
-                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">🔀 Hỗn hợp</span>
+                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-400 border border-indigo-500/30"><ShuffleIcon className="w-4 h-4 inline" /> Hỗn hợp</span>
                     )}
-                    <span className="text-[11px] text-gray-500">
+                    <span className="text-[11px] text-gray-400">
                       ⏱ {fmtDelayRange(c.delay_min_seconds || Math.max(30, c.delay_seconds - 10), c.delay_max_seconds || c.delay_seconds + 10)}
                       {c.created_at ? <> · 📅 {fmtDate(c.created_at)}</> : null}
                     </span>
@@ -139,7 +140,7 @@ export default function CampaignList({ campaigns, loading, activeId, onSelect, o
 
               {c.total_contacts > 0 && (
                 <div className="mb-2">
-                  <div className="flex justify-between text-[11px] text-gray-500 mb-1">
+                  <div className="flex justify-between text-[11px] text-gray-400 mb-1">
                     <span>{c.sent_count}/{c.total_contacts} đã gửi</span>
                     {c.failed_count > 0 && <span className="text-red-400">{c.failed_count} lỗi</span>}
                   </div>
@@ -164,7 +165,7 @@ export default function CampaignList({ campaigns, loading, activeId, onSelect, o
                 )}
                 <button onClick={() => onClone(c.id)}
                   title="Nhân bản chiến dịch"
-                  className="px-2 text-[12px] py-1 rounded-lg bg-gray-700 hover:bg-blue-700/50 text-gray-400 hover:text-blue-300 transition-colors">📋 Nhân bản</button>
+                  className="px-2 text-[12px] py-1 rounded-lg bg-gray-700 hover:bg-blue-700/50 text-gray-400 hover:text-blue-300 transition-colors"><ClipboardListIcon className="w-4 h-4 inline" /> Nhân bản</button>
                 <button
                   onClick={async () => {
                     const ok = await showConfirm({
@@ -175,7 +176,7 @@ export default function CampaignList({ campaigns, loading, activeId, onSelect, o
                     });
                     if (ok) onDelete(c.id);
                   }}
-                  className="px-2 text-[12px] py-1 rounded-lg bg-gray-700 hover:bg-red-700/50 text-gray-400 hover:text-red-300 transition-colors">🗑</button>
+                  className="px-2 text-[12px] py-1 rounded-lg bg-gray-700 hover:bg-red-700/50 text-gray-400 hover:text-red-300 transition-colors"><TrashIcon className="w-4 h-4" /></button>
               </div>
             </div>
           );

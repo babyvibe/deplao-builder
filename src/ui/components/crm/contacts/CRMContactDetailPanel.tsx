@@ -13,6 +13,7 @@ import type { LocalLabelItem } from '@/components/common/LocalLabelSelector';
 import NoteList from '../notes/NoteList';
 import PhoneDisplay from '@/components/common/PhoneDisplay';
 import type { PinnedNote } from '@/components/chat/PinnedMessages';
+import { GiftIcon } from '@/components/common/icons';
 
 interface CRMContactDetailPanelProps {
   contact: CRMContact;
@@ -244,7 +245,7 @@ export default function CRMContactDetailPanel({ contact, allLabels, localLabels,
           <p className="text-white font-semibold text-sm">{name}</p>
           {contact.alias && contact.alias !== contact.display_name &&
             <p className="text-xs text-gray-400">({contact.display_name})</p>}
-          {contact.phone && <p className="text-xs text-gray-500 mt-0.5"><PhoneDisplay phone={contact.phone} className="text-xs text-gray-500" /></p>}
+          {contact.phone && <p className="text-xs text-gray-400 mt-0.5"><PhoneDisplay phone={contact.phone} className="text-xs text-gray-400" /></p>}
           {/* Gender & Birthday */}
           <div className="flex items-center gap-2 mt-1.5">
             <span className={`inline-block mt-1 px-2 py-0.5 rounded-full text-[11px] font-medium ${contact.is_friend ? 'bg-green-500/20 text-green-400' : 'bg-gray-600/50 text-gray-400'}`}>
@@ -252,7 +253,7 @@ export default function CRMContactDetailPanel({ contact, allLabels, localLabels,
             </span>
             {contact.gender === 0 && <span className="text-[11px] text-blue-400 bg-blue-400/10 px-1.5 py-0.5 rounded">♂ Nam</span>}
             {contact.gender === 1 && <span className="text-[11px] text-pink-400 bg-pink-400/10 px-1.5 py-0.5 rounded">♀ Nữ</span>}
-            {contact.birthday && <span className="text-[11px] text-gray-400 bg-gray-600/30 px-1.5 py-0.5 rounded">🎂 {contact.birthday}</span>}
+            {contact.birthday && <span className="text-[11px] text-gray-400 bg-gray-600/30 px-1.5 py-0.5 rounded"><GiftIcon className="w-4 h-4 inline" /> {contact.birthday}</span>}
           </div>
         </div>
         {/* Current labels pills (Zalo + Local) */}
@@ -273,7 +274,7 @@ export default function CRMContactDetailPanel({ contact, allLabels, localLabels,
             })}
           </div>
         )}
-        <p className="text-[11px] text-gray-500">ID: {contact.contact_id}</p>
+        <p className="text-[11px] text-gray-400">ID: {contact.contact_id}</p>
       </div>
 
       {/* Tabs */}
@@ -314,7 +315,7 @@ export default function CRMContactDetailPanel({ contact, allLabels, localLabels,
                 {/* Zalo labels */}
                 <p className="text-xs text-gray-400 font-medium">Nhãn Zalo</p>
                 {allLabels.length === 0 ? (
-                  <p className="text-xs text-gray-500">Chưa tải nhãn. Hãy đồng bộ nhãn từ header.</p>
+                  <p className="text-xs text-gray-400">Chưa tải nhãn. Hãy đồng bộ nhãn từ header.</p>
                 ) : (
                   <ZaloLabelSelector
                     allLabels={allLabels}
@@ -357,16 +358,16 @@ export default function CRMContactDetailPanel({ contact, allLabels, localLabels,
                 {isGroup && noteTab === 'zalo' && (
                   <div className="space-y-2">
                     {zaloNotes.length === 0 && (
-                      <p className="text-xs text-gray-500 text-center py-2">Chưa có ghi chú Zalo nào</p>
+                      <p className="text-xs text-gray-400 text-center py-2">Chưa có ghi chú Zalo nào</p>
                     )}
                     {zaloNotes.map(note => (
                       <div key={note.topicId} className="bg-yellow-500/5 border border-yellow-700/30 rounded-lg p-2.5">
                         <p className="text-xs text-gray-200 whitespace-pre-wrap">{note.title}</p>
                         <div className="flex items-center justify-between mt-1.5">
                           {note.creatorName && (
-                            <span className="text-[11px] text-gray-500">{note.creatorName}</span>
+                            <span className="text-[11px] text-gray-400">{note.creatorName}</span>
                           )}
-                          <span className="text-[11px] text-gray-500 ml-auto">
+                          <span className="text-[11px] text-gray-400 ml-auto">
                             {note.editTime ? new Date(note.editTime).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}
                           </span>
                         </div>
@@ -379,14 +380,14 @@ export default function CRMContactDetailPanel({ contact, allLabels, localLabels,
 
             {detailTab === 'history' && (
               <div className="space-y-2">
-                {sendLog.length === 0 && <p className="text-xs text-gray-500 text-center py-4">Chưa có lịch sử gửi</p>}
+                {sendLog.length === 0 && <p className="text-xs text-gray-400 text-center py-4">Chưa có lịch sử gửi</p>}
                 {sendLog.map(log => (
                   <div key={log.id} className={`p-2.5 rounded-lg border text-xs ${log.status === 'sent' ? 'bg-green-500/5 border-green-700/30' : 'bg-red-500/5 border-red-700/30'}`}>
                     <div className="flex items-center justify-between mb-1">
                       <span className={`font-medium ${log.status === 'sent' ? 'text-green-400' : 'text-red-400'}`}>
                         {log.status === 'sent' ? '✓ Đã gửi' : '✕ Thất bại'}
                       </span>
-                      <span className="text-gray-500">{fmt(log.sent_at)}</span>
+                      <span className="text-gray-400">{fmt(log.sent_at)}</span>
                     </div>
                     <p className="text-gray-300 line-clamp-2">{log.message}</p>
                     {log.error && <p className="text-red-400 text-[11px] mt-1">{log.error}</p>}

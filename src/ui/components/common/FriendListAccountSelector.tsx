@@ -1,5 +1,6 @@
 import React from 'react';
-import AccountSelectorDropdown, { AccountOption } from './AccountSelectorDropdown';
+import AccountSelectorDropdown, { AccountOption } from './AccountSelectorDropdown';import { HomeIcon, MailIcon, SearchIcon, UsersIcon } from '@/components/common/icons';
+
 
 export type FriendTab = 'search' | 'friends' | 'groups' | 'requests';
 
@@ -21,11 +22,11 @@ interface Props {
   onSelectAccount: (id: string) => void;
 }
 
-const TABS: { key: FriendTab; label: string; icon: string }[] = [
-  { key: 'search',   label: 'Tìm kiếm', icon: '🔍' },
-  { key: 'friends',  label: 'Bạn bè',   icon: '👥' },
-  { key: 'groups',   label: 'Nhóm',     icon: '🏠' },
-  { key: 'requests', label: 'Lời mời',  icon: '✉️' },
+const TABS: { key: FriendTab; label: string; icon: React.ReactNode }[] = [
+  { key: 'search',   label: 'Tìm kiếm', icon: <SearchIcon className="w-4 h-4" /> },
+  { key: 'friends',  label: 'Bạn bè',   icon: <UsersIcon className="w-4 h-4" /> },
+  { key: 'groups',   label: 'Nhóm',     icon: <HomeIcon className="w-4 h-4" /> },
+  { key: 'requests', label: 'Lời mời',  icon: <MailIcon className="w-4 h-4" /> },
 ];
 
 /** Header của FriendList - 3 tab bên trái, account selector bên phải (giống CRM) */

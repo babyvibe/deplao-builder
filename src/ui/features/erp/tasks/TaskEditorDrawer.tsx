@@ -19,6 +19,8 @@ import type {
 } from '../../../../models/erp';
 import { EmployeeAvatar, PriorityBadge, RichContentPreview, StatusBadge } from '../shared/ErpBadges';
 import TaskMultiSelect from './TaskMultiSelect';
+import { PaperclipIcon } from '@/components/common/icons';
+
 
 interface Props {
   taskId?: string | null;
@@ -373,7 +375,7 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700/60 flex-shrink-0">
           <div className="min-w-0">
             <h3 className="text-base font-semibold text-white truncate">{taskId ? 'Cập nhật task' : 'Tạo task mới'}</h3>
-            <p className="text-[11px] text-gray-500 mt-1 truncate">{taskId ? `Task ID: ${taskId}` : 'Mọi thay đổi của task sẽ được lưu bằng một nút lưu tổng.'}</p>
+            <p className="text-[11px] text-gray-400 mt-1 truncate">{taskId ? `Task ID: ${taskId}` : 'Mọi thay đổi của task sẽ được lưu bằng một nút lưu tổng.'}</p>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -476,7 +478,7 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
                   <div className="flex items-center justify-between gap-2 mb-2">
                     <div>
                       <label className="text-xs text-gray-400 font-medium block">Nội dung task</label>
-                      <p className="text-[11px] text-gray-500 mt-1">Soạn nội dung với heading, danh sách, màu chữ, code block và chèn ảnh trực tiếp.</p>
+                      <p className="text-[11px] text-gray-400 mt-1">Soạn nội dung với heading, danh sách, màu chữ, code block và chèn ảnh trực tiếp.</p>
                     </div>
                     <button
                       type="button"
@@ -504,7 +506,7 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
                   <div className="flex items-center justify-between gap-2 mb-2">
                     <div>
                       <label className="text-xs text-gray-400 font-medium block">Tệp đính kèm</label>
-                      <p className="text-[11px] text-gray-500 mt-1">Đính kèm file tham chiếu riêng. Ảnh có thể chèn trực tiếp vào nội dung hoặc đính kèm ở đây.</p>
+                      <p className="text-[11px] text-gray-400 mt-1">Đính kèm file tham chiếu riêng. Ảnh có thể chèn trực tiếp vào nội dung hoặc đính kèm ở đây.</p>
                     </div>
                     <button
                       type="button"
@@ -518,7 +520,7 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
                   <input ref={editorImageInputRef} type="file" accept="image/*" className="hidden" onChange={handleInlineImageSelected} />
 
                   {attachments.length === 0 ? (
-                    <div className="rounded-xl border border-dashed border-gray-700 bg-gray-900/40 px-4 py-6 text-center text-sm text-gray-500">
+                    <div className="rounded-xl border border-dashed border-gray-700 bg-gray-900/40 px-4 py-6 text-center text-sm text-gray-400">
                       Chưa có tệp đính kèm
                     </div>
                   ) : (
@@ -528,12 +530,12 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
                           {attachment.previewUrl && isImageAttachment(attachment) ? (
                             <img src={attachment.previewUrl} alt={attachment.file_name} className="w-full h-32 object-cover rounded-lg border border-gray-700/60 mb-3" />
                           ) : (
-                            <div className="h-32 rounded-lg border border-dashed border-gray-700/60 flex items-center justify-center text-4xl text-gray-600 mb-3">📎</div>
+                            <div className="h-32 rounded-lg border border-dashed border-gray-700/60 flex items-center justify-center text-4xl text-gray-400 mb-3"><PaperclipIcon className="w-4 h-4" /></div>
                           )}
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
                               <div className="text-sm text-gray-100 font-medium truncate">{attachment.file_name}</div>
-                              <div className="text-[11px] text-gray-500 mt-1 truncate">{attachment.mime_type || 'Tệp đính kèm'}{attachment.size ? ` · ${(attachment.size / 1024).toFixed(1)} KB` : ''}</div>
+                              <div className="text-[11px] text-gray-400 mt-1 truncate">{attachment.mime_type || 'Tệp đính kèm'}{attachment.size ? ` · ${(attachment.size / 1024).toFixed(1)} KB` : ''}</div>
                             </div>
                             <div className="flex items-center gap-2">
                               <button
@@ -588,12 +590,12 @@ function PeopleChips({
   tone: 'blue' | 'violet';
 }) {
   if (!ids.length) {
-    return <span className="text-xs text-gray-500 italic">{emptyLabel}</span>;
+    return <span className="text-xs text-gray-400 italic">{emptyLabel}</span>;
   }
 
   const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
   if (!uniqueIds.length) {
-    return <span className="text-xs text-gray-500 italic">{emptyLabel}</span>;
+    return <span className="text-xs text-gray-400 italic">{emptyLabel}</span>;
   }
 
   const toneClass = tone === 'violet'

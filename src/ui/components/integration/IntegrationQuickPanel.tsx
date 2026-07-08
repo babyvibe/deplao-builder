@@ -12,14 +12,52 @@ import { Spinner } from '@/components/common/PageLoading';
 import { useAppStore } from '@/store/appStore';
 import POSOrderPanel from './POSOrderPanel';
 import { IS_DEV_BUILD } from "../../../configs/BuildConfig";
+import { AlertIcon, ChartIcon, ClipboardListIcon, CloseIcon, CreditCardIcon, DollarIcon, EditIcon, FileTextIcon, GlobeIcon, LightningIcon, LinkIcon, MapPinIcon, PackageIcon, PinIcon, PluginIcon, SearchIcon, SettingsIcon, ShoppingCartIcon, StarIcon, StoreIcon, TagIcon, TargetIcon, TruckIcon, UserIcon , CheckIcon } from '@/components/common/icons';
 
-// ─── Pin icon emoji list ─────────────────────────────────────────────────────
-const PIN_EMOJIS = [
-  '🛒','📦','🔍','👤','📋','💳','🚚','📊','💰','🏪',
-  '🟢','🍽️','⚡','🔗','🔌','⭐','📌','🏷️','💼','📱',
-  '✅','🔔','📝','🎯','🔑','🗂️','💡','🔄','📈','🎁',
-  '🤝','🏷️','🧾','🗃️','📲','💬','🔖','🧩','⚙️','🌐',
+// ─── Pin icon definitions (SVG) ────────────────────────────────────────────────
+const PIN_ICON_DEFS = [
+  { id: 'shopping-cart', icon: <ShoppingCartIcon className="w-4 h-4" /> },
+  { id: 'package',       icon: <PackageIcon className="w-4 h-4" /> },
+  { id: 'search',        icon: <SearchIcon className="w-4 h-4" /> },
+  { id: 'user',          icon: <UserIcon className="w-4 h-4" /> },
+  { id: 'clipboard',     icon: <ClipboardListIcon className="w-4 h-4" /> },
+  { id: 'credit-card',   icon: <CreditCardIcon className="w-4 h-4" /> },
+  { id: 'truck',         icon: <TruckIcon className="w-4 h-4" /> },
+  { id: 'chart',         icon: <ChartIcon className="w-4 h-4" /> },
+  { id: 'dollar',        icon: <DollarIcon className="w-4 h-4" /> },
+  { id: 'store',         icon: <StoreIcon className="w-4 h-4" /> },
+  { id: 'lightning',     icon: <LightningIcon className="w-4 h-4" /> },
+  { id: 'link',          icon: <LinkIcon className="w-4 h-4" /> },
+  { id: 'plugin',        icon: <PluginIcon className="w-4 h-4" /> },
+  { id: 'star',          icon: <StarIcon className="w-4 h-4" /> },
+  { id: 'pin',           icon: <PinIcon className="w-4 h-4" /> },
+  { id: 'tag',           icon: <TagIcon className="w-4 h-4" /> },
+  { id: 'edit',          icon: <EditIcon className="w-4 h-4" /> },
+  { id: 'target',        icon: <TargetIcon className="w-4 h-4" /> },
+  { id: 'settings',      icon: <SettingsIcon className="w-4 h-4" /> },
+  { id: 'globe',         icon: <GlobeIcon className="w-4 h-4" /> },
+  { id: 'map-pin',       icon: <MapPinIcon className="w-4 h-4" /> },
+  { id: 'file-text',     icon: <FileTextIcon className="w-4 h-4" /> },
+  { id: 'package-box',   icon: <PackageIcon className="w-4 h-4" /> },
 ];
+// Backward-compat: map old emoji strings to new SVG icon IDs
+const EMOJI_TO_PIN_ID: Record<string, string> = {
+  '🛒':'shopping-cart','📦':'package','🔍':'search','👤':'user','📋':'clipboard','💳':'credit-card',
+  '🚚':'truck','📊':'chart','💰':'dollar','🏪':'store','🟢':'package','🍽️':'package','⚡':'lightning',
+  '🔗':'link','🔌':'plugin','⭐':'star','📌':'pin','🏷️':'tag','✏️':'edit','📝':'edit','🎯':'target',
+  '⚙️':'settings','🌐':'globe','📍':'map-pin','🧾':'file-text','🗂️':'file-text','📈':'chart',
+};
+// Helper: render a pin icon by its stored id (SVG or emoji fallback)
+function renderPinIcon(iconId: string): React.ReactNode {
+  const def = PIN_ICON_DEFS.find(d => d.id === iconId);
+  if (def) return def.icon;
+  const mappedId = EMOJI_TO_PIN_ID[iconId];
+  if (mappedId) {
+    const mapped = PIN_ICON_DEFS.find(d => d.id === mappedId);
+    if (mapped) return mapped.icon;
+  }
+  return <span className="text-base">{iconId}</span>;
+}
 
 // ─── PinIconPicker ───────────────────────────────────────────────────────────
 function PinIconPicker({ onSelect, onClose }: { onSelect: (icon: string) => void; onClose: () => void }) {
@@ -32,13 +70,13 @@ function PinIconPicker({ onSelect, onClose }: { onSelect: (icon: string) => void
     return () => document.removeEventListener('mousedown', h);
   }, [onClose]);
   return (
-    <div ref={ref} className="absolute right-0 top-full mt-1 bg-gray-850 bg-gray-800 border border-gray-600 rounded-xl shadow-2xl z-50 p-3 w-56" onClick={e => e.stopPropagation()}>
-      <p className="text-[11px] text-gray-400 mb-2 font-medium">📌 Chọn icon cho nút ghim:</p>
-      <div className="grid grid-cols-8 gap-0.5">
-        {PIN_EMOJIS.map(emoji => (
-          <button key={emoji} onClick={() => onSelect(emoji)}
-            className="w-6 h-6 flex items-center justify-center text-sm rounded-lg hover:bg-gray-700 transition-colors">
-            {emoji}
+    <div ref={ref} className="absolute right-0 top-full mt-1 bg-gray-850 bg-gray-800 border border-gray-600 rounded-xl shadow-2xl z-50 p-3 w-72" onClick={e => e.stopPropagation()}>
+      <p className="text-[11px] text-gray-400 mb-2 font-medium flex items-center gap-1"><PinIcon className="w-3 h-3" /> Chọn icon cho nut ghim:</p>
+      <div className="grid grid-cols-6 gap-1">
+        {PIN_ICON_DEFS.map(def => (
+          <button key={def.id} onClick={() => onSelect(def.id)}
+            className="w-9 h-9 flex items-center justify-center text-sm rounded-lg hover:bg-gray-700 transition-colors">
+            {def.icon}
           </button>
         ))}
       </div>
@@ -76,16 +114,32 @@ interface QuickActionDef {
 
 // ─── Action definitions per integration type ─────────────────────────────────
 
-const TYPE_META: Record<string, { icon: string; color: string; name: string }> = {
-  kiotviet: { icon: '🛒', color: 'bg-orange-500', name: 'KiotViet' },
-  haravan:  { icon: '🏪', color: 'bg-indigo-500', name: 'Haravan' },
-  sapo:     { icon: '🟢', color: 'bg-emerald-500', name: 'Sapo' },
-  nhanh:    { icon: '⚡', color: 'bg-yellow-600', name: 'Nhanh.vn' },
-  pancake:  { icon: '🥞', color: 'bg-amber-500', name: 'Pancake POS' },
-  ghn:      { icon: '📦', color: 'bg-red-500', name: 'GHN Express' },
-  ghtk:     { icon: '🚚', color: 'bg-blue-500', name: 'GHTK' },
-  casso:    { icon: '💳', color: 'bg-green-600', name: 'Casso' },
-  sepay:    { icon: '💰', color: 'bg-teal-600', name: 'SePay' },
+const TYPE_META: Record<string, { icon: React.ReactNode; color: string; name: string }> = {
+  kiotviet: { icon: <ShoppingCartIcon className="w-4 h-4" />, color: 'bg-orange-500', name: 'KiotViet' },
+  haravan:  { icon: <StoreIcon className="w-4 h-4" />, color: 'bg-indigo-500', name: 'Haravan' },
+  sapo:     { icon: <ShoppingCartIcon className="w-4 h-4" />, color: 'bg-emerald-500', name: 'Sapo' },
+  nhanh:    { icon: <LightningIcon className="w-4 h-4" />, color: 'bg-yellow-600', name: 'Nhanh.vn' },
+  pancake:  { icon: <PackageIcon className="w-4 h-4" />, color: 'bg-amber-500', name: 'Pancake POS' },
+  ghn:      { icon: <PackageIcon className="w-4 h-4" />, color: 'bg-red-500', name: 'GHN Express' },
+  ghtk:     { icon: <TruckIcon className="w-4 h-4" />, color: 'bg-blue-500', name: 'GHTK' },
+  casso:    { icon: <CreditCardIcon className="w-4 h-4" />, color: 'bg-green-600', name: 'Casso' },
+  sepay:    { icon: <DollarIcon className="w-4 h-4" />, color: 'bg-teal-600', name: 'SePay' },
+};
+
+// ─── Action icon SVG mapping ──────────────────────────────────────────────────
+const ACTION_ICONS: Record<string, React.ReactNode> = {
+  lookupCustomer: <UserIcon className="w-4 h-4" />,
+  lookupOrder: <ClipboardListIcon className="w-4 h-4" />,
+  lookupProduct: <SearchIcon className="w-4 h-4" />,
+  createOrder: <EditIcon className="w-4 h-4" />,
+  getProvinces: <MapPinIcon className="w-4 h-4" />,
+  getDistricts: <MapPinIcon className="w-4 h-4" />,
+  getWards: <MapPinIcon className="w-4 h-4" />,
+  getServices: <TruckIcon className="w-4 h-4" />,
+  getTracking: <PackageIcon className="w-4 h-4" />,
+  calculateFee: <DollarIcon className="w-4 h-4" />,
+  getTransactions: <CreditCardIcon className="w-4 h-4" />,
+  getProducts: <PackageIcon className="w-4 h-4" />,
 };
 
 const ACTIONS_BY_TYPE: Record<string, QuickActionDef[]> = {
@@ -804,14 +858,14 @@ function OrderCard({ o }: { o: any }) {
           <div className="flex items-center gap-1 flex-shrink-0">
             <span className="text-xs font-semibold text-blue-300">{normalized.total.toLocaleString('vi-VN')}đ</span>
             {hasDetail && (
-              <svg className={`w-3 h-3 text-gray-500 transition-transform ${expanded ? 'rotate-180' : ''}`}
+              <svg className={`w-3 h-3 text-gray-400 transition-transform ${expanded ? 'rotate-180' : ''}`}
                 viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <polyline points="6 9 12 15 18 9"/>
               </svg>
             )}
           </div>
         </div>
-        {normalized.createdDate && <p className="text-[10px] text-gray-600 mt-0.5">{normalized.createdDate}</p>}
+        {normalized.createdDate && <p className="text-[10px] text-gray-400 mt-0.5">{normalized.createdDate}</p>}
       </button>
 
       {/* ── Expandable detail ── */}
@@ -820,7 +874,7 @@ function OrderCard({ o }: { o: any }) {
           {/* Items list */}
           {(normalized.items.length > 0 || normalized.itemCount > 0) && (
             <div>
-              <p className="text-[10px] text-gray-500 font-semibold uppercase tracking-wide mb-1">
+              <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide mb-1">
                 Sản phẩm ({normalized.itemCount || normalized.items.length})
               </p>
               {normalized.items.length > 0 ? (
@@ -829,7 +883,7 @@ function OrderCard({ o }: { o: any }) {
                     return (
                       <div key={j} className="flex items-start justify-between gap-2">
                         <div className="flex items-baseline gap-1 min-w-0 flex-1">
-                          <span className="text-[11px] text-gray-500 flex-shrink-0">{item.quantity}×</span>
+                          <span className="text-[11px] text-gray-400 flex-shrink-0">{item.quantity}×</span>
                           <span className="text-[11px] text-gray-200 leading-snug truncate">{item.name}</span>
                         </div>
                         <span className="text-[11px] text-gray-400 flex-shrink-0">
@@ -840,7 +894,7 @@ function OrderCard({ o }: { o: any }) {
                   })}
                 </div>
               ) : (
-                <p className="text-[11px] text-gray-500">Có sản phẩm trong đơn nhưng API chưa trả chi tiết từng dòng.</p>
+                <p className="text-[11px] text-gray-400">Có sản phẩm trong đơn nhưng API chưa trả chi tiết từng dòng.</p>
               )}
             </div>
           )}
@@ -850,13 +904,13 @@ function OrderCard({ o }: { o: any }) {
             <div className="space-y-0.5 border-t border-gray-700/40 pt-1.5">
               {normalized.shippingFee > 0 && (
                 <div className="flex justify-between">
-                  <span className="text-[11px] text-gray-500">🚚 Phí ship:</span>
+                  <span className="text-[11px] text-gray-400"><TruckIcon className="w-3 h-3 inline" /> Phi ship:</span>
                   <span className="text-[11px] text-gray-300">+{normalized.shippingFee.toLocaleString('vi-VN')}đ</span>
                 </div>
               )}
               {normalized.discount > 0 && (
                 <div className="flex justify-between">
-                  <span className="text-[11px] text-gray-500">🏷️ Giảm giá:</span>
+                  <span className="text-[11px] text-gray-400"><TagIcon className="w-3 h-3 inline" /> Giam gia:</span>
                   <span className="text-[11px] text-orange-400">-{normalized.discount.toLocaleString('vi-VN')}đ</span>
                 </div>
               )}
@@ -866,30 +920,30 @@ function OrderCard({ o }: { o: any }) {
           {/* Payment */}
           {normalized.payMethod && (
             <div className="flex items-center gap-1.5">
-              <span className="text-[10px] text-gray-500">💳</span>
+<CreditCardIcon className="w-3 h-3 text-gray-400" />
               <span className="text-[11px] text-gray-300">{PAY_LABEL[normalized.payMethod] || normalized.payMethod}</span>
             </div>
           )}
 
           {normalized.moneyToCollect > 0 && (
             <div className="flex items-center gap-1.5">
-              <span className="text-[10px] text-gray-500">💰</span>
-              <span className="text-[11px] text-gray-300">Thu hộ: {normalized.moneyToCollect.toLocaleString('vi-VN')}đ</span>
+              <DollarIcon className="w-3 h-3 text-gray-400" />
+              <span className="text-[11px] text-gray-300">Thu ho: {normalized.moneyToCollect.toLocaleString('vi-VN')}d</span>
             </div>
           )}
 
           {(normalized.sourceName || normalized.sellerName || normalized.deliveryPartner) && (
             <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
-              {normalized.sourceName && <p className="text-[11px] text-gray-400">🌐 Nguồn: {normalized.sourceName}</p>}
-              {normalized.sellerName && <p className="text-[11px] text-gray-400">🙋 Phụ trách: {normalized.sellerName}</p>}
-              {normalized.deliveryPartner && <p className="text-[11px] text-gray-400">🚚 ĐVVC: {normalized.deliveryPartner}</p>}
+              {normalized.sourceName && <p className="text-[11px] text-gray-400"><GlobeIcon className="w-3 h-3 inline" /> Nguon: {normalized.sourceName}</p>}
+              {normalized.sellerName && <p className="text-[11px] text-gray-400"><UserIcon className="w-3 h-3 inline" /> Phu trach: {normalized.sellerName}</p>}
+              {normalized.deliveryPartner && <p className="text-[11px] text-gray-400"><TruckIcon className="w-3 h-3 inline" /> DVVC: {normalized.deliveryPartner}</p>}
             </div>
           )}
 
           {/* Address */}
           {normalized.address && (
             <div className="flex items-start gap-1.5">
-              <span className="text-[10px] text-gray-500 mt-0.5 flex-shrink-0">📍</span>
+              <MapPinIcon className="w-3 h-3 text-gray-400 mt-0.5 flex-shrink-0" />
               <p className="text-[11px] text-gray-400 leading-snug">{normalized.address}</p>
             </div>
           )}
@@ -897,29 +951,29 @@ function OrderCard({ o }: { o: any }) {
           {/* Tracking */}
           {normalized.trackingCode && (
             <div className="flex items-center gap-1.5">
-              <span className="text-[10px] text-gray-500 flex-shrink-0">📦</span>
+              <PackageIcon className="w-3 h-3 text-gray-400 flex-shrink-0" />
               <span className="text-[11px] text-blue-400 font-mono">{normalized.trackingCode}</span>
             </div>
           )}
 
           {normalized.trackingLink && (
             <div className="flex items-start gap-1.5">
-              <span className="text-[10px] text-gray-500 flex-shrink-0 mt-0.5">🔗</span>
-              <p className="text-[11px] text-blue-400 break-all">{normalized.trackingLink}</p>
+              <LinkIcon className="w-3 h-3 text-gray-400 flex-shrink-0 mt-0.5" />
+              <p className="text-[11px] text-blue-400 break-word">{normalized.trackingLink}</p>
             </div>
           )}
 
           {normalized.orderLink && (
             <div className="flex items-start gap-1.5">
-              <span className="text-[10px] text-gray-500 flex-shrink-0 mt-0.5">🧾</span>
-              <p className="text-[11px] text-blue-400 break-all">{normalized.orderLink}</p>
+              <FileTextIcon className="w-3 h-3 text-gray-400 flex-shrink-0 mt-0.5" />
+              <p className="text-[11px] text-blue-400 break-word">{normalized.orderLink}</p>
             </div>
           )}
 
           {/* Note */}
           {normalized.note && (
             <div className="flex items-start gap-1.5">
-              <span className="text-[10px] text-gray-500 flex-shrink-0 mt-0.5">📝</span>
+              <EditIcon className="w-3 h-3 text-gray-400 flex-shrink-0 mt-0.5" />
               <p className="text-[11px] text-gray-400 italic leading-snug">{normalized.note}</p>
             </div>
           )}
@@ -927,7 +981,7 @@ function OrderCard({ o }: { o: any }) {
           {/* Cancel reason */}
           {normalized.cancelReason && (
             <div className="flex items-start gap-1.5 bg-red-900/20 rounded-lg px-2 py-1.5">
-              <span className="text-[10px] text-red-400 flex-shrink-0">✕</span>
+              <span className="text-[10px] text-red-400 flex-shrink-0"><CloseIcon className="w-3 h-3" /></span>
               <p className="text-[11px] text-red-400 leading-snug">{normalized.cancelReason}</p>
             </div>
           )}
@@ -952,13 +1006,13 @@ function ProductCard({ p }: { p: any }) {
       <div className="w-10 h-10 rounded-lg bg-gray-600 flex items-center justify-center flex-shrink-0 overflow-hidden border border-gray-600/40">
         {img
           ? <img src={img} alt={name} className="w-full h-full object-cover"
-              onError={e => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).parentElement!.textContent = '📦'; }} />
-          : <span className="text-base">📦</span>}
+              onError={e => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).parentElement!.textContent = 'SP'; }} />
+          : <PackageIcon className="w-5 h-5" />}
       </div>
       <div className="min-w-0 flex-1">
         <p className="text-xs font-medium text-white leading-snug truncate" title={name}>{name}</p>
         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-          {code && <span className="text-[10px] text-gray-500">{code}</span>}
+          {code && <span className="text-[10px] text-gray-400">{code}</span>}
           {price != null && (
             <span className="text-[11px] text-blue-300 font-medium">{Number(price).toLocaleString('vi-VN')}đ</span>
           )}
@@ -976,12 +1030,12 @@ function ProductCard({ p }: { p: any }) {
 // ─── Result Formatter ─────────────────────────────────────────────────────────
 
 function formatResult(_action: string, data: any): React.ReactNode {
-  if (!data) return <span className="text-gray-500 text-xs">Không có kết quả</span>;
+  if (!data) return <span className="text-gray-400 text-xs">Không có kết quả</span>;
 
   // Customers
   if (data.customers !== undefined) {
     const customers: any[] = data.customers || [];
-    if (!customers.length) return <span className="text-yellow-400 text-xs">⚠️ Không tìm thấy khách hàng</span>;
+    return <span className="text-yellow-400 text-xs"><AlertIcon className="w-3 h-3 inline" /> Khong tim thay khach hang</span>;
     return (
       <div className="space-y-1.5">
         {customers.map((c: any, i: number) => {
@@ -990,11 +1044,11 @@ function formatResult(_action: string, data: any): React.ReactNode {
             <div key={i} className="bg-gray-700/50 rounded-lg px-3 py-2 border border-gray-600/30">
               <p className="text-xs font-medium text-white">{customer.name}</p>
               <p className="text-[11px] text-gray-400">{compactJoin([customer.phone, customer.email], ' · ') || '-'}</p>
-              <p className="text-[10px] text-gray-500">
+              <p className="text-[10px] text-gray-400">
                 ID: {customer.id || '-'} · Đơn: {customer.orderCount ?? '-'}
                 {customer.purchasedAmount > 0 ? ` · Mua: ${customer.purchasedAmount.toLocaleString('vi-VN')}đ` : ''}
               </p>
-              {customer.address && <p className="text-[10px] text-gray-500 mt-1 leading-snug">📍 {customer.address}</p>}
+              {customer.address && <p className="text-[10px] text-gray-400 mt-1 leading-snug"><MapPinIcon className="w-3 h-3 inline" /> {customer.address}</p>}
             </div>
           );
         })}
@@ -1006,10 +1060,10 @@ function formatResult(_action: string, data: any): React.ReactNode {
   if (data.orders !== undefined || data.order !== undefined) {
     const orders: any[] = firstNonEmptyArray(data.orders, data.data?.orders, data.result?.orders, data.response?.orders);
     const normalizedOrders = orders.length > 0 ? orders : (data.order ? [data.order] : []);
-    if (!normalizedOrders.length) return <span className="text-yellow-400 text-xs">⚠️ Không tìm thấy đơn hàng</span>;
+    if (!normalizedOrders.length) return <span className="text-yellow-400 text-xs"><AlertIcon className="w-3 h-3 inline" /> Khong tim thay don hang</span>;
     return (
       <div className="space-y-1.5">
-        <p className="text-[10px] text-gray-500">Nhấn vào đơn để xem chi tiết ↓</p>
+        <p className="text-[10px] text-gray-400">Nhấn vào đơn để xem chi tiết ↓</p>
         {normalizedOrders.map((o: any, i: number) => <OrderCard key={i} o={o} />)}
       </div>
     );
@@ -1018,7 +1072,7 @@ function formatResult(_action: string, data: any): React.ReactNode {
   // Products - dùng ProductCard có ảnh
   if (data.products !== undefined) {
     const products: any[] = data.products || [];
-    if (!products.length) return <span className="text-yellow-400 text-xs">⚠️ Không tìm thấy sản phẩm</span>;
+    if (!products.length) return <span className="text-yellow-400 text-xs"><AlertIcon className="w-3 h-3 inline" /> Khong tim thay san pham</span>;
     return (
       <div className="space-y-1.5">
         {products.map((p: any, i: number) => <ProductCard key={i} p={p} />)}
@@ -1029,7 +1083,7 @@ function formatResult(_action: string, data: any): React.ReactNode {
   // Provinces / Districts / Wards
   if (data.provinces !== undefined || data.districts !== undefined || data.wards !== undefined) {
     const rows: any[] = data.provinces || data.districts || data.wards || [];
-    if (!rows.length) return <span className="text-yellow-400 text-xs">⚠️ Không có dữ liệu địa chỉ</span>;
+    if (!rows.length) return <span className="text-yellow-400 text-xs"><AlertIcon className="w-3 h-3 inline" /> Khong co du lieu dia chi</span>;
     return (
       <div className="space-y-1.5">
         {rows.slice(0, 12).map((row: any, i: number) => (
@@ -1040,7 +1094,7 @@ function formatResult(_action: string, data: any): React.ReactNode {
             </p>
           </div>
         ))}
-        {rows.length > 12 && <p className="text-xs text-gray-500 text-center">+{rows.length - 12} mục khác</p>}
+        {rows.length > 12 && <p className="text-xs text-gray-400 text-center">+{rows.length - 12} mục khác</p>}
       </div>
     );
   }
@@ -1048,7 +1102,7 @@ function formatResult(_action: string, data: any): React.ReactNode {
   // Services
   if (data.services !== undefined) {
     const services: any[] = data.services || [];
-    if (!services.length) return <span className="text-yellow-400 text-xs">⚠️ Không có dịch vụ phù hợp</span>;
+    if (!services.length) return <span className="text-yellow-400 text-xs"><AlertIcon className="w-3 h-3 inline" /> Khong co dich vu phu hop</span>;
     return (
       <div className="space-y-1.5">
         {services.map((svc: any, i: number) => (
@@ -1078,7 +1132,7 @@ function formatResult(_action: string, data: any): React.ReactNode {
   // Transactions
   if (data.transactions !== undefined) {
     const txs: any[] = data.transactions || [];
-    if (!txs.length) return <span className="text-yellow-400 text-xs">⚠️ Không có giao dịch</span>;
+    if (!txs.length) return <span className="text-yellow-400 text-xs"><AlertIcon className="w-3 h-3 inline" /> Khong co giao dich</span>;
     return (
       <div className="space-y-1.5">
         {txs.slice(0, 5).map((tx: any, i: number) => (
@@ -1112,7 +1166,7 @@ function formatResult(_action: string, data: any): React.ReactNode {
     const o = data.order;
     return (
       <div className="bg-green-900/30 border border-green-700/40 rounded-lg px-3 py-2">
-        <p className="text-sm font-medium text-green-300">✅ Tạo đơn thành công!</p>
+        <p className="text-sm font-medium text-green-300"><CheckIcon className="w-4 h-4 inline" /> Tao don thanh cong!</p>
         <p className="text-xs text-green-400">Mã đơn: {o.code || o.id || o.orderId || '-'}</p>
       </div>
     );
@@ -1315,10 +1369,10 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
         {/* ── Header ──────────────────────────────────────────── */}
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-700/60 flex-shrink-0 bg-gray-850">
           <div className="flex items-center gap-3">
-            <span className="text-lg">🔌</span>
+            <PluginIcon className="w-5 h-5" />
             <div>
               <p className="text-sm font-semibold text-white">Tích hợp nhanh</p>
-              <p className="text-[11px] text-gray-500">
+              <p className="text-[11px] text-gray-400">
                 {contextName ? <>Hội thoại: <span className="text-blue-400">{contextName}</span></> : 'Tra cứu đơn, sản phẩm, vận chuyển...'}
               </p>
             </div>
@@ -1328,8 +1382,8 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
               onClick={goToIntegrationPage}
               className="text-[11px] px-3 py-1.5 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-blue-400 transition-colors border border-gray-600"
               title="Mở trang cấu hình Tích hợp"
-            >⚙️ Quản lý</button>
-            <button onClick={onClose} className="text-gray-500 hover:text-blue-400 transition-colors p-1 rounded hover:bg-gray-700">
+            ><SettingsIcon className="w-4 h-4 inline" /> Quan ly</button>
+            <button onClick={onClose} className="text-gray-400 hover:text-blue-400 transition-colors p-1 rounded hover:bg-gray-700">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
               </svg>
@@ -1344,21 +1398,21 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
           </div>
         ) : !hasConnectedIntegrations ? (
           <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-            <div className="w-16 h-16 rounded-2xl bg-gray-800 flex items-center justify-center text-3xl mb-4">🔌</div>
+            <div className="w-16 h-16 rounded-2xl bg-gray-800 flex items-center justify-center mb-4"><PluginIcon className="w-8 h-8" /></div>
             <h3 className="text-base font-semibold text-white mb-2">Chưa có tích hợp nào được kết nối</h3>
             <p className="text-sm text-gray-400 max-w-sm mb-6 leading-relaxed">
-              Hãy kết nối ít nhất một nền tảng (KiotViet, Haravan, GHN…) để sử dụng tính năng tra cứu nhanh tại đây.
+              Hãy kết nối ít nhất một nền tảng (KiotViet, Haravan, Nhanh, Sepay, GHN…) để sử dụng tính năng tra cứu nhanh tại đây.
             </p>
             <button
               onClick={goToIntegrationPage}
               className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-xl transition-colors"
             >
-              🔌 Đi tới trang Tích hợp
+              <PluginIcon className="w-4 h-4 inline" /> Đi tới trang tích hợp
             </button>
             <div className="mt-6 flex flex-wrap gap-2 justify-center">
               {Object.entries(TYPE_META).map(([type, meta]) => (
                 <span key={type} className="flex items-center gap-1 px-2.5 py-1 bg-gray-800 rounded-lg text-xs text-gray-400 border border-gray-700/50">
-                  <span className={`w-5 h-5 rounded ${meta.color} flex items-center justify-center text-[10px]`}>{meta.icon}</span>
+                  <span className={`w-5 h-5 rounded ${meta.color} flex items-center justify-center text-white-important`}>{meta.icon}</span>
                   {meta.name}
                 </span>
               ))}
@@ -1372,14 +1426,14 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
             {showSidebar && (
               <div className="w-12 flex-shrink-0 border-r border-gray-700/60 bg-gray-900/80 flex flex-col items-center py-2 gap-1">
                 {integrations.map(intg => {
-                  const meta = TYPE_META[intg.type] || { icon: '🔌', color: 'bg-gray-600', name: intg.type };
+                  const meta = TYPE_META[intg.type] || { icon: <PluginIcon className="w-4 h-4" />, color: 'bg-gray-600', name: intg.type };
                   const isActive = selectedIntegration?.id === intg.id;
                   return (
                     <div key={intg.id} className="relative">
                       <button
                         onClick={() => setSelectedIntegration(intg)}
                         title={intg.name}
-                        className={`w-9 h-9 rounded-xl flex items-center justify-center text-lg transition-all
+                        className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all
                           ${isActive
                             ? `${meta.color} ring-2 ring-blue-400 ring-offset-1 ring-offset-gray-900`
                             : `${meta.color} opacity-60 hover:opacity-100`
@@ -1396,7 +1450,7 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
                 <button
                   onClick={goToIntegrationPage}
                   title="Thêm tích hợp"
-                  className="mt-auto w-9 h-9 rounded-xl flex items-center justify-center text-gray-600 hover:text-blue-400 hover:bg-gray-800 transition-colors text-lg"
+                  className="mt-auto w-9 h-9 rounded-xl flex items-center justify-center text-gray-400 hover:text-blue-400 hover:bg-gray-800 transition-colors text-lg"
                 >
                   +
                 </button>
@@ -1409,7 +1463,7 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
               {/* ── Action grid (chưa chọn action) ─────────────── */}
               {selectedIntegration && !selectedAction && (
                 <div className="flex-1 overflow-y-auto p-4">
-                  <p className="text-xs text-gray-500 mb-3">
+                  <p className="text-xs text-gray-400 mb-3">
                     Chọn thao tác cho <span className="text-white font-medium">{selectedIntegration.name}</span>:
                   </p>
                   <div className="grid grid-cols-1 gap-2">
@@ -1424,10 +1478,10 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
                             onClick={() => setSelectedAction(act)}
                             className="w-full flex items-center gap-3 p-3 pr-10 rounded-xl bg-gray-800 hover:bg-gray-750 border border-gray-700/60 hover:border-blue-500/50 transition-all text-left"
                           >
-                            <span className="text-xl flex-shrink-0">{act.icon}</span>
+                            <span className="flex-shrink-0">{ACTION_ICONS[act.action] || <span className="text-xl">{act.icon}</span>}</span>
                             <div className="min-w-0">
                               <p className="text-sm font-medium text-gray-200 group-hover/act:text-blue-400">{act.label}</p>
-                              <p className="text-[11px] text-gray-500 leading-snug">{act.desc}</p>
+                              <p className="text-[11px] text-gray-400 leading-snug">{act.desc}</p>
                             </div>
                           </button>
                           {/* Pin button */}
@@ -1445,9 +1499,9 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
                             className={`absolute top-1/2 -translate-y-1/2 right-2.5 w-7 h-7 rounded-lg flex items-center justify-center text-sm transition-all
                               ${isPinned
                                 ? 'text-yellow-400 bg-yellow-400/10 hover:bg-red-500/15 hover:text-red-400'
-                                : 'text-gray-600 hover:text-yellow-400 hover:bg-yellow-400/10 opacity-0 group-hover/act:opacity-100'}`}
+                                : 'text-gray-400 hover:text-yellow-400 hover:bg-yellow-400/10 opacity-0 group-hover/act:opacity-100'}`}
                           >
-                            {isPinned ? '📌' : '📍'}
+                            {isPinned ? <PinIcon className="w-4 h-4" /> : <MapPinIcon className="w-4 h-4" />}
                           </button>
                           {/* Icon picker */}
                           {pinPickerKey === pinKey && (
@@ -1471,7 +1525,7 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
                     })}
                   </div>
                   {!actions.length && (
-                    <p className="text-sm text-gray-500 text-center py-10">Chưa có thao tác nào cho {selectedIntegration.name}</p>
+                    <p className="text-sm text-gray-400 text-center py-10">Chưa có thao tác nào cho {selectedIntegration.name}</p>
                   )}
                 </div>
               )}
@@ -1506,8 +1560,8 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
                       </svg>
                     </button>
                     <div className="min-w-0 flex-1">
-                      <span className="text-base font-semibold text-white">{selectedAction.icon} {selectedAction.label}</span>
-                      <span className="text-[10px] text-gray-500 ml-2">({selectedIntegration.name})</span>
+                      <span className="text-base font-semibold text-white flex items-center gap-1.5">{ACTION_ICONS[selectedAction.action] || <span className="text-base">{selectedAction.icon}</span>} {selectedAction.label}</span>
+                      <span className="text-[10px] text-gray-400 ml-2">({selectedIntegration.name})</span>
                     </div>
                     {/* Pin button in detail view */}
                     <div className="relative flex-shrink-0">
@@ -1529,9 +1583,9 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
                               }}
                               title={isPinned ? 'Gỡ ghim khỏi toolbar' : 'Ghim tính năng này ra thanh toolbar'}
                               className={`w-7 h-7 rounded-lg flex items-center justify-center text-sm transition-colors
-                                ${isPinned ? 'text-yellow-400 bg-yellow-400/10 hover:bg-red-500/15 hover:text-red-400' : 'text-gray-500 hover:text-yellow-400 hover:bg-yellow-400/10'}`}
+                                ${isPinned ? 'text-yellow-400 bg-yellow-400/10 hover:bg-red-500/15 hover:text-red-400' : 'text-gray-400 hover:text-yellow-400 hover:bg-yellow-400/10'}`}
                             >
-                              {isPinned ? '📌' : '📍'}
+                              {isPinned ? <PinIcon className="w-4 h-4" /> : <MapPinIcon className="w-4 h-4" />}
                             </button>
                             {pinPickerKey === detailPinKey && (
                               <PinIconPicker
@@ -1561,7 +1615,7 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
                       <div key={field.key}>
                         <label className="block text-xs text-gray-400 mb-1.5 font-medium">
                           {field.label}
-                          {field.optional && <span className="text-gray-600 font-normal ml-1">(tùy chọn)</span>}
+                          {field.optional && <span className="text-gray-400 font-normal ml-1">(tùy chọn)</span>}
                         </label>
                         {field.type === 'select' ? (
                           <select
@@ -1594,20 +1648,20 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
                         <Spinner size={4} />
                         Đang thực hiện...
                       </span>
-                    ) : `${selectedAction.icon} Thực hiện`}
+                    ) : <span className="flex items-center gap-1.5">{ACTION_ICONS[selectedAction.action] || <span className="text-base">{selectedAction.icon}</span>} Thuc hien</span>}
                   </button>
 
                   {/* Error */}
                   {error && (
                     <div className="bg-red-900/30 border border-red-700/50 rounded-xl px-4 py-3">
-                      <p className="text-xs text-red-300">❌ {error}</p>
+                      <p className="text-xs text-red-300"><CloseIcon className="w-4 h-4 inline" /> {error}</p>
                     </div>
                   )}
 
                   {/* Result */}
                   {result !== null && !error && (
                     <div>
-                      <p className="text-xs text-gray-500 mb-2 font-medium">📊 Kết quả:</p>
+                      <p className="text-xs text-gray-400 mb-2 font-medium"><ChartIcon className="w-4 h-4 inline" /> Ket qua:</p>
                       {formatResult(selectedAction.action, result)}
                       {resultMeta && PAGED_ACTIONS.has(executedAction || selectedAction.action) && (
                         <div className="mt-3 flex items-center justify-between gap-2 text-[11px] text-gray-400">
@@ -1638,7 +1692,7 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
 
               {!selectedIntegration && (
                 <div className="flex-1 flex items-center justify-center">
-                  <p className="text-sm text-gray-500">← Chọn một tích hợp</p>
+                  <p className="text-sm text-gray-400">← Chọn một tích hợp</p>
                 </div>
               )}
             </div>

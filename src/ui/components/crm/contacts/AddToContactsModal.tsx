@@ -6,6 +6,7 @@ import { useAppStore, LabelData } from '@/store/appStore';
 import ZaloLabelBadge from '../tags/ZaloLabelBadge';
 import type { LocalLabelItem } from '@/components/common/LocalLabelSelector';
 import { extractUserProfile } from '../../../../utils/profileUtils';
+import { CloudIcon, CloseIcon, HardDriveIcon, SearchIcon } from '@/components/common/icons';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -269,7 +270,7 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
             <div>
               <div className="text-red-400 text-xs">Zalo hạn chế bạn tìm kiếm SĐT theo ngày để tránh trục lợi từ tính năng tìm kiếm, nên nhập tối đa 30 số 1 giờ và không quá 100-200 số 1 ngày để hoạt động an toàn.</div>
               <label className="text-xs text-gray-400 mb-1.5 block mt-2">
-                Nhập danh sách SĐT <span className="text-gray-600">(mỗi dòng 1 số, hoặc cách nhau bởi dấu phẩy)</span>
+                Nhập danh sách SĐT <span className="text-gray-400">(mỗi dòng 1 số, hoặc cách nhau bởi dấu phẩy)</span>
               </label>
               <textarea
                 value={phoneInput}
@@ -280,7 +281,7 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
                 className="w-full bg-gray-700 border border-gray-600 rounded-xl px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-green-500 disabled:opacity-60 resize-none font-mono"
               />
               {phoneInput.trim() && (
-                <p className="text-xs text-gray-500 mt-1.5">
+                <p className="text-xs text-gray-400 mt-1.5">
                   Phát hiện <span className="text-green-400 font-medium">{phoneCount}</span> SĐT hợp lệ
                 </p>
               )}
@@ -319,7 +320,7 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
                 </span>
                 <button
                   onClick={() => { setResolvedContacts([]); }}
-                  className="text-xs text-gray-500 hover:text-gray-300 transition-colors">
+                  className="text-xs text-gray-400 hover:text-gray-300 transition-colors">
                   ← Nhập lại
                 </button>
               </div>
@@ -331,10 +332,10 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
                       : <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">{(c.displayName || '?').charAt(0).toUpperCase()}</div>}
                     <div className="flex-1 min-w-0">
                       <p className="text-sm text-white truncate">{c.displayName}</p>
-                      {c.phone && <p className="text-[11px] text-gray-500">{c.phone}</p>}
+                      {c.phone && <p className="text-[11px] text-gray-400">{c.phone}</p>}
                     </div>
                     <button onClick={() => removeResolved(c.contactId)}
-                      className="text-gray-600 hover:text-red-400 transition-colors flex-shrink-0 p-0.5">
+                      className="text-gray-400 hover:text-red-400 transition-colors flex-shrink-0 p-0.5">
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                         <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                       </svg>
@@ -357,12 +358,12 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
                       : <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">{(c.displayName || '?').charAt(0).toUpperCase()}</div>}
                     <div className="flex-1 min-w-0">
                       <p className="text-sm text-white truncate">{c.displayName}</p>
-                      {c.phone && <p className="text-[11px] text-gray-500">{c.phone}</p>}
+                      {c.phone && <p className="text-[11px] text-gray-400">{c.phone}</p>}
                     </div>
                   </div>
                 ))}
                 {finalContacts.length > 50 && (
-                  <p className="text-xs text-gray-500 px-3 py-2 text-center">
+                  <p className="text-xs text-gray-400 px-3 py-2 text-center">
                     ... và {finalContacts.length - 50} liên hệ khác
                   </p>
                 )}
@@ -374,7 +375,7 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
           {(inputMode === 'list' || resolvedContacts.length > 0) && (
             <div className="border border-gray-700 rounded-xl overflow-hidden">
               <div className="px-4 py-2.5 bg-gray-750 border-b border-gray-700">
-                <p className="text-xs text-gray-300 font-medium">Gắn nhãn <span className="text-gray-500">(tuỳ chọn)</span></p>
+                <p className="text-xs text-gray-300 font-medium">Gắn nhãn <span className="text-gray-400">(tuỳ chọn)</span></p>
               </div>
 
               {/* Tag mode tabs */}
@@ -382,15 +383,14 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
                 <div className="flex bg-gray-700/60 rounded-lg p-0.5 gap-0.5">
                   <button onClick={() => setTagTab('none')}
                     className={`flex-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${tagTab === 'none' ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}>
-                    ❌ Không gắn
+                    <CloseIcon className="w-4 h-4 inline" /> Không gắn
                   </button>
                   <button onClick={() => setTagTab('local')}
-                    className={`flex-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${tagTab === 'local' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}>
-                    💾 Nhãn Local
+                    className={`flex-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${tagTab === 'local' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}><HardDriveIcon className="w-4 h-4 inline" /> Nhãn Local
                   </button>
                   <button onClick={() => setTagTab('zalo')}
                     className={`flex-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${tagTab === 'zalo' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}>
-                    ☁️ Nhãn Zalo
+                    <CloudIcon className="w-4 h-4 inline" /> Nhãn Zalo
                   </button>
                 </div>
               </div>
@@ -399,7 +399,7 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
               {tagTab === 'local' && (
                 <div className="px-3 pb-3 max-h-36 overflow-y-auto">
                   {localLabels.length === 0 ? (
-                    <p className="text-xs text-gray-500 py-2 text-center">Chưa có Nhãn Local nào</p>
+                    <p className="text-xs text-gray-400 py-2 text-center">Chưa có Nhãn Local nào</p>
                   ) : (
                     <div className="space-y-1">
                       {localLabels.map(label => {
@@ -429,9 +429,9 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
               {/* Zalo labels list */}
               {tagTab === 'zalo' && (
                 <div className="px-3 pb-3 max-h-36 overflow-y-auto">
-                  <p className="text-[10px] text-gray-500 mb-1.5">Zalo chỉ cho phép 1 nhãn / hội thoại</p>
+                  <p className="text-[10px] text-gray-400 mb-1.5">Zalo chỉ cho phép 1 nhãn / hội thoại</p>
                   {zaloLabels.length === 0 ? (
-                    <p className="text-xs text-gray-500 py-2 text-center">Chưa có nhãn Zalo nào</p>
+                    <p className="text-xs text-gray-400 py-2 text-center">Chưa có nhãn Zalo nào</p>
                   ) : (
                     <div className="space-y-1">
                       {zaloLabels.map(label => {
@@ -494,7 +494,7 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
               onClick={handleResolvePhones}
               disabled={resolving || phoneCount === 0}
               className="flex-1 py-2.5 rounded-xl bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-40 transition-colors flex items-center justify-center gap-1.5">
-              {resolving ? <>{SpinIcon} Đang tra cứu...</> : `🔍 Tra cứu ${phoneCount > 0 ? phoneCount + ' SĐT' : ''}`}
+              {resolving ? <>{SpinIcon} Đang tra cứu...</> : <><SearchIcon className="w-4 h-4 inline" /> Tra cứu {phoneCount > 0 ? phoneCount + ' SĐT' : ''}</>}
             </button>
           )}
 

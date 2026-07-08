@@ -10,11 +10,13 @@ import GroupInfoPanel from './GroupInfoPanel';
 import MediaSection, { MediaDetailPanel, MediaTab } from './MediaSection';
 import { UserActionSection } from './ConversationActions';
 import { extractUserProfile } from '../../../utils/profileUtils';
+import { fetchAllAliases } from '@/lib/zaloAliasUtils';
 import { Spinner } from '@/components/common/PageLoading';
 import GroupAvatar from '../common/GroupAvatar';
 import { toLocalMediaUrl } from '@/lib/localMedia';
 import { getCapability, type Channel } from '../../../configs/channelConfig';
 import { fetchContactInfo } from '@/hooks/useZaloEvents';
+import { BellIcon, BellOffIcon, GiftIcon, MapPinIcon, PhoneIcon, PinIcon, UserIcon, UsersIcon } from '@/components/common/icons';
 
 function muteUntilToDuration(until: number): number | string {
   if (until === 0) return -1;
@@ -327,15 +329,12 @@ function UserConversationInfo() {
       if (effectiveChannel === 'zalo') {
         const auth = getAuth();
         if (!auth) return;
-        // 1. Update toàn bộ alias từ getAliasList (Zalo API)
-        const res = await ipc.zalo?.getAliasList({ auth, count: 5000 });
-        if (res?.success) {
-          const items: { userId: string; alias: string }[] = res?.response?.items || [];
-          for (const item of items) {
-            if (item.alias && item.userId) {
-              updateContact(activeAccountId, { contact_id: item.userId, alias: item.alias });
-              DataAccessor.setContactAlias({ zaloId: activeAccountId, contactId: item.userId, alias: item.alias }).catch(() => {});
-            }
+        // 1. Update toàn bộ alias từ fetchAllAliases (pagination, count=200)
+        const aliasItems = await fetchAllAliases(auth);
+        for (const item of aliasItems) {
+          if (item.alias && item.userId) {
+            updateContact(activeAccountId, { contact_id: item.userId, alias: item.alias });
+            DataAccessor.setContactAlias({ zaloId: activeAccountId, contactId: item.userId, alias: item.alias }).catch(() => {});
           }
         }
         // 2. Fetch full profile (tên, avatar, SĐT) cho hội thoại hiện tại
@@ -524,13 +523,13 @@ function UserConversationInfo() {
                 size="sm"
               />
               <span className="text-sm text-gray-200 truncate flex-1">{g.name || g.groupId}</span>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-600 flex-shrink-0">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-400 flex-shrink-0">
                 <polyline points="9 18 15 12 9 6"/>
               </svg>
             </button>
           ))}
           {!mutualGroupsLoading && mutualGroups.length === 0 && (
-            <p className="text-xs text-gray-500 text-center py-8">Không có nhóm chung</p>
+            <p className="text-xs text-gray-400 text-center py-8">Không có nhóm chung</p>
           )}
         </div>
       </div>
@@ -632,11 +631,11 @@ function UserConversationInfo() {
           </div>
         )}
         {contact?.alias && contact?.display_name && contact.alias !== contact.display_name && (
-          <p className="text-gray-500 text-xs mt-0.5 text-center">({contact.display_name})</p>
+          <p className="text-gray-400 text-xs mt-0.5 text-center">({contact.display_name})</p>
         )}
         {contact?.phone && (
           <p className="text-gray-400 text-xs mt-0.5">
-            📞 <PhoneDisplay phone={contact.phone} className="text-gray-400 text-xs" />
+            <PhoneDisplay phone={contact.phone} className="text-gray-400 text-xs" showIcon={true} />
           </p>
         )}
       </div>
@@ -644,7 +643,7 @@ function UserConversationInfo() {
       {/* Contact detail info - editable phone, birthday, gender */}
       <div className="border-b border-gray-700 divide-y divide-gray-700/50">
         <ContactInfoRow
-          icon="📞"
+          icon={<PhoneIcon className="w-4 h-4" />}
           label="Số điện thoại"
           value={contact?.phone || ''}
           placeholder="Thêm số điện thoại"
@@ -656,7 +655,7 @@ function UserConversationInfo() {
           onEditChange={setPhoneInput}
         />
         <ContactInfoRow
-          icon="🎂"
+          icon={<GiftIcon className="w-4 h-4" />}
           label="Sinh nhật"
           value={contact?.birthday || ''}
           placeholder="Chọn ngày"
@@ -670,7 +669,7 @@ function UserConversationInfo() {
         />
         <div ref={genderBtnRef} className="relative">
           <ContactInfoRow
-            icon="👤"
+            icon={<UserIcon className="w-4 h-4" />}
             label="Giới tính"
             value={contact?.gender === 0 ? 'Nam' : contact?.gender === 1 ? 'Nữ' : ''}
             placeholder="Chọn giới tính"
@@ -693,7 +692,7 @@ function UserConversationInfo() {
         {/* Mute with time picker dropdown */}
         <div className="relative" ref={muteRef}>
           <UserActionBtn
-            icon={isMuted ? '🔔' : '🔕'}
+            icon={isMuted ? <BellIcon className="w-4 h-4" /> : <BellOffIcon className="w-4 h-4" />}
             label={isMuted ? 'Bật thông báo' : 'Tắt thông báo'}
             onClick={isMuted ? handleUnmute : () => {
               if (muteRef.current) {
@@ -722,13 +721,13 @@ function UserConversationInfo() {
           )}
         </div>
         {effectiveChannelCap.supportsPinConversation && (
-          <UserActionBtn icon={isPinned ? '📌' : '📌'} label={isPinned ? 'Bỏ ghim' : 'Ghim hội thoại'} onClick={handleTogglePin} active={isPinned} />
+          <UserActionBtn icon={<PinIcon className="w-4 h-4" />} label={isPinned ? 'Bỏ ghim' : 'Ghim hội thoại'} onClick={handleTogglePin} active={isPinned} />
         )}
         {!effectiveChannelCap.supportsPinConversation && (
-          <UserActionBtn icon={isLocalPinned ? '📍' : '📍'} label={isLocalPinned ? 'Bỏ ghim app' : 'Ghim trong app'} onClick={handleTogglePin} active={isLocalPinned} />
+          <UserActionBtn icon={<MapPinIcon className="w-4 h-4" />} label={isLocalPinned ? 'Bỏ ghim app' : 'Ghim trong app'} onClick={handleTogglePin} active={isLocalPinned} />
         )}
         {channelCap.supportsCreateGroup && (
-          <UserActionBtn icon="👥" label="Tạo nhóm" onClick={() => setCreateGroupOpen(true)} />
+          <UserActionBtn icon={<UsersIcon className="w-4 h-4" />} label="Tạo nhóm" onClick={() => setCreateGroupOpen(true)} />
         )}
       </div>
 
@@ -770,7 +769,7 @@ function UserConversationInfo() {
   );
 }
 
-function UserActionBtn({ icon, label, onClick, active }: { icon: string; label: string; onClick: () => void; active?: boolean }) {
+function UserActionBtn({ icon, label, onClick, active }: { icon: React.ReactNode; label: string; onClick: () => void; active?: boolean }) {
   return (
     <button onClick={onClick}
       className="flex flex-col items-center gap-1 py-2 px-1 rounded-xl hover:bg-gray-700 transition-colors text-center"
@@ -785,7 +784,7 @@ function UserActionBtn({ icon, label, onClick, active }: { icon: string; label: 
 // ─── ContactInfoRow ──────────────────────────────────────────────────────────
 /** Inline-editable row: icon + label + value/input. Click value to edit, Enter to save, Esc to cancel. */
 function ContactInfoRow({ icon, label, value, placeholder, editing, editValue, onStartEdit, onCancelEdit, onSave, onEditChange, onClick, isClickable, inputType }: {
-  icon: string; label: string; value: string; placeholder?: string;
+  icon: React.ReactNode; label: string; value: string; placeholder?: string;
   editing?: boolean; editValue?: string;
   onStartEdit?: () => void; onCancelEdit?: () => void; onSave?: () => void; onEditChange?: (v: string) => void;
   onClick?: () => void; isClickable?: boolean;
@@ -814,7 +813,7 @@ function ContactInfoRow({ icon, label, value, placeholder, editing, editValue, o
       <div className="flex items-center gap-2.5 min-w-0 flex-1">
         <span className="text-base flex-shrink-0 leading-none">{icon}</span>
         <div className="min-w-0 flex-1">
-          <p className="text-[10px] text-gray-500 font-medium uppercase tracking-[0.08em]">{label}</p>
+          <p className="text-[10px] text-gray-400 font-medium uppercase tracking-[0.08em]">{label}</p>
           {editing && onEditChange ? (
             <div className="flex items-center gap-1 mt-1">
               {isDate ? (
@@ -857,7 +856,7 @@ function ContactInfoRow({ icon, label, value, placeholder, editing, editValue, o
                   {value}
                 </span>
               ) : (
-                <span className="text-sm text-gray-500 italic">{placeholder || 'Chưa cập nhật'}</span>
+                <span className="text-sm text-gray-400 italic">{placeholder || 'Chưa cập nhật'}</span>
               )}
             </button>
           )}
@@ -865,7 +864,7 @@ function ContactInfoRow({ icon, label, value, placeholder, editing, editValue, o
       </div>
       {!editing && !isClickable && (
         <button onClick={onStartEdit}
-          className="text-gray-600 hover:text-gray-300 transition-colors flex-shrink-0 ml-2"
+          className="text-gray-400 hover:text-gray-300 transition-colors flex-shrink-0 ml-2"
           title="Sửa">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>

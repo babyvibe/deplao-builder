@@ -5,6 +5,8 @@ import { MarkdownRenderer } from '../shared/ErpBadges';
 import NoteShareModal from './NoteShareModal';
 import NoteVersionHistory from './NoteVersionHistory';
 import ipc from '@/lib/ipc';
+import { BookIcon, EditIcon, EyeIcon, FolderIcon, LinkIcon, PinIcon, TrashIcon } from '@/components/common/icons';
+
 
 export default function NotesPage() {
   const { folders, notes, activeNoteId, loadFolders, loadNotes, createNote, updateNote, deleteNote, setActiveNote } = useErpNoteStore();
@@ -55,14 +57,13 @@ export default function NotesPage() {
       {/* Folder tree */}
       <div className="w-44 border-r border-gray-700/60 flex flex-col bg-gray-900/50 flex-shrink-0">
         <div className="px-3 py-2 border-b border-gray-700/40">
-          <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Thư mục</p>
+          <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Thư mục</p>
         </div>
         <div className="flex-1 overflow-y-auto py-1">
           <button
             onClick={() => setActiveFolderId(undefined)}
             className={`w-full text-left px-3 py-2 text-xs transition-colors ${activeFolderId === undefined ? 'bg-blue-600/20 text-blue-400' : 'text-gray-400 hover:bg-gray-700/50 hover:text-gray-300'}`}
-          >
-            📝 Tất cả note
+          ><EditIcon className="w-4 h-4 inline" /> Tất cả note
           </button>
           {folderTree.map(folder => (
             <FolderNode
@@ -76,7 +77,7 @@ export default function NotesPage() {
           ))}
           <button
             onClick={() => { setFolderForm({ name: '', parent_id: activeFolderId ? String(activeFolderId) : '' }); setShowNewFolderPrompt(true); }}
-            className="w-full text-left px-3 py-2 text-xs text-gray-600 hover:text-gray-400 hover:bg-gray-700/30"
+            className="w-full text-left px-3 py-2 text-xs text-gray-400 hover:text-gray-400 hover:bg-gray-700/30"
           >
             + Thư mục
           </button>
@@ -111,16 +112,16 @@ export default function NotesPage() {
                 activeNoteId === note.id ? 'bg-blue-600/15 border-l-2 border-l-blue-500' : 'hover:bg-gray-700/30'
               }`}
             >
-              <p className="text-xs font-medium text-gray-200 truncate">{note.pinned ? '📌 ' : ''}{note.title}</p>
-              <p className="text-[10px] text-gray-500 mt-0.5 truncate">{note.content.slice(0, 50)}</p>
-              <p className="text-[10px] text-gray-600 mt-0.5">
+              <p className="text-xs font-medium text-gray-200 truncate">{note.pinned ? <><PinIcon className="w-3.5 h-3.5 inline" /> </> : ''}{note.title}</p>
+              <p className="text-[10px] text-gray-400 mt-0.5 truncate">{note.content.slice(0, 50)}</p>
+              <p className="text-[10px] text-gray-400 mt-0.5">
                 {new Date(note.updated_at).toLocaleDateString('vi-VN')}
               </p>
             </button>
           ))}
           {notes.length === 0 && (
-            <div className="flex flex-col items-center justify-center h-32 text-gray-600">
-              <span className="text-2xl mb-1">📝</span>
+            <div className="flex flex-col items-center justify-center h-32 text-gray-400">
+              <span className="text-2xl mb-1"><EditIcon className="w-4 h-4" /></span>
               <p className="text-xs">Chưa có note nào</p>
             </div>
           )}
@@ -140,28 +141,27 @@ export default function NotesPage() {
               />
               <button
                 onClick={() => setPreview(p => !p)}
-                className={`text-xs px-2 py-1 rounded ${preview ? 'bg-blue-600/30 text-blue-300' : 'text-gray-500 hover:text-gray-300 hover:bg-gray-700/50'}`}
+                className={`text-xs px-2 py-1 rounded ${preview ? 'bg-blue-600/30 text-blue-300' : 'text-gray-400 hover:text-gray-300 hover:bg-gray-700/50'}`}
                 title={preview ? 'Chuyển sang chỉnh sửa' : 'Xem preview markdown'}
               >
-                {preview ? '✏️ Sửa' : '👁 Preview'}
+                {preview ? <><EditIcon className="w-4 h-4 inline" /> Sửa</> : <><EyeIcon className="w-4 h-4 inline" /> Preview</>}
               </button>
               <button
                 onClick={() => setShowShare(true)}
-                className="text-gray-500 hover:text-blue-400 text-xs px-2 py-1 rounded hover:bg-gray-700/50"
+                className="text-gray-400 hover:text-blue-400 text-xs px-2 py-1 rounded hover:bg-gray-700/50"
                 title="Chia sẻ"
-              >
-                🔗 Chia sẻ
+              ><LinkIcon className="w-4 h-4 inline" /> Chia sẻ
               </button>
               <button
                 onClick={() => setShowHistory(true)}
-                className="text-gray-500 hover:text-purple-400 text-xs px-2 py-1 rounded hover:bg-gray-700/50"
+                className="text-gray-400 hover:text-purple-400 text-xs px-2 py-1 rounded hover:bg-gray-700/50"
                 title="Lịch sử phiên bản"
               >
                 🕒 Lịch sử
               </button>
               <button
                 onClick={() => setDeleteNoteTarget(activeNote.id)}
-                className="text-gray-600 hover:text-red-400 text-xs p-1 rounded"
+                className="text-gray-400 hover:text-red-400 text-xs p-1 rounded"
                 title="Xoá note"
               >
                 Xóa
@@ -180,14 +180,14 @@ export default function NotesPage() {
               />
             )}
             <div className="px-6 py-1.5 border-t border-gray-700/40 flex-shrink-0">
-              <p className="text-[10px] text-gray-600">
+              <p className="text-[10px] text-gray-400">
                 {editorContent.length} ký tự · Cập nhật {new Date(activeNote.updated_at).toLocaleString('vi-VN')} · Tự lưu
               </p>
             </div>
           </>
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center text-gray-600">
-            <span className="text-4xl mb-3">📓</span>
+          <div className="flex-1 flex flex-col items-center justify-center text-gray-400">
+            <span className="text-4xl mb-3"><BookIcon className="w-4 h-4" /></span>
             <p className="text-sm">Chọn một note để xem / chỉnh sửa</p>
             <p className="text-xs mt-1">hoặc tạo note mới từ danh sách bên trái</p>
           </div>
@@ -308,15 +308,14 @@ function FolderNode({ folder, activeFolderId, onSelect, onRename, onDelete, leve
           onClick={() => onSelect(folder.id)}
           className="flex-1 text-left truncate py-1.5 min-w-0"
           title={folder.name}
-        >
-          📁 {folder.name}
+        ><FolderIcon className="w-4 h-4 inline" /> {folder.name}
         </button>
         <div className="flex items-center gap-1 flex-shrink-0 pl-1 border-l border-transparent group-hover:border-gray-700/60">
           <button type="button" onClick={(e) => {
             e.stopPropagation();
             onRename(folder.id, folder.name);
-          }} className="opacity-0 group-hover:opacity-100 w-6 h-6 flex items-center justify-center rounded text-[11px] text-blue-400 hover:text-blue-300 hover:bg-gray-700/70" title="Đổi tên thư mục">✏️</button>
-          <button type="button" onClick={(e) => { e.stopPropagation(); onDelete(folder.id); }} className="opacity-0 group-hover:opacity-100 w-6 h-6 flex items-center justify-center rounded text-[11px] text-red-400 hover:text-red-300 hover:bg-gray-700/70" title="Xóa thư mục">🗑</button>
+          }} className="opacity-0 group-hover:opacity-100 w-6 h-6 flex items-center justify-center rounded text-[11px] text-blue-400 hover:text-blue-300 hover:bg-gray-700/70" title="Đổi tên thư mục"><EditIcon className="w-4 h-4" /></button>
+          <button type="button" onClick={(e) => { e.stopPropagation(); onDelete(folder.id); }} className="opacity-0 group-hover:opacity-100 w-6 h-6 flex items-center justify-center rounded text-[11px] text-red-400 hover:text-red-300 hover:bg-gray-700/70" title="Xóa thư mục"><TrashIcon className="w-4 h-4" /></button>
         </div>
       </div>
       {folder.children?.map((child: any) => (

@@ -9,6 +9,7 @@ import GroupAvatar from '@/components/common/GroupAvatar';
 import CampaignCreateModal from '@/components/crm/campaigns/CampaignCreateModal';
 import AddToContactsModal from '@/components/crm/contacts/AddToContactsModal';
 import { syncZaloGroups, MemberPlaceholder, SyncGroupsProgress } from '@/lib/zaloGroupUtils';
+import { AlertIcon, CheckIcon, SearchIcon } from '@/components/common/icons';
 
 interface ZaloGroup {
   contact_id: string;
@@ -30,7 +31,7 @@ interface GroupMember {
 function roleLabel(role: number) {
   if (role === 2) return { text: 'Trưởng nhóm', cls: 'text-yellow-400' };
   if (role === 1) return { text: 'Phó nhóm', cls: 'text-blue-400' };
-  return { text: 'Thành viên', cls: 'text-gray-500' };
+  return { text: 'Thành viên', cls: 'text-gray-400' };
 }
 
 function Avatar({ src, name, size = 36 }: { src?: string; name: string; size?: number }) {
@@ -56,13 +57,13 @@ function EmptyState({ icon, title, desc }: { icon: React.ReactNode; title: strin
     <div className="flex flex-col items-center justify-center h-full px-5 py-8 text-center">
       <div className="w-12 h-12 rounded-full bg-gray-800 flex items-center justify-center mb-3 opacity-70">{icon}</div>
       <p className="text-sm text-gray-300 font-medium mb-1">{title}</p>
-      <div className="text-xs text-gray-500 leading-relaxed max-w-xs">{desc}</div>
+      <div className="text-xs text-gray-400 leading-relaxed max-w-xs">{desc}</div>
     </div>
   );
 }
 
 const GroupIcon = (
-  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-500">
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-400">
     <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
     <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
   </svg>
@@ -557,7 +558,7 @@ export default function GroupMembersTab() {
               Nhóm Zalo
               {groups.length > 0 && <span className="ml-1.5 text-xs font-normal text-gray-400">({groups.length})</span>}
             </h3>
-            <p className="text-[11px] text-gray-500 mt-0.5">Từ danh sách hội thoại</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">Từ danh sách hội thoại</p>
           </div>
           {/* 3-dot menu */}
           <div ref={groupMenuRef} className="relative flex-shrink-0">
@@ -603,7 +604,7 @@ export default function GroupMembersTab() {
             <EmptyState icon={GroupIcon} title="Chưa có dữ liệu nhóm"
               desc={<>Nhấn <span className="text-blue-400 font-medium">Tải từ API</span> để đồng bộ nhóm từ Zalo.</>} />
           ) : filteredGroups.length === 0 ? (
-            <div className="flex items-center justify-center h-16 text-xs text-gray-500">Không tìm thấy nhóm</div>
+            <div className="flex items-center justify-center h-16 text-xs text-gray-400">Không tìm thấy nhóm</div>
           ) : (
             <div className="py-1">
               {filteredGroups.map(group => (
@@ -618,7 +619,7 @@ export default function GroupMembersTab() {
                   />
                   <div className="flex-1 min-w-0">
                     <p className="text-sm text-white truncate font-medium">{group.display_name}</p>
-                    <p className="text-[11px] text-gray-500 mt-0.5">
+                    <p className="text-[11px] text-gray-400 mt-0.5">
                       {group.memberCount > 0 ? `${group.memberCount} thành viên` : 'Chưa có thành viên'}
                     </p>
                   </div>
@@ -648,9 +649,9 @@ export default function GroupMembersTab() {
               />
               <div className="flex-1 min-w-0">
                 <h3 className="text-sm font-semibold text-white truncate">{selectedGroup.display_name}</h3>
-                <p className="text-[11px] text-gray-500 mt-0.5">
+                <p className="text-[11px] text-gray-400 mt-0.5">
                   {members.length > 0
-                    ? <>{members.length} thành viên{membersLastFetched > 0 && <span className="ml-2 text-gray-600">· {formatTime(membersLastFetched)}</span>}</>
+                    ? <>{members.length} thành viên{membersLastFetched > 0 && <span className="ml-2 text-gray-400">· {formatTime(membersLastFetched)}</span>}</>
                     : 'Chưa có dữ liệu thành viên'}
                 </p>
               </div>
@@ -719,12 +720,12 @@ export default function GroupMembersTab() {
             <div className="flex-1 overflow-y-auto pb-16">
               {members.length === 0 ? (
                 <EmptyState
-                  icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-500"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>}
+                  icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-400"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>}
                   title="Chưa có dữ liệu thành viên"
-                  desc={<>Nhấn <span className="text-blue-400 font-medium">Tải thành viên</span> để đồng bộ từ Zalo về DB.<br/><span className="text-gray-600 text-[11px]">Lưu ý: cần tải nhóm từ API trước để có danh sách UID.</span></>}
+                  desc={<>Nhấn <span className="text-blue-400 font-medium">Tải thành viên</span> để đồng bộ từ Zalo về DB.<br/><span className="text-gray-400 text-[11px]">Lưu ý: cần tải nhóm từ API trước để có danh sách UID.</span></>}
                 />
               ) : filteredMembers.length === 0 ? (
-                <div className="flex items-center justify-center h-16 text-xs text-gray-500">Không tìm thấy thành viên</div>
+                <div className="flex items-center justify-center h-16 text-xs text-gray-400">Không tìm thấy thành viên</div>
               ) : (
                 <div className="p-2 space-y-0.5">
                   {filteredMembers.map(member => {
@@ -747,17 +748,17 @@ export default function GroupMembersTab() {
                         <div className="flex-1 min-w-0">
                           {member.display_name
                             ? <p className="text-sm text-white truncate font-medium">{member.display_name}</p>
-                            : <p className="text-sm text-gray-500 truncate italic">
+                            : <p className="text-sm text-gray-400 truncate italic">
                                 Chưa có tên -{' '}
                                 {member.phone
                                   ? <PhoneDisplay phone={member.phone} className="text-gray-400" />
                                   : member.member_id}
                               </p>}
-                          <div className="text-[11px] text-gray-500 mt-0.5">
+                          <div className="text-[11px] text-gray-400 mt-0.5">
                             {member.phone
                               ? <>
                                   <PhoneDisplay phone={member.phone} className="text-green-400" />
-                                  <div className="text-gray-600">{member.member_id}</div>
+                                  <div className="text-gray-400">{member.member_id}</div>
                                 </>
                               : member.display_name ? member.member_id : null}
                           </div>
@@ -832,7 +833,7 @@ export default function GroupMembersTab() {
                 </div>
                 <div className="text-center">
                   <p className="text-sm text-gray-300 font-medium">Chưa có chiến dịch nào</p>
-                  <p className="text-xs text-gray-500 mt-1">Tạo chiến dịch mới để bắt đầu gửi tin</p>
+                  <p className="text-xs text-gray-400 mt-1">Tạo chiến dịch mới để bắt đầu gửi tin</p>
                 </div>
                 <button
                   onClick={() => setShowCreateCampaign(true)}
@@ -853,7 +854,7 @@ export default function GroupMembersTab() {
                       <span className={`inline-block w-1.5 h-1.5 rounded-full flex-shrink-0 ${c.status === 'active' ? 'bg-green-400' : c.status === 'paused' ? 'bg-yellow-400' : 'bg-gray-500'}`} />
                       {c.name}
                     </span>
-                    <span className="block text-xs text-gray-500 mt-0.5 pl-3">{c.total_contacts ?? 0} liên hệ</span>
+                    <span className="block text-xs text-gray-400 mt-0.5 pl-3">{c.total_contacts ?? 0} liên hệ</span>
                   </button>
                 ))}
               </div>
@@ -978,30 +979,30 @@ export default function GroupMembersTab() {
             {/* Error */}
             {linkScanError && (
               <div className="mb-4 px-3 py-2 bg-red-500/10 border border-red-500/30 rounded-xl text-xs text-red-400">
-                ⚠️ {linkScanError}
+                <AlertIcon className="w-4 h-4 inline" /> {linkScanError}
               </div>
             )}
 
             {/* Success result */}
             {linkScanResult && !linkScanLoading && (
               <div className="mb-4 px-3 py-2 bg-green-500/10 border border-green-500/30 rounded-xl text-xs text-green-400">
-                ✅ Đã quét xong nhóm <span className="font-semibold text-green-300">"{linkScanResult.name}"</span>
-                <span className="text-gray-500 ml-1">({linkScanResult.groupId})</span>
+                <CheckIcon className="w-4 h-4 inline" /> Đã quét xong nhóm <span className="font-semibold text-green-300">"{linkScanResult.name}"</span>
+                <span className="text-gray-400 ml-1">({linkScanResult.groupId})</span>
               </div>
             )}
 
             {/* Join status */}
             {linkJoinStatus !== 'idle' && (
-              <div className={`mb-4 px-3 py-2 rounded-xl text-xs border ${
+              <div className={`mb-4 px-3 py-2 rounded-xl text-xs border flex items-center gap-1 ${
                 linkJoinStatus === 'success' ? 'bg-green-500/10 border-green-500/30 text-green-400' :
                 linkJoinStatus === 'pending' ? 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400' :
                 linkJoinStatus === 'already' ? 'bg-blue-500/10 border-blue-500/30 text-blue-400' :
                 'bg-red-500/10 border-red-500/30 text-red-400'
               }`}>
-                {linkJoinStatus === 'success' && '✅ '}
+                {linkJoinStatus === 'success' && <CheckIcon className="w-3.5 h-3.5 inline" />}
                 {linkJoinStatus === 'pending' && '⏳ '}
                 {linkJoinStatus === 'already' && 'ℹ️ '}
-                {linkJoinStatus === 'error' && '⚠️ '}
+                {linkJoinStatus === 'error' && <AlertIcon className="w-3.5 h-3.5 inline" />}
                 {linkJoinMsg}
               </div>
             )}
@@ -1019,7 +1020,7 @@ export default function GroupMembersTab() {
                   onClick={scanGroupByLink}
                   disabled={linkScanLoading || !linkScanInput.trim()}
                   className="flex-1 py-2 rounded-xl bg-purple-600 text-white text-sm hover:bg-purple-700 disabled:opacity-40 transition-colors flex items-center justify-center gap-1.5">
-                  {linkScanLoading ? <>{SpinIcon} Đang quét...</> : '🔍 Quét nhóm'}
+                  {linkScanLoading ? <>{SpinIcon} Đang quét...</> : <><SearchIcon className="w-4 h-4 inline" /> Quét nhóm</>}
                 </button>
               )}
               {/* Join button - shown after scan success or standalone */}
@@ -1062,7 +1063,7 @@ export default function GroupMembersTab() {
                 <div className="flex items-center justify-between text-xs mb-2">
                   <span className="text-gray-400">
                     Đã xử lý: <span className="text-white font-semibold">{groupFetchProgress.current}</span>
-                    <span className="text-gray-600"> / {groupFetchProgress.total}</span>
+                    <span className="text-gray-400"> / {groupFetchProgress.total}</span>
                   </span>
                   <span className="text-blue-400 font-semibold text-sm">
                     {Math.round((groupFetchProgress.current / groupFetchProgress.total) * 100)}%
@@ -1072,7 +1073,7 @@ export default function GroupMembersTab() {
                   <div className="h-full bg-gradient-to-r from-blue-500 to-blue-400 rounded-full transition-all duration-300"
                     style={{ width: `${(groupFetchProgress.current / groupFetchProgress.total) * 100}%` }} />
                 </div>
-                <p className="text-[11px] text-gray-500 mt-3 text-center">
+                <p className="text-[11px] text-gray-400 mt-3 text-center">
                   Vui lòng không đóng cửa sổ trong khi đồng bộ...
                 </p>
               </>
@@ -1088,7 +1089,7 @@ export default function GroupMembersTab() {
                     <p className="text-xs text-gray-400 mt-0.5 truncate">
                       Nhóm <span className="text-white font-medium">{groupFetchProgress.groupCurrent}/{groupFetchProgress.groupTotal}</span>
                       {groupFetchProgress.currentGroupName && (
-                        <span className="ml-1 text-gray-500 truncate">· {groupFetchProgress.currentGroupName}</span>
+                        <span className="ml-1 text-gray-400 truncate">· {groupFetchProgress.currentGroupName}</span>
                       )}
                     </p>
                   </div>
@@ -1097,7 +1098,7 @@ export default function GroupMembersTab() {
                 {/* Group progress */}
                 <div className="mb-3">
                   <div className="flex items-center justify-between text-xs mb-1">
-                    <span className="text-gray-500">Tiến độ nhóm</span>
+                    <span className="text-gray-400">Tiến độ nhóm</span>
                     <span className="text-green-400 font-semibold">
                       {Math.round((groupFetchProgress.groupCurrent / groupFetchProgress.groupTotal) * 100)}%
                     </span>
@@ -1112,7 +1113,7 @@ export default function GroupMembersTab() {
                 {groupFetchProgress.memberTotal > 0 && (
                   <div className="mb-3">
                     <div className="flex items-center justify-between text-xs mb-1">
-                      <span className="text-gray-500">
+                      <span className="text-gray-400">
                         Thành viên: <span className="text-white">{groupFetchProgress.memberCurrent}</span>/{groupFetchProgress.memberTotal}
                       </span>
                       <span className="text-blue-400 font-semibold">
@@ -1127,7 +1128,7 @@ export default function GroupMembersTab() {
                 )}
 
                 <div className="flex items-center justify-between mt-3">
-                  <p className="text-[11px] text-gray-600">Đang tải SĐT + thông tin thành viên từ Zalo...</p>
+                  <p className="text-[11px] text-gray-400">Đang tải SĐT + thông tin thành viên từ Zalo...</p>
                   <button
                     onClick={() => { bulkEnrichStopRef.current = true; }}
                     className="flex-shrink-0 ml-3 px-3 py-1 text-xs text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded-lg transition-colors">

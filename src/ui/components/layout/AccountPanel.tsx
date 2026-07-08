@@ -6,6 +6,7 @@ import { useEmployeeStore } from '@/store/employeeStore';
 import { useVisibleAccounts } from '@/hooks/useVisibleAccounts';
 import ChannelBadge from '../common/ChannelBadge';
 import { formatPhone } from '@/utils/phoneUtils';
+import { FolderIcon } from '@/components/common/icons';
 
 interface AccountPanelProps {
   onAddAccount: () => void;
@@ -65,7 +66,7 @@ export default function AccountPanel({ onAddAccount }: AccountPanelProps) {
       {/* Search */}
       <div className="px-3 pt-2.5 pb-2 flex-shrink-0">
         <div className="relative">
-          <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
           </svg>
           <input
@@ -77,7 +78,7 @@ export default function AccountPanel({ onAddAccount }: AccountPanelProps) {
           {accountSearch && (
             <button
               onClick={() => setAccountSearch('')}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-300"
             >
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -161,12 +162,12 @@ export default function AccountPanel({ onAddAccount }: AccountPanelProps) {
                       {account.full_name || account.zalo_id}
                     </span>
                     {account.is_business ? (
-                      <span className="text-[9px] leading-none" title="Zalo Business">💼</span>
+                      <span className="text-[9px] leading-none" title="Zalo Business"><FolderIcon className="w-4 h-4" /></span>
                     ) : null}
                   </div>
                   <div className="flex items-center gap-1.5 mt-0.5">
                     {account.phone ? (
-                      <span className="text-[10px] text-gray-500 truncate">{formatPhone(account.phone)}</span>
+                      <span className="text-[10px] text-gray-400 truncate">{formatPhone(account.phone)}</span>
                     ) : null}
                     {!account.isConnected && !listenerDead && (
                       <span className="text-[9px] text-red-400/70 font-medium">Chưa kết nối</span>
@@ -185,7 +186,7 @@ export default function AccountPanel({ onAddAccount }: AccountPanelProps) {
         {empMode !== 'employee' && !isSimulating && (
           <button
             onClick={onAddAccount}
-            className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-gray-500 hover:text-gray-300 hover:bg-gray-700/50 transition-colors text-left"
+            className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-gray-400 hover:text-gray-300 hover:bg-gray-700/50 transition-colors text-left"
           >
             <div className="w-8 h-8 rounded-full border-2 border-dashed border-gray-600 flex items-center justify-center flex-shrink-0">
               <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">

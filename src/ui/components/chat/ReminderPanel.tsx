@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import ipc from '@/lib/ipc';
 import { useAccountStore } from '@/store/accountStore';
 import { Spinner } from '@/components/common/PageLoading';
+import { BellIcon, CalendarIcon, CheckIcon, ClockIcon, CloseIcon, LightbulbIcon, PinIcon, StarIcon, TargetIcon } from '@/components/common/icons';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -47,7 +48,16 @@ const REPEAT_LABELS: Record<ReminderRepeatMode, string> = {
   [ReminderRepeatMode.Monthly]: 'Hàng tháng',
 };
 
-const EMOJI_OPTIONS = ['⏰', '📅', '🔔', '⭐', '📌', '💡', '🎯', '🎉'];
+const EMOJI_OPTIONS = [
+  { icon: '⏰', component: <ClockIcon className="w-4 h-4" /> },
+  { icon: '📅', component: <CalendarIcon className="w-4 h-4" /> },
+  { icon: '🔔', component: <BellIcon className="w-4 h-4" /> },
+  { icon: '⭐', component: <StarIcon className="w-4 h-4" /> },
+  { icon: '📌', component: <PinIcon className="w-4 h-4" /> },
+  { icon: '💡', component: <LightbulbIcon className="w-4 h-4" /> },
+  { icon: '🎯', component: <TargetIcon className="w-4 h-4" /> },
+  { icon: '🎉', component: <StarIcon className="w-4 h-4" /> },
+];
 const COLOR_OPTIONS = [
   { label: 'Đỏ',   value: -65536,   hex: '#ff0000' },
   { label: 'Cam',  value: -23296,   hex: '#ffa500' },
@@ -365,7 +375,7 @@ export default function ReminderPanel({ threadId, threadType, onClose, anchorRef
 
       {/* Header */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-700 flex-shrink-0">
-        <span className="flex-1 text-sm font-semibold text-white">⏰ Nhắc hẹn</span>
+        <span className="flex-1 text-sm font-semibold text-white"><ClockIcon className="w-4 h-4 inline" /> Nhắc hẹn</span>
         <button onClick={openCreate}
           className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-blue-600 bg-blue-600/20 text-blue-400 hover:text-white transition-colors"
           title="Tạo nhắc hẹn mới">
@@ -448,10 +458,10 @@ export default function ReminderPanel({ threadId, threadType, onClose, anchorRef
           <div>
             <label className="block text-xs text-gray-400 mb-1">Biểu tượng</label>
             <div className="flex gap-1 flex-wrap">
-              {EMOJI_OPTIONS.map(e => (
-                <button key={e} onClick={() => setForm(f => ({ ...f, emoji: e }))}
-                  className={`w-8 h-8 rounded-lg text-base flex items-center justify-center transition-colors ${form.emoji === e ? 'bg-blue-600' : 'hover:bg-gray-600'}`}>
-                  {e}
+              {EMOJI_OPTIONS.map(opt => (
+                <button key={opt.icon} onClick={() => setForm(f => ({ ...f, emoji: opt.icon }))}
+                  className={`w-8 h-8 rounded-lg text-base flex items-center justify-center transition-colors ${form.emoji === opt.icon ? 'bg-blue-600' : 'hover:bg-gray-600'}`}>
+                  {opt.component}
                 </button>
               ))}
             </div>
@@ -501,9 +511,9 @@ export default function ReminderPanel({ threadId, threadType, onClose, anchorRef
             <Spinner size={5} />
           </div>
         ) : currentList.length === 0 ? (
-          <div className="flex flex-col items-center py-8 text-gray-500">
+          <div className="flex flex-col items-center py-8 text-gray-400">
             <span className="text-3xl mb-2">
-              {activeTab === 'upcoming' ? '⏰' : activeTab === 'past' ? '✅' : '❌'}
+              {activeTab === 'upcoming' ? <ClockIcon className="w-8 h-8" /> : activeTab === 'past' ? <CheckIcon className="w-8 h-8" /> : <CloseIcon className="w-8 h-8" />}
             </span>
             <p className="text-xs text-center">
               {activeTab === 'upcoming' && 'Chưa có nhắc hẹn sắp tới'}
@@ -552,7 +562,7 @@ export default function ReminderPanel({ threadId, threadType, onClose, anchorRef
                       </div>
                     </div>
                     <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
-                      <span className={`inline-flex items-center gap-1 text-[11px] ${isPast ? 'text-gray-500' : 'text-blue-400'}`}>
+                      <span className={`inline-flex items-center gap-1 text-[11px] ${isPast ? 'text-gray-400' : 'text-blue-400'}`}>
                         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                           <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
                         </svg>

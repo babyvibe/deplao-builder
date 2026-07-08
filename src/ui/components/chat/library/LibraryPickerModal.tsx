@@ -22,6 +22,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import ipc from '../../../lib/ipc';
 import * as channelIpc from '../../../lib/channelIpc';
 import DataAccessor, { refreshLibraryCache } from '../../../lib/data/DataAccessor';
+import { BookIcon, ChartIcon, CloseIcon, EditIcon, FileTextIcon, FolderIcon, ImageIcon, MonitorIcon, RefreshIcon, SearchIcon, SendIcon, StarIcon, TrashIcon } from '@/components/common/icons';
 
 interface LibraryItem {
   uuid: string;
@@ -35,6 +36,10 @@ interface LibraryItem {
   is_favorite: number;
   folder_id: number | null;
   created_at: number;
+  /** Local file path trên Boss (được inject bởi library IPC/handler, undefined ở employee mode) */
+  _localPath?: string;
+  /** Local thumbnail path trên Boss (được inject bởi library IPC/handler, undefined ở employee mode) */
+  _thumbLocalPath?: string;
 }
 
 interface LibraryFolder {
@@ -56,10 +61,10 @@ interface Props {
 }
 
 const TYPE_LABELS: Record<MediaType, string> = {
-  all: '📁 Tất cả',
-  image: '🖼️ Ảnh',
-  video: '🎬 Video',
-  file: '📄 File',
+  all: 'Tất cả',
+  image: 'Ảnh',
+  video: 'Video',
+  file: 'File',
 };
 
 export default function LibraryPickerModal({
@@ -607,7 +612,7 @@ export default function LibraryPickerModal({
         style={{ paddingLeft: `${12 + depth * 16}px` }}
       >
         <span onClick={() => setActiveFolderId(activeFolderId === folder.id ? undefined as any : folder.id)} className="flex items-center gap-2 flex-1 min-w-0">
-          <span>📁</span>
+          <span><FolderIcon className="w-4 h-4" /></span>
           <span className="truncate">{folder.name}</span>
           <span className="text-[10px] mb-2">{folder.item_count || 0}</span>
         </span>
@@ -615,17 +620,17 @@ export default function LibraryPickerModal({
         {/* ⋯ menu button */}
         <div className="relative">
           <button onClick={(e) => { e.stopPropagation(); setShowFolderMenu(showFolderMenu === folder.id ? null : folder.id); }}
-            className="p-1 rounded-md text-gray-500 hover:text-gray-200 opacity-0 group-hover:opacity-100 transition-all text-sm">⋯</button>
+            className="p-1 rounded-md text-gray-400 hover:text-gray-200 opacity-0 group-hover:opacity-100 transition-all text-sm">⋯</button>
 
           {showFolderMenu === folder.id && (
             <div className="absolute right-0 top-full mt-1 bg-gray-700 border border-gray-600 rounded-xl shadow-2xl z-50 py-1 w-40"
               onClick={e => e.stopPropagation()}>
               <button onClick={() => handleAddChildFolder(folder.id)}
-                className="w-full text-left px-3 py-1.5 text-xs text-gray-200 hover:bg-gray-600 flex items-center gap-2">📁 Thêm thư mục con</button>
+                className="w-full text-left px-3 py-1.5 text-xs text-gray-200 hover:bg-gray-600 flex items-center gap-2"><FolderIcon className="w-4 h-4 inline" /> Thêm thư mục con</button>
               <button onClick={() => { handleRenameFolder(folder.id); }}
-                className="w-full text-left px-3 py-1.5 text-xs text-gray-200 hover:bg-gray-600 flex items-center gap-2">✏️ Đổi tên</button>
+                className="w-full text-left px-3 py-1.5 text-xs text-gray-200 hover:bg-gray-600 flex items-center gap-2"><EditIcon className="w-3.5 h-3.5" /> Đổi tên</button>
               <button onClick={() => handleDeleteFolder(folder.id)}
-                className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-gray-600 flex items-center gap-2">🗑️ Xoá</button>
+                className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-gray-600 flex items-center gap-2"><TrashIcon className="w-4 h-4 inline" /> Xoá</button>
             </div>
           )}
         </div>
@@ -644,9 +649,9 @@ export default function LibraryPickerModal({
         <button onClick={() => handleMoveToFolder(itemUuid, folder.id)}
           className="w-full text-left px-3 py-1.5 text-xs text-gray-200 hover:bg-gray-700 flex items-center gap-2 truncate"
           style={{ paddingLeft: `${12 + depth * 16}px` }}>
-          <span>📁</span>
+          <span><FolderIcon className="w-4 h-4" /></span>
           <span className="truncate">{folder.name}</span>
-          {folder.item_count ? <span className="ml-auto text-[10px] text-gray-500">{folder.item_count}</span> : null}
+          {folder.item_count ? <span className="ml-auto text-[10px] text-gray-400">{folder.item_count}</span> : null}
         </button>
         {children.map(child => renderFolderPickerItem(child, itemUuid, depth + 1))}
       </React.Fragment>
@@ -659,8 +664,8 @@ export default function LibraryPickerModal({
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-gray-700/50">
           <h2 className="text-lg font-semibold text-white">{typeLabel}</h2>
-          <span className="text-xs text-gray-500">{total} file</span>
-          <button onClick={() => { refreshLibraryCache(); loadItems(1); loadFolders(); }} className="p-1.5 text-gray-400 hover:text-white transition-colors" title="Làm mới">🔄</button>
+          <span className="text-xs text-gray-400">{total} file</span>
+          <button onClick={() => { refreshLibraryCache(); loadItems(1); loadFolders(); }} className="p-1.5 text-gray-400 hover:text-white transition-colors" title="Làm mới"><RefreshIcon className="w-4 h-4" /></button>
           <button onClick={onClose} className="p-1.5 text-gray-400 hover:text-white transition-colors ml-auto">✕</button>
         </div>
 
@@ -686,7 +691,7 @@ export default function LibraryPickerModal({
                 className={`flex items-center gap-2 px-3 py-1.5 rounded-lg cursor-pointer text-sm transition-all ${
                   activeFolderId === -1 ? 'bg-blue-600/30 text-blue-300' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'
                 }`}>
-                <span>⭐</span>
+                <StarIcon className="w-4 h-4 text-yellow-400" />
                 <span className="flex-1">Yêu thích</span>
               </div>
               <div className="h-px bg-gray-700/50 my-2" />
@@ -704,7 +709,7 @@ export default function LibraryPickerModal({
               )}
               {rootFolders.map(f => renderFolderItem(f))}
               {rootFolders.length === 0 && !folderInput && (
-                <p className="text-xs text-gray-600 text-center py-4">Chưa có thư mục</p>
+                <p className="text-xs text-gray-400 text-center py-4">Chưa có thư mục</p>
               )}
             </div>
           </div>
@@ -713,7 +718,7 @@ export default function LibraryPickerModal({
           <div className="w-3/4 flex flex-col">
             <div className="px-4 py-2 border-b border-gray-700/50">
               <input value={search} onChange={e => setSearch(e.target.value)}
-                placeholder="🔍 Tìm trong thư viện..."
+                placeholder="Tìm trong thư viện..."
                 className="w-full px-3 py-1.5 bg-gray-700 border border-gray-600 rounded-lg text-sm text-gray-200 placeholder-gray-500"
               />
             </div>
@@ -726,7 +731,7 @@ export default function LibraryPickerModal({
               onDrop={handleDrop}
               className={`flex-1 overflow-y-auto p-4 transition-all ${isDragOver ? 'bg-blue-900/20 border-2 border-dashed border-blue-500/50 rounded-lg' : ''}`}>
               {items.length === 0 && !loading && (
-                <div className="flex flex-col items-center justify-center h-full text-gray-500">
+                <div className="flex flex-col items-center justify-center h-full text-gray-400">
                   <span className="text-4xl mb-2">📂</span>
                   <p className="text-sm">Thư viện trống</p>
                   <p className="text-xs mt-1">Nhấn "Upload vào thư viện" để thêm file</p>
@@ -753,7 +758,7 @@ export default function LibraryPickerModal({
                           <div className="bg-black/50 backdrop-blur-sm rounded-lg p-1 shadow-lg">
                             <button onClick={(e) => { e.stopPropagation(); handleToggleFavorite(item.uuid, item.is_favorite); }}
                               className="text-[11px] leading-none block" title={item.is_favorite ? 'Bỏ yêu thích' : 'Yêu thích'}>
-                              {item.is_favorite ? '⭐' : '☆'}
+                              {item.is_favorite ? <StarIcon className="w-4 h-4 text-yellow-400" /> : <StarIcon className="w-4 h-4 text-gray-400" />}
                             </button>
                           </div>
                         </div>
@@ -785,7 +790,7 @@ export default function LibraryPickerModal({
                               className="text-green-400 hover:text-green-300 text-xs">✓</button>
                           </div>
                         ) : (
-                          <span className="block text-[10px] text-gray-500 truncate">{item.name}</span>
+                          <span className="block text-[10px] text-gray-400 truncate">{item.name}</span>
                         )}
                       </div>
 
@@ -814,7 +819,7 @@ export default function LibraryPickerModal({
                           <div className="bg-black/50 backdrop-blur-sm rounded-lg p-1 shadow-lg">
                             <button onClick={(e) => { e.stopPropagation(); handleToggleFavorite(item.uuid, item.is_favorite); }}
                               className="text-[11px] leading-none block" title={item.is_favorite ? 'Bỏ yêu thích' : 'Yêu thích'}>
-                              {item.is_favorite ? '⭐' : '☆'}
+                              {item.is_favorite ? <StarIcon className="w-4 h-4 text-yellow-400" /> : <StarIcon className="w-4 h-4 text-gray-400" />}
                             </button>
                           </div>
                         </div>
@@ -878,7 +883,7 @@ export default function LibraryPickerModal({
                         ) : (
                           <>
                             <p className="text-sm text-gray-200 truncate">{item.name}</p>
-                            <p className="text-xs text-gray-500">{(item.size / 1024).toFixed(1)} KB</p>
+                            <p className="text-xs text-gray-400">{(item.size / 1024).toFixed(1)} KB</p>
                           </>
                         )}
                       </div>
@@ -906,20 +911,18 @@ export default function LibraryPickerModal({
           <input ref={fileInputRef} type="file" multiple accept={getAcceptType(initialType)} onChange={handleUploadAndSend} className="hidden" />
           <input ref={directInputRef} type="file" multiple accept={getAcceptType(initialType)} onChange={handleDirectFile} className="hidden" />
           <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-700/80 hover:bg-indigo-600 text-white-important text-xs rounded-lg transition-colors disabled:opacity-50">
-            📤 {uploading ? 'Đang tải...' : 'Upload vào thư viện'}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-700/80 hover:bg-indigo-600 text-white-important text-xs rounded-lg transition-colors disabled:opacity-50"><SendIcon className="w-4 h-4 inline" /> {uploading ? 'Đang tải...' : 'Upload vào thư viện'}
           </button>
           <button onClick={() => directInputRef.current?.click()}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-200 text-xs rounded-lg transition-colors">
-            💻 Chọn từ Máy tính
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-200 text-xs rounded-lg transition-colors"><MonitorIcon className="w-4 h-4 inline" /> Chọn từ Máy tính
           </button>
           <div className="flex-1" />
-          <span className="text-xs text-gray-500">{selectedItems.length} file</span>
+          <span className="text-xs text-gray-400">{selectedItems.length} file</span>
           <button onClick={handleSendSelected} disabled={selectedItems.length === 0}
             className={`px-5 py-1.5 text-sm rounded-lg transition-colors ${
               selectedItems.length > 0
                 ? 'bg-blue-600 hover:bg-blue-500 text-white'
-                : 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                : 'bg-gray-700 text-gray-400 cursor-not-allowed'
             }`}>
             Gửi {selectedItems.length ? `${selectedItems.length} file` : ''}
           </button>
@@ -937,29 +940,27 @@ export default function LibraryPickerModal({
               style={{ top: menuPos.top, left: menuPos.left }} onClick={e => e.stopPropagation()}>
               <button onClick={() => { handleToggleFavorite(item.uuid, item.is_favorite); closeMenus(); }}
                 className="w-full text-left px-3 py-1.5 text-xs text-gray-200 hover:bg-gray-700 flex items-center gap-2">
-                {item.is_favorite ? '⭐ Bỏ yêu thích' : '☆ Yêu thích'}
+                {item.is_favorite ? <><StarIcon className="w-3.5 h-3.5 inline" /> Bỏ yêu thích</> : '☆ Yêu thích'}
               </button>
               <button onClick={() => { setMoveFolderTarget(item.uuid); setFolderPos(menuPos); setMenuTarget(null); setMenuPos(null); }}
-                className="w-full text-left px-3 py-1.5 text-xs text-gray-200 hover:bg-gray-700 flex items-center gap-2">
-                📁 Chuyển đến thư mục →
+                className="w-full text-left px-3 py-1.5 text-xs text-gray-200 hover:bg-gray-700 flex items-center gap-2"><FolderIcon className="w-4 h-4 inline" /> Chuyển đến thư mục →
               </button>
               <button onClick={() => { startRename(item.uuid, item.name); closeMenus(); }}
                 className="w-full text-left px-3 py-1.5 text-xs text-gray-200 hover:bg-gray-700 flex items-center gap-2">
-                ✏️ Đổi tên
+                <EditIcon className="w-3.5 h-3.5 inline" /> Đổi tên
               </button>
               {item.folder_id !== null && (
                 <>
                   <div className="h-px bg-gray-600 mx-2" />
                   <button onClick={() => handleMoveToFolder(item.uuid, null)}
-                    className="w-full text-left px-3 py-1.5 text-xs text-gray-400 hover:bg-gray-700 flex items-center gap-2">
-                    🗑️ Bỏ khỏi thư mục
+                    className="w-full text-left px-3 py-1.5 text-xs text-gray-400 hover:bg-gray-700 flex items-center gap-2"><TrashIcon className="w-4 h-4 inline" /> Bỏ khỏi thư mục
                   </button>
                 </>
               )}
               <div className="h-px bg-gray-600 mx-2" />
               <button onClick={() => handleDeleteItem(item.uuid)}
                 className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-gray-700 flex items-center gap-2">
-                ❌ Xoá
+                <CloseIcon className="w-4 h-4" /> Xoá
               </button>
             </div>
           </>
@@ -975,9 +976,9 @@ export default function LibraryPickerModal({
             <div className="fixed inset-0 z-[99]" onClick={closeMenus} />
             <div className="fixed z-[100] bg-gray-800 border border-gray-600 rounded-xl shadow-2xl py-1 min-w-[180px] max-h-[260px] overflow-y-auto"
               style={{ top: folderPos.top, left: folderPos.left }} onClick={e => e.stopPropagation()}>
-              <div className="px-3 py-1.5 text-[10px] text-gray-500 uppercase tracking-wider">Chuyển đến</div>
+              <div className="px-3 py-1.5 text-[10px] text-gray-400 uppercase tracking-wider">Chuyển đến</div>
               {rootFolders.length === 0 && (
-                <p className="px-3 py-2 text-xs text-gray-500">Chưa có thư mục</p>
+                <p className="px-3 py-2 text-xs text-gray-400">Chưa có thư mục</p>
               )}
               {rootFolders.map(f => renderFolderPickerItem(f, item.uuid))}
               {item.folder_id !== null && (
@@ -1017,7 +1018,7 @@ function ImagePreview({ item }: { item: any }) {
     setErr(false);
   }, [item.thumbUrl, item._localPath, item.fileUrl]);
 
-  if (!src || err) return <div className="w-full h-full bg-gray-700 flex items-center justify-center text-2xl">🖼️</div>;
+  if (!src || err) return <div className="w-full h-full bg-gray-700 flex items-center justify-center text-2xl"><ImageIcon className="w-4 h-4" /></div>;
   return (
     <img
       src={src}
@@ -1040,13 +1041,13 @@ function getAcceptType(type: MediaType): string {
 
 function getFileIcon(name: string): string {
   const ext = name.split('.').pop()?.toLowerCase() || '';
-  if (['pdf'].includes(ext)) return '📕';
-  if (['doc', 'docx'].includes(ext)) return '📘';
-  if (['xls', 'xlsx', 'csv'].includes(ext)) return '📊';
-  if (['zip', 'rar', '7z'].includes(ext)) return '🗜️';
-  if (['ppt', 'pptx'].includes(ext)) return '📽️';
-  if (['txt'].includes(ext)) return '📝';
-  return '📄';
+  if (['pdf'].includes(ext)) return 'PDF';
+  if (['doc', 'docx'].includes(ext)) return 'DOC';
+  if (['xls', 'xlsx', 'csv'].includes(ext)) return 'XLS';
+  if (['zip', 'rar', '7z'].includes(ext)) return 'ZIP';
+  if (['ppt', 'pptx'].includes(ext)) return 'PPT';
+  if (['txt'].includes(ext)) return 'TXT';
+  return 'FILE';
 }
 
 function fileToBase64(file: File): Promise<string> {

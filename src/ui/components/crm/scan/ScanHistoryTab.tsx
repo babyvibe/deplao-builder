@@ -2,6 +2,8 @@ import React, { useEffect, useState, useCallback } from 'react';
 import ipc from '@/lib/ipc';
 import { SCAN_TAB_LABELS } from './ScanSessionTypes';
 import { Spinner } from '@/components/common/PageLoading';
+import { ClipboardListIcon, FolderIcon, InboxIcon, SearchIcon, SendIcon } from '@/components/common/icons';
+
 
 interface Props {
   accountId: string;
@@ -85,8 +87,8 @@ export default function ScanHistoryTab({ accountId }: Props) {
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-700 bg-gray-850 flex-shrink-0">
         <div className="flex items-center gap-3">
-          <h3 className="text-sm font-semibold text-white">📋 Lịch sử quét</h3>
-          <span className="text-[11px] text-gray-500">({total} bản ghi)</span>
+          <h3 className="text-sm font-semibold text-white"><ClipboardListIcon className="w-4 h-4 inline" /> Lịch sử quét</h3>
+          <span className="text-[11px] text-gray-400">({total} bản ghi)</span>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={loadLogs} className="p-1 rounded hover:bg-gray-700 text-gray-400 hover:text-white" title="Làm mới">
@@ -99,13 +101,13 @@ export default function ScanHistoryTab({ accountId }: Props) {
 
       {/* Filter bar */}
       <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-700/50 bg-gray-850/60 flex-shrink-0">
-        <label className="text-[11px] text-gray-500 whitespace-nowrap">🔍 Lọc theo tab:</label>
+        <label className="text-[11px] text-gray-400 whitespace-nowrap"><SearchIcon className="w-4 h-4 inline" /> Lọc theo tab:</label>
         <select
           value={selectedTabId}
           onChange={(e) => setSelectedTabId(e.target.value)}
           className="bg-gray-700 text-gray-200 text-xs rounded-lg px-3 py-1.5 border border-gray-600/50 focus:outline-none focus:border-blue-500 min-w-[180px]"
         >
-          <option value="">📋 Tất cả các tab</option>
+          <option value=""><ClipboardListIcon className="w-4 h-4 inline" /> Tất cả các tab</option>
           {tabs.map(t => (
             <option key={t.id} value={t.id}>{t.name}</option>
           ))}
@@ -113,7 +115,7 @@ export default function ScanHistoryTab({ accountId }: Props) {
         {selectedTabId && (
           <button
             onClick={() => setSelectedTabId('')}
-            className="text-[11px] text-gray-500 hover:text-white px-2 py-1 rounded hover:bg-gray-700"
+            className="text-[11px] text-gray-400 hover:text-white px-2 py-1 rounded hover:bg-gray-700"
           >
             ✕ Bỏ lọc
           </button>
@@ -127,7 +129,7 @@ export default function ScanHistoryTab({ accountId }: Props) {
             <Spinner size={6} />
           </div>
         ) : logs.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-gray-500 text-sm">
+          <div className="flex items-center justify-center h-full text-gray-400 text-sm">
             {selectedTabId ? 'Tab này chưa có lịch sử quét' : 'Chưa có lịch sử quét'}
           </div>
         ) : (
@@ -143,7 +145,7 @@ export default function ScanHistoryTab({ accountId }: Props) {
                     {log.status === 'success' ? '✓' : '✗'}
                   </span>
                   <span className="text-xs font-semibold text-gray-300">{getScanTypeLabel(log.scanType)}</span>
-                  <span className="text-[10px] text-gray-500">{formatDate(log.createdAt)}</span>
+                  <span className="text-[10px] text-gray-400">{formatDate(log.createdAt)}</span>
                   {log.itemsCount > 0 && (
                     <span className="text-[10px] text-blue-400 ml-auto font-mono">{log.itemsCount} items</span>
                   )}
@@ -152,13 +154,11 @@ export default function ScanHistoryTab({ accountId }: Props) {
                 {/* Row 2: Tab name + Input */}
                 <div className="mt-1 flex items-center gap-2 text-[11px]">
                   {log.tabName && (
-                    <span className="text-purple-400 bg-purple-900/30 rounded px-1.5 py-0.5 font-medium">
-                      📁 {log.tabName}
+                    <span className="text-purple-400 bg-purple-900/30 rounded px-1.5 py-0.5 font-medium"><FolderIcon className="w-4 h-4 inline" /> {log.tabName}
                     </span>
                   )}
                   {log.input && (
-                    <span className="text-gray-500 truncate flex-1" title={log.input}>
-                      📥 <span className="text-gray-400">{truncate(log.input, 80)}</span>
+                    <span className="text-gray-400 truncate flex-1" title={log.input}><InboxIcon className="w-4 h-4 inline" /> <span className="text-gray-400">{truncate(log.input, 80)}</span>
                     </span>
                   )}
                 </div>
@@ -175,14 +175,14 @@ export default function ScanHistoryTab({ accountId }: Props) {
 
                     {/* Info grid */}
                     <div className="grid grid-cols-3 gap-2 text-[10px] text-gray-400 bg-gray-850 rounded-lg p-2">
-                      <div><span className="text-gray-500">DocId:</span> <span className="text-gray-300 font-mono">{log.docId || '-'}</span></div>
-                      <div><span className="text-gray-500">Threads:</span> <span className="text-gray-300">{log.threadCount}</span></div>
-                      <div><span className="text-gray-500">Items:</span> <span className="text-blue-400 font-mono">{log.itemsCount}</span></div>
+                      <div><span className="text-gray-400">DocId:</span> <span className="text-gray-300 font-mono">{log.docId || '-'}</span></div>
+                      <div><span className="text-gray-400">Threads:</span> <span className="text-gray-300">{log.threadCount}</span></div>
+                      <div><span className="text-gray-400">Items:</span> <span className="text-blue-400 font-mono">{log.itemsCount}</span></div>
                     </div>
                     {log.requestHeaders && (
                       <div>
-                        <div className="flex items-center gap-1.5 text-[10px] text-gray-500 mb-1">
-                          <span>📤 Request headers</span>
+                        <div className="flex items-center gap-1.5 text-[10px] text-gray-400 mb-1">
+                          <span><SendIcon className="w-4 h-4 inline" /> Request headers</span>
                           <button
                             onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(log.requestHeaders || ''); }}
                             className="text-blue-500 hover:text-blue-400"
@@ -190,7 +190,7 @@ export default function ScanHistoryTab({ accountId }: Props) {
                             [Copy]
                           </button>
                         </div>
-                        <pre className="text-[10px] text-gray-400 bg-gray-850 rounded p-2 overflow-x-auto max-h-[120px] overflow-y-auto whitespace-pre-wrap break-all border border-gray-700/30">
+                        <pre className="text-[10px] text-gray-400 bg-gray-850 rounded p-2 overflow-x-auto max-h-[120px] overflow-y-auto whitespace-pre-wrap break-word border border-gray-700/30">
                           {log.requestHeaders}
                         </pre>
                       </div>
@@ -198,8 +198,8 @@ export default function ScanHistoryTab({ accountId }: Props) {
 
                     {log.responseHeaders && (
                       <div>
-                        <div className="flex items-center gap-1.5 text-[10px] text-gray-500 mb-1">
-                          <span>📥 Response headers</span>
+                        <div className="flex items-center gap-1.5 text-[10px] text-gray-400 mb-1">
+                          <span><InboxIcon className="w-4 h-4 inline" /> Response headers</span>
                           <button
                             onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(log.responseHeaders || ''); }}
                             className="text-blue-500 hover:text-blue-400"
@@ -207,7 +207,7 @@ export default function ScanHistoryTab({ accountId }: Props) {
                             [Copy]
                           </button>
                         </div>
-                        <pre className="text-[10px] text-gray-400 bg-gray-850 rounded p-2 overflow-x-auto max-h-[120px] overflow-y-auto whitespace-pre-wrap break-all border border-gray-700/30">
+                        <pre className="text-[10px] text-gray-400 bg-gray-850 rounded p-2 overflow-x-auto max-h-[120px] overflow-y-auto whitespace-pre-wrap break-word border border-gray-700/30">
                           {log.responseHeaders}
                         </pre>
                       </div>
@@ -215,8 +215,8 @@ export default function ScanHistoryTab({ accountId }: Props) {
                     {/* Request payload */}
                     {formatPayload(log.requestPayload) && (
                       <div>
-                        <div className="flex items-center gap-1.5 text-[10px] text-gray-500 mb-1">
-                          <span>📤 Request payload</span>
+                        <div className="flex items-center gap-1.5 text-[10px] text-gray-400 mb-1">
+                          <span><SendIcon className="w-4 h-4 inline" /> Request payload</span>
                           <button
                             onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(formatPayload(log.requestPayload) || ''); }}
                             className="text-blue-500 hover:text-blue-400"
@@ -224,7 +224,7 @@ export default function ScanHistoryTab({ accountId }: Props) {
                             [Copy]
                           </button>
                         </div>
-                        <pre className="text-[10px] text-gray-400 bg-gray-850 rounded p-2 overflow-x-auto max-h-[200px] overflow-y-auto whitespace-pre-wrap break-all border border-gray-700/30">
+                        <pre className="text-[10px] text-gray-400 bg-gray-850 rounded p-2 overflow-x-auto max-h-[200px] overflow-y-auto whitespace-pre-wrap break-word border border-gray-700/30">
                           {formatPayload(log.requestPayload)}
                         </pre>
                       </div>
@@ -233,8 +233,8 @@ export default function ScanHistoryTab({ accountId }: Props) {
                     {/* Response preview */}
                     {log.responsePreview && (
                       <div>
-                        <div className="flex items-center gap-1.5 text-[10px] text-gray-500 mb-1">
-                          <span>📥 Response preview</span>
+                        <div className="flex items-center gap-1.5 text-[10px] text-gray-400 mb-1">
+                          <span><InboxIcon className="w-4 h-4 inline" /> Response preview</span>
                           <button
                             onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(log.responsePreview); }}
                             className="text-blue-500 hover:text-blue-400"
@@ -242,7 +242,7 @@ export default function ScanHistoryTab({ accountId }: Props) {
                             [Copy]
                           </button>
                         </div>
-                        <pre className="text-[10px] text-gray-400 bg-gray-850 rounded p-2 overflow-x-auto max-h-[150px] overflow-y-auto whitespace-pre-wrap break-all border border-gray-700/30">
+                        <pre className="text-[10px] text-gray-400 bg-gray-850 rounded p-2 overflow-x-auto max-h-[150px] overflow-y-auto whitespace-pre-wrap break-word border border-gray-700/30">
                           {log.responsePreview}
                         </pre>
                       </div>

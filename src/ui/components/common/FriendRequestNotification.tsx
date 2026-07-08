@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAppStore } from '@/store/appStore';
+import { CheckIcon, CloseIcon, UserCheckIcon } from '@/components/common/icons';
+
 
 export interface FriendRequestNotifData {
   zaloId: string;
@@ -81,7 +83,7 @@ export default function FriendRequestNotification({ data, onAccept, onReject, on
         {/* Header */}
         <div className="flex items-start justify-between gap-2 mb-3">
           <div className="flex items-center gap-2">
-            <span className="text-lg">🤝</span>
+            <span className="text-lg"><UserCheckIcon className="w-4 h-4" /></span>
             <p className={`font-bold text-sm ${isLight ? 'text-gray-800' : 'text-white'}`}>
               Lời mời kết bạn
             </p>
@@ -89,7 +91,7 @@ export default function FriendRequestNotification({ data, onAccept, onReject, on
           <button
             onClick={handleDismiss}
             className={`text-lg leading-none p-0.5 rounded-full transition-colors
-              ${isLight ? 'text-gray-400 hover:text-gray-600 hover:bg-gray-100' : 'text-gray-500 hover:text-gray-300 hover:bg-gray-700'}`}
+              ${isLight ? 'text-gray-400 hover:text-gray-400 hover:bg-gray-100' : 'text-gray-400 hover:text-gray-300 hover:bg-gray-700'}`}
             title="Đóng"
           >
             ×
@@ -116,12 +118,12 @@ export default function FriendRequestNotification({ data, onAccept, onReject, on
               {data.displayName || data.userId}
             </p>
             {data.msg && (
-              <p className={`text-xs mt-0.5 line-clamp-2 ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
+              <p className={`text-xs mt-0.5 line-clamp-2 ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
                 "{data.msg}"
               </p>
             )}
             {!data.msg && (
-              <p className={`text-xs mt-0.5 ${isLight ? 'text-gray-400' : 'text-gray-500'}`}>
+              <p className={`text-xs mt-0.5 ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
                 muốn kết bạn với bạn
               </p>
             )}
@@ -133,9 +135,9 @@ export default function FriendRequestNotification({ data, onAccept, onReject, on
           <div className={`text-center py-2 text-sm font-medium rounded-lg mb-2
             ${result === 'accepted'
               ? (isLight ? 'bg-green-50 text-green-600' : 'bg-green-900/30 text-green-400')
-              : (isLight ? 'bg-gray-50 text-gray-500' : 'bg-gray-800/50 text-gray-400')
+              : (isLight ? 'bg-gray-50 text-gray-400' : 'bg-gray-800/50 text-gray-400')
             }`}>
-            {result === 'accepted' ? '✅ Đã chấp nhận kết bạn' : '❌ Đã từ chối lời mời'}
+            {result === 'accepted' ? <><CheckIcon className="w-4 h-4 inline" /> Đã chấp nhận kết bạn</> : <><CloseIcon className="w-4 h-4 inline" /> Đã từ chối lời mời</>}
           </div>
         )}
 
@@ -155,7 +157,7 @@ export default function FriendRequestNotification({ data, onAccept, onReject, on
               {acting === 'accept' ? (
                 <span className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
               ) : (
-                <>✅ Chấp nhận</>
+                <><CheckIcon className="w-4 h-4 inline" /> Chấp nhận</>
               )}
             </button>
             <button
@@ -164,14 +166,14 @@ export default function FriendRequestNotification({ data, onAccept, onReject, on
               className={`flex-1 py-2 rounded-xl text-sm font-semibold transition-all duration-200 flex items-center justify-center gap-1.5
                 ${acting === 'reject' ? 'opacity-70 cursor-wait' : ''}
                 ${isLight
-                  ? 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  ? 'bg-gray-100 text-gray-400 hover:bg-gray-200'
                   : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                 }`}
             >
               {acting === 'reject' ? (
                 <span className="inline-block w-4 h-4 border-2 border-gray-400/30 border-t-gray-400 rounded-full animate-spin" />
               ) : (
-                <>❌ Từ chối</>
+                <><CloseIcon className="w-4 h-4 inline" /> Từ chối</>
               )}
             </button>
           </div>

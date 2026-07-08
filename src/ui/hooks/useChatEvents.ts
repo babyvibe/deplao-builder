@@ -16,6 +16,7 @@ import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
 import { playNotificationSound, showDesktopNotification } from '../utils/NotificationService';
 import { getFilteredUnreadCount } from '@/lib/badgeUtils';
+import { ImageIcon, PaletteIcon, PaperclipIcon } from '@/components/common/icons';
 
 /**
  * Lấy tên hiển thị của account từ accountStore.

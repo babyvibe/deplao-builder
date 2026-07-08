@@ -155,6 +155,38 @@ export function registerFileIpc() {
                 } else {
                     return { success: false, error: 'Không thể tải file từ server' };
                 }
+            } else if (params.localPath) {
+                // Employee mode fallback: local path không tồn tại (path từ Boss)
+                // → chuyển thành Boss REST URL và download qua HttpClientService
+                try {
+                    const { default: WorkspaceManager } = require('../../src/utils/WorkspaceManager');
+                    const ws = WorkspaceManager.getInstance().getActiveWorkspace();
+                    if (ws?.type === 'remote' && ws.bossUrl && ws.token) {
+                        // Build boss REST URL từ local path (giống toLocalMediaUrl)
+                        const normalized = params.localPath.replace(/\\/g, '/');
+                        const mediaMatch = normalized.match(/(?:^|\/)(media|_uploads|avatar)\/(.+)/);
+                        let bossUrl = '';
+                        if (mediaMatch) {
+                            bossUrl = `${ws.bossUrl.replace(/\/+$/, '')}/api/${mediaMatch[1]}/${mediaMatch[2]}`;
+                        } else {
+                            const filename = normalized.split('/').pop() || params.defaultName;
+                            bossUrl = `${ws.bossUrl.replace(/\/+$/, '')}/api/media/external/${encodeURIComponent(normalized)}`;
+                        }
+                        // Download từ Boss
+                        const response = await fetch(bossUrl, {
+                            headers: { 'Authorization': `Bearer ${ws.token}` },
+                            signal: AbortSignal.timeout(120000),
+                        });
+                        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                        const buffer = Buffer.from(await response.arrayBuffer());
+                        fs.writeFileSync(destPath, buffer);
+                    } else {
+                        return { success: false, error: 'Không có nguồn file để lưu' };
+                    }
+                } catch (e: any) {
+                    Logger.error(`[fileIpc] saveAs employee fallback error: ${e.message}`);
+                    return { success: false, error: 'Không thể tải file từ Boss: ' + e.message };
+                }
             } else {
                 return { success: false, error: 'Không có nguồn file để lưu' };
             }
@@ -480,6 +512,52 @@ export function registerFileIpc() {
             return { success: true, cached: false };
         } catch {
             return { success: true, cached: false };
+        }
+    });
+
+    /**
+     * Employee mode: ensure media file is available locally.
+     * Khác với media:resolveUrl (background download), handler này CHỜ download
+     * hoàn tất trước khi trả về — dùng khi user click mở video/file để có file local ngay.
+     *
+     * Input: { bossUrl: string, mediaType?: string }
+     * Output: { success: boolean, displayUrl: string, localPath?: string, fromCache: boolean }
+     */
+    ipcMain.handle('file:employeeEnsureMediaLocal', async (_event, { bossUrl, mediaType }: { bossUrl: string; mediaType?: string }) => {
+        try {
+            const cache = MediaCacheService.getInstance();
+            if (!bossUrl) return { success: true, displayUrl: '', fromCache: false };
+
+            // Dùng resolveUrlSync — chờ download nếu cache miss
+            const result = await cache.resolveUrlSync(bossUrl, (mediaType || 'image') as any);
+
+            // Extract local path từ file:// URL
+            let localPath = '';
+            if (result.displayUrl.startsWith('file://')) {
+                const urlPath = result.displayUrl.replace('file:///', '');
+                // Handle both Unix and Windows paths
+                localPath = decodeURIComponent(urlPath);
+                // Normalize Windows paths
+                if (process.platform === 'win32' && localPath.startsWith('/')) {
+                    localPath = localPath.replace(/^\//, '');
+                }
+                // Kiểm tra file thực sự tồn tại
+                try {
+                    if (!require('fs').existsSync(localPath)) {
+                        localPath = '';
+                    }
+                } catch { localPath = ''; }
+            }
+
+            return {
+                success: true,
+                displayUrl: result.displayUrl,
+                localPath,
+                fromCache: result.fromCache,
+            };
+        } catch (err: any) {
+            Logger.error(`[fileIpc] employeeEnsureMediaLocal error: ${err.message}`);
+            return { success: false, displayUrl: bossUrl, localPath: '', fromCache: false, error: err.message };
         }
     });
 

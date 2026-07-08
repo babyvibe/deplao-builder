@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ipc from '@/lib/ipc';
 import { Spinner } from '@/components/common/PageLoading';
+import { LockIcon } from '@/components/common/icons';
 
 interface Props {
   onUnlock: () => void;
@@ -442,8 +443,7 @@ export default function LockScreen({ onUnlock }: Props) {
         </div>
 
         {/* Footer */}
-        <p className="text-center text-white/60 text-xs mt-6 font-medium tracking-wider">
-          🔐 Dữ liệu được bảo vệ bởi mã hoá cục bộ
+        <p className="text-center text-white/60 text-xs mt-6 font-medium tracking-wider"><LockIcon className="w-4 h-4 inline" /> Dữ liệu được bảo vệ bởi mã hoá cục bộ
           <br />
           Các tính năng vẫn được chạy ngầm khi bạn khoá màn hình
         </p>

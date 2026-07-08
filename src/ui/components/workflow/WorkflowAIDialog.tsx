@@ -4,6 +4,7 @@ import DataAccessor from '../../lib/data/DataAccessor';
 import ipc from '../../lib/ipc';
 import { NODE_GROUPS, DEFAULT_CONFIGS, getNodeLabel } from './workflowConfig';
 import { useAppStore } from '@/store/appStore';
+import { BotIcon, CheckIcon, SparklesIcon, UserIcon } from '@/components/common/icons';
 
 interface WorkflowAIDialogProps {
   currentNodes: any[];
@@ -230,8 +231,8 @@ export default function WorkflowAIDialog({ currentNodes, currentEdges, channel, 
   const borderCard = isLight ? 'border-gray-200' : 'border-gray-700';
   const bgInput = isLight ? 'bg-gray-50 border-gray-200' : 'bg-gray-800 border-gray-700';
   const textPrimary = isLight ? 'text-gray-900' : 'text-white';
-  const textSecondary = isLight ? 'text-gray-500' : 'text-gray-400';
-  const textMuted = isLight ? 'text-gray-400' : 'text-gray-600';
+  const textSecondary = isLight ? 'text-gray-400' : 'text-gray-400';
+  const textMuted = isLight ? 'text-gray-400' : 'text-gray-400';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
@@ -241,7 +242,7 @@ export default function WorkflowAIDialog({ currentNodes, currentEdges, channel, 
         <div className={`px-5 py-4 border-b ${borderCard} flex items-center justify-between flex-shrink-0`}>
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center text-white text-sm">
-              ✨
+              <SparklesIcon className="w-4 h-4" />
             </div>
             <div>
               <p className={`${textPrimary} font-semibold text-sm`}>AI Workflow Builder</p>
@@ -289,9 +290,9 @@ export default function WorkflowAIDialog({ currentNodes, currentEdges, channel, 
                 <div key={i} className={`text-xs px-3 py-2 rounded-xl ${
                   h.role === 'user'
                     ? (isLight ? 'bg-blue-50 text-blue-700' : 'bg-blue-900/30 text-blue-300')
-                    : (isLight ? 'bg-gray-100 text-gray-600' : 'bg-gray-800 text-gray-400')
+                    : (isLight ? 'bg-gray-100 text-gray-400' : 'bg-gray-800 text-gray-400')
                 }`}>
-                  <span className="font-semibold">{h.role === 'user' ? '🧑 Bạn: ' : '🤖 AI: '}</span>
+                  <span className="font-semibold inline-flex items-center gap-1">{h.role === 'user' ? <><UserIcon className="w-3.5 h-3.5" /> Bạn: </> : <><BotIcon className="w-3.5 h-3.5" /> AI: </>}</span>
                   <span className="whitespace-pre-wrap">{h.role === 'user' ? h.text : h.text.substring(0, 200) + (h.text.length > 200 ? '…' : '')}</span>
                 </div>
               ))}
@@ -334,7 +335,7 @@ export default function WorkflowAIDialog({ currentNodes, currentEdges, channel, 
           {preview && (
             <div className={`border ${isLight ? 'border-green-200 bg-green-50' : 'border-green-500/30 bg-green-900/10'} rounded-xl p-3`}>
               <p className={`text-xs font-semibold mb-2 ${isLight ? 'text-green-700' : 'text-green-400'}`}>
-                ✅ AI đề xuất thêm {preview.nodes.length} node, {(preview.edges || []).length} liên kết:
+                <CheckIcon className="w-4 h-4 inline" /> AI đề xuất thêm {preview.nodes.length} node, {(preview.edges || []).length} liên kết:
               </p>
               <div className="space-y-1">
                 {preview.nodes.map((n: any, i: number) => (

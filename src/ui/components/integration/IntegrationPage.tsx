@@ -6,6 +6,7 @@ import { useEmployeeStore } from '@/store/employeeStore';
 import { useWorkspaceStore } from '@/store/workspaceStore';
 import IntegrationDetailPage from './IntegrationDetailPage';
 import AIAssistantPage from './AIAssistantPage';
+import { AlertIcon, BotIcon, ChatIcon, CheckCircleIcon, CreditCardIcon, DollarIcon, GlobeIcon, LightningIcon, LockIcon, MenuIcon, PackageIcon, PinIcon, PluginIcon, RefreshIcon, RocketIcon, ShoppingCartIcon, ShuffleIcon, SparklesIcon, StoreIcon, TargetIcon, TruckIcon , CheckIcon } from '@/components/common/icons';
 
 // ─── Catalog definition ───────────────────────────────────────────────────────
 
@@ -13,7 +14,7 @@ interface CatalogItem {
   type: string;
   name: string;
   desc: string;
-  icon: string;
+  icon: React.ReactNode;
   color: string;
   priority: 'p0' | 'p1' | 'p2';
   credentialFields: { key: string; label: string; secret?: boolean; placeholder?: string }[];
@@ -22,44 +23,44 @@ interface CatalogItem {
 
 type TabKey = 'all' | 'pos' | 'payment' | 'shipping' | 'ai';
 
-const TABS: { key: TabKey; label: string; icon: string }[] = [
-  { key: 'all',      label: 'Tất cả',            icon: '📌' },
-  { key: 'pos',      label: 'POS / Bán hàng',    icon: '🛒' },
-  { key: 'payment',  label: 'Thanh toán',        icon: '💳' },
-  { key: 'shipping', label: 'Vận chuyển',        icon: '📦' },
-  { key: 'ai',       label: 'Trợ lý AI',         icon: '🤖' },
+const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
+  { key: 'all',      label: 'Tất cả',            icon: <PinIcon className="w-4 h-4" /> },
+  { key: 'pos',      label: 'POS / Bán hàng',    icon: <ShoppingCartIcon className="w-4 h-4" /> },
+  { key: 'payment',  label: 'Thanh toán',        icon: <CreditCardIcon className="w-4 h-4" /> },
+  { key: 'shipping', label: 'Vận chuyển',        icon: <PackageIcon className="w-4 h-4" /> },
+  { key: 'ai',       label: 'Trợ lý AI',         icon: <BotIcon className="w-4 h-4" /> },
 ];
 
-const SECTION_META: Record<string, { label: string; icon: string; color: string }> = {
-  ai:       { label: 'Trợ lý AI',      icon: '🤖', color: 'bg-amber-600' },
-  pos:      { label: 'POS / Bán hàng', icon: '🛒', color: 'bg-orange-500' },
-  payment:  { label: 'Thanh toán',     icon: '💳', color: 'bg-green-600' },
-  shipping: { label: 'Vận chuyển',     icon: '📦', color: 'bg-red-500' },
+const SECTION_META: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
+  ai:       { label: 'Trợ lý AI',      icon: <BotIcon className="w-4 h-4" />, color: 'bg-amber-600' },
+  pos:      { label: 'POS / Bán hàng', icon: <ShoppingCartIcon className="w-4 h-4" />, color: 'bg-orange-500' },
+  payment:  { label: 'Thanh toán',     icon: <CreditCardIcon className="w-4 h-4" />, color: 'bg-green-600' },
+  shipping: { label: 'Vận chuyển',     icon: <PackageIcon className="w-4 h-4" />, color: 'bg-red-500' },
 };
 
-const AI_PLATFORMS: { key: string; label: string; icon: string; color: string; desc: string }[] = [
-  { key: 'openai',   label: 'OpenAI',   icon: '🤖', color: 'bg-green-600',   desc: 'GPT-4o, GPT-4.1, o3, o4-mini' },
-  { key: 'gemini',   label: 'Gemini',   icon: '✨', color: 'bg-blue-600',    desc: 'Gemini 2.0 Flash, 2.5 Pro' },
-  { key: 'claude',   label: 'Claude',   icon: '🟠', color: 'bg-amber-600',   desc: 'Sonnet 4.6, Opus 4.8, Haiku 4.5' },
-  { key: 'deepseek', label: 'DeepSeek', icon: '🔮', color: 'bg-purple-600',  desc: 'DeepSeek V3, R1' },
-  { key: 'grok',     label: 'Grok',     icon: '⚡', color: 'bg-orange-600',  desc: 'Grok 3, Grok 3 Mini' },
-  { key: 'openrouter', label: 'OpenRouter', icon: '🔀', color: 'bg-indigo-600', desc: 'Gateway nhiều model qua một API key' },
+const AI_PLATFORMS: { key: string; label: string; icon: React.ReactNode; color: string; desc: string }[] = [
+  { key: 'openai',   label: 'OpenAI',   icon: <BotIcon className="w-4 h-4" />, color: 'bg-green-600',   desc: 'GPT-4o, GPT-4.1, o3, o4-mini' },
+  { key: 'gemini',   label: 'Gemini',   icon: <SparklesIcon className="w-4 h-4" />, color: 'bg-blue-600',    desc: 'Gemini 2.0 Flash, 2.5 Pro' },
+  { key: 'claude',   label: 'Claude',   icon: <AlertIcon className="w-4 h-4" />, color: 'bg-amber-600',   desc: 'Sonnet 4.6, Opus 4.8, Haiku 4.5' },
+  { key: 'deepseek', label: 'DeepSeek', icon: <TargetIcon className="w-4 h-4" />, color: 'bg-purple-600',  desc: 'DeepSeek V3, R1' },
+  { key: 'grok',     label: 'Grok',     icon: <LightningIcon className="w-4 h-4" />, color: 'bg-orange-600',  desc: 'Grok 3, Grok 3 Mini' },
+  { key: 'openrouter', label: 'OpenRouter', icon: <ShuffleIcon className="w-4 h-4" />, color: 'bg-indigo-600', desc: 'Gateway nhiều model qua một API key' },
 ];
 
-const AI_PLATFORM_META: Record<string, { label: string; color: string; icon: string }> = {
-  openai:   { label: 'OpenAI',   color: 'bg-green-600',   icon: '🤖' },
-  gemini:   { label: 'Gemini',   color: 'bg-blue-600',    icon: '✨' },
-  claude:   { label: 'Claude',   color: 'bg-amber-600',   icon: '🟠' },
-  deepseek: { label: 'DeepSeek', color: 'bg-purple-600',  icon: '🔮' },
-  grok:     { label: 'Grok',     color: 'bg-orange-600',  icon: '⚡' },
-  openrouter: { label: 'OpenRouter', color: 'bg-indigo-600', icon: '🔀' },
+const AI_PLATFORM_META: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
+  openai:   { label: 'OpenAI',   color: 'bg-green-600',   icon: <BotIcon className="w-4 h-4" /> },
+  gemini:   { label: 'Gemini',   color: 'bg-blue-600',    icon: <SparklesIcon className="w-4 h-4" /> },
+  claude:   { label: 'Claude',   color: 'bg-amber-600',   icon: <AlertIcon className="w-4 h-4" /> },
+  deepseek: { label: 'DeepSeek', color: 'bg-purple-600',  icon: <TargetIcon className="w-4 h-4" /> },
+  grok:     { label: 'Grok',     color: 'bg-orange-600',  icon: <LightningIcon className="w-4 h-4" /> },
+  openrouter: { label: 'OpenRouter', color: 'bg-indigo-600', icon: <ShuffleIcon className="w-4 h-4" /> },
 };
 
 const CATALOG: Record<string, CatalogItem[]> = {
   pos: [
     {
       type: 'kiotviet', name: 'KiotViet', priority: 'p0',
-      icon: '🛒', color: 'bg-orange-500',
+      icon: <ShoppingCartIcon className="w-4 h-4" />, color: 'bg-orange-500',
       desc: 'Tra cứu đơn hàng, khách hàng ngay trong chat. Tạo đơn hàng từ workflow.',
       credentialFields: [
         { key: 'clientId',     label: 'Client ID',     placeholder: 'KiotViet client_id' },
@@ -72,7 +73,7 @@ const CATALOG: Record<string, CatalogItem[]> = {
     },
     {
       type: 'haravan', name: 'Haravan', priority: 'p0',
-      icon: '🏪', color: 'bg-indigo-500',
+      icon: <StoreIcon className="w-4 h-4" />, color: 'bg-indigo-500',
       desc: 'Nền tảng TMĐT Việt Nam. Tra cứu đơn hàng, khách hàng Haravan trong chat.',
       credentialFields: [
         { key: 'accessToken',   label: 'Access Token (khuyên dùng)', secret: true, placeholder: 'Haravan Access Token từ Custom App' },
@@ -83,7 +84,7 @@ const CATALOG: Record<string, CatalogItem[]> = {
     },
     {
       type: 'sapo', name: 'Sapo', priority: 'p0',
-      icon: '🟢', color: 'bg-emerald-500',
+      icon: <CheckCircleIcon className="w-4 h-4" />, color: 'bg-emerald-500',
       desc: 'Quản lý bán hàng đa kênh Sapo. Tra cứu đơn, khách hàng theo SĐT.',
       credentialFields: [
         { key: 'accessToken',  label: 'Access Token', secret: true, placeholder: 'Lấy từ SAPO Admin → Cài đặt → Phát triển → Quản lý API → Token' },
@@ -92,7 +93,7 @@ const CATALOG: Record<string, CatalogItem[]> = {
     },
     {
       type: 'nhanh', name: 'Nhanh.vn', priority: 'p0',
-      icon: '⚡', color: 'bg-yellow-600',
+      icon: <LightningIcon className="w-4 h-4" />, color: 'bg-yellow-600',
       desc: 'Phần mềm bán hàng đa kênh Nhanh.vn. Quản lý đơn hàng, kho, khách hàng.',
       credentialFields: [
         { key: 'appId',       label: 'App ID',       placeholder: 'Nhanh.vn Open API App ID' },
@@ -102,7 +103,7 @@ const CATALOG: Record<string, CatalogItem[]> = {
     },
     {
       type: 'pancake', name: 'Pancake POS', priority: 'p0',
-      icon: '🥞', color: 'bg-amber-500',
+      icon: <MenuIcon className="w-4 h-4" />, color: 'bg-amber-500',
       desc: 'Pancake POS/OMS. Tra cứu khách hàng, đơn hàng, sản phẩm và tạo đơn ngay trong chat.',
       credentialFields: [
         { key: 'accessToken', label: 'API Key (api_key)', secret: true, placeholder: 'Pancake Open API key' },
@@ -113,7 +114,7 @@ const CATALOG: Record<string, CatalogItem[]> = {
   payment: [
     {
       type: 'casso', name: 'Casso', priority: 'p0',
-      icon: '💳', color: 'bg-green-600',
+      icon: <CreditCardIcon className="w-4 h-4" />, color: 'bg-green-600',
       desc: 'Nhận webhook khi có giao dịch chuyển khoản VietQR. Tự động xác nhận đơn.',
       credentialFields: [
         { key: 'apiKey',    label: 'API Key', secret: true, placeholder: 'Casso API Key' },
@@ -122,7 +123,7 @@ const CATALOG: Record<string, CatalogItem[]> = {
     },
     {
       type: 'sepay', name: 'SePay', priority: 'p0',
-      icon: '💰', color: 'bg-teal-600',
+      icon: <DollarIcon className="w-4 h-4" />, color: 'bg-teal-600',
       desc: 'Nhận webhook giao dịch từ SePay. Kích hoạt workflow tự động khi nhận tiền.',
       credentialFields: [
         { key: 'apiKey',          label: 'API Key', secret: true, placeholder: 'SePay API Key' },
@@ -133,7 +134,7 @@ const CATALOG: Record<string, CatalogItem[]> = {
   shipping: [
     {
       type: 'ghn', name: 'GHN Express', priority: 'p0',
-      icon: '📦', color: 'bg-red-500',
+      icon: <PackageIcon className="w-4 h-4" />, color: 'bg-red-500',
       desc: 'Tạo đơn, tra cứu vận đơn GHN. Khách hỏi tracking → tự động reply.',
       credentialFields: [
         { key: 'token',  label: 'Token GHN', secret: true, placeholder: 'GHN Token' },
@@ -148,7 +149,7 @@ const CATALOG: Record<string, CatalogItem[]> = {
     },
     {
       type: 'ghtk', name: 'GHTK', priority: 'p0',
-      icon: '🚚', color: 'bg-blue-500',
+      icon: <TruckIcon className="w-4 h-4" />, color: 'bg-blue-500',
       desc: 'Tạo đơn, tra cứu vận đơn GHTK. Tự động gửi cập nhật trạng thái đơn.',
       credentialFields: [
         { key: 'token', label: 'Token GHTK', secret: true, placeholder: 'GHTK API Token' },
@@ -198,19 +199,17 @@ function AISection({ onNavigateAi }: { onNavigateAi: () => void }) {
       {/* 🚀 9Router FREE Banner */}
       <div className="mb-4 bg-gray-900/60 border-l-4 border-l-blue-500 border border-gray-700/60 rounded-xl p-3.5">
         <div className="flex items-start gap-3">
-          <div className="w-8 h-8 rounded-lg bg-blue-600/20 flex items-center justify-center text-lg flex-shrink-0 border border-blue-500/30">
-            🚀
-          </div>
+          <div className="w-8 h-8 rounded-lg bg-blue-600/20 flex items-center justify-center text-lg flex-shrink-0 border border-blue-500/30"><RocketIcon className="w-4 h-4 inline" /> </div>
           <div className="flex-1 min-w-0">
             <p className="text-gray-300 text-xs font-semibold mb-1.5">
               Cài đặt <strong className="text-white">9Router</strong> để dùng AI <strong className="text-green-400">FREE</strong> cho:
             </p>
             <div className="grid grid-cols-2 gap-x-4 gap-y-1">
               {[
-                '💬 Gợi ý trả lời trong hội thoại',
-                '🤖 Hỏi đáp với AI trong hội thoại',
-                '⚡ Dùng AI tạo workflow bằng câu lệnh',
-                '🔄 Node AI trả lời - tạo chatbot 24/7',
+                'Gợi ý trả lời trong hội thoại',
+                'Hỏi đáp với AI trong hội thoại',
+                'Dùng AI tạo workflow bằng câu lệnh',
+                'Node AI trả lời - tạo chatbot 24/7',
               ].map((text, i) => (
                 <p key={i} className="text-gray-300 text-[11px] flex items-center gap-1.5">
                   <span className="text-blue-500/70">▸</span>
@@ -235,17 +234,15 @@ function AISection({ onNavigateAi }: { onNavigateAi: () => void }) {
 
       {/* Section header */}
       <div className="flex items-center gap-3 mb-4">
-        <div className="w-8 h-8 rounded-lg bg-amber-600 flex items-center justify-center text-base">
-          🤖
-        </div>
+        <div className="w-8 h-8 rounded-lg bg-amber-600 flex items-center justify-center text-base text-white-important"><BotIcon className="w-4 h-4 inline" /> </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-semibold text-white">Trợ lý AI</h2>
             {hasAssistants && (
-              <span className="text-[10px] text-gray-500 ml-1">({assistants.length} trợ lý)</span>
+              <span className="text-[10px] text-gray-400 ml-1">({assistants.length} trợ lý)</span>
             )}
           </div>
-          <p className="text-[10px] text-gray-500">
+          <p className="text-[10px] text-gray-400">
             5 nền tảng · Tự động gợi ý trả lời, chat với AI, knowledge base
           </p>
         </div>
@@ -271,7 +268,7 @@ function AISection({ onNavigateAi }: { onNavigateAi: () => void }) {
                 className="text-left p-4 rounded-xl border border-gray-700 hover:border-blue-500 bg-gray-800 hover:bg-gray-750 transition-all group"
               >
                 <div className="flex items-start gap-3">
-                  <div className={`w-10 h-10 rounded-lg ${meta.color} flex items-center justify-center text-lg flex-shrink-0`}>
+                  <div className={`w-10 h-10 rounded-lg ${meta.color} flex items-center justify-center text-lg flex-shrink-0 text-white-important`}>
                     {meta.icon}
                   </div>
                   <div className="flex-1 min-w-0">
@@ -285,7 +282,7 @@ function AISection({ onNavigateAi }: { onNavigateAi: () => void }) {
                   </div>
                 </div>
                 <div className="mt-3 flex items-center justify-between">
-                  <span className={`text-xs flex items-center gap-1 ${a.enabled ? 'text-green-400' : 'text-gray-500'}`}>
+                  <span className={`text-xs flex items-center gap-1 ${a.enabled ? 'text-green-400' : 'text-gray-400'}`}>
                     <span className={`w-1.5 h-1.5 rounded-full ${a.enabled ? 'bg-green-400' : 'bg-gray-600'}`}/>
                     {a.enabled ? 'Đang bật' : 'Đã tắt'}
                   </span>
@@ -305,7 +302,7 @@ function AISection({ onNavigateAi }: { onNavigateAi: () => void }) {
               className="p-4 rounded-xl border border-gray-700 hover:border-blue-500 bg-gray-800/60 hover:bg-gray-750 transition-all group text-left"
             >
               <div className="flex items-start gap-3">
-                <div className={`w-10 h-10 rounded-lg ${platform.color} flex items-center justify-center text-xl flex-shrink-0`}>
+                <div className={`w-10 h-10 rounded-lg ${platform.color} flex items-center justify-center text-xl flex-shrink-0 text-white-important`}>
                   {platform.icon}
                 </div>
                 <div className="flex-1 min-w-0">
@@ -336,7 +333,7 @@ function TunnelStatusCard({ webhookPort, tunnelUrl, tunnelLoading, onToggle, sav
       <div className="flex items-start justify-between mb-3">
         <div>
           <h3 className="text-sm font-semibold flex items-center gap-2">
-            <span>🌐</span> Webhook Tunnel - Kết nối Internet
+            <span><GlobeIcon className="w-4 h-4" /></span> Webhook Tunnel - Kết nối Internet
           </h3>
           <p className="text-xs mt-1">
             Tunnel expose server local ra internet để nhận webhook thanh toán,
@@ -357,15 +354,15 @@ function TunnelStatusCard({ webhookPort, tunnelUrl, tunnelLoading, onToggle, sav
               <Spinner size={3} />
               Đang kết nối...
             </span>
-          ) : tunnelUrl ? '🌐 Đang Online' : '🔒 Bật Tunnel'}
+          ) : tunnelUrl ? <><GlobeIcon className="w-4 h-4 inline" /> Đang Online</> : <><LockIcon className="w-4 h-4 inline" /> Bật Tunnel</>}
         </button>
       </div>
 
       {/* URL display */}
       <div className="flex items-center gap-2 bg-gray-200/80 dark:bg-gray-900/60 rounded-xl px-4 py-3 border border-gray-300 dark:border-gray-700/40">
         <div className="flex-1 min-w-0">
-          <p className="text-[10px] text-gray-500 dark:text-gray-500 mb-0.5 font-medium">
-            {tunnelUrl ? 'URL công khai (internet):' : '⚠️ URL local (chỉ hoạt động nội bộ):'}
+          <p className="text-[10px] text-gray-400 dark:text-gray-400 mb-0.5 font-medium">
+            {tunnelUrl ? 'URL công khai (internet):' : <><AlertIcon className="w-4 h-4 inline" /> URL local (chỉ hoạt động nội bộ):</>}
           </p>
           <p className={`text-xs font-mono truncate ${tunnelUrl ? 'text-green-600 dark:text-green-400' : 'text-yellow-700 dark:text-yellow-500'}`}>
             {tunnelUrl || `http://127.0.0.1:${webhookPort}`}
@@ -375,7 +372,7 @@ function TunnelStatusCard({ webhookPort, tunnelUrl, tunnelLoading, onToggle, sav
           <button
             onClick={() => navigator.clipboard.writeText(tunnelUrl)}
             title="Copy URL"
-            className="flex-shrink-0 w-8 h-8 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-white flex items-center justify-center transition-colors"
+            className="flex-shrink-0 w-8 h-8 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-400 dark:text-gray-400 hover:text-gray-800 dark:hover:text-white flex items-center justify-center transition-colors"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
@@ -387,7 +384,7 @@ function TunnelStatusCard({ webhookPort, tunnelUrl, tunnelLoading, onToggle, sav
       {/* Billing explanation - always visible */}
       <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
         <div className="bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700/30 rounded-xl p-3">
-          <p className="text-xs font-semibold text-blue-700 dark:text-blue-300 mb-1">💳 Khi nào cần bật Tunnel?</p>
+          <p className="text-xs font-semibold text-blue-700 dark:text-blue-300 mb-1"><CreditCardIcon className="w-4 h-4 inline" /> Khi nào cần bật Tunnel?</p>
           <ul className="text-[11px] text-blue-600/80 dark:text-blue-200/80 space-y-1">
             <li>• Dùng <strong>Casso</strong> hoặc <strong>SePay</strong> để nhận thông báo chuyển khoản tự động</li>
             <li>• Hệ thống thanh toán <strong>cần server công khai</strong> để gửi webhook về</li>
@@ -409,7 +406,7 @@ function TunnelStatusCard({ webhookPort, tunnelUrl, tunnelLoading, onToggle, sav
       {/* Warning if no tunnel but has payment integration connected */}
       {!tunnelUrl && hasPaymentIntegration && (
         <div className="mt-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-700/40 rounded-xl px-4 py-3">
-          <p className="text-xs text-yellow-800 dark:text-yellow-400 font-medium mb-1">⚠️ Bạn đang dùng Casso/SePay nhưng Tunnel chưa bật</p>
+          <p className="text-xs text-yellow-800 dark:text-yellow-400 font-medium mb-1"><AlertIcon className="w-4 h-4 inline" /> Bạn đang dùng Casso/SePay nhưng Tunnel chưa bật</p>
           <p className="text-[11px] text-yellow-700 dark:text-yellow-500">
             Thanh toán tự động sẽ không hoạt động. Hãy bật Tunnel ở nút bên trên để nhận webhook từ internet.
           </p>
@@ -420,7 +417,7 @@ function TunnelStatusCard({ webhookPort, tunnelUrl, tunnelLoading, onToggle, sav
       {tunnelUrl && (
         <div className="mt-3 bg-green-50 dark:bg-green-900/15 border border-green-300 dark:border-green-700/30 rounded-xl px-4 py-3">
           <div className="flex items-center gap-2">
-            <span className="text-green-600 dark:text-green-400 text-sm">✅</span>
+            <span className="text-green-600 dark:text-green-400"><CheckIcon className="w-4 h-4" /></span>
             <p className="text-xs text-green-800 dark:text-green-300 font-medium">Tunnel đang hoạt động - sẵn sàng nhận webhook thanh toán</p>
           </div>
           <p className="text-[11px] text-green-700/70 dark:text-green-400/70 mt-1 ml-5">
@@ -449,12 +446,12 @@ function IntegrationSection({ sectionKey, catalog, savedList, onSelect }: {
     <div id={`section-${sectionKey}`} className="scroll-mt-20">
       {/* Section header */}
       <div className="flex items-center gap-3 mb-4">
-        <div className={`w-8 h-8 rounded-lg ${meta.color} flex items-center justify-center text-base`}>
+        <div className={`w-8 h-8 rounded-lg ${meta.color} flex items-center justify-center text-base text-white-important`}>
           {meta.icon}
         </div>
         <div>
           <h2 className="text-sm font-semibold text-white">{meta.label}</h2>
-          <p className="text-[10px] text-gray-500">
+          <p className="text-[10px] text-gray-400">
             {catalog.length} nền tảng
             {connectedCount > 0 && <span className="text-green-500"> · {connectedCount} đã kết nối</span>}
           </p>
@@ -473,7 +470,7 @@ function IntegrationSection({ sectionKey, catalog, savedList, onSelect }: {
               className="text-left p-4 rounded-xl border border-gray-700 hover:border-blue-500 bg-gray-800 hover:bg-gray-750 transition-all group"
             >
               <div className="flex items-start gap-3">
-                <div className={`w-10 h-10 rounded-lg ${item.color} flex items-center justify-center text-xl flex-shrink-0`}>
+                <div className={`w-10 h-10 rounded-lg ${item.color} flex items-center justify-center text-xl flex-shrink-0 text-white-important`}>
                   {item.icon}
                 </div>
                 <div className="flex-1 min-w-0">
@@ -491,7 +488,7 @@ function IntegrationSection({ sectionKey, catalog, savedList, onSelect }: {
                 </div>
               </div>
               <div className="mt-3 flex items-center justify-between">
-                <span className={`text-xs flex items-center gap-1 ${connected ? 'text-green-400' : 'text-gray-500'}`}>
+                <span className={`text-xs flex items-center gap-1 ${connected ? 'text-green-400' : 'text-gray-400'}`}>
                   <span className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-green-400' : 'bg-gray-600'}`}/>
                   {connected ? 'Đã kết nối' : saved ? 'Chưa xác nhận' : 'Chưa kết nối'}
                 </span>
@@ -559,10 +556,10 @@ export default function IntegrationPage() {
       } else {
         const res = await ipc.tunnel?.start();
         if (res?.success && res.url) setTunnelUrl(res.url);
-        else alert('❌ Không thể mở Tunnel: ' + (res?.error || 'Lỗi không xác định'));
+        else alert('Không thể mở Tunnel: ' + (res?.error || 'Lỗi không xác định'));
       }
     } catch (e: any) {
-      alert('❌ Lỗi tunnel: ' + e.message);
+      alert('Lỗi tunnel: ' + e.message);
     }
     setTunnelLoading(false);
   };
@@ -618,13 +615,13 @@ export default function IntegrationPage() {
         <div className="px-6 py-6 space-y-2">
 
           {isOfflineEmployee ? (
-            <div className="flex flex-col items-center justify-center h-full py-20 text-center text-gray-500">
-              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" className="text-gray-600 mb-4">
+            <div className="flex flex-col items-center justify-center h-full py-20 text-center text-gray-400">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" className="text-gray-400 mb-4">
                 <rect x="2" y="2" width="20" height="20" rx="3" />
                 <path d="M9 12h6M12 9v6" />
               </svg>
               <p className="text-gray-400 font-semibold mb-1">Không có dữ liệu</p>
-              <p className="text-gray-600 text-sm">Mất kết nối tới Boss. Dữ liệu tích hợp không khả dụng.</p>
+              <p className="text-gray-400 text-sm">Mất kết nối tới Boss. Dữ liệu tích hợp không khả dụng.</p>
             </div>
           ) : loading ? (
             <PageLoading variant="inline" text="Đang tải tích hợp..." />
@@ -699,8 +696,8 @@ function TopBar({ activeTab, onTabChange, tunnelUrl, tunnelLoading, onTunnelTogg
         {/* Title row */}
         <div className="flex items-center justify-between py-3">
           <div className="flex items-center gap-3">
-            <h1 className="text-base font-semibold text-white">🔌 Tích hợp</h1>
-            <p className="text-[11px] text-gray-500">Kết nối nền tảng bên ngoài</p>
+            <h1 className="text-base font-semibold text-white"><PluginIcon className="w-4 h-4 inline" /> Tích hợp</h1>
+            <p className="text-[11px] text-gray-400">Kết nối nền tảng bên ngoài</p>
           </div>
           {/* Compact tunnel toggle in top bar */}
           <button

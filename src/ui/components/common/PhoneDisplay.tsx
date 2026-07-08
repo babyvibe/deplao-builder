@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { formatPhone } from '@/utils/phoneUtils';
+import { PhoneIcon } from './icons';
 
 interface PhoneDisplayProps {
   phone: string | undefined | null;
@@ -36,8 +37,8 @@ export default function PhoneDisplay({ phone, maskIfEmpty = false, className = '
       title={formatted ? 'Click để copy SĐT' : ''}
       onClick={handleCopy}
     >
-      {showIcon && <span>📞</span>}
-      <span className={`${formatted ? 'group-hover:text-blue-400 transition-colors' : 'text-gray-600'}`}>
+      {showIcon && <PhoneIcon className="w-3 h-3" />}
+      <span className={`${formatted ? 'group-hover:text-blue-400 transition-colors' : 'text-gray-400'}`}>
         {display}
       </span>
       {/* Clipboard icon – hiện khi hover */}

@@ -3,6 +3,7 @@ import ipc from '@/lib/ipc';
 import { useEmployeeStore } from '@/store/employeeStore';
 import { useAppStore } from '@/store/appStore';
 import RestQueryService from '../../../services/http/RestQueryService';
+import { AlertIcon, GlobeIcon, HomeIcon, PluginIcon, UserIcon } from '@/components/common/icons';
 
 interface Props {
     onBossMode: () => void;
@@ -151,8 +152,7 @@ export default function EmployeeLoginScreen({ onBossMode, onEmployeeConnected }:
                                 ? 'bg-green-600 text-white shadow-lg'
                                 : 'text-gray-400 hover:text-gray-200'
                         }`}
-                    >
-                        👤 Nhân viên
+                    ><UserIcon className="w-4 h-4 inline" /> Nhân viên
                     </button>
                 </div>
 
@@ -178,22 +178,22 @@ export default function EmployeeLoginScreen({ onBossMode, onEmployeeConnected }:
 
                             {/* Boss Address */}
                             <div>
-                                <label className="text-[11px] text-gray-500 mb-1 block">Địa chỉ BOSS</label>
+                                <label className="text-[11px] text-gray-400 mb-1 block">Địa chỉ BOSS</label>
                                 <input
                                     value={bossAddress} onChange={e => setBossAddress(e.target.value)}
                                     placeholder="192.168.1.100:9900 hoặc https://xxx.trycloudflare.com"
                                     className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-sm text-gray-200 placeholder-gray-500"
                                 />
-                                <p className="text-[10px] text-gray-600 mt-1">
+                                <p className="text-[10px] text-gray-400 mt-1">
                                     {bossAddress.includes('://')
-                                        ? '🌐 Kết nối qua internet (Tunnel URL)'
-                                        : '🏠 Kết nối qua LAN (IP:Port)'}
+                                        ? <><GlobeIcon className="w-4 h-4 inline" /> Kết nối qua internet (Tunnel URL)</>
+                                        : <><HomeIcon className="w-4 h-4 inline" /> Kết nối qua LAN (IP:Port)</>}
                                 </p>
                             </div>
 
                             {/* Credentials */}
                             <div>
-                                <label className="text-[11px] text-gray-500 mb-1 block">Tên đăng nhập</label>
+                                <label className="text-[11px] text-gray-400 mb-1 block">Tên đăng nhập</label>
                                 <input
                                     value={username} onChange={e => setUsername(e.target.value)}
                                     placeholder="nhanvien01"
@@ -201,7 +201,7 @@ export default function EmployeeLoginScreen({ onBossMode, onEmployeeConnected }:
                                 />
                             </div>
                             <div>
-                                <label className="text-[11px] text-gray-500 mb-1 block">Mật khẩu</label>
+                                <label className="text-[11px] text-gray-400 mb-1 block">Mật khẩu</label>
                                 <input
                                     type="password" value={password} onChange={e => setPassword(e.target.value)}
                                     placeholder="••••••"
@@ -212,7 +212,7 @@ export default function EmployeeLoginScreen({ onBossMode, onEmployeeConnected }:
 
                             {error && (
                                 <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
-                                    ⚠️ {error}
+                                    <AlertIcon className="w-4 h-4 inline" /> {error}
                                 </p>
                             )}
 
@@ -229,7 +229,7 @@ export default function EmployeeLoginScreen({ onBossMode, onEmployeeConnected }:
 
                 {/* Footer */}
                 <div className="px-6 py-3 border-t border-gray-700/50 text-center">
-                    <p className="text-[10px] text-gray-600">Deplao - Quản lý Zalo & Facebook đa tài khoản</p>
+                    <p className="text-[10px] text-gray-400">Deplao - Quản lý Zalo & Facebook đa tài khoản</p>
                 </div>
             </div>
         </div>

@@ -3,6 +3,8 @@ import { useAccountStore } from '@/store/accountStore';
 import AccountMultiDropdown from '../common/AccountMultiDropdown';
 import QuickMessageSettings from './conversation/QuickMessageSettings';
 import LabelSettings from './conversation/LabelSettings';
+import { TagIcon } from '@/components/common/icons';
+
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type MainTab = 'quick_msg' | 'labels';
@@ -31,8 +33,8 @@ export default function ConversationSettings() {
         {/* Main tabs - pill style */}
         <div className="flex bg-gray-800 rounded-lg p-0.5 gap-0.5 my-2">
           {([
-            { id: 'quick_msg' as const, label: '⚡ Tin nhắn nhanh' },
-            { id: 'labels'    as const, label: '🏷️ Quản lý nhãn' },
+            { id: 'quick_msg' as const, label: 'Tin nhắn nhanh' },
+            { id: 'labels'    as const, label: 'Quản lý nhãn' },
           ]).map(tab => (
             <button
               key={tab.id}
@@ -68,7 +70,7 @@ export default function ConversationSettings() {
             placeholder="Tìm kiếm..."
             className="bg-gray-800 border border-gray-700 text-sm rounded-lg pl-8 pr-3 py-1.5 focus:border-blue-500 outline-none w-44 text-gray-200 placeholder-gray-500"
           />
-          <svg className="w-4 h-4 text-gray-500 absolute left-2.5 top-1/2 -translate-y-1/2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <svg className="w-4 h-4 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
           </svg>
         </div>

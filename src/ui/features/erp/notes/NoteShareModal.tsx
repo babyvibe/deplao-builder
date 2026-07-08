@@ -4,6 +4,8 @@ import { useErpEmployeeStore } from '@/store/erp/erpEmployeeStore';
 import type { ErpNote, NoteShareScope, NoteSharePermission } from '../../../../models/erp';
 import { EmployeeAvatar } from '../shared/ErpBadges';
 import PageLoading from '@/components/common/PageLoading';
+import { GlobeIcon, LockIcon, UsersIcon } from '@/components/common/icons';
+
 
 interface Props {
   note: ErpNote;
@@ -71,7 +73,7 @@ export default function NoteShareModal({ note, onClose, onSaved }: Props) {
           <h3 className="text-base font-semibold text-white">Chia sẻ note</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-white text-lg">×</button>
         </div>
-        <p className="text-xs text-gray-500 mb-3 truncate">"{note.title}"</p>
+        <p className="text-xs text-gray-400 mb-3 truncate">"{note.title}"</p>
 
         {/* Scope picker */}
         <div className="grid grid-cols-3 gap-2 mb-3">
@@ -85,7 +87,7 @@ export default function NoteShareModal({ note, onClose, onSaved }: Props) {
                   : 'border-gray-600 text-gray-400 hover:bg-gray-700'
               }`}
             >
-              {s === 'private' ? '🔒 Riêng tư' : s === 'workspace' ? '🌐 Toàn workspace' : '👥 Tuỳ chọn'}
+              {s === 'private' ? <><LockIcon className="w-4 h-4 inline" /> Riêng tư</> : s === 'workspace' ? <><GlobeIcon className="w-4 h-4 inline" /> Toàn workspace</> : <><UsersIcon className="w-4 h-4 inline" /> Tuỳ chọn</>}
             </button>
           ))}
         </div>
@@ -118,7 +120,7 @@ export default function NoteShareModal({ note, onClose, onSaved }: Props) {
             <div className="flex-1 overflow-y-auto">
               {loading && <PageLoading variant="inline" size="sm" />}
               {!loading && rows.length === 0 && (
-                <p className="text-xs text-gray-500 p-3 text-center">Chưa chia sẻ với ai. Gõ tên để thêm.</p>
+                <p className="text-xs text-gray-400 p-3 text-center">Chưa chia sẻ với ai. Gõ tên để thêm.</p>
               )}
               {rows.map(r => (
                 <div key={r.employeeId} className="flex items-center gap-2 px-3 py-2 border-b border-gray-700/40 last:border-b-0">
@@ -132,7 +134,7 @@ export default function NoteShareModal({ note, onClose, onSaved }: Props) {
                     <option value="read">Xem</option>
                     <option value="edit">Sửa</option>
                   </select>
-                  <button onClick={() => remove(r.employeeId)} className="text-gray-500 hover:text-red-400 text-sm">×</button>
+                  <button onClick={() => remove(r.employeeId)} className="text-gray-400 hover:text-red-400 text-sm">×</button>
                 </div>
               ))}
             </div>
@@ -140,7 +142,7 @@ export default function NoteShareModal({ note, onClose, onSaved }: Props) {
         )}
 
         {scope !== 'custom' && (
-          <p className="text-xs text-gray-500 italic p-2">
+          <p className="text-xs text-gray-400 italic p-2">
             {scope === 'private'
               ? 'Chỉ bạn thấy note này.'
               : 'Tất cả thành viên workspace có thể xem (chỉ người tạo được sửa).'}

@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { ClipboardListIcon, EditIcon, UsersIcon } from '@/components/common/icons';
+
 
 interface CampaignCloneModalProps {
   campaignName: string;
@@ -34,7 +36,7 @@ export default function CampaignCloneModal({ campaignName, totalContacts, onClos
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700">
           <div className="flex items-center gap-2">
-            <span className="text-lg">📋</span>
+            <span className="text-lg"><ClipboardListIcon className="w-4 h-4" /></span>
             <h3 className="font-semibold text-white text-sm">Nhân bản chiến dịch</h3>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">✕</button>
@@ -43,7 +45,7 @@ export default function CampaignCloneModal({ campaignName, totalContacts, onClos
         <div className="p-5 space-y-4">
           {/* Campaign preview */}
           <div className="bg-gray-700/60 rounded-xl px-4 py-3">
-            <p className="text-[11px] text-gray-500 mb-0.5">Chiến dịch gốc</p>
+            <p className="text-[11px] text-gray-400 mb-0.5">Chiến dịch gốc</p>
             <p className="text-sm text-white font-medium truncate">{campaignName}</p>
             <p className="text-xs text-gray-400 mt-0.5">{totalContacts} liên hệ</p>
           </div>
@@ -74,7 +76,7 @@ export default function CampaignCloneModal({ campaignName, totalContacts, onClos
                     : 'border-gray-600 text-gray-400 hover:border-gray-500 hover:text-gray-200'
                 }`}
               >
-                <span className="text-xl">📝</span>
+                <span className="text-xl"><EditIcon className="w-4 h-4" /></span>
                 <span className="text-xs font-semibold">Chỉ clone template</span>
                 <span className="text-[11px] leading-snug opacity-70">
                   Sao chép nội dung trừ danh sách tệp gửi.
@@ -89,7 +91,7 @@ export default function CampaignCloneModal({ campaignName, totalContacts, onClos
                     : 'border-gray-600 text-gray-400 hover:border-gray-500 hover:text-gray-200'
                 }`}
               >
-                <span className="text-xl">👥</span>
+                <span className="text-xl"><UsersIcon className="w-4 h-4" /></span>
                 <span className="text-xs font-semibold">Clone giống hệt</span>
                 <span className="text-[11px] leading-snug opacity-70">
                   Sao chép toàn bộ, cả danh sách tệp gửi.

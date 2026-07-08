@@ -212,12 +212,12 @@ export default function GroupBoardPanel({
               className={`flex-1 py-2.5 text-xs font-medium transition-colors border-b-2 ${
                 tab === key
                   ? 'text-blue-400 border-blue-500'
-                  : 'text-gray-500 border-transparent hover:text-gray-300'
+                  : 'text-gray-400 border-transparent hover:text-gray-300'
               }`}
             >
               {label}
               {counts[key] > 0 && (
-                <span className={`ml-1 text-[11px] ${tab === key ? 'text-blue-400' : 'text-gray-600'}`}>
+                <span className={`ml-1 text-[11px] ${tab === key ? 'text-blue-400' : 'text-gray-400'}`}>
                   ({counts[key]})
                 </span>
               )}
@@ -233,7 +233,7 @@ export default function GroupBoardPanel({
             <Spinner size={6} />
           </div>
         ) : displayed.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-gray-500 gap-2">
+          <div className="flex flex-col items-center justify-center py-16 text-gray-400 gap-2">
             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" className="opacity-30">
               <rect x="3" y="3" width="18" height="18" rx="2"/>
               <line x1="9" y1="9" x2="15" y2="9"/>
@@ -312,7 +312,7 @@ function BoardCard({ item, onNoteClick, onScrollToMsg, zaloId, threadId }: {
           <p className="text-sm text-gray-100 font-medium leading-snug whitespace-pre-wrap line-clamp-3">{note.title}</p>
         </div>
         <div className="flex items-center justify-between px-4 pb-3 pt-1">
-          <span className="text-xs text-gray-500">{formatTime(note.createTime)}</span>
+          <span className="text-xs text-gray-400">{formatTime(note.createTime)}</span>
           <button
             onClick={e => { e.stopPropagation(); onNoteClick?.(note); }}
             className="text-xs text-blue-400 hover:text-blue-300 font-semibold transition-colors"
@@ -360,7 +360,7 @@ function BoardCard({ item, onNoteClick, onScrollToMsg, zaloId, threadId }: {
           </div>
         )}
         <div className="flex items-center justify-between px-4 pb-3 pt-1">
-          <span className="text-xs text-gray-500">{formatTime(pin.timestamp)}</span>
+          <span className="text-xs text-gray-400">{formatTime(pin.timestamp)}</span>
           <button
             onClick={() => onScrollToMsg?.(pin.msg_id)}
             className="text-xs text-blue-400 hover:text-blue-300 font-semibold transition-colors"
@@ -455,9 +455,9 @@ function PollBoardCard({ poll, zaloId, threadId }: { poll: NonNullable<BoardItem
               <line x1="8" y1="9" x2="16" y2="9"/>
             </svg>
             <span className="text-[11px] text-green-400 font-medium">Bình chọn</span>
-            {isAnon && <span className="text-[11px] text-gray-500 bg-gray-700 px-1.5 py-0.5 rounded ml-1">Ẩn danh</span>}
+            {isAnon && <span className="text-[11px] text-gray-400 bg-gray-700 px-1.5 py-0.5 rounded ml-1">Ẩn danh</span>}
             {(isClosed || isExpired) && (
-              <span className="text-[11px] text-gray-500 bg-gray-700 px-1.5 py-0.5 rounded ml-1">
+              <span className="text-[11px] text-gray-400 bg-gray-700 px-1.5 py-0.5 rounded ml-1">
                 {isClosed ? 'Đã khoá' : 'Hết hạn'}
               </span>
             )}
@@ -468,7 +468,7 @@ function PollBoardCard({ poll, zaloId, threadId }: { poll: NonNullable<BoardItem
       {/* Question */}
       <div className="px-4 pb-2">
         <p className="text-sm font-bold text-gray-100">{poll.question}</p>
-        {allowMulti && <p className="text-xs text-gray-500 mt-0.5">Chọn nhiều phương án</p>}
+        {allowMulti && <p className="text-xs text-gray-400 mt-0.5">Chọn nhiều phương án</p>}
         {totalVotes > 0 && <p className="text-xs text-blue-400 font-semibold mt-0.5">{totalVotes} lượt bình chọn</p>}
       </div>
 
@@ -491,13 +491,13 @@ function PollBoardCard({ poll, zaloId, threadId }: { poll: NonNullable<BoardItem
             showAddOption={true}
           />
         ) : (
-          <p className="text-xs text-gray-500 py-2 text-center px-4">Không có dữ liệu</p>
+          <p className="text-xs text-gray-400 py-2 text-center px-4">Không có dữ liệu</p>
         )
       )}
 
       {/* Footer */}
       <div className="flex items-center justify-between px-4 pb-3 pt-1">
-        <span className="text-xs text-gray-500">{formatTime(poll.timestamp)}</span>
+        <span className="text-xs text-gray-400">{formatTime(poll.timestamp)}</span>
         <button
           onClick={handleExpand}
           className="text-xs text-blue-400 hover:text-blue-300 font-semibold transition-colors flex items-center gap-1"

@@ -8,6 +8,8 @@ import AccountSelectorDropdown, { AccountOption } from '../../common/AccountSele
 import { QuickMessage, LocalMediaFile, fetchZaloQuickMessages, invalidateZaloQuickMessageCache } from '../../chat/QuickMessageManager';
 import { toLocalMediaUrl } from '@/lib/localMedia';
 import PhoneDisplay from '@/components/common/PhoneDisplay';
+import { AlertIcon, ChartIcon, CheckIcon, ClipboardListIcon, CloudIcon, HardDriveIcon, ImageIcon, InboxIcon, LightningIcon, PluginIcon, PlusIcon, RefreshIcon } from '@/components/common/icons';
+
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type QuickMsgSource = 'local' | 'zalo';
@@ -49,12 +51,12 @@ export function mapDbRowToLocalQMItem(r: any): LocalQMItem {
 }
 
 // ─── Shared mini-components ───────────────────────────────────────────────────
-function EmptyState({ icon, title, subtitle }: { icon: string; title: string; subtitle: string }) {
+function EmptyState({ icon, title, subtitle }: { icon: React.ReactNode; title: string; subtitle: string }) {
   return (
     <div className="text-center py-14">
-      <p className="text-3xl mb-2">{icon}</p>
+      <p className="text-3xl mb-2 justify-items-center">{icon}</p>
       <p className="text-gray-400 text-sm font-medium">{title}</p>
-      <p className="text-gray-600 text-xs mt-1">{subtitle}</p>
+      <p className="text-gray-400 text-xs mt-1">{subtitle}</p>
     </div>
   );
 }
@@ -93,8 +95,7 @@ function MediaThumbs({ item }: { item: QuickMessage }) {
         </div>
       ))}
       {localFiles?.filter(f => f.type === 'image').length ? (
-        <span className="self-center text-[11px] text-blue-400 bg-blue-900/30 px-1.5 py-0.5 rounded flex items-center gap-0.5">
-          🖼 {localFiles.filter(f => f.type === 'image').length} ảnh
+        <span className="self-center text-[11px] text-blue-400 bg-blue-900/30 px-1.5 py-0.5 rounded flex items-center gap-0.5"><ImageIcon className="w-4 h-4 inline" /> {localFiles.filter(f => f.type === 'image').length} ảnh
         </span>
       ) : null}
       {localFiles?.filter(f => f.type === 'video').length ? (
@@ -123,7 +124,7 @@ function LocalMsgRow({
     <div className={`bg-gray-900 border rounded-xl p-3 hover:border-gray-600 transition-colors ${isDragging ? 'opacity-40' : ''} ${isActive ? 'border-gray-700/80' : 'border-gray-700/30 opacity-60'}`}>
       <div className="flex items-start gap-3">
         {/* Drag handle */}
-        <div className="pt-2 shrink-0 cursor-grab text-gray-600 hover:text-gray-400 select-none" title="Kéo để sắp xếp">
+        <div className="pt-2 shrink-0 cursor-grab text-gray-400 hover:text-gray-400 select-none" title="Kéo để sắp xếp">
           <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor">
             <circle cx="3" cy="2.5" r="1.2"/><circle cx="7" cy="2.5" r="1.2"/>
             <circle cx="3" cy="7" r="1.2"/><circle cx="7" cy="7" r="1.2"/>
@@ -135,7 +136,7 @@ function LocalMsgRow({
             /{item.keyword}
           </span>
           {(item.sort_order ?? 0) > 0 && (
-            <span className="block mt-1 text-center text-[9px] text-gray-600 font-mono">#{item.sort_order}</span>
+            <span className="block mt-1 text-center text-[9px] text-gray-400 font-mono">#{item.sort_order}</span>
           )}
         </div>
         <div className="flex-1 min-w-0">
@@ -145,7 +146,7 @@ function LocalMsgRow({
         {/* Actions */}
         <div className="flex items-center gap-0.5 shrink-0">
           <button onClick={onToggleActive} title={isActive ? 'Tắt' : 'Bật'}
-            className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${isActive ? 'text-green-400 hover:bg-green-500/10' : 'text-gray-600 hover:bg-gray-700 hover:text-gray-400'}`}>
+            className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${isActive ? 'text-green-400 hover:bg-green-500/10' : 'text-gray-400 hover:bg-gray-700 hover:text-gray-400'}`}>
             {isActive
               ? <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"/><polyline points="9 12 11 14 15 10"/></svg>
               : <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/></svg>
@@ -179,7 +180,7 @@ function LocalMsgRow({
               </div>
             )}
             <span className="text-[11px] text-gray-400 truncate max-w-[140px]">{accountName}</span>
-            <PhoneDisplay phone={accountPhone} className="text-xs text-gray-500" />
+            <PhoneDisplay phone={accountPhone} className="text-xs text-gray-400" />
           </div>
         </div>
       )}
@@ -199,7 +200,7 @@ function ZaloMsgRow({ item, onEdit, onDelete }: { item: QuickMessage; onEdit: ()
         <div className="flex-1 min-w-0">
           <p className="text-sm text-gray-200 whitespace-pre-wrap line-clamp-2">{item.message?.title || '<Không có nội dung>'}</p>
           <MediaThumbs item={item} />
-          <span className="text-[11px] text-blue-500/80 mt-1 flex items-center gap-1">☁️ Lưu trên Zalo</span>
+          <span className="text-[11px] text-blue-500/80 mt-1 flex items-center gap-1"><CloudIcon className="w-4 h-4 inline" /> Lưu trên Zalo</span>
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
           <button onClick={onEdit} title="Sửa"
@@ -339,7 +340,7 @@ function LocalMsgModal({
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-xs text-gray-400 font-medium">
-                Media đính kèm <span className="text-gray-600">({localMediaFiles.length} file)</span>
+                Media đính kèm <span className="text-gray-400">({localMediaFiles.length} file)</span>
               </label>
               {localMediaFiles.length > 0 && (
                 <button onClick={() => setLocalMediaFiles([])} className="text-[11px] text-red-400 hover:text-red-300">Xóa tất cả</button>
@@ -383,14 +384,14 @@ function LocalMsgModal({
                 Thêm video
               </button>
             </div>
-            <p className="text-[11px] text-gray-500 mt-1.5">Ảnh/video sẽ được gửi kèm khi chọn tin nhắn nhanh này.</p>
+            <p className="text-[11px] text-gray-400 mt-1.5">Ảnh/video sẽ được gửi kèm khi chọn tin nhắn nhanh này.</p>
           </div>
 
           {/* Tài khoản áp dụng */}
           <div className="border-t border-gray-700/50 pt-4">
             <label className="block text-xs text-gray-400 mb-2 font-medium">Tài khoản áp dụng</label>
             {accounts.length === 0 ? (
-              <p className="text-xs text-gray-500 italic">Chưa có tài khoản nào</p>
+              <p className="text-xs text-gray-400 italic">Chưa có tài khoản nào</p>
             ) : isEdit ? (
               /* Edit mode: single account selector */
               <>
@@ -404,7 +405,7 @@ function LocalMsgModal({
                 />
                 {editAccountId !== initialData!.owner_zalo_id && (
                   <p className="text-[11px] text-yellow-400/80 mt-1.5">
-                    ⚠️ Tin nhắn sẽ được chuyển sang tài khoản mới.
+                    <AlertIcon className="w-4 h-4 inline" /> Tin nhắn sẽ được chuyển sang tài khoản mới.
                   </p>
                 )}
               </>
@@ -428,19 +429,19 @@ function LocalMsgModal({
                       )}
                       <div className="min-w-0 flex-1">
                         <p className="text-sm text-gray-200 truncate">{acc.full_name || acc.zalo_id}</p>
-                        {acc.phone && <p className="text-[11px] text-gray-500">{acc.phone}</p>}
+                        {acc.phone && <p className="text-[11px] text-gray-400">{acc.phone}</p>}
                       </div>
                     </label>
                   ))}
                 </div>
                 {selectedAccountIds.size > 0 && (
                   <p className="text-[11px] text-blue-400/80 mt-1.5">
-                    ✅ Sẽ thêm cho {selectedAccountIds.size} tài khoản đã chọn.
+                    <CheckIcon className="w-4 h-4 inline" /> Sẽ thêm cho {selectedAccountIds.size} tài khoản đã chọn.
                   </p>
                 )}
                 {selectedAccountIds.size === 0 && (
                   <p className="text-[11px] text-red-400/80 mt-1.5">
-                    ⚠️ Chọn ít nhất 1 tài khoản.
+                    <AlertIcon className="w-4 h-4 inline" /> Chọn ít nhất 1 tài khoản.
                   </p>
                 )}
               </>
@@ -494,7 +495,7 @@ function ZaloMsgModal({ initialData, accountName, onClose, onSave }: {
         </div>
         <div className="p-5 space-y-4 overflow-y-auto">
           <div className="flex items-center gap-2 bg-blue-900/20 rounded-lg px-3 py-2 border border-blue-800/30">
-            <span className="text-blue-400 text-sm">☁️</span>
+            <span className="text-blue-400"><CloudIcon className="w-4 h-4" /></span>
             <p className="text-xs text-blue-300">Tài khoản: <strong>{accountName}</strong></p>
           </div>
           <div>
@@ -575,18 +576,17 @@ function CloneMsgModal({ accounts, onClose, onSave }: {
           <button onClick={onClose} className="text-gray-400 hover:text-white">✕</button>
         </div>
         <div className="p-5 space-y-4">
-          <p className="text-xs text-gray-400 bg-gray-700/50 rounded-lg px-3 py-2 border border-gray-600">
-            📋 Sao chép tin nhắn nhanh Local từ tài khoản nguồn sang đích.
+          <p className="text-xs text-gray-400 bg-gray-700/50 rounded-lg px-3 py-2 border border-gray-600"><ClipboardListIcon className="w-4 h-4 inline" /> Sao chép tin nhắn nhanh Local từ tài khoản nguồn sang đích.
           </p>
           <div>
             <label className="block text-xs text-gray-400 mb-1.5">Từ tài khoản (Nguồn)</label>
             <AccountSelectorDropdown position="up-left" fullWidth options={sourceOptions} activeId={source} onSelect={setSource} placeholder="Chọn tài khoản nguồn..." />
           </div>
-          <div className="flex justify-center text-xl text-gray-600">⬇️</div>
+          <div className="flex justify-center text-xl text-gray-400">⬇️</div>
           <div>
             <label className="block text-xs text-gray-400 mb-1.5">Sang tài khoản (Đích)</label>
             {targetOptions.length === 0
-              ? <p className="text-xs text-gray-500 italic px-2">Không có tài khoản đích khả dụng</p>
+              ? <p className="text-xs text-gray-400 italic px-2">Không có tài khoản đích khả dụng</p>
               : <AccountSelectorDropdown position="up-left" fullWidth options={targetOptions} activeId={target} onSelect={setTarget} placeholder="Chọn tài khoản đích..." />
             }
           </div>
@@ -603,7 +603,7 @@ function CloneMsgModal({ accounts, onClose, onSave }: {
               <label className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${mode === 'replace' ? 'border-red-500 bg-red-500/10' : 'border-gray-600 hover:border-gray-500'}`}>
                 <input type="radio" name="clone-mode" value="replace" checked={mode === 'replace'} onChange={() => setMode('replace')} className="mt-0.5 accent-red-500" />
                 <div>
-                  <p className="text-sm font-semibold text-red-300">🔄 Thay thế (Ghi đè)</p>
+                  <p className="text-sm font-semibold text-red-300"><RefreshIcon className="w-4 h-4 inline" /> Thay thế (Ghi đè)</p>
                   <p className="text-xs text-gray-400 mt-0.5">Trùng keyword sẽ bị ghi đè bởi bản từ nguồn.</p>
                 </div>
               </label>
@@ -614,7 +614,7 @@ function CloneMsgModal({ accounts, onClose, onSave }: {
           <button onClick={onClose} className="px-4 py-2 text-gray-400 hover:text-white text-sm">Hủy</button>
           <button onClick={() => onSave(source, target, mode)} disabled={!valid}
             className={`px-4 py-2 text-white text-sm font-medium rounded-lg disabled:opacity-40 ${mode === 'replace' ? 'bg-red-600 hover:bg-red-500' : 'bg-blue-600 hover:bg-blue-500'}`}
-          >{mode === 'replace' ? '🔄 Thay thế' : '➕ Thêm mới'}</button>
+          >{mode === 'replace' ? <><RefreshIcon className="w-4 h-4 inline" /> Thay thế</> : <><PlusIcon className="w-4 h-4 inline" /> Thêm mới</>}</button>
         </div>
       </div>
     </ModalWrapper>
@@ -634,8 +634,8 @@ function SyncModal({ accountName, zaloCount, onClose, onSave }: {
         </div>
         <div className="p-5 space-y-3">
           <div className="bg-blue-900/20 rounded-lg px-3 py-2.5 border border-blue-800/30 space-y-0.5">
-            <p className="text-xs text-blue-300">☁️ Tài khoản: <strong>{accountName}</strong></p>
-            <p className="text-xs text-blue-300">📊 Số tin nhắn sẽ đồng bộ: <strong>{zaloCount}</strong></p>
+            <p className="text-xs text-blue-300"><CloudIcon className="w-4 h-4 inline" /> Tài khoản: <strong>{accountName}</strong></p>
+            <p className="text-xs text-blue-300"><ChartIcon className="w-4 h-4 inline" /> Số tin nhắn sẽ đồng bộ: <strong>{zaloCount}</strong></p>
           </div>
           <p className="text-xs text-gray-400 font-medium pt-1">Chọn chế độ đồng bộ:</p>
           <button onClick={() => onSave('merge')}
@@ -645,7 +645,7 @@ function SyncModal({ accountName, zaloCount, onClose, onSave }: {
           </button>
           <button onClick={() => onSave('replace')}
             className="w-full bg-gray-700 hover:bg-red-900/30 border border-gray-600 hover:border-red-700/50 rounded-xl p-3.5 text-left transition-colors">
-            <p className="text-sm font-semibold text-red-300">🔄 Thay thế hoàn toàn (Replace)</p>
+            <p className="text-sm font-semibold text-red-300"><RefreshIcon className="w-4 h-4 inline" /> Thay thế hoàn toàn (Replace)</p>
             <p className="text-xs text-gray-400 mt-0.5">Xóa toàn bộ Local của tài khoản này và thay bằng dữ liệu từ Zalo.</p>
           </button>
         </div>
@@ -663,24 +663,24 @@ function HelpModal({ onClose }: { onClose: () => void }) {
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60]" onClick={onClose}>
       <div className="bg-gray-800 rounded-xl border border-gray-700 p-6 max-w-lg w-full mx-4 shadow-2xl relative" onClick={e => e.stopPropagation()}>
         <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 hover:text-white">✕</button>
-        <h3 className="text-lg font-bold text-white mb-4">⚡ Hướng dẫn - Tin nhắn nhanh</h3>
+        <h3 className="text-lg font-bold text-white mb-4"><LightningIcon className="w-4 h-4 inline" /> Hướng dẫn - Tin nhắn nhanh</h3>
 
         {/* Comparison table */}
         <div className="grid grid-cols-2 gap-3 mb-5 text-xs">
           {/* Local */}
           <div className="bg-blue-950/40 border border-blue-800/40 rounded-xl p-3.5">
-            <p className="font-bold text-blue-400 mb-2.5 flex items-center gap-1.5">💾 Local <span className="text-[11px] font-normal text-blue-500/70 bg-blue-900/30 px-1.5 py-0.5 rounded">Khuyến nghị</span></p>
+            <p className="font-bold text-blue-400 mb-2.5 flex items-center gap-1.5"><HardDriveIcon className="w-4 h-4 inline" /> Local <span className="text-[11px] font-normal text-blue-500/70 bg-blue-900/30 px-1.5 py-0.5 rounded">Khuyến nghị</span></p>
             <ul className="space-y-1.5 text-gray-300">
               <li className="flex items-start gap-1.5"><span className="text-green-400 mt-0.5 shrink-0">✓</span><span><strong className="text-white">Không giới hạn</strong> số lượng tin nhắn tạo ra</span></li>
               <li className="flex items-start gap-1.5"><span className="text-green-400 mt-0.5 shrink-0">✓</span><span>Đính kèm <strong className="text-white">nhiều ảnh + video</strong> cùng lúc</span></li>
               <li className="flex items-start gap-1.5"><span className="text-green-400 mt-0.5 shrink-0">✓</span><span>Dùng chung cho nhiều tài khoản</span></li>
               <li className="flex items-start gap-1.5"><span className="text-green-400 mt-0.5 shrink-0">✓</span><span>Sắp xếp thứ tự, bật/tắt từng mục</span></li>
-              <li className="flex items-start gap-1.5"><span className="text-yellow-500 mt-0.5 shrink-0">−</span><span className="text-gray-500">Không đồng bộ điện thoại Zalo</span></li>
+              <li className="flex items-start gap-1.5"><span className="text-yellow-500 mt-0.5 shrink-0">−</span><span className="text-gray-400">Không đồng bộ điện thoại Zalo</span></li>
             </ul>
           </div>
           {/* Zalo */}
           <div className="bg-gray-900/60 border border-gray-700/60 rounded-xl p-3.5">
-            <p className="font-bold text-gray-400 mb-2.5 flex items-center gap-1.5">☁️ Zalo</p>
+            <p className="font-bold text-gray-400 mb-2.5 flex items-center gap-1.5"><CloudIcon className="w-4 h-4 inline" /> Zalo</p>
             <ul className="space-y-1.5 text-gray-400">
               <li className="flex items-start gap-1.5"><span className="text-red-400 mt-0.5 shrink-0">✗</span><span><strong className="text-red-300">Chỉ 1 tin nhắn nhanh</strong> - Zalo giới hạn rất ít</span></li>
               <li className="flex items-start gap-1.5"><span className="text-red-400 mt-0.5 shrink-0">✗</span><span>Chỉ đính kèm <strong className="text-red-300">1 ảnh</strong>, không hỗ trợ video</span></li>
@@ -690,11 +690,11 @@ function HelpModal({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className="border-t border-gray-700 pt-4 space-y-1.5 text-xs text-gray-400">
-          <p className="text-gray-300 font-semibold mb-2">📋 Các tính năng</p>
-          <p>💾 <strong className="text-gray-300">Local:</strong> Tạo/sửa/xóa, đính kèm ảnh+video, tạo cho nhiều tài khoản cùng lúc.</p>
-          <p>☁️ <strong className="text-gray-300">Zalo:</strong> Xem & quản lý trực tiếp trên server Zalo. Cần tài khoản kết nối.</p>
-          <p>📥 <strong className="text-gray-300">Đồng bộ về Local:</strong> Kéo tin nhắn Zalo về Local (Merge hoặc Replace).</p>
-          <p>📋 <strong className="text-gray-300">Sao chép:</strong> Copy tin nhắn Local từ tài khoản A sang B.</p>
+          <p className="text-gray-300 font-semibold mb-2"><ClipboardListIcon className="w-4 h-4 inline" /> Các tính năng</p>
+          <p><HardDriveIcon className="w-4 h-4 inline" /> <strong className="text-gray-300">Local:</strong> Tạo/sửa/xóa, đính kèm ảnh+video, tạo cho nhiều tài khoản cùng lúc.</p>
+          <p><CloudIcon className="w-4 h-4 inline" /> <strong className="text-gray-300">Zalo:</strong> Xem & quản lý trực tiếp trên server Zalo. Cần tài khoản kết nối.</p>
+          <p><InboxIcon className="w-4 h-4 inline" /> <strong className="text-gray-300">Đồng bộ về Local:</strong> Kéo tin nhắn Zalo về Local (Merge hoặc Replace).</p>
+          <p><ClipboardListIcon className="w-4 h-4 inline" /> <strong className="text-gray-300">Sao chép:</strong> Copy tin nhắn Local từ tài khoản A sang B.</p>
           <p>↕️ <strong className="text-gray-300">Kéo thả:</strong> Kéo icon ⠿ để sắp xếp thứ tự hiển thị.</p>
         </div>
       </div>
@@ -945,8 +945,8 @@ export default function QuickMessageSettings({ accounts, filterAccounts, searchT
       <div className="bg-gray-800/30 px-4 py-2 border-b border-gray-800 flex items-center gap-2">
         <div className="flex bg-gray-800 rounded-lg p-0.5 gap-0.5">
           {([
-            { id: 'local' as const, label: '💾 Local' },
-            ...(!allFB ? [{ id: 'zalo' as const, label: '☁️ Zalo' }] : []),
+            { id: 'local' as const, label: 'Local' },
+            ...(!allFB ? [{ id: 'zalo' as const, label: 'Zalo' }] : []),
           ] as const).map(src => (
             <button key={src.id} onClick={() => setSource(src.id)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap
@@ -956,7 +956,7 @@ export default function QuickMessageSettings({ accounts, filterAccounts, searchT
         </div>
         {/* Help button - right next to tabs */}
         <button onClick={() => setShowHelp(true)} title="Hướng dẫn sử dụng"
-          className="p-1.5 hover:bg-gray-700 rounded-full text-gray-500 hover:text-blue-400 transition-colors">
+          className="p-1.5 hover:bg-gray-700 rounded-full text-gray-400 hover:text-blue-400 transition-colors">
           <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>
           </svg>
@@ -965,8 +965,7 @@ export default function QuickMessageSettings({ accounts, filterAccounts, searchT
         <div className="ml-auto flex items-center gap-2">
           {effectiveSource === 'local' && (<>
             <button onClick={() => setCloneMsgModal(true)}
-              className="bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 border border-gray-600">
-              📋 Sao chép
+              className="bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 border border-gray-600"><ClipboardListIcon className="w-4 h-4 inline" /> Sao chép
             </button>
             <button onClick={() => setLocalMsgModal({ open: true, data: null })}
               className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5">
@@ -977,8 +976,7 @@ export default function QuickMessageSettings({ accounts, filterAccounts, searchT
           {effectiveSource === 'zalo' && activeZaloId && (<>
             {zaloMessages.length > 0 && (
               <button onClick={() => setSyncModal(true)}
-                className="bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 border border-gray-600">
-                📥 Đồng bộ về Local
+                className="bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 border border-gray-600"><InboxIcon className="w-4 h-4 inline" /> Đồng bộ về Local
               </button>
             )}
             <button onClick={() => setZaloMsgModal({ open: true, data: null })} disabled={!isConnected}
@@ -996,7 +994,7 @@ export default function QuickMessageSettings({ accounts, filterAccounts, searchT
         {/* Local Quick Msgs */}
         {effectiveSource === 'local' && (
           filteredLocalMessages.length === 0
-            ? <EmptyState icon="⚡" title="Chưa có tin nhắn nhanh" subtitle='Nhấn "Thêm mới" để tạo tin nhắn nhanh đầu tiên.' />
+            ? <EmptyState icon={<LightningIcon className="w-4 h-4" />} title="Chưa có tin nhắn nhanh" subtitle='Nhấn "Thêm mới" để tạo tin nhắn nhanh đầu tiên.' />
             : filteredLocalMessages.map((item, idx) => (
               <div key={item.id} draggable
                 onDragStart={() => { qmDragFromRef.current = idx; qmDragOverRef.current = idx; setQMDragging(idx); }}
@@ -1022,19 +1020,19 @@ export default function QuickMessageSettings({ accounts, filterAccounts, searchT
         {/* Zalo Quick Msgs */}
         {effectiveSource === 'zalo' && (<>
           {!activeZaloId && (
-            <EmptyState icon="☁️" title="Chọn đúng 1 tài khoản" subtitle="Vui lòng chọn chính xác 1 tài khoản để xem tin nhắn nhanh trên Zalo." />
+            <EmptyState icon={<CloudIcon className="w-4 h-4" />} title="Chọn đúng 1 tài khoản" subtitle="Vui lòng chọn chính xác 1 tài khoản để xem tin nhắn nhanh trên Zalo." />
           )}
           {activeZaloId && !isConnected && (
-            <EmptyState icon="🔌" title="Tài khoản chưa kết nối" subtitle="Vui lòng kết nối tài khoản để quản lý tin nhắn nhanh trên Zalo." />
+            <EmptyState icon={<PluginIcon className="w-4 h-4" />} title="Tài khoản chưa kết nối" subtitle="Vui lòng kết nối tài khoản để quản lý tin nhắn nhanh trên Zalo." />
           )}
           {activeZaloId && isConnected && zaloLoading && (
             <div className="text-center py-14">
               <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3"/>
-              <p className="text-gray-500 text-sm">Đang tải từ Zalo...</p>
+              <p className="text-gray-400 text-sm">Đang tải từ Zalo...</p>
             </div>
           )}
           {activeZaloId && isConnected && !zaloLoading && filteredZaloMessages.length === 0 &&
-            <EmptyState icon="☁️" title="Chưa có tin nhắn nhanh trên Zalo" subtitle='Nhấn "Thêm lên Zalo" để tạo.' />
+            <EmptyState icon={<CloudIcon className="w-4 h-4" />} title="Chưa có tin nhắn nhanh trên Zalo" subtitle='Nhấn "Thêm lên Zalo" để tạo.' />
           }
           {activeZaloId && isConnected && !zaloLoading && filteredZaloMessages.map((item, idx) => (
             <ZaloMsgRow key={item.id ?? idx} item={item}

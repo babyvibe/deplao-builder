@@ -5,6 +5,7 @@ import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import TargetSelector from './TargetSelector';
 import CampaignCreateModal from './CampaignCreateModal';
+import { ChartIcon, ClockIcon, EditIcon, SendIcon, UsersIcon } from '@/components/common/icons';
 
 function fmtDelayRange(min: number, max: number): string {
   const fmt = (s: number) => {
@@ -95,10 +96,10 @@ export default function CampaignDetail({ campaign, zaloId, allLabels, localLabel
         <div className="flex items-start justify-between gap-3 mb-3">
           <div className="flex-1 min-w-0">
             <h3 className="font-semibold text-white text-sm truncate">{campaign.name}</h3>
-            <p className="text-xs text-gray-500 mt-0.5">
+            <p className="text-xs text-gray-400 mt-0.5">
               ⏱ {fmtDelayRange(campaign.delay_min_seconds || Math.max(30, campaign.delay_seconds - 10), campaign.delay_max_seconds || campaign.delay_seconds + 10)} · {campaign.total_contacts} liên hệ
               {campaign.daily_send_limit > 0
-                ? <> · 📊 {campaign.daily_send_limit}/ngày từ {campaign.daily_start_time}</>
+                ? <> · <ChartIcon className="w-4 h-4 inline" /> {campaign.daily_send_limit}/ngày từ {campaign.daily_start_time}</>
                 : <> · 🕐 Chạy từ {campaign.daily_start_time}</>}
             </p>
           </div>
@@ -106,7 +107,7 @@ export default function CampaignDetail({ campaign, zaloId, allLabels, localLabel
             {/* Nút Sửa: chỉ hiện khi nháp hoặc tạm dừng */}
             {(campaign.status === 'draft' || campaign.status === 'paused') && onUpdate && (
               <button onClick={() => setShowEdit(true)}
-                className="text-xs px-3 py-1.5 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-300 transition-colors">✏️ Sửa</button>
+                className="text-xs px-3 py-1.5 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-300 transition-colors"><EditIcon className="w-3.5 h-3.5 inline" /> Sửa</button>
             )}
             {campaign.status === 'draft' && (
               <button onClick={() => onStatusChange(campaign.id, 'active')}
@@ -126,9 +127,9 @@ export default function CampaignDetail({ campaign, zaloId, allLabels, localLabel
         {/* Progress */}
         {campaign.total_contacts > 0 && (
           <div>
-            <div className="flex justify-between text-xs text-gray-500 mb-1.5">
+            <div className="flex justify-between text-xs text-gray-400 mb-1.5">
               <span className="text-green-400">{campaign.sent_count} đã gửi</span>
-              <span className="text-gray-500">{campaign.pending_count} chờ</span>
+              <span className="text-gray-400">{campaign.pending_count} chờ</span>
               {campaign.failed_count > 0 && <span className="text-red-400">{campaign.failed_count} lỗi</span>}
               <span>{Math.round(progress)}%</span>
             </div>
@@ -141,7 +142,7 @@ export default function CampaignDetail({ campaign, zaloId, allLabels, localLabel
         {/* Daily progress */}
         {campaign.daily_send_limit > 0 && (
           <div className="mt-2 flex items-center gap-2">
-            <span className="text-[11px] text-gray-500">Hôm nay:</span>
+            <span className="text-[11px] text-gray-400">Hôm nay:</span>
             <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden max-w-[120px]">
               <div
                 className="h-full bg-gradient-to-r from-emerald-500 to-emerald-400 rounded-full transition-all duration-500"
@@ -161,15 +162,15 @@ export default function CampaignDetail({ campaign, zaloId, allLabels, localLabel
             try { groupIds = JSON.parse(campaign.mixed_config || '{}').group_ids || []; } catch {}
             return (
               <>
-                <p className="text-[11px] text-gray-500 mb-1">👥 Nhóm đích:</p>
+                <p className="text-[11px] text-gray-400 mb-1"><UsersIcon className="w-4 h-4 inline" /> Nhóm đích:</p>
                 {groupIds.length > 0
                   ? <p className="text-xs text-orange-300">{groupIds.length} nhóm đã chọn</p>
-                  : <p className="text-xs text-gray-500 italic">Chưa cấu hình nhóm</p>}
+                  : <p className="text-xs text-gray-400 italic">Chưa cấu hình nhóm</p>}
               </>
             );
           })() : (
             <>
-              <p className="text-[11px] text-gray-500 mb-1">
+              <p className="text-[11px] text-gray-400 mb-1">
                 {campaign.campaign_type === 'friend_request' ? 'Tin nhắn kết bạn:' : 'Template tin nhắn:'}
               </p>
               <p className="text-xs text-gray-300 line-clamp-2">
@@ -179,7 +180,7 @@ export default function CampaignDetail({ campaign, zaloId, allLabels, localLabel
               </p>
               {campaign.campaign_type === 'mixed' && campaign.friend_request_message && (
                 <>
-                  <p className="text-[11px] text-gray-500 mt-1.5 mb-1">Fallback kết bạn:</p>
+                  <p className="text-[11px] text-gray-400 mt-1.5 mb-1">Fallback kết bạn:</p>
                   <p className="text-xs text-gray-400 line-clamp-1">{campaign.friend_request_message}</p>
                 </>
               )}
@@ -210,15 +211,15 @@ export default function CampaignDetail({ campaign, zaloId, allLabels, localLabel
                 </div>}
             <div className="flex-1 min-w-0">
               <p className="text-xs text-gray-200 truncate">{c.display_name || c.contact_id}</p>
-              {c.phone && <p className="text-[11px] text-gray-500 font-mono truncate">{c.phone}</p>}
+              {c.phone && <p className="text-[11px] text-gray-400 font-mono truncate">{c.phone}</p>}
               {!c.phone && c.contact_id && c.contact_id !== c.display_name && (
-                <p className="text-[11px] text-gray-600 font-mono truncate">{c.contact_id}</p>
+                <p className="text-[11px] text-gray-400 font-mono truncate">{c.contact_id}</p>
               )}
             </div>
             <span className={`text-[11px] flex-shrink-0 ${STATUS_STYLE[c.status]}`}>
               {c.status === 'pending' ? '⏳' : c.status === 'sending' ? '📤' : c.status === 'sent' ? '✓' : '✕'} {c.status}
             </span>
-            {c.sent_at > 0 && <span className="text-[11px] text-gray-600 flex-shrink-0">{fmt(c.sent_at)}</span>}
+            {c.sent_at > 0 && <span className="text-[11px] text-gray-400 flex-shrink-0">{fmt(c.sent_at)}</span>}
           </div>
         ))}
       </div>

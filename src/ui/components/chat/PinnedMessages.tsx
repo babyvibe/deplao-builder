@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import ipc from '@/lib/ipc';
 import { toLocalMediaUrl } from '@/lib/localMedia';
 import { useAppStore } from '@/store/appStore';
+import { ChartIcon, EditIcon, PinIcon } from '@/components/common/icons';
+
 
 export interface PinnedMsg {
   id?: number;
@@ -99,7 +101,7 @@ export default function PinnedBar({ zaloId, threadId, pins, onPinsChange, onScro
               <button
                 onClick={() => setActiveTab('msg')}
                 title="Tin nhắn đã ghim"
-                className={`px-1.5 py-1 transition-colors ${effectiveTab === 'msg' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:text-gray-300 hover:bg-gray-700'}`}
+                className={`px-1.5 py-1 transition-colors ${effectiveTab === 'msg' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-300 hover:bg-gray-700'}`}
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" strokeWidth="1.8" strokeLinecap="round">
                   <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
@@ -108,7 +110,7 @@ export default function PinnedBar({ zaloId, threadId, pins, onPinsChange, onScro
               <button
                 onClick={() => setActiveTab('note')}
                 title="Ghi chú nhóm"
-                className={`px-1.5 py-1 transition-colors ${effectiveTab === 'note' ? 'bg-yellow-600 text-white' : 'text-gray-500 hover:text-gray-300 hover:bg-gray-700'}`}
+                className={`px-1.5 py-1 transition-colors ${effectiveTab === 'note' ? 'bg-yellow-600 text-white' : 'text-gray-400 hover:text-gray-300 hover:bg-gray-700'}`}
               >
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
@@ -155,17 +157,17 @@ export default function PinnedBar({ zaloId, threadId, pins, onPinsChange, onScro
           {/* Tooltip ? - giải thích giới hạn ghim */}
           {effectiveTab === 'msg' && (
             <div className="relative group">
-              <span className="w-4 h-4 rounded-full border border-gray-600 text-gray-500 hover:border-blue-400 hover:text-blue-400 flex items-center justify-center text-[11px] font-bold cursor-default select-none transition-colors">
+              <span className="w-4 h-4 rounded-full border border-gray-600 text-gray-400 hover:border-blue-400 hover:text-blue-400 flex items-center justify-center text-[11px] font-bold cursor-default select-none transition-colors">
                 ?
               </span>
               <div className="absolute right-0 top-full mt-1.5 w-72 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-3.5 text-xs text-gray-300 leading-relaxed z-[60] hidden group-hover:block pointer-events-none">
                 <p className="font-semibold text-white mb-1.5 flex items-center gap-1.5">
-                  <span>📌</span> Ghim tin nhắn
+                  <span><PinIcon className="w-4 h-4" /></span> Ghim tin nhắn
                 </p>
                 <p className="mb-2">
                   Zalo <span className="text-yellow-400 font-medium">giới hạn tối đa 3 tin nhắn</span> được ghim mỗi cuộc trò chuyện. Khi vượt quá giới hạn, tin nhắn vẫn được ghim <span className="text-blue-400 font-medium">trong thiết bị này</span> nhưng sẽ không đồng bộ lên Zalo.
                 </p>
-                <p className="text-gray-500 border-t border-gray-700 pt-2">
+                <p className="text-gray-400 border-t border-gray-700 pt-2">
                   Bạn có thể dùng Zalo xoá các tin ghim cũ rồi ghim lại để được đồng bộ trên cả hai bên.
                 </p>
               </div>
@@ -261,7 +263,7 @@ function PinnedListModal({ pins, notes, zaloId, threadId, onClose, onScrollToMsg
               </div>
               <button
                 onClick={e => { e.stopPropagation(); onNoteClick?.(note); onClose(); }}
-                className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-500 hover:text-white hover:bg-gray-600 transition-colors flex-shrink-0"
+                className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-600 transition-colors flex-shrink-0"
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                   <circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>
@@ -291,7 +293,7 @@ function PinnedListModal({ pins, notes, zaloId, threadId, onClose, onScrollToMsg
               <button className="flex-1 min-w-0 text-left py-0.5" onClick={() => { onScrollToMsg(pin.msg_id); onClose(); }}>
                 <p className="text-sm font-semibold text-gray-100">Tin nhắn</p>
                 <p className="text-xs text-gray-400 truncate mt-0.5">
-                  {pin.sender_name ? <span className="text-gray-500">{pin.sender_name}: </span> : null}
+                  {pin.sender_name ? <span className="text-gray-400">{pin.sender_name}: </span> : null}
                   {renderPreviewLabel(pin)}
                 </p>
               </button>
@@ -372,7 +374,7 @@ function PinItemMenu({ pin, isFirst, onUnpin, onCopy, onBringToTop, useFixed }: 
       <button
         ref={btnRef}
         onClick={handleOpen}
-        className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-500 hover:text-white hover:bg-gray-600 transition-colors"
+        className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-600 transition-colors"
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
           <circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>
@@ -708,8 +710,8 @@ export function buildPinFromMsg(msg: any, senderName: string): {
       const p = JSON.parse(rawContent);
       const params = typeof p.params === 'string' ? JSON.parse(p.params) : (p.params || {});
       const question = params.question || p.title || '';
-      previewText = question ? `📊 ${question}` : '📊 Bình chọn';
-    } catch { previewText = '📊 Bình chọn'; }
+      previewText = question ? `Poll: ${question}` : 'Poll: ';
+    } catch { previewText = 'Poll: '; }
   } else if (t === 'photo' || t === 'image') {    // FIX #2: local path trước, remote sau - KHÔNG lưu content JSON vào previewImage
     previewImage = getLocalImg() || getRemoteImg();
     previewText = '';

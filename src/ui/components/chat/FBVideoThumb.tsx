@@ -129,7 +129,7 @@ export default function FBVideoThumb({ videoPath }: FBVideoThumbProps) {
         <img src={thumbDataUrl} alt="video thumb" className="w-full h-full object-cover" />
       ) : (
         <div className="w-full h-full bg-gray-800 flex items-center justify-center">
-          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-600">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-400">
             <polygon points="23 7 16 12 23 17 23 7" />
             <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
           </svg>

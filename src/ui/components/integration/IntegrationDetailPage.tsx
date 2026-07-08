@@ -2,12 +2,13 @@ import React, { useState, useEffect } from 'react';
 import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import { useAppStore } from '@/store/appStore';
+import { AlertIcon, ChatIcon, CheckIcon, ClipboardListIcon, CloseIcon, CreditCardIcon, GlobeIcon, HardDriveIcon, KeyIcon, PackageIcon, PluginIcon, SearchIcon, SettingsIcon, SunIcon, TruckIcon, UserIcon , EditIcon } from '@/components/common/icons';
 
 interface CatalogItem {
   type: string;
   name: string;
   desc: string;
-  icon: string;
+  icon: React.ReactNode;
   color: string;
   priority: string;
   credentialFields: { key: string; label: string; secret?: boolean; placeholder?: string }[];
@@ -166,7 +167,7 @@ export default function IntegrationDetailPage({ catalogItem, saved, webhookPort,
 
         {/* Credentials */}
         <div>
-          <h2 className="text-sm font-semibold text-gray-300 mb-3">🔑 Thông tin xác thực</h2>
+          <h2 className="text-sm font-semibold text-gray-300 mb-3"><KeyIcon className="w-4 h-4 inline" /> Thông tin xác thực</h2>
           <div className="space-y-3 bg-gray-800 rounded-xl p-4">
             {catalogItem.credentialFields.map(field => (
               <div key={field.key}>
@@ -193,14 +194,14 @@ export default function IntegrationDetailPage({ catalogItem, saved, webhookPort,
             ))}
           </div>
           {saved_id && (
-            <p className="text-xs text-gray-500 mt-1">Để trống các trường bí mật nếu không muốn thay đổi.</p>
+            <p className="text-xs text-gray-400 mt-1">Để trống các trường bí mật nếu không muốn thay đổi.</p>
           )}
         </div>
 
         {/* Settings */}
         {catalogItem.settingFields && catalogItem.settingFields.length > 0 && (
           <div>
-            <h2 className="text-sm font-semibold text-gray-300 mb-3">⚙️ Cài đặt</h2>
+            <h2 className="text-sm font-semibold text-gray-300 mb-3"><SettingsIcon className="w-4 h-4 inline" /> Cài đặt</h2>
             <div className="space-y-3 bg-gray-800 rounded-xl p-4">
               {catalogItem.settingFields.map(field => (
                 <div key={field.key}>
@@ -232,12 +233,12 @@ export default function IntegrationDetailPage({ catalogItem, saved, webhookPort,
         {/* Webhook & Tunnel - bắt buộc cho thanh toán */}
         {isPayment && (
           <div>
-            <h2 className="text-sm font-semibold text-gray-300 mb-3">🌐 Webhook Tunnel - Kết nối Internet</h2>
+            <h2 className="text-sm font-semibold text-gray-300 mb-3"><GlobeIcon className="w-4 h-4 inline" /> Webhook Tunnel - Kết nối Internet</h2>
             <div className="bg-gray-800 rounded-xl p-4 space-y-3">
 
               {/* WHY - giải thích tại sao cần tunnel */}
               <div className="bg-amber-100 dark:bg-amber-900/40 border border-amber-300 dark:border-amber-700/30 rounded-xl px-4 py-3">
-                <p className="text-xs font-semibold text-amber-700 dark:text-amber-300 mb-1.5">💡 Dùng {catalogItem.name} để nhận thanh toán tự động?</p>
+                <p className="text-xs font-semibold text-amber-700 dark:text-amber-300 mb-1.5"><SunIcon className="w-4 h-4 inline" /> Dùng {catalogItem.name} để nhận thanh toán tự động?</p>
                 <p className="text-[11px] text-amber-800/90 dark:text-amber-200/90 leading-relaxed">
                   {catalogItem.name} gửi webhook (thông báo giao dịch) từ internet.
                   Nhưng phần mềm đang chạy trên máy tính của bạn (localhost), không có địa chỉ công khai.
@@ -247,14 +248,14 @@ export default function IntegrationDetailPage({ catalogItem, saved, webhookPort,
 
               {/* Luồng hoạt động trực quan */}
               <div className="bg-amber-50/80 dark:bg-gray-900/40 rounded-xl px-4 py-3 border border-amber-200 dark:border-gray-700/40">
-                <p className="text-[10px] text-amber-600 dark:text-gray-500 font-medium mb-2">📋 Luồng hoạt động:</p>
+                <p className="text-[10px] text-amber-600 dark:text-gray-400 font-medium mb-2"><ClipboardListIcon className="w-4 h-4 inline" /> Luồng hoạt động:</p>
                 <div className="flex items-center gap-2 text-[11px] text-amber-700 dark:text-gray-400 flex-wrap">
                   <span className="px-2 py-1 bg-blue-100 dark:bg-blue-900/40 rounded-lg text-blue-700 dark:text-blue-300">{catalogItem.name}</span>
-                  <span className="text-amber-400 dark:text-gray-600">─(webhook)─→</span>
+                  <span className="text-amber-400 dark:text-gray-400">─(webhook)─→</span>
                   <span className="px-2 py-1 bg-green-100 dark:bg-green-900/40 rounded-lg text-green-700 dark:text-green-300">Tunnel URL</span>
-                  <span className="text-amber-400 dark:text-gray-600">─(tunnel)─→</span>
+                  <span className="text-amber-400 dark:text-gray-400">─(tunnel)─→</span>
                   <span className="px-2 py-1 bg-purple-100 dark:bg-purple-900/40 rounded-lg text-purple-700 dark:text-purple-300">Máy bạn</span>
-                  <span className="text-amber-400 dark:text-gray-600">→</span>
+                  <span className="text-amber-400 dark:text-gray-400">→</span>
                   <span className="px-2 py-1 bg-emerald-100 dark:bg-emerald-900/40 rounded-lg text-emerald-700 dark:text-emerald-300">Tự động XN đơn</span>
                 </div>
               </div>
@@ -262,7 +263,7 @@ export default function IntegrationDetailPage({ catalogItem, saved, webhookPort,
               {/* Lưu ý về tunnel tạm thời */}
               <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/40 rounded-xl px-4 py-3">
                 <p className="text-[11px] text-blue-700 dark:text-blue-300/90 leading-relaxed">
-                  ⚠️ <strong>Lưu ý về Tunnel:</strong> Tunnel chỉ hoạt động khi app đang chạy.
+                  <AlertIcon className="w-4 h-4 inline" /> <strong>Lưu ý về Tunnel:</strong> Tunnel chỉ hoạt động khi app đang chạy.
                   Khi bạn tắt máy hoặc đóng app, tunnel sẽ ngừng và URL cũ không còn dùng được.
                   Khi khởi động lại app, bạn phải bật lại tunnel và sẽ nhận được <strong>địa chỉ URL mới</strong>.
                   Những bên thứ 3 đang dùng URL cũ sẽ cần được cập nhật URL mới.
@@ -272,9 +273,9 @@ export default function IntegrationDetailPage({ catalogItem, saved, webhookPort,
               {/* Public URL (when tunnel is active) */}
               {publicWebhookUrl && (
                 <div>
-                  <p className="text-[10px] text-green-400 mb-1 font-medium">✅ URL công khai - dùng để cấu hình webhook trong {catalogItem.name}:</p>
+                  <p className="text-[10px] text-green-400 mb-1 font-medium"><CheckIcon className="w-4 h-4 inline" /> URL công khai - dùng để cấu hình webhook trong {catalogItem.name}:</p>
                   <div className="flex items-center gap-2 bg-green-900/20 border border-green-700/40 rounded-lg px-3 py-2">
-                    <code className="text-xs text-green-300 flex-1 break-all">{publicWebhookUrl}</code>
+                    <code className="text-xs text-green-300 flex-1 break-word">{publicWebhookUrl}</code>
                     <button
                       className="text-gray-400 hover:text-white flex-shrink-0"
                       onClick={() => navigator.clipboard.writeText(publicWebhookUrl)}
@@ -293,7 +294,7 @@ export default function IntegrationDetailPage({ catalogItem, saved, webhookPort,
               {!publicWebhookUrl && (
                 <div className="bg-red-900/20 border border-red-700/40 rounded-xl px-4 py-4">
                   <div className="flex items-start gap-3">
-                    <span className="text-lg flex-shrink-0">🔴</span>
+                    <span className="text-lg flex-shrink-0"><CloseIcon className="w-4 h-4" /></span>
                     <div>
                       <p className="text-xs font-semibold mb-1">Chưa bật Tunnel - Chưa thể nhận thanh toán tự động</p>
                       <p className="text-[11px] leading-relaxed">
@@ -314,8 +315,8 @@ export default function IntegrationDetailPage({ catalogItem, saved, webhookPort,
 
               {/* Local URL info (informational) */}
               <div className="bg-gray-700/40 rounded-lg px-3 py-2">
-                <p className="text-[10px] text-gray-500 mb-0.5">URL local (nội bộ, không dùng để cấu hình webhook):</p>
-                <code className="text-[11px] text-gray-500 font-mono">{localWebhookUrl}</code>
+                <p className="text-[10px] text-gray-400 mb-0.5">URL local (nội bộ, không dùng để cấu hình webhook):</p>
+                <code className="text-[11px] text-gray-400 font-mono">{localWebhookUrl}</code>
               </div>
             </div>
           </div>
@@ -323,7 +324,7 @@ export default function IntegrationDetailPage({ catalogItem, saved, webhookPort,
 
         {/* Usage in conversation (QuickPanel) */}
         <div>
-          <h2 className="text-sm font-semibold text-gray-300 mb-3">💬 Sử dụng trong hội thoại</h2>
+          <h2 className="text-sm font-semibold text-gray-300 mb-3"><ChatIcon className="w-4 h-4 inline" /> Sử dụng trong hội thoại</h2>
           <div className="bg-gray-800 rounded-xl p-4 space-y-3">
             <p className="text-xs text-gray-400 leading-relaxed">
               Sau khi kết nối, bạn có thể tra cứu thông tin trực tiếp khi đang chat với khách hàng
@@ -332,13 +333,13 @@ export default function IntegrationDetailPage({ catalogItem, saved, webhookPort,
 
             <div className="bg-gray-700/50 rounded-lg p-3 border border-gray-600/30">
               <div className="flex items-center gap-2 mb-2">
-                <span className="text-lg">🔌</span>
+                <span className="text-lg"><PluginIcon className="w-4 h-4" /></span>
                 <span className="text-xs font-semibold text-white">Bảng điều khiển Tích hợp nhanh</span>
               </div>
               <ol className="space-y-1.5 text-[11px] text-gray-400 ml-1">
                 <li className="flex items-start gap-2">
                   <span className="text-blue-400 font-mono flex-shrink-0">1.</span>
-                  <span>Nhấn nút <span className="text-blue-300 font-medium">🔌 Tích hợp</span> trên thanh toolbar phía trên khung chat</span>
+                  <span>Nhấn nút <span className="text-blue-300 font-medium"><PluginIcon className="w-4 h-4 inline" /> Tích hợp</span> trên thanh toolbar phía trên khung chat</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-blue-400 font-mono flex-shrink-0">2.</span>
@@ -355,16 +356,16 @@ export default function IntegrationDetailPage({ catalogItem, saved, webhookPort,
             {(catalogItem.type === 'kiotviet' || catalogItem.type === 'haravan' || catalogItem.type === 'sapo' || catalogItem.type === 'nhanh' || catalogItem.type === 'pancake') && (
               <div className="grid grid-cols-2 gap-2">
                 {[
-                  { icon: '👤', label: 'Tra cứu KH', desc: 'Theo SĐT' },
-                  { icon: '📋', label: 'Tra cứu đơn', desc: 'Theo mã/SĐT' },
-                  { icon: '🔍', label: 'Tìm sản phẩm', desc: 'Theo tên/SKU' },
-                  { icon: '✏️', label: 'Tạo đơn hàng', desc: 'Tạo đơn mới' },
+                  { icon: <UserIcon className="w-4 h-4" />, label: 'Tra cứu KH', desc: 'Theo SĐT' },
+                  { icon: <ClipboardListIcon className="w-4 h-4" />, label: 'Tra cứu đơn', desc: 'Theo mã/SĐT' },
+                  { icon: <SearchIcon className="w-4 h-4" />, label: 'Tìm sản phẩm', desc: 'Theo tên/SKU' },
+                  { icon: <EditIcon className="w-4 h-4" />, label: 'Tạo đơn hàng', desc: 'Tạo đơn mới' },
                 ].map((act, i) => (
                   <div key={i} className="flex items-center gap-2 bg-gray-700/50 rounded-lg px-3 py-2 border border-gray-600/30">
                     <span className="text-base flex-shrink-0">{act.icon}</span>
                     <div>
                       <p className="text-[11px] font-medium text-gray-200">{act.label}</p>
-                      <p className="text-[10px] text-gray-500">{act.desc}</p>
+                      <p className="text-[10px] text-gray-400">{act.desc}</p>
                     </div>
                   </div>
                 ))}
@@ -377,7 +378,7 @@ export default function IntegrationDetailPage({ catalogItem, saved, webhookPort,
                   { icon: '🏙️', label: 'DS quận/huyện' },
                   { icon: '📍', label: 'DS phường/xã' },
                   { icon: '🚛', label: 'Dịch vụ GHN' },
-                  { icon: '📦', label: 'Tra vận đơn' },
+                  { icon: <PackageIcon className="w-4 h-4" />, label: 'Tra vận đơn' },
                   { icon: '💵', label: 'Tính phí ship' },
                 ].map((act, i) => (
                   <div key={i} className="flex items-center gap-2 bg-gray-700/50 rounded-lg px-3 py-2 border border-gray-600/30">
@@ -390,7 +391,7 @@ export default function IntegrationDetailPage({ catalogItem, saved, webhookPort,
             {catalogItem.type === 'ghtk' && (
               <div className="grid grid-cols-2 gap-2">
                 {[
-                  { icon: '🚚', label: 'Tra vận đơn' },
+                  { icon: <TruckIcon className="w-4 h-4" />, label: 'Tra vận đơn' },
                   { icon: '💵', label: 'Tính phí ship' },
                 ].map((act, i) => (
                   <div key={i} className="flex items-center gap-2 bg-gray-700/50 rounded-lg px-3 py-2 border border-gray-600/30">
@@ -403,7 +404,7 @@ export default function IntegrationDetailPage({ catalogItem, saved, webhookPort,
             {(catalogItem.type === 'casso' || catalogItem.type === 'sepay') && (
               <div className="grid grid-cols-2 gap-2">
                 {[
-                  { icon: '💳', label: 'LS giao dịch' },
+                  { icon: <CreditCardIcon className="w-4 h-4" />, label: 'LS giao dịch' },
                 ].map((act, i) => (
                   <div key={i} className="flex items-center gap-2 bg-gray-700/50 rounded-lg px-3 py-2 border border-gray-600/30">
                     <span className="text-base flex-shrink-0">{act.icon}</span>
@@ -413,8 +414,8 @@ export default function IntegrationDetailPage({ catalogItem, saved, webhookPort,
               </div>
             )}
 
-            <p className="text-[11px] text-gray-500 flex items-start gap-1.5">
-              <span className="flex-shrink-0">💡</span>
+            <p className="text-[11px] text-gray-400 flex items-start gap-1.5">
+              <span className="flex-shrink-0"><SunIcon className="w-4 h-4" /></span>
               <span>
                 Kết quả tra cứu hiển thị ngay trong panel - có thể xem chi tiết đơn hàng,
                 sản phẩm, thông tin khách hàng. Hỗ trợ <strong className="text-gray-300">ghim thao tác</strong> ra toolbar
@@ -426,7 +427,7 @@ export default function IntegrationDetailPage({ catalogItem, saved, webhookPort,
 
         {/* Workflow hint */}
         <div className="bg-blue-900/20 border border-blue-700/40 rounded-xl p-4">
-          <h3 className="text-xs font-semibold text-blue-300 mb-2">💡 Workflow Nodes có sẵn</h3>
+          <h3 className="text-xs font-semibold text-blue-300 mb-2"><SunIcon className="w-4 h-4 inline" /> Workflow Nodes có sẵn</h3>
           <ul className="text-xs text-blue-200 space-y-1">
             {catalogItem.type === 'kiotviet' && <>
               <li>• <code className="bg-blue-900/40 px-1 rounded">kiotviet.lookupCustomer</code> - Tra cứu khách hàng theo SĐT</li>
@@ -475,7 +476,7 @@ export default function IntegrationDetailPage({ catalogItem, saved, webhookPort,
         {/* Test result */}
         {testResult && (
           <div className={`p-3 rounded-lg text-sm ${testResult.success ? 'bg-green-900/30 border border-green-700 text-green-300' : 'bg-red-900/30 border border-red-700 text-red-300'}`}>
-            {testResult.success ? '✅' : '❌'} {testResult.message}
+            {testResult.success ? <CheckIcon className="w-4 h-4 inline" /> : <CloseIcon className="w-4 h-4 inline" />} {testResult.message}
           </div>
         )}
       </div>
@@ -498,7 +499,7 @@ export default function IntegrationDetailPage({ catalogItem, saved, webhookPort,
             disabled={testing}
             className="px-4 py-2 text-sm rounded-lg bg-gray-700 hover:bg-gray-600 text-white transition-colors"
           >
-            {testing ? 'Đang test...' : '🔍 Test kết nối'}
+            {testing ? 'Đang test...' : <><SearchIcon className="w-4 h-4 inline" /> Test kết nối</>}
           </button>
         )}
         <button
@@ -506,7 +507,7 @@ export default function IntegrationDetailPage({ catalogItem, saved, webhookPort,
           disabled={saving}
           className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium transition-colors"
         >
-          {saving ? 'Đang lưu...' : saved_id ? '💾 Cập nhật' : '🔌 Kết nối'}
+          {saving ? 'Đang lưu...' : saved_id ? <><HardDriveIcon className="w-3.5 h-3.5 inline" /> Cập nhật</> : 'Kết nối'}
         </button>
       </div>
     </div>

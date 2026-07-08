@@ -10,9 +10,10 @@ import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
 import { useEmployeeStore } from '@/store/employeeStore';
 import { getCachedBankCard } from '@/lib/bankCardCache';
-import ipc from '@/lib/ipc'
-import DataAccessor from '@/lib/data/DataAccessor';;
+import ipc from '@/lib/ipc';
+import DataAccessor from '@/lib/data/DataAccessor';
 import { toLocalMediaUrl } from '@/lib/localMedia';
+import { ensureMediaLocal } from '@/lib/employeeMediaSync';
 import { formatPhone } from '@/utils/phoneUtils';
 import PhoneDisplay from '../common/PhoneDisplay';
 
@@ -283,7 +284,7 @@ function StickerBubble({ msg }: { msg: any }) {
     return (
       <div className="w-28 h-28 rounded-xl bg-gray-700/30 border border-gray-600/30 flex flex-col items-center justify-center gap-1">
         <span className="text-2xl opacity-40">🎭</span>
-        <span className="text-[10px] text-gray-500 text-center px-1 leading-tight">Sticker chưa hỗ trợ</span>
+        <span className="text-[10px] text-gray-400 text-center px-1 leading-tight">Sticker chưa hỗ trợ</span>
       </div>
     );
   }
@@ -484,12 +485,18 @@ function ZaloVideoBubble({ msg }: { msg: any }) {
 
   const videoUrl = videoLocalPath ? toLocalMediaUrl(videoLocalPath) : '';
 
-  const handlePlay = (e: React.MouseEvent) => {
+  const handlePlay = async (e: React.MouseEvent) => {
     e.stopPropagation();
     const mode = useEmployeeStore.getState().mode;
-    // Employee mode: open via Boss REST API
+    // Employee mode: mở boss URL trực tiếp (stream video qua Range request,
+    // không cần download hết mới xem). Boss MediaHandler hỗ trợ Range.
     if (mode === 'employee' && videoUrl && videoUrl.startsWith('http')) {
       ipc.shell?.openExternal(videoUrl);
+      // Background cache cho lần sau (fire & forget)
+      if (videoLocalPath) {
+        const bossUrl = toLocalMediaUrl(videoLocalPath);
+        if (bossUrl) ensureMediaLocal(bossUrl, 'video').catch(() => {});
+      }
       return;
     }
     // Boss/standalone: open in external player (VLC, etc.)
@@ -503,7 +510,7 @@ function ZaloVideoBubble({ msg }: { msg: any }) {
         ? <img src={thumbUrl} alt="video" className="w-full h-full object-cover"
             onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
         : <div className="w-full h-full bg-gray-800 flex items-center justify-center">
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-600">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-400">
               <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
             </svg>
           </div>
@@ -579,7 +586,7 @@ function FacebookVideoBubble({ msg }: { msg: any }) {
       style={{ width: '17.5rem', height: 160 }} onClick={() => { if (videoUrl) setShowPlayer(true); }}>
       {/* No thumbnail for FB - always show video placeholder */}
       <div className="w-full h-full bg-gray-800 flex items-center justify-center">
-        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-600">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-400">
           <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
         </svg>
       </div>
@@ -866,6 +873,17 @@ function FileBubble({ msg, isSelf }: { msg: any; isSelf: boolean }) {
     if (opening) return;
     setOpening(true);
     try {
+      const mode = useEmployeeStore.getState().mode;
+      if (mode === 'employee' && localFilePath) {
+        const bossUrl = toLocalMediaUrl(localFilePath);
+        // Employee: mở boss URL trực tiếp để download/stream
+        if (bossUrl && bossUrl.startsWith('http')) {
+          ipc.shell?.openExternal(bossUrl);
+          // Background cache cho lần sau
+          ensureMediaLocal(bossUrl, 'file').catch(() => {});
+          return;
+        }
+      }
       if (localFilePath) await ipc.file?.openPath(localFilePath);
       else if (fileHref) ipc.shell?.openExternal(fileHref);
     } catch {} finally { setOpening(false); }
@@ -1129,7 +1147,7 @@ function CallBubble({ parsed, isSelf }: { parsed: any; isSelf: boolean }) {
         </div>
         <div className="flex-1 min-w-0">
           <p className={`text-sm font-semibold ${statusRed ? 'text-red-400' : isSelf ? 'text-white' : 'text-gray-200'}`}>{statusLabel}</p>
-          <p className={`text-xs mt-0.5 ${isSelf ? 'text-blue-200' : 'text-gray-400'}`}>{isVideo ? 'Cuộc gọi video' : 'Cuộc gọi thoại'}</p>
+          <p className={`text-xs mt-0.5`}>{isVideo ? 'Cuộc gọi video' : 'Cuộc gọi thoại'}</p>
         </div>
       </div>
     </div>
@@ -1245,7 +1263,7 @@ function ContactCardBubble({ parsed, isSelf, onOpenProfile }: { parsed: any; isS
         <div className="flex-1 min-w-0">
           <p className="text-base font-semibold truncate select-text cursor-text">{title || 'Danh thiếp'}</p>
           {phone && <PhoneDisplay phone={phone} className={`text-sm ${isSelf ? 'text-blue-100' : 'text-gray-300'}`} />}
-          <p className={`text-xs mt-1 ${isSelf ? 'text-blue-200' : 'text-gray-500'}`}>Danh thiếp Zalo</p>
+          <p className={`text-xs mt-1 ${isSelf ? 'text-blue-200' : 'text-gray-400'}`}>Danh thiếp Zalo</p>
         </div>
         {qrCodeUrl && (
           <div className="w-12 h-12 flex-shrink-0">
@@ -1655,7 +1673,7 @@ export function MessageBubble({ msg, isSelf, senderName, onManage, onView, onOpe
     const hasOriginal = !!(originalContent && originalContent.trim() !== '' && originalContent !== 'null' && originalContent !== '{}');
     return (
       <div className={`flex flex-col ${isSelf ? 'items-end' : 'items-start'} gap-1 mb-0.5`}>
-        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-2xl bg-gray-700/50 border border-gray-600/50 text-gray-500 text-xs italic select-none">
+        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-2xl bg-gray-700/50 border border-gray-600/50 text-gray-400 text-xs italic select-none">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0 opacity-60">
             <polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 00-4-4H4"/>
           </svg>
@@ -1860,7 +1878,7 @@ export function RecalledBubble({
   return (
     <div className="flex flex-col gap-1 max-w-[320px]">
       {/* Recalled indicator */}
-      <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-2xl bg-gray-700/50 border border-gray-600/50 text-gray-500 text-xs italic select-none">
+      <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-2xl bg-gray-700/50 border border-gray-600/50 text-gray-400 text-xs italic select-none">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0 opacity-60">
           <polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 00-4-4H4"/>
         </svg>

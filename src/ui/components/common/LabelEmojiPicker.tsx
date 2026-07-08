@@ -60,7 +60,7 @@ export function LabelEmojiPicker({ value, onChange, onClose }: LabelEmojiPickerP
       <div className="max-h-64 overflow-y-auto p-2 space-y-3">
         {Object.entries(filteredCategories).map(([category, emojis]) => (
           <div key={category}>
-            <p className="text-[11px] text-gray-500 font-medium mb-1.5 px-1">{category}</p>
+            <p className="text-[11px] text-gray-400 font-medium mb-1.5 px-1">{category}</p>
             <div className="grid grid-cols-8 gap-0.5">
               {emojis.map((emoji, idx) => (
                 <button
@@ -77,7 +77,7 @@ export function LabelEmojiPicker({ value, onChange, onClose }: LabelEmojiPickerP
           </div>
         ))}
         {Object.values(filteredCategories).flat().length === 0 && (
-          <p className="text-center text-gray-500 text-sm py-4">Không tìm thấy emoji</p>
+          <p className="text-center text-gray-400 text-sm py-4">Không tìm thấy emoji</p>
         )}
       </div>
 

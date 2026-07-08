@@ -2,6 +2,7 @@ import React from 'react';
 import { useAppStore } from '@/store/appStore';
 import { useAccountStore } from '@/store/accountStore';
 import { toLocalMediaUrl } from '@/lib/localMedia';
+import { PhoneIcon } from './icons';
 
 /**
  * AccountSwitcherOverlay - Ctrl+Tab quick account switcher
@@ -60,7 +61,7 @@ export default function AccountSwitcherOverlay() {
 
           {/* Hint */}
           <p className={`text-[10px] text-center truncate w-full max-w-[140px] ${
-            isLight ? 'text-gray-500' : 'text-gray-400'
+            isLight ? 'text-gray-400' : 'text-gray-400'
           }`}>
             {mergedInboxMode ? 'Hiện tất cả hội thoại' : `${accounts.length} tài khoản`}
           </p>
@@ -123,7 +124,7 @@ export default function AccountSwitcherOverlay() {
 
         {/* UID */}
         <p className={`text-[10px] font-mono truncate w-full max-w-[140px] text-center ${
-          isLight ? 'text-gray-500' : 'text-gray-400'
+          isLight ? 'text-gray-400' : 'text-gray-400'
         }`}>
           ID: {acc.zalo_id}
         </p>
@@ -131,9 +132,9 @@ export default function AccountSwitcherOverlay() {
         {/* Phone */}
         {acc.phone && (
           <p className={`text-[10px] truncate w-full max-w-[140px] text-center ${
-            isLight ? 'text-gray-400' : 'text-gray-500'
+            isLight ? 'text-gray-400' : 'text-gray-400'
           }`}>
-            📞 {acc.phone}
+            <PhoneIcon className="w-3 h-3 inline" /> {acc.phone}
           </p>
         )}
       </div>

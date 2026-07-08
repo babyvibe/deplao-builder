@@ -42,6 +42,7 @@ import { useWorkspaceStore } from './store/workspaceStore';
 import { useEmployeeStore } from './store/employeeStore';
 import LockScreen from './components/auth/LockScreen';
 import { Spinner } from '@/components/common/PageLoading';
+import { GlobeIcon } from '@/components/common/icons';
 
 const HEALTH_CHECK_INTERVAL_MS = 60 * 1000; // 1 phút
 const NETWORK_RECONNECT_COOLDOWN_MS = 15 * 1000; // 15 giây
@@ -143,6 +144,26 @@ export default function App() {
         setIsLocked(true);
       }
     });
+  }, []);
+
+  // ─── Early init RestQueryService (employee mode) — trước workspace:switched ──
+  // UI components mount và gọi REST API ngay lập tức, nhưng workspace:switched
+  // event có độ trễ → RestQueryService chưa init → request bị "blocked".
+  // Fix: init ngay từ mount effect với thông tin workspace hiện tại.
+  useEffect(() => {
+    (async () => {
+      try {
+        const wsRes = await ipc.workspace?.getActive();
+        const ws = wsRes?.workspace;
+        if (ws?.type === 'remote' && ws.bossUrl && ws.token) {
+          const mod = require('../services/http/RestQueryService');
+          if (mod?.default?.getInstance) {
+            mod.default.getInstance().init(ws.bossUrl, ws.token);
+            console.log(`[App] ⚡ Early RestQueryService init: ${ws.bossUrl}`);
+          }
+        }
+      } catch {}
+    })();
   }, []);
 
   // ─── Lock screen: listen for lock events + keyboard shortcut ───────────
@@ -1466,8 +1487,8 @@ export default function App() {
             onClick={(e) => { e.stopPropagation(); hideNotification(); }}
             className={`flex-shrink-0 mt-0.5 w-6 h-6 flex items-center justify-center rounded-full transition-colors
               ${theme === 'light'
-                ? 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
-                : 'text-gray-500 hover:text-gray-300 hover:bg-gray-700/60'}`}>
+                ? 'text-gray-400 hover:text-gray-400 hover:bg-gray-100'
+                : 'text-gray-400 hover:text-gray-300 hover:bg-gray-700/60'}`}>
             <svg width="9" height="9" viewBox="0 0 10 10" fill="currentColor">
               <path d="M6.06 5l2.47-2.47A.75.75 0 007.47 1.47L5 3.94 2.53 1.47A.75.75 0 001.47 2.53L3.94 5 1.47 7.47a.75.75 0 001.06 1.06L5 6.06l2.47 2.47a.75.75 0 001.06-1.06L6.06 5z"/>
             </svg>
@@ -1492,7 +1513,7 @@ export default function App() {
                 </div>
                 <button
                   onClick={hideErpPermissionDialog}
-                  className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${theme === 'light' ? 'text-gray-400 hover:text-gray-700 hover:bg-white' : 'text-gray-500 hover:text-white hover:bg-gray-800'}`}
+                  className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${theme === 'light' ? 'text-gray-400 hover:text-gray-700 hover:bg-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}
                 >
                   ✕
                 </button>
@@ -1505,8 +1526,8 @@ export default function App() {
               </p>
               {erpPermissionDialog.details && (
                 <div className={`rounded-xl border px-3 py-2 ${theme === 'light' ? 'border-gray-200 bg-gray-50' : 'border-gray-700 bg-gray-800/80'}`}>
-                  <p className={`text-[11px] uppercase tracking-wider mb-1 ${theme === 'light' ? 'text-gray-500' : 'text-gray-500'}`}>Chi tiết</p>
-                  <p className={`text-xs break-words ${theme === 'light' ? 'text-gray-600' : 'text-gray-300'}`}>{erpPermissionDialog.details}</p>
+                  <p className={`text-[11px] uppercase tracking-wider mb-1 ${theme === 'light' ? 'text-gray-400' : 'text-gray-400'}`}>Chi tiết</p>
+                  <p className={`text-xs break-words ${theme === 'light' ? 'text-gray-400' : 'text-gray-300'}`}>{erpPermissionDialog.details}</p>
                 </div>
               )}
               <div className="flex justify-end">

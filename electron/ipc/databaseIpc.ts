@@ -3,6 +3,7 @@ import DatabaseService from '../../src/services/database/DatabaseService';
 import FileStorageService from '../../src/services/file/FileStorageService';
 import WorkflowEngineService from '../../src/services/workflow/WorkflowEngineService';
 import EventBroadcaster from '../../src/services/event/EventBroadcaster';
+import MediaCacheService from '../../src/services/cache/MediaCacheService';
 import { proxyToBoss } from './proxyHelper';
 import Logger from '../../src/utils/Logger';
 import * as path from 'path';
@@ -235,7 +236,29 @@ export function registerDatabaseIpc() {
     // ─── Storage path management ──────────────────────────────────────────
     ipcMain.handle('db:getStoragePath', async () => {
         try {
-            if (isEmployeeMode()) return { success: true };
+            if (isEmployeeMode()) {
+                // Employee mode: trả về thông tin local của Employee (không phải Boss)
+                const userDataPath = app.getPath('userData');
+                const cache = MediaCacheService.getInstance();
+                const cacheDir = cache['cacheDir'] || path.join(app.getPath('userData'), '.media-cache');
+                let cacheSize = 0;
+                try {
+                    const index = cache['index'] as Map<string, any> | undefined;
+                    if (index) {
+                        for (const entry of index.values()) {
+                            cacheSize += entry.size || 0;
+                        }
+                    }
+                } catch {}
+                return {
+                    success: true,
+                    path: userDataPath,
+                    defaultPath: userDataPath,
+                    isEmployee: true,
+                    mediaCachePath: cacheDir,
+                    mediaCacheSize: cacheSize,
+                };
+            }
             const userDataPath = app.getPath('userData');
             const configPath = path.join(userDataPath, 'deplao-config.json');
             let customPath: string | null = null;
@@ -254,6 +277,7 @@ export function registerDatabaseIpc() {
                 configPath,
                 actualDbPath,
                 configExists: fs.existsSync(configPath),
+                isEmployee: false,
             };
         } catch (error: any) {
             return { success: false, error: error.message };

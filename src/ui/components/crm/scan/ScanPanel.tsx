@@ -7,6 +7,7 @@ import ScanFiltersPanel from './ScanFiltersPanel';
 import { SCAN_INPUT_CONFIG } from './ScanSessionTypes';
 import ScanHistoryPanel from './ScanHistoryPanel';
 import { Spinner } from '@/components/common/PageLoading';
+import { ClipboardListIcon, HardDriveIcon, SearchIcon } from '@/components/common/icons';
 import { showConfirm } from '../../common/ConfirmDialog';
 
 const SCAN_WARNING_KEY = 'fb_scan_warning_dismissed';
@@ -755,6 +756,7 @@ export default function ScanPanel({ accountId }: Props) {
       useAppStore.getState().showNotification?.('Đã xuất Excel thành công!', 'success');
     } catch (err: any) {
       const { useAppStore } = await import('@/store/appStore');
+
       useAppStore.getState().showNotification?.('Lỗi xuất Excel: ' + err.message, 'error');
     }
   }, [tabs]);
@@ -800,7 +802,7 @@ export default function ScanPanel({ accountId }: Props) {
               return (
                 <>
                   {visibleTabs.map(tab => {
-                    const info = SCAN_TAB_LABELS[tab.scanType] || { icon: '📋', label: tab.scanType };
+                    const info = SCAN_TAB_LABELS[tab.scanType] || { icon: <ClipboardListIcon className="w-4 h-4" />, label: tab.scanType };
                     const isActive = tab.id === activeTabId;
                     return (
                 <div
@@ -811,7 +813,7 @@ export default function ScanPanel({ accountId }: Props) {
                   className={`group flex items-center gap-1 px-2.5 py-2 text-xs cursor-pointer select-none transition-all duration-150 border-b-2 flex-shrink min-w-[60px] max-w-[220px] ${
                     isActive
                       ? 'bg-gray-850 text-gray-100 border-blue-500 flex-shrink-0'
-                      : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800/40 border-transparent'
+                      : 'text-gray-400 hover:text-gray-300 hover:bg-gray-800/40 border-transparent'
                   }`}
                 >
                   <span className="flex-shrink-0">{info.icon}</span>
@@ -827,7 +829,7 @@ export default function ScanPanel({ accountId }: Props) {
                       <button
                         ref={(el) => { tabMenuRef.current[tab.id] = el; }}
                         onClick={(e) => { e.stopPropagation(); setOpenMenuTabId(openMenuTabId === tab.id ? null : tab.id); }}
-                        className="p-0.5 rounded hover:bg-gray-600/40 opacity-0 group-hover:opacity-100 transition-opacity text-gray-500 hover:text-gray-300"
+                        className="p-0.5 rounded hover:bg-gray-600/40 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-300"
                         title="Tuỳ chọn"
                       >
                         <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
@@ -878,12 +880,12 @@ export default function ScanPanel({ accountId }: Props) {
                       <button
                         ref={overflowRef}
                         onClick={(e) => { e.stopPropagation(); setShowOverflowTabs(v => !v); }}
-                        className="flex items-center gap-1 px-2.5 py-2 text-xs text-gray-500 hover:text-gray-300 hover:bg-gray-800/40 border-b-2 border-transparent"
+                        className="flex items-center gap-1 px-2.5 py-2 text-xs text-gray-400 hover:text-gray-300 hover:bg-gray-800/40 border-b-2 border-transparent"
                       >
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                           <circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/>
                         </svg>
-                        <span className="text-[10px] text-gray-600">+{tabs.length - MAX_VISIBLE}</span>
+                        <span className="text-[10px] text-gray-400">+{tabs.length - MAX_VISIBLE}</span>
                       </button>
                       {showOverflowTabs && (
                         <>
@@ -894,7 +896,7 @@ export default function ScanPanel({ accountId }: Props) {
                               left: (overflowRef.current?.getBoundingClientRect().left ?? 100),
                             }}>
                             {tabs.slice(MAX_VISIBLE).map(tab => {
-                              const info = SCAN_TAB_LABELS[tab.scanType] || { icon: '📋', label: tab.scanType };
+                              const info = SCAN_TAB_LABELS[tab.scanType] || { icon: <ClipboardListIcon className="w-4 h-4" />, label: tab.scanType };
                               const isActive = tab.id === activeTabId;
                               return (
                                 <button
@@ -904,7 +906,7 @@ export default function ScanPanel({ accountId }: Props) {
                                 >
                                   <span>{info.icon}</span>
                                   <span className="truncate flex-1">{tab.label}</span>
-                                  {tab.items.length > 0 && <span className="text-[10px] text-gray-500">{tab.items.length}</span>}
+                                  {tab.items.length > 0 && <span className="text-[10px] text-gray-400">{tab.items.length}</span>}
                                 </button>
                               );
                             })}
@@ -924,13 +926,13 @@ export default function ScanPanel({ accountId }: Props) {
             <div className="relative">
               <div className="flex items-center gap-0">
                 <button onClick={() => setShowArchive(v => !v)}
-                  className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs text-gray-500 hover:text-gray-200 hover:bg-gray-800 transition-colors"
+                  className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs text-gray-400 hover:text-gray-200 hover:bg-gray-800 transition-colors"
                 >
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 8v13H3V8M1 3h22v5H1z"/></svg>
                   {archivedTabs.length > 0 && (<span className="text-[10px] bg-amber-600/30 text-amber-300 rounded-full px-1.5 py-0.5 leading-none">{archivedTabs.length}</span>)}
                 </button>
                 <button onClick={() => setShowHistory(true)}
-                  className="p-1.5 rounded-lg text-gray-500 hover:text-gray-200 hover:bg-gray-800 transition-colors" title="Lịch sử quét"
+                  className="p-1.5 rounded-lg text-gray-400 hover:text-gray-200 hover:bg-gray-800 transition-colors" title="Lịch sử quét"
                 >
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                 </button>
@@ -940,8 +942,8 @@ export default function ScanPanel({ accountId }: Props) {
                   <div className="fixed inset-0 z-10" onClick={() => { setShowArchive(false); setArchiveSearch(''); }} />
                   <div className="absolute z-20 right-0 top-full mt-1 bg-gray-800 border border-gray-600/50 rounded-xl shadow-2xl py-2 w-[340px] max-h-[420px] flex flex-col">
                     <div className="px-3 pb-2 flex items-center gap-2 flex-shrink-0">
-                      <span className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Đã lưu trữ</span>
-                      <span className="text-[10px] text-gray-600">({archivedTabs.length})</span>
+                      <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Đã lưu trữ</span>
+                      <span className="text-[10px] text-gray-400">({archivedTabs.length})</span>
                       <button onClick={loadArchivedTabs} className="p-0.5 hover:text-white ml-auto" title="Làm mới">
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                           <path d="M21 2v6h-6M3 12a9 9 0 0115.36-6.36L21 8M3 22v-6h6M21 12a9 9 0 01-15.36 6.36L3 16"/>
@@ -959,16 +961,16 @@ export default function ScanPanel({ accountId }: Props) {
                           .filter((t: any) => !archiveSearch || t.name?.toLowerCase().includes(archiveSearch.toLowerCase()))
                           .sort((a: any, b: any) => (b.createdAt || b.created_at || 0) - (a.createdAt || a.created_at || 0));
                         if (filtered.length === 0) {
-                          return <div className="px-3 py-4 text-xs text-gray-500 text-center">{archiveSearch ? 'Không tìm thấy' : 'Không có tab nào được lưu trữ'}</div>;
+                          return <div className="px-3 py-4 text-xs text-gray-400 text-center">{archiveSearch ? 'Không tìm thấy' : 'Không có tab nào được lưu trữ'}</div>;
                         }
                         return filtered.map((t: any) => (
                           <div key={t.id} className="flex items-center gap-2 px-3 py-2 hover:bg-gray-700/60 group">
                             <div className="flex-1 min-w-0">
                               <div className="text-xs text-gray-300 truncate">{t.name}</div>
                               <div className="flex items-center gap-2 mt-0.5">
-                                <span className="text-[10px] text-gray-600">{t.items_count ?? t.itemsCount ?? 0} items</span>
+                                <span className="text-[10px] text-gray-400">{t.items_count ?? t.itemsCount ?? 0} items</span>
                                 <span className="text-[10px] text-gray-700">·</span>
-                                <span className="text-[10px] text-gray-600">{formatArchivedDate(t.createdAt || t.created_at)}</span>
+                                <span className="text-[10px] text-gray-400">{formatArchivedDate(t.createdAt || t.created_at)}</span>
                               </div>
                             </div>
                             <button onClick={() => restoreTab(t.id)}
@@ -1004,17 +1006,17 @@ export default function ScanPanel({ accountId }: Props) {
                       right: newTabMenuRef.current ? document.documentElement.clientWidth - newTabMenuRef.current.getBoundingClientRect().right : 0,
                     }}
                   >
-                    <div className="px-3 py-1.5 text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Loại quét</div>
+                    <div className="px-3 py-1.5 text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Loại quét</div>
                     <div className="max-h-[320px] overflow-y-auto">
                       {SCAN_CONFIGS.map(cfg => (
                         <button key={cfg.scanType}
                           onClick={() => !cfg.comingSoon && openNewTab(cfg.scanType)}
-                          className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs text-left transition-colors ${cfg.comingSoon ? 'text-gray-600 cursor-not-allowed' : 'text-gray-300 hover:bg-gray-700/60 hover:text-white'}`}
+                          className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs text-left transition-colors ${cfg.comingSoon ? 'text-gray-400 cursor-not-allowed' : 'text-gray-300 hover:bg-gray-700/60 hover:text-white'}`}
                         >
                           <span className="text-base">{cfg.icon}</span>
                           <div className="flex flex-col flex-1 min-w-0">
                             <span className="font-medium">{cfg.label}</span>
-                            <span className="text-[10px] text-gray-500">{cfg.description}</span>
+                            <span className="text-[10px] text-gray-400">{cfg.description}</span>
                           </div>
                           {cfg.comingSoon && (
                             <span className="flex-shrink-0 text-[9px] px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-500 font-medium">Đang phát triển</span>
@@ -1104,7 +1106,7 @@ export default function ScanPanel({ accountId }: Props) {
           onDuplicate={() => duplicateTab(activeTab)}
         />
       ) : (
-        <div className="flex-1 flex items-center justify-center text-gray-500 text-sm">
+        <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
           Chọn hoặc mở tab mới để bắt đầu quét
         </div>
       )}
@@ -1158,7 +1160,7 @@ function ActiveTabContent({
   onDuplicate: () => void;
 }) {
   const config = SCAN_CONFIGS.find(c => c.scanType === tab.scanType) || SCAN_CONFIGS[0];
-  const info = SCAN_TAB_LABELS[tab.scanType] || { icon: '📋', label: tab.scanType };
+  const info = SCAN_TAB_LABELS[tab.scanType] || { icon: <ClipboardListIcon className="w-4 h-4" />, label: tab.scanType };
   const inputConfig = SCAN_INPUT_CONFIG[tab.scanType] || { modes: ['single_url'], defaultMode: 'single_url' };
 
   // ── Client-side filters ──────────────────────────────────────
@@ -1235,7 +1237,7 @@ function ActiveTabContent({
           {/* Threads (batch only) */}
           {batchMode && (
             <div className="flex items-center gap-1">
-              <span className="text-[10px] text-gray-500">Luồng:</span>
+              <span className="text-[10px] text-gray-400">Luồng:</span>
               <select value={threadCount} onChange={(e) => onUpdate({ threadCount: Number(e.target.value) })}
                 className="bg-gray-700/50 text-gray-300 text-[11px] rounded-lg px-2 py-1.5 border border-gray-600/30 focus:outline-none focus:border-blue-500">
                 <option value={1}>1</option><option value={5}>5</option><option value={10}>10</option><option value={20}>20</option>
@@ -1245,7 +1247,7 @@ function ActiveTabContent({
 
           {/* Target count */}
           <div className="flex items-center gap-1">
-            <span className="text-[10px] text-gray-500">Mục tiêu:</span>
+            <span className="text-[10px] text-gray-400">Mục tiêu:</span>
             <select value={tab.filters.maxResults} onChange={(e) => onUpdate({ filters: { ...tab.filters, maxResults: Number(e.target.value) } })}
               className="bg-gray-700/50 text-gray-300 text-[11px] rounded-lg px-2 py-1.5 border border-gray-600/30 focus:outline-none focus:border-blue-500">
               <option value={10}>10</option><option value={20}>20</option><option value={50}>50</option>
@@ -1279,7 +1281,7 @@ function ActiveTabContent({
           )}
 
           <button onClick={onDuplicate}
-            className="p-1.5 rounded-lg text-gray-500 hover:text-gray-300 hover:bg-gray-700/60 transition-colors" title="Nhân bản tab">
+            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-300 hover:bg-gray-700/60 transition-colors" title="Nhân bản tab">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
             </svg>
@@ -1329,7 +1331,7 @@ function ActiveTabContent({
                   <div className="h-full bg-gradient-to-r from-purple-500 to-pink-400 rounded-full transition-all duration-300"
                     style={{ width: `${(batchProgress.done / batchProgress.total) * 100}%` }} />
                 </div>
-                <span className="text-gray-500 text-[10px] truncate">{batchProgress.current}</span>
+                <span className="text-gray-400 text-[10px] truncate">{batchProgress.current}</span>
               </div>
             )}
 

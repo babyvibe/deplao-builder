@@ -13,6 +13,7 @@ import LabelPicker, { EditLabelsModal } from './LabelPicker';
 import AddFriendModal from '../common/AddFriendModal';
 import GroupAvatar from '../common/GroupAvatar';
 import { Spinner } from '@/components/common/PageLoading';
+import { BellIcon, BellOffIcon, BookmarkIcon, ChatIcon, CheckIcon, CircleIcon, ClipboardListIcon, CloseIcon, CloudIcon, FolderIcon, GlobeIcon, HardDriveIcon, ImageIcon, LinkIcon, MapPinIcon, MessageCircleIcon, PaperclipIcon, PinIcon, PluginIcon, TargetIcon, TrashIcon, UsersIcon } from '@/components/common/icons';
 import { toLocalMediaUrl } from '@/lib/localMedia';
 import GlobalSearchPanel from './GlobalSearchPanel';
 import useIsMobile from '@/hooks/useIsMobile';
@@ -1526,16 +1527,16 @@ export default function ConversationList() {
     return (
       <div ref={ctxRef} className="fixed z-50 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl py-1 min-w-[190px]"
         style={{ top: Math.min(ctxMenu.y, window.innerHeight - 320), left: Math.min(ctxMenu.x, window.innerWidth - 210) }}>
-        <CtxItem icon={hasUnread ? '✅' : '🔵'} label={hasUnread ? 'Đánh dấu đã đọc' : 'Đánh dấu chưa đọc'} onClick={() => handleMarkRead(contact.contact_id, hasUnread, ctxZaloId)} />
+        <CtxItem icon={hasUnread ? <CheckIcon className="w-4 h-4" /> : <CircleIcon className="w-4 h-4" />} label={hasUnread ? 'Đánh dấu đã đọc' : 'Đánh dấu chưa đọc'} onClick={() => handleMarkRead(contact.contact_id, hasUnread, ctxZaloId)} />
 
         {/* Mute sub-menu */}
         <div className="relative"
           onMouseEnter={() => setMuteSubmenuId(contact.contact_id)}
           onMouseLeave={() => setMuteSubmenuId(null)}>
           {isMuted ? (
-            <CtxItem icon="🔔" label="Bật thông báo" onClick={() => handleUnmute(contact.contact_id, ctxZaloId)} />
+            <CtxItem icon={<BellIcon className="w-4 h-4" />} label="Bật thông báo" onClick={() => handleUnmute(contact.contact_id, ctxZaloId)} />
           ) : (
-            <CtxItem icon="🔕" label="Tắt thông báo" hasArrow onClick={() => {}} />
+            <CtxItem icon={<BellOffIcon className="w-4 h-4" />} label="Tắt thông báo" hasArrow onClick={() => {}} />
           )}
           {!isMuted && muteSubmenuId === contact.contact_id && (
             <div className="absolute left-full top-0 bg-gray-800 border border-gray-700 rounded-xl shadow-xl min-w-[200px] py-1 z-50">
@@ -1550,25 +1551,25 @@ export default function ConversationList() {
         </div>
 
         {ctxChannelCap.supportsPinConversation && (
-          <CtxItem icon={isPinned ? '📍' : '📌'} label={isPinned ? 'Bỏ ghim (Zalo)' : 'Ghim (đồng bộ Zalo)'} onClick={() => handleTogglePin(contact.contact_id, threadType)} />
+          <CtxItem icon={isPinned ? <MapPinIcon className="w-4 h-4" /> : <PinIcon className="w-4 h-4" />} label={isPinned ? 'Bỏ ghim (Zalo)' : 'Ghim (đồng bộ Zalo)'} onClick={() => handleTogglePin(contact.contact_id, threadType)} />
         )}
-        <CtxItem icon={isLocalPinned ? '🔖' : '📎'} label={isLocalPinned ? 'Bỏ ghim trong app' : 'Ghim trong app'} onClick={() => handleToggleLocalPin(contact.contact_id)} />
+        <CtxItem icon={isLocalPinned ? <BookmarkIcon className="w-4 h-4" /> : <PaperclipIcon className="w-4 h-4" />} label={isLocalPinned ? 'Bỏ ghim trong app' : 'Ghim trong app'} onClick={() => handleToggleLocalPin(contact.contact_id)} />
 
         <div className="border-t border-gray-700 my-1" />
 
         {ctxOthers.has(contact.contact_id) ? (
-          <CtxItem icon="🌐" label="Chuyển về Chính" onClick={() => handleRemoveFromOthers(contact.contact_id, ctxZaloId)} />
+          <CtxItem icon={<GlobeIcon className="w-4 h-4" />} label="Chuyển về Chính" onClick={() => handleRemoveFromOthers(contact.contact_id, ctxZaloId)} />
         ) : (
           <div className="flex items-center">
             <button
               onClick={() => handleMoveToOthers(contact.contact_id, ctxZaloId)}
               className="flex-1 flex items-center gap-2 px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-700 hover:text-white text-left transition-colors"
             >
-              <span>📁</span>
+              <span><FolderIcon className="w-4 h-4" /></span>
               <span>Chuyển vào Khác</span>
             </button>
             <div className="relative group pr-2">
-              <span className="w-4 h-4 rounded-full border border-gray-500 text-gray-500 hover:border-gray-300 hover:text-gray-300 flex items-center justify-center text-xs cursor-default select-none transition-colors">
+              <span className="w-4 h-4 rounded-full border border-gray-500 text-gray-400 hover:border-gray-300 hover:text-gray-300 flex items-center justify-center text-xs cursor-default select-none transition-colors">
                 ?
               </span>
               <div className="absolute right-0 bottom-full mb-1 w-64 bg-gray-900 border border-gray-600 rounded-lg shadow-xl p-3 text-xs text-gray-300 leading-relaxed z-[60] hidden group-hover:block pointer-events-none">
@@ -1581,14 +1582,14 @@ export default function ConversationList() {
         {contact.contact_type !== 'group' && ctxChannelCap.supportsInviteToGroup && (
           <>
             <div className="border-t border-gray-700 my-1" />
-            <CtxItem icon="👥" label="Mời vào nhóm" onClick={() => { setCtxMenu(null); setInviteContactId(contact.contact_id); }} />
+            <CtxItem icon={<UsersIcon className="w-4 h-4" />} label="Mời vào nhóm" onClick={() => { setCtxMenu(null); setInviteContactId(contact.contact_id); }} />
           </>
         )}
         <div className="border-t border-gray-700 my-1" />
         <div className="flex items-center">
-          <CtxItem icon="🗑" label="Xóa hội thoại" onClick={() => handleDeleteConversation(contact.contact_id, ctxZaloId)} danger />
+          <CtxItem icon={<TrashIcon className="w-4 h-4" />} label="Xóa hội thoại" onClick={() => handleDeleteConversation(contact.contact_id, ctxZaloId)} danger />
           <div className="relative group pr-2">
-              <span className="w-4 h-4 rounded-full border border-gray-500 text-gray-500 hover:border-gray-300 hover:text-gray-300 flex items-center justify-center text-xs cursor-default select-none transition-colors">
+              <span className="w-4 h-4 rounded-full border border-gray-500 text-gray-400 hover:border-gray-300 hover:text-gray-300 flex items-center justify-center text-xs cursor-default select-none transition-colors">
                 ?
               </span>
             <div className="absolute right-0 bottom-full mb-1 w-64 bg-gray-900 border border-gray-600 rounded-lg shadow-xl p-3 text-xs text-gray-300 leading-relaxed z-[60] hidden group-hover:block pointer-events-none">
@@ -1765,12 +1766,12 @@ export default function ConversationList() {
                   <button onClick={() => { setFilterLabelSource('local'); setFilterLabelIds([]); }}
                     className={`${isFbLabel ? 'flex-1' : 'flex-1'} px-2 py-1 rounded text-[11px] font-medium transition-colors ${
                       filterLabelSource === 'local' || isFbLabel ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'
-                    }`}>💾 Local</button>
+                    }`}><HardDriveIcon className="w-4 h-4 inline" /> Local</button>
                   {!isFbLabel && (
                     <button onClick={() => { setFilterLabelSource('zalo'); setFilterLabelIds([]); }}
                       className={`flex-1 px-2 py-1 rounded text-[11px] font-medium transition-colors ${
                         filterLabelSource === 'zalo' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'
-                      }`}>☁️ Zalo</button>
+                      }`}><CloudIcon className="w-4 h-4 inline" /> Zalo</button>
                   )}
                 </div>
               </div>
@@ -1805,7 +1806,7 @@ export default function ConversationList() {
                     {filterLabelIds.length === 0 && <span className="ml-auto text-blue-600">✓</span>}
                   </button>
                   {localLabels.length === 0 ? (
-                    <p className="text-xs text-gray-500 px-3 py-2 italic">Chưa có Nhãn Local</p>
+                    <p className="text-xs text-gray-400 px-3 py-2 italic">Chưa có Nhãn Local</p>
                   ) : localLabels.map(l => {
                     const isActive = filterLabelIds.includes(l.id);
                     return (
@@ -1828,7 +1829,7 @@ export default function ConversationList() {
                 <>
                   {/* Cập nhật */}
                   <div className="px-3 py-1.5 border-b border-gray-700/60 flex items-center justify-between">
-                    <span className="text-[11px] text-gray-500 uppercase tracking-wide font-medium">Nhãn Zalo</span>
+                    <span className="text-[11px] text-gray-400 uppercase tracking-wide font-medium">Nhãn Zalo</span>
                     <button
                       onClick={async () => {
                         if (syncingLabels) return;
@@ -1874,7 +1875,7 @@ export default function ConversationList() {
                     {filterLabelIds.length === 0 && <span className="ml-auto text-blue-400">✓</span>}
                   </button>
                   {(mergedInboxMode ? mergedLabels! : labels).length === 0 ? (
-                    <p className="text-xs text-gray-500 px-3 py-2 italic">Chưa có nhãn Zalo</p>
+                    <p className="text-xs text-gray-400 px-3 py-2 italic">Chưa có nhãn Zalo</p>
                   ) : (mergedInboxMode ? mergedLabels! : labels).map(l => {
                     const isActive = filterLabelIds.includes(l.id);
                     return (
@@ -1946,7 +1947,7 @@ export default function ConversationList() {
               {/*  }}*/}
               {/*  className={`w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-gray-700 text-left ${filter === 'unreplied' ? 'text-white bg-gray-700/50' : 'text-gray-300'}`}*/}
               {/*>*/}
-              {/*  <span>💬</span>*/}
+              {/*  <span><ChatIcon className="w-4 h-4" /></span>*/}
               {/*  <span>Chưa trả lời</span>*/}
               {/*  {unrepliedCount > 0 && <span className="ml-auto bg-blue-600 text-white text-xs rounded-full px-1.5 min-w-[18px] text-center">{unrepliedCount}</span>}*/}
               {/*  {filter === 'unreplied' && <span className="ml-auto text-blue-400">✓</span>}*/}
@@ -1960,12 +1961,12 @@ export default function ConversationList() {
                 }}
                 className={`w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-gray-700 text-left ${filter === 'others' ? 'text-white bg-gray-700/50' : 'text-gray-300'}`}
               >
-                <span>🧩</span>
+                <span><PluginIcon className="w-4 h-4" /></span>
                 <span>Khác</span>
                 {othersCount > 0 && <span className="ml-auto bg-gray-600 text-white text-xs rounded-full px-1.5 min-w-[18px] text-center">{othersCount}</span>}
                 {filter === 'others' && <span className="ml-auto text-blue-400">✓</span>}
                 <div className="relative group pr-2">
-                  <span className="w-4 h-4 rounded-full border border-gray-500 text-gray-500 hover:border-gray-300 hover:text-gray-300 flex items-center justify-center text-xs cursor-default select-none transition-colors">
+                  <span className="w-4 h-4 rounded-full border border-gray-500 text-gray-400 hover:border-gray-300 hover:text-gray-300 flex items-center justify-center text-xs cursor-default select-none transition-colors">
                     ?
                   </span>
                     <div className="absolute right-0 top-full mb-1 w-64 bg-gray-900 border border-gray-600 rounded-lg shadow-xl p-3 text-xs text-gray-300 leading-relaxed z-[60] hidden group-hover:block pointer-events-none">
@@ -1976,14 +1977,14 @@ export default function ConversationList() {
 
               {/* Channel filter submenu */}
               <div className="border-t border-gray-700 mt-1 pt-1">
-                <div className="px-3 py-1 text-[10px] text-gray-500 uppercase tracking-wider">Kênh</div>
+                <div className="px-3 py-1 text-[10px] text-gray-400 uppercase tracking-wider">Kênh</div>
                 {(['all', 'zalo', 'facebook'] as const).map(ch => (
                   <button
                     key={ch}
                     onClick={() => { setChannelFilter(ch); setMoreMenuOpen(false); }}
                     className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-gray-700 text-left ${channelFilter === ch ? 'text-white bg-gray-700/50' : 'text-gray-300'}`}
                   >
-                    <span>{ch === 'all' ? '🌐' : ch === 'zalo' ? '💙' : '💜'}</span>
+                    <span>{ch === 'all' ? <GlobeIcon className="w-4 h-4" /> : <MessageCircleIcon className="w-4 h-4" />}</span>
                     <span>{ch === 'all' ? 'Tất cả kênh' : ch === 'zalo' ? 'Zalo' : 'Facebook'}</span>
                     {channelFilter === ch && <span className="ml-auto text-blue-400">✓</span>}
                   </button>
@@ -2031,14 +2032,14 @@ export default function ConversationList() {
         <div className="border-b border-gray-700 bg-gray-800 px-3 py-2">
           {phoneSearching ? <p className="text-xs text-gray-400">Đang tìm...</p> : phoneResult ? (
             phoneResult._notFound ? (
-              <p className="text-xs text-gray-500">Không tìm thấy người dùng với số này hoặc người dùng đã chặn tìm kiếm với người lạ</p>
+              <p className="text-xs text-gray-400">Không tìm thấy người dùng với số này hoặc người dùng đã chặn tìm kiếm với người lạ</p>
             ) : (
             <div className="flex items-center gap-2">
               {phoneResult.avatar ? <img src={phoneResult.avatar} alt="" className="w-9 h-9 rounded-full object-cover flex-shrink-0" />
                 : <div className="w-9 h-9 rounded-full bg-blue-600 flex items-center justify-center text-white text-sm font-bold flex-shrink-0">{(phoneResult.display_name || 'U').charAt(0).toUpperCase()}</div>}
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-gray-200 truncate">{phoneResult.display_name || phoneResult.zalo_name}</p>
-                {phoneResult.isBlocked === 1 ? <p className="text-xs text-red-400">🚫 Đã chặn</p>
+                {phoneResult.isBlocked === 1 ? <p className="text-xs text-red-400"><CloseIcon className="w-4 h-4 inline" /> Đã chặn</p>
                   : phoneResult.isFr === 1 ? <p className="text-xs text-green-400">✓ Bạn bè</p>
                   : phoneResult._sentRequest ? <p className="text-xs text-yellow-400">✓ Đã gửi lời mời</p>
                   : <p className="text-xs text-gray-400">Chưa kết bạn</p>}
@@ -2051,7 +2052,7 @@ export default function ConversationList() {
                     + Kết bạn
                   </button>
                 )}
-                <button onClick={() => handleOpenPhoneResult(phoneResult)} className="bg-gray-700 hover:bg-gray-600 text-gray-200 text-xs px-2 py-1 rounded-lg">💬</button>
+                <button onClick={() => handleOpenPhoneResult(phoneResult)} className="bg-gray-700 hover:bg-gray-600 text-gray-200 text-xs px-2 py-1 rounded-lg"><ChatIcon className="w-4 h-4" /></button>
               </div>
             </div>
             )
@@ -2072,12 +2073,12 @@ export default function ConversationList() {
           <PageLoading variant="skeleton" skeletonVariant="table" />
         ) : (mergedInboxMode ? (filteredMerged?.length ?? 0) : filtered.length) === 0 ? (
           useChatStore.getState().conversationsLoading ? (
-            <div className="flex flex-col items-center justify-center h-full text-gray-500 text-sm gap-2">
+            <div className="flex flex-col items-center justify-center h-full text-gray-400 text-sm gap-2">
               <span className="w-5 h-5 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
               <p>Đang tải hội thoại...</p>
             </div>
           ) : (
-          <div className="flex flex-col items-center justify-center h-full text-gray-500 text-sm"><p>Không có hội thoại</p></div>
+          <div className="flex flex-col items-center justify-center h-full text-gray-400 text-sm"><p>Không có hội thoại</p></div>
           )
         ) : (mergedInboxMode ? filteredMerged! : filtered).slice(0, displayCount).map((contact) => {
           const threadType = contact.contact_type === 'group' ? 1 : 0;
@@ -2100,7 +2101,7 @@ export default function ConversationList() {
           const ownerAcc = mergedInboxMode ? allAccountsList.find(a => a.zalo_id === contact.owner_zalo_id) : null;
           return (
             <div key={`${contact.owner_zalo_id}_${contact.contact_id}`}
-              className={`relative w-full flex items-center gap-3 px-3 py-2.5 hover:bg-gray-700 transition-colors cursor-pointer ${threadLocalLabelsArr.length > 0 ? 'min-h-[72px]' : 'max-h-[80px] min-h-[80px]'} ${activeThreadId === contact.contact_id && activeAccountId === contact.owner_zalo_id ? 'bg-gray-700' : ''}`}
+              className={`relative w-full flex items-center gap-3 px-3 py-2.5 hover:bg-gray-600 transition-colors cursor-pointer ${threadLocalLabelsArr.length > 0 ? 'min-h-[72px]' : 'max-h-[80px] min-h-[80px]'} ${activeThreadId === contact.contact_id && activeAccountId === contact.owner_zalo_id ? 'bg-gray-600' : ''}`}
               onClick={() => { if (mergedInboxMode) { handleMergedClick(contact); } else { handleSelect(contact.contact_id, threadType, contact.owner_zalo_id || activeAccountId); setFilterDropdownOpen(false); } }}
               onMouseEnter={() => setHoveredId(`${contact.owner_zalo_id}_${contact.contact_id}`)}
               onMouseLeave={() => setHoveredId(null)}>
@@ -2154,7 +2155,7 @@ export default function ConversationList() {
                 <div className="flex items-center justify-between gap-1">
                   <span className="text-sm font-medium text-gray-200 truncate flex items-center gap-1">
                     {isLocalPinned && <span title="Ghim trong app">📍</span>}
-                    {isPinned && <span title="Ghim Zalo">📌</span>}
+                    {isPinned && <span title="Ghim Zalo"><PinIcon className="w-4 h-4" /></span>}
                     {contact.alias || contact.display_name || contact.contact_id}
                   </span>
                   {/* Fixed-width slot: always reserve space to prevent layout shift on hover */}
@@ -2170,7 +2171,7 @@ export default function ConversationList() {
                         </button>
                       </>
                     ) : contact.last_message_time ? (
-                      <span className="text-xs text-gray-500 whitespace-nowrap">{formatTime(contact.last_message_time)}</span>
+                      <span className="text-xs text-gray-400 whitespace-nowrap">{formatTime(contact.last_message_time)}</span>
                     ) : null}
                   </div>
                 </div>
@@ -2196,12 +2197,12 @@ export default function ConversationList() {
                         if (draftText) {
                           return <><span className="text-red-400">Chưa gửi: </span><span className="text-gray-400">{draftText}</span></>;
                         }
-                        return formatLastMessage(contact.last_message) || (contact.phone ? `📞 ${contact.phone}` : '');
+                        return formatLastMessage(contact.last_message) || (contact.phone ? `${contact.phone}` : '');
                       })()}
                     </span>
                   </span>
                   <div className="flex items-center gap-1 flex-shrink-0">
-                    {isMuted && <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-500"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>}
+                    {isMuted && <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-400"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>}
                     {contact.unread_count > 0
                       ? <span className="bg-blue-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">{contact.unread_count > 99 ? '99+' : contact.unread_count}</span>
                       : contact.is_replied === 1
@@ -2215,10 +2216,10 @@ export default function ConversationList() {
                 </div>
                 {/* Local labels: pill tags on conversation item */}
                 {threadLocalLabelsArr.length > 0 && (
-                  <div className="flex items-center gap-1 mt-1.5 overflow-hidden">
-                    {threadLocalLabelsArr.slice(0, 3).map(label => (
+                  <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                    {threadLocalLabelsArr.map(label => (
                       <span key={label.id}
-                        className="inline-flex items-center gap-0.5 px-2 py-1 rounded-full text-[11px] flex-shrink-0 max-w-[100px] leading-none"
+                        className="inline-flex items-center gap-0.5 px-2 py-1 rounded-full text-[11px] flex-shrink-0 max-w-[160px] leading-none"
                         style={{ backgroundColor: label.color || '#3b82f6', color: label.text_color || '#ffffff' }}
                         title={label.name}
                       >
@@ -2226,7 +2227,6 @@ export default function ConversationList() {
                         <span className="truncate">{label.name}</span>
                       </span>
                     ))}
-                    {threadLocalLabelsArr.length > 3 && <span className="text-[9px] text-gray-500">+{threadLocalLabelsArr.length - 3}</span>}
                   </div>
                 )}
               </div>
@@ -2329,10 +2329,10 @@ export default function ConversationList() {
                     }
                     <div className="flex-1 min-w-0">
                       <p className="text-sm text-gray-200 truncate">{acc?.full_name || zaloId}</p>
-                      <p className="text-gray-500 text-[12px]">{acc?.phone || zaloId}</p>
-                      <p className="text-xs text-gray-500">{accLabels.length} nhãn</p>
+                      <p className="text-gray-400 text-[12px]">{acc?.phone || zaloId}</p>
+                      <p className="text-xs text-gray-400">{accLabels.length} nhãn</p>
                     </div>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-500 flex-shrink-0">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-400 flex-shrink-0">
                       <polyline points="9 18 15 12 9 6"/>
                     </svg>
                   </button>
@@ -2376,14 +2376,14 @@ export default function ConversationList() {
 
 function TabBtn({ label, active, onClick, badge, fullWidth }: { label: string; active: boolean; onClick: () => void; badge?: number; fullWidth?: boolean }) {
   return (
-    <button onClick={onClick} className={`${fullWidth ? 'w-full' : 'flex-1'} h-10 flex items-center justify-center text-xs font-medium transition-colors whitespace-nowrap px-3 ${active ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-500 hover:text-gray-300'}`}>
+    <button onClick={onClick} className={`${fullWidth ? 'w-full' : 'flex-1'} h-10 flex items-center justify-center text-xs font-medium transition-colors whitespace-nowrap px-3 ${active ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-gray-300'}`}>
       {label}
       {badge !== undefined && badge > 0 && <span className="ml-1 bg-blue-600 text-white text-[9px] rounded-full px-1.5 min-w-[16px] text-center">{badge > 99 ? '99+' : badge}</span>}
     </button>
   );
 }
 
-function CtxItem({ icon, label, onClick, hasArrow, danger }: { icon: string; label: string; onClick: () => void; hasArrow?: boolean; danger?: boolean }) {
+function CtxItem({ icon, label, onClick, hasArrow, danger }: { icon: React.ReactNode; label: string; onClick: () => void; hasArrow?: boolean; danger?: boolean }) {
   return (
     <button onClick={onClick} className={`w-full flex items-center gap-2 px-3 py-2 text-sm text-left transition-colors ${danger ? 'text-red-400 hover:bg-red-900/30 hover:text-red-300' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}>
       <span className="w-4 text-center flex-shrink-0 text-base">{icon}</span>
@@ -2410,7 +2410,7 @@ function formatLastMessage(msg: string | undefined): string {
         'Video': '🎥 Video',
         'Sticker': '🎭 Nhãn dán',
         'GIF': '🎬 GIF',
-        'File': '📂 File',
+        'File': 'File: ',
         'Giọng nói': '🎙 Tin nhắn thoại',
         'Âm thanh': '🎙 Tin nhắn thoại',
       };
@@ -2429,7 +2429,7 @@ function formatLastMessage(msg: string | undefined): string {
       const secs = params.duration || 0;
       if (secs > 0) {
         const m = Math.floor(secs / 60), s = secs % 60;
-        return `📞 Cuộc gọi (${m > 0 ? `${m}p ` : ''}${s}s)`;
+        return `Cuộc gọi (${m > 0 ? `${m}p ` : ''}${s}s)`;
       }
       return '📞 Cuộc gọi';
     }
@@ -2449,10 +2449,10 @@ function formatLastMessage(msg: string | undefined): string {
         if (href && href.includes('://')) {
           try {
             const url = new URL(href);
-            return `🔗 ${url.hostname}`;
+            return `Link: ${url.hostname}`;
           } catch { }
         }
-        return '🔗 Link';
+        return 'Link: ';
       }
       
       // Other recommended messages (text suggestions, etc.)
@@ -2468,7 +2468,7 @@ function formatLastMessage(msg: string | undefined): string {
       const secs = p?.duration || p?.call_duration;
       if (secs) {
         const m = Math.floor(secs / 60), s = secs % 60;
-        return `📞 Cuộc gọi (${m > 0 ? `${m}p ` : ''}${s}s)`;
+        return `Cuộc gọi (${m > 0 ? `${m}p ` : ''}${s}s)`;
       }
       return '📞 Cuộc gọi';
     }
@@ -2490,7 +2490,7 @@ function formatLastMessage(msg: string | undefined): string {
       return '🎥 Video';
     }
     // File with title - only when msgType is file OR content has file-specific fields
-    if (mt.includes('file') || mt === 'share.file') return p?.title ? `📂 ${p.title}` : '📂 [File]';
+    if (mt.includes('file') || mt === 'share.file') return p?.title ? `File: ${p.title}` : 'File: ';
     // Location
     if (mt === 'chat.location.new') {
       const desc = p?.description || '';
@@ -2499,7 +2499,7 @@ function formatLastMessage(msg: string | undefined): string {
     // Parse params for further checks
     const par = (() => { try { return typeof p?.params === 'string' ? JSON.parse(p.params) : (p?.params || {}); } catch { return {}; } })();
     // File heuristic: title + file-specific fields
-    if (p?.title && (par?.fileSize || par?.fileExt || par?.fileUrl || p?.normalUrl || p?.fileUrl)) return `📂 ${p.title}`;
+    if (p?.title && (par?.fileSize || par?.fileExt || par?.fileUrl || p?.normalUrl || p?.fileUrl)) return `File: ${p.title}`;
     // Image (by URL fields) - but prefer text content if the message has both
     if (p?.href || par?.hd || par?.rawUrl || p?.thumb) {
       const textContent = (typeof p?.content === 'string' ? p.content : null) || (typeof p?.msg === 'string' ? p.msg : null);
@@ -2572,7 +2572,7 @@ function InlineLabelPickerPopup({ contactId, x, y, labels, onAssign, onClose, on
       className="fixed z-[200] bg-gray-800 border border-gray-700 rounded-xl shadow-2xl min-w-[185px]"
       style={{ top: Math.max(8, top), left: Math.max(8, left) }}
     >
-      <p className="text-[11px] text-gray-500 px-3 pt-1.5 pb-1 font-medium uppercase tracking-wide">Nhãn</p>
+      <p className="text-[11px] text-gray-400 px-3 pt-1.5 pb-1 font-medium uppercase tracking-wide">Nhãn</p>
       <LabelPicker
         labels={labels}
         activeThreadId={contactId}

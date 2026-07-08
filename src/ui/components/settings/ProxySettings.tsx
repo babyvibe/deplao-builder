@@ -4,6 +4,8 @@ import { useAppStore } from '@/store/appStore';
 import { useAccountStore } from '@/store/accountStore';
 import { showConfirm } from '../common/ConfirmDialog';
 import { Spinner } from '@/components/common/PageLoading';
+import { CheckIcon, CloseIcon, EditIcon, LockIcon, PluginIcon, PlusIcon } from '@/components/common/icons';
+
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface ProxyItem {
@@ -73,11 +75,11 @@ function TestProxyButton({ proxy, size = 'sm' }: { proxy: any; size?: 'sm' | 'xs
         {state === 'testing' ? (
           <><Spinner size={3} /> Đang test...</>
         ) : state === 'ok' ? (
-          <>✅ OK ({info})</>
+          <><CheckIcon className="w-4 h-4 inline" /> OK ({info})</>
         ) : state === 'fail' ? (
-          <>❌ Lỗi</>
+          <><CloseIcon className="w-4 h-4 inline" /> Lỗi</>
         ) : (
-          <>🔌 Test kết nối</>
+          <><PluginIcon className="w-4 h-4 inline" /> Test kết nối</>
         )}
       </button>
     );
@@ -98,11 +100,11 @@ function TestProxyButton({ proxy, size = 'sm' }: { proxy: any; size?: 'sm' | 'xs
         {state === 'testing' ? (
           <><Spinner size={3} /> Đang test...</>
         ) : state === 'ok' ? (
-          <>✅ OK ({info})</>
+          <><CheckIcon className="w-4 h-4 inline" /> OK ({info})</>
         ) : state === 'fail' ? (
-          <>❌ Lỗi</>
+          <><CloseIcon className="w-4 h-4 inline" /> Lỗi</>
         ) : (
-          <>🔌 Test kết nối</>
+          <><PluginIcon className="w-4 h-4 inline" /> Test kết nối</>
         )}
       </button>
       {state === 'fail' && info && (
@@ -202,7 +204,7 @@ function ProxyForm({
       {/* Username + Password (optional) */}
       <div className="flex gap-2">
         <div className="flex-1">
-          <label className="text-xs text-gray-400 mb-1 block">Username <span className="text-gray-600">(tuỳ chọn)</span></label>
+          <label className="text-xs text-gray-400 mb-1 block">Username <span className="text-gray-400">(tuỳ chọn)</span></label>
           <input
             className="input-field text-sm w-full"
             placeholder="user"
@@ -213,7 +215,7 @@ function ProxyForm({
           />
         </div>
         <div className="flex-1">
-          <label className="text-xs text-gray-400 mb-1 block">Password <span className="text-gray-600">(tuỳ chọn)</span></label>
+          <label className="text-xs text-gray-400 mb-1 block">Password <span className="text-gray-400">(tuỳ chọn)</span></label>
           <input
             className="input-field text-sm w-full"
             placeholder="••••••••"
@@ -229,8 +231,8 @@ function ProxyForm({
       {/* URL preview */}
       {form.host && form.port && (
         <div className="bg-gray-900 rounded-lg px-3 py-2">
-          <p className="text-[11px] text-gray-500 mb-0.5">URL proxy</p>
-          <code className="text-xs text-green-400 break-all">
+          <p className="text-[11px] text-gray-400 mb-0.5">URL proxy</p>
+          <code className="text-xs text-green-400 break-word">
             {form.type}://{form.username ? `${form.username}:••••@` : ''}{form.host}:{form.port}
           </code>
         </div>
@@ -362,8 +364,8 @@ export default function ProxySettings() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-base font-semibold text-white">🔒 Quản lý Proxy</h2>
-          <p className="text-xs text-gray-500 mt-0.5">
+          <h2 className="text-base font-semibold text-white"><LockIcon className="w-4 h-4 inline" /> Quản lý Proxy</h2>
+          <p className="text-xs text-gray-400 mt-0.5">
             Mỗi tài khoản có thể gắn 1 proxy riêng. Hỗ trợ HTTP, HTTPS, SOCKS4, SOCKS5.
           </p>
         </div>
@@ -384,7 +386,7 @@ export default function ProxySettings() {
       {formMode !== 'none' && (
         <div className="bg-gray-750 border border-gray-600 rounded-xl p-4">
           <p className="text-sm font-semibold text-white mb-3">
-            {formMode === 'add' ? '➕ Thêm proxy mới' : `✏️ Sửa "${editTarget?.name}"`}
+            {formMode === 'add' ? <><PlusIcon className="w-4 h-4 inline" /> Thêm proxy mới</> : <><EditIcon className="w-4 h-4 inline" /> Sửa "{editTarget?.name}"</>}
           </p>
           <ProxyForm
             initial={formMode === 'edit' && editTarget ? {
@@ -404,8 +406,8 @@ export default function ProxySettings() {
 
       {/* Proxy List */}
       {proxies.length === 0 ? (
-        <div className="text-center py-12 text-gray-500">
-          <div className="text-4xl mb-3">🔒</div>
+        <div className="text-center py-12 text-gray-400">
+          <div className="text-4xl mb-3 justify-self-center"><LockIcon className="w-4 h-4" /></div>
           <p className="text-sm font-medium text-gray-400">Chưa có proxy nào</p>
           <p className="text-xs mt-1">Thêm proxy để gán cho từng tài khoản Zalo khi đăng nhập</p>
         </div>
@@ -429,7 +431,7 @@ export default function ProxySettings() {
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium text-white truncate">{proxy.name}</span>
                   </div>
-                  <p className="text-xs text-gray-500 font-mono truncate">
+                  <p className="text-xs text-gray-400 font-mono truncate">
                     {proxy.username ? `${proxy.username}@` : ''}{proxy.host}:{proxy.port}
                   </p>
                 </div>
@@ -439,10 +441,10 @@ export default function ProxySettings() {
                   {usedAccounts.length > 0 ? (
                     <div className="text-center">
                       <span className="text-sm font-semibold text-blue-400">{usedAccounts.length}</span>
-                      <p className="text-[10px] text-gray-500">tài khoản</p>
+                      <p className="text-[10px] text-gray-400">tài khoản</p>
                     </div>
                   ) : (
-                    <span className="text-xs text-gray-600">Chưa dùng</span>
+                    <span className="text-xs text-gray-400">Chưa dùng</span>
                   )}
                 </div>
 

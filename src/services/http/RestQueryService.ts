@@ -64,7 +64,9 @@ class RestQueryService {
     this.connected = true;
     this.consecutiveFailures = 0;
     this.startHealthCheck();
-    Logger.log(`[RestQueryService] Initialized: ${this.baseUrl}`);
+    const msg = `[RestQueryService] Initialized: ${this.baseUrl} token=${token ? token.slice(0, 12)+'...' : 'EMPTY!'}`;
+    Logger.log(msg);
+    console.log(msg);
     this.notifyStatus(true, 0);
   }
 

@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useAppStore } from '@/store/appStore';
+import { CalendarIcon, ClipboardListIcon, LinkIcon, PackageIcon, SearchIcon, SendIcon, UserIcon } from '@/components/common/icons';
 import {
   TemplateVarInfo,
   TemplateVarGroup,
@@ -70,7 +71,7 @@ export default function TemplateVarPopup({
   }, [groupedVars, search, selectedGroup]);
 
   const groups = ['all' as const, ...groupedVars.keys()] as (TemplateVarGroup | 'all')[];
-  const groupLabels: Record<string, string> = { all: '📋 Tất cả', ...TEMPLATE_VAR_GROUP_LABELS };
+  const groupLabels: Record<string, string> = { all: 'Tất cả', ...TEMPLATE_VAR_GROUP_LABELS };
   const groupCounts = useMemo(() => {
     const counts: Record<string, number> = { all: 0 };
     for (const [g, vars] of groupedVars.entries()) {
@@ -94,12 +95,12 @@ export default function TemplateVarPopup({
             <p className={`text-base font-semibold ${isLight ? 'text-gray-900' : 'text-white'}`}>
               🔤 Chèn biến động
             </p>
-            <p className={`text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
+            <p className={`text-xs ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
               Click vào variable để chèn vào ô đang nhập
             </p>
           </div>
           <button onClick={onClose} className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${
-            isLight ? 'hover:bg-gray-100 text-gray-500' : 'hover:bg-gray-700 text-gray-400'
+            isLight ? 'hover:bg-gray-100 text-gray-400' : 'hover:bg-gray-700 text-gray-400'
           }`}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -115,9 +116,9 @@ export default function TemplateVarPopup({
             <button
               key={g}
               onClick={() => setSelectedGroup(g)}
-              className={`w-full text-left px-3 py-2 rounded-lg transition-colors text-sm ${selectedGroup === g ? isLight ? 'bg-blue-100 text-blue-700 font-medium' : 'bg-blue-500/20 text-blue-400 font-medium' : isLight ? 'text-gray-600 hover:bg-gray-200' : 'text-gray-400 hover:bg-gray-700'}`}>
+              className={`w-full text-left px-3 py-2 rounded-lg transition-colors text-sm ${selectedGroup === g ? isLight ? 'bg-blue-100 text-blue-700 font-medium' : 'bg-blue-500/20 text-blue-400 font-medium' : isLight ? 'text-gray-400 hover:bg-gray-200' : 'text-gray-400 hover:bg-gray-700'}`}>
               <span className="text-xs">{groupLabels[g] || g}</span>
-              <span className={`ml-1.5 text-[10px] ${selectedGroup === g ? isLight ? 'text-blue-500' : 'text-blue-500' : isLight ? 'text-gray-400' : 'text-gray-600'}`}>
+              <span className={`ml-1.5 text-[10px] ${selectedGroup === g ? isLight ? 'text-blue-500' : 'text-blue-500' : isLight ? 'text-gray-400' : 'text-gray-400'}`}>
                 {groupCounts[g] || 0}
               </span>
             </button>
@@ -128,7 +129,7 @@ export default function TemplateVarPopup({
         <div className="flex-1 flex flex-col overflow-hidden">
           <div className={`px-4 py-3 border-b flex-shrink-0 ${isLight ? 'border-gray-200' : 'border-gray-700/50'}`}>
             <div className="relative">
-              <svg className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${isLight ? 'text-gray-400' : 'text-gray-500'}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <svg className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${isLight ? 'text-gray-400' : 'text-gray-400'}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                 <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
               </svg>
               <input
@@ -142,10 +143,10 @@ export default function TemplateVarPopup({
 
           {/* Variable list */}
           <div className="flex-1 overflow-y-auto p-2 space-y-0.5">          {filtered.length === 0 ? (
-            <div className={`text-center py-8 ${isLight ? 'text-gray-500' : 'text-gray-500'}`}>
-              <span className="text-3xl block mb-2">🔍</span>
+            <div className={`text-center py-8 ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
+              <span className="text-3xl block mb-2"><SearchIcon className="w-4 h-4" /></span>
               <p className="text-sm">Không tìm thấy variable</p>
-              <p className={`text-xs mt-1 ${isLight ? 'text-gray-400' : 'text-gray-600'}`}>
+              <p className={`text-xs mt-1 ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
                 Thử tìm kiếm với từ khoá khác
               </p>
             </div>
@@ -163,7 +164,7 @@ export default function TemplateVarPopup({
               >
                 {/* Icon based on group */}
                 <span className="flex-shrink-0 text-base mt-0.5">
-                  {group === 'trigger' ? '📩' : group === 'date' ? '📅' : group === 'variable' ? '📦' : group === 'node' ? '🔗' : '👤'}
+                  {group === 'trigger' ? <SendIcon className="w-4 h-4" /> : group === 'date' ? <CalendarIcon className="w-4 h-4" /> : group === 'variable' ? <PackageIcon className="w-4 h-4" /> : group === 'node' ? <LinkIcon className="w-4 h-4" /> : <UserIcon className="w-4 h-4" />}
                 </span>
 
                 {/* Content */}
@@ -178,7 +179,7 @@ export default function TemplateVarPopup({
                       {v.label}
                     </span>
                   </div>
-                  <p className={`text-[10px] mt-1 leading-relaxed ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
+                  <p className={`text-[10px] mt-1 leading-relaxed ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
                     {v.description}
                   </p>
                   {v.example && (
@@ -193,7 +194,7 @@ export default function TemplateVarPopup({
                 {/* Insert button */}
                 <span className={`flex-shrink-0 text-[10px] px-2 py-1 rounded-lg font-medium ${
                   isLight
-                    ? 'bg-gray-100 text-gray-500 group-hover:bg-blue-100 group-hover:text-blue-600'
+                    ? 'bg-gray-100 text-gray-400 group-hover:bg-blue-100 group-hover:text-blue-600'
                     : 'bg-gray-700 text-gray-400 group-hover:bg-blue-500/20 group-hover:text-blue-400'
                 }`}>
                   Chèn
@@ -210,7 +211,7 @@ export default function TemplateVarPopup({
         <div className={`px-5 py-3 border-t flex items-center justify-between ${
           isLight ? 'border-gray-200 bg-gray-50' : 'border-gray-700 bg-gray-800/50'
         }`}>
-          <span className={`text-[11px] ${isLight ? 'text-gray-500' : 'text-gray-500'}`}>
+          <span className={`text-[11px] ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
             {filtered.length} variable{filtered.length !== 1 ? 's' : ''}
             {search.trim() ? ` (tìm "${search}")` : ''}
           </span>

@@ -85,7 +85,7 @@ export default function AccountSelectorDropdown({ options, activeId, onSelect, p
       {open && (
         <div className={`${panelPos} bg-gray-800 border border-gray-700 rounded-xl shadow-2xl z-50 min-w-[230px] ${fullWidth ? 'w-full' : ''} overflow-hidden`}>
           <div className="px-3 pt-2.5 pb-1">
-            <p className="text-[9px] uppercase tracking-widest text-gray-500 font-semibold">Tài khoản</p>
+            <p className="text-[9px] uppercase tracking-widest text-gray-400 font-semibold">Tài khoản</p>
           </div>
           <div className="max-h-[200px] overflow-y-auto">
             {options.map(opt => {
@@ -104,7 +104,7 @@ export default function AccountSelectorDropdown({ options, activeId, onSelect, p
                       {opt.name || opt.id}
                     </p>
                     {/* SĐT · ID */}
-                    <p className="text-[11px] text-gray-500 truncate mt-0.5">
+                    <p className="text-[11px] text-gray-400 truncate mt-0.5">
                       <PhoneDisplay phone={opt.phone} className="text-xs text-blue-400" />
                     </p>
                   </div>

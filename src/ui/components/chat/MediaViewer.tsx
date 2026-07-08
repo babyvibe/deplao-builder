@@ -2,7 +2,9 @@ import React, { useEffect, useCallback, useRef, useState } from 'react';
 import { TransformWrapper, TransformComponent, ReactZoomPanPinchRef } from 'react-zoom-pan-pinch';
 import ipc from '@/lib/ipc';
 import { useAppStore } from '@/store/appStore';
+import { useEmployeeStore } from '@/store/employeeStore';
 import { toLocalMediaUrl } from '@/lib/localMedia';
+import { ensureMediaLocal } from '@/lib/employeeMediaSync';
 import { Spinner } from '@/components/common/PageLoading';
 
 export interface MediaViewerImage {
@@ -101,7 +103,9 @@ export default function MediaViewer({ src, images, initialIndex = 0, alt = 'ản
     }
     setIsImageLoading(false); // Reset - don't show spinner immediately
     setMainImageError(false);
-    setUseFallback(false);
+    // KHÔNG reset useFallback ở đây — nếu không sẽ tạo infinite loop:
+    //   primary lỗi → useFallback(true) → effect chạy → useFallback(false) → về primary → lỗi lại → ...
+    // Chỉ reset fallback khi currentSrc thay đổi (user chuyển ảnh), xử lý ở cấp goNext/goPrev.
     repairAttemptedRef.current = false; // Allow repair attempt for new image
 
     // Immediately check if the image is already loaded (cache hit).
@@ -191,12 +195,16 @@ export default function MediaViewer({ src, images, initialIndex = 0, alt = 'ản
     if (imageList.length <= 1) return;
     const next = imageList[(currentIndex + 1) % imageList.length];
     setCurrentSrc(next?.displaySrc || next?.src || '');
+    setUseFallback(false);
+    repairAttemptedRef.current = false;
   }, [imageList, currentIndex]);
 
   const goPrev = useCallback(() => {
     if (imageList.length <= 1) return;
     const prev = imageList[(currentIndex - 1 + imageList.length) % imageList.length];
     setCurrentSrc(prev?.displaySrc || prev?.src || '');
+    setUseFallback(false);
+    repairAttemptedRef.current = false;
   }, [imageList, currentIndex]);
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
@@ -288,6 +296,18 @@ export default function MediaViewer({ src, images, initialIndex = 0, alt = 'ản
 
   const handleShowInFolder = useCallback(async () => {
     closeContextMenu();
+    const mode = useEmployeeStore.getState().mode;
+    if (mode === 'employee' && localPath) {
+      // Employee: download ảnh từ Boss → show in folder
+      const bossUrl = toLocalMediaUrl(localPath);
+      if (bossUrl) {
+        const { localPath: cachedPath } = await ensureMediaLocal(bossUrl, 'image');
+        if (cachedPath) {
+          await ipc.file?.showItemInFolder(cachedPath);
+          return;
+        }
+      }
+    }
     if (localPath) {
       await ipc.file?.showItemInFolder(localPath);
     } else {
@@ -563,6 +583,8 @@ export default function MediaViewer({ src, images, initialIndex = 0, alt = 'ản
                 onClick={() => {
                   const img = imageList[idx];
                   setCurrentSrc(img?.displaySrc || img?.src || '');
+                  setUseFallback(false);
+                  repairAttemptedRef.current = false;
                 }}
                 className={`w-full aspect-square rounded overflow-hidden flex-shrink-0 border-2 transition-all ${
                   idx === currentIndex

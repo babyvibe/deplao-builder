@@ -48,7 +48,7 @@ export default function NoteVersionHistory({ note, onClose, onRestored }: Props)
         <div className="flex items-center justify-between px-5 py-3 border-b border-gray-700/60">
           <div>
             <h3 className="text-base font-semibold text-white">Lịch sử phiên bản</h3>
-            <p className="text-xs text-gray-500 truncate max-w-[600px]">"{note.title}"</p>
+            <p className="text-xs text-gray-400 truncate max-w-[600px]">"{note.title}"</p>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-white text-lg">×</button>
         </div>
@@ -58,7 +58,7 @@ export default function NoteVersionHistory({ note, onClose, onRestored }: Props)
           <div className="w-60 border-r border-gray-700/60 overflow-y-auto bg-gray-900/40">
             {loading && <PageLoading variant="inline" size="sm" />}
             {!loading && versions.length === 0 && (
-              <p className="text-xs text-gray-500 p-3 text-center">Chưa có phiên bản nào.</p>
+              <p className="text-xs text-gray-400 p-3 text-center">Chưa có phiên bản nào.</p>
             )}
             {versions.map(v => {
               const isActive = active?.id === v.id;
@@ -74,7 +74,7 @@ export default function NoteVersionHistory({ note, onClose, onRestored }: Props)
                     <EmployeeAvatar employeeId={v.editor_id} size={18} />
                     <span className="text-[11px] text-gray-300 truncate">{v.editor_id}</span>
                   </div>
-                  <p className="text-[10px] text-gray-500">
+                  <p className="text-[10px] text-gray-400">
                     {new Date(v.created_at).toLocaleString('vi-VN')}
                   </p>
                 </button>
@@ -102,7 +102,7 @@ export default function NoteVersionHistory({ note, onClose, onRestored }: Props)
                 </pre>
               </>
             ) : (
-              <div className="flex-1 flex items-center justify-center text-gray-600 text-sm">
+              <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
                 Chọn phiên bản ở cột trái để xem
               </div>
             )}

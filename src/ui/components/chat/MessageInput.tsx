@@ -21,6 +21,7 @@ import ReminderPanel from './ReminderPanel';
 import { matchesShortcut } from '../common/LabelEmojiPicker';
 import { getCapability } from '../../../configs/channelConfig';
 import * as channelIpc from '../../lib/channelIpc';
+import { AlertIcon, AwardIcon, BellIcon, BookmarkIcon, BotIcon, ChartIcon, ChatIcon, CheckIcon, ClipboardListIcon, ClockIcon, CreditCardIcon, DollarIcon, EditIcon, FileTextIcon, FolderIcon, GiftIcon, GlobeIcon, KeyIcon, LightbulbIcon, LightningIcon, LinkIcon, PackageIcon, PinIcon, PluginIcon, RefreshIcon, SearchIcon, SettingsIcon, ShoppingCartIcon, SmartphoneIcon, SmileIcon, SparklesIcon, StarIcon, StoreIcon, TagIcon, TargetIcon, TrashIcon, TrendingUpIcon, TruckIcon, UserIcon } from '@/components/common/icons';
 
 interface LocalLabel {
   id: number;
@@ -2634,7 +2635,7 @@ export default function MessageInput() {
               <line x1="12" y1="3" x2="12" y2="15"/>
             </svg>
             <p className="text-blue-400 font-medium text-sm">Thả file / ảnh để gửi</p>
-            <p className="text-gray-500 text-xs">Hỗ trợ ảnh, video, file</p>
+            <p className="text-gray-400 text-xs">Hỗ trợ ảnh, video, file</p>
           </div>
         </div>
       )}
@@ -2643,7 +2644,7 @@ export default function MessageInput() {
       {activeAccountId && activeThreadId && !isAiSuggestDisabled(activeAccountId, activeThreadId) && (aiSuggestions.length > 0 || aiSuggestionsLoading) && (
         <div className="ai-suggestion-bar border-b overflow-x-auto">
           <span className="ai-suggestion-badge">
-            <span className="text-[11px]">✨</span>
+            <SparklesIcon className="w-3 h-3" />
             <span>Gợi ý AI</span>
           </span>
           {aiSuggestionsLoading ? (
@@ -2692,7 +2693,7 @@ export default function MessageInput() {
               ) : null;
             })()}
           </div>
-          <button onClick={() => setReplyTo(null)} className="text-gray-500 hover:text-white flex-shrink-0 text-lg leading-none">✕</button>
+          <button onClick={() => setReplyTo(null)} className="text-gray-400 hover:text-white flex-shrink-0 text-lg leading-none">✕</button>
         </div>
       )}
 
@@ -2716,7 +2717,7 @@ export default function MessageInput() {
           ))}
           <button
             onClick={() => setClipboardImages([])}
-            className="flex-shrink-0 text-xs text-gray-500 hover:text-red-400 px-2 py-1 rounded hover:bg-gray-700 transition-colors ml-auto"
+            className="flex-shrink-0 text-xs text-gray-400 hover:text-red-400 px-2 py-1 rounded hover:bg-gray-700 transition-colors ml-auto"
             title="Xóa tất cả"
           >Xóa tất cả</button>
         </div>
@@ -2765,7 +2766,7 @@ export default function MessageInput() {
           {/* Right-side controls: expand/collapse arrow + close X */}
           <div className="flex items-center gap-1 flex-shrink-0 ml-1">
             {localLabelCanExpand && (
-              <button type="button" onClick={() => setLocalLabelExpanded(v => !v)} className="text-gray-500 hover:text-gray-300 flex-shrink-0" title={localLabelExpanded ? 'Thu gọn' : 'Xem tất cả'}>
+              <button type="button" onClick={() => setLocalLabelExpanded(v => !v)} className="text-gray-400 hover:text-gray-300 flex-shrink-0" title={localLabelExpanded ? 'Thu gọn' : 'Xem tất cả'}>
                 {localLabelExpanded ? (
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <polyline points="6 9 12 15 18 9" />
@@ -2801,7 +2802,7 @@ export default function MessageInput() {
             }
           }}
         >
-          <span className="text-[10px] text-gray-500 flex-shrink-0 mr-0.5">🎭</span>
+          <span className="text-[10px] text-gray-400 flex-shrink-0 mr-0.5">🎭</span>
           {inlineStickerSuggestions.map((s: any) => (
             <button
               key={s.id}
@@ -2824,7 +2825,7 @@ export default function MessageInput() {
           ))}
           <button
             onClick={() => { setInlineStickerSuggestions([]); inlineStickerLastKwRef.current = ''; }}
-            className="flex-shrink-0 w-6 h-6 rounded-full hover:bg-gray-700 flex items-center justify-center text-gray-500 hover:text-gray-300 text-[10px] transition-colors ml-0.5"
+            className="flex-shrink-0 w-6 h-6 rounded-full hover:bg-gray-700 flex items-center justify-center text-gray-400 hover:text-gray-300 text-[10px] transition-colors ml-0.5"
             title="Ẩn gợi ý sticker"
           >
             ✕
@@ -3113,8 +3114,8 @@ export default function MessageInput() {
             active={aiSuggestionsEnabled && !(activeAccountId && activeThreadId && isAiSuggestDisabled(activeAccountId, activeThreadId))}
           >
             <span className="text-sm leading-none relative">
-                🤖
-              <span className="absolute bottom-3 left-2">✨</span>
+                <BotIcon className="w-4 h-4" />
+              <SparklesIcon className="absolute bottom-3 left-2 w-3 h-3" />
             </span>
           </ToolbarBtn>
           {showAiMenu && (
@@ -3304,7 +3305,7 @@ export default function MessageInput() {
 
           {/* Hint: select text to apply */}
           {fmtRanges.length === 0 && (
-            <span className="text-xs text-gray-500 ml-auto">Chọn văn bản rồi bấm định dạng</span>
+            <span className="text-xs text-gray-400 ml-auto">Chọn văn bản rồi bấm định dạng</span>
           )}
           {fmtRanges.length > 0 && (
             <span className="text-xs text-blue-400 ml-auto">
@@ -3374,7 +3375,7 @@ export default function MessageInput() {
             className="absolute bottom-full left-3 right-3 mb-1 bg-gray-800 border border-gray-600 rounded-xl shadow-2xl z-30 overflow-hidden"
             style={{ maxHeight: '15rem', overflowY: 'auto' }}
           >
-            <p className="text-xs text-gray-500 px-3 py-1.5 border-b border-gray-700 sticky top-0 bg-gray-800 z-10">
+            <p className="text-xs text-gray-400 px-3 py-1.5 border-b border-gray-700 sticky top-0 bg-gray-800 z-10">
               Nhắc đến thành viên{mentionSearch ? ` - "${mentionSearch}"` : ''}
             </p>
             {filteredMentions.map((member, idx) => (
@@ -3401,7 +3402,7 @@ export default function MessageInput() {
           {/* Placeholder */}
           {!text && (
             <span
-              className="absolute inset-0 text-gray-500 text-sm pointer-events-none select-none flex items-center px-0"
+              className="absolute inset-0 text-gray-400 text-sm pointer-events-none select-none flex items-center px-0"
               style={{ top: 0 }}
             >
               {account ? 'Nhập @tên để tag, Shift+Enter xuống dòng, Enter gửi...' : 'Nhập tin nhắn...'}
@@ -3426,7 +3427,7 @@ export default function MessageInput() {
                 prevTextRef.current = '';
               }
             }}
-            className="w-full bg-transparent text-gray-200 text-sm focus:outline-none overflow-y-auto"
+            className="w-full bg-transparent text-gray-200 text-sm focus:outline-none overflow-y-auto py-1"
             style={{ minHeight: '2rem', maxHeight: '8rem', wordBreak: 'break-word', whiteSpace: 'pre-wrap', lineHeight: '1.5' }}
             spellCheck={false}
           />
@@ -3439,7 +3440,7 @@ export default function MessageInput() {
             title="Biểu cảm"
             className={`w-9 h-9 rounded-lg flex items-center justify-center text-xl transition-colors ${showEmojiPicker ? 'bg-blue-600' : 'hover:bg-gray-700'}`}
           >
-            😊
+            <SmileIcon className="w-5 h-5" />
           </button>
           {showEmojiPicker && (
             <div
@@ -3449,7 +3450,7 @@ export default function MessageInput() {
               <div className="max-h-72 overflow-y-auto p-2 space-y-3">
                 {Object.entries(EMOJI_CATEGORIES).map(([category, emojis]) => (
                   <div key={category}>
-                    <p className="text-[11px] text-gray-500 font-medium mb-1.5 px-1">{category}</p>
+                    <p className="text-[11px] text-gray-400 font-medium mb-1.5 px-1">{category}</p>
                     <div className="grid grid-cols-8 gap-0.5">
                       {emojis.map((emoji, idx) => (
                         <button
@@ -3564,7 +3565,7 @@ function PinContextMenu({ onEditIcon, onDelete, onClose }: {
         onClick={onEditIcon}
         className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-gray-200 hover:bg-gray-700 transition-colors"
       >
-        <span className="text-base">✏️</span>
+        <span className="text-base"><EditIcon className="w-4 h-4" /></span>
         <span>Đổi icon</span>
       </button>
       <div className="h-px bg-gray-700/60 mx-2 my-0.5" />
@@ -3572,7 +3573,7 @@ function PinContextMenu({ onEditIcon, onDelete, onClose }: {
         onClick={onDelete}
         className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-red-400 hover:bg-red-500/10 transition-colors"
       >
-        <span className="text-base">🗑️</span>
+        <span className="text-base"><TrashIcon className="w-4 h-4" /></span>
         <span>Xóa ghim</span>
       </button>
     </div>
@@ -3581,10 +3582,37 @@ function PinContextMenu({ onEditIcon, onDelete, onClose }: {
 
 // ─── Pin emoji picker (for editing pinned shortcut icons) ─────────────────────
 const PIN_EMOJIS_TOOLBAR = [
-  '🛒','📦','🔍','👤','📋','💳','🚚','📊','💰','🏪',
-  '🟢','🍽️','⚡','🔗','🔌','⭐','📌','🏷️','💼','📱',
-  '✅','🔔','📝','🎯','🔑','🗂️','💡','🔄','📈','🎁',
-  '🤝','🧾','🗃️','📲','💬','🔖','🧩','⚙️','🌐','🏅',
+  { id: 'cart', icon: <ShoppingCartIcon className="w-4 h-4" /> },
+  { id: 'package', icon: <PackageIcon className="w-4 h-4" /> },
+  { id: 'search', icon: <SearchIcon className="w-4 h-4" /> },
+  { id: 'user', icon: <UserIcon className="w-4 h-4" /> },
+  { id: 'clipboard', icon: <ClipboardListIcon className="w-4 h-4" /> },
+  { id: 'credit', icon: <CreditCardIcon className="w-4 h-4" /> },
+  { id: 'truck', icon: <TruckIcon className="w-4 h-4" /> },
+  { id: 'chart', icon: <ChartIcon className="w-4 h-4" /> },
+  { id: 'dollar', icon: <DollarIcon className="w-4 h-4" /> },
+  { id: 'store', icon: <StoreIcon className="w-4 h-4" /> },
+  { id: 'lightning', icon: <LightningIcon className="w-4 h-4" /> },
+  { id: 'link', icon: <LinkIcon className="w-4 h-4" /> },
+  { id: 'key', icon: <KeyIcon className="w-4 h-4" /> },
+  { id: 'star', icon: <StarIcon className="w-4 h-4" /> },
+  { id: 'pin', icon: <PinIcon className="w-4 h-4" /> },
+  { id: 'tag', icon: <TagIcon className="w-4 h-4" /> },
+  { id: 'phone', icon: <SmartphoneIcon className="w-4 h-4" /> },
+  { id: 'check', icon: <CheckIcon className="w-4 h-4" /> },
+  { id: 'bell', icon: <BellIcon className="w-4 h-4" /> },
+  { id: 'edit', icon: <EditIcon className="w-4 h-4" /> },
+  { id: 'target', icon: <TargetIcon className="w-4 h-4" /> },
+  { id: 'folder', icon: <FolderIcon className="w-4 h-4" /> },
+  { id: 'lightbulb', icon: <LightbulbIcon className="w-4 h-4" /> },
+  { id: 'refresh', icon: <RefreshIcon className="w-4 h-4" /> },
+  { id: 'trending', icon: <TrendingUpIcon className="w-4 h-4" /> },
+  { id: 'gift', icon: <GiftIcon className="w-4 h-4" /> },
+  { id: 'chat', icon: <ChatIcon className="w-4 h-4" /> },
+  { id: 'bookmark', icon: <BookmarkIcon className="w-4 h-4" /> },
+  { id: 'settings', icon: <SettingsIcon className="w-4 h-4" /> },
+  { id: 'globe', icon: <GlobeIcon className="w-4 h-4" /> },
+  { id: 'award', icon: <AwardIcon className="w-4 h-4" /> },
 ];
 
 function PinEmojiPicker({ onSelect, onClose }: { onSelect: (icon: string) => void; onClose: () => void }) {
@@ -3603,10 +3631,10 @@ function PinEmojiPicker({ onSelect, onClose }: { onSelect: (icon: string) => voi
     >
       <p className="text-[11px] text-gray-400 mb-2 font-medium">Chọn icon:</p>
       <div className="grid grid-cols-8 gap-0.5">
-        {PIN_EMOJIS_TOOLBAR.map(emoji => (
-          <button key={emoji} onClick={() => onSelect(emoji)}
-            className="w-10 h-10 flex items-center justify-center text-sm rounded hover:bg-gray-700 transition-colors">
-            {emoji}
+        {PIN_EMOJIS_TOOLBAR.map(item => (
+          <button key={item.id} onClick={() => onSelect(item.id)}
+            className="w-10 h-10 flex items-center justify-center rounded hover:bg-gray-700 transition-colors">
+            {item.icon}
           </button>
         ))}
       </div>
@@ -4101,9 +4129,9 @@ function StickerPicker({
   }, [tab]);
 
   const mainTabs = [
-    { key: 'recent' as const, label: '⏱️ Gần đây' },
-    { key: 'store' as const, label: '🏪 Kho sticker' },
-    { key: 'emoji' as const, label: '😊 Emoji' },
+    { key: 'recent' as const, label: <><ClockIcon className="w-3.5 h-3.5" /> Gần đây</> },
+    { key: 'store' as const, label: <><StoreIcon className="w-3.5 h-3.5" /> Kho sticker</> },
+    { key: 'emoji' as const, label: <><SmileIcon className="w-3.5 h-3.5" /> Emoji</> },
   ];
 
   return (
@@ -4162,12 +4190,12 @@ function StickerPicker({
               <span className="text-xs">Đang tìm kiếm...</span>
             </div>
           ) : searchResults.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 text-gray-500 text-xs">
+            <div className="flex flex-col items-center justify-center py-8 text-gray-400 text-xs">
               😕 Không tìm thấy sticker
             </div>
           ) : (
             <>
-              <p className="text-xs text-gray-500 px-1 py-1.5 font-medium">Kết quả tìm kiếm ({searchResults.length})</p>
+              <p className="text-xs text-gray-400 px-1 py-1.5 font-medium">Kết quả tìm kiếm ({searchResults.length})</p>
               <div className="grid grid-cols-5 gap-1.5">
                 {searchResults.map((s) => (
                   <StickerItem key={s.id} sticker={s} onSelect={onSelect} />
@@ -4180,14 +4208,14 @@ function StickerPicker({
         /* Recent stickers */
         <div className="flex-1 overflow-y-auto px-2 pb-2">
           {recentStickers.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 text-gray-500 text-xs text-center">
+            <div className="flex flex-col items-center justify-center py-8 text-gray-400 text-xs text-center">
               <span className="text-3xl mb-2">🎭</span>
               Chưa có sticker nào gần đây<br/>
               Hãy tìm kiếm hoặc mở kho sticker
             </div>
           ) : (
             <>
-              <p className="text-xs text-gray-500 px-1 py-1.5 font-medium">Gần đây</p>
+              <p className="text-xs text-gray-400 px-1 py-1.5 font-medium">Gần đây</p>
               <div className="grid grid-cols-5 gap-1.5">
                 {recentStickers.map((s) => (
                   <StickerItem key={s.id} sticker={s} onSelect={onSelect} />
@@ -4205,8 +4233,8 @@ function StickerPicker({
               <span className="text-xs">Đang tải kho sticker...</span>
             </div>
           ) : storeError && packs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 text-gray-500 text-xs gap-2">
-              <span>⚠️ {storeError}</span>
+            <div className="flex flex-col items-center justify-center py-8 text-gray-400 text-xs gap-2">
+              <span><AlertIcon className="w-4 h-4 inline" /> {storeError}</span>
               <button
                 onClick={fetchStickerStore}
                 className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs transition-colors"
@@ -4215,8 +4243,8 @@ function StickerPicker({
               </button>
             </div>
           ) : packs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 text-gray-500 text-xs gap-2">
-              <span className="text-3xl mb-1">🏪</span>
+            <div className="flex flex-col items-center justify-center py-8 text-gray-400 text-xs gap-2">
+              <StoreIcon className="w-8 h-8 mb-1 opacity-40" />
               <span>Chưa có gói sticker nào</span>
               <button
                 onClick={fetchStickerStore}
@@ -4264,7 +4292,7 @@ function StickerPicker({
                 <button
                   onClick={fetchStickerStore}
                   disabled={loadingStore}
-                  className="flex-shrink-0 w-12 h-12 rounded-xl border-2 border-dashed border-gray-600 hover:border-gray-400 flex items-center justify-center text-gray-500 hover:text-gray-300 transition-all"
+                  className="flex-shrink-0 w-12 h-12 rounded-xl border-2 border-dashed border-gray-600 hover:border-gray-400 flex items-center justify-center text-gray-400 hover:text-gray-300 transition-all"
                   title="Cập nhật kho sticker"
                 >
                   {loadingStore ? (
@@ -4281,7 +4309,7 @@ function StickerPicker({
               {/* Pack stickers grid */}
               <div className="flex-1 overflow-y-auto px-2 pb-2">
                 {activePackId === null ? (
-                  <div className="flex flex-col items-center justify-center py-6 text-gray-500 text-xs">
+                  <div className="flex flex-col items-center justify-center py-6 text-gray-400 text-xs">
                     <span className="text-2xl mb-2">👆</span>
                     Chọn một gói sticker ở trên
                   </div>
@@ -4291,7 +4319,7 @@ function StickerPicker({
                     <span className="text-xs">Đang tải...</span>
                   </div>
                 ) : packStickers.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-6 text-gray-500 text-xs">
+                  <div className="flex flex-col items-center justify-center py-6 text-gray-400 text-xs">
                     Gói sticker này trống hoặc không hỗ trợ
                   </div>
                 ) : (
@@ -4310,7 +4338,7 @@ function StickerPicker({
         <div className="flex-1 overflow-y-auto p-2 space-y-3">
           {Object.entries(EMOJI_CATEGORIES).map(([category, emojis]) => (
             <div key={category}>
-              <p className="text-[11px] text-gray-500 font-medium mb-1.5 px-1">{category}</p>
+              <p className="text-[11px] text-gray-400 font-medium mb-1.5 px-1">{category}</p>
               <div className="grid grid-cols-6 gap-1">
                 {emojis.map((emoji, idx) => (
                   <button
@@ -4404,28 +4432,14 @@ function MoreMenuDropdown({ isGroup, onCreatePoll, onCreateNote, onCreateReminde
 
   const groupItems = [
     {
-      icon: (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <rect x="3" y="3" width="18" height="18" rx="2"/>
-          <line x1="8" y1="9" x2="16" y2="9"/>
-          <line x1="8" y1="13" x2="13" y2="13"/>
-          <line x1="8" y1="17" x2="11" y2="17"/>
-        </svg>
-      ),
+      icon: <ChartIcon className="w-4 h-4" />,
       label: 'Tạo bình chọn',
       sublabel: 'Khảo sát ý kiến nhóm',
       color: 'text-blue-400',
       onClick: onCreatePoll,
     },
     {
-      icon: (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
-          <polyline points="14 2 14 8 20 8"/>
-          <line x1="16" y1="13" x2="8" y2="13"/>
-          <line x1="16" y1="17" x2="8" y2="17"/>
-        </svg>
-      ),
+      icon: <FileTextIcon className="w-4 h-4" />,
       label: 'Tạo ghi chú',
       sublabel: 'Ghim thông tin quan trọng',
       color: 'text-orange-400',
@@ -4434,12 +4448,7 @@ function MoreMenuDropdown({ isGroup, onCreatePoll, onCreateNote, onCreateReminde
   ];
 
   const reminderItem = {
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <circle cx="12" cy="12" r="10"/>
-        <polyline points="12 6 12 12 16 14"/>
-      </svg>
-    ),
+    icon: <ClockIcon className="w-4 h-4" />,
     label: 'Tạo nhắc hẹn',
     sublabel: isGroup ? 'Nhắc nhở lịch nhóm' : 'Nhắc nhở trong hội thoại',
     color: 'text-green-400',
@@ -4447,11 +4456,7 @@ function MoreMenuDropdown({ isGroup, onCreatePoll, onCreateNote, onCreateReminde
   };
 
   const integrationItem = {
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M12 2v4m0 12v4m10-10h-4M6 12H2m15.07-5.07l-2.83 2.83M9.76 14.24l-2.83 2.83m0-10.14l2.83 2.83m4.48 4.48l2.83 2.83"/>
-      </svg>
-    ),
+    icon: <PluginIcon className="w-4 h-4" />,
     label: 'Tích hợp nhanh',
     sublabel: 'Tra cứu đơn, sản phẩm, vận chuyển...',
     color: 'text-purple-400',
@@ -4459,14 +4464,7 @@ function MoreMenuDropdown({ isGroup, onCreatePoll, onCreateNote, onCreateReminde
   };
 
   const noteItem = {
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
-        <polyline points="14 2 14 8 20 8"/>
-        <line x1="16" y1="13" x2="8" y2="13"/>
-        <line x1="16" y1="17" x2="8" y2="17"/>
-      </svg>
-    ),
+    icon: <FileTextIcon className="w-4 h-4" />,
     label: 'Ghi chú',
     sublabel: isGroup ? 'Ghi chú nhóm & local' : 'Ghi chú local',
     color: 'text-orange-400',
@@ -4482,7 +4480,7 @@ function MoreMenuDropdown({ isGroup, onCreatePoll, onCreateNote, onCreateReminde
       ref={ref}
       className="absolute bottom-full right-0 mb-2 bg-gray-800 border border-gray-700 rounded-2xl shadow-2xl z-50 w-56 py-2 overflow-hidden"
     >
-      <p className="text-[11px] text-gray-500 px-4 pt-1 pb-2 font-medium uppercase tracking-wide">
+      <p className="text-[11px] text-gray-400 px-4 pt-1 pb-2 font-medium uppercase tracking-wide">
         {isGroup ? 'Tính năng nhóm' : 'Tính năng'}
       </p>
       {items.map((item) => (
@@ -4494,7 +4492,7 @@ function MoreMenuDropdown({ isGroup, onCreatePoll, onCreateNote, onCreateReminde
           <span className={`flex-shrink-0 ${item.color}`}>{item.icon}</span>
           <div className="min-w-0">
             <p className="text-sm font-medium text-gray-200">{item.label}</p>
-            <p className="text-[11px] text-gray-500 leading-tight">{item.sublabel}</p>
+            <p className="text-[11px] text-gray-400 leading-tight">{item.sublabel}</p>
           </div>
         </button>
       ))}
@@ -4539,7 +4537,7 @@ function ShortcutsPopup({ onClose }: { onClose: () => void }) {
       ref={ref}
       className="absolute bottom-full right-0 mb-2 bg-gray-800 border border-gray-700 rounded-2xl shadow-2xl z-50 w-72 py-3 px-4"
     >
-      <p className="text-[11px] text-gray-500 font-medium uppercase tracking-wide mb-3">
+      <p className="text-[11px] text-gray-400 font-medium uppercase tracking-wide mb-3">
         Phím tắt hội thoại
       </p>
       <div className="flex flex-col gap-1.5">

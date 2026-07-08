@@ -22,7 +22,7 @@ export function ActionRow({ icon, label, onClick, textColor = 'text-gray-300' }:
       className={`w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-700/50 transition-colors text-left ${textColor}`}>
       <span className="flex-shrink-0 text-gray-400">{icon}</span>
       <span className="text-sm">{label}</span>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="ml-auto text-gray-600 flex-shrink-0">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="ml-auto text-gray-400 flex-shrink-0">
         <polyline points="9 18 15 12 9 6"/>
       </svg>
     </button>
@@ -405,13 +405,13 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
                 className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-700/50 transition-colors text-left">
                 <GroupAvatarCommon name={g.name || g.groupId} avatarUrl={g.avatar} size="sm" />
                 <span className="text-sm text-gray-200 truncate flex-1">{g.name || g.groupId}</span>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-600 flex-shrink-0">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-400 flex-shrink-0">
                   <polyline points="9 18 15 12 9 6"/>
                 </svg>
               </button>
             ))}
             {!mutualGroupsLoading && mutualGroups.length === 0 && (
-              <p className="text-xs text-gray-500 text-center py-8">Không có nhóm chung</p>
+              <p className="text-xs text-gray-400 text-center py-8">Không có nhóm chung</p>
             )}
           </div>
         </div>
@@ -496,7 +496,7 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
                 <button onClick={handleSaveAlias} className="text-blue-400 hover:text-blue-300 p-1">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
                 </button>
-                <button onClick={() => setEditingAlias(false)} className="text-gray-500 hover:text-gray-300 p-1">
+                <button onClick={() => setEditingAlias(false)} className="text-gray-400 hover:text-gray-300 p-1">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                 </button>
               </div>
@@ -506,7 +506,7 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
                 {!isMe && (
                   <button onClick={() => { setEditingAlias(true); setTimeout(() => aliasInputRef.current?.select(), 50); }}
                     title="Đặt tên gợi nhớ"
-                    className="text-gray-500 hover:text-blue-400 transition-colors flex-shrink-0">
+                    className="text-gray-400 hover:text-blue-400 transition-colors flex-shrink-0">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
                       <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
@@ -516,10 +516,10 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
               </div>
             )}
             {userInfo?.alias && realName && userInfo.alias !== realName && (
-              <p className="text-gray-500 text-xs truncate mt-0.5">({realName})</p>
+              <p className="text-gray-400 text-xs truncate mt-0.5">({realName})</p>
             )}
             {userInfo?.zaloName && userInfo.zaloName !== name && userInfo.zaloName !== realName && (
-              <p className="text-gray-500 text-xs truncate mt-0.5">{userInfo.zaloName}</p>
+              <p className="text-gray-400 text-xs truncate mt-0.5">{userInfo.zaloName}</p>
             )}
           </div>
         </div>
@@ -585,21 +585,21 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
           <div className="space-y-2">
             {bio && (
               <div className="flex gap-3 text-xs">
-                <span className="text-gray-500 w-20 flex-shrink-0">Bio</span>
+                <span className="text-gray-400 w-20 flex-shrink-0">Bio</span>
                 <span className="text-gray-300 break-words flex-1">{bio}</span>
               </div>
             )}
             <div className="flex gap-3 text-xs">
-              <span className="text-gray-500 w-20 flex-shrink-0">Giới tính</span>
+              <span className="text-gray-400 w-20 flex-shrink-0">Giới tính</span>
               <span className="text-gray-300">{formatGender(userInfo?.gender) ?? '**'}</span>
             </div>
             <div className="flex gap-3 text-xs">
-              <span className="text-gray-500 w-20 flex-shrink-0">Ngày sinh</span>
+              <span className="text-gray-400 w-20 flex-shrink-0">Ngày sinh</span>
               <span className="text-gray-300">{formatDob()}</span>
             </div>
             <div className="flex gap-3 text-xs">
-              <span className="text-gray-500 w-20 flex-shrink-0">Điện thoại</span>
-              <span className={userInfo?.phone ? 'text-blue-400' : 'text-gray-600'}>
+              <span className="text-gray-400 w-20 flex-shrink-0">Điện thoại</span>
+              <span className={userInfo?.phone ? 'text-blue-400' : 'text-gray-400'}>
                 {userInfo?.phone
                   ? <PhoneDisplay phone={userInfo.phone} className="text-xs text-blue-400" />
                   : '**********'}
@@ -616,7 +616,7 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
             icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>}
             label={mutualGroupsLoading ? 'Nhóm chung (đang tải...)' : `Nhóm chung${mutualGroups.length > 0 ? ` (${mutualGroups.length})` : ' (0)'}`}
             onClick={() => !mutualGroupsLoading && setShowGroups(true)}
-            textColor={mutualGroupsLoading ? 'text-gray-500' : 'text-gray-300'}
+            textColor={mutualGroupsLoading ? 'text-gray-400' : 'text-gray-300'}
           />
           {!isInGroup && activeThreadId && !isMe && (
             <ActionRow

@@ -11,7 +11,9 @@ import { toLocalMediaUrl } from '@/lib/localMedia';
 import { useChannelCapability } from '@/hooks/useChannelCapability';
 import { fetchContactInfo } from '@/hooks/useZaloEvents';
 import { extractUserProfile } from '../../../utils/profileUtils';
+import { fetchAllAliases } from '@/lib/zaloAliasUtils';
 import { Spinner } from '@/components/common/PageLoading';
+import { BotIcon } from '@/components/common/icons';
 
 interface HeaderLocalLabel {
   id: number;
@@ -372,15 +374,12 @@ export default function ChatHeader() {
     try {
       if ((acc.channel || 'zalo') === 'zalo') {
         const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
-        // 1. Update toàn bộ alias từ getAliasList (Zalo API)
-        const res = await ipc.zalo?.getAliasList({ auth, count: 5000 });
-        if (res?.success) {
-          const items: { userId: string; alias: string }[] = res?.response?.items || [];
-          for (const item of items) {
-            if (item.alias && item.userId) {
-              updateContact(activeAccountId, { contact_id: item.userId, alias: item.alias });
-              DataAccessor.setContactAlias({ zaloId: activeAccountId, contactId: item.userId, alias: item.alias }).catch(() => {});
-            }
+        // 1. Update toàn bộ alias từ fetchAllAliases (pagination, count=200)
+        const aliasItems = await fetchAllAliases(auth);
+        for (const item of aliasItems) {
+          if (item.alias && item.userId) {
+            updateContact(activeAccountId, { contact_id: item.userId, alias: item.alias });
+            DataAccessor.setContactAlias({ zaloId: activeAccountId, contactId: item.userId, alias: item.alias }).catch(() => {});
           }
         }
         // 2. Fetch full profile (tên, avatar, SĐT) cho hội thoại hiện tại
@@ -718,7 +717,7 @@ export default function ChatHeader() {
                     </button>
                   ))}
                   {activeLocalLabels.length > 4 && (
-                    <button className="text-[11px] text-gray-500 hover:text-gray-300 transition-colors">
+                    <button className="text-[11px] text-gray-400 hover:text-gray-300 transition-colors">
                       +{activeLocalLabels.length - 4}
                     </button>
                   )}
@@ -734,7 +733,7 @@ export default function ChatHeader() {
             onClick={toggleSearch}
             className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${searchOpen ? 'bg-blue-600 text-white' : 'hover:bg-gray-700 text-gray-400 hover:text-white'}`}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
             </svg>
           </button>
@@ -746,7 +745,7 @@ export default function ChatHeader() {
               onClick={() => setShowGroupBoard(!showGroupBoard)}
               className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${showGroupBoard ? 'bg-blue-600 text-white' : 'hover:bg-gray-700 text-gray-400 hover:text-white'}`}
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <rect x="3" y="3" width="18" height="18" rx="2"/>
                 <line x1="3" y1="9" x2="21" y2="9"/>
                 <line x1="9" y1="21" x2="9" y2="9"/>
@@ -757,15 +756,13 @@ export default function ChatHeader() {
             title={showAIQuickPanel ? 'Đóng trợ lý AI' : 'Trợ lý AI'}
             onClick={toggleAIQuickPanel}
             className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${showAIQuickPanel ? 'bg-purple-600 text-white' : 'hover:bg-gray-700 text-gray-400 hover:text-white'}`}
-          >
-            🤖
-          </button>
+          ><BotIcon className="w-5 h-5 inline" /> </button>
           <button
             title={showIntegrationQuickPanel ? 'Đóng tích hợp' : 'Tích hợp nhanh'}
             onClick={toggleIntegrationQuickPanel}
             className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${showIntegrationQuickPanel ? 'bg-blue-600 text-white' : 'hover:bg-gray-700 text-gray-400 hover:text-white'}`}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
               <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
               <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
             </svg>
@@ -776,7 +773,7 @@ export default function ChatHeader() {
             className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${showConversationInfo ? 'bg-blue-600 text-white' : 'hover:bg-gray-700 text-gray-400 hover:text-white'}`}
           >
             {/* Panel/sidebar toggle icon - square with right divider, like Zalo */}
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <rect x="3" y="3" width="18" height="18" rx="2"/>
               <line x1="15" y1="3" x2="15" y2="21"/>
             </svg>
@@ -848,7 +845,7 @@ export default function ChatHeader() {
           )}
           {/* No results indicator */}
           {searchQuery.trim() && !searching && searchResults.length === 0 && (
-            <span className="text-xs text-gray-500 flex-shrink-0 whitespace-nowrap">Không tìm thấy</span>
+            <span className="text-xs text-gray-400 flex-shrink-0 whitespace-nowrap">Không tìm thấy</span>
           )}
 
           {/* Close button */}

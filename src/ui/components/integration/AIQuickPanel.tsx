@@ -10,6 +10,8 @@ import { useChatStore } from '@/store/chatStore';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
 import { parseStructuredResponse } from '../../../utils/aiUtils';
+import { BotIcon, ClipboardListIcon, DiamondIcon, EditIcon, FileTextIcon, HelpCircleIcon, LightningIcon, SparklesIcon, StarIcon, TargetIcon } from '@/components/common/icons';
+
 
 interface ChatMsg {
   role: 'user' | 'assistant';
@@ -27,8 +29,15 @@ interface AssistantSummary {
   contextMessageCount?: number;
 }
 
-const PLATFORM_ICONS: Record<string, string> = {
-  openai: '🤖', gemini: '✨', deepseek: '🔮', grok: '⚡',
+const PLATFORM_ICONS: Record<string, React.ReactNode> = {
+  openai: <BotIcon className="w-4 h-4" />,
+  gemini: <SparklesIcon className="w-4 h-4" />,
+  deepseek: <HelpCircleIcon className="w-4 h-4" />,
+  grok: <LightningIcon className="w-4 h-4" />,
+};
+// Text fallback for use in <option> elements (cannot render JSX)
+const PLATFORM_ICON_TEXTS: Record<string, string> = {
+  openai: '[AI]', gemini: '[G]', deepseek: '[DS]', grok: '[Grok]',
 };
 
 const clampContextCount = (value: number) => Math.min(100, Math.max(1, Math.round(value)));
@@ -155,10 +164,10 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
         const segments = parseStructuredResponse(res.result);
         setMessages(prev => [...prev, { role: 'assistant', content: res.result!, segments: segments || undefined }]);
       } else {
-        setMessages(prev => [...prev, { role: 'assistant', content: `❌ ${res?.error || 'Không có phản hồi'}` }]);
+        setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${res?.error || 'Không có phản hồi'}` }]);
       }
     } catch (e: any) {
-      setMessages(prev => [...prev, { role: 'assistant', content: `❌ Lỗi: ${e.message}` }]);
+      setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${e.message}` }]);
     }
     setLoading(false);
     setTimeout(() => inputRef.current?.focus(), 100);
@@ -183,17 +192,17 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
     if (!zaloContext) return;
     setLoading(true);
     const summaryPrompt = `Hãy tóm tắt cuộc hội thoại sau trong 3-5 dòng, nêu rõ: chủ đề chính, yêu cầu của khách, trạng thái hiện tại.\n\n${zaloContext}`;
-    const userMsg: ChatMsg = { role: 'user', content: '📑 Tóm tắt hội thoại' };
+    const userMsg: ChatMsg = { role: 'user', content: 'Tóm tắt hội thoại' };
     setMessages(prev => [...prev, userMsg]);
     try {
       const res = await ipc.ai?.chat(activeId, [{ role: 'user', content: summaryPrompt }]);
       if (res?.success && res.result) {
         setMessages(prev => [...prev, { role: 'assistant', content: res.result! }]);
       } else {
-        setMessages(prev => [...prev, { role: 'assistant', content: `❌ ${res?.error || 'Không có phản hồi'}` }]);
+        setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${res?.error || 'Không có phản hồi'}` }]);
       }
     } catch (e: any) {
-      setMessages(prev => [...prev, { role: 'assistant', content: `❌ Lỗi: ${e.message}` }]);
+      setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${e.message}` }]);
     }
     setLoading(false);
   }, [activeId, loading, getRawZaloChatContext]);
@@ -223,8 +232,7 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
       {/* Header */}
       <div className="px-4 py-3 border-b border-gray-700 flex-shrink-0">
         <div className="flex items-center justify-between mb-2">
-          <h2 className="text-sm font-semibold text-white flex items-center gap-1.5">
-            🤖 Trợ lý AI
+          <h2 className="text-sm font-semibold text-white flex items-center gap-1.5"><BotIcon className="w-4 h-4 inline" /> Trợ lý AI
           </h2>
           <button onClick={onClose}
             className="w-7 h-7 rounded-lg hover:bg-gray-700 flex items-center justify-center text-gray-400 hover:text-white transition-colors">
@@ -236,10 +244,10 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
 
         {/* Assistant selector */}
         {loadingAssistants ? (
-          <div className="text-xs text-gray-500">Đang tải...</div>
+          <div className="text-xs text-gray-400">Đang tải...</div>
         ) : assistants.length === 0 ? (
           <div className="flex flex-col items-center gap-3 py-2">
-            <div className="text-3xl">🤖</div>
+            <div className="text-3xl"><BotIcon className="w-4 h-4" /></div>
             <p className="text-xs text-gray-400 text-center leading-relaxed">
               Chưa có trợ lý AI nào.<br/>Tạo trợ lý để bắt đầu hỗ trợ chat thông minh.
             </p>
@@ -252,17 +260,20 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
               }}
               className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors shadow-lg shadow-blue-900/30"
             >
-              ✨ Tạo trợ lý AI ngay
+              <SparklesIcon className="w-4 h-4" /> Tạo trợ lý AI ngay
             </button>
             <div className="w-full pt-1 border-t border-gray-700/60">
-              <p className="text-[10px] text-gray-500 text-center mb-2">Nền tảng hỗ trợ</p>
+              <p className="text-[10px] text-gray-400 text-center mb-2">Nền tảng hỗ trợ</p>
               <div className="flex justify-center gap-3">
-                {[['🤖','OpenAI'],['✨','Gemini'],['🔮','DeepSeek'],['⚡','Grok']].map(([icon, name]) => (
-                  <div key={name} className="flex flex-col items-center gap-0.5">
+                {[<BotIcon className="w-4 h-4" />,<SparklesIcon className="w-4 h-4" />,<HelpCircleIcon className="w-4 h-4" />,<LightningIcon className="w-4 h-4" />].map((icon, idx) => {
+                  const names = ['OpenAI','Gemini','DeepSeek','Grok'];
+                  return (
+                  <div key={names[idx]} className="flex flex-col items-center gap-0.5">
                     <span className="text-base">{icon}</span>
-                    <span className="text-[9px] text-gray-500">{name}</span>
+                    <span className="text-[9px] text-gray-400">{names[idx]}</span>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -271,8 +282,8 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
             className="w-full bg-gray-800 border border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500">
             {assistants.map(a => (
               <option key={a.id} value={a.id}>
-                {PLATFORM_ICONS[a.platform] || '🤖'} {a.name} - {a.model}
-                {a.isDefault ? ' ⭐' : ''}
+                {PLATFORM_ICON_TEXTS[a.platform] || '[AI]'} {a.name} - {a.model}
+                {a.isDefault ? ' [Mac dinh]' : ''}
               </option>
             ))}
           </select>
@@ -283,7 +294,7 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
       {activeId && canUseZaloContext && (
         <div className="px-3 py-2 border-b border-gray-700/50 flex-shrink-0 space-y-2">
           <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1 text-[10px] text-gray-500 min-w-0">
+            <div className="flex items-center gap-1 text-sm text-gray-400 min-w-0">
               <span>{hasZaloContext ? 'Ngữ cảnh bật' : 'Ngữ cảnh tắt'}</span>
               <button
                 type="button"
@@ -301,16 +312,15 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
             <button
               onClick={handleSummarize}
               disabled={loading}
-              className="text-[10px] px-2 py-0.5 rounded bg-purple-900/60 text-purple-100 hover:bg-purple-800/50 disabled:opacity-40 transition-colors flex-shrink-0"
+              className="text-[12px] px-2 py-0.5 rounded bg-purple-900/60 text-purple-100 hover:bg-purple-800/50 disabled:opacity-40 transition-colors flex-shrink-0"
               title="AI tóm tắt hội thoại hiện tại"
-            >
-              📑 Tóm tắt
+            ><FileTextIcon className="w-4 h-4 inline" /> Tóm tắt
             </button>
           </div>
 
           {hasZaloContext && (
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[10px] uppercase tracking-wide text-gray-500">Số ngữ cảnh</span>
+              <span className="text-[11px] uppercase tracking-wide text-gray-400">Số ngữ cảnh</span>
               <input
                 type="number"
                 min={1}
@@ -328,7 +338,7 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
                 className="w-16 bg-gray-800 border border-gray-600 rounded-md px-2 py-1 text-[11px] text-white focus:outline-none focus:border-blue-500"
                 title="Số lượng tin nhắn dùng làm ngữ cảnh"
               />
-              <span className="text-[10px] text-gray-500">Tối đa 1000 tin</span>
+              <span className="text-[11px] text-gray-400">Tối đa 1000 tin</span>
             </div>
           )}
         </div>
@@ -338,12 +348,11 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-3">
         {messages.length === 0 && activeId && (
           <div className="text-center py-10">
-            <div className="text-3xl mb-2">{PLATFORM_ICONS[activeAssistant?.platform || 'openai']}</div>
-            <p className="text-xs text-gray-500">
+            <p className="text-xs text-gray-400">
               {canUseZaloContext
                 ? (hasZaloContext
-                    ? 'Hỏi bất kỳ điều gì - AI sẽ tự động nắm ngữ cảnh hội thoại Zalo hiện tại'
-                    : 'Hỏi bất kỳ điều gì - đang chat với AI nội bộ, không tự gửi ngữ cảnh Zalo')
+                    ? 'Hỏi bất kỳ điều gì - trợ lý AI sẽ tự động nắm ngữ cảnh hội thoại Zalo hiện tại'
+                    : 'Hỏi bất kỳ điều gì - đang chat với trợ lý AI nội bộ, không tự gửi lịch sử chat Zalo')
                 : 'Hỏi bất kỳ điều gì - AI sẽ trả lời dựa trên prompt và dữ liệu đã cấu hình'}
             </p>
           </div>
@@ -374,7 +383,7 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
               ) : (
                 <div className="whitespace-pre-wrap break-words">{msg.content}</div>
               )}
-              {msg.role === 'assistant' && !msg.content.startsWith('❌') && (
+              {msg.role === 'assistant' && !msg.content.startsWith('Error:') && (
                 <div className="flex items-center gap-1.5 mt-2 pt-1.5 border-t border-gray-700/50">
                   <button onClick={() => {
                     const textToInsert = msg.segments
@@ -384,7 +393,7 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
                   }}
                     className="text-[10px] px-2 py-0.5 rounded bg-blue-900/40 text-blue-400 hover:bg-blue-800/50 transition-colors"
                     title="Chèn vào ô chat">
-                    ✏️ Chèn vào chat
+                    <EditIcon className="w-4 h-4 inline" /> Chèn vào chat
                   </button>
                   <button onClick={() => {
                     const textToCopy = msg.segments
@@ -393,8 +402,7 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
                     navigator.clipboard.writeText(textToCopy);
                   }}
                     className="text-[10px] px-2 py-0.5 rounded bg-gray-700 text-gray-400 hover:text-white transition-colors"
-                    title="Copy">
-                    📋 Copy
+                    title="Copy"><ClipboardListIcon className="w-4 h-4 inline" /> Copy
                   </button>
                 </div>
               )}

@@ -14,6 +14,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import Logger from '../../utils/Logger';
+import FileStorageService from '../file/FileStorageService';
 
 interface CacheEntry {
   key: string;
@@ -83,6 +84,52 @@ class MediaCacheService {
     const cacheKey = this.hashUrl(bossUrl);
     const cached = this.index.get(cacheKey);
 
+    // Cache hit (hash-based)
+    if (cached && fs.existsSync(this.getCacheFilePath(cacheKey))) {
+      cached.accessedAt = Date.now();
+      this.saveIndex();
+      return {
+        displayUrl: this.getCacheFileUrl(cacheKey, cached.mimeType),
+        fromCache: true,
+      };
+    }
+
+    // Cache miss → kiểm tra structured media folder (có thể đã download từ lần trước)
+    try {
+      const mediaRelPath = this.extractMediaRelPath(bossUrl);
+      if (mediaRelPath) {
+        let mediaBaseDir = FileStorageService.getBaseDir?.() || '';
+        if (!mediaBaseDir) {
+          const { app } = require('electron');
+          mediaBaseDir = path.join(app.getPath('userData'), 'media');
+        }
+        const structuredPath = path.resolve(mediaBaseDir, mediaRelPath);
+        if (fs.existsSync(structuredPath)) {
+          return { displayUrl: `file:///${structuredPath.replace(/\\/g, '/').replace(/^\//, '')}`, fromCache: true };
+        }
+      }
+    } catch {}
+
+    // Cache miss → download background
+    this.downloadToCache(bossUrl, cacheKey, mediaType).catch(() => {});
+    return { displayUrl: bossUrl, fromCache: false };
+  }
+
+  /**
+   * Resolve URL với cache-first, nhưng CHỜ download hoàn tất nếu cache miss.
+   * Dùng khi user chủ động click mở file/media (cần file local ngay).
+   */
+  public async resolveUrlSync(bossUrl: string, mediaType: 'avatar' | 'image' | 'file' = 'image'): Promise<{
+    displayUrl: string;
+    fromCache: boolean;
+  }> {
+    if (!this.initialized) {
+      return { displayUrl: bossUrl, fromCache: false };
+    }
+
+    const cacheKey = this.hashUrl(bossUrl);
+    const cached = this.index.get(cacheKey);
+
     // Cache hit
     if (cached && fs.existsSync(this.getCacheFilePath(cacheKey))) {
       cached.accessedAt = Date.now();
@@ -93,8 +140,21 @@ class MediaCacheService {
       };
     }
 
-    // Cache miss → download background
-    this.downloadToCache(bossUrl, cacheKey, mediaType).catch(() => {});
+    // Cache miss → download SYNCHRONOUS (chờ hoàn tất)
+    try {
+      await this.downloadToCache(bossUrl, cacheKey, mediaType);
+      // Kiểm tra lại sau khi download
+      const entry = this.index.get(cacheKey);
+      if (entry && fs.existsSync(this.getCacheFilePath(cacheKey))) {
+        return {
+          displayUrl: this.getCacheFileUrl(cacheKey, entry.mimeType),
+          fromCache: true,
+        };
+      }
+    } catch (err: any) {
+      Logger.warn(`[MediaCacheService] resolveUrlSync failed: ${err.message}`);
+    }
+
     return { displayUrl: bossUrl, fromCache: false };
   }
 
@@ -124,7 +184,7 @@ class MediaCacheService {
     }
   }
 
-  /** Download file từ boss vào cache */
+  /** Download file từ boss vào cache + lưu đúng folder media/ */
   private async downloadToCache(bossUrl: string, cacheKey: string, mediaType: string): Promise<void> {
     await this.acquireSlot();
     try {
@@ -148,7 +208,7 @@ class MediaCacheService {
       const mimeType = response.headers.get('content-type') || this.guessMimeFromUrl(bossUrl);
       const filePath = this.getCacheFilePath(cacheKey);
 
-      // Lưu file
+      // Lưu cache hash-based
       const dir = path.dirname(filePath);
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
@@ -166,6 +226,24 @@ class MediaCacheService {
       });
       this.saveIndex();
       this.evictIfNeeded();
+
+      // Đồng thời lưu vào structured media folder nếu boss URL chứa đường dẫn đúng
+      // VD: https://boss/api/media/zaloId/2024-06-27/video.mp4
+      try {
+        const mediaRelPath = this.extractMediaRelPath(bossUrl);
+        if (mediaRelPath) {
+          let mediaBaseDir = FileStorageService.getBaseDir?.() || '';
+          if (!mediaBaseDir) {
+            const { app } = require('electron');
+            mediaBaseDir = path.join(app.getPath('userData'), 'media');
+          }
+          const structuredPath = path.resolve(mediaBaseDir, mediaRelPath);
+          const structuredDir = path.dirname(structuredPath);
+          if (!fs.existsSync(structuredDir)) fs.mkdirSync(structuredDir, { recursive: true });
+          if (!fs.existsSync(structuredPath)) fs.writeFileSync(structuredPath, buffer);
+          Logger.log(`[MediaCacheService] Also saved to: ${structuredPath}`);
+        }
+      } catch {}
 
       Logger.log(`[MediaCacheService] Cached: ${(buffer.length / 1024).toFixed(1)}KB`);
     } catch (err: any) {
@@ -275,6 +353,24 @@ class MediaCacheService {
       '.pdf': 'application/pdf', '.mp3': 'audio/mpeg',
     };
     return mimeMap[ext] || 'application/octet-stream';
+  }
+
+  /** Trích xuất relative path từ boss URL để lưu đúng folder media/zaloId/date/
+   *  VD: https://boss/api/media/2231125334791940537/2024/06/27/video.mp4
+   *    → 2231125334791940537/2024/06/27/video.mp4
+   *  VD: https://boss/api/media/thumb/2231125334791940537/2024/06/27/thumb.jpg
+   *    → thumb/2231125334791940537/2024/06/27/thumb.jpg
+   */
+  private extractMediaRelPath(bossUrl: string): string {
+    try {
+      // Match /api/media/ hoặc /api/avatar/...
+      const match = bossUrl.match(/\/api\/(?:media|avatar|_uploads)\/(.+)/);
+      if (match) return match[1];
+      // Fallback: lấy pathname từ URL
+      const urlObj = new URL(bossUrl);
+      const pathname = urlObj.pathname.replace(/^\/api\//, '');
+      return pathname || '';
+    } catch { return ''; }
   }
 
   private getDefaultCacheDir(): string {

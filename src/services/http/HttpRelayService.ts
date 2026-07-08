@@ -453,7 +453,7 @@ class HttpRelayService {
 
     private handleHttpRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
         res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
+        res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS, PATCH, PUT, DELETE');
         res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
         if (req.method === 'OPTIONS') {
@@ -1609,7 +1609,7 @@ class HttpRelayService {
                 this.readBody(req, async (body) => {
                     try {
                         const parsed = JSON.parse(body);
-                        const { AIAssistantService } = require('../ai/AIAssistantService');
+                        const AIAssistantService = require('../ai/AIAssistantService').default;
                         const result = await AIAssistantService.getInstance().chat(
                             parsed.assistantId || parsed.params?.assistantId,
                             parsed.messages || parsed.params?.messages || [],
@@ -1628,7 +1628,7 @@ class HttpRelayService {
                 this.readBody(req, async (body) => {
                     try {
                         const parsed = JSON.parse(body);
-                        const { AIAssistantService } = require('../ai/AIAssistantService');
+                        const AIAssistantService = require('../ai/AIAssistantService').default;
                         const suggestions = await AIAssistantService.getInstance().getSuggestions(
                             parsed.assistantId || parsed.params?.assistantId,
                             parsed.chatHistory || parsed.params?.chatHistory || []
@@ -2142,13 +2142,13 @@ class HttpRelayService {
 
             // ── AI Assistant CRUD ──
             if (pathname === '/api/command/ai/assistants') {
-                const { AIAssistantService } = require('../ai/AIAssistantService');
+                const AIAssistantService = require('../ai/AIAssistantService').default;
                 const savedId = AIAssistantService.getInstance().saveAssistant(params.assistant || params);
                 return { success: true, id: savedId };
             }
             if (pathname.match(/^\/api\/command\/ai\/assistants\/[^/]+$/)) {
                 const id = pathname.split('/').pop() || '';
-                const { AIAssistantService } = require('../ai/AIAssistantService');
+                const AIAssistantService = require('../ai/AIAssistantService').default;
                 AIAssistantService.getInstance().deleteAssistant(id);
                 return { success: true };
             }

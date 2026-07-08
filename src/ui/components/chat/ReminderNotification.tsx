@@ -170,7 +170,7 @@ export default function ReminderNotification({ data, onClose, onOpenThread }: Pr
                 <h2 className={`text-2xl font-bold mb-1 leading-tight break-words ${isLight ? 'text-gray-900' : 'text-white'}`}>
                   {data.title}
                 </h2>
-                <p className={`text-sm ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
+                <p className={`text-sm ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
                   {data.description}
                 </p>
               </div>
@@ -190,7 +190,7 @@ export default function ReminderNotification({ data, onClose, onOpenThread }: Pr
                   </svg>
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className={`text-xs mb-0.5 ${isLight ? 'text-gray-400' : 'text-gray-500'}`}>Tài khoản</p>
+                  <p className={`text-xs mb-0.5 ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>Tài khoản</p>
                   <p className={`text-sm font-medium truncate ${isLight ? 'text-gray-800' : 'text-white'}`}>{data.accountName}</p>
                 </div>
               </div>
@@ -204,7 +204,7 @@ export default function ReminderNotification({ data, onClose, onOpenThread }: Pr
                   </svg>
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className={`text-xs mb-0.5 ${isLight ? 'text-gray-400' : 'text-gray-500'}`}>Hội thoại</p>
+                  <p className={`text-xs mb-0.5 ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>Hội thoại</p>
                   <p className={`text-sm font-medium truncate ${isLight ? 'text-gray-800' : 'text-white'}`}>{data.conversationName}</p>
                 </div>
               </div>

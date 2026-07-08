@@ -3,13 +3,14 @@ import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import { useAccountStore } from '@/store/accountStore';
 import { Spinner } from '@/components/common/PageLoading';
+import { AlertIcon, BotIcon, ChatIcon, LightningIcon, SparklesIcon, TargetIcon, UserIcon } from '@/components/common/icons';
 
-const PLATFORM_META: Record<string, { label: string; color: string; icon: string }> = {
-  openai:   { label: 'OpenAI',   color: 'bg-green-600',   icon: '🤖' },
-  gemini:   { label: 'Gemini',   color: 'bg-blue-600',    icon: '✨' },
-  claude:   { label: 'Claude',   color: 'bg-amber-600',   icon: '🟠' },
-  deepseek: { label: 'DeepSeek', color: 'bg-purple-600',  icon: '🔮' },
-  grok:     { label: 'Grok',     color: 'bg-orange-600',  icon: '⚡' },
+const PLATFORM_META: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
+  openai:   { label: 'OpenAI',   color: 'bg-green-600',   icon: <BotIcon className="w-4 h-4" /> },
+  gemini:   { label: 'Gemini',   color: 'bg-blue-600',    icon: <SparklesIcon className="w-4 h-4" /> },
+  claude:   { label: 'Claude',   color: 'bg-amber-600',   icon: <AlertIcon className="w-4 h-4" /> },
+  deepseek: { label: 'DeepSeek', color: 'bg-purple-600',  icon: <TargetIcon className="w-4 h-4" /> },
+  grok:     { label: 'Grok',     color: 'bg-orange-600',  icon: <LightningIcon className="w-4 h-4" /> },
 };
 
 interface AIAssistantSummary {
@@ -89,12 +90,12 @@ export default function AccountAssignmentPopup({ open, onClose }: { open: boolea
       <div className="bg-gray-800 border border-gray-700 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700 flex-shrink-0">
           <div>
-            <h2 className="text-base font-semibold text-white">👤 Gán trợ lý theo tài khoản</h2>
+            <h2 className="text-base font-semibold text-white"><UserIcon className="w-4 h-4 inline" /> Gán trợ lý theo tài khoản</h2>
             <p className="text-xs text-gray-400 mt-0.5">
               Mỗi tài khoản Zalo có thể dùng trợ lý riêng cho gợi ý tin nhắn và panel chat AI. Để trống = dùng trợ lý mặc định.
             </p>
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors p-1">
+          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors p-1">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
@@ -107,7 +108,7 @@ export default function AccountAssignmentPopup({ open, onClose }: { open: boolea
               <Spinner size={5} />
             </div>
           ) : accounts.length === 0 ? (
-            <p className="text-sm text-gray-500 text-center py-10">Chưa có tài khoản Zalo nào.</p>
+            <p className="text-sm text-gray-400 text-center py-10">Chưa có tài khoản Zalo nào.</p>
           ) : (
             <div className="space-y-3">
               {accounts.map(acc => {
@@ -121,11 +122,11 @@ export default function AccountAssignmentPopup({ open, onClose }: { open: boolea
                     />
                     <div className="flex-shrink-0 min-w-[130px]">
                       <p className="text-sm text-white font-medium truncate">{acc.full_name}</p>
-                      <p className="text-[11px] text-gray-500">{acc.zalo_id}</p>
+                      <p className="text-[11px] text-gray-400">{acc.zalo_id}</p>
                     </div>
                     <div className="flex-1 grid grid-cols-2 gap-3">
                       <div>
-                        <label className="text-[10px] text-gray-500 block mb-1 font-medium">✨ Gợi ý tin nhắn</label>
+                        <label className="text-[10px] text-gray-400 block mb-1 font-medium"><SparklesIcon className="w-3.5 h-3.5 inline" /> Gợi ý tin nhắn</label>
                         <select
                           value={assignment.suggestion || ''}
                           onChange={e => handleSet(acc.zalo_id, 'suggestion', e.target.value || null)}
@@ -138,7 +139,7 @@ export default function AccountAssignmentPopup({ open, onClose }: { open: boolea
                         </select>
                       </div>
                       <div>
-                        <label className="text-[10px] text-gray-500 block mb-1 font-medium">💬 Panel chat AI</label>
+                        <label className="text-[10px] text-gray-400 block mb-1 font-medium"><ChatIcon className="w-4 h-4 inline" /> Panel chat AI</label>
                         <select
                           value={assignment.panel || ''}
                           onChange={e => handleSet(acc.zalo_id, 'panel', e.target.value || null)}

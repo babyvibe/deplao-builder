@@ -5,6 +5,7 @@ import { useAppStore } from '@/store/appStore';
 import {ZaloIcon, FacebookIcon, TelegramIcon} from '../common/ChannelBadge';
 import cookieGuideImg from '../../../assets/login/hd_login_fb_cookie.png';
 import { Spinner } from '@/components/common/PageLoading';
+import { AlertIcon, BookIcon, CheckIcon, ClockIcon, CloseIcon, KeyIcon, LockIcon, PinIcon, PluginIcon, RefreshIcon, SmartphoneIcon, StarIcon, SunIcon, WrenchIcon } from '@/components/common/icons';
 
 interface AddAccountModalProps {
   onClose: () => void;
@@ -14,7 +15,7 @@ interface AddAccountModalProps {
 function TosFooter() {
   const { setView, setAddAccountModalOpen } = useAppStore();
   return (
-    <p className="text-gray-600 text-[11px] text-center pt-3 leading-relaxed">
+    <p className="text-gray-400 text-[11px] text-center pt-3 leading-relaxed">
       Khi bạn đăng nhập là đã đồng ý{' '}
       <button
         type="button"
@@ -143,7 +144,7 @@ export default function AddAccountModal({ onClose }: AddAccountModalProps) {
               </button>
             </div>
 
-            <p className="text-gray-600 text-[11px] text-center pt-2">
+            <p className="text-gray-400 text-[11px] text-center pt-2">
               Thêm nhiều tài khoản để quản lý tin nhắn đa kênh
             </p>
           </div>
@@ -167,13 +168,13 @@ export default function AddAccountModal({ onClose }: AddAccountModalProps) {
             {selectedProxyId && proxies.length > 0 && (
               <div className="px-6 pt-3 pb-0">
                 <div className="flex items-center gap-2 bg-green-900/20 border border-green-700/40 rounded-lg px-3 py-1.5">
-                  <span className="text-green-400 text-sm">🔒</span>
+                  <span className="text-green-400 text-sm"><LockIcon className="w-4 h-4" /></span>
                   <span className="text-xs text-green-300">
                     Proxy: <strong>{proxies.find(p => p.id === selectedProxyId)?.name}</strong>
                   </span>
                   <button
                     onClick={() => setSelectedProxyId(null)}
-                    className="ml-auto text-gray-500 hover:text-gray-300 text-xs"
+                    className="ml-auto text-gray-400 hover:text-gray-300 text-xs"
                   >✕</button>
                 </div>
               </div>
@@ -190,7 +191,7 @@ export default function AddAccountModal({ onClose }: AddAccountModalProps) {
                       : 'text-gray-400 hover:text-gray-200'
                   }`}
                 >
-                  {t === 'qr' ? '📱 Quét mã QR' : '🍪 Cookies / IMEI'}
+                  {t === 'qr' ? 'Quét mã QR' : 'Cookies / IMEI'}
                 </button>
               ))}
             </div>
@@ -210,13 +211,13 @@ export default function AddAccountModal({ onClose }: AddAccountModalProps) {
             {selectedProxyId && proxies.length > 0 && (
               <div className="px-6 pt-3 pb-0">
                 <div className="flex items-center gap-2 bg-green-900/20 border border-green-700/40 rounded-lg px-3 py-1.5">
-                  <span className="text-green-400 text-sm">🔒</span>
+                  <span className="text-green-400 text-sm"><LockIcon className="w-4 h-4" /></span>
                   <span className="text-xs text-green-300">
                     Proxy: <strong>{proxies.find(p => p.id === selectedProxyId)?.name}</strong>
                   </span>
                   <button
                     onClick={() => setSelectedProxyId(null)}
-                    className="ml-auto text-gray-500 hover:text-gray-300 text-xs"
+                    className="ml-auto text-gray-400 hover:text-gray-300 text-xs"
                   >✕</button>
                 </div>
               </div>
@@ -233,7 +234,7 @@ export default function AddAccountModal({ onClose }: AddAccountModalProps) {
                       : 'text-gray-400 hover:text-gray-200'
                   }`}
                 >
-                  {t === 'account' ? '🔑 Tài khoản' : '🍪 Cookie'}
+                  {t === 'account' ? <><KeyIcon className="w-4 h-4 inline" /> Tài khoản</> : 'Cookie'}
                 </button>
               ))}
             </div>
@@ -294,7 +295,7 @@ function ProxySelectStep({
   return (
     <div className="p-6 space-y-4">
       <p className="text-gray-400 text-sm">
-        Chọn proxy cho tài khoản này (không bắt buộc).
+        Chọn proxy cho tài khoản này <strong>(không bắt buộc)</strong>.
         Nếu bỏ qua, tài khoản sẽ kết nối trực tiếp.
       </p>
 
@@ -304,7 +305,7 @@ function ProxySelectStep({
         </div>
       ) : proxies.length === 0 ? (
         <div className="text-center py-6 space-y-3">
-          <div className="text-3xl">🔒</div>
+          <div className="text-3xl justify-items-center"><LockIcon className="w-4 h-4" /></div>
           <p className="text-sm text-gray-400">Chưa có proxy nào được cài đặt</p>
           <button
             onClick={() => {
@@ -328,10 +329,10 @@ function ProxySelectStep({
                 : 'border-gray-600 text-gray-400 hover:border-gray-500'
             }`}
           >
-            <span className="text-lg">🚫</span>
+            <span className="text-lg"><CloseIcon className="w-4 h-4" /></span>
             <div className="text-left">
               <p className="text-sm font-medium">Không dùng proxy</p>
-              <p className="text-xs text-gray-500">Kết nối trực tiếp</p>
+              <p className="text-xs text-gray-400">Kết nối trực tiếp</p>
             </div>
             {selectedProxyId === null && (
               <svg className="ml-auto text-blue-400" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
@@ -349,10 +350,10 @@ function ProxySelectStep({
                   : 'border-gray-600 text-gray-400 hover:border-gray-500'
               }`}
             >
-              <span className="text-lg">🔒</span>
+              <span className="text-lg"><LockIcon className="w-4 h-4" /></span>
               <div className="text-left flex-1 min-w-0">
                 <p className="text-sm font-medium truncate">{proxy.name}</p>
-                <p className="text-xs text-gray-500 font-mono truncate">
+                <p className="text-xs text-gray-400 font-mono truncate">
                   {proxy.type.toUpperCase()} · {proxy.host}:{proxy.port}
                 </p>
               </div>
@@ -387,13 +388,13 @@ function ProxySelectStep({
             >
               {testState === 'testing' ? (
                 <><Spinner size={3} /> Đang test...</>
-              ) : testState === 'ok' ? '✅ Kết nối tốt'
-              : testState === 'fail' ? '🔄 Test lại'
-              : '🔌 Test ngay'}
+              ) : testState === 'ok' ? <><CheckIcon className="w-4 h-4 inline" /> Kết nối tốt</>
+              : testState === 'fail' ? <><RefreshIcon className="w-4 h-4 inline" /> Test lại</>
+              : 'Test ngay'}
             </button>
           </div>
           {testState === 'fail' && testError && (
-            <p className="mt-2 text-xs text-red-400">⚠️ {testError}</p>
+            <p className="mt-2 text-xs text-red-400"><AlertIcon className="w-4 h-4 inline" /> {testError}</p>
           )}
         </div>
       )}
@@ -401,7 +402,7 @@ function ProxySelectStep({
       {/* Cảnh báo khi proxy lỗi */}
       {testState === 'fail' && (
         <div className="bg-yellow-900/20 border border-yellow-700/40 rounded-xl p-3">
-          <p className="text-xs text-yellow-400 font-medium">⚠️ Proxy không hoạt động</p>
+          <p className="text-xs text-yellow-400 font-medium"><AlertIcon className="w-4 h-4 inline" /> Proxy không hoạt động</p>
           <p className="text-xs text-yellow-300/70 mt-1">
             Đăng nhập qua proxy lỗi sẽ thất bại. Bạn vẫn có thể tiếp tục không dùng proxy.
           </p>
@@ -412,7 +413,7 @@ function ProxySelectStep({
         onClick={onContinue}
         className="btn-primary text-white w-full"
       >
-        {selectedProxyId ? '✅ Tiếp tục với proxy' : 'Tiếp tục không có proxy →'}
+        {selectedProxyId ? <><CheckIcon className="w-4 h-4 inline" /> Tiếp tục với proxy</> : 'Tiếp tục không cần proxy →'}
       </button>
     </div>
   );
@@ -573,7 +574,7 @@ function QRLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId?: n
       {/* Scanned */}
       {status === 'scanned' && (
         <div className="py-8 flex flex-col items-center gap-3">
-          <div className="text-5xl">📱</div>
+          <div className="text-5xl"><SmartphoneIcon className="w-4 h-4" /></div>
           <p className="text-green-400 font-medium">Đã quét! Đang xác nhận trên điện thoại...</p>
           <Spinner size={5} className="text-green-400" />
         </div>
@@ -582,7 +583,7 @@ function QRLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId?: n
       {/* Success */}
       {status === 'success' && (
         <div className="py-8 flex flex-col items-center gap-3">
-          <div className="text-5xl">🎉</div>
+          <div className="text-5xl"><StarIcon className="w-4 h-4" /></div>
           <p className="text-green-400 font-semibold text-lg">Đăng nhập thành công!</p>
         </div>
       )}
@@ -590,7 +591,7 @@ function QRLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId?: n
       {/* Expired / Error → hiện nút Làm mới */}
       {(status === 'expired' || status === 'error') && (
         <div className="py-6 flex flex-col items-center gap-4">
-          <div className="text-5xl">{status === 'expired' ? '⏰' : '❌'}</div>
+          <div className="text-5xl">{status === 'expired' ? <ClockIcon className="w-5 h-5" /> : <CloseIcon className="w-5 h-5" />}</div>
           <p className="text-gray-300 text-sm">
             {status === 'expired' ? 'Mã QR đã hết hạn (1 phút)' : 'Có lỗi xảy ra'}
           </p>
@@ -699,9 +700,9 @@ function FacebookAccountLoginTab({ onSuccess, proxyId }: { onSuccess: () => void
         <div className="flex items-center justify-between mb-2">
           <p className={`text-xs font-medium ${need2FA ? 'text-red-400' : 'text-indigo-300'}`}>
             {need2FA ? (
-              '⚠️ Tài khoản yêu cầu xác thực 2 yếu tố (2FA)'
+              <><AlertIcon className="w-4 h-4 inline" /> Tài khoản yêu cầu xác thực 2 yếu tố (2FA)</>
             ) : (
-              '🔐 Mã bí mật 2FA (2FA Secret Key)'
+              'Mã bí mật 2FA (2FA Secret Key)'
             )}
           </p>
           <button
@@ -722,7 +723,7 @@ function FacebookAccountLoginTab({ onSuccess, proxyId }: { onSuccess: () => void
           value={twoFASecret}
           onChange={(e) => { setTwoFASecret(e.target.value); setError(''); }}
           placeholder={need2FA
-            ? '⚠️ Nhập mã bí mật 2FA để đăng nhập (32 ký tự)'
+            ? 'Nhập mã bí mật 2FA để đăng nhập (32 ký tự)'
             : 'Nhập mã bí mật 2FA từ Facebook (để trống nếu không có)'
           }
           className={`input-field text-sm font-mono ${
@@ -811,7 +812,7 @@ function FacebookCookieLoginTab({ onSuccess, proxyId }: { onSuccess: () => void;
       <div>
         <label className="text-xs text-gray-400 mb-1 block font-medium">
           Cookie Facebook{' '}
-          <span className="text-gray-600 font-normal">- dán chuỗi cookie từ trình duyệt</span>
+          <span className="text-gray-400 font-normal">- dán chuỗi cookie từ trình duyệt</span>
         </label>
         <textarea
           value={cookie}
@@ -823,20 +824,19 @@ function FacebookCookieLoginTab({ onSuccess, proxyId }: { onSuccess: () => void;
           spellCheck={false}
           autoComplete="off"
         />
-        <p className="text-gray-600 text-[11px] mt-1">
+        <p className="text-gray-400 text-[11px] mt-1">
           <button
             type="button"
             onClick={() => setShowGuide(true)}
             className="text-blue-400 hover:text-blue-300 underline underline-offset-2 transition-colors"
-          >
-            📖 Xem hướng dẫn lấy Cookie Facebook
+          ><BookIcon className="w-4 h-4 inline" /> Xem hướng dẫn lấy Cookie Facebook
           </button>
         </p>
       </div>
 
       {/* Cookie expiry warning */}
       <div className="bg-orange-500/10 border border-orange-500/30 rounded-xl p-3 flex gap-2.5 items-start">
-        <span className="text-orange-400 text-base mt-0.5">⚠️</span>
+        <span className="text-orange-400 mt-0.5"><AlertIcon className="w-4 h-4" /></span>
         <div>
           <p className="text-orange-500 text-xs font-semibold mb-0.5">Lưu ý: Cookie có thời hạn</p>
           <p className="text-orange-400 text-[11px] leading-relaxed">
@@ -912,7 +912,7 @@ function CookieGuidePopup({ onClose }: { onClose: () => void }) {
                 </span>
                 <div className="min-w-0">
                   <p className="text-white text-xs font-semibold">{s.title}</p>
-                  <p className="text-gray-500 text-[11px] mt-0.5">{s.desc}</p>
+                  <p className="text-gray-400 text-[11px] mt-0.5">{s.desc}</p>
                 </div>
               </div>
             ))}
@@ -935,7 +935,7 @@ function CookieGuidePopup({ onClose }: { onClose: () => void }) {
             onClick={onClose}
             className="px-5 py-2 rounded-lg text-xs font-medium bg-blue-600 hover:bg-blue-500 text-white transition-colors"
           >
-            ✅ Đã hiểu, dán cookie ngay!
+            <CheckIcon className="w-4 h-4 inline" /> Đã hiểu, dán cookie ngay!
           </button>
         </div>
       </div>
@@ -996,7 +996,7 @@ function CookieLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId
       <div>
         <label className="text-xs text-gray-400 mb-1 block font-medium">
           Auth JSON{' '}
-          <span className="text-gray-600 font-normal">
+          <span className="text-gray-400 font-normal">
             - dán nguyên khối từ tool extract
           </span>
         </label>
@@ -1035,7 +1035,7 @@ function CookieLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId
         ) : 'Đăng nhập'}
       </button>
 
-      <p className="text-gray-600 text-xs text-center pt-1">
+      <p className="text-gray-400 text-xs text-center pt-1">
         Lấy auth JSON bằng cách chạy tool extract cookies từ trình duyệt
       </p>
       <TosFooter />
@@ -1054,7 +1054,7 @@ function SecretKeyGuidePopup({ onClose }: { onClose: () => void }) {
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700 shrink-0">
           <div className="flex items-center gap-2.5">
-            <span className="text-indigo-400 text-xl">🔐</span>
+            <span className="text-indigo-400 text-xl"><LockIcon className="w-4 h-4" /></span>
             <h3 className="text-white font-semibold">Hướng dẫn lấy mã bí mật 2FA (Secret Key) từ Facebook</h3>
           </div>
           <button
@@ -1078,7 +1078,7 @@ function SecretKeyGuidePopup({ onClose }: { onClose: () => void }) {
                 : 'text-gray-400 hover:text-gray-200'
             }`}
           >
-            ✅ Đã có 2FA - Cách lấy Secret Key
+            <CheckIcon className="w-4 h-4 inline" /> Đã có 2FA - Cách lấy Secret Key
           </button>
           <button
             onClick={() => setTab('setup-2fa')}
@@ -1087,8 +1087,7 @@ function SecretKeyGuidePopup({ onClose }: { onClose: () => void }) {
                 ? 'text-indigo-400 border-b-2 border-indigo-400'
                 : 'text-gray-400 hover:text-gray-200'
             }`}
-          >
-            🛠 Chưa có 2FA - Cách thiết lập
+          ><WrenchIcon className="w-4 h-4 inline" /> Chưa có 2FA - Cách thiết lập
           </button>
         </div>
 
@@ -1104,7 +1103,7 @@ function SecretKeyGuidePopup({ onClose }: { onClose: () => void }) {
             onClick={onClose}
             className="px-5 py-2 rounded-lg text-xs font-medium bg-indigo-600 hover:bg-indigo-500 text-white transition-colors"
           >
-            ✅ Đã hiểu
+            <CheckIcon className="w-4 h-4 inline" /> Đã hiểu
           </button>
         </div>
       </div>
@@ -1168,7 +1167,7 @@ function Have2FAGuide() {
     <div className="space-y-1">
       <div className="bg-indigo-900/20 border border-indigo-700/30 rounded-xl p-3 mb-4">
         <p className="text-indigo-300 text-xs leading-relaxed">
-          <strong>📌 Mục "Mã bí mật (Secret Key)"</strong> không phải tài khoản Facebook nào cũng hiện sẵn vì Facebook thường xuyên thay đổi giao diện.
+          <strong><PinIcon className="w-4 h-4 inline" /> Mục "Mã bí mật (Secret Key)"</strong> không phải tài khoản Facebook nào cũng hiện sẵn vì Facebook thường xuyên thay đổi giao diện.
           Nếu bạn không thấy Secret Key trong giao diện hiện tại, hãy làm theo các bước dưới đây.
         </p>
       </div>
@@ -1186,7 +1185,7 @@ function Have2FAGuide() {
 
       {/* Tips */}
       <div className="bg-emerald-600 border border-emerald-700/30 rounded-xl p-3 mt-4 space-y-2">
-        <p className="text-emerald-300 text-xs font-semibold">💡 Mẹo nhỏ</p>
+        <p className="text-emerald-300 text-xs font-semibold"><SunIcon className="w-4 h-4 inline" /> Mẹo nhỏ</p>
         <ul className="text-white-important text-[11px] space-y-1.5 list-disc list-inside leading-relaxed">
           <li>Nếu đã thấy mục "Ứng dụng xác thực" hiển thị trạng thái "Đã bật" - bấm vào để xem lại mã.</li>
           <li>Dùng trình duyệt trên máy tính (không dùng app điện thoại) để dễ thao tác.</li>
@@ -1269,7 +1268,7 @@ function Setup2FAGuide() {
     <div className="space-y-1">
       <div className="bg-amber-900/20 border border-amber-700/30 rounded-xl p-3 mb-4">
         <p className="text-amber-300 text-xs leading-relaxed">
-          <strong>⚠️ Hướng dẫn dành cho tài khoản CHƯA bật 2FA</strong>
+          <strong><AlertIcon className="w-4 h-4 inline" /> Hướng dẫn dành cho tài khoản CHƯA bật 2FA</strong>
           {' - hoặc đã bật 2FA nhưng không tìm thấy Secret Key, cần thiết lập lại từ đầu.'}
         </p>
       </div>

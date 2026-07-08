@@ -18,6 +18,7 @@ import DataAccessor from '@/lib/data/DataAccessor';;
 import { useAppStore } from '@/store/appStore';
 import type { Channel } from '../../../configs/channelConfig';
 import PageLoading from '../common/PageLoading';
+import { SearchIcon, SmartphoneIcon, PlayIcon, SparklesIcon } from '@/components/common/icons';
 
 // Use node types from registry (centralized node component mapping)
 const nodeTypes = reactFlowNodeTypes;
@@ -112,10 +113,10 @@ function TestRunModal({ accounts, workflowPageIds, triggerType, onRun, onClose }
         {/* Header */}
         <div className="px-5 py-4 border-b border-gray-700 flex items-center justify-between flex-shrink-0">
           <div>
-            <p className="text-white font-semibold text-sm flex items-center gap-2">▶️ Chạy thử Workflow</p>
-            <p className="text-gray-500 text-[11px] mt-0.5">{isFriendRequest ? 'Chọn người để mô phỏng lời mời kết bạn' : 'Chọn người nhận để gửi tin nhắn thử nghiệm'}</p>
+            <p className="text-white font-semibold text-sm flex items-center gap-2"><PlayIcon className="w-4 h-4" /> Chạy thử Workflow</p>
+            <p className="text-gray-400 text-[11px] mt-0.5">{isFriendRequest ? 'Chọn người để mô phỏng lời mời kết bạn' : 'Chọn người nhận để gửi tin nhắn thử nghiệm'}</p>
           </div>
-          <button onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-500 hover:text-white hover:bg-gray-700 transition-colors">
+          <button onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 transition-colors">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
@@ -169,22 +170,22 @@ function TestRunModal({ accounts, workflowPageIds, triggerType, onRun, onClose }
           {/* Friend picker */}
           <div>
             <label className="text-gray-400 text-xs font-medium mb-1.5 block">
-              {isFriendRequest ? 'Chọn người gửi lời mời kết bạn' : 'Chọn người nhận'} <span className="text-gray-600">(không thể gửi cho chính mình)</span>
+              {isFriendRequest ? 'Chọn người gửi lời mời kết bạn' : 'Chọn người nhận'} <span className="text-gray-400">(không thể gửi cho chính mình)</span>
             </label>
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
               className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-600 focus:border-blue-500 outline-none mb-2"
-              placeholder="🔍 Tìm tên hoặc ID..."
+              placeholder="Tìm tên hoặc ID..."
             />
 
             {loadingFriends ? (
-              <div className="flex items-center gap-2 py-4 justify-center text-gray-500 text-xs">
+              <div className="flex items-center gap-2 py-4 justify-center text-gray-400 text-xs">
                 <span className="w-4 h-4 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin" />
                 Đang tải danh bạ…
               </div>
             ) : filteredFriends.length === 0 ? (
-              <div className="py-4 text-center text-gray-600 text-xs">
+              <div className="py-4 text-center text-gray-400 text-xs">
                 {friends.length === 0 ? 'Chưa có bạn bè nào' : 'Không tìm thấy'}
               </div>
             ) : (
@@ -208,7 +209,7 @@ function TestRunModal({ accounts, workflowPageIds, triggerType, onRun, onClose }
                         <p className={`text-sm font-medium truncate ${isActive ? 'text-green-300' : 'text-gray-200'}`}>
                           {f.displayName || f.userId}
                         </p>
-                        <p className="text-[10px] text-gray-600 truncate">{f.userId}</p>
+                        <p className="text-[10px] text-gray-400 truncate">{f.userId}</p>
                       </div>
                       {isActive && (
                         <svg className="w-5 h-5 text-green-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
@@ -489,6 +490,7 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
 
         // Replace current nodes & edges
         setNodes(importedNodes.map((n: any) => toRFNode(n)));
+
         setEdges(importedEdges.map((e: any) => ({
           ...e, type: 'custom',
           markerEnd: { type: MarkerType.ArrowClosed },
@@ -523,8 +525,8 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
   const pageLabel = workflowMeta.pageIds.length === 0
     ? <span className="text-amber-400">⚠ Tất cả tài khoản {channelLabel} ({filteredAccounts.length})</span>
     : workflowMeta.pageIds.length === 1
-      ? <span className="text-blue-300">📱 {accounts.find(a => a.zalo_id === workflowMeta.pageIds[0])?.full_name || workflowMeta.pageIds[0]}</span>
-      : <span className="text-blue-300">📱 {workflowMeta.pageIds.length} tài khoản</span>;
+      ? <span className="text-blue-300"><SmartphoneIcon className="w-4 h-4 inline" /> {accounts.find(a => a.zalo_id === workflowMeta.pageIds[0])?.full_name || workflowMeta.pageIds[0]}</span>
+      : <span className="text-blue-300"><SmartphoneIcon className="w-4 h-4 inline" /> {workflowMeta.pageIds.length} tài khoản</span>;
 
   const togglePage = (zaloId: string) => {
     setWorkflowMeta(m => ({
@@ -570,17 +572,17 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
             className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-gray-800 border border-gray-700 hover:border-gray-500 text-xs transition-colors"
           >
             {pageLabel}
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-gray-500">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-gray-400">
               <polyline points="6 9 12 15 18 9"/>
             </svg>
           </button>
           {showPagePicker && (
             <div className="absolute top-full left-0 mt-1 z-50 bg-gray-900 border border-gray-700 rounded-xl shadow-xl min-w-[220px] py-2">
-              <p className="text-[11px] text-gray-500 px-3 pb-1.5 font-medium uppercase tracking-wider">
+              <p className="text-[11px] text-gray-400 px-3 pb-1.5 font-medium uppercase tracking-wider">
                 Workflow áp dụng cho tài khoản {channelLabel}
               </p>
               {filteredAccounts.length === 0 && (
-                <p className="text-gray-600 text-xs px-3 py-2">Chưa có tài khoản {channelLabel} nào</p>
+                <p className="text-gray-400 text-xs px-3 py-2">Chưa có tài khoản {channelLabel} nào</p>
               )}
               {filteredAccounts.map(acc => (
                 <label key={acc.zalo_id} className="flex items-center gap-2.5 px-3 py-2 hover:bg-gray-800 cursor-pointer">
@@ -596,12 +598,12 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
                   <div className="min-w-0">
                     <div className="text-white text-xs font-medium truncate">{acc.full_name || acc.zalo_id}</div>
                     {acc.phone && <div className="text-gray-400 text-[11px]">{acc.phone}</div>}
-                    <div className="text-gray-600 text-[11px]">{acc.zalo_id}</div>
+                    <div className="text-gray-400 text-[11px]">{acc.zalo_id}</div>
                   </div>
                 </label>
               ))}
               <div className="border-t border-gray-800 mt-1 pt-1 px-3">
-                <p className="text-[11px] text-gray-600 leading-relaxed">
+                <p className="text-[11px] text-gray-400 leading-relaxed">
                   {workflowMeta.pageIds.length === 0
                     ? `⚠ Chưa chọn tài khoản - workflow sẽ chạy cho TẤT CẢ tài khoản ${channelLabel} (${filteredAccounts.length})`
                     : `✓ Sẽ chạy cho ${workflowMeta.pageIds.length} tài khoản ${channelLabel} đã chọn`}
@@ -631,7 +633,7 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
           {/* AI Builder */}
           <button onClick={() => setShowAIDialog(true)} title="Dùng AI để tạo workflow tự động"
             className="flex items-center gap-1.5 px-2.5 py-1.5 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 border border-violet-500/50 text-white/90 text-xs font-medium rounded-xl transition-all shadow-sm shadow-violet-500/20">
-            ✨ AI
+            <SparklesIcon className="w-3.5 h-3.5" /> AI
           </button>
 
           <div className="w-px h-4 bg-gray-700" />
@@ -645,7 +647,7 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
             <div className={`w-8 h-[18px] rounded-full transition-colors relative ${workflowMeta.enabled ? 'bg-blue-600' : 'bg-gray-700'}`}>
               <span className={`absolute top-[2px] w-[14px] h-[14px] bg-white rounded-full shadow transition-all ${workflowMeta.enabled ? 'left-[18px]' : 'left-[2px]'}`} />
             </div>
-            <span className={`text-xs font-medium transition-colors ${workflowMeta.enabled ? 'text-blue-400' : 'text-gray-500'}`}>
+            <span className={`text-xs font-medium transition-colors ${workflowMeta.enabled ? 'text-blue-400' : 'text-gray-400'}`}>
               {workflowMeta.enabled ? 'Bật' : 'Tắt'}
             </span>
           </button>
@@ -697,7 +699,7 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
               />
             </ReactFlow>
             {/* UX hint */}
-            <div className="absolute bottom-2 left-1/2 -translate-x-1/2 text-[11px] text-gray-600 pointer-events-none select-none whitespace-nowrap">
+            <div className="absolute bottom-2 left-1/2 -translate-x-1/2 text-[11px] text-gray-400 pointer-events-none select-none whitespace-nowrap">
               Click liên kết → nhấn ✕ hoặc <kbd className="bg-gray-800 border border-gray-700 rounded px-1">Del</kbd> để xóa
             </div>
           </div>

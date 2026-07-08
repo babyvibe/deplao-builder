@@ -179,7 +179,7 @@ function LabelTabsFilter({
           </button>
         )}
         {selectedCount > 0 && (
-          <button onClick={clearAll} className="ml-auto text-[11px] text-gray-500 hover:text-red-400 transition-colors py-2">
+          <button onClick={clearAll} className="ml-auto text-[11px] text-gray-400 hover:text-red-400 transition-colors py-2">
             Xóa bộ lọc ({selectedCount})
           </button>
         )}
@@ -188,7 +188,7 @@ function LabelTabsFilter({
       {/* Label chips */}
       <div className="flex gap-1.5 px-4 py-2.5 max-h-[80px] overflow-y-auto">
         {currentLabels.length === 0 ? (
-          <span className="text-xs text-gray-500 py-1">Không có nhãn</span>
+          <span className="text-xs text-gray-400 py-1">Không có nhãn</span>
         ) : currentLabels.map(({ key, label, color, emoji }) => {
           const active = value.has(key);
           return (
@@ -412,7 +412,7 @@ export function CreateGroupModal({ onClose, onCreated, preSelected }: {
             <>
               {/* Refresh bar */}
               <div className="flex items-center justify-between px-4 pt-2 pb-1">
-                <span className="text-xs text-gray-500">{refreshing ? 'Đang cập nhật...' : `${friends.length} bạn bè`}</span>
+                <span className="text-xs text-gray-400">{refreshing ? 'Đang cập nhật...' : `${friends.length} bạn bè`}</span>
                 <button onClick={refresh} disabled={refreshing}
                   className="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40 flex items-center gap-1">
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
@@ -444,7 +444,7 @@ export function CreateGroupModal({ onClose, onCreated, preSelected }: {
                 </div>
               ))}
               {filteredFriends.length === 0 && recentContacts.length === 0 && (
-                <p className="text-center text-gray-500 text-sm py-10">Không tìm thấy</p>
+                <p className="text-center text-gray-400 text-sm py-10">Không tìm thấy</p>
               )}
             </>
           )}
@@ -551,7 +551,7 @@ export function InviteToGroupModal({ contactId, contactName, onClose }: {
         <div className="flex-1 min-h-0 overflow-y-auto">
           <p className="px-4 py-2 text-xs text-gray-400 font-medium uppercase tracking-wide">Nhóm</p>
           {groups.length === 0 ? (
-            <p className="text-center text-gray-500 text-sm py-10">{search ? 'Không tìm thấy nhóm' : 'Bạn chưa có nhóm nào'}</p>
+            <p className="text-center text-gray-400 text-sm py-10">{search ? 'Không tìm thấy nhóm' : 'Bạn chưa có nhóm nào'}</p>
           ) : groups.map(g => (
             <PersonRow key={g.contact_id} id={g.contact_id} name={g.display_name || g.contact_id}
               avatar={g.avatar_url} selected={selectedGroups.has(g.contact_id)}
@@ -726,7 +726,7 @@ export function SendCardModal({ threadId, threadType, onClose }: {
             <>
               {/* Refresh bar */}
               <div className="flex items-center justify-between px-4 pt-2 pb-1">
-                <span className="text-xs text-gray-500">{refreshing ? 'Đang cập nhật...' : `${friends.length} liên hệ`}</span>
+                <span className="text-xs text-gray-400">{refreshing ? 'Đang cập nhật...' : `${friends.length} liên hệ`}</span>
                 <button onClick={refresh} disabled={refreshing}
                   className="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40 flex items-center gap-1">
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
@@ -763,7 +763,7 @@ export function SendCardModal({ threadId, threadType, onClose }: {
                 </div>
               ))}
               {filteredFriends.length === 0 && recentContacts.length === 0 && (
-                <p className="text-center text-gray-500 text-sm py-10">Không tìm thấy</p>
+                <p className="text-center text-gray-400 text-sm py-10">Không tìm thấy</p>
               )}
             </>
           )}
@@ -880,7 +880,7 @@ export function AddMemberToGroupModal({ groupId, groupName, existingMemberIds = 
           ) : (
             <>
               <div className="flex items-center justify-between px-4 pt-2 pb-1">
-                <span className="text-xs text-gray-500">
+                <span className="text-xs text-gray-400">
                   {refreshing ? 'Đang cập nhật...' : `${filteredFriends.length} bạn bè có thể thêm`}
                 </span>
                 <button onClick={refresh} disabled={refreshing}
@@ -906,7 +906,7 @@ export function AddMemberToGroupModal({ groupId, groupName, existingMemberIds = 
                 </div>
               ))}
               {filteredFriends.length === 0 && (
-                <p className="text-center text-gray-500 text-sm py-10">
+                <p className="text-center text-gray-400 text-sm py-10">
                   {search ? 'Không tìm thấy bạn bè phù hợp' : existingMemberIds.length > 0 ? 'Tất cả bạn bè đã là thành viên nhóm' : 'Không có bạn bè nào'}
                 </p>
               )}
@@ -955,7 +955,7 @@ function PersonRow({ id, name, avatar, selected, onToggle, isGroup, subtitle }: 
       )}
       <div className="flex-1 min-w-0">
         <p className="text-sm text-gray-200 truncate">{name}</p>
-        {subtitle && <p className="text-xs text-gray-500 truncate">{subtitle}</p>}
+        {subtitle && <p className="text-xs text-gray-400 truncate">{subtitle}</p>}
       </div>
     </button>
   );
@@ -1038,7 +1038,7 @@ function LabelSelectFilter({ zaloLabels, localLabels, value, onChange }: {
           {/* Zalo labels group */}
           {zaloLabels.length > 0 && (
             <>
-              <div className="px-3 py-1 text-[10px] font-semibold text-gray-500 uppercase tracking-wider border-t border-gray-700/60 mt-0.5 flex items-center gap-1.5">
+              <div className="px-3 py-1 text-[10px] font-semibold text-gray-400 uppercase tracking-wider border-t border-gray-700/60 mt-0.5 flex items-center gap-1.5">
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" className="text-blue-400"><circle cx="12" cy="12" r="10"/></svg>
                 Nhãn Zalo
               </div>
@@ -1061,7 +1061,7 @@ function LabelSelectFilter({ zaloLabels, localLabels, value, onChange }: {
           {/* Local labels group */}
           {localLabels.length > 0 && (
             <>
-              <div className="px-3 py-1 text-[10px] font-semibold text-gray-500 uppercase tracking-wider border-t border-gray-700/60 mt-0.5 flex items-center gap-1.5">
+              <div className="px-3 py-1 text-[10px] font-semibold text-gray-400 uppercase tracking-wider border-t border-gray-700/60 mt-0.5 flex items-center gap-1.5">
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" className="text-purple-400"><circle cx="12" cy="12" r="10"/></svg>
                 Nhãn Local
               </div>
