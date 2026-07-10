@@ -366,6 +366,18 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       advanced: true,
     },
     {
+      key: 'sendDelayMinSeconds', label: 'Giãn cách gửi tối thiểu (giây)', type: 'number',
+      placeholder: '1',
+      desc: 'Khi nhiều khách nhắn cùng lúc trên CÙNG 1 tài khoản, các tin trả lời gửi lần lượt, cách nhau ít nhất bấy nhiêu giây. Tránh bắn hàng loạt bị Zalo nghi spam. 0 = gửi ngay.',
+      advanced: true,
+    },
+    {
+      key: 'sendDelayMaxSeconds', label: 'Giãn cách gửi tối đa (giây)', type: 'number',
+      placeholder: '3',
+      desc: 'Khoảng giãn cách tối đa. Hệ thống chọn ngẫu nhiên giữa tối thiểu và tối đa cho tự nhiên.',
+      advanced: true,
+    },
+    {
       key: 'continueOnError', label: 'Tiếp tục workflow dù gửi thất bại', type: 'boolean',
       desc: 'Bật nếu muốn các bước sau vẫn chạy ngay cả khi tin nhắn này gửi lỗi.',
       advanced: true,
@@ -426,6 +438,18 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       advanced: true,
     },
     {
+      key: 'sendDelayMinSeconds', label: 'Giãn cách gửi tối thiểu (giây)', type: 'number',
+      placeholder: '1',
+      desc: 'Khi nhiều khách nhắn cùng lúc trên CÙNG 1 tài khoản, các tin gửi lần lượt, cách nhau ít nhất bấy nhiêu giây. 0 = gửi ngay.',
+      advanced: true,
+    },
+    {
+      key: 'sendDelayMaxSeconds', label: 'Giãn cách gửi tối đa (giây)', type: 'number',
+      placeholder: '3',
+      desc: 'Khoảng giãn cách tối đa. Chọn ngẫu nhiên giữa tối thiểu và tối đa cho tự nhiên.',
+      advanced: true,
+    },
+    {
       key: 'continueOnError', label: 'Tiếp tục workflow dù gửi thất bại', type: 'boolean',
       desc: 'Bật nếu muốn các bước sau vẫn chạy ngay cả khi gửi ảnh lỗi.',
       advanced: true,
@@ -451,6 +475,18 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
         { value: '{{ $trigger.threadType }}', label: 'Tự động (theo trigger)' },
         { value: '0', label: 'Cá nhân' }, { value: '1', label: 'Nhóm' },
       ],
+      advanced: true,
+    },
+    {
+      key: 'sendDelayMinSeconds', label: 'Giãn cách gửi tối thiểu (giây)', type: 'number',
+      placeholder: '1',
+      desc: 'Khi nhiều khách nhắn cùng lúc trên CÙNG 1 tài khoản, các tin gửi lần lượt, cách nhau ít nhất bấy nhiêu giây. 0 = gửi ngay.',
+      advanced: true,
+    },
+    {
+      key: 'sendDelayMaxSeconds', label: 'Giãn cách gửi tối đa (giây)', type: 'number',
+      placeholder: '3',
+      desc: 'Khoảng giãn cách tối đa. Chọn ngẫu nhiên giữa tối thiểu và tối đa cho tự nhiên.',
       advanced: true,
     },
     {

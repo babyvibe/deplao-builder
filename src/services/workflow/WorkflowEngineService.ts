@@ -1,6 +1,7 @@
 import EventBroadcaster from '../event/EventBroadcaster';
 import DatabaseService from '../database/DatabaseService';
 import ConnectionManager from '../../utils/ConnectionManager';
+import AccountSendQueue from './AccountSendQueue';
 import { FacebookService } from '../facebook/FacebookService';
 import { FacebookSendService } from '../facebook/FacebookSendService';
 import Logger from '../../utils/Logger';
@@ -1007,7 +1008,7 @@ class WorkflowEngineService {
         return { ...ctx.trigger };
 
       // ── Zalo Actions ─────────────────────────────────────────────────────
-      case 'zalo.sendMessage': {
+      case 'zalo.sendMessage': return this.enqueueSend(cfg, ctx, async () => {
         const api = this.getApi(ctx.pageId);
         const threadType = Number(cfg.threadType) === 1 ? 1 : 0;   // guard NaN → 0
         const targetThreadIds = this.resolveTargetThreadIds(cfg, ctx.trigger?.threadId);
@@ -1080,7 +1081,7 @@ class WorkflowEngineService {
           success: true,
           _targetCount: targetThreadIds.length,
         };
-      }
+      });
 
       case 'zalo.sendTyping': {
         // Gửi sự kiện "đang gõ" rồi chờ delay trước khi bước tiếp theo chạy.
@@ -1099,7 +1100,7 @@ class WorkflowEngineService {
         return { success: true, delayMs };
       }
 
-      case 'zalo.sendImage': {
+      case 'zalo.sendImage': return this.enqueueSend(cfg, ctx, async () => {
         const api = this.getApi(ctx.pageId);
         const threadType = Number(cfg.threadType) === 1 ? 1 : 0;
         const targetThreadIds = this.resolveTargetThreadIds(cfg, ctx.trigger?.threadId);
@@ -1121,9 +1122,9 @@ class WorkflowEngineService {
           success: true,
           _targetCount: targetThreadIds.length,
         };
-      }
+      });
 
-      case 'zalo.sendFile': {
+      case 'zalo.sendFile': return this.enqueueSend(cfg, ctx, async () => {
         const api = this.getApi(ctx.pageId);
         const threadType = Number(cfg.threadType) === 1 ? 1 : 0;
         const targetThreadIds = this.resolveTargetThreadIds(cfg, ctx.trigger?.threadId);
@@ -1144,7 +1145,7 @@ class WorkflowEngineService {
           success: true,
           _targetCount: targetThreadIds.length,
         };
-      }
+      });
 
       case 'zalo.findUser': {
         const api = this.getApi(ctx.pageId);
@@ -2486,6 +2487,17 @@ class WorkflowEngineService {
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
+
+  /**
+   * Đẩy 1 tác vụ gửi tin qua hàng đợi theo account (ctx.pageId = zaloId của workflow).
+   * Nhiều workflow cùng 1 tài khoản → chung 1 hàng đợi → tin gửi tuần tự, giãn cách ngẫu nhiên
+   * theo cấu hình node (sendDelayMin/MaxSeconds) để tránh spam khi nhiều khách nhắn cùng lúc.
+   */
+  private enqueueSend<T>(cfg: Record<string, any>, ctx: ExecutionContext, task: () => Promise<T>): Promise<T> {
+    const minMs = Number(cfg.sendDelayMinSeconds ?? 0) * 1000;
+    const maxMs = Number(cfg.sendDelayMaxSeconds ?? 0) * 1000;
+    return AccountSendQueue.getInstance().enqueue(ctx.pageId, task, minMs, maxMs);
+  }
 
   private getApi(pageId: string): any {
     // Try to find connection by pageId or use any connected account
