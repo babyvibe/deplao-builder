@@ -6,7 +6,7 @@ import React from 'react';
 import { useChatStore } from '@/store/chatStore';
 import { useAppStore } from '@/store/appStore';
 import { useAccountStore } from '@/store/accountStore';
-import ipc from '@/lib/ipc'
+import ipc, { buildZaloAuth } from '@/lib/ipc'
 import DataAccessor from '@/lib/data/DataAccessor';;
 import PhoneDisplay from './PhoneDisplay';
 import GroupAvatarCommon from './GroupAvatar';
@@ -89,7 +89,7 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
     const accRes = await ipc.login?.getAccounts();
     const acc = accRes?.accounts?.find((a: any) => a.zalo_id === activeAccountId) || accRes?.accounts?.[0];
     if (!acc) throw new Error('No account');
-    return { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+    return buildZaloAuth(acc, activeAccountId);
   }, [activeAccountId]);
 
   // Load user info

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import ipc from '@/lib/ipc'
+import ipc, { buildZaloAuth } from '@/lib/ipc'
 import DataAccessor from '@/lib/data/DataAccessor';;
 import { PinnedMsg, PinnedNote } from './PinnedMessages';
 import { useChatStore } from '@/store/chatStore';
@@ -406,7 +406,7 @@ function PollBoardCard({ poll, zaloId, threadId }: { poll: NonNullable<BoardItem
     const accRes = await ipc.login?.getAccounts();
     const acc = accRes?.accounts?.find((a: any) => a.zalo_id === zaloId) || accRes?.accounts?.[0];
     if (!acc) throw new Error('No account');
-    return { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+    return buildZaloAuth(acc, zaloId);
   };
 
   const creatorContact = detail ? allContacts.find((c: any) => String(c.contact_id) === String(detail.creator || '')) : null;

@@ -3,7 +3,7 @@ import { useAccountStore } from '@/store/accountStore';
 import { useAppStore, LabelData } from '@/store/appStore';
 import { useChatStore } from '@/store/chatStore';
 import DataAccessor from '@/lib/data/DataAccessor';
-import ipc from '@/lib/ipc';
+import ipc, { buildZaloAuth } from '@/lib/ipc';
 
 // Cache TTL: 12 hour
 const FRIENDS_CACHE_TTL = 12 * 60 * 60 * 1000;
@@ -19,7 +19,7 @@ function useFriends() {
   const [refreshing, setRefreshing] = useState(false);
 
   const acc = getActiveAccount();
-  const auth = acc ? { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent } : null;
+  const auth = acc ? buildZaloAuth(acc, activeAccountId) : null;
 
   const fetchFromApiRef = useRef<((force?: boolean) => Promise<void>) | null>(null);
 
@@ -250,7 +250,7 @@ export function CreateGroupModal({ onClose, onCreated, preSelected }: {
 
   const { friends, loading, refreshing, refresh } = useFriends();
   const acc = getActiveAccount();
-  const auth = acc ? { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent } : null;
+  const auth = acc ? buildZaloAuth(acc, activeAccountId) : null;
 
   useEffect(() => { groupNameRef.current?.focus(); }, []);
 
@@ -489,7 +489,7 @@ export function InviteToGroupModal({ contactId, contactName, onClose }: {
   const [inviting, setInviting] = useState(false);
 
   const acc = getActiveAccount();
-  const auth = acc ? { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent } : null;
+  const auth = acc ? buildZaloAuth(acc, activeAccountId) : null;
 
   const groups = accountContacts.filter(c => c.contact_type === 'group').filter(g => {
     const name = (g.display_name || '').toLowerCase();
@@ -593,7 +593,7 @@ export function SendCardModal({ threadId, threadType, onClose }: {
 
   const { friends, loading, refreshing, refresh } = useFriends();
   const acc = getActiveAccount();
-  const auth = acc ? { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent } : null;
+  const auth = acc ? buildZaloAuth(acc, activeAccountId) : null;
 
   useEffect(() => {
     if (!activeAccountId) return;
@@ -805,7 +805,7 @@ export function AddMemberToGroupModal({ groupId, groupName, existingMemberIds = 
 
   const { friends, loading, refreshing, refresh } = useFriends();
   const acc = getActiveAccount();
-  const auth = acc ? { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent } : null;
+  const auth = acc ? buildZaloAuth(acc) : null;
 
   const toggleSelect = (id: string) =>
     setSelected(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });

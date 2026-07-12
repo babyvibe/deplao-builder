@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
-import ipc from '@/lib/ipc';
+import ipc, { buildZaloAuth } from '@/lib/ipc';
 interface Group {
   id: string;
   name: string;
@@ -19,9 +19,9 @@ interface GroupPickerProps {
   templateVars?: string[];
 }
 
-const GroupPicker: React.FC<GroupPickerProps> = ({ 
-  value, 
-  onChange, 
+const GroupPicker: React.FC<GroupPickerProps> = ({
+  value,
+  onChange,
   placeholder = 'Chọn nhóm...',
   disabled = false,
   templateVars
@@ -33,7 +33,7 @@ const GroupPicker: React.FC<GroupPickerProps> = ({
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null);
   const [error, setError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  
+
   const { accounts } = useAccountStore();
   const theme = useAppStore(s => s.theme);
   const isLight = theme === 'light';
@@ -42,11 +42,11 @@ const GroupPicker: React.FC<GroupPickerProps> = ({
   // Fetch groups when account changes
   const loadGroups = useCallback(async () => {
     if (!selectedAccountId) return;
-    
+
     setLoading(true);
     setError(null);
     const items: Group[] = [];
-    
+
     const acc = accounts.find(a => a.zalo_id === selectedAccountId);
     if (!acc) {
       setLoading(false);
@@ -74,13 +74,13 @@ const GroupPicker: React.FC<GroupPickerProps> = ({
 
     // Load from API as backup
     try {
-      const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+      const auth = buildZaloAuth(acc);
       const groupsRes = await ipc.zalo?.getGroups(auth);
-      
+
       if (!groupsRes?.error) {
         const groupsMap = groupsRes?.response?.gridInfoMap || {};
         const existingIds = new Set(items.map(i => i.id));
-        
+
         Object.entries(groupsMap).forEach(([groupId, groupInfo]: [string, any]) => {
           if (existingIds.has(groupId)) return;
           items.push({
@@ -101,13 +101,13 @@ const GroupPicker: React.FC<GroupPickerProps> = ({
     }
 
     setGroups(items);
-    
+
     // Find selected group if value exists
     if (value && !value.startsWith('{{')) {
       const found = items.find(g => g.id === value);
       if (found) setSelectedGroup(found);
     }
-    
+
     setLoading(false);
   }, [selectedAccountId, accounts, value]);
 

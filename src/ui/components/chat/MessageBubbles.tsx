@@ -16,139 +16,12 @@ import { toLocalMediaUrl } from '@/lib/localMedia';
 import { ensureMediaLocal } from '@/lib/employeeMediaSync';
 import { formatPhone } from '@/utils/phoneUtils';
 import PhoneDisplay from '../common/PhoneDisplay';
-
-// ── Zalo emoji codes → Unicode emoji ─────────────────────────────────────────
-const ZALO_CODE_TO_EMOJI: Record<string, string> = {
-  '/-heart': '❤️', '/-strong': '👍', ':>': '😄', ':o': '😮',
-  ':-((': '😢', ':-h': '😡', ':-*': '😘', ":')": '😂',
-  '/-shit': '💩', '/-rose': '🌹', '/-break': '💔', '/-weak': '👎',
-  ';xx': '😍', ';-/': '😕', ';-)': '😉', '/-fade': '😶',
-  '/-li': '☀️', '/-bd': '🎂', '/-bome': '💣', '/-ok': '👌',
-  '/-v': '✌️', '/-thanks': '🤝', '/-punch': '👊', '/-share': '🔗',
-  '_()_': '🙏', '/-no': '🙅', '/-bad': '👎', '/-loveu': '🫶',
-  '--b': '😞', ':((': '😭', 'x-)': '😎', '8-)': '🤓',
-  ';-d': '😁', 'b-)': '😎', ':--|': '😐', 'p-(': '😔',
-  ':-bye': '👋', '|-)': '😴', ':wipe': '😅', ':-dig': '🤔',
-  '&-(': '😰', ':handclap': '👏', '>-|': '😠', ';-x': '🤫',
-  ':-o': '😲', ';-s': '😳', ';-a': '😨', ':-<': '😢',
-  ':))': '😂', '$-)': '🤑', '/-beer': '🍺',
-  ':-)': '🙂', ':)': '🙂', ':-(': '😞', ':(': '😞',
-  ':-D': '😁', ':D': '😁', ':P': '😛', ':p': '😛',
-  ':-P': '😛', ':O': '😲', '>:(': '😠', ":'(": '😢',
-};
-
-function convertZaloEmojis(text: string): string {
-  if (!text) return text;
-  const direct = ZALO_CODE_TO_EMOJI[text];
-  if (direct) return direct;
-  const sorted = Object.keys(ZALO_CODE_TO_EMOJI).sort((a, b) => b.length - a.length);
-  let result = text;
-  for (const code of sorted) {
-    if (result.includes(code)) result = result.split(code).join(ZALO_CODE_TO_EMOJI[code]);
-  }
-  return result;
-}
-
-function parseTxt(content: string): string {
-  if (!content || content === 'null') return '';
-  try {
-    const p = JSON.parse(content);
-    if (p === null || p === undefined) return '';
-    if (typeof p === 'string') return convertZaloEmojis(p);
-    if (typeof p !== 'object') return convertZaloEmojis(String(p));
-    if (p?.action === 'zinstant.bankcard') return '🏦 [Tài khoản ngân hàng]';
-    if (p?.content && typeof p.content === 'string') return convertZaloEmojis(p.content);
-    if (p?.msg && typeof p.msg === 'string') return convertZaloEmojis(p.msg);
-    if (p?.message && typeof p.message === 'string') return convertZaloEmojis(p.message);
-    if (p?.title && typeof p.title === 'string' && !p.href && !p.thumb) return convertZaloEmojis(p.title);
-    return '';
-  } catch { return convertZaloEmojis(content); }
-}
-
-// ── Type detection helpers ────────────────────────────────────────────────────
-function isCardType(msgType: string, content: string): boolean {
-  if (['chat.recommended', 'chat.recommend'].includes(msgType)) return true;
-  try {
-    const parsed = JSON.parse(content);
-    if (parsed?.action && String(parsed.action).includes('recommened')) return true;
-  } catch {}
-  return false;
-}
-
-function isEcardType(msgType: string): boolean {
-  return msgType === 'chat.ecard';
-}
-
-function isFileType(msgType: string, content: string): boolean {
-  if (isCardType(msgType, content)) return false;
-  if (['share.file', 'share.link', 'file'].includes(msgType)) return true;
-  try {
-    const parsed = JSON.parse(content);
-    if (parsed?.title && parsed?.href && !parsed?.params?.rawUrl && !parsed?.params?.hd) return true;
-  } catch {}
-  return false;
-}
-
-function isStickerType(msgType: string): boolean {
-  return msgType === 'chat.sticker' || msgType === 'sticker';
-}
-
-function isRtfMsg(msgType: string, content: string): boolean {
-  if (msgType !== 'webchat') return false;
-  try { return JSON.parse(content)?.action === 'rtf'; } catch { return false; }
-}
-
-function isBankCardType(msgType: string, content: string): boolean {
-  // Ưu tiên check msgType trước
-  if (msgType === 'chat.webcontent' || msgType === 'webchat') {
-    try {
-      const parsed = JSON.parse(content);
-      if (parsed?.action === 'zinstant.bankcard') return true;
-    } catch {}
-  }
-  // Fallback: kiểm tra content bất kể msgType (phòng trường hợp Zalo đổi msgType)
-  if (content && content.includes('zinstant.bankcard')) {
-    try {
-      const parsed = JSON.parse(content);
-      if (parsed?.action === 'zinstant.bankcard') return true;
-    } catch {}
-  }
-  return false;
-}
-
-function isMediaType(msgType: string, content: string): boolean {
-  if (isCardType(msgType, content)) return false;
-  if (isBankCardType(msgType, content)) return false;
-  if (['share.file', 'share.link', 'file'].includes(msgType)) return false;
-  if (msgType === 'chat.video.msg') return false;
-  if (msgType === 'chat.voice') return false;
-  if (msgType === 'photo' || msgType === 'image' || msgType === 'chat.photo') return true;
-  try {
-    const parsed = JSON.parse(content);
-    if (parsed && typeof parsed === 'object') {
-      let paramsObj: any = parsed.params;
-      if (typeof paramsObj === 'string') {
-        try { paramsObj = JSON.parse(paramsObj); } catch { paramsObj = null; }
-      }
-      const hasHdOrRaw = !!(paramsObj?.hd || paramsObj?.rawUrl);
-      if (parsed.title && parsed.href && !hasHdOrRaw) return false;
-      return !!(parsed.href || parsed.thumb || paramsObj?.rawUrl || paramsObj?.hd);
-    }
-  } catch {}
-  return false;
-}
-
-function isVideoType(msgType: string): boolean {
-  return msgType === 'chat.video.msg' || msgType === 'video';
-}
-
-function isVoiceType(msgType: string): boolean {
-  return msgType === 'chat.voice' || msgType === 'audio';
-}
-
-function isLocationType(msgType: string): boolean {
-  return msgType === 'chat.location.new';
-}
+import { ZALO_CODE_TO_EMOJI, convertZaloEmojis } from '@/lib/chat/emojiUtils';
+import { parseTxt } from '@/lib/chat/messageParser';
+import {
+  isCardType, isEcardType, isFileType, isStickerType, isRtfMsg,
+  isBankCardType, isMediaType, isVideoType, isVoiceType, isLocationType,
+} from '@/lib/chat/messageTypeUtils';
 
 // ── RTF style constants ───────────────────────────────────────────────────────
 const RTF_COLOR_MAP: Record<string, string> = {
@@ -395,12 +268,14 @@ function MediaBubble({ msg, isSelf, onView }: { msg: any; isSelf: boolean; onVie
 
   const imgNode = (
     <div className="relative max-w-xs">
-      <img
-        src={displayUrl}
-        alt=""
-        className={`max-w-xs max-h-64 object-cover cursor-pointer hover:opacity-90 transition-opacity bg-gray-700/30 w-full${caption ? ' rounded-t-xl' : ' rounded-xl'}`}
-        onClick={() => onView?.(viewUrl)}
-        onError={() => {
+      {/* aspect-ratio container giữ khung cố định trước khi ảnh load → không layout shift */}
+      <div className="w-full aspect-[4/3] bg-gray-700/30 rounded-xl overflow-hidden">
+        <img
+          src={displayUrl}
+          alt=""
+          className="w-full h-full object-cover cursor-pointer hover:opacity-90 transition-opacity"
+          onClick={() => onView?.(viewUrl)}
+          onError={() => {
           // Cascade: thử nguồn tiếp theo nếu employee mode
           if (mode === 'employee') {
             const nextIdx = useFallback + 1;
@@ -433,6 +308,7 @@ function MediaBubble({ msg, isSelf, onView }: { msg: any; isSelf: boolean; onVie
           else setLoadFailed(true);
         }}
       />
+      </div>
       {/* Viền overlay */}
       <div className={`absolute inset-0 pointer-events-none ring-1 ring-inset ring-black/[0.12]${caption ? ' rounded-t-xl' : ' rounded-xl'}`} />
     </div>

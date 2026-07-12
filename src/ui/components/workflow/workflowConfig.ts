@@ -73,6 +73,7 @@ export const NODE_GROUPS: NodeGroup[] = [
       { type: 'zalo.addReaction',        label: 'Thêm cảm xúc vào tin nhắn',  desc: 'Thả like, yêu thích, haha... vào tin nhắn', channel: 'zalo' },
       { type: 'zalo.assignLabel',        label: 'Gắn nhãn hội thoại',         desc: 'Gắn Nhãn Local hoặc Zalo cho hội thoại', channel: 'zalo' },
       { type: 'zalo.removeLabel',        label: 'Gỡ nhãn hội thoại',          desc: 'Gỡ Nhãn Local hoặc Zalo khỏi hội thoại', channel: 'zalo' },
+      { type: 'zalo.changeAliasName',    label: 'Đổi tên gợi nhớ',           desc: 'Đổi tên gợi nhớ (biệt danh) cho bạn bè trong danh bạ Zalo', channel: 'zalo' },
     ],
   },
   {
@@ -212,6 +213,7 @@ export const DEFAULT_CONFIGS: Record<string, Record<string, any>> = {
   // Quản lý nhãn
   'zalo.assignLabel':      { threadId: '{{ $trigger.threadId }}', labelSource: 'local', labelIds: [] },
   'zalo.removeLabel':      { threadId: '{{ $trigger.threadId }}', labelSource: 'local', labelIds: [] },
+  'zalo.changeAliasName':  { friendId: '{{ $trigger.fromId }}', alias: '' },
   'logic.if':              { left: '{{ $trigger.content }}', operator: 'contains', right: '' },
   'logic.switch':          { value: '{{ $trigger.content }}', cases: [], defaultLabel: 'default' },
   'logic.wait':            { delaySeconds: 3 },

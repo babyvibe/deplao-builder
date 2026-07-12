@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import DataAccessor from '@/lib/data/DataAccessor';
-import ipc from '@/lib/ipc';
+import ipc, { buildZaloAuth } from '@/lib/ipc';
 import { AccountInfo } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
 import { showConfirm } from '../../common/ConfirmDialog';
@@ -269,13 +269,13 @@ function LabelModal({ initialData, accounts, filterAccounts, onClose, onSave }: 
   onSave: (data: Partial<LocalLabel>) => void;
 }) {
   const [form, setForm] = useState<Partial<LocalLabel>>(
-    initialData 
+    initialData
       ? { ...initialData, shortcut: initialData.shortcut || '' }
       : { name: '', color: '#3b82f6', text_color: '#ffffff', emoji: '🏷️', is_active: 1, sort_order: 0, shortcut: '' }
   );
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const emojiButtonRef = useRef<HTMLButtonElement>(null);
-  
+
   const defaultPages = initialData
     ? (initialData.page_ids ?? '').split(',').filter(Boolean)
     : (filterAccounts.length > 0 ? filterAccounts : accounts.map(a => a.zalo_id));
@@ -312,7 +312,7 @@ function LabelModal({ initialData, accounts, filterAccounts, onClose, onSave }: 
               )}
             </div>
           </div>
-          
+
           {/* Name & Emoji */}
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -347,7 +347,7 @@ function LabelModal({ initialData, accounts, filterAccounts, onClose, onSave }: 
               )}
             </div>
           </div>
-          
+
           {/* Colors */}
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -365,7 +365,7 @@ function LabelModal({ initialData, accounts, filterAccounts, onClose, onSave }: 
               </div>
             </div>
           </div>
-          
+
           {/* Quick color presets */}
           <div>
             <label className="block text-xs text-gray-400 mb-1.5">Màu nhanh</label>
@@ -394,7 +394,7 @@ function LabelModal({ initialData, accounts, filterAccounts, onClose, onSave }: 
               ))}
             </div>
           </div>
-          
+
           {/* Sort order & Status */}
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -412,7 +412,7 @@ function LabelModal({ initialData, accounts, filterAccounts, onClose, onSave }: 
               >{(form.is_active ?? 1) === 1 ? <><CheckIcon className="w-4 h-4 inline" /> Hoạt động</> : <><CloseIcon className="w-4 h-4 inline" /> Tắt</>}</button>
             </div>
           </div>
-          
+
           {/* Keyboard Shortcut */}
           <div>
             <label className="block text-xs text-gray-400 mb-1.5">
@@ -428,7 +428,7 @@ function LabelModal({ initialData, accounts, filterAccounts, onClose, onSave }: 
               * Khi đang xem hội thoại, nhấn phím tắt để gắn/gỡ nhãn này nhanh chóng.
             </p>
           </div>
-          
+
           {/* Tài khoản áp dụng */}
           <div>
             <label className="text-xs text-gray-400 font-medium block mb-2">Tài khoản sử dụng nhãn này</label>
@@ -830,7 +830,7 @@ export default function LabelSettings({ accounts, filterAccounts, searchText }: 
   const buildAuth = (zaloId: string) => {
     const acc = accounts.find(a => a.zalo_id === zaloId);
     if (!acc) return null;
-    return { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+    return buildZaloAuth(acc);
   };
 
   const getAccountName = (zaloId: string) => {

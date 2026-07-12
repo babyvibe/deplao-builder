@@ -3,12 +3,11 @@ import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
 import { useChatStore } from '@/store/chatStore';
 import DataAccessor from '@/lib/data/DataAccessor';
-import ipc from '@/lib/ipc';
+import ipc, { buildZaloAuth } from '@/lib/ipc';
 import { extractApiError } from '@/utils/apiError';
-import PhoneDisplay from '../../common/PhoneDisplay';
 import { UserProfilePopup } from '../../common/UserProfilePopup';
 import AddFriendModal from '../../common/AddFriendModal';
-import { CloseIcon, HomeIcon, SmartphoneIcon, UsersIcon } from '@/components/common/icons';
+import { CloseIcon} from '@/components/common/icons';
 
 /**
  * CRM Search Tab - tìm kiếm người dùng theo SĐT + gợi ý kết bạn.
@@ -34,7 +33,7 @@ export default function CRMSearchTab() {
 
   const getAuth = () => {
     const acc = getActiveAccount();
-    return acc ? { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent } : null;
+    return acc ? buildZaloAuth(acc, activeAccountId) : null;
   };
 
   const handleMessage = (userId: string, opts?: { displayName?: string; avatar?: string; phone?: string }) => {

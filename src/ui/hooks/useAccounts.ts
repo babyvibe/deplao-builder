@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { useAccountStore, AccountInfo } from '../store/accountStore';
 import { useAppStore } from '../store/appStore';
-import ipc from '../lib/ipc';
+import ipc, { buildZaloAuth } from '../lib/ipc';
 
 /**
  * Hook quản lý tài khoản Zalo - bao gồm kết nối, ngắt kết nối, reload
@@ -26,7 +26,7 @@ export function useAccounts() {
     async (acc: AccountInfo) => {
       showNotification(`Đang kết nối ${acc.full_name || acc.zalo_id}...`, 'info');
       try {
-        const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+        const auth = buildZaloAuth(acc);
         const res = await ipc.login?.connectAccount(auth);
         if (res?.success) {
           updateAccountStatus(acc.zalo_id, true, true);
@@ -83,7 +83,7 @@ export function useAccounts() {
   const getActiveAuth = useCallback(() => {
     const acc = getActiveAccount();
     if (!acc) return null;
-    return { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+    return buildZaloAuth(acc);
   }, [getActiveAccount]);
 
   return {

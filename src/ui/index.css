@@ -958,3 +958,7 @@ html[data-theme="light"] .hover\:bg-white\/20:hover  { background-color: rgba(24
 .text-white-important {
   color: #fff !important;
 }
+
+.z-2 {
+  z-index: 2;
+}

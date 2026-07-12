@@ -131,9 +131,11 @@ export function registerErpTaskIpc(): void {
     return {};
   }));
 
-  ipcMain.handle('erp:task:listMyInbox', withErpAuth('erp.access', async (input: any, ctx) => ({
-    tasks: svc().getMyInbox(ctx.employeeId, input?.filter || 'week'),
-  })));
+  ipcMain.handle('erp:task:listMyInbox', withErpAuth('erp.access', async (input: any, ctx) => {
+    const { erpCan } = require('../../src/services/erp/permissions');
+    const viewAll = erpCan(ctx.role, 'task.edit_any'); // owner, admin, manager
+    return { tasks: svc().getMyInbox(ctx.employeeId, input?.filter || 'week', viewAll) };
+  }));
 
   // ─── Watchers / Dependencies (Phase 2) ───────────────────────────────────
 

@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import DataAccessor from '@/lib/data/DataAccessor';
-import ipc from '@/lib/ipc';
+import ipc, { buildZaloAuth } from '@/lib/ipc';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore, LabelData } from '@/store/appStore';
 import ZaloLabelBadge from '../tags/ZaloLabelBadge';
@@ -93,7 +93,7 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
     }
     const acc = getActiveAccount();
     if (!acc) return;
-    const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+    const auth = buildZaloAuth(acc);
 
     setResolving(true);
     setResolveProgress({ current: 0, total: phones.length });
@@ -197,7 +197,7 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
         try {
           const acc = getActiveAccount();
           if (acc) {
-            const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+            const auth = buildZaloAuth(acc);
             const freshRes = await ipc.zalo?.getLabels({ auth });
             const freshLabels: LabelData[] = freshRes?.response?.labelData || zaloLabels;
             const version: number = freshRes?.response?.version || 0;

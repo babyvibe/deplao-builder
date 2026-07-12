@@ -644,6 +644,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'workspace:connectionStatus',
       'workspace:initialState',
       'workspace:accountAccessUpdate',
+      'workspace:permissionUpdate',
       'workspace:syncComplete',
       'employee:modeChanged',
       // ─── Facebook events ─────────────────────────────────────────────

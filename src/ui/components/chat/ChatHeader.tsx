@@ -3,7 +3,7 @@ import { useChatStore } from '@/store/chatStore';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore, LabelData } from '@/store/appStore';
 import DataAccessor from '@/lib/data/DataAccessor';
-import ipc from '@/lib/ipc';
+import ipc, { buildZaloAuth } from '@/lib/ipc';
 import { UserProfilePopup } from '../common/UserProfilePopup';
 import LabelPicker, { ActiveLabels, EditLabelsModal } from './LabelPicker';
 import useIsMobile from '@/hooks/useIsMobile';
@@ -254,7 +254,7 @@ export default function ChatHeader() {
   const handleAssignLabel = async (labelId: number) => {
     const acc = getActiveAccount();
     if (!acc || !activeAccountId || !activeThreadId) return;
-    const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+    const auth = buildZaloAuth(acc, activeAccountId);
     const currentLabels = allLabels[activeAccountId] || [];
 
     // Detect if this thread is a group to apply 'g' prefix (consistent with Zalo's label API)
@@ -344,7 +344,7 @@ export default function ChatHeader() {
       const trimmed = aliasInputValue.trim();
       // Zalo: sync to API. Facebook/kênh khác: save locally only.
       if ((acc.channel || 'zalo') === 'zalo') {
-        const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+        const auth = buildZaloAuth(acc, activeAccountId);
         const res = await ipc.zalo?.changeFriendAlias({ auth, alias: trimmed, friendId: activeThreadId });
         if (res && !res.success && res.error) {
           showNotification('Lỗi cập nhật biệt danh: ' + res.error, 'error');
@@ -373,7 +373,7 @@ export default function ChatHeader() {
     setAliasRefreshing(true);
     try {
       if ((acc.channel || 'zalo') === 'zalo') {
-        const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+        const auth = buildZaloAuth(acc, activeAccountId);
         // 1. Update toàn bộ alias từ fetchAllAliases (pagination, count=200)
         const aliasItems = await fetchAllAliases(auth);
         for (const item of aliasItems) {
@@ -438,7 +438,7 @@ export default function ChatHeader() {
     setGroupNameSaving(true);
     try {
       if ((acc.channel || 'zalo') === 'zalo') {
-        const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+        const auth = buildZaloAuth(acc, activeAccountId);
         const res = await ipc.zalo?.changeGroupName({ name: trimmed, groupId: activeThreadId });
         if (res && !res.success && res.error) {
           showNotification('Lỗi đổi tên nhóm: ' + res.error, 'error');
@@ -503,18 +503,16 @@ export default function ChatHeader() {
       return <img src={avatarUrl} alt={displayName} className={`w-9 h-9 rounded-full object-cover ${!isGroup ? 'hover:ring-2 hover:ring-blue-400 transition-all' : ''}`}
         onError={() => {
           setAvatarFailed(true);
-          // Auto-refresh avatar cho Facebook contacts (CDN hết hạn → 403)
-          if (activeAccountId && activeThreadId && (/^\d+$/.test(activeThreadId) || contact?.channel === 'facebook')) {
-            ipc.fb.refreshContactAvatar({ accountId: activeAccountId, userId: activeThreadId })
-              .then(res => {
-                if (res.success && res.avatarUrl) {
-                  updateContact(activeAccountId, {
-                    contact_id: activeThreadId,
-                    avatar_url: res.avatarUrl,
-                  });
-                  setAvatarFailed(false);
-                }
-              }).catch(() => {});
+          // Retry avatar cho cả Zalo + Facebook
+          if (activeAccountId && activeThreadId) {
+            import('@/lib/avatarRetry').then(({ handleAvatarError }) =>
+              handleAvatarError({ ownerId: activeAccountId, contactId: activeThreadId, channel: contact?.channel || 'zalo' })
+            ).then(newUrl => {
+              if (newUrl) {
+                updateContact(activeAccountId!, { contact_id: activeThreadId, avatar_url: newUrl });
+                setAvatarFailed(false);
+              }
+            }).catch(() => {});
           }
         }} />;
     }
@@ -983,7 +981,7 @@ function HeaderLabelPickerPopup({ contactId, isGroup, x, y, labels, onAssign, on
           try {
             const acc = useAccountStore.getState().getActiveAccount();
             if (!acc) return;
-            const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+            const auth = buildZaloAuth(acc, activeAccountId);
             const res = await ipc.zalo?.getLabels({ auth });
             if (res?.response?.labelData) {
               setLabels(activeAccountId, res.response.labelData);

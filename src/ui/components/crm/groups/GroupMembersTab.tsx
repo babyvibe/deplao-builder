@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import DataAccessor from '@/lib/data/DataAccessor';
-import ipc from '@/lib/ipc';
+import ipc, { buildZaloAuth } from '@/lib/ipc';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
 import { useCRMStore } from '@/store/crmStore';
@@ -196,7 +196,7 @@ export default function GroupMembersTab() {
     if (!activeAccountId) return;
     const acc = useAccountStore.getState().getActiveAccount();
     if (!acc) return;
-    const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+    const auth = buildZaloAuth(acc, activeAccountId);
 
     setGroupsLoading(true);
     bulkEnrichStopRef.current = false;
@@ -235,7 +235,7 @@ export default function GroupMembersTab() {
     if (!activeAccountId || !selectedGroupId) return;
     const acc = useAccountStore.getState().getActiveAccount();
     if (!acc) return;
-    const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+    const auth = buildZaloAuth(acc, activeAccountId);
 
     setMembersLoading(true);
     manualLoadStopRef.current = false;
@@ -276,7 +276,7 @@ export default function GroupMembersTab() {
     if (!activeAccountId || !linkScanInput.trim()) return;
     const acc = useAccountStore.getState().getActiveAccount();
     if (!acc) return;
-    const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+    const auth = buildZaloAuth(acc, activeAccountId);
 
     setLinkScanLoading(true);
     setLinkScanError('');
@@ -416,7 +416,7 @@ export default function GroupMembersTab() {
     if (!activeAccountId || !linkScanInput.trim()) return;
     const acc = useAccountStore.getState().getActiveAccount();
     if (!acc) return;
-    const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+    const auth = buildZaloAuth(acc, activeAccountId);
 
     setLinkJoinLoading(true);
     setLinkJoinStatus('idle');

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import ipc from '@/lib/ipc';
+import ipc, {buildZaloAuth} from '@/lib/ipc';
 import DataAccessor from '@/lib/data/DataAccessor';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
@@ -732,6 +732,20 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       desc: 'ID hội thoại cần gỡ nhãn.',
       templateVars: ['$trigger.threadId'],
       advanced: true,
+    },
+  ],
+  'zalo.changeAliasName': [
+    {
+      key: 'friendId', label: 'Bạn bè cần đổi tên', type: 'contact-picker', contactType: 'user',
+      placeholder: '{{ $trigger.fromId }}',
+      desc: 'ID người dùng Zalo muốn đổi tên gợi nhớ. Giữ mặc định để áp dụng cho người gửi tin nhắn.',
+      templateVars: ['$trigger.fromId'],
+    },
+    {
+      key: 'alias', label: 'Tên gợi nhớ mới', type: 'text',
+      placeholder: 'Nhập tên gợi nhớ (hỗ trợ biến)',
+      desc: 'Tên mới sẽ hiển thị trong danh bạ của bạn. Dùng biến để tạo tên động, ví dụ: {{ $trigger.fromName }} - KH VIP',
+      templateVars: ['$trigger.fromName', '$trigger.fromId', '$trigger.content'],
     },
   ],
   'logic.if': [
@@ -2960,7 +2974,7 @@ function ContactPickerModal({
       // Load groups from API - requires active connection (as backup if not in DB)
       if (contactType === 'group' || contactType === 'all') {
         try {
-          const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+          const auth = buildZaloAuth(acc);
           const groupsRes = await ipc.zalo?.getGroups(auth);
 
           // Check for API error
@@ -3923,7 +3937,7 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
 
         for (const acc of currentAccounts) {
           try {
-            const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+            const auth = buildZaloAuth(acc);
             const res = await ipc.zalo?.getLabels({ auth });
 
             const labels = res?.response?.labelData || [];

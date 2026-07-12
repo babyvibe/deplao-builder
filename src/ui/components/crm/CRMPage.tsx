@@ -3,7 +3,7 @@ import { useCRMStore, CRMContact } from '@/store/crmStore';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore, LabelData } from '@/store/appStore';
 import DataAccessor from '@/lib/data/DataAccessor';
-import ipc from '@/lib/ipc';
+import ipc, { buildZaloAuth } from '@/lib/ipc';
 import CRMContactList from './contacts/CRMContactList';
 import CRMContactDetailPanel from './contacts/CRMContactDetailPanel';
 import BulkActionBar from './contacts/BulkActionBar';
@@ -416,7 +416,7 @@ export default function CRMPage() {
     try {
       const acc = useAccountStore.getState().getActiveAccount();
       if (!acc) throw new Error('No account');
-      const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+      const auth = buildZaloAuth(acc, activeAccountId);
 
       // Fetch fresh labels to avoid version mismatch
       const freshRes = await ipc.zalo?.getLabels({ auth });
@@ -480,7 +480,7 @@ export default function CRMPage() {
     if (!activeAccountId) return;
     const acc = useAccountStore.getState().getActiveAccount();
     if (!acc) return;
-    const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+    const auth = buildZaloAuth(acc, activeAccountId);
 
     setLeavingGroups(true);
     const groupIds = store.contacts

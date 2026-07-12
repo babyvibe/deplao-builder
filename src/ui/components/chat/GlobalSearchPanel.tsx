@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import ipc from '@/lib/ipc'
+import ipc, { buildZaloAuth } from '@/lib/ipc'
 import DataAccessor from '@/lib/data/DataAccessor';;
 import GroupAvatar from '../common/GroupAvatar';
 import AddFriendModal from '../common/AddFriendModal';
@@ -60,12 +60,12 @@ export function highlightText(text: string, query: string): React.ReactNode {
 // ─── Parse message preview ────────────────────────────────────────────────────
 function parsePreview(content: string): string {
   if (!content) return '[Tin nhắn]';
-  
+
   try {
     const p = JSON.parse(content);
-    
+
     if (typeof p === 'string') return p;
-    
+
     // Check for link preview FIRST (recommened.link) - show only media title like Zalo
     const action = String(p?.action || '');
     if (action === 'recommened.link') {
@@ -84,18 +84,18 @@ function parsePreview(content: string): string {
       }
       return 'Link: ';
     }
-    
+
     // Filter out "0", "null", empty strings from content/msg
     const contentText = (typeof p?.content === 'string' ? p.content : null);
     const msgText = (typeof p?.msg === 'string' ? p.msg : null);
-    
+
     if (contentText && contentText.trim() && contentText !== '0' && contentText !== 'null') {
       return contentText;
     }
     if (msgText && msgText.trim() && msgText !== '0' && msgText !== 'null') {
       return msgText;
     }
-    
+
     const par = (() => { try { return typeof p?.params === 'string' ? JSON.parse(p.params) : (p?.params || {}); } catch { return {}; } })();
     if (p?.title && (par?.fileSize || par?.fileExt || par?.fileUrl || p?.normalUrl)) return `File: ${p.title}`;
     if (p?.href || p?.thumb || par?.rawUrl || par?.hd) return '[Hình ảnh]';
@@ -103,39 +103,39 @@ function parsePreview(content: string): string {
     if (par?.latitude || par?.longitude) return p?.description ? `📍 ${p.description}` : '📍 [Vị trí]';
     if (p?.title) return p.title;
     return '[Đính kèm]';
-  } catch { 
-    return content; 
+  } catch {
+    return content;
   }
 }
 
 // Check if message should be included in search results (only text and image+text)
 function isSearchableMessage(content: string): boolean {
   if (!content) return false;
-  
+
   // Plain text messages: always searchable
   if (!content.startsWith('{')) return true;
-  
+
   try {
     const p = JSON.parse(content);
     const action = String(p?.action || '');
-    
+
     // Exclude system messages (reminders, calls, etc.)
     if (action && action !== 'recommened.link') return false;
-    
+
     // Check for meaningful text content
     const contentText = (typeof p?.content === 'string' ? p.content : null);
     const msgText = (typeof p?.msg === 'string' ? p.msg : null);
-    
+
     // Has text content that's not "0" or "null"
     if (contentText && contentText.trim() && contentText !== '0' && contentText !== 'null') return true;
     if (msgText && msgText.trim() && msgText !== '0' && msgText !== 'null') return true;
-    
+
     // Link preview with media title
     if (action === 'recommened.link') {
       const par = (() => { try { return typeof p?.params === 'string' ? JSON.parse(p.params) : (p?.params || {}); } catch { return {}; } })();
       if (par.mediaTitle || par.src) return true;
     }
-    
+
     // Image/attachment without text: NOT searchable
     return false;
   } catch {
@@ -165,7 +165,7 @@ function ContactResultItem({ contact, query, onClick, groupInfoCache }: {
   const isGroup = contact.contact_type === 'group';
   const zaloId = contact.owner_zalo_id;
   const groupInfo = isGroup && zaloId && groupInfoCache?.[zaloId]?.[contact.contact_id];
-  
+
   return (
     <button onClick={onClick} className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-gray-700/60 transition-colors text-left group">
       <div className="flex-shrink-0">
@@ -215,7 +215,7 @@ function MessageResultItem({ msg, query, contacts, onClick, groupInfoCache }: {
   const isGroup = contact?.contact_type === 'group';
   const zaloId = msg.owner_zalo_id;
   const groupInfo = isGroup && zaloId && groupInfoCache?.[zaloId]?.[msg.thread_id];
-  
+
   return (
     <button onClick={onClick} className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-gray-700/60 transition-colors text-left">
       {isGroup ? (
@@ -451,7 +451,7 @@ export default function GlobalSearchPanel({
     }
     setPhoneSearching(true); setPhoneResult(null); setPhonePendingAccounts(false);
     try {
-      const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+      const auth = buildZaloAuth(acc, acc.zalo_id);
       const res = await ipc.zalo?.findUser({ auth, phone: phone.trim() });
       const user = res?.response;
       if (user?.uid) {
@@ -726,7 +726,7 @@ export default function GlobalSearchPanel({
             setSendingFriendReq(true);
             try {
               await ipc.zalo?.sendFriendRequest({
-                auth: { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent },
+                auth: buildZaloAuth(acc, targetZaloId),
                 userId: addFriendModal.userId,
                 msg,
               });

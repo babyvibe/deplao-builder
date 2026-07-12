@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import type { CRMContact, CRMNote } from '@/store/crmStore';
 import type { LabelData } from '@/store/appStore';
-import ipc from '@/lib/ipc'
+import ipc, { buildZaloAuth } from '@/lib/ipc'
 import DataAccessor from '@/lib/data/DataAccessor';
 import PageLoading from '@/components/common/PageLoading';
 import { useAccountStore } from '@/store/accountStore';
@@ -158,7 +158,7 @@ export default function CRMContactDetailPanel({ contact, allLabels, localLabels,
     try {
       const acc = useAccountStore.getState().getActiveAccount();
       if (!acc) throw new Error('No account');
-      const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+      const auth = buildZaloAuth(acc, activeAccountId);
 
       // Fetch fresh labels to avoid version mismatch
       const freshRes = await ipc.zalo?.getLabels({ auth });

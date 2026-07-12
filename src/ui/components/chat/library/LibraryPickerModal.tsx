@@ -22,7 +22,10 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import ipc from '../../../lib/ipc';
 import * as channelIpc from '../../../lib/channelIpc';
 import DataAccessor, { refreshLibraryCache } from '../../../lib/data/DataAccessor';
-import { BookIcon, ChartIcon, CloseIcon, EditIcon, FileTextIcon, FolderIcon, ImageIcon, MonitorIcon, RefreshIcon, SearchIcon, SendIcon, StarIcon, TrashIcon } from '@/components/common/icons';
+import { useChatStore } from '@/store/chatStore';
+import { messageQueue, generateTempId, extractMsgIdFromResponse } from '@/lib/MessageQueue';
+import { toLocalMediaUrl } from '@/lib/localMedia';
+import { CloseIcon, EditIcon, FolderIcon, ImageIcon, MonitorIcon, RefreshIcon, SendIcon, StarIcon, TrashIcon } from '@/components/common/icons';
 
 interface LibraryItem {
   uuid: string;
@@ -443,54 +446,102 @@ export default function LibraryPickerModal({
   const handleSendSelected = async () => {
     const selectedItems = items.filter(i => selected.has(i.uuid));
     if (selectedItems.length === 0) { onClose(); return; }
-
+    const addMessage = useChatStore.getState().addMessage;
+    const removeMessage = useChatStore.getState().removeMessage;
     const imageItems = selectedItems.filter(i => i.type === 'image');
-    const nonImageItems = selectedItems.filter(i => i.type !== 'image');
+    const videoItems = selectedItems.filter(i => i.type === 'video');
+    const fileItems = selectedItems.filter(i => i.type === 'file');
 
-    try {
-      // ── Batch images (gửi gộp bằng sendImages) ──
-      if (imageItems.length > 0) {
-        const auth = await getAuthForZaloId();
-        const hasLocalPath = imageItems.every(i => i._localPath);
-
-        if (imageItems.length === 1) {
-          // 1 ảnh → sendImage như cũ
-          const item = imageItems[0];
-          const opts: any = { auth: auth || {}, zaloId, threadId, threadType };
-          if (item._localPath) {
-            opts.filePath = item._localPath;
+    // ── Batch images ──
+    if (imageItems.length > 0) {
+      const batchTempId = generateTempId();
+      const previewPaths = imageItems.map(i => i._localPath || i.fileUrl || '').filter(Boolean);
+      addMessage(zaloId, threadId, {
+        msg_id: batchTempId, owner_zalo_id: zaloId, thread_id: threadId,
+        thread_type: threadType, sender_id: zaloId, content: '',
+        msg_type: 'image', timestamp: Date.now(), is_sent: 1, status: 'sending',
+        send_status: 'sending', temp_id: batchTempId, media_type: 'image',
+        attachments: JSON.stringify(previewPaths.map(fp => ({ type: 'image', localPath: fp }))),
+        local_paths: JSON.stringify(previewPaths.reduce((acc, fp, i) => ({ ...acc, [`img${i}`]: fp }), {})),
+      });
+      const auth = await getAuthForZaloId();
+      const hasLocalPath = imageItems.every(i => i._localPath);
+      messageQueue.enqueue({
+        tempId: batchTempId, zaloId, threadId, threadType, channel: 'zalo',
+        sendFn: async () => {
+          try {
+            if (imageItems.length === 1) {
+              const item = imageItems[0];
+              const opts: any = { auth: auth || {}, zaloId, threadId, threadType };
+              if (item._localPath) opts.filePath = item._localPath;
+              else { opts.fileUrl = item.fileUrl; opts._libraryUuid = item.uuid; }
+              const res = await ipc.zalo.sendImage(opts);
+              return { success: true, ...extractMsgIdFromResponse(res, 'zalo') };
+            } else {
+              const opts: any = { auth: auth || {}, zaloId, threadId, threadType, type: threadType };
+              if (hasLocalPath) opts.filePaths = imageItems.map(i => i._localPath);
+              else { opts.filePaths = imageItems.map(i => i.fileUrl); opts._libraryUuids = imageItems.map(i => i.uuid); }
+              const res = await ipc.zalo.sendImages(opts);
+              return { success: true, ...extractMsgIdFromResponse(res, 'zalo') };
+            }
+          } catch (err: any) { return { success: false, error: err?.message || String(err) }; }
+        },
+        onSuccess: () => {
+          if (imageItems.length > 1) {
+            messageQueue.registerImageBatch(batchTempId, zaloId, threadId, imageItems.length,
+              () => { removeMessage(zaloId, threadId, batchTempId); });
           } else {
-            opts.fileUrl = item.fileUrl;
-            opts._libraryUuid = item.uuid;
+            removeMessage(zaloId, threadId, batchTempId);
           }
-          if (item.type === 'image') {
-            await ipc.zalo.sendImage(opts);
-          } else {
-            await ipc.zalo.sendFile(opts);
-          }
-        } else {
-          // 2+ ảnh → gửi gộp bằng sendImages
-          const opts: any = { auth: auth || {}, zaloId, threadId, threadType, type: threadType };
-          if (hasLocalPath) {
-            // Boss mode: dùng local path trực tiếp
-            opts.filePaths = imageItems.map(i => i._localPath);
-          } else {
-            // Employee mode: proxy resolve _libraryUuids → file path trên Boss
-            opts.filePaths = imageItems.map(i => i.fileUrl);
-            opts._libraryUuids = imageItems.map(i => i.uuid);
-          }
-          await ipc.zalo.sendImages(opts);
-        }
-      }
-
-      // ── Videos & Files (gửi lẻ, giữ nguyên logic cũ) ──
-      for (const item of nonImageItems) {
-        await sendItem(item);
-      }
-    } catch (err) {
-      console.error('[Library] handleSendSelected error:', err);
+        },
+      });
     }
 
+    // ── Videos & Files (gửi lẻ qua queue) ──
+    for (const item of [...videoItems, ...fileItems]) {
+      const tempId = generateTempId();
+      const previewPath = item._localPath || item.fileUrl || '';
+      addMessage(zaloId, threadId, {
+        msg_id: tempId, owner_zalo_id: zaloId, thread_id: threadId,
+        thread_type: threadType, sender_id: zaloId, content: '',
+        msg_type: item.type, timestamp: Date.now(), is_sent: 1, status: 'sending',
+        send_status: 'pending', temp_id: tempId, media_type: item.type as any,
+        attachments: JSON.stringify([{ type: item.type, localPath: previewPath }]),
+      });
+      messageQueue.enqueue({
+        tempId, zaloId, threadId, threadType, channel: 'zalo',
+        sendFn: async () => {
+          try {
+            const auth = await getAuthForZaloId();
+            if (item.type === 'video') {
+              if (item._localPath) {
+                const metaRes: any = await ipc.file?.getVideoMeta?.({ filePath: item._localPath }).catch(() => ({})) || {};
+                const res = await channelIpc.sendVideo('zalo', {
+                  auth, accountId: zaloId, threadId, threadType, filePath: item._localPath,
+                  thumbPath: metaRes.thumbPath || '', duration: metaRes.duration || 0,
+                  width: metaRes.width || 0, height: metaRes.height || 0,
+                });
+                return { success: true, ...(res as any) };
+              } else {
+                const res = await ipc.zalo.sendVideo({ auth: auth || {}, zaloId, threadId, threadType, fileUrl: item.fileUrl, _libraryUuid: item.uuid });
+                return { success: true, ...extractMsgIdFromResponse(res, 'zalo') };
+              }
+            } else {
+              const opts: any = { auth: auth || {}, zaloId, threadId, threadType };
+              if (item._localPath) opts.filePath = item._localPath;
+              else { opts.fileUrl = item.fileUrl; opts._libraryUuid = item.uuid; }
+              const res = await ipc.zalo.sendFile(opts);
+              return { success: true, ...extractMsgIdFromResponse(res, 'zalo') };
+            }
+          } catch (err: any) { return { success: false, error: err?.message || String(err) }; }
+        },
+      });
+    }
+
+    // Scroll xuống cuối sau khi gửi
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('chat:scrollToBottom'));
+    }, 100);
     onClose();
   };
 
@@ -755,7 +806,7 @@ export default function LibraryPickerModal({
 
                         {/*** Star favorite (top-left) ***/}
                         <div className={`absolute top-1 left-1 z-10 ${!item.is_favorite ? 'opacity-0 group-hover:opacity-100' : ''} transition-opacity`}>
-                          <div className="bg-black/50 backdrop-blur-sm rounded-lg p-1 shadow-lg">
+                          <div className="bg-white backdrop-blur-sm rounded-lg p-1 shadow-lg">
                             <button onClick={(e) => { e.stopPropagation(); handleToggleFavorite(item.uuid, item.is_favorite); }}
                               className="text-[11px] leading-none block" title={item.is_favorite ? 'Bỏ yêu thích' : 'Yêu thích'}>
                               {item.is_favorite ? <StarIcon className="w-4 h-4 text-yellow-400" /> : <StarIcon className="w-4 h-4 text-gray-400" />}
@@ -766,7 +817,7 @@ export default function LibraryPickerModal({
                         {/*** ⋮ button (top-right, hover) — menu ở modal level fixed ***/}
                         <div className="absolute top-1 right-1 z-20 opacity-0 group-hover:opacity-100 transition-opacity">
                           <button onClick={(e) => handleMenuClick(e, item.uuid)}
-                            className="bg-black/50 backdrop-blur-sm rounded-lg p-2 shadow-lg text-gray-200 hover:text-white text-sm leading-none">⋮</button>
+                            className="bg-white backdrop-blur-sm rounded-lg p-2 shadow-lg text-gray-200 hover:text-white text-sm leading-none">⋮</button>
                         </div>
 
                         {selected.has(item.uuid) && (
@@ -996,27 +1047,33 @@ export default function LibraryPickerModal({
 
 // ── ImagePreview component ─────────────────────────────────────
 
-/** Hiển thị ảnh với fallback: thumbUrl → fileUrl (employee) → _localPath (boss) → fileUrl → placeholder */
+/** Hiển thị ảnh với fallback: _thumbLocalPath/_localPath (boss) → thumbUrl → fileUrl (employee) → placeholder */
 function ImagePreview({ item }: { item: any }) {
   const [src, setSrc] = useState<string | null>(null);
   const [err, setErr] = useState(false);
 
   useEffect(() => {
-    let url = item.thumbUrl;
-    // Employee: fileUrl là full HTTP URL → dùng trước _localPath (boss path không tồn tại trên employee)
+    let url: string | null = null;
+    // Boss: ưu tiên local path (file nằm trên máy Boss)
+    if (item._thumbLocalPath) {
+      url = toLocalMediaUrl(item._thumbLocalPath);
+    } else if (item._localPath) {
+      url = toLocalMediaUrl(item._localPath);
+    }
+    // Employee: dùng HTTP URL (không có local path)
+    if (!url && item.thumbUrl) {
+      url = item.thumbUrl;
+    }
     if (!url && item.fileUrl && item.fileUrl.startsWith('http')) {
       url = item.fileUrl;
     }
-    if (!url && item._localPath) {
-      // Boss: chuyển local path → local-media:// URL
-      url = 'local-media:///' + item._localPath.replace(/\\/g, '/').replace(/^\/?[A-Z]:\//, (m: string) => '/' + m[0].toLowerCase() + '/');
-    }
+    // Fallback
     if (!url && item.fileUrl) {
-      url = item.fileUrl; // Fallback
+      url = item.fileUrl;
     }
     setSrc(url);
     setErr(false);
-  }, [item.thumbUrl, item._localPath, item.fileUrl]);
+  }, [item.thumbUrl, item._localPath, item._thumbLocalPath, item.fileUrl]);
 
   if (!src || err) return <div className="w-full h-full bg-gray-700 flex items-center justify-center text-2xl"><ImageIcon className="w-4 h-4" /></div>;
   return (

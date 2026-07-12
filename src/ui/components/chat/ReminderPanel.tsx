@@ -1,6 +1,6 @@
 import DateInputVN from '@/components/common/DateInputVN';
 import React, { useEffect, useRef, useState } from 'react';
-import ipc from '@/lib/ipc';
+import ipc, { buildZaloAuth } from '@/lib/ipc';
 import { useAccountStore } from '@/store/accountStore';
 import { Spinner } from '@/components/common/PageLoading';
 import { BellIcon, CalendarIcon, CheckIcon, ClockIcon, CloseIcon, LightbulbIcon, PinIcon, StarIcon, TargetIcon } from '@/components/common/icons';
@@ -182,7 +182,7 @@ export default function ReminderPanel({ threadId, threadType, onClose, anchorRef
   const getAuth = () => {
     const acc = getActiveAccount();
     if (!acc) return null;
-    return { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+    return buildZaloAuth(acc, activeAccountId);
   };
 
   const showMsg = (msg: string, type: 'success' | 'error') => {

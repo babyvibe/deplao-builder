@@ -51,7 +51,7 @@ export function useErpContext(): { employeeId: string; role: ErpRole; permission
   if (previewEmployeeId) {
     return {
       employeeId: previewEmployeeId,
-      role: (activeProfile?.erp_role as ErpRole | undefined) ?? fallbackRole,
+      role: (activeProfile?.erp_role as ErpRole | undefined) || fallbackRole,
       permissionOverrides: parseErpPermissionOverridesFromExtraJson(activeProfile?.extra_json),
     };
   }
@@ -59,7 +59,7 @@ export function useErpContext(): { employeeId: string; role: ErpRole; permission
   if (mode === 'employee') {
     return {
       employeeId: activeEmployeeId,
-      role: (activeProfile?.erp_role as ErpRole | undefined) ?? fallbackRole,
+      role: (activeProfile?.erp_role as ErpRole | undefined) || fallbackRole,
       permissionOverrides: parseErpPermissionOverridesFromExtraJson(activeProfile?.extra_json),
     };
   }

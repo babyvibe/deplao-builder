@@ -3,7 +3,7 @@ import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
 import { useCRMStore } from '@/store/crmStore';
 import DataAccessor from '@/lib/data/DataAccessor';
-import ipc from '@/lib/ipc';
+import ipc, { buildZaloAuth } from '@/lib/ipc';
 import { extractApiError } from '@/utils/apiError';
 import { UserProfilePopup } from '../../common/UserProfilePopup';
 import {InboxIcon, SendIcon, UsersIcon} from '@/components/common/icons';
@@ -29,7 +29,7 @@ export default function CRMRequestsTab() {
 
   const getAuth = () => {
     const acc = getActiveAccount();
-    return acc ? { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent } : null;
+    return acc ? buildZaloAuth(acc, activeAccountId) : null;
   };
 
   // ─── Load from DB ─────────────────────────────────────────────────────

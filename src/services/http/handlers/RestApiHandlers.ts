@@ -12,8 +12,7 @@
  */
 
 import DatabaseService from '../../database/DatabaseService';
-import Logger from '../../../utils/Logger';
-import EmployeeService from '../../employee/EmployeeService';
+import ErpTaskService from '../../erp/ErpTaskService';
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -964,6 +963,246 @@ export const handlers = {
     const AIAssistantService = require('../../ai/AIAssistantService').default;
     const result = AIAssistantService.getInstance().getAccountAssistants(zaloId);
     return success(result);
+  },
+
+  // ═══════════════════════════════════════════════════════════════
+  // ERP TASKS — Employee mode REST API
+  // ═══════════════════════════════════════════════════════════════
+
+  getErpProjects(_employee: RegisteredEmployee, params: any): JsonResponse {
+    const svc = ErpTaskService.getInstance();
+    const projects = svc.listProjects({ archived: !!params?.archived });
+    return success({ projects });
+  },
+
+  getErpTasks(employee: RegisteredEmployee, params: any): JsonResponse {
+    const svc = ErpTaskService.getInstance();
+    const filter: any = {};
+    if (params.projectId) filter.projectId = params.projectId;
+    if (params.assigneeId) filter.assigneeId = params.assigneeId;
+    if (params.priority) filter.priority = params.priority;
+    if (params.status) filter.status = params.status;
+    if (params.search) filter.search = params.search;
+    if (params.archived !== undefined) filter.archived = params.archived === 'true' || params.archived === true;
+    if (params.parentTaskId !== undefined) filter.parentTaskId = params.parentTaskId;
+    if (params.limit) filter.limit = parseInt(params.limit);
+    if (params.offset) filter.offset = parseInt(params.offset);
+    if (params.dueRange) {
+      try {
+        filter.dueRange = typeof params.dueRange === 'string' ? JSON.parse(params.dueRange) : params.dueRange;
+      } catch {}
+    }
+
+    // Employee chỉ thấy task mình liên quan: assignee, watcher, hoặc reporter
+    const { erpCan } = require('../../../services/erp/permissions');
+    let erpRole = 'member';
+    try {
+      const profile = db().queryOne<any>(`SELECT erp_role FROM erp_employee_profiles WHERE employee_id = ?`, [employee.employee_id]);
+      if (profile?.erp_role) erpRole = profile.erp_role;
+    } catch {}
+    const canViewAll = erpCan(erpRole, 'task.edit_any'); // owner, admin, manager
+    if (!canViewAll) {
+      filter._viewerEmployeeId = employee.employee_id;
+    }
+
+    const tasks = svc.listTasks(filter);
+    return success({ tasks });
+  },
+
+  getErpTaskDetail(employee: RegisteredEmployee, params: any): JsonResponse {
+    if (!params.id) return error('Missing task id');
+    const svc = ErpTaskService.getInstance();
+    const task = svc.getTaskDetail(params.id);
+    if (!task) return error('Không tìm thấy task');
+
+    // Permission: employee chỉ xem task mình liên quan
+    const { erpCan } = require('../../../services/erp/permissions');
+    let erpRole = 'member';
+    try {
+      const profile = db().queryOne<any>(`SELECT erp_role FROM erp_employee_profiles WHERE employee_id = ?`, [employee.employee_id]);
+      if (profile?.erp_role) erpRole = profile.erp_role;
+    } catch {}
+    const canViewAll = erpCan(erpRole, 'task.edit_any');
+    if (!canViewAll) {
+      const isReporter = task.reporter_id === employee.employee_id;
+      const isAssignee = task.assignees?.includes(employee.employee_id);
+      const isWatcher = task.watchers?.includes(employee.employee_id);
+      if (!isReporter && !isAssignee && !isWatcher) {
+        return error('Không có quyền xem task này');
+      }
+    }
+
+    return success({ task });
+  },
+
+  getErpMyInbox(employee: RegisteredEmployee, params: any): JsonResponse {
+    const svc = ErpTaskService.getInstance();
+    const filter = params?.filter || 'week';
+    // Boss/admin: xem tất cả tasks, employee: chỉ xem task liên quan
+    const { erpCan } = require('../../../services/erp/permissions');
+    let erpRole = 'member';
+    try {
+      const profile = db().queryOne<any>(`SELECT erp_role FROM erp_employee_profiles WHERE employee_id = ?`, [employee.employee_id]);
+      if (profile?.erp_role) erpRole = profile.erp_role;
+    } catch {}
+    const viewAll = erpCan(erpRole, 'task.edit_any');
+    const tasks = svc.getMyInbox(employee.employee_id, filter, viewAll);
+    return success({ tasks });
+  },
+
+  // ── ERP Task WRITE operations ──
+
+  createErpTask(employee: RegisteredEmployee, params: any): JsonResponse {
+    if (!params?.title) return error('Missing task title');
+    const svc = ErpTaskService.getInstance();
+    const task = svc.createTask(params, employee.employee_id);
+    return success({ task });
+  },
+
+  updateErpTask(employee: RegisteredEmployee, params: any): JsonResponse {
+    if (!params?.id) return error('Missing task id');
+    const svc = ErpTaskService.getInstance();
+    const task = svc.updateTask(params.id, params.patch || {}, employee.employee_id);
+    return success({ task });
+  },
+
+  updateErpTaskStatus(employee: RegisteredEmployee, params: any): JsonResponse {
+    if (!params?.id || !params?.status) return error('Missing task id or status');
+    const svc = ErpTaskService.getInstance();
+    const task = svc.updateTask(params.id, { status: params.status }, employee.employee_id);
+    return success({ task });
+  },
+
+  deleteErpTask(employee: RegisteredEmployee, params: any): JsonResponse {
+    if (!params?.id) return error('Missing task id');
+    const svc = ErpTaskService.getInstance();
+    // Permission: chỉ reporter hoặc admin mới được xóa
+    const task = svc.getTaskDetail(params.id);
+    if (!task) return error('Không tìm thấy task');
+    const { erpCan } = require('../../../services/erp/permissions');
+    const isReporter = task.reporter_id === employee.employee_id;
+    // Resolve ERP role từ DB
+    let erpRole = 'member';
+    try {
+      const profile = db().queryOne<any>(`SELECT erp_role FROM erp_employee_profiles WHERE employee_id = ?`, [employee.employee_id]);
+      if (profile?.erp_role) erpRole = profile.erp_role;
+    } catch {}
+    if (!isReporter && !erpCan(erpRole, 'task.delete')) {
+      return error('Không có quyền xóa task này');
+    }
+    svc.deleteTask(params.id);
+    return success({});
+  },
+
+  assignErpTask(employee: RegisteredEmployee, params: any): JsonResponse {
+    if (!params?.id) return error('Missing task id');
+    const svc = ErpTaskService.getInstance();
+    svc.assignTask(params.id, params.employeeIds || [], employee.employee_id);
+    return success({});
+  },
+
+  addErpTaskWatcher(employee: RegisteredEmployee, params: any): JsonResponse {
+    if (!params?.taskId) return error('Missing taskId');
+    const svc = ErpTaskService.getInstance();
+    svc.addWatcher(params.taskId, params.employeeId || employee.employee_id);
+    return success({});
+  },
+
+  removeErpTaskWatcher(employee: RegisteredEmployee, params: any): JsonResponse {
+    if (!params?.taskId) return error('Missing taskId');
+    const svc = ErpTaskService.getInstance();
+    svc.removeWatcher(params.taskId, params.employeeId || employee.employee_id);
+    return success({});
+  },
+
+  addErpTaskComment(employee: RegisteredEmployee, params: any): JsonResponse {
+    if (!params?.taskId || !params?.content) return error('Missing taskId or content');
+    const svc = ErpTaskService.getInstance();
+    const comment = svc.addComment(params.taskId, employee.employee_id, params.content, params.mentions || []);
+    return success({ comment });
+  },
+
+  editErpTaskComment(employee: RegisteredEmployee, params: any): JsonResponse {
+    if (!params?.id || !params?.content) return error('Missing id or content');
+    const svc = ErpTaskService.getInstance();
+    const comment = svc.editComment(Number(params.id), params.content);
+    return success({ comment });
+  },
+
+  deleteErpTaskComment(employee: RegisteredEmployee, params: any): JsonResponse {
+    if (!params?.id) return error('Missing comment id');
+    const svc = ErpTaskService.getInstance();
+    svc.deleteComment(Number(params.id));
+    return success({});
+  },
+
+  addErpTaskChecklist(employee: RegisteredEmployee, params: any): JsonResponse {
+    if (!params?.taskId || !params?.content) return error('Missing taskId or content');
+    const svc = ErpTaskService.getInstance();
+    const item = svc.addChecklist(params.taskId, params.content);
+    return success({ item });
+  },
+
+  toggleErpTaskChecklist(employee: RegisteredEmployee, params: any): JsonResponse {
+    if (!params?.id) return error('Missing checklist id');
+    const svc = ErpTaskService.getInstance();
+    const item = svc.toggleChecklist(Number(params.id), !!params.done);
+    return success({ item });
+  },
+
+  createErpProject(employee: RegisteredEmployee, params: any): JsonResponse {
+    if (!params?.name) return error('Missing project name');
+    const svc = ErpTaskService.getInstance();
+    const project = svc.createProject({
+      name: params.name,
+      description: params.description,
+      color: params.color,
+      department_id: params.department_id,
+    }, employee.employee_id);
+    return success({ project });
+  },
+
+  // ── ERP Employee Profiles ──
+
+  getErpDepartments(_employee: RegisteredEmployee, _params: any): JsonResponse {
+    const rows = db().query<any>(`SELECT * FROM erp_departments ORDER BY name ASC`) || [];
+    return success({ departments: rows });
+  },
+
+  getErpPositions(_employee: RegisteredEmployee, _params: any): JsonResponse {
+    const rows = db().query<any>(`SELECT * FROM erp_positions ORDER BY name ASC`) || [];
+    return success({ positions: rows });
+  },
+
+  getErpProfiles(_employee: RegisteredEmployee, params: any): JsonResponse {
+    let sql = `SELECT * FROM erp_employee_profiles`;
+    const sqlParams: any[] = [];
+    if (params?.departmentId) {
+      sql += ` WHERE department_id = ?`;
+      sqlParams.push(params.departmentId);
+    }
+    sql += ` ORDER BY employee_id ASC`;
+    const rows = db().query<any>(sql, sqlParams) || [];
+    return success({ profiles: rows });
+  },
+
+  getErpProfile(_employee: RegisteredEmployee, params: any): JsonResponse {
+    if (!params?.employeeId) return error('Missing employeeId');
+    const row = db().queryOne<any>(`SELECT * FROM erp_employee_profiles WHERE employee_id = ?`, [params.employeeId]);
+    return success({ profile: row || null });
+  },
+
+  // ── ERP Calendar ──
+
+  getErpCalendarEvents(employee: RegisteredEmployee, params: any): JsonResponse {
+    const from = parseInt(params?.from) || 0;
+    const to = parseInt(params?.to) || Date.now();
+    const organizerId = params?.organizerId || employee.employee_id;
+    const rows = db().query<any>(
+      `SELECT * FROM erp_calendar_events WHERE organizer_id = ? AND start_at <= ? AND (end_at >= ? OR (end_at IS NULL AND start_at >= ?)) ORDER BY start_at ASC`,
+      [organizerId, to, from, from]
+    ) || [];
+    return success({ events: rows });
   },
 };
 

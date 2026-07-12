@@ -29,6 +29,7 @@ class HttpClientService {
     private onStatusChange: ((connected: boolean, latency: number) => void) | null = null;
     private onInitialState: ((data: any) => void) | null = null;
     private onAccountAccessUpdate: ((data: any) => void) | null = null;
+    private onPermissionUpdate: ((data: any) => void) | null = null;
 
     /** Socket.IO client - transport duy nhất cho real-time event */
     private socketIOClient = new SocketIOClient();
@@ -259,6 +260,9 @@ class HttpClientService {
     public setOnAccountAccessUpdate(cb: (data: any) => void): void {
         this.onAccountAccessUpdate = cb;
     }
+    public setOnPermissionUpdate(cb: (data: any) => void): void {
+        this.onPermissionUpdate = cb;
+    }
     public setWorkspaceId(id: string): void {
         this.workspaceId = id;
     }
@@ -360,6 +364,11 @@ class HttpClientService {
         if (channel === 'relay:initialState') {
             Logger.log(`[HttpClientService] Received initial state push: assigned=${data?.assignedAccounts?.length || 0}`);
             this.onInitialState?.(data);
+            return;
+        }
+        if (channel === 'relay:permissionUpdate') {
+            Logger.log(`[HttpClientService] Permission update received: erpRole=${data?.erpRole || 'none'}`);
+            this.onPermissionUpdate?.(data);
             return;
         }
         if (channel === 'relay:accountAccessUpdate') {

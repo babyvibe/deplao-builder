@@ -95,6 +95,8 @@ class HttpRelayService {
     /** Tunnel state */
     private tunnelActive = false;
     private tunnelUrl: string | null = null;
+    /** Lưu tunnel cần restart khi relay start lại (sau workspace switch) */
+    private tunnelPendingRestart = false;
 
     /**
      * Pending employee sender info: msgId → employee data.
@@ -284,10 +286,31 @@ class HttpRelayService {
             const assignedAccounts = emp.assigned_accounts || [];
             const onlineAccounts = assignedAccounts.filter((zaloId) => ConnectionManager.isConnected(zaloId));
             const allAccounts = db.getAccounts();
-            const profile = db.queryOne<{ erp_role?: string; extra_json?: string }>(
+            let profile = db.queryOne<{ erp_role?: string; extra_json?: string }>(
                 `SELECT erp_role, extra_json FROM erp_employee_profiles WHERE employee_id = ?`,
                 [employeeId],
             );
+
+            // Repair: if employee has erp module permission but no ERP profile, auto-create one.
+            // This handles cases where the initial auto-create in employeeIpc failed silently.
+            if (!profile) {
+                const hasErpPerm = (emp.permissions || []).some(
+                    (p: any) => p.module === 'erp' && p.can_access,
+                );
+                if (hasErpPerm) {
+                    try {
+                        db.run(
+                            `INSERT OR IGNORE INTO erp_employee_profiles (employee_id, erp_role, extra_json, updated_at)
+                             VALUES (?, 'member', '{}', ?)`,
+                            [employeeId, Date.now()],
+                        );
+                        profile = { erp_role: 'member', extra_json: '{}' };
+                        Logger.log(`[HttpRelayService] Auto-repaired ERP profile for employee ${employeeId}`);
+                    } catch (repairErr: any) {
+                        Logger.warn(`[HttpRelayService] Failed to repair ERP profile: ${repairErr.message}`);
+                    }
+                }
+            }
             const employeesData = employeeService.getEmployees().map((employee: any) => ({
                 employee_id: employee.employee_id,
                 username: employee.username,
@@ -348,6 +371,18 @@ class HttpRelayService {
                 this.httpServer!.listen(this.port, () => {
                     this.running = true;
                     Logger.log(`[HttpRelayService] ✅ Server started on port ${this.port}`);
+                    // Auto-restart tunnel nếu trước đó tunnel đang chạy
+                    if (this.tunnelPendingRestart) {
+                        this.tunnelPendingRestart = false;
+                        TunnelService.start(this.port).then((url) => {
+                            this.tunnelActive = true;
+                            this.tunnelUrl = url;
+                            Logger.log(`[HttpRelayService] 🔁 Tunnel auto-restarted: ${url}`);
+                            this.broadcastEmployeeList();
+                        }).catch((err) => {
+                            Logger.warn(`[HttpRelayService] Tunnel auto-restart failed: ${err.message}`);
+                        });
+                    }
                     resolve({ success: true, port: this.port });
                 });
                 this.httpServer!.on('error', (err: any) => {
@@ -379,8 +414,9 @@ class HttpRelayService {
             this.sseClients.clear();
             this.sseKeepaliveTimers.clear();
             this.sseLastWriteOk.clear();
-            // Stop tunnel if active
+            // Stop tunnel if active — nhưng nhớ để restart sau
             if (this.tunnelActive) {
+                this.tunnelPendingRestart = true;
                 TunnelService.stop(this.port).catch(() => {});
                 this.tunnelActive = false;
                 this.tunnelUrl = null;
@@ -618,17 +654,6 @@ class HttpRelayService {
 
                 // Socket.IO đã thay thế SSE - không cần detect half-open nữa
                 // (heartbeat chỉ để xác nhận employee còn alive)
-                if (false) {
-                    const sseRes = this.sseClients.get(employee.employee_id);
-                    if (sseRes) {
-                        Logger.warn(`[HttpRelayService] 🩺 Employee ${employee.display_name} reports SSE dead - closing half-open connection (events will queue)`);
-                        try { sseRes.end(); } catch {}
-                        this.sseClients.delete(employee.employee_id);
-                        const kt = this.sseKeepaliveTimers.get(employee.employee_id);
-                        if (kt) { clearInterval(kt); this.sseKeepaliveTimers.delete(employee.employee_id); }
-                        this.sseLastWriteOk.delete(employee.employee_id);
-                    }
-                }
 
                 this.json(res, 200, { success: true, ts: Date.now() });
             } catch (err: any) {
@@ -1482,6 +1507,42 @@ class HttpRelayService {
                 return this.json(res, 200, restHandlers.getBankCardsHandler(employee, params));
             }
 
+            // ── ERP Tasks ──
+            if (method === 'GET' && pathname === '/api/query/erp/projects') {
+                return this.json(res, 200, restHandlers.getErpProjects(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/erp/tasks') {
+                return this.json(res, 200, restHandlers.getErpTasks(employee, params));
+            }
+            // ⚠️ Specific routes MUST come BEFORE the regex catch-all
+            if (method === 'GET' && pathname === '/api/query/erp/tasks/inbox') {
+                return this.json(res, 200, restHandlers.getErpMyInbox(employee, params));
+            }
+            if (method === 'GET' && pathname.match(/^\/api\/query\/erp\/tasks\/[^/]+$/)) {
+                const id = pathname.split('/').pop() || '';
+                return this.json(res, 200, restHandlers.getErpTaskDetail(employee, { ...params, id }));
+            }
+
+            // ── ERP Departments / Positions / Profiles ──
+            if (method === 'GET' && pathname === '/api/query/erp/departments') {
+                return this.json(res, 200, restHandlers.getErpDepartments(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/erp/positions') {
+                return this.json(res, 200, restHandlers.getErpPositions(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/erp/profiles') {
+                return this.json(res, 200, restHandlers.getErpProfiles(employee, params));
+            }
+            if (method === 'GET' && pathname.match(/^\/api\/query\/erp\/profiles\/[^/]+$/)) {
+                const employeeId = pathname.split('/').pop() || '';
+                return this.json(res, 200, restHandlers.getErpProfile(employee, { ...params, employeeId }));
+            }
+
+            // ── ERP Calendar ──
+            if (method === 'GET' && pathname === '/api/query/erp/calendar/events') {
+                return this.json(res, 200, restHandlers.getErpCalendarEvents(employee, params));
+            }
+
             // ── Proxies ──
             if (method === 'GET' && pathname === '/api/query/proxies') {
                 return this.json(res, 200, restHandlers.getProxies(employee, params));
@@ -2153,6 +2214,90 @@ class HttpRelayService {
                 return { success: true };
             }
 
+            // ── ERP Tasks ──
+            if (pathname === '/api/command/erp/tasks') {
+                const ErpTaskService = require('../../services/erp/ErpTaskService').default;
+                const task = ErpTaskService.getInstance().createTask(params.input || params, employee.employee_id);
+                EventBroadcaster.emit('erp:event:taskCreated', { task });
+                return { success: true, task };
+            }
+            // ⚠️ Specific routes BEFORE regex catch-all
+            if (pathname === '/api/command/erp/tasks/assign') {
+                const ErpTaskService = require('../../services/erp/ErpTaskService').default;
+                ErpTaskService.getInstance().assignTask(params.id, params.employeeIds || [], employee.employee_id);
+                return { success: true };
+            }
+            if (pathname === '/api/command/erp/tasks/watcher') {
+                const ErpTaskService = require('../../services/erp/ErpTaskService').default;
+                if (params.action === 'remove') {
+                    ErpTaskService.getInstance().removeWatcher(params.taskId, params.employeeId || employee.employee_id);
+                } else {
+                    ErpTaskService.getInstance().addWatcher(params.taskId, params.employeeId || employee.employee_id);
+                }
+                return { success: true };
+            }
+            if (pathname === '/api/command/erp/tasks/comment') {
+                const ErpTaskService = require('../../services/erp/ErpTaskService').default;
+                const comment = ErpTaskService.getInstance().addComment(params.taskId, employee.employee_id, params.content, params.mentions || []);
+                return { success: true, comment };
+            }
+            if (pathname === '/api/command/erp/tasks/checklist') {
+                const ErpTaskService = require('../../services/erp/ErpTaskService').default;
+                const item = ErpTaskService.getInstance().addChecklist(params.taskId, params.content);
+                return { success: true, item };
+            }
+            if (pathname.match(/^\/api\/command\/erp\/tasks\/checklist\/\d+\/toggle$/)) {
+                const checkId = parseInt(pathname.split('/')[6]);
+                const ErpTaskService = require('../../services/erp/ErpTaskService').default;
+                const item = ErpTaskService.getInstance().toggleChecklist(checkId, !!params.done);
+                return { success: true, item };
+            }
+            // Regex catch-all for tasks/{id} — MUST be after specific routes
+            if (pathname.match(/^\/api\/command\/erp\/tasks\/[^/]+\/status$/)) {
+                const taskId = pathname.split('/')[5];
+                const ErpTaskService = require('../../services/erp/ErpTaskService').default;
+                const task = ErpTaskService.getInstance().updateTask(taskId, { status: params.status }, employee.employee_id);
+                return { success: true, task };
+            }
+            if (pathname.match(/^\/api\/command\/erp\/tasks\/[^/]+$/)) {
+                const taskId = pathname.split('/')[5];
+                const ErpTaskService = require('../../services/erp/ErpTaskService').default;
+                if (httpMethod === 'DELETE') {
+                    ErpTaskService.getInstance().deleteTask(taskId);
+                    return { success: true };
+                }
+                // PUT/PATCH — update
+                const task = ErpTaskService.getInstance().updateTask(taskId, params.patch || params, employee.employee_id);
+                return { success: true, task };
+            }
+            if (pathname === '/api/command/erp/projects') {
+                const ErpTaskService = require('../../services/erp/ErpTaskService').default;
+                const project = ErpTaskService.getInstance().createProject({
+                    name: params.name,
+                    description: params.description,
+                    color: params.color,
+                    department_id: params.department_id,
+                }, employee.employee_id);
+                return { success: true, project };
+            }
+
+            // ── ERP Calendar ──
+            if (pathname === '/api/command/erp/calendar') {
+                const { default: ErpCalendarService } = require('../../services/erp/ErpCalendarService');
+                const event = ErpCalendarService.getInstance().createEvent(params.input || params, employee.employee_id);
+                return { success: true, event };
+            }
+            if (pathname.match(/^\/api\/command\/erp\/calendar\/[^/]+$/)) {
+                const eventId = pathname.split('/').pop() || '';
+                const { default: ErpCalendarService } = require('../../services/erp/ErpCalendarService');
+                if (httpMethod === 'DELETE') {
+                    ErpCalendarService.getInstance().deleteEvent(eventId);
+                    return { success: true };
+                }
+                const event = ErpCalendarService.getInstance().updateEvent(eventId, params.patch || params);
+                return { success: true, event };
+            }
+
             return { success: false, error: `Unknown command: ${httpMethod} ${pathname}` };
         } catch (err: any) {
             Logger.error(`[HttpRelayService] Command error: ${err.message}`);
@@ -2219,6 +2364,7 @@ class HttpRelayService {
             return { success: false, error: 'Relay server chưa được bật' };
         }
         try {
+            this.tunnelPendingRestart = false;
             const url = await TunnelService.start(this.port, 'Employee Relay');
             this.tunnelActive = true;
             this.tunnelUrl = url;
@@ -2557,6 +2703,19 @@ class HttpRelayService {
         if (snapshot) {
             if (!this.pushViaSSE(employeeId, 'relay:initialState', snapshot)) {
                 this.pushToEmployee(emp, 'relay:initialState', snapshot).catch(() => {});
+            }
+            // Permission updates: send dedicated event that bypasses 60s throttle
+            // on workspace:initialState in the renderer.
+            if (reason === 'permissions-updated') {
+                const permPayload = {
+                    permissions: snapshot.permissions,
+                    erpRole: snapshot.erpRole,
+                    erpExtraJson: snapshot.erpExtraJson,
+                    employeesData: snapshot.employeesData,
+                };
+                if (!this.pushViaSSE(employeeId, 'relay:permissionUpdate', permPayload)) {
+                    this.pushToEmployee(emp, 'relay:permissionUpdate', permPayload).catch(() => {});
+                }
             }
         }
         Logger.log(`[HttpRelayService] refreshEmployeeState(${reason}) → employee=${employeeId}`);

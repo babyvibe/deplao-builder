@@ -7,7 +7,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppStore, QuickChatTarget } from '@/store/appStore';
 import { useAccountStore } from '@/store/accountStore';
 import { useChatStore, MessageItem } from '@/store/chatStore';
-import ipc from '@/lib/ipc';
+import ipc, { buildZaloAuth } from '@/lib/ipc';
 import { MessageCircleIcon } from '@/components/common/icons';
 import DataAccessor from '@/lib/data/DataAccessor';;
 import { sendSeenForThread } from '@/lib/sendSeenHelper';
@@ -16,16 +16,7 @@ import { fetchQuickMessages, QuickMessage, LocalMediaFile } from './QuickMessage
 import { formatPhone } from '@/utils/phoneUtils';
 import ChatHistoryList from './ChatHistoryList';
 import SharedMessageContent from './SharedMessageContent';
-
-// ── Constants ────────────────────────────────────────────────────────────────
-const EMOJI_CATEGORIES = {
-  'Phổ biến': ['😊', '😂', '❤️', '👍', '😮', '😢', '😡', '🔥', '👋', '🙏', '✌️', '😍', '😎', '🥰', '😜', '🤩', '😭', '🤗', '😇', '🤔', '😤', '🥳', '💪', '✅', '🎉', '💯', '🚀', '⭐', '🌈', '💙'],
-  'Cảm xúc': ['😀', '😃', '😄', '😁', '😆', '🥹', '😅', '🤣', '🥲', '☺️', '😋', '😛', '😝', '🤑', '🤭', '🤫', '🤐', '🤨', '😏', '😒', '🙄', '😬', '😮‍💨', '🤥', '🙂', '😌', '😔', '😪', '🤤', '😴'],
-  'Trái tim': ['❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍', '🤎', '💔', '❣️', '💕', '💞', '💓', '💗', '💖', '💘', '💝', '💟', '❤️‍🔥', '❤️‍🩹', '💑', '💏', '🫂', '💋', '🫶', '🤲', '🙌', '👏', '🤝'],
-  'Tay & Cử chỉ': ['👍', '👎', '👊', '✊', '🤛', '🤜', '🤞', '✌️', '🤟', '🤘', '🤙', '👈', '👉', '👆', '👇', '☝️', '👋', '🤚', '🖐️', '✋', '🖖', '💪', '🦾', '🙏', '✍️', '🤳', '💅', '🤌', '👌', '🫰'],
-  'Biểu tượng': ['✨', '⚡', '🌟', '💫', '💥', '💢', '💦', '💨', '🕳️', '💣', '💬', '👁️‍🗨️', '🗯️', '💭', '💤', '🔴', '🟠', '🟡', '🟢', '🔵', '🟣', '🟤', '⚫', '⚪', '🔶', '🔷', '🔸', '🔹', '▶️', '⏩'],
-};
-const QUICK_EMOJIS = Object.values(EMOJI_CATEGORIES).flat();
+import { EMOJI_CATEGORIES, QUICK_EMOJIS } from '@/lib/chat/emojiUtils';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function fmtTime(ts: number): string {
@@ -222,7 +213,7 @@ function RecipientRow({ zaloId, contacts, accounts, onSelect }: {
       const acc = accounts.find(a => a.zalo_id === zaloId);
       if (!acc) return;
       setSearching(true);
-      const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+      const auth = buildZaloAuth(acc, zaloId);
       ipc.zalo?.findUser({ auth, phone: query.trim() }).then((res: any) => {
         const p = res?.response?.info || res?.response;
         if (p?.userId) setPhoneResult({ contact_id: p.userId, display_name: p.displayName||p.zaloName||query.trim(), avatar_url: p.avatar||'', phone: query.trim(), contact_type: 'user', unread_count: 0 });
@@ -385,7 +376,7 @@ export default function QuickChatModal() {
 
   const getAuth = () => {
     const acc = accounts.find(a => a.zalo_id === selectedZaloId);
-    return acc ? { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent } : null;
+    return acc ? buildZaloAuth(acc, selectedZaloId) : null;
   };
 
   const insertText = (txt: string) => {

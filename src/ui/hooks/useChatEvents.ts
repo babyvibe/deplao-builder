@@ -10,6 +10,7 @@
 
 import { useEffect } from 'react';
 import ipc from '../lib/ipc'
+import { messageQueue } from '@/lib/MessageQueue';
 import DataAccessor from '../lib/data/DataAccessor';;
 import { useChatStore, type MessageItem } from '@/store/chatStore';
 import { useAccountStore } from '@/store/accountStore';
@@ -202,7 +203,7 @@ export function useChatEvents(): void {
             }
           } catch {}
           const updated = [...existing];
-          updated[tempIdx] = { ...tempMsg, ...normalized, attachments: mergedAttachments };
+          updated[tempIdx] = { ...tempMsg, ...normalized, attachments: mergedAttachments, send_status: 'received' as const };
           useChatStore.setState((s) => ({
             messages: { ...s.messages, [key]: updated },
           }));
@@ -228,6 +229,11 @@ export function useChatEvents(): void {
 
       // Add message to store first
       store.addMessage(fbAccountId, threadId, normalized);
+
+      // Nếu là self-image → báo cho MessageQueue để đếm batch
+      if (isSelf && (normalized.msg_type === 'image' || normalized.msg_type === 'photo')) {
+        messageQueue.onImageMessageReceived(fbAccountId, threadId);
+      }
 
       // If this message has reply_to_id but no quote_data, try looking up
       // original message from the store (both should now be in the store)

@@ -282,7 +282,7 @@ function createWindow() {
           ...details.responseHeaders,
           'Content-Security-Policy': [
             // img-src và media-src phải có https: để load ảnh/video từ CDN Zalo
-            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: local-media: blob: https:; media-src 'self' local-media: blob: https:; connect-src 'self' https: wss:; font-src 'self' data: https:; frame-src 'self' https:;",
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: local-media: blob: https: http:; media-src 'self' local-media: blob: https: http:; connect-src 'self' https: http: wss:; font-src 'self' data: https:; frame-src 'self' https:;",
           ],
         },
       });

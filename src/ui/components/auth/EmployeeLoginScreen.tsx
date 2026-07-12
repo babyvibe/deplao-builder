@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 import ipc from '@/lib/ipc';
 import { useEmployeeStore } from '@/store/employeeStore';
 import { useAppStore } from '@/store/appStore';
+import { useAccountStore } from '@/store/accountStore';
+import { useChatStore } from '@/store/chatStore';
+import DataAccessor from '@/lib/data/DataAccessor';
 import RestQueryService from '../../../services/http/RestQueryService';
 import { AlertIcon, GlobeIcon, HomeIcon, PluginIcon, UserIcon } from '@/components/common/icons';
 
@@ -23,6 +26,58 @@ export default function EmployeeLoginScreen({ onBossMode, onEmployeeConnected }:
     const [password, setPassword] = useState('');
     const [connecting, setConnecting] = useState(false);
     const [error, setError] = useState('');
+
+    const normalizeAccounts = (accounts: any[] = []) => accounts.map((account) => {
+        const listenerState = account.listener_active ?? account.listenerActive ?? (account.isConnected ? 1 : 0);
+        const fullName = account.full_name || account.display_name || account.zalo_id;
+        return {
+            zalo_id: account.zalo_id,
+            display_name: fullName,
+            full_name: fullName,
+            avatar_url: account.avatar_url || '',
+            phone: account.phone || '',
+            is_business: account.is_business || 0,
+            imei: '',
+            user_agent: '',
+            cookies: '',
+            is_active: account.is_active ?? 1,
+            created_at: '',
+            listenerActive: !!listenerState,
+            isConnected: !!listenerState,
+            isOnline: !!listenerState,
+        };
+    });
+
+    const bootstrapAccountsFromSnapshot = async (snapshot: any) => {
+        const accounts = normalizeAccounts(snapshot?.accountsData || []);
+        if (accounts.length === 0) return;
+
+        useAccountStore.getState().setAccounts(accounts as any);
+        const activeAccountId = useAccountStore.getState().activeAccountId;
+        if (!activeAccountId || !accounts.some((account) => account.zalo_id === activeAccountId)) {
+            useAccountStore.getState().setActiveAccount(accounts[0].zalo_id);
+        }
+
+        useChatStore.getState().setConversationsLoading(true);
+        try {
+            for (const account of accounts) {
+                const existing = useChatStore.getState().contacts[account.zalo_id];
+                if ((existing?.length || 0) >= 200) continue;
+                const result = await DataAccessor.getConversations(account.zalo_id, 200, 0);
+                const items = Array.isArray(result?.items) ? result.items : [];
+                if (items.length > 0) {
+                    const current = useChatStore.getState().contacts[account.zalo_id] || [];
+                    const seen = new Set(items.map((contact: any) => contact.contact_id));
+                    useChatStore.getState().setContacts(account.zalo_id, [
+                        ...items,
+                        ...current.filter((contact: any) => !seen.has(contact.contact_id)),
+                    ]);
+                }
+            }
+        } finally {
+            useChatStore.getState().setConversationsLoading(false);
+        }
+    };
 
     // Load saved values from localStorage
     useEffect(() => {
@@ -63,7 +118,10 @@ export default function EmployeeLoginScreen({ onBossMode, onEmployeeConnected }:
                 return;
             }
 
-            const { token, employee, snapshot } = loginRes.data || {};
+            const rawLoginRes = loginRes as any;
+            const token = rawLoginRes.token || loginRes.data?.token;
+            const employee = rawLoginRes.employee || loginRes.data?.employee;
+            const snapshot = rawLoginRes.snapshot || loginRes.data?.snapshot;
 
             if (!token || !employee) {
                 setError('Phản hồi từ BOSS không hợp lệ');
@@ -110,6 +168,7 @@ export default function EmployeeLoginScreen({ onBossMode, onEmployeeConnected }:
             setBossConnected(true);
             setToken(token);
             setMode('employee');
+            await bootstrapAccountsFromSnapshot(snapshot);
             setConnecting(false);
 
             showNotification(`Đăng nhập thành công! Xin chào ${employee.display_name}`, 'success');

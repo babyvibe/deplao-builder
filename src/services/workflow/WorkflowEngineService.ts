@@ -29,6 +29,7 @@ export type NodeType =
   | 'zalo.addToGroup' | 'zalo.removeFromGroup' | 'zalo.createPoll'
   | 'zalo.getMessageHistory' | 'zalo.setMute'
   | 'zalo.assignLabel' | 'zalo.removeLabel'
+  | 'zalo.changeAliasName'
   | 'logic.if' | 'logic.switch' | 'logic.wait' | 'logic.forEach'
   | 'logic.setVariable' | 'logic.stopIf'
   | 'data.textFormat' | 'data.jsonParse' | 'data.dateFormat' | 'data.randomPick'
@@ -1346,6 +1347,21 @@ class WorkflowEngineService {
           }
           return { success: true, source: 'zalo', labelId: zaloRawId, threadId: cfg.threadId };
         }
+      }
+
+      case 'zalo.changeAliasName': {
+        const api = this.getApi(ctx.pageId);
+        const friendId = cfg.friendId || ctx.trigger?.fromId;
+        if (!friendId) throw new Error('[zalo.changeAliasName] friendId required');
+        if (cfg.alias === undefined || cfg.alias === '') throw new Error('[zalo.changeAliasName] alias required');
+        const alias = String(cfg.alias);
+        // 1. Gọi API Zalo đổi tên gợi nhớ
+        await api.changeFriendAlias(alias, String(friendId));
+        // 2. Cập nhật DB local (giống IPC handler db:setContactAlias)
+        DatabaseService.getInstance().setContactAlias(ctx.pageId, String(friendId), alias);
+        // 3. Broadcast cho nhân viên đang kết nối
+        EventBroadcaster.emit('db:contactAliasChanged', { ownerZaloId: ctx.pageId, contactId: String(friendId), alias });
+        return { success: true, friendId, alias };
       }
 
       // ── Logic Nodes ──────────────────────────────────────────────────────

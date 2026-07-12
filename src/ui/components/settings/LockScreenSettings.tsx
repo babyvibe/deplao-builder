@@ -53,6 +53,8 @@ export default function LockScreenSettings() {
         setConfirmPassword('');
         // Show recovery key inline
         setRecoveryView('show');
+        // Notify App.tsx + TopBar to enable keyboard shortcut & lock icon
+        window.dispatchEvent(new CustomEvent('lockScreen:changed', { detail: { enabled: true } }));
       } else {
         setError(res.error || 'Lỗi thiết lập mật khẩu');
       }
@@ -110,6 +112,8 @@ export default function LockScreenSettings() {
         setEnabled(false);
         setPassword('');
         setSuccess('Đã tắt khoá màn hình');
+        // Notify App.tsx + TopBar to disable keyboard shortcut & lock icon
+        window.dispatchEvent(new CustomEvent('lockScreen:changed', { detail: { enabled: false } }));
       } else {
         setError(res.error || 'Mật khẩu không đúng');
       }

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useChatStore } from '@/store/chatStore';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
-import ipc from '@/lib/ipc';
+import ipc, { buildZaloAuth } from '@/lib/ipc';
 import DataAccessor from '@/lib/data/DataAccessor';
 import { useEmployeeStore } from '@/store/employeeStore';
 import { sendSeenForThread } from '@/lib/sendSeenHelper';
@@ -152,14 +152,60 @@ export default function ConversationList() {
     return m?.(params);
   }, [isEmp, activeAccountId]);
 
-  // ── Pagination: cố định 250 hội thoại mỗi trang, infinite scroll ──────
-  const PAGE_SIZE = 250;
+  // ── Pagination: cố định 200 hội thoại mỗi trang, infinite scroll ──────
+  const PAGE_SIZE = 200;
   const [displayCount, setDisplayCount] = useState(PAGE_SIZE);
+  const [conversationHasMore, setConversationHasMore] = useState(false);
+  const [conversationLoadingMore, setConversationLoadingMore] = useState(false);
+  const [conversationNextOffset, setConversationNextOffset] = useState(PAGE_SIZE);
+  const [conversationExhausted, setConversationExhausted] = useState(false);
   const listContainerRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
+  const loadMoreConversationsRef = useRef<() => void>(() => {});
 
   // Reset displayCount khi đổi account hoặc filter
-  useEffect(() => { setDisplayCount(PAGE_SIZE); }, [activeAccountId, filter, filterLabelIds, search, mergedInboxFilterAccount, channelFilter]);
+  useEffect(() => {
+    setDisplayCount(PAGE_SIZE);
+    setConversationHasMore(false);
+    setConversationNextOffset(PAGE_SIZE);
+    setConversationExhausted(false);
+  }, [activeAccountId, filter, filterLabelIds, search, mergedInboxFilterAccount, channelFilter]);
+
+  useEffect(() => {
+    if (!activeAccountId || mergedInboxMode || conversationExhausted) return;
+    const count = contacts[activeAccountId]?.length || 0;
+    if (count >= PAGE_SIZE) {
+      setConversationNextOffset(prev => Math.max(prev, count));
+      setConversationHasMore(true);
+    }
+  }, [activeAccountId, contacts, mergedInboxMode, conversationExhausted]);
+
+  const loadMoreConversations = useCallback(async () => {
+    if (!activeAccountId || mergedInboxMode || conversationLoadingMore || !conversationHasMore) return;
+    setConversationLoadingMore(true);
+    try {
+      const current = useChatStore.getState().contacts[activeAccountId] || [];
+      const result = await DataAccessor.getConversations(activeAccountId, PAGE_SIZE, conversationNextOffset);
+      const items = Array.isArray(result?.items) ? result.items : [];
+      if (items.length > 0) {
+        const seen = new Set(current.map((contact) => contact.contact_id));
+        const merged = [
+          ...current,
+          ...items.filter((contact: any) => !seen.has(contact.contact_id)),
+        ];
+        useChatStore.getState().setContacts(activeAccountId, merged);
+      }
+      setConversationNextOffset(prev => prev + items.length);
+      setConversationHasMore(!!result?.hasMore);
+      setConversationExhausted(!result?.hasMore);
+    } catch (err) {
+      console.warn('[ConversationList] Failed to load more contacts:', err);
+    } finally {
+      setConversationLoadingMore(false);
+    }
+  }, [activeAccountId, mergedInboxMode, conversationHasMore, conversationLoadingMore, conversationNextOffset]);
+
+  loadMoreConversationsRef.current = loadMoreConversations;
 
   // Infinite scroll: IntersectionObserver trên sentinel element
   useEffect(() => {
@@ -170,6 +216,7 @@ export default function ConversationList() {
       (entries) => {
         if (entries[0]?.isIntersecting) {
           setDisplayCount(prev => prev + PAGE_SIZE);
+          loadMoreConversationsRef.current();
         }
       },
       { root: container, threshold: 0.1 }
@@ -214,7 +261,7 @@ export default function ConversationList() {
     const acc = useAccountStore.getState().getActiveAccount();
     if (!acc) return;
     const isZalo = (acc.channel || 'zalo') === 'zalo';
-    const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+    const auth = buildZaloAuth(acc, activeAccountId);
 
     // Zalo-only APIs: labels, pin conversations
     if (isZalo) {
@@ -247,17 +294,31 @@ export default function ConversationList() {
   // de ConversationList tu load. Neu contacts rong → fetch tu DataAccessor.
   useEffect(() => {
     if (!activeAccountId) return;
-    const currentContacts = useChatStore.getState().contacts[activeAccountId];
-    if (currentContacts && currentContacts.length > 0) return;
+    const currentContacts = useChatStore.getState().contacts[activeAccountId] || [];
+    if (currentContacts.length > 0) {
+      setConversationNextOffset(currentContacts.length);
+      setConversationHasMore(currentContacts.length >= PAGE_SIZE && !conversationExhausted);
+      if (conversationExhausted || !isEmp || currentContacts.length >= PAGE_SIZE) return;
+    }
     if (useChatStore.getState().conversationsLoading) return;
 
     const loadContactsForAccount = async () => {
       useChatStore.getState().setConversationsLoading(true);
       try {
-        const result = await DataAccessor.getConversations(activeAccountId, 500, 0);
-        if (result?.items?.length) {
-          useChatStore.getState().setContacts(activeAccountId, result.items);
-          console.log(`[ConversationList] Loaded ${result.items.length} contacts for ${activeAccountId} via DataAccessor`);
+        const result = await DataAccessor.getConversations(activeAccountId, PAGE_SIZE, 0);
+        const items = Array.isArray(result?.items) ? result.items : [];
+        setConversationHasMore(!!result?.hasMore);
+        setConversationExhausted(!result?.hasMore);
+        setConversationNextOffset(items.length);
+        if (items.length) {
+          const existing = useChatStore.getState().contacts[activeAccountId] || [];
+          const seen = new Set(items.map((contact) => contact.contact_id));
+          const merged = [
+            ...items,
+            ...existing.filter((contact) => !seen.has(contact.contact_id)),
+          ];
+          useChatStore.getState().setContacts(activeAccountId, merged);
+          console.log(`[ConversationList] Loaded ${items.length} contacts for ${activeAccountId} via DataAccessor`);
         } else {
           console.warn(`[ConversationList] No contacts returned for ${activeAccountId}`);
         }
@@ -268,7 +329,7 @@ export default function ConversationList() {
       }
     };
     loadContactsForAccount();
-  }, [activeAccountId]);
+  }, [activeAccountId, isEmp, conversationExhausted]);
 
   // ─── Clear initial loading khi contacts load lần đầu ───────────────────
   // Trong employee mode với high ping, tránh hiển thị empty state trước khi fetch xong
@@ -507,7 +568,7 @@ export default function ConversationList() {
       const acc = useAccountStore.getState().getActiveAccount();
       if (!acc || (acc.channel || 'zalo') !== 'zalo') return; // Zalo-only API
 
-      const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+      const auth = buildZaloAuth(acc, accountId);
 
       // Batch getGroupInfo (max 10/request)
       const batchSize = 10;
@@ -620,7 +681,7 @@ export default function ConversationList() {
             onGroupEnriched: () => reloadFromDB(true),
           }).catch(err => console.warn(`[ConversationList] syncZaloGroups failed for ${groupId}:`, err));
         }
-        
+
         // Add small delay between API batches to avoid rate limiting
         if (i + batchSize < groupIds.length) {
           await new Promise(resolve => setTimeout(resolve, 300));
@@ -657,7 +718,7 @@ export default function ConversationList() {
           if (i > 0) {
             await new Promise(resolve => setTimeout(resolve, BATCH_DELAY));
           }
-          
+
           const batch = groupsNeedingAvatars.slice(i, i + BATCH_SIZE);
           for (const group of batch) {
             try {
@@ -700,7 +761,7 @@ export default function ConversationList() {
     if (!activeAccountId) return;
     const acc = useAccountStore.getState().getActiveAccount();
     if (!acc) return;
-    const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+    const auth = buildZaloAuth(acc, activeAccountId);
 
     // Delay nhỏ để contacts kịp load từ DB
     const timer = setTimeout(async () => {
@@ -1004,7 +1065,7 @@ export default function ConversationList() {
     if ((acc.channel || 'zalo') !== 'zalo') { setPhoneResult({ _notFound: true }); setPhoneSearching(false); return; }
     setPhoneSearching(true); setPhoneResult(null);
     try {
-      const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+      const auth = buildZaloAuth(acc);
       const res = await ipc.zalo?.findUser({ auth, phone: phone.trim() });
       const user = res?.response;
       if (user?.uid) {
@@ -1060,7 +1121,7 @@ export default function ConversationList() {
     const now = Date.now();
     if (now - lastLabelsFetchRef.current < 3_600_000) return; // debounce 1 giờ
     lastLabelsFetchRef.current = now;
-    const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+    const auth = buildZaloAuth(acc, activeAccountId);
     try {
       const res = await zaloApi('getLabels', { auth });
       if (res?.response?.labelData) {
@@ -1086,6 +1147,7 @@ export default function ConversationList() {
       console.warn(`[ConversationList] handleSelect: no zaloId (activeAccountId=${currentAccountId})`);
       return;
     }
+    useChatStore.getState().setMessagesLoading(true);
     setActiveThread(contactId, threadType);
     // On mobile, switch to chat detail view
     if (isMobile) setMobileShowChat(true);
@@ -1102,7 +1164,8 @@ export default function ConversationList() {
     // Load labels mỗi lần click hội thoại (debounced 30s) - chỉ ở chế độ thường
     if (!overrideZaloId) loadLabelsIfStale();
 
-    console.log(`[ConversationList] handleSelect: calling DataAccessor.getMessages zaloId=${zaloId} threadId=${contactId} isEmp=${useEmployeeStore.getState().mode}`);
+    try {
+      console.log(`[ConversationList] handleSelect: calling DataAccessor.getMessages zaloId=${zaloId} threadId=${contactId} isEmp=${useEmployeeStore.getState().mode}`);
     const res = await DataAccessor.getMessages({ zaloId, threadId: contactId, limit: 50, offset: 0 });
     const dbMessages = res?.messages || res?.items || [];
     console.log(`[ConversationList] handleSelect: result keys=${Object.keys(res||{}).join(',')} messages=${res?.messages?.length ?? 0} items=${res?.items?.length ?? 0}`);
@@ -1190,6 +1253,11 @@ export default function ConversationList() {
         }
       }
     }
+    } catch (err) {
+      console.warn(`[ConversationList] handleSelect error:`, err);
+    } finally {
+      useChatStore.getState().setMessagesLoading(false);
+    }
 
     // Auto-fetch contact info nếu chỉ có UID chưa có tên thật (fire-and-forget)
     if (threadType === 0) {
@@ -1200,7 +1268,7 @@ export default function ConversationList() {
           ? useAccountStore.getState().accounts.find(a => a.zalo_id === zaloId)
           : useAccountStore.getState().getActiveAccount();
         if (acc && (acc.channel || 'zalo') === 'zalo') {
-          const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+          const auth = buildZaloAuth(acc, zaloId || activeAccountId);
           ipc.zalo?.getUserInfo({ auth, zaloId, userId: contactId })
             .then((res: any) => {
               const rawProfile = res?.response?.changed_profiles?.[contactId]
@@ -1288,7 +1356,7 @@ export default function ConversationList() {
       await handleToggleLocalPin(contactId);
       return;
     }
-    const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+    const auth = buildZaloAuth(acc, activeAccountId);
     const result = await zaloApi('setPinConversation', { auth, conversations: [{ threadId: contactId, type: threadType }], isPin: !wasPinned });
     if (result?.success) {
       setPinnedThreads(prev => { const s = new Set(prev); wasPinned ? s.delete(contactId) : s.add(contactId); return s; });
@@ -1847,7 +1915,7 @@ export default function ConversationList() {
                           } else {
                             const acc = useAccountStore.getState().getActiveAccount();
                             if (!acc || !activeAccountId) return;
-                            const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+                            const auth = buildZaloAuth(acc, activeAccountId);
                             const res = await zaloApi('getLabels', { auth });
                             if (res?.response?.labelData) {
                               setLabels(activeAccountId, res.response.labelData);
@@ -2117,19 +2185,17 @@ export default function ConversationList() {
                   <img src={toLocalMediaUrl(contact.avatar_url)} alt="" className="w-10 h-10 rounded-full object-cover"
                     onError={() => {
                       setFailedAvatars(prev => new Set(prev).add(contact.contact_id));
-                      // Auto-refresh avatar cho Facebook contacts (CDN hết hạn → 403)
+                      // Retry avatar cho cả Zalo + Facebook
                       const ownerId = contact.owner_zalo_id || activeAccountId;
-                      if (ownerId && (contact.channel === 'facebook' || /^\d+$/.test(ownerId))) {
-                        ipc.fb.refreshContactAvatar({ accountId: ownerId, userId: contact.contact_id })
-                          .then(res => {
-                            if (res.success && res.avatarUrl) {
-                              updateContact(ownerId, {
-                                contact_id: contact.contact_id,
-                                avatar_url: res.avatarUrl,
-                              });
-                              setFailedAvatars(prev => { const next = new Set(prev); next.delete(contact.contact_id); return next; });
-                            }
-                          }).catch(() => {});
+                      if (ownerId) {
+                        import('@/lib/avatarRetry').then(({ handleAvatarError }) =>
+                          handleAvatarError({ ownerId, contactId: contact.contact_id, channel: contact.channel || 'zalo' })
+                        ).then(newUrl => {
+                          if (newUrl) {
+                            updateContact(ownerId, { contact_id: contact.contact_id, avatar_url: newUrl });
+                            setFailedAvatars(prev => { const next = new Set(prev); next.delete(contact.contact_id); return next; });
+                          }
+                        }).catch(() => {});
                       }
                     }} />
                 ) : (
@@ -2234,7 +2300,8 @@ export default function ConversationList() {
           );
         })}
         {/* Sentinel element for infinite scroll */}
-        {displayCount < (mergedInboxMode ? filteredMerged?.length ?? 0 : filtered.length) && (
+        {(displayCount < (mergedInboxMode ? filteredMerged?.length ?? 0 : filtered.length)
+          || (!mergedInboxMode && conversationHasMore)) && (
           <div ref={sentinelRef} className="h-1 w-full" />
         )}
       </div>
@@ -2355,7 +2422,7 @@ export default function ConversationList() {
             setSendingFriendReq(true);
             try {
               await ipc.zalo?.sendFriendRequest({
-                auth: { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent },
+                auth: buildZaloAuth(acc),
                 userId: addFriendModal.userId,
                 msg,
               });
@@ -2436,7 +2503,7 @@ function formatLastMessage(msg: string | undefined): string {
     // Handle chat.recommended messages
     if (action.startsWith('recommened.') || action.startsWith('chat.recommended')) {
       const params = (() => { try { const pr = p?.params; return typeof pr === 'string' ? JSON.parse(pr) : (pr || {}); } catch { return {}; } })();
-      
+
       // Link preview (recommened.link) - show media title prominently
       if (action === 'recommened.link') {
         const mediaTitle = params.mediaTitle || params.src || '';
@@ -2454,7 +2521,7 @@ function formatLastMessage(msg: string | undefined): string {
         }
         return 'Link: ';
       }
-      
+
       // Other recommended messages (text suggestions, etc.)
       const textContent = params.content || params.message || params.text || p?.content || p?.msg;
       if (textContent && typeof textContent === 'string' && textContent.trim()) {

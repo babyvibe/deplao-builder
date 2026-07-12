@@ -30,7 +30,7 @@ import { useCRMStore } from './store/crmStore';
 import { useZaloEvents } from './hooks/useZaloEvents';
 import { useChatEvents } from './hooks/useChatEvents';
 import useIsMobile from './hooks/useIsMobile';
-import ipc from './lib/ipc';
+import ipc, { buildZaloAuth } from './lib/ipc';
 import { sendSeenForThread } from './lib/sendSeenHelper';
 import { getFilteredUnreadCount } from './lib/badgeUtils';
 import DataAccessor from './lib/data/DataAccessor';
@@ -104,6 +104,48 @@ function buildCurrentEmployeeFromWorkspace(ws: any) {
   };
 }
 
+function ensureActiveAccount(accounts: Array<{ zalo_id: string }>) {
+  if (!accounts.length) return;
+  const accountStore = useAccountStore.getState();
+  const activeAccountStillVisible = !!accountStore.activeAccountId
+    && accounts.some((account) => account.zalo_id === accountStore.activeAccountId);
+  if (!activeAccountStillVisible) {
+    accountStore.setActiveAccount(accounts[0].zalo_id);
+  }
+}
+
+async function loadEmployeeConversationsForAccounts(accounts: Array<{ zalo_id: string }>, limit = 200) {
+  if (!accounts.length) return;
+  const chatStore = useChatStore.getState();
+  chatStore.setConversationsLoading(true);
+  try {
+    for (const account of accounts) {
+      const existing = useChatStore.getState().contacts[account.zalo_id];
+      if ((existing?.length || 0) >= limit) continue;
+
+      try {
+        const result = await DataAccessor.getConversations(account.zalo_id, limit, 0);
+        const items = Array.isArray(result?.items) ? result.items : [];
+        if (items.length > 0) {
+          console.log(`[App] Loaded ${items.length} conversations from REST for ${account.zalo_id}`);
+          const current = useChatStore.getState().contacts[account.zalo_id] || [];
+          const seen = new Set(items.map((contact: any) => contact.contact_id));
+          useChatStore.getState().setContacts(account.zalo_id, [
+            ...items,
+            ...current.filter((contact: any) => !seen.has(contact.contact_id)),
+          ]);
+        } else {
+          console.warn(`[App] REST returned 0 conversations for ${account.zalo_id}`);
+        }
+      } catch (err) {
+        console.warn(`[App] Failed to load conversations from REST for ${account.zalo_id}:`, err);
+      }
+    }
+  } finally {
+    useChatStore.getState().setConversationsLoading(false);
+  }
+}
+
 export default function App() {
   const {
     view, setView, notification, hideNotification,
@@ -156,7 +198,7 @@ export default function App() {
         const wsRes = await ipc.workspace?.getActive();
         const ws = wsRes?.workspace;
         if (ws?.type === 'remote' && ws.bossUrl && ws.token) {
-          const mod = require('../services/http/RestQueryService');
+          const mod = await import('../services/http/RestQueryService');
           if (mod?.default?.getInstance) {
             mod.default.getInstance().init(ws.bossUrl, ws.token);
             console.log(`[App] ⚡ Early RestQueryService init: ${ws.bossUrl}`);
@@ -183,6 +225,17 @@ export default function App() {
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, [lockEnabled]);
+
+  // ─── Lock screen: react to enable/disable from Settings ───────────────
+  useEffect(() => {
+    const handleChanged = (e: Event) => {
+      const enabled = (e as CustomEvent).detail?.enabled ?? false;
+      setLockEnabled(enabled);
+      if (enabled) setIsLocked(true);
+    };
+    window.addEventListener('lockScreen:changed', handleChanged);
+    return () => window.removeEventListener('lockScreen:changed', handleChanged);
+  }, []);
 
   // ─── Account switcher (Ctrl+Tab): global keyboard handler ──────────────
   useEffect(() => {
@@ -242,6 +295,7 @@ export default function App() {
         chat:        'chat',
         friends:     'friends',
         crm:         'crm',
+        erp:         'erp',
         workflow:    'workflow',
         integration: 'integration',
         analytics:   'analytics',
@@ -308,7 +362,7 @@ export default function App() {
     reconnectCooldownRef.current.set(acc.zalo_id, now);
 
     try {
-      const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+      const auth = buildZaloAuth(acc);
       const res = await ipc.login?.connectAccount(auth);
 
       if (!res?.success) {
@@ -398,7 +452,7 @@ export default function App() {
   const handleFriendRequestAccept = async (zaloId: string, userId: string) => {
     const acc = accounts.find(a => a.zalo_id === zaloId);
     if (!acc) return;
-    const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+    const auth = buildZaloAuth(acc, zaloId);
     await ipc.zalo?.acceptFriendRequest({ auth, userId });
     await DataAccessor.removeFriendRequest({ zaloId, userId, direction: 'received' }).catch(() => {});
     await DataAccessor.getFriendRequests({ zaloId, direction: 'received' }).then((res: any) => {
@@ -416,7 +470,7 @@ export default function App() {
   const handleFriendRequestReject = async (zaloId: string, userId: string) => {
     const acc = accounts.find(a => a.zalo_id === zaloId);
     if (!acc) return;
-    const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+    const auth = buildZaloAuth(acc, zaloId);
     await ipc.zalo?.rejectFriendRequest({ auth, userId });
     await DataAccessor.removeFriendRequest({ zaloId, userId, direction: 'received' }).catch(() => {});
     await DataAccessor.getFriendRequests({ zaloId, direction: 'received' }).then((res: any) => {
@@ -519,7 +573,7 @@ export default function App() {
         // Init RestQueryService để employee có thể gọi REST API
         if (ws.bossUrl && ws.token) {
           try {
-            const mod = require('../services/http/RestQueryService');
+            const mod = await import('../services/http/RestQueryService');
             if (mod?.default?.getInstance) {
               mod.default.getInstance().init(ws.bossUrl, ws.token);
             }
@@ -690,6 +744,7 @@ export default function App() {
       // Populate account store with account data from boss for the active workspace only
       if (cachedAccounts.length > 0) {
         setAccounts(cachedAccounts as any);
+        ensureActiveAccount(cachedAccounts);
         console.log(`[App] Accounts set from initialState: ${cachedAccounts.length} accounts`, cachedAccounts.map(a => ({ zalo_id: a.zalo_id, full_name: a.full_name })));
 
         // Load conversations từ Boss qua REST API (chỉ khi chưa có)
@@ -700,7 +755,7 @@ export default function App() {
           (async () => {
             for (const acc of cachedAccounts) {
               try {
-                const result = await DataAccessor.getConversations(acc.zalo_id, 50, 0);
+                const result = await DataAccessor.getConversations(acc.zalo_id, 200, 0);
                 if (result?.items && result.items.length > 0) {
                   console.log(`[App] ✅ Loaded ${result.items.length} conversations from REST for ${acc.zalo_id}`);
                   useChatStore.getState().setContacts(acc.zalo_id, result.items);
@@ -769,6 +824,54 @@ export default function App() {
         : useAccountStore.getState().accounts.filter(a => assignedSet.has(a.zalo_id));
 
       setAccounts(nextAccounts as any);
+      ensureActiveAccount(nextAccounts);
+      loadEmployeeConversationsForAccounts(nextAccounts);
+    });
+    return () => unsub?.();
+  }, []);
+
+  // ─── Handle relay:permissionUpdate (boss changed ERP/permissions — no throttle) ─────
+  useEffect(() => {
+    const unsub = window.electronAPI?.on('workspace:permissionUpdate', async (data: any) => {
+      if (!data?.workspaceId) return;
+
+      const permissions = data.permissions || [];
+      const erpRole = data.erpRole || '';
+      const erpExtraJson = data.erpExtraJson || '';
+      const employeesData = data.employeesData || [];
+
+      // Update workspace cache
+      await ipc.workspace?.update(data.workspaceId, {
+        cachedPermissions: permissions,
+        cachedErpRole: erpRole,
+        cachedErpExtraJson: erpExtraJson,
+        cachedEmployeesData: employeesData,
+      }).catch(() => null);
+      useWorkspaceStore.getState().setWorkspaces(
+        useWorkspaceStore.getState().workspaces.map((ws: any) => ws.id === data.workspaceId
+          ? { ...ws, cachedPermissions: permissions, cachedErpRole: erpRole, cachedErpExtraJson: erpExtraJson, cachedEmployeesData: employeesData }
+          : ws)
+      );
+
+      const activeWorkspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+      if (data.workspaceId !== activeWorkspaceId) return;
+
+      // Update employee store immediately — no throttle
+      const empStore = useEmployeeStore.getState();
+      const permsMap = buildPermissionsMap(permissions);
+      empStore.setPermissions(permsMap);
+      empStore.setEmployees(employeesData);
+      empStore.setCurrentEmployee(buildCurrentEmployeeFromWorkspace({
+        ...useWorkspaceStore.getState().activeWorkspace(),
+        cachedPermissions: permissions,
+        cachedEmployeesData: employeesData,
+      }));
+
+      console.log('[App] workspace:permissionUpdate applied', {
+        workspaceId: data.workspaceId,
+        erpRole,
+        permCount: permissions.length,
+      });
     });
     return () => unsub?.();
   }, []);
@@ -1031,7 +1134,7 @@ export default function App() {
             for (const acc of accountsRes.accounts) {
               if ((acc.channel || 'zalo') !== 'zalo') continue; // Skip FB accounts
               if (!acc.isConnected) {
-                const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+                const auth = buildZaloAuth(acc);
                 ipc.login?.connectAccount(auth).catch(() => {});
               }
             }
@@ -1091,7 +1194,7 @@ export default function App() {
             // Init RestQueryService
             if (activeWs.bossUrl && activeWs.token) {
               try {
-                const mod = require('../services/http/RestQueryService');
+                const mod = await import('../services/http/RestQueryService');
                 if (mod?.default?.getInstance) {
                   const rqs = mod.default.getInstance();
                   rqs.init(activeWs.bossUrl, activeWs.token);
@@ -1119,7 +1222,10 @@ export default function App() {
             empStore.setAssignedAccounts(activeWs.cachedAssignedAccounts || []);
 
             if (useAccountStore.getState().accounts.length === 0 && activeWs.cachedAccountsData?.length) {
-              setAccounts(normalizeWorkspaceAccounts(activeWs.cachedAccountsData) as any);
+              const cachedAccounts = normalizeWorkspaceAccounts(activeWs.cachedAccountsData);
+              setAccounts(cachedAccounts as any);
+              ensureActiveAccount(cachedAccounts);
+              loadEmployeeConversationsForAccounts(cachedAccounts);
             }
 
           }

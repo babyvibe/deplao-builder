@@ -18,6 +18,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAccountStore } from '@/store/accountStore';
+import { buildZaloAuth } from '@/lib/ipc';
 import { ChatIcon, CheckIcon, ClipboardListIcon, LightningIcon, SendIcon, TagIcon, UserCheckIcon, UsersIcon } from '@/components/common/icons';
 import {
   runAccountInit,
@@ -141,7 +142,7 @@ export default function AccountInitPanel({ accountId, onClose }: Props) {
       });
     } else {
       // Zalo init flow
-      const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+      const auth = buildZaloAuth(acc, accountId);
       checkAccountInitNeeds(accountId).then(initNeeds => {
         if (!initNeeds.any) { onClose(); return; }
         setNeeds(initNeeds);

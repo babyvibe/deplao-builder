@@ -1100,6 +1100,50 @@ export class DataAccessor {
     catch { return { success: false }; }
   }
 
+  /**
+   * Upload a local file to boss media storage. Returns boss path.
+   * - Boss mode: file already local, return as-is
+   * - Employee mode: read file as base64, upload to boss via REST
+   */
+  static async uploadMediaFile(filePath: string, zaloId?: string): Promise<{ success: boolean; bossPath?: string; error?: string }> {
+    if (!filePath) return { success: false, error: 'No file path' };
+
+    // Boss mode: file is already on boss machine
+    if (!isEmployee()) {
+      return { success: true, bossPath: filePath };
+    }
+
+    // Employee mode: upload to boss
+    try {
+      // Read file as base64 via IPC
+      const readResult = await (window as any).electronAPI?.file?.readImageAsBase64?.({ localPath: filePath });
+      if (!readResult?.success || !readResult?.base64) {
+        return { success: false, error: 'Cannot read file' };
+      }
+
+      // Convert base64 to Uint8Array
+      const binaryStr = atob(readResult.base64);
+      const bytes = new Uint8Array(binaryStr.length);
+      for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+
+      // Extract filename from path
+      const filename = filePath.replace(/^.*[/\\]/, '') || 'file.jpg';
+
+      // Upload to boss
+      const result = await rest().postBinary('/api/media/upload', bytes, {
+        'X-Filename': encodeURIComponent(filename),
+        ...(zaloId ? { 'X-Zalo-Id': zaloId } : {}),
+      });
+
+      if (result?.success && result.data?.bossPath) {
+        return { success: true, bossPath: result.data.bossPath };
+      }
+      return { success: false, error: result?.error || 'Upload failed' };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
   static async createLibraryFolder(params: {
     zaloId: string; name: string; parentId?: number | null; color?: string; type?: string;
   }) {
@@ -1265,6 +1309,168 @@ export class DataAccessor {
       return { success: true, ...res.data, assistants: res.data?.items };
     }
     return window.electronAPI.ai?.getAccountAssistants(zaloId);
+  }
+
+  // ═════════════════════════════════════════════════════════════════
+  // ERP TASKS & PROJECTS
+  // ═════════════════════════════════════════════════════════════════
+
+  static async erpProjects(params?: { archived?: boolean }) {
+    if (isEmployee()) {
+      return rest().get('/api/query/erp/projects', params);
+    }
+    return window.electronAPI.erp?.projectList(params);
+  }
+
+  static async erpTasks(filter?: Record<string, any>) {
+    if (isEmployee()) {
+      return rest().get('/api/query/erp/tasks', filter);
+    }
+    return window.electronAPI.erp?.taskList(filter);
+  }
+
+  static async erpTaskDetail(id: string) {
+    if (isEmployee()) {
+      return rest().get(`/api/query/erp/tasks/${id}`);
+    }
+    return window.electronAPI.erp?.taskGet({ id });
+  }
+
+  static async erpMyInbox(filter?: string) {
+    if (isEmployee()) {
+      return rest().get('/api/query/erp/tasks/inbox', { filter });
+    }
+    return window.electronAPI.erp?.taskListMyInbox({ filter });
+  }
+
+  static async erpCreateTask(input: any) {
+    if (isEmployee()) {
+      return rest().post('/api/command/erp/tasks', { input });
+    }
+    return window.electronAPI.erp?.taskCreate({ input });
+  }
+
+  static async erpUpdateTask(id: string, patch: any) {
+    if (isEmployee()) {
+      return rest().patch(`/api/command/erp/tasks/${id}`, { patch });
+    }
+    return window.electronAPI.erp?.taskUpdate({ id, patch });
+  }
+
+  static async erpUpdateTaskStatus(id: string, status: string) {
+    if (isEmployee()) {
+      return rest().patch(`/api/command/erp/tasks/${id}/status`, { status });
+    }
+    return window.electronAPI.erp?.taskUpdateStatus({ id, status });
+  }
+
+  static async erpDeleteTask(id: string) {
+    if (isEmployee()) {
+      return rest().delete(`/api/command/erp/tasks/${id}`);
+    }
+    return window.electronAPI.erp?.taskDelete({ id });
+  }
+
+  static async erpAssignTask(id: string, employeeIds: string[]) {
+    if (isEmployee()) {
+      return rest().post('/api/command/erp/tasks/assign', { id, employeeIds });
+    }
+    return window.electronAPI.erp?.taskAssign({ id, employeeIds });
+  }
+
+  static async erpAddWatcher(taskId: string, employeeId?: string) {
+    if (isEmployee()) {
+      return rest().post('/api/command/erp/tasks/watcher', { taskId, employeeId, action: 'add' });
+    }
+    return window.electronAPI.erp?.taskAddWatcher?.({ taskId, employeeId });
+  }
+
+  static async erpRemoveWatcher(taskId: string, employeeId?: string) {
+    if (isEmployee()) {
+      return rest().post('/api/command/erp/tasks/watcher', { taskId, employeeId, action: 'remove' });
+    }
+    return window.electronAPI.erp?.taskRemoveWatcher?.({ taskId, employeeId });
+  }
+
+  static async erpAddComment(taskId: string, content: string, mentions?: string[]) {
+    if (isEmployee()) {
+      return rest().post('/api/command/erp/tasks/comment', { taskId, content, mentions });
+    }
+    return window.electronAPI.erp?.taskAddComment?.({ taskId, content, mentions });
+  }
+
+  static async erpTaskChecklistToggle(id: number, done: boolean) {
+    if (isEmployee()) {
+      return rest().patch(`/api/command/erp/tasks/checklist/${id}/toggle`, { done });
+    }
+    return window.electronAPI.erp?.taskToggleChecklist?.({ id, done });
+  }
+
+  static async erpCreateProject(params: { name: string; description?: string; color?: string; department_id?: string }) {
+    if (isEmployee()) {
+      return rest().post('/api/command/erp/projects', params);
+    }
+    return window.electronAPI.erp?.projectCreate(params);
+  }
+
+  // ── ERP Employee Profiles ──
+
+  static async erpDepartments() {
+    if (isEmployee()) {
+      return rest().get('/api/query/erp/departments');
+    }
+    return window.electronAPI.erp?.departmentList?.();
+  }
+
+  static async erpPositions() {
+    if (isEmployee()) {
+      return rest().get('/api/query/erp/positions');
+    }
+    return window.electronAPI.erp?.positionList?.();
+  }
+
+  static async erpProfiles(departmentId?: number | null) {
+    if (isEmployee()) {
+      return rest().get('/api/query/erp/profiles', departmentId ? { departmentId } : undefined);
+    }
+    return window.electronAPI.erp?.employeeListByDepartment?.({ departmentId });
+  }
+
+  static async erpProfile(employeeId: string) {
+    if (isEmployee()) {
+      return rest().get(`/api/query/erp/profiles/${employeeId}`);
+    }
+    return window.electronAPI.erp?.employeeGetProfile?.({ employeeId });
+  }
+
+  // ── ERP Calendar ──
+
+  static async erpCalendarEvents(params: { from: number; to: number; organizerId?: string }) {
+    if (isEmployee()) {
+      return rest().get('/api/query/erp/calendar/events', params);
+    }
+    return window.electronAPI.erp?.calendarListEvents(params);
+  }
+
+  static async erpCalendarCreate(input: any) {
+    if (isEmployee()) {
+      return rest().post('/api/command/erp/calendar', { input });
+    }
+    return window.electronAPI.erp?.calendarCreate({ input });
+  }
+
+  static async erpCalendarUpdate(id: string, patch: any) {
+    if (isEmployee()) {
+      return rest().patch(`/api/command/erp/calendar/${id}`, { patch });
+    }
+    return window.electronAPI.erp?.calendarUpdate({ id, patch });
+  }
+
+  static async erpCalendarDelete(id: string) {
+    if (isEmployee()) {
+      return rest().delete(`/api/command/erp/calendar/${id}`);
+    }
+    return window.electronAPI.erp?.calendarDelete({ id });
   }
 
 }

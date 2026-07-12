@@ -3,7 +3,7 @@ import { useChatStore } from '@/store/chatStore';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
 import DataAccessor from '@/lib/data/DataAccessor';
-import ipc from '@/lib/ipc';
+import ipc, { buildZaloAuth } from '@/lib/ipc';
 import PhoneDisplay from '../common/PhoneDisplay';
 import { CreateGroupModal } from './GroupModals';
 import GroupInfoPanel from './GroupInfoPanel';
@@ -101,7 +101,7 @@ function UserConversationInfo() {
   const getAuth = () => {
     const acc = getActiveAccount();
     if (!acc) return null;
-    return { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+    return buildZaloAuth(acc, activeAccountId);
   };
 
   // Load pin status on mount / thread change
@@ -456,7 +456,7 @@ function UserConversationInfo() {
     if (!activeAccountId || !activeThreadId) return;
     const acc = getActiveAccount();
     if (!acc) return;
-    const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+    const auth = buildZaloAuth(acc, activeAccountId);
     setMutualGroupsLoading(true);
     ipc.zalo?.getRelatedFriendGroup({ auth, userId: activeThreadId })
       .then((res: any) => {

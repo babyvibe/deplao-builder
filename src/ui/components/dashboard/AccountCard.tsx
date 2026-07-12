@@ -2,7 +2,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { AccountInfo } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
 import { useAccountStore } from '@/store/accountStore';
-import ipc from '@/lib/ipc'
+import ipc, { buildZaloAuth } from '@/lib/ipc'
+import { handleAvatarError } from '@/lib/avatarRetry'
 import DataAccessor from '@/lib/data/DataAccessor';;
 import { formatPhone } from '@/utils/phoneUtils';
 import PhoneDisplay from '../common/PhoneDisplay';
@@ -76,6 +77,8 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
   const [menuOpen, setMenuOpen] = useState(false);
   const [updatingInfo, setUpdatingInfo] = useState(false);
   const [fbCookieModalOpen, setFbCookieModalOpen] = useState(false);
+  const [avatarFailed, setAvatarFailed] = useState(false);
+  const avatarRetryDone = useRef(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const isFacebook = (acc.channel || 'zalo') === 'facebook';
 
@@ -108,7 +111,7 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
         }
         return;
       }
-      const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+      const auth = buildZaloAuth(acc);
       const res = await ipc.login?.connectAccount(auth);
       if (res?.success) {
         updateAccountStatus(acc.zalo_id, true, true);
@@ -170,7 +173,7 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
     setMenuOpen(false);
     setUpdatingInfo(true);
     try {
-      const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+      const auth = buildZaloAuth(acc);
       const res = await ipc.zalo?.getContext({ auth });
       if (res?.success && res.response) {
         const ctx = res.response;
@@ -256,8 +259,22 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
       {/* Header */}
       <div className="flex items-center gap-3 mb-3">
         <div className="relative flex-shrink-0">
-          {acc.avatar_url ? (
-            <img src={acc.avatar_url} alt="" className="w-12 h-12 rounded-full object-cover" />
+          {acc.avatar_url && !avatarFailed ? (
+            <img src={acc.avatar_url} alt="" className="w-12 h-12 rounded-full object-cover"
+              onError={() => {
+                setAvatarFailed(true);
+                // Retry: gọi API refresh avatar
+                if (!avatarRetryDone.current) {
+                  avatarRetryDone.current = true;
+                  handleAvatarError({ ownerId: acc.zalo_id, contactId: acc.zalo_id, channel: acc.channel || 'zalo' })
+                    .then(newUrl => {
+                      if (newUrl) {
+                        useAccountStore.getState().updateAccount(acc.zalo_id, { avatar_url: newUrl });
+                        setAvatarFailed(false);
+                      }
+                    }).catch(() => {});
+                }
+              }} />
           ) : (
             <div className={`w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-lg ${isFacebook ? 'bg-blue-800' : 'bg-blue-600'}`}>
               {isFacebook ? (

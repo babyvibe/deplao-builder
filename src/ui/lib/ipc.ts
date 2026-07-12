@@ -693,5 +693,20 @@ export const ipc = {
   removeAllListeners: window.electronAPI?.removeAllListeners,
 };
 
+/**
+ * Build auth object cho Zalo IPC calls, luôn kèm accountId để resolveZaloId
+ * fallback đúng khi cookies rỗng + có nhiều connections active.
+ *
+ * Dùng thay vì `{ cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent }`
+ */
+export function buildZaloAuth(acc: { cookies?: string; imei?: string; user_agent?: string; zalo_id?: string }, accountId?: string) {
+  return {
+    cookies: acc.cookies || '',
+    imei: acc.imei || '',
+    userAgent: acc.user_agent || '',
+    accountId: accountId || acc.zalo_id || '',
+  };
+}
+
 export default ipc;
 

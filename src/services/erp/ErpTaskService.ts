@@ -465,14 +465,14 @@ export default class ErpTaskService {
 
   // ─── My Inbox ──────────────────────────────────────────────────────────────
 
-  getMyInbox(employeeId: string, filter: TaskInboxFilter): ErpTask[] {
+  getMyInbox(employeeId: string, filter: TaskInboxFilter, viewAll = false): ErpTask[] {
     const now = Date.now();
     const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
     const todayEnd   = new Date(); todayEnd.setHours(23, 59, 59, 999);
     const weekEnd    = new Date(todayEnd); weekEnd.setDate(weekEnd.getDate() + 7);
 
     let condition = '';
-    const params: any[] = [employeeId];
+    const params: any[] = [];
 
     if (filter === 'today') {
       condition = 'AND (t.due_date BETWEEN ? AND ? OR t.due_date IS NULL)';
@@ -487,19 +487,35 @@ export default class ErpTaskService {
       condition = 'AND t.due_date > ?';
       params.push(weekEnd.getTime());
     } else if (filter === 'all') {
-      // No date filter - show every assigned task that's still active.
       condition = `AND t.status != 'cancelled'`;
     }
 
+    // Boss/admin: xem tất cả tasks, không filter theo nhân viên
+    if (viewAll) {
+      return this.db().query<any>(`
+        SELECT t.*,
+          (SELECT GROUP_CONCAT(employee_id) FROM erp_task_assignees WHERE task_id = t.id) as assignees_raw,
+          (SELECT GROUP_CONCAT(employee_id) FROM erp_task_watchers WHERE task_id = t.id) as watchers_raw
+        FROM erp_tasks t
+        WHERE t.archived = 0 ${condition}
+        ORDER BY t.due_date ASC, t.priority DESC
+      `, params).map(row => this._inflateTaskRow(row));
+    }
+
+    // Employee: chỉ xem task mình liên quan (assignee/watcher/reporter)
     return this.db().query<any>(`
       SELECT t.*,
         (SELECT GROUP_CONCAT(employee_id) FROM erp_task_assignees WHERE task_id = t.id) as assignees_raw,
         (SELECT GROUP_CONCAT(employee_id) FROM erp_task_watchers WHERE task_id = t.id) as watchers_raw
       FROM erp_tasks t
-      JOIN erp_task_assignees a ON a.task_id = t.id AND a.employee_id = ?
       WHERE t.archived = 0 ${condition}
+        AND (
+          EXISTS (SELECT 1 FROM erp_task_assignees a WHERE a.task_id = t.id AND a.employee_id = ?)
+          OR EXISTS (SELECT 1 FROM erp_task_watchers w WHERE w.task_id = t.id AND w.employee_id = ?)
+          OR t.reporter_id = ?
+        )
       ORDER BY t.due_date ASC, t.priority DESC
-    `, params).map(row => this._inflateTaskRow(row));
+    `, [...params, employeeId, employeeId, employeeId]).map(row => this._inflateTaskRow(row));
   }
 
   // ─── Private helpers ───────────────────────────────────────────────────────

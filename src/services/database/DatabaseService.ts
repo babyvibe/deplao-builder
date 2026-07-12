@@ -110,7 +110,19 @@ class DatabaseService {
             }
 
             // Open DB with better-sqlite3 (native SQLite, memory-mapped I/O)
-            db = this.openDb(this.dbPath);
+            try {
+                db = this.openDb(this.dbPath);
+            } catch (openErr: any) {
+                // First open failed - try recovery: clean stale WAL/SHM from crash/update
+                Logger.warn(`[DatabaseService] First open failed: ${openErr.message}. Attempting WAL/SHM cleanup...`);
+                const walPath = this.dbPath + '-wal';
+                const shmPath = this.dbPath + '-shm';
+                try { if (fs.existsSync(walPath)) fs.unlinkSync(walPath); } catch {}
+                try { if (fs.existsSync(shmPath)) fs.unlinkSync(shmPath); } catch {}
+                // Retry open after cleanup
+                db = this.openDb(this.dbPath);
+                Logger.log(`[DatabaseService] Recovery successful after WAL/SHM cleanup`);
+            }
 
             this.createTables();
             this.migrate();
@@ -121,16 +133,60 @@ class DatabaseService {
             Logger.log(`[DatabaseService] Initialized at ${this.dbPath} (better-sqlite3, WAL mode)`);
         } catch (error: any) {
             Logger.error(`[DatabaseService] Failed to initialize: ${error.message}`);
-            // Fall back to in-memory db so app still runs
+            // ⚠️ DO NOT silently fall back to in-memory DB - this causes "lost data" after updates.
+            // Instead, try to show a dialog and let the user decide.
             try {
-                db = new BetterSqlite3(':memory:');
-                this.createTables();
-                this.migrate();
-                this.initErpSchema();
-                this.initialized = true;
-                Logger.warn(`[DatabaseService] Using in-memory database as fallback`);
-            } catch (e2: any) {
-                Logger.error(`[DatabaseService] In-memory fallback also failed: ${e2.message}`);
+                const { dialog } = require('electron');
+                const choice = dialog.showMessageBoxSync({
+                    type: 'error',
+                    title: 'Lỗi khởi tạo database',
+                    message: 'Không thể mở file database. Dữ liệu có thể bị lỗi sau khi cập nhật.',
+                    detail: `Path: ${this.dbPath}\nError: ${error.message}\n\nBạn muốn thử khôi phục không?`,
+                    buttons: ['Thử khôi phục', 'Thoát'],
+                    defaultId: 0,
+                    cancelId: 1,
+                });
+                if (choice === 0) {
+                    // Attempt recovery: backup corrupt DB and create fresh one
+                    try {
+                        const backupPath = `${this.dbPath}.corrupt-${Date.now()}.bak`;
+                        if (fs.existsSync(this.dbPath)) {
+                            fs.copyFileSync(this.dbPath, backupPath);
+                            Logger.warn(`[DatabaseService] Backed up corrupt DB to: ${backupPath}`);
+                        }
+                        // Delete corrupt files
+                        try { fs.unlinkSync(this.dbPath); } catch {}
+                        try { fs.unlinkSync(this.dbPath + '-wal'); } catch {}
+                        try { fs.unlinkSync(this.dbPath + '-shm'); } catch {}
+                        // Create fresh DB
+                        db = this.openDb(this.dbPath);
+                        this.createTables();
+                        this.migrate();
+                        this.migrateFTS5();
+                        this.migrateMediaLibrary();
+                        this.initErpSchema();
+                        this.initialized = true;
+                        Logger.warn(`[DatabaseService] Created fresh DB after recovery. Backup at: ${backupPath}`);
+                    } catch (recoveryErr: any) {
+                        Logger.error(`[DatabaseService] Recovery also failed: ${recoveryErr.message}`);
+                        app.quit();
+                    }
+                } else {
+                    app.quit();
+                }
+            } catch (dialogErr: any) {
+                // dialog not available (very early init), fall back to in-memory as last resort
+                Logger.error(`[DatabaseService] Dialog failed, using in-memory fallback: ${dialogErr.message}`);
+                try {
+                    db = new BetterSqlite3(':memory:');
+                    this.createTables();
+                    this.migrate();
+                    this.initErpSchema();
+                    this.initialized = true;
+                    Logger.warn(`[DatabaseService] Using in-memory database as last-resort fallback`);
+                } catch (e2: any) {
+                    Logger.error(`[DatabaseService] In-memory fallback also failed: ${e2.message}`);
+                }
             }
         }
     }
@@ -157,6 +213,26 @@ class DatabaseService {
             }
         } catch (err: any) {
             Logger.warn(`[DatabaseService] WAL checkpoint error: ${err.message}`);
+        }
+    }
+
+    /**
+     * Close the database connection and release file locks.
+     * MUST be called in before-quit to ensure WAL/SHM files are released
+     * before the NSIS installer runs (prevents DB corruption during updates).
+     */
+    public close(): void {
+        try {
+            if (db) {
+                // Flush WAL first
+                try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch {}
+                db.close();
+                db = null;
+                this.initialized = false;
+                Logger.log(`[DatabaseService] DB closed cleanly: ${this.dbPath}`);
+            }
+        } catch (err: any) {
+            Logger.warn(`[DatabaseService] DB close error: ${err.message}`);
         }
     }
 
@@ -3913,14 +3989,6 @@ class DatabaseService {
             return String(msgObj.thumb || '');
         }
         return '';
-    }
-
-    public close(): void {
-        if (db) {
-            try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch {}
-            db.close();
-            db = null;
-        }
     }
 
     public getDbPath(): string {

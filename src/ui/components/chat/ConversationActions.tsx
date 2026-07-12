@@ -17,7 +17,7 @@ import React, { useEffect, useState } from 'react';
 import { useChatStore } from '@/store/chatStore';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
-import ipc from '@/lib/ipc'
+import ipc, { buildZaloAuth } from '@/lib/ipc'
 import DataAccessor from '@/lib/data/DataAccessor';;
 import { showConfirm } from '../common/ConfirmDialog';
 import { extractApiError } from '@/utils/apiError';
@@ -30,7 +30,7 @@ function useAuth() {
   return () => {
     const acc = getActiveAccount();
     if (!acc) return null;
-    return { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+    return buildZaloAuth(acc);
   };
 }
 
@@ -378,7 +378,7 @@ export function MutualGroupsRow({ userId, onOpen }: MutualGroupsRowProps) {
     if (!activeAccountId || !userId) return;
     const acc = useAccountStore.getState().getActiveAccount();
     if (!acc) return;
-    const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+    const auth = buildZaloAuth(acc, activeAccountId);
     ipc.zalo?.getRelatedFriendGroup({ auth, userId })
       .then((res: any) => {
         if (!res?.success || !res.response) return;

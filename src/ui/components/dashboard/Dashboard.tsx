@@ -7,7 +7,7 @@ import { useVisibleAccounts } from '@/hooks/useVisibleAccounts';
 import AccountCard from './AccountCard';
 import MergedInboxModal from './MergedInboxModal';
 import EmployeeLoginModal from './EmployeeLoginModal';
-import ipc from '@/lib/ipc';
+import ipc, { buildZaloAuth } from '@/lib/ipc';
 import PageLoading from '@/components/common/PageLoading';
 import { BugIcon, HomeIcon, RefreshIcon, SunIcon, TargetIcon, UserIcon, UsersIcon } from '@/components/common/icons';
 
@@ -41,7 +41,7 @@ export default function Dashboard() {
   const handleReconnect = async (acc: any) => {
     showNotification(`Đang kết nối ${acc.full_name || acc.zalo_id}...`, 'info');
     try {
-      const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+      const auth = buildZaloAuth(acc);
       // In employee/remote mode, proxy the reconnect to the Boss
       const res = isRemoteWs
         ? await ipc.employee?.proxyAction('login:connect', { ...auth, zaloId: acc.zalo_id })

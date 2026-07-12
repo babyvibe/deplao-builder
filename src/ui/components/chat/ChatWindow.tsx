@@ -1,81 +1,43 @@
-import PageLoading, { Spinner } from '@/components/common/PageLoading';
-import DateInputVN from '@/components/common/DateInputVN';
+import { Spinner } from '@/components/common/PageLoading';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useChatStore } from '@/store/chatStore';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
 import MediaViewer, { MediaViewerImage } from './MediaViewer';
 import MessageContextMenu from './MessageContextMenu';
-import PinnedBar, { buildPinFromMsg, usePinnedData, PinnedNote } from './PinnedMessages';
+import PinnedBar, { buildPinFromMsg, usePinnedData } from './PinnedMessages';
 import ChatHistoryList from './ChatHistoryList';
 import SharedMessageContent from './SharedMessageContent';
 import * as channelIpc from '../../lib/channelIpc';
 import { getCapability, type Channel } from '@/../configs/channelConfig';
 import { ManagePanel } from './GroupInfoPanel';
-import                           { UserProfilePopup } from '../common/UserProfilePopup';
-import FBVideoThumb from './FBVideoThumb';
+import { UserProfilePopup } from '../common/UserProfilePopup';
 import { RecalledBubble, BankCardBubble } from './MessageBubbles';
-import GroupAvatar from '../common/GroupAvatar';
-import PhoneDisplay from '../common/PhoneDisplay';
+import FBVideoThumb from './FBVideoThumb';
 import DataAccessor from '@/lib/data/DataAccessor';
-import ipc from '@/lib/ipc';
+import ipc, { buildZaloAuth } from '@/lib/ipc';
 import { toLocalMediaUrl } from '@/lib/localMedia';
-import { formatPhone } from '@/utils/phoneUtils';
-import { PollDetailView as SharedPollDetailView } from './PollView';
 import { useEmployeeStore } from '@/store/employeeStore';
-import { BellIcon, CalendarIcon, ChatIcon, CloudIcon, GiftIcon, GlobeIcon, HardDriveIcon, LinkIcon, PaperclipIcon, PinIcon, StarIcon, SunIcon, TargetIcon, UserCheckIcon, WaveIcon } from '@/components/common/icons';
-
-const EMOJI_TO_REACTION: Record<string, string> = {
-  '❤️': 'HEART', '👍': 'LIKE', '😄': 'HAHA', '😮': 'WOW', '😢': 'CRY', '😡': 'ANGRY',
-  '😘': 'KISS', '😂': 'TEARS_OF_JOY', '💩': 'SHIT', '🌹': 'ROSE', '💔': 'BROKEN_HEART',
-  '👎': 'DISLIKE', '😍': 'LOVE', '👌': 'OK', '✌️': 'PEACE', '🙏': 'PRAY',
-  '😉': 'WINK', '😕': 'CONFUSED', '😁': 'BIG_SMILE', '👊': 'PUNCH', '👋': 'BYE',
-  '🫶': 'LOVE_YOU', '😭': 'VERY_SAD', '😎': 'COOL', '🎂': 'BIRTHDAY',
-};
-
-// Zalo text reaction codes → Unicode emoji (dùng để convert khi display)
-const ZALO_CODE_TO_EMOJI: Record<string, string> = {
-  '/-heart':   '❤️',  '/-strong':  '👍',  ':>':       '😄',  ':o':       '😮',
-  ':-((': '😢',  ':-h': '😡',  ':-*': '😘',  ":')": '😂',
-  '/-shit': '💩',  '/-rose': '🌹',  '/-break': '💔',  '/-weak': '👎',
-  ';xx': '😍',  ';-/': '😕',  ';-)': '😉',  '/-fade': '😶',
-  '/-li': '☀️',  '/-bd': '🎂',  '/-bome': '💣',  '/-ok': '👌',
-  '/-v': '✌️',  '/-thanks': '🤝',  '/-punch': '👊',  '/-share': '🔗',
-  '_()_': '🙏',  '/-no': '🙅',  '/-bad': '👎',  '/-loveu': '🫶',
-  '--b': '😞',  ':((': '😭',  'x-)': '😎',  '8-)': '🤓',
-  ';-d': '😁',  'b-)': '😎',  ':--|': '😐',  'p-(': '😔',
-  ':-bye': '👋',  '|-)': '😴',  ':wipe': '😅',  ':-dig': '🤔',
-  '&-(': '😰',  ':handclap': '👏',  '>-|': '😠',  ';-x': '🤫',
-  ':-o': '😲',  ';-s': '😳',  ';-a': '😨',  ':-<': '😢',
-  ':))': '😂',  '$-)': '🤑',  '/-beer': '🍺',
-  // Common text emoticons
-  ':-)': '🙂',  ':)': '🙂',  ':-(': '😞',  ':(': '😞',
-  ':-D': '😁',  ':D': '😁',  ':P': '😛',  ':p': '😛',
-  ':-P': '😛',  ':O': '😲',  '>:(': '😠',  ":'(": '😢',
-};
-
-// Chuyển đổi Zalo reaction code → Unicode emoji (dùng cho display)
-function zaloCodeToEmoji(code: string): string {
-  return ZALO_CODE_TO_EMOJI[code] ?? code;
-}
-
-// Thay thế tất cả Zalo codes trong text bằng Unicode emoji
-function convertZaloEmojis(text: string): string {
-  if (!text) return text;
-  const direct = ZALO_CODE_TO_EMOJI[text];
-  if (direct) return direct;
-  const sorted = Object.keys(ZALO_CODE_TO_EMOJI).sort((a, b) => b.length - a.length);
-  let result = text;
-  for (const code of sorted) {
-    if (result.includes(code)) {
-      result = result.split(code).join(ZALO_CODE_TO_EMOJI[code]);
-    }
-  }
-  return result;
-}
+import { ChatIcon } from '@/components/common/icons';
+import { handleAvatarError } from '@/lib/avatarRetry';
+import { EMOJI_TO_REACTION } from '@/lib/chat/emojiUtils';
+import { parseContent, parseQuoteMsg, extractQuoteImage, extractMediaUrl, formatMsgTime, extractMsgText } from '@/lib/chat/messageParser';
+import { isCardType, isEcardType, isFileType, isStickerType, isRtfMsg, isMediaType, isVideoType, isBankCardType } from '@/lib/chat/messageTypeUtils';
+import { NoteViewModal } from './NoteViewModal';
+import ForwardMessageModal from './ForwardMessageModal';
+import PollBubble from './PollBubble';
+import FriendRequestBar from './FriendRequestBar';
+import { ReactionContextMenu, ReactionPopup, parseReactions, parseReactionsFull } from './ReactionComponents';
+import {
+  EmployeeAvatar, FileBubble, MediaBubble, VideoBubble, VoiceBubble,
+  QuotedStickerPreview, StickerGroupBubble, getGroupLayoutId, MediaGroupBubble,
+  SingleImageInGroup, StickerBubble, MsgActionBtn, EcardBubble, CardBubble,
+  LinkBubble, CallBubble, ContactCardBubble, applyRtfStyles, TextWithMentions,
+  RtfBubble, ActionRow,
+} from './ChatWindowBubbles';
 
 export default function ChatWindow() {
-  const { messages, activeThreadId, prependMessages, setMessages, contacts, setReplyTo, removeMessage, typingUsers, seenInfo, updateContact } = useChatStore();
+  const { messages, activeThreadId, prependMessages, setMessages, contacts, setReplyTo, removeMessage, typingUsers, seenInfo, updateContact, messagesLoading } = useChatStore();
   const { activeAccountId, getActiveAccount } = useAccountStore();
   const { showNotification, groupInfoCache, searchHighlightQuery } = useAppStore();
 
@@ -95,6 +57,10 @@ export default function ChatWindow() {
   const savedScrollHeightRef = useRef(0);
   const shouldRestoreScrollRef = useRef(false);
   const isInitialThreadLoadRef = useRef(true);
+  const initialScrollDoneRef = useRef(false);
+  // nearBottomRef: cập nhật realtime từ scroll event (không gây re-render)
+  // dùng cho ResizeObserver + realtime scroll — tránh stale closure
+  const nearBottomRef = useRef(true);
 
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
@@ -188,8 +154,11 @@ export default function ChatWindow() {
 
   // ─── Thread ready gate: chỉ hiển thị UI khi messages + pins đều đã load ──
   const [threadReady, setThreadReady] = useState(false);
+  const [messagesReady, setMessagesReady] = useState(false);
   // Track initial loading for PageLoading display
   const [initialLoading, setInitialLoading] = useState(true);
+  // loadingSpinner: spinner trung tâm khi chuyển thread, chỉ done sau khi scroll hoàn tất
+  const [loadingSpinner, setLoadingSpinner] = useState(false);
   // Track threadId đã scroll - tránh race condition giữa useLayoutEffect vs useEffect
   const lastScrolledThreadRef = useRef<string | null>(null);
 
@@ -419,8 +388,11 @@ export default function ChatWindow() {
     return cache;
   }, [msgs, groupedFirstMsgs]);
 
-  // Reset khi đổi thread
-  useEffect(() => {
+  // Reset khi đổi thread — DÙNG useLayoutEffect (chạy trước paint) để tránh
+  // "double flash": nếu dùng useEffect, first render vẫn giữ threadReady=true
+  // → messages container hiện ra với empty state (spinner) trước khi reset.
+  // useLayoutEffect đảm bảo reset state trước khi browser paint frame đầu tiên.
+  useLayoutEffect(() => {
     setHasMore(true);
     setLoadError(false);
     setAtTop(false);
@@ -431,7 +403,10 @@ export default function ChatWindow() {
     isInitialThreadLoadRef.current = true;
     // Reset thread ready gate - ẩn UI cho đến khi data load xong
     setThreadReady(false);
+    setMessagesReady(false);
     setInitialLoading(true);
+    initialScrollDoneRef.current = false;
+    lastScrolledThreadRef.current = null;
     prevPinnedBarHeightRef.current = 0;
     // Reset selection mode when switching threads
     setIsSelecting(false);
@@ -440,34 +415,72 @@ export default function ChatWindow() {
     fbCursorRef.current = null;
     fbHasMoreRef.current = false;
     fbProbeDoneRef.current = true;
-  }, [activeThreadId]);
+	    setLoadingSpinner(true);
+  }, [activeAccountId, activeThreadId]);
 
   // ─── Thread ready gate (đơn giản): set true ngay khi pinsReady = true ───────
   // pinsReady reset về false mỗi khi thread đổi (trong usePinnedData hook),
   // rồi fire true sau khi IPC getPinnedMessages hoàn thành (~50-100ms).
   // Không dùng dataReady trung gian nữa - tránh bug RAF bị cancel khi re-render.
   useEffect(() => {
-    if (!pinsReady || !activeThreadId) return;
-    setThreadReady(true);
+    if (!activeThreadId) {
+      setMessagesReady(false);
+      return;
+    }
+    if (msgs.length > 0 || !messagesLoading) {
+      setMessagesReady(true);
+    }
+  }, [activeThreadId, threadKey, msgs.length, messagesLoading]);
+
+  useEffect(() => {
+    if (!activeThreadId) return;
+    setThreadReady(pinsReady && messagesReady);
     // setInitialLoading(false); // chờ messages load
-  }, [pinsReady, activeThreadId]);
+  }, [pinsReady, messagesReady, activeThreadId]);
 
   // ─── Safety fallback: nếu loading quá 3s mà vẫn chưa ready → force hiển thị ───
   useEffect(() => {
     if (!activeThreadId) return;
     const fallback = setTimeout(() => {
-      setThreadReady(true);
-      setInitialLoading(false);
-    }, 3000);
+      if (!useChatStore.getState().messagesLoading) {
+        setMessagesReady(true);
+        setThreadReady(true);
+        setInitialLoading(false);
+      }
+    }, 5000);
     return () => clearTimeout(fallback);
   }, [activeThreadId]);
 
   // ─── Clear initial loading khi messages thực sự có data ────────────────
   useEffect(() => {
-    if (threadKey && msgs.length > 0 && initialLoading) {
+    if (threadReady && messagesReady && initialLoading) {
       setInitialLoading(false);
     }
-  }, [threadKey, msgs, initialLoading]);
+  }, [threadReady, messagesReady, initialLoading]);
+
+  // ─── Scroll đồng bộ cho cached threads (trước khi browser paint) ──────
+  // Khi threadReady = true VÀ messages đã có sẵn trong store (cached),
+  // scroll ngay trong useLayoutEffect để browser paint frame đầu tiên
+  // với messages ở đáy, không bị giật từ trên nhảy xuống.
+  useLayoutEffect(() => {
+    if (!threadReady || !messagesReady || !activeThreadId || !threadKey) return;
+    if (!msgs.length) return;
+    // Chỉ cho thread đã từng scroll (cached) hoặc thread mới nhưng messages đã sẵn
+    if (lastScrolledThreadRef.current === threadKey) return;
+    if (initialScrollDoneRef.current) return;
+
+    const el = messagesContainerRef.current;
+    if (!el) return;
+
+    // Scroll đồng bộ - browser sẽ paint với vị trí này ngay
+    el.scrollTop = el.scrollHeight;
+    bottomRef.current?.scrollIntoView({ behavior: 'instant' });
+    setAtTop(false);
+    setAtBottom(true);
+    initialScrollDoneRef.current = true;
+    lastScrolledThreadRef.current = threadKey;
+    setLoadingSpinner(false);
+  }, [threadReady, messagesReady, activeThreadId, threadKey, msgs.length]);
 
   // ─── Drag-to-select: pointer move/up (document level) ──────────────────────
   useEffect(() => {
@@ -567,42 +580,111 @@ export default function ChatWindow() {
     const scroller = messagesContainerRef.current;
     const currentHeight = pinnedBarWrapperRef.current?.offsetHeight || 0;
     const prevHeight = prevPinnedBarHeightRef.current;
+    if (!initialScrollDoneRef.current) {
+      prevPinnedBarHeightRef.current = currentHeight;
+      return;
+    }
     if (scroller && currentHeight !== prevHeight) {
-      scroller.scrollTop += (currentHeight - prevHeight);
+      if (nearBottomRef.current) {
+        scroller.scrollTop = scroller.scrollHeight;
+      } else {
+        scroller.scrollTop += (currentHeight - prevHeight);
+      }
     }
     prevPinnedBarHeightRef.current = currentHeight;
   }, [threadReady, activeThreadId, pins.length, pinnedNotes.length]);
 
-  // ─── Scroll to bottom SAU KHI threadReady = true (có guard tránh race realtime) ──
-  // Dùng useEffect (không phải useLayoutEffect) + double-RAF để đảm bảo
-  // messages đã được render + DOM đã được paint trước khi scroll.
+  // ─── Scroll to bottom SAU KHI threadReady = true ──
+  // Dùng double-RAF để đảm bảo messages đã render + layout paint trước khi scroll.
+  // KHÔNG dùng setTimeout guess-timings nữa — ResizeObserver (effect riêng) tự động
+  // re-scroll nếu user ở bottom khi async media load xong gây layout shift.
   //
   // ⚠️ Race condition guard: nếu realtime message đến trong lúc chờ batch load,
   // effect sẽ fire với 1 tin và lock thread prematurely → batch đầy đủ sau đó
   // không được scroll (lastScrolledThreadRef đã set). Fix: chỉ lock khi có ≥3
   // messages thực (không tính temp_), batch đầy đủ (50 tin) sẽ trigger lock thật.
   useEffect(() => {
-    if (!threadReady || !activeThreadId) return;
+    if (!threadReady || !messagesReady || !activeThreadId || !threadKey) return;
     if (!msgs.length) return;
-    if (lastScrolledThreadRef.current === activeThreadId) return;
+    if (lastScrolledThreadRef.current === threadKey) return;
 
     // Lock thread chỉ khi có đủ messages thực (≥3), tránh realtime lẻ lock sớm
     const realCount = msgs.filter(m => !String(m.msg_id).startsWith('temp_')).length;
-    if (realCount >= 3) {
-      lastScrolledThreadRef.current = activeThreadId;
-    }
+    if (realCount < 3 && messagesLoading) return;
 
-    // Double-RAF: frame 1 = messages render, frame 2 = layout hoàn chỉnh → scroll
-    requestAnimationFrame(() => {
-      const el = messagesContainerRef.current;
-      if (el) el.scrollTop = el.scrollHeight;
+    // 200ms settling time: đợi layout ổn định + late-loading conversations render
+    // trước khi scroll, tránh scroll sai đáy do content chưa kịp render
+    let cancelled = false;
+    const settlingTimer = setTimeout(() => {
+      if (cancelled) return;
+      // RAF 1: scroll xuống đáy
       requestAnimationFrame(() => {
-        const el2 = messagesContainerRef.current;
-        if (el2) el2.scrollTop = el2.scrollHeight;
-        bottomRef.current?.scrollIntoView({ behavior: 'instant' });
+        if (cancelled) return;
+        const el = messagesContainerRef.current;
+        if (el) el.scrollTop = el.scrollHeight;
+        // RAF 2: confirm scroll + lock flags
+        requestAnimationFrame(() => {
+          if (cancelled) return;
+          const el2 = messagesContainerRef.current;
+          if (el2) {
+            el2.scrollTop = el2.scrollHeight;
+            setAtTop(false);
+            setAtBottom(true);
+          }
+          bottomRef.current?.scrollIntoView({ behavior: 'instant' });
+          initialScrollDoneRef.current = true;
+          lastScrolledThreadRef.current = threadKey;
+          // RAF 3: tắt overlay SAU KHI browser đã paint vị trí scroll
+          // Tránh giật: overlay tồn tại xuyên suốt quá trình scroll → user không thấy content nhảy
+          requestAnimationFrame(() => {
+            if (cancelled) return;
+            setLoadingSpinner(false);
+          });
+        });
+      });
+    }, 10);
+    return () => {
+      cancelled = true;
+      clearTimeout(settlingTimer);
+    };
+  }, [threadReady, messagesReady, activeThreadId, threadKey, msgs.length, messagesLoading]);
+
+  // ─── Loading spinner fallback cho empty/cached thread ──
+  // Khi initialScrollDoneRef da duoc set (cached) hoac msgs.length === 0 (empty),
+  // initial scroll effect khong fire → khong goi setLoadingSpinner(false).
+  // Fallback: khi threadReady && loadingSpinner, kiem tra neu khong can scroll → tat spinner.
+  useEffect(() => {
+    if (!loadingSpinner || !threadReady) return;
+    const isCached = lastScrolledThreadRef.current === threadKey;
+    if (msgs.length === 0 || isCached) {
+      setLoadingSpinner(false);
+    }
+  }, [loadingSpinner, threadReady, msgs.length, threadKey]);
+
+
+  // ─── ResizeObserver: auto-scroll khi content resize mà user đang ở bottom ──
+  // Giải quyết layout shift từ ảnh/video load async, pin bar thay đổi, sticker load, v.v.
+  // Chỉ scroll nếu user đang ở gần bottom (nearBottomRef), không giật khi user đang đọc lịch sử.
+  // Debounce bằng rAF để gom nhiều resize events thành 1 lần scroll, tránh jank.
+  useEffect(() => {
+    const el = messagesContainerRef.current;
+    if (!el || !threadReady) return;
+    let rafId = 0;
+    let prevScrollHeight = el.scrollHeight;
+    const ro = new ResizeObserver(() => {
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        rafId = 0;
+        if (!nearBottomRef.current) return;
+        const newHeight = el.scrollHeight;
+        if (newHeight === prevScrollHeight) return; // không thay đổi → skip
+        prevScrollHeight = newHeight;
+        el.scrollTop = newHeight;
       });
     });
-  }, [threadReady, activeThreadId, msgs.length]);
+    ro.observe(el);
+    return () => { ro.disconnect(); if (rafId) cancelAnimationFrame(rafId); };
+  }, [activeThreadId, threadReady]);
 
   // ─── Lazy scan: quét ảnh lỗi trong conversation khi mở thread ────────────────
   // Chạy 1 lần per thread, sau khi threadReady. Background, không block UI.
@@ -794,7 +876,7 @@ export default function ChatWindow() {
           try {
             const acc = useAccountStore.getState().accounts.find(a => a.zalo_id === accountId);
             if (!acc || (acc.channel || 'zalo') !== 'zalo') return;
-            const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+            const auth = buildZaloAuth(acc, accountId);
             const infoRes = await ipc.zalo?.getGroupInfo({ auth, groupId });
             const info = infoRes?.response?.gridInfoMap?.[groupId] || infoRes?.response;
             if (!info) return;
@@ -883,7 +965,7 @@ export default function ChatWindow() {
         try {
           const acc = useAccountStore.getState().accounts.find(a => a.zalo_id === activeAccountId);
           if (!acc || (acc.channel || 'zalo') !== 'zalo') return;
-          const auth = { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+          const auth = buildZaloAuth(acc, activeAccountId);
           const res = await ipc.zalo?.getUserInfo({ auth, userId: senderId });
           if (!res?.success || !res.response) return;
           const profile = res.response.changed_profiles?.[senderId];
@@ -932,17 +1014,28 @@ export default function ChatWindow() {
     }
   }, [activeAccountId, activeThreadId, msgs, groupInfoCache]);
 
-  // Scroll event: track top/bottom position
+  // Scroll event: track top/bottom position + nearBottomRef (dùng cho ResizeObserver)
+  // Tối ưu: dùng rAF throttle + chỉ setState khi giá trị thay đổi để tránh re-render liên tục
   useEffect(() => {
     const el = messagesContainerRef.current;
     if (!el) return;
+    let rafId = 0;
+    let lastAtTop = false;
+    let lastAtBottom = true;
     const onScroll = () => {
-      const { scrollTop, scrollHeight, clientHeight } = el;
-      setAtTop(scrollTop < 60);
-      setAtBottom(scrollHeight - scrollTop - clientHeight < 60);
+      if (rafId) return; // throttle bằng rAF
+      rafId = requestAnimationFrame(() => {
+        rafId = 0;
+        const { scrollTop, scrollHeight, clientHeight } = el;
+        nearBottomRef.current = scrollHeight - scrollTop - clientHeight < 150;
+        const newAtTop = scrollTop < 60;
+        const newAtBottom = scrollHeight - scrollTop - clientHeight < 60;
+        if (newAtTop !== lastAtTop) { lastAtTop = newAtTop; setAtTop(newAtTop); }
+        if (newAtBottom !== lastAtBottom) { lastAtBottom = newAtBottom; setAtBottom(newAtBottom); }
+      });
     };
     el.addEventListener('scroll', onScroll, { passive: true });
-    return () => el.removeEventListener('scroll', onScroll);
+    return () => { el.removeEventListener('scroll', onScroll); if (rafId) cancelAnimationFrame(rafId); };
   }, [activeThreadId]);
 
   // ─── Auto-load tin nhắn cũ khi scroll lên đầu ───────────────────────────
@@ -956,7 +1049,7 @@ export default function ChatWindow() {
     if (!atTop) autoLoadFiredRef.current = false;
   }, [atTop]);
   useEffect(() => {
-    if (!atTop || !hasMore || loadingMore || !activeThreadId) return;
+    if (!initialScrollDoneRef.current || initialLoading || !atTop || !hasMore || loadingMore || !activeThreadId) return;
     // Đã auto-load rồi mà user chưa scroll xuống khỏi top → không load tiếp
     if (autoLoadFiredRef.current) return;
     // Delay nhẹ tránh trigger liên tục khi scroll
@@ -973,9 +1066,10 @@ export default function ChatWindow() {
   // ─── Scroll to bottom khi AI suggestions bar xuất hiện/biến mất ──────────
   // Khi thanh gợi ý AI thay đổi, input area đổi chiều cao → tin nhắn bị che.
   // Nếu user đang ở cuối trang → tự động scroll xuống để bù offset.
+  // Dùng nearBottomRef (không gây re-render) thay vì atBottom state
   useEffect(() => {
     const handler = () => {
-      if (atBottom) {
+      if (nearBottomRef.current) {
         requestAnimationFrame(() => {
           bottomRef.current?.scrollIntoView({ behavior: 'instant' });
         });
@@ -983,10 +1077,21 @@ export default function ChatWindow() {
     };
     window.addEventListener('ai:suggestionsBarChanged', handler);
     return () => window.removeEventListener('ai:suggestionsBarChanged', handler);
-  }, [atBottom]);
+  }, []);
+
+  // Scroll to bottom khi LibraryPickerModal gửi xong
+  useEffect(() => {
+    const handler = () => {
+      const el = messagesContainerRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    };
+    window.addEventListener('chat:scrollToBottom', handler);
+    return () => window.removeEventListener('chat:scrollToBottom', handler);
+  }, []);
 
   // Scroll to bottom chỉ khi có tin nhắn MỚI (tin cuối thay đổi), không scroll khi prepend tin cũ
   // Initial load scroll được xử lý bởi threadReady gate - effect này chỉ handle tin nhắn realtime
+  // Dùng nearBottomRef (ref, không gây re-render) thay vì atBottom state để tránh stale closure
   useEffect(() => {
     if (!msgs.length) return;
     const lastMsg = msgs[msgs.length - 1];
@@ -1005,17 +1110,21 @@ export default function ChatWindow() {
           // SKIP scroll ở đây - threadReady gate sẽ xử lý scroll initial
           return;
         }
-        // Tin nhắn mới (realtime) - luôn cuộn khi chính mình gửi, còn tin đến thì giữ rule atBottom.
+        // Tin nhắn mới (realtime) - dùng nearBottomRef (cập nhật realtime từ scroll event)
+        // thay vì atBottom state (có thể bị stale trong closure do batching)
         const isOutgoing =
           lastMsg?.is_sent === 1 ||
           (activeAccountId ? String(lastMsg?.sender_id || '') === String(activeAccountId) : false) ||
           String(lastMsg?.msg_id || '').startsWith('temp_');
-        if (isOutgoing || atBottom) {
-          bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+        if (isOutgoing || nearBottomRef.current) {
+          // Dùng scrollTop trực tiếp thay vì scrollIntoView('smooth')
+          // → instant, không animation delay, mượt hơn cho realtime messages
+          const el = messagesContainerRef.current;
+          if (el) el.scrollTop = el.scrollHeight;
         }
       }
     }
-  }, [msgs, atBottom, activeAccountId]);
+  }, [msgs, activeAccountId, activeContact?.channel]);
 
   // Sau khi prepend tin cũ: khôi phục vị trí scroll để không bị nhảy lên đầu
   useLayoutEffect(() => {
@@ -1029,8 +1138,8 @@ export default function ChatWindow() {
   const getAuth = () => {
     const acc = getActiveAccount();
     if (!acc) return null;
-    if ((acc.channel || 'zalo') !== 'zalo') return { cookies: '', imei: '', userAgent: '' };
-    return { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+    if ((acc.channel || 'zalo') !== 'zalo') return buildZaloAuth(acc, activeAccountId);
+    return buildZaloAuth(acc, activeAccountId);
   };
 
   // Tải thêm tin nhắn cũ dùng timestamp cursor (tránh lỗi offset khi có tin real-time)
@@ -1507,7 +1616,6 @@ export default function ChatWindow() {
       await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
       const el = messagesContainerRef.current;
       if (el) el.scrollTop = el.scrollHeight;
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     } catch (e) {
       console.error('[handleReturnToLatest]', e);
     } finally {
@@ -1734,72 +1842,6 @@ export default function ChatWindow() {
         </div>
       )}
 
-      {/* ── Loading state - hiển thị khi data chưa sẵn sàng ── */}
-      {(!threadReady || msgs.length === 0) && initialLoading && (
-        <PageLoading text="Đang tải tin nhắn..." />
-      )}
-      {!threadReady && !initialLoading && (
-        <div className="flex-1 flex flex-col p-4 space-y-3 animate-pulse">
-          {/* Skeleton bubbles */}
-          <div className="flex items-end gap-2">
-            <div className="w-8 h-8 rounded-full bg-gray-700 flex-shrink-0" />
-            <div className="space-y-1.5">
-              <div className="h-3 w-20 bg-gray-700 rounded" />
-              <div className="h-10 w-52 bg-gray-700 rounded-2xl" />
-            </div>
-          </div>
-          <div className="flex items-end gap-2 self-end flex-row-reverse">
-            <div className="space-y-1.5 items-end flex flex-col">
-              <div className="h-10 w-40 bg-blue-900/40 rounded-2xl" />
-            </div>
-          </div>
-          <div className="flex items-end gap-2">
-            <div className="w-8 h-8 rounded-full bg-gray-700 flex-shrink-0" />
-            <div className="space-y-1.5">
-              <div className="h-3 w-16 bg-gray-700 rounded" />
-              <div className="h-8 w-64 bg-gray-700 rounded-2xl" />
-            </div>
-          </div>
-          <div className="flex items-end gap-2 self-end flex-row-reverse">
-            <div className="space-y-1.5 items-end flex flex-col">
-              <div className="h-12 w-48 bg-blue-900/40 rounded-2xl" />
-            </div>
-          </div>
-          <div className="flex items-end gap-2">
-            <div className="w-8 h-8 rounded-full bg-gray-700 flex-shrink-0" />
-            <div className="space-y-1.5">
-              <div className="h-3 w-24 bg-gray-700 rounded" />
-              <div className="h-8 w-36 bg-gray-700 rounded-2xl" />
-            </div>
-          </div>
-          <div className="flex items-end gap-2 self-end flex-row-reverse">
-            <div className="space-y-1.5 items-end flex flex-col">
-              <div className="h-10 w-56 bg-blue-900/40 rounded-2xl" />
-            </div>
-          </div>
-          {/* 3 hàng skeleton bổ sung */}
-          <div className="flex items-end gap-2">
-            <div className="w-8 h-8 rounded-full bg-gray-700 flex-shrink-0" />
-            <div className="space-y-1.5">
-              <div className="h-3 w-18 bg-gray-700 rounded" />
-              <div className="h-9 w-44 bg-gray-700 rounded-2xl" />
-            </div>
-          </div>
-          <div className="flex items-end gap-2 self-end flex-row-reverse">
-            <div className="space-y-1.5 items-end flex flex-col">
-              <div className="h-8 w-60 bg-blue-900/40 rounded-2xl" />
-            </div>
-          </div>
-          <div className="flex items-end gap-2">
-            <div className="w-8 h-8 rounded-full bg-gray-700 flex-shrink-0" />
-            <div className="space-y-1.5">
-              <div className="h-3 w-14 bg-gray-700 rounded" />
-              <div className="h-11 w-48 bg-gray-700 rounded-2xl" />
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* ── Pinned messages + notes bar - chỉ hiện khi ready ── */}
       {threadReady && activeAccountId && activeThreadId && (
         <div ref={pinnedBarWrapperRef}>
@@ -1871,9 +1913,12 @@ export default function ChatWindow() {
         </div>
       )}
 
-      {/* Messages - chỉ render khi threadReady */}
-      {threadReady && (
-      <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-4 space-y-1.5">
+      {/* Messages container - luôn render khi có thread active, skeleton hiển thị bên trong khi loading */}
+      {/* Giúp tránh "double flash" do container mount/unmount khi chuyển thread */}
+      {activeAccountId && activeThreadId && (
+      <div ref={messagesContainerRef} className="flex-1 overflow-y-auto [overflow-anchor:auto] relative" style={{ willChange: 'scroll-position' }}>
+                {loadingSpinner && <div className="absolute inset-0 z-10 flex items-center justify-center bg-gray-900 pointer-events-none"><div className="flex flex-col items-center gap-3"><div className="w-8 h-8 border-4 border-blue-400 border-t-transparent rounded-full animate-spin"></div><p className="text-sm text-gray-400">Đang tải...</p></div></div>}
+        <div className="p-4 space-y-1.5">
         {/* Load More Button - Hiển thị trên tin nhắn đầu tiên (cũ nhất) */}
         {msgs.length > 0 && (hasMore || loadError) && (
           <div className="flex justify-center py-3 mb-2">
@@ -1912,14 +1957,9 @@ export default function ChatWindow() {
           </div>
         )}
 
+
         {/* Empty state - no messages yet */}
-        {msgs.length === 0 && (
-          useChatStore.getState().messagesLoading ? (
-            <div className="flex-1 flex flex-col items-center justify-center text-center px-6 py-12 opacity-60 gap-2">
-              <span className="w-6 h-6 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
-              <p className="text-gray-400 text-sm font-medium">Đang tải tin nhắn...</p>
-            </div>
-          ) : (
+        {msgs.length === 0 && !initialLoading && !messagesLoading && (
           <div className="flex-1 flex flex-col items-center justify-center text-center px-6 py-12 opacity-60">
             <div className="text-3xl mb-3"><ChatIcon className="w-4 h-4" /></div>
             <p className="text-gray-400 text-sm font-medium">Chưa có tin nhắn nào</p>
@@ -1927,7 +1967,6 @@ export default function ChatWindow() {
               Tin nhắn chỉ hiển thị từ lúc kết nối. Hãy gửi tin nhắn mới để bắt đầu.
             </p>
           </div>
-          )
         )}
 
         <ChatHistoryList items={msgs} bottomRef={bottomRef} renderItem={(msg, idx) => {
@@ -2058,13 +2097,13 @@ export default function ChatWindow() {
                             <img src={avatarUrl} alt={displayName} className="w-7 h-7 rounded-full object-cover"
                               onError={() => {
                                 setFailedMsgAvatars(prev => new Set(prev).add(msg.sender_id));
-                                const contact = getContact(msg.sender_id);
-                                if (activeAccountId && (contact?.channel === 'facebook' || /^\d+$/.test(msg.sender_id)) && !avatarRefreshAttempted.current.has(msg.sender_id)) {
+                                if (activeAccountId && !avatarRefreshAttempted.current.has(msg.sender_id)) {
                                   avatarRefreshAttempted.current.add(msg.sender_id);
-                                  ipc.fb.refreshContactAvatar({ accountId: activeAccountId, userId: msg.sender_id })
-                                    .then(res => {
-                                      if (res.success && res.avatarUrl) {
-                                        updateContact(activeAccountId, { contact_id: msg.sender_id, avatar_url: res.avatarUrl });
+                                  const contact = getContact(msg.sender_id);
+                                  handleAvatarError({ ownerId: activeAccountId, contactId: msg.sender_id, channel: contact?.channel || 'zalo' })
+                                    .then(newUrl => {
+                                      if (newUrl) {
+                                        updateContact(activeAccountId!, { contact_id: msg.sender_id, avatar_url: newUrl });
                                         setFailedMsgAvatars(prev => { const n = new Set(prev); n.delete(msg.sender_id); return n; });
                                       }
                                     }).catch(() => {});
@@ -2206,13 +2245,13 @@ export default function ChatWindow() {
                             <img src={avatarUrl} alt={displayName} className="w-7 h-7 rounded-full object-cover"
                               onError={() => {
                                 setFailedMsgAvatars(prev => new Set(prev).add(msg.sender_id));
-                                const contact = getContact(msg.sender_id);
-                                if (activeAccountId && (contact?.channel === 'facebook' || /^\d+$/.test(msg.sender_id)) && !avatarRefreshAttempted.current.has(msg.sender_id)) {
+                                if (activeAccountId && !avatarRefreshAttempted.current.has(msg.sender_id)) {
                                   avatarRefreshAttempted.current.add(msg.sender_id);
-                                  ipc.fb.refreshContactAvatar({ accountId: activeAccountId, userId: msg.sender_id })
-                                    .then(res => {
-                                      if (res.success && res.avatarUrl) {
-                                        updateContact(activeAccountId, { contact_id: msg.sender_id, avatar_url: res.avatarUrl });
+                                  const contact = getContact(msg.sender_id);
+                                  handleAvatarError({ ownerId: activeAccountId, contactId: msg.sender_id, channel: contact?.channel || 'zalo' })
+                                    .then(newUrl => {
+                                      if (newUrl) {
+                                        updateContact(activeAccountId!, { contact_id: msg.sender_id, avatar_url: newUrl });
                                         setFailedMsgAvatars(prev => { const n = new Set(prev); n.delete(msg.sender_id); return n; });
                                       }
                                     }).catch(() => {});
@@ -2254,7 +2293,7 @@ export default function ChatWindow() {
                       isMediaMsg || isGroupMedia || isFileMsg || isCardMsg || isEcardMsg || isStickerMsg || isBankCardMsg ? '' : isSent
                         ? 'px-3 py-2 bg-blue-400/40 text-white border border-blue-200 dark:border-blue-600/50 rounded-br-sm'
                         : 'px-3 py-2 bg-gray-700 text-gray-200 border border-gray-200 dark:border-gray-600 rounded-bl-sm'
-                    }`}>
+                    } ${msg.send_status === 'pending' ? 'opacity-60' : msg.send_status === 'sending' ? 'opacity-80' : ''}`}>
                     {/* Quote preview - supports both pre-built quote_data and reply_to_id fallback */}
                     {(msg.quote_data || msg.reply_to_id) && (() => {
                       // Build quote object from quote_data or fallback to reply_to_id + msgs lookup
@@ -2525,7 +2564,7 @@ export default function ChatWindow() {
                       : [];
                     return (
                       <div
-                        className={`absolute -bottom-3 z-10 transition-opacity duration-100${!hasReactions ? ' opacity-0 group-hover/msg:opacity-100' : ''}${isSent ? ' right-0' : ' left-0'}`}
+                        className={`absolute -bottom-3 z-2 transition-opacity duration-100${!hasReactions ? ' opacity-0 group-hover/msg:opacity-100' : ''}${isSent ? ' right-0' : ' left-0'}`}
                         onMouseEnter={() => setReactionPickerMsgId(msg.msg_id)}
                         onMouseLeave={() => setReactionPickerMsgId(null)}
                       >
@@ -2566,6 +2605,85 @@ export default function ChatWindow() {
                       </div>
                     );
                   })()}
+
+                  {/* ── Send status indicator (optimistic messages) ──── */}
+                  {isSent && msg.send_status && msg.send_status !== 'received' && (
+                    <div className="flex items-center gap-1 mt-0.5 px-1">
+                      {msg.send_status === 'pending' && (
+                        <span title="Đang chờ gửi">
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-gray-400 opacity-60">
+                            <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                          </svg>
+                        </span>
+                      )}
+                      {msg.send_status === 'sending' && (
+                        <span title="Đang gửi...">
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-blue-400 animate-spin">
+                            <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+                          </svg>
+                        </span>
+                      )}
+                      {msg.send_status === 'sent' && (
+                        <span title="Đã gửi">
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-gray-400">
+                            <polyline points="20 6 9 17 4 12"/>
+                          </svg>
+                        </span>
+                      )}
+                      {(msg.send_status === 'failed' || msg.send_status === 'timeout') && (
+                        <div className="flex items-center gap-1">
+                          <span title={msg.send_status === 'timeout' ? 'Gửi timeout (60s)' : 'Gửi thất bại'}>
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-red-400">
+                              <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>
+                            </svg>
+                          </span>
+                          {msg.media_type === 'text' || msg.media_type === 'link' || !msg.media_type ? (
+                            <button
+                              onClick={() => {
+                                // Retry text: xóa msg cũ, gửi lại
+                                removeMessage(activeAccountId!, activeThreadId, msg.msg_id);
+                                const retryTempId = `retry_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
+                                const isFb = msg.channel === 'facebook';
+                                useChatStore.getState().addMessage(activeAccountId!, activeThreadId, {
+                                  msg_id: retryTempId, owner_zalo_id: activeAccountId!, thread_id: activeThreadId,
+                                  thread_type: msg.thread_type, sender_id: activeAccountId!, content: msg.content,
+                                  msg_type: msg.msg_type, timestamp: Date.now(), is_sent: 1, status: 'sending',
+                                  send_status: 'pending', temp_id: retryTempId, media_type: 'text',
+                                  ...(msg.quote_data ? { quote_data: msg.quote_data } : {}),
+                                });
+                                import('@/lib/MessageQueue').then(({ messageQueue, extractMsgIdFromResponse }) => {
+                                  const auth = (() => {
+                                    const acc = useAccountStore.getState().accounts.find(a => a.zalo_id === activeAccountId);
+                                    return acc ? { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent, accountId: activeAccountId } : null;
+                                  })();
+                                  if (!auth) return;
+                                  messageQueue.enqueue({
+                                    tempId: retryTempId, zaloId: activeAccountId!, threadId: activeThreadId,
+                                    threadType: msg.thread_type, channel: isFb ? 'facebook' : 'zalo',
+                                    sendFn: async () => {
+                                      try {
+                                        if (isFb) {
+                                          const r = await ipc.fb?.sendMessage({ accountId: activeAccountId!, threadId: activeThreadId, body: msg.content });
+                                          return { success: !!r?.success, msgId: (r as any)?.messageId, error: r?.error };
+                                        } else {
+                                          const res = await ipc.zalo?.sendMessage({ auth, threadId: activeThreadId, type: msg.thread_type, message: msg.content });
+                                          return { success: true, ...extractMsgIdFromResponse(res, 'zalo') };
+                                        }
+                                      } catch (err: any) { return { success: false, error: err?.message || String(err) }; }
+                                    },
+                                  });
+                                });
+                              }}
+                              className="text-[10px] text-red-400 hover:text-red-300 underline"
+                            >Gửi lại</button>
+                          ) : (
+                            <span className="text-[10px] text-gray-500 italic">Không thể gửi lại media</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   </div>{/* end flex flex-col (bubble content column) */}
                 </div>{/* end bubble area (flex items-end gap-2) */}
 
@@ -2597,6 +2715,7 @@ export default function ChatWindow() {
             </div>
           );
         }} />
+        </div>
       </div>
       )}
 
@@ -2919,2786 +3038,9 @@ export default function ChatWindow() {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 
-/** PollBubble - hiển thị tin nhắn group.poll */
-function PollBubble({ msg, isSent, activeAccountId, threadId }: { msg: any; isSent: boolean; activeAccountId: string; threadId: string }) {
-  const [pollDetail, setPollDetail] = React.useState<any>(null);
-  const [loading, setLoading] = React.useState(false);
-  const [expanded, setExpanded] = React.useState(false);
-  const contacts = useChatStore(s => s.contacts[activeAccountId] || []);
-  const { showNotification, groupInfoCache } = useAppStore();
-  const rawGroupMembers: any[] = groupInfoCache?.[activeAccountId]?.[threadId]?.members || [];
-  // Merge contacts + group members → đủ thông tin voter (tên + avatar)
-  const allContacts = React.useMemo(() => {
-    const map = new Map<string, any>();
-    contacts.forEach((c: any) => map.set(String(c.contact_id), c));
-    rawGroupMembers.forEach((m: any) => {
-      const id = String(m.userId || m.uid || '');
-      if (!id) return;
-      const existing = map.get(id) || {};
-      map.set(id, {
-        ...existing,
-        contact_id: id,
-        display_name: existing.display_name || m.displayName || m.name || '',
-        avatar_url: existing.avatar_url || m.avatar || m.avatarUrl || '',
-      });
-    });
-    return Array.from(map.values());
-  }, [contacts, rawGroupMembers]);
 
-  let pollId = '';
-  let question = '';
-  let voterName = '';
-  try {
-    const parsed = JSON.parse(msg.content || '{}');
-    const params = typeof parsed.params === 'string' ? JSON.parse(parsed.params) : (parsed.params || {});
-    pollId = String(params.pollId || '');
-    question = params.question || parsed.title || '';
-    voterName = params.dName || '';
-  } catch {}
 
-  const getAuth = async () => {
-    const accRes = await ipc.login?.getAccounts();
-    const acc = accRes?.accounts?.find((a: any) => a.zalo_id === activeAccountId) || accRes?.accounts?.[0];
-    if (!acc) throw new Error('No account');
-    return { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
-  };
-
-  const loadDetail = async () => {
-    if (!pollId || loading) return;
-    setLoading(true);
-    try {
-      const auth = await getAuth();
-      const res = await ipc.zalo?.getPollDetail({ auth, pollId });
-      if (res?.success && res.response) setPollDetail(res.response);
-    } catch {} finally { setLoading(false); }
-  };
-
-  React.useEffect(() => {
-    if (expanded && !pollDetail && pollId) loadDetail();
-  }, [expanded]);
-
-  return (
-    <div className={`rounded-2xl overflow-hidden min-w-[260px] max-w-sm ${isSent ? 'bg-blue-600' : 'bg-gray-700'}`}>
-      {/* Header */}
-      <div className="flex items-center gap-2.5 px-3 pt-3 pb-2">
-        <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${isSent ? 'bg-blue-500' : 'bg-[#2a2f42]'}`}>
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={isSent ? 'text-blue-100' : 'text-purple-400'}>
-            <rect x="3" y="3" width="18" height="18" rx="2"/>
-            <line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="13" y2="13"/><line x1="8" y1="17" x2="11" y2="17"/>
-          </svg>
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className={`text-[11px] font-bold uppercase tracking-widest mb-0.5 ${isSent ? 'text-blue-200' : 'text-purple-400'}`}>BÌNH CHỌN</p>
-          <p className={`text-sm font-semibold leading-tight ${isSent ? 'text-white' : 'text-gray-100'}`}>{question || 'Cuộc bình chọn'}</p>
-        </div>
-      </div>
-
-      {/* Voter info */}
-      {voterName && (
-        <div className={`px-3 pb-2 text-xs ${isSent ? 'text-blue-200' : 'text-gray-400'}`}>
-          {voterName} đã bình chọn
-        </div>
-      )}
-
-      {/* Expand/collapse toggle */}
-      <button
-        onClick={() => setExpanded(v => !v)}
-        className={`w-full px-3 py-2 text-xs font-semibold flex items-center justify-between border-t transition-colors ${
-          isSent ? 'border-blue-500 text-blue-100 hover:bg-blue-700' : 'border-gray-600 text-gray-300 hover:bg-gray-600'
-        }`}
-      >
-        <span>{expanded ? 'Thu gọn' : 'Xem bình chọn'}</span>
-        {loading
-          ? <Spinner size={3} />
-          : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <polyline points={expanded ? '18 15 12 9 6 15' : '6 9 12 15 18 9'}/>
-            </svg>
-        }
-      </button>
-
-      {/* Poll detail - dùng shared component */}
-      {expanded && pollDetail && (
-        <SharedPollDetailView
-          detail={pollDetail}
-          activeAccountId={activeAccountId}
-          pollId={pollId}
-          getAuth={getAuth}
-          onRefresh={loadDetail}
-          theme={isSent ? 'blue' : 'dark'}
-          contacts={allContacts}
-          showLockButton={true}
-          showAddOption={true}
-          onNotify={(m, t) => showNotification(m, t)}
-        />
-      )}
-      {expanded && !loading && !pollDetail && (
-        <p className={`px-3 py-2 text-xs ${isSent ? 'text-blue-200' : 'text-gray-400'}`}>Không thể tải chi tiết</p>
-      )}
-    </div>
-  );
-}
-
-
-/** CreatePollDialog - tạo cuộc bình chọn mới trong nhóm */
-export function CreatePollDialog({ groupId, activeAccountId, channel, onClose }: {
-  groupId: string; activeAccountId: string; channel?: string; onClose: () => void;
-}) {
-  const [question, setQuestion] = React.useState('');
-  const [options, setOptions] = React.useState(['', '']);
-  const [expiredTime, setExpiredTime] = React.useState('');
-  const [allowMulti, setAllowMulti] = React.useState(true);
-  const [allowAdd, setAllowAdd] = React.useState(true);
-  const [hidePreview, setHidePreview] = React.useState(false);
-  const [isAnon, setIsAnon] = React.useState(false);
-  const [creating, setCreating] = React.useState(false);
-  const { showNotification } = useAppStore();
-
-  const setOption = (i: number, val: string) => setOptions(prev => prev.map((o, idx) => idx === i ? val : o));
-  const addOption = () => { if (options.length < 20) setOptions(prev => [...prev, '']); };
-  const removeOption = (i: number) => { if (options.length > 2) setOptions(prev => prev.filter((_, idx) => idx !== i)); };
-
-  const handleCreate = async () => {
-    const q = question.trim();
-    const opts = options.map(o => o.trim()).filter(Boolean);
-    if (!q) { showNotification('Vui lòng nhập câu hỏi bình chọn', 'error'); return; }
-    if (opts.length < 2) { showNotification('Cần ít nhất 2 lựa chọn', 'error'); return; }
-    setCreating(true);
-    try {
-      let res;
-      if (channel === 'facebook') {
-        res = await channelIpc.createPoll('facebook', {
-          accountId: activeAccountId,
-          threadId: groupId,
-          question: q,
-          options: opts,
-        });
-      } else {
-        const accRes = await ipc.login?.getAccounts();
-        const acc = accRes?.accounts?.find((a: any) => a.zalo_id === activeAccountId) || accRes?.accounts?.[0];
-        if (!acc) throw new Error('No account');
-        const expMs = expiredTime ? new Date(expiredTime).getTime() : 0;
-        res = await ipc.zalo?.createPoll({
-          auth: { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent },
-          options: {
-            question: q,
-            options: opts,
-            expiredTime: expMs,
-            allowMultiChoices: allowMulti,
-            allowAddNewOption: allowAdd,
-            hideVotePreview: hidePreview,
-            isAnonymous: isAnon,
-          },
-          groupId,
-        });
-      }
-      if (res?.success) {
-        showNotification('Đã tạo bình chọn', 'success');
-        onClose();
-      } else {
-        showNotification('Tạo bình chọn thất bại: ' + (res?.error || 'Lỗi không xác định'), 'error');
-      }
-    } catch (e: any) {
-      showNotification('Lỗi: ' + e.message, 'error');
-    } finally { setCreating(false); }
-  };
-
-  return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-[#1e2535] rounded-2xl shadow-2xl border border-gray-700 w-full max-w-2xl mx-4 max-h-[90vh] flex flex-col"
-        onClick={e => e.stopPropagation()}>
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700 flex-shrink-0">
-          <h2 className="text-white font-bold text-lg">Tạo bình chọn</h2>
-          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 transition-colors">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-            </svg>
-          </button>
-        </div>
-
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto p-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Left: question + options */}
-            <div className="space-y-4">
-              <div>
-                <label className="text-sm text-gray-300 font-medium mb-1.5 block">Chủ đề bình chọn</label>
-                <textarea
-                  value={question}
-                  onChange={e => setQuestion(e.target.value)}
-                  maxLength={200}
-                  placeholder="Đặt câu hỏi bình chọn"
-                  rows={3}
-                  className="w-full bg-gray-800 border border-gray-600 rounded-xl px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 resize-none"
-                />
-                <p className="text-right text-xs text-gray-400 mt-0.5">{question.length}/200</p>
-              </div>
-
-              <div>
-                <label className="text-sm text-gray-300 font-medium mb-1.5 block">Các lựa chọn</label>
-                <div className="space-y-2">
-                  {options.map((opt, i) => (
-                    <div key={i} className="flex items-center gap-2">
-                      <input
-                        value={opt}
-                        onChange={e => setOption(i, e.target.value)}
-                        placeholder={`Lựa chọn ${i + 1}`}
-                        className="flex-1 bg-gray-800 border border-gray-600 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
-                      />
-                      {options.length > 2 && (
-                        <button onClick={() => removeOption(i)}
-                          className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-red-400 transition-colors">
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-                          </svg>
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-                {options.length < 20 && (
-                  <button onClick={addOption}
-                    className="mt-2 flex items-center gap-1.5 text-blue-400 hover:text-blue-300 text-sm font-medium transition-colors">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                      <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-                    </svg>
-                    Thêm lựa chọn
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Right: settings */}
-            <div className="space-y-4">
-              <div>
-                <label className="text-sm text-gray-300 font-medium mb-1.5 block">Thời hạn bình chọn</label>
-                <div className="relative">
-                  <DateInputVN
-                    type="datetime-local"
-                    value={expiredTime}
-                    onChange={e => setExpiredTime(e.target.value)}
-                    min={new Date().toISOString().slice(0, 16)}
-                    placeholder="Không thời hạn"
-                    className="w-full bg-gray-800 border border-gray-600 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500"
-                  />
-                  {expiredTime && (
-                    <button onClick={() => setExpiredTime('')}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white">
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-                      </svg>
-                    </button>
-                  )}
-                </div>
-                {!expiredTime && <p className="text-xs text-gray-400 mt-1">Không giới hạn thời gian</p>}
-              </div>
-
-              <div>
-                <p className="text-sm text-gray-300 font-medium mb-2">Thiết lập nâng cao</p>
-                <div className="space-y-2.5">
-                  <PollToggle label="Chọn nhiều phương án" checked={allowMulti} onChange={setAllowMulti} />
-                  <PollToggle label="Có thể thêm phương án" checked={allowAdd} onChange={setAllowAdd} />
-                </div>
-              </div>
-
-              <div>
-                <p className="text-sm text-gray-300 font-medium mb-2">Bình chọn ẩn danh</p>
-                <div className="space-y-2.5">
-                  <PollToggle label="Ẩn kết quả khi chưa bình chọn" checked={hidePreview} onChange={setHidePreview} />
-                  <PollToggle label="Ẩn người bình chọn" checked={isAnon} onChange={setIsAnon} />
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-700 flex-shrink-0">
-          <button onClick={onClose}
-            className="px-5 py-2 rounded-xl text-sm font-semibold text-gray-300 hover:bg-gray-700 transition-colors">
-            Huỷ
-          </button>
-          <button onClick={handleCreate} disabled={creating || !question.trim() || options.filter(o => o.trim()).length < 2}
-            className="px-5 py-2 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
-            {creating && <Spinner size={3} />}
-            Tạo bình chọn
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function PollToggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <label className="flex items-center justify-between cursor-pointer select-none">
-      <span className="text-sm text-gray-300">{label}</span>
-      <button
-        type="button"
-        onClick={() => onChange(!checked)}
-        className={`relative w-10 h-5 rounded-full transition-colors flex-shrink-0 ${checked ? 'bg-blue-600' : 'bg-gray-600'}`}
-      >
-        <span className={`absolute top-0.5 left-0 w-4 h-4 bg-white rounded-full shadow transition-transform ${checked ? 'translate-x-5' : 'translate-x-0.5'}`} />
-      </button>
-    </label>
-  );
-}
-
-// ─── EmployeeAvatar ────────────────────────────────────────────────
-// Hiển thị avatar của nhân viên trong bong bóng chat (bên phải).
-// Nếu avatar load lỗi (404) → fallback sang chữ cái đầu của tên.
-function EmployeeAvatar({ name, avatarUrl }: { name: string; avatarUrl?: string }) {
-  const [imgError, setImgError] = useState(false);
-  if (!avatarUrl || imgError) {
-    return (
-      <div className="w-6 h-6 rounded-full bg-purple-600/30 flex items-center justify-center text-purple-300 text-[10px] font-bold ring-1 ring-purple-500/40 flex-shrink-0 self-end mb-0.5"
-        title={`Gửi bởi: ${name}`}>
-        {(name || 'N').charAt(0).toUpperCase()}
-      </div>
-    );
-  }
-  return (
-    <img src={avatarUrl} alt={name}
-      className="w-6 h-6 rounded-full object-cover ring-1 ring-purple-500/40 flex-shrink-0 self-end mb-0.5"
-      title={`Gửi bởi: ${name}`}
-      onError={() => setImgError(true)}
-    />
-  );
-}
-
-/** Parse reactions thành { emojiChar: count } - hỗ trợ cả format mới (PHP-like) và cũ */
-function parseReactions(raw: any): Record<string, number> {
-  if (!raw) return {};
-  let parsed = raw;
-  if (typeof parsed === 'string') {
-    try { parsed = JSON.parse(parsed); } catch { return {}; }
-  }
-  if (!parsed || typeof parsed !== 'object') return {};
-
-  const toEmoji = (k: string) => zaloCodeToEmoji(k);
-
-  // Format mới: { total, lastReact, emoji: { emojiChar: { total, users } } }
-  if (parsed.emoji && typeof parsed.emoji === 'object') {
-    const counts: Record<string, number> = {};
-    for (const [emojiChar, data] of Object.entries(parsed.emoji as any)) {
-      if (data && typeof data === 'object' && (data as any).total > 0) {
-        const key = toEmoji(emojiChar);
-        counts[key] = (counts[key] || 0) + (data as any).total;
-      }
-    }
-    return counts;
-  }
-
-  // Format cũ: { userId: emojiChar }
-  const counts: Record<string, number> = {};
-  for (const val of Object.values(parsed)) {
-    if (val && typeof val === 'string') {
-      const key = toEmoji(val);
-      counts[key] = (counts[key] || 0) + 1;
-    }
-  }
-  return counts;
-}
-
-/** Trích xuất URL ảnh từ một object bất kỳ */
-function extractUrlFromObj(obj: any): string {
-  if (!obj || typeof obj !== 'object') return '';
-  let p: any = obj.params;
-  if (typeof p === 'string') { try { p = JSON.parse(p); } catch { p = null; } }
-  return (p?.hd || p?.rawUrl || p?.normalUrl)
-    || obj.normalUrl || obj.hdUrl || obj.hd
-    || obj.href || obj.thumb || obj.url || obj.src
-    || '';
-}
-
-/** Trích xuất URL ảnh từ nội dung quote - CHỈ với ảnh thực sự, không phải link/file */
-function extractQuoteImage(msg: any, attach?: any, msgType?: string): string {
-  // Helper để kiểm tra xem có phải ảnh không
-  const isImageContent = (obj: any): boolean => {
-    if (!obj || typeof obj !== 'object') return false;
-    // Nếu có title + href nhưng KHÔNG có params.hd/rawUrl => đây là link/file, không phải ảnh
-    if (obj.title && obj.href) {
-      let paramsObj = obj.params;
-      if (typeof paramsObj === 'string') {
-        try { paramsObj = JSON.parse(paramsObj); } catch { paramsObj = null; }
-      }
-      const hasImageParams = !!(paramsObj?.hd || paramsObj?.rawUrl);
-      if (!hasImageParams) return false; // Link/file, không phải ảnh
-    }
-    // Có params.hd/rawUrl hoặc thumb => ảnh
-    let paramsObj = obj.params;
-    if (typeof paramsObj === 'string') {
-      try { paramsObj = JSON.parse(paramsObj); } catch { paramsObj = null; }
-    }
-    return !!(paramsObj?.hd || paramsObj?.rawUrl || obj.thumb || obj.href);
-  };
-
-  if (msg && typeof msg === 'object') {
-    if (isImageContent(msg)) {
-      const url = extractUrlFromObj(msg);
-      if (url) return url;
-    }
-    if (Array.isArray(msg) && msg.length > 0) {
-      if (isImageContent(msg[0])) {
-        const u = extractUrlFromObj(msg[0]);
-        if (u) return u;
-      }
-    }
-  }
-  if (msg && typeof msg === 'string' && msg !== '' && msg !== 'null') {
-    try {
-      const parsed = JSON.parse(msg);
-      if (typeof parsed === 'object') {
-        if (isImageContent(parsed)) {
-          const url = extractUrlFromObj(parsed);
-          if (url) return url;
-        }
-        if (Array.isArray(parsed) && parsed.length > 0 && isImageContent(parsed[0])) {
-          return extractUrlFromObj(parsed[0]);
-        }
-      }
-    } catch {}
-  }
-  if (attach) {
-    try {
-      const parsed = typeof attach === 'string' ? JSON.parse(attach) : attach;
-      const item = Array.isArray(parsed) ? parsed[0] : parsed;
-      if (item && typeof item === 'object' && isImageContent(item)) {
-        const url = extractUrlFromObj(item);
-        if (url) return url;
-        if (item.data && isImageContent(item.data)) return extractUrlFromObj(item.data);
-      }
-    } catch {}
-  }
-  return '';
-}
-
-/** Trích xuất URL ảnh từ tin nhắn (dùng khi lookup quote image) */
-function extractMediaUrl(msg: any): string {
-  try {
-    const parsed = JSON.parse(msg.content || '{}');
-    if (parsed && typeof parsed === 'object') {
-      let paramsObj: any = parsed.params;
-      if (typeof paramsObj === 'string') {
-        try { paramsObj = JSON.parse(paramsObj); } catch { paramsObj = null; }
-      }
-      return paramsObj?.hd || paramsObj?.rawUrl || parsed.href || parsed.thumb || '';
-    }
-  } catch {}
-  try {
-    const attachments = JSON.parse(msg.attachments || '[]');
-    return attachments[0]?.url || attachments[0]?.href || attachments[0]?.thumb || '';
-  } catch {}
-  return '';
-}
-
-/** Hiển thị nội dung tin nhắn trích dẫn - ưu tiên msgType từ DB, sau đó phân tích cấu trúc msg */
-function parseQuoteMsg(msg: string, msgType?: string): string {
-  if (!msg || msg === 'null') {
-    // msg rỗng nhưng msgType cho biết loại → trả về fallback ngay
-    if (msgType === 'chat.recommended' || msgType === 'chat.link') return '[Link]';
-    if (msgType === 'share.file' || msgType === 'file') return '[File]';
-    if (msgType === 'share.link') return '[Link]';
-    if (msgType === 'chat.photo' || msgType === 'photo' || msgType === 'image') return '[Hình ảnh]';
-    if (msgType === 'chat.video.msg') return '[Video]';
-    if (msgType === 'chat.voice') return '🎤 [Ghi âm]';
-    if (msgType === 'chat.sticker') return '[Sticker]';
-    if (msgType === 'chat.poll') return '[Bình chọn]';
-    if (msgType === 'chat.webcontent') return '🏦 [Tài khoản ngân hàng]';
-    if (msgType === 'chat.location.new') return '📍 [Vị trí]';
-    return '';
-  }
-
-  // Nếu có msgType từ DB → sử dụng để xác định loại trước
-  if (msgType) {
-    // Với các loại đặc biệt, kiểm tra msgType trước khi parse msg
-    if (msgType === 'photo' || msgType === 'image' || msgType === 'chat.photo') {
-      return '[Hình ảnh]';
-    }
-    if (msgType === 'chat.video.msg') {
-      return '[Video]';
-    }
-    if (msgType === 'chat.voice') {
-      return '🎤 [Ghi âm]';
-    }
-    if (msgType === 'chat.sticker') {
-      return '[Sticker]';
-    }
-    if (msgType === 'chat.poll') {
-      return '[Bình chọn]';
-    }
-    if (msgType === 'chat.webcontent') {
-      try {
-        const parsed = JSON.parse(msg);
-        if (parsed?.action === 'zinstant.bankcard') return '🏦 [Tài khoản ngân hàng]';
-      } catch {}
-    }
-    // chat.recommended / chat.link = link chia sẻ, parse msg để lấy title
-    if (msgType === 'chat.recommended' || msgType === 'chat.link') {
-      try {
-        const parsed = JSON.parse(msg);
-        if (parsed && typeof parsed === 'object') {
-          let paramsObj = parsed.params;
-          if (typeof paramsObj === 'string') { try { paramsObj = JSON.parse(paramsObj); } catch { paramsObj = null; } }
-          const title = parsed.title || paramsObj?.mediaTitle || parsed.description;
-          if (title) return `Link: ${title}`;
-        }
-      } catch {}
-      return '[Link]';
-    }
-    // Với share.file và share.link → cần parse msg để lấy title
-    if (msgType === 'share.file' || msgType === 'share.link' || msgType === 'file') {
-      try {
-        const parsed = JSON.parse(msg);
-        if (parsed && typeof parsed === 'object' && parsed.title) {
-          return `File: ${parsed.title}`;
-        }
-      } catch {}
-      return msgType === 'share.link' ? '[Link]' : '[File]';
-    }
-  }
-
-  // Thử parse JSON để lấy text hoặc phân tích cấu trúc
-  try {
-    const parsed = JSON.parse(msg);
-
-    // Nếu parse ra string thuần túy → đây là text message
-    if (typeof parsed === 'string') return parsed;
-
-    if (parsed && typeof parsed === 'object') {
-      // Parse params nếu có
-      let paramsObj = parsed.params;
-      if (typeof paramsObj === 'string') {
-        try { paramsObj = JSON.parse(paramsObj); } catch { paramsObj = null; }
-      }
-
-      // 1. Kiểm tra text message trước (msg/content field)
-      if (parsed.msg && typeof parsed.msg === 'string') return String(parsed.msg);
-      if (parsed.content && typeof parsed.content === 'string') return String(parsed.content);
-
-      // 2. Kiểm tra LINK với action="recommened.link"
-      if (parsed.action === 'recommened.link' || parsed.action === 'recommended.link') {
-        // Ưu tiên title gốc (có thể chứa text người dùng), fallback sang mediaTitle
-        const mediaTitle = parsed.title || paramsObj?.mediaTitle;
-        if (mediaTitle) {
-          return `Link: ${mediaTitle}`;
-        }
-        return '[Link]';
-      }
-
-      // 3. Kiểm tra FILE/LINK thông thường: có title + href
-      if (parsed.title && parsed.href) {
-        // Có params.fileSize/fileExt → file
-        if (paramsObj?.fileSize || paramsObj?.fileExt) {
-          return `File: ${parsed.title}`;
-        }
-        // Có params.hd/rawUrl → ảnh (bọc trong link format)
-        const hasImageParams = !!(paramsObj?.hd || paramsObj?.rawUrl);
-        if (!hasImageParams) {
-          // Link thuần túy - ưu tiên title gốc để không mất text do user nhập
-          const displayTitle = parsed.title || paramsObj?.mediaTitle;
-          return `Link: ${displayTitle}`;
-        }
-        // Có image params → rơi vào case ảnh bên dưới
-      }
-
-      // 4. Kiểm tra HÌNH ẢNH: có params.hd/rawUrl hoặc thumb
-      const hasImageData = !!(paramsObj?.hd || paramsObj?.rawUrl || parsed.thumb || (parsed.href && !parsed.title));
-      if (hasImageData) {
-        return '[Hình ảnh]';
-      }
-    }
-    return '';
-  } catch {
-    // Không phải JSON → text thuần túy
-    return msg;
-  }
-}
-
-/** Kiểm tra tin nhắn danh thiếp (chat.recommended) */
-function isCardType(msgType: string, content: string): boolean {
-  if (['chat.recommended', 'chat.recommend'].includes(msgType)) return true;
-  try {
-    const parsed = JSON.parse(content);
-    if (parsed?.action && String(parsed.action).includes('recommened')) return true;
-  } catch {}
-  return false;
-}
-
-/** Kiểm tra tin nhắn ecard (thông báo hệ thống dạng thẻ, vd: trở thành phó nhóm) */
-function isEcardType(msgType: string): boolean {
-  return msgType === 'chat.ecard';
-}
-
-/** Kiểm tra tin nhắn có phải file đính kèm không (không phải ảnh, không phải card) */
-function isFileType(msgType: string, content: string): boolean {
-  if (isCardType(msgType, content)) return false;
-  if (['share.file', 'share.link', 'file'].includes(msgType)) return true;
-  try {
-    const parsed = JSON.parse(content);
-    if (parsed && typeof parsed === 'object' && parsed.title && parsed.href &&
-        !parsed.params?.rawUrl && !parsed.params?.hd) return true;
-  } catch {}
-  return false;
-}
-
-/** Kiểm tra tin nhắn là sticker */
-function isStickerType(msgType: string): boolean {
-  return msgType === 'chat.sticker' || msgType === 'sticker';
-}
-
-/** Kiểm tra tin nhắn webchat với action=rtf (tin nhắn có định dạng rich text) */
-function isRtfMsg(msgType: string, content: string): boolean {
-  if (msgType !== 'webchat') return false;
-  try {
-    const parsed = JSON.parse(content);
-    return parsed?.action === 'rtf';
-  } catch {}
-  return false;
-}
-
-/** Kiểm tra tin nhắn có phải media (ảnh) không - loại trừ file và card */
-function isMediaType(msgType: string, content: string): boolean {
-  if (isCardType(msgType, content)) return false;
-  if (isBankCardType(msgType, content)) return false;
-  if (['share.file', 'share.link', 'file'].includes(msgType)) return false;
-  if (msgType === 'chat.video.msg') return false; // video được xử lý riêng
-  if (msgType === 'chat.voice') return false; // voice được xử lý riêng
-  if (msgType === 'photo' || msgType === 'image' || msgType === 'chat.photo') return true;
-  try {
-    const parsed = JSON.parse(content);
-    if (parsed && typeof parsed === 'object') {
-      // params có thể là string JSON hoặc object
-      let paramsObj: any = parsed.params;
-      if (typeof paramsObj === 'string') {
-        try { paramsObj = JSON.parse(paramsObj); } catch { paramsObj = null; }
-      }
-      const hasHdOrRaw = !!(paramsObj?.hd || paramsObj?.rawUrl);
-      if (parsed.title && parsed.href && !hasHdOrRaw) return false;
-      return !!(parsed.href || parsed.thumb || paramsObj?.rawUrl || paramsObj?.hd);
-    }
-  } catch {}
-  return false;
-}
-
-/** Kiểm tra tin nhắn video */
-function isVideoType(msgType: string): boolean {
-  return msgType === 'chat.video.msg' || msgType === 'video';
-}
-
-/** Kiểm tra tin nhắn thẻ ngân hàng (chat.webcontent + zinstant.bankcard) */
-function isBankCardType(msgType: string, content: string): boolean {
-  // Ưu tiên check msgType trước
-  if (msgType === 'chat.webcontent' || msgType === 'webchat') {
-    try {
-      const parsed = JSON.parse(content);
-      if (parsed?.action === 'zinstant.bankcard') return true;
-    } catch {}
-  }
-  // Fallback: kiểm tra content bất kể msgType (phòng trường hợp Zalo đổi msgType)
-  if (content && content.includes('zinstant.bankcard')) {
-    try {
-      const parsed = JSON.parse(content);
-      if (parsed?.action === 'zinstant.bankcard') return true;
-    } catch {}
-  }
-  return false;
-}
-
-/** FileBubble - hiển thị tin nhắn file đính kèm (share.file) */
-function FileBubble({ msg, isSent }: { msg: any; isSent: boolean }) {
-  const [opening, setOpening] = React.useState(false);
-
-  let fileTitle = '';
-  let fileHref = '';
-  let fileSize = '';
-  let fileExt = '';
-  try {
-    const parsed = JSON.parse(msg.content || '{}');
-    const params = typeof parsed.params === 'string' ? JSON.parse(parsed.params || '{}') : (parsed.params || {});
-    fileTitle = parsed.title || 'File';
-    fileHref = parsed.href || '';
-    fileSize = params.fileSize || '';
-    fileExt = (params.fileExt || fileTitle.split('.').pop() || '').toLowerCase();
-  } catch {}
-
-  // Facebook: extract metadata from attachments column
-  if (msg.channel === 'facebook' && (!fileTitle || fileTitle === 'File')) {
-    try {
-      const atts = JSON.parse(msg.attachments || '[]');
-      if (atts.length > 0) {
-        const a = atts[0];
-        if (a.name) fileTitle = a.name;
-        if (a.url && !fileHref) fileHref = a.url;
-        if (a.fileSize != null && !fileSize) fileSize = String(a.fileSize);
-        if (!fileExt && fileTitle) fileExt = fileTitle.split('.').pop()?.toLowerCase() || '';
-      }
-    } catch {}
-    // Fallback: extract name from body text like "File: filename.ext"
-    if (!fileTitle && msg.content) {
-      const m = msg.content.match(/(?:📎|File:)\s*(.+)/);
-      if (m) {
-        fileTitle = m[1].trim();
-        if (!fileExt) fileExt = fileTitle.split('.').pop()?.toLowerCase() || '';
-      }
-    }
-  }
-
-  let localFilePath = '';
-  try {
-    const lp = typeof msg.local_paths === 'string' ? JSON.parse(msg.local_paths || '{}') : (msg.local_paths || {});
-    localFilePath = lp.file || lp.main || '';
-  } catch {}
-
-  // Facebook: also check localPath inside attachments (temp sending state)
-  if (msg.channel === 'facebook' && !localFilePath) {
-    try {
-      const atts = JSON.parse(msg.attachments || '[]');
-      if (atts.length > 0 && atts[0].localPath) localFilePath = atts[0].localPath;
-    } catch {}
-  }
-
-  const handleOpen = async () => {
-    if (opening) return;
-    setOpening(true);
-    try {
-      if (localFilePath) await ipc.file?.openPath(localFilePath);
-      else if (fileHref) ipc.shell?.openExternal(fileHref);
-    } catch {} finally { setOpening(false); }
-  };
-
-  const handleOpenFolder = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!localFilePath) return;
-    const parentDir = localFilePath.replace(/[/\\][^/\\]+$/, '');
-    try { await ipc.file?.openPath(parentDir); } catch {}
-  };
-
-  const formatFileSize = (bytes: string | number): string => {
-    const n = typeof bytes === 'string' ? parseInt(bytes) : bytes;
-    if (!n || isNaN(n)) return '';
-    if (n < 1024) return `${n} B`;
-    if (n < 1024 * 1024) return `${(n / 1024).toFixed(2)} KB`;
-    return `${(n / 1024 / 1024).toFixed(2)} MB`;
-  };
-
-  const getFileIconAndColor = (ext: string): { icon: string; bg: string; text: string } => {
-    const e = ext.toLowerCase();
-    if (['pdf'].includes(e)) return { icon: 'PDF', bg: 'bg-red-600', text: 'text-white' };
-    if (['doc', 'docx'].includes(e)) return { icon: 'DOC', bg: 'bg-blue-500', text: 'text-white' };
-    if (['xls', 'xlsx', 'csv'].includes(e)) return { icon: 'XLS', bg: 'bg-green-600', text: 'text-white' };
-    if (['ppt', 'pptx'].includes(e)) return { icon: 'PPT', bg: 'bg-orange-500', text: 'text-white' };
-    if (['zip', 'rar', '7z', 'tar', 'gz'].includes(e)) return { icon: 'ZIP', bg: 'bg-yellow-600', text: 'text-white' };
-    if (['mp4', 'avi', 'mov', 'mkv', 'webm'].includes(e)) return { icon: 'VID', bg: 'bg-purple-600', text: 'text-white' };
-    if (['mp3', 'wav', 'ogg', 'flac', 'm4a'].includes(e)) return { icon: 'AUD', bg: 'bg-pink-600', text: 'text-white' };
-    if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(e)) return { icon: 'IMG', bg: 'bg-teal-600', text: 'text-white' };
-    if (['txt', 'log'].includes(e)) return { icon: 'TXT', bg: 'bg-gray-500', text: 'text-white' };
-    return { icon: e.toUpperCase().slice(0, 3) || '...', bg: 'bg-gray-500', text: 'text-white' };
-  };
-
-  const sizeText = formatFileSize(fileSize);
-  const hasLocal = !!localFilePath;
-  const canOpen = hasLocal || !!fileHref;
-  const { icon, bg, text } = getFileIconAndColor(fileExt);
-
-  return (
-    <div className={`flex items-center gap-3 px-3 py-2.5 rounded-2xl min-w-[200px] max-w-xs ${
-      isSent ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-200'
-    }`}>
-      {/* Colored file type icon box */}
-      <button
-        onClick={handleOpen}
-        disabled={opening || !canOpen}
-        className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 font-bold text-[11px] ${bg} ${text} ${canOpen ? 'hover:opacity-80 cursor-pointer' : 'cursor-default opacity-60'} transition-opacity`}
-        title={canOpen ? 'Nhấn để mở' : ''}
-      >
-        {icon}
-      </button>
-
-      {/* File info */}
-      <button
-        onClick={handleOpen}
-        disabled={opening || !canOpen}
-        className="flex-1 min-w-0 text-left"
-        title={canOpen ? 'Nhấn để mở' : ''}
-      >
-        <p className="text-sm font-medium truncate">{fileTitle}</p>
-        <p className={`text-xs mt-0.5 flex items-center gap-1 ${isSent ? 'text-white-important' : 'text-gray-400'}`}>
-          {sizeText && <span>{sizeText}</span>}
-          {sizeText && hasLocal && <span>•</span>}
-          {opening ? <span>Đang mở...</span>
-            : hasLocal ? <><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg><span>Đã có trên máy</span></>
-            : fileHref ? <span>Nhấn để tải</span>
-            : (msg.channel === 'facebook' && isSent) ? <span>✓ Đã gửi</span>
-            : <span>Đang tải về...</span>}
-        </p>
-      </button>
-
-      {/* Action buttons: folder + download */}
-      <div className="flex items-center gap-1 flex-shrink-0">
-        {hasLocal && (
-          <button onClick={handleOpenFolder} title="Mở thư mục"
-            className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${
-              isSent ? 'text-white-important hover:text-white hover:bg-blue-500' : 'text-gray-400 hover:text-white hover:bg-gray-600'
-            }`}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
-            </svg>
-          </button>
-        )}
-        <button onClick={handleOpen} disabled={opening || !canOpen} title={hasLocal ? 'Mở file' : 'Tải xuống'}
-          className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors disabled:opacity-40 ${
-            isSent ? 'text-white-important hover:text-white hover:bg-blue-500' : 'text-white-important hover:text-white hover:bg-gray-600'
-          }`}>
-          {hasLocal
-            ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
-                <polyline points="15 3 21 3 21 9" />
-                <line x1="10" y1="14" x2="21" y2="3" />
-              </svg>
-            : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          }
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/** Hiển thị bubble ảnh dùng React state - tự retry khi local_paths được cập nhật sau khi tải xong */
-function MediaBubble({ msg, onView, isSent, allContacts, groupMembersList, onMentionClick }: {
-  msg: any;
-  onView: (src: string) => void;
-  isSent?: boolean;
-  allContacts?: any[];
-  groupMembersList?: any[];
-  onMentionClick?: (userId: string, e: React.MouseEvent) => void;
-}) {
-  // Remote-first: hiển thị CDN ngay lập tức, chuyển sang local sau khi tải xong
-  // useLocal=true khi local_paths đã có → thử dùng file local (nhanh hơn, bền vững hơn)
-  const [useLocal, setUseLocal] = React.useState(false);
-  const [loadFailed, setLoadFailed] = React.useState(false);
-  const [saving, setSaving] = React.useState(false);
-
-  const localPathsStr = typeof msg.local_paths === 'string' ? msg.local_paths : JSON.stringify(msg.local_paths ?? '');
-  React.useEffect(() => {
-    setLoadFailed(false);
-    // Chỉ dùng local khi local_paths thực sự có path (file đã tải về máy)
-    try {
-      const lp: Record<string, string> = JSON.parse(localPathsStr || '{}');
-      const hasPath = !!(lp.main || lp.hd || (Object.values(lp)[0] as string));
-      setUseLocal(hasPath);
-    } catch { setUseLocal(false); }
-  }, [localPathsStr]);
-
-  // Parse local URL
-  let localUrl = '';
-  let localFilePath = '';
-  try {
-    const lp: Record<string, string> = typeof msg.local_paths === 'string'
-      ? JSON.parse(msg.local_paths || '{}')
-      : (msg.local_paths || {});
-    localFilePath = lp.main || lp.hd || (Object.values(lp)[0] as string) || '';
-    if (localFilePath) {
-      localUrl = toLocalMediaUrl(localFilePath);
-    }
-  } catch {}
-
-  // FB: use localPath from attachments for immediate preview
-  let fbLocalUrls: string[] = [];
-  if (msg.channel === 'facebook') {
-    try {
-      const atts = JSON.parse(msg.attachments || '[]');
-      fbLocalUrls = atts.map((a: any) => a.localPath ? toLocalMediaUrl(a.localPath) : (a.url || '')).filter(Boolean);
-      if (!localUrl && fbLocalUrls.length > 0) localUrl = fbLocalUrls[0];
-    } catch {}
-  }
-
-  // Parse remote URL + caption
-  let remoteUrl = '';
-  let caption = '';
-  try {
-    const parsed = JSON.parse(msg.content || '{}');
-    if (parsed && typeof parsed === 'object') {
-      let paramsObj: any = parsed.params;
-      if (typeof paramsObj === 'string') {
-        try { paramsObj = JSON.parse(paramsObj); } catch { paramsObj = null; }
-      }
-      remoteUrl = paramsObj?.hd || paramsObj?.rawUrl || parsed.href || parsed.thumb || '';
-      if (parsed.title && typeof parsed.title === 'string') {
-        const t = parsed.title.trim();
-        if (t && !t.startsWith('http')) caption = t;
-      }
-    }
-  } catch {}
-  if (!remoteUrl) {
-    try {
-      const attachments = JSON.parse(msg.attachments || '[]');
-      remoteUrl = attachments[0]?.url || attachments[0]?.href || attachments[0]?.thumb || '';
-    } catch {}
-  }
-
-  // Remote-first: CDN hiển thị ngay; chuyển local khi file đã tải xong
-  // Nếu local lỗi (race condition file chưa kịp ghi) → tự fallback về CDN
-  const displayUrl = useLocal ? (localUrl || remoteUrl) : (remoteUrl || localUrl);
-  const viewUrl = remoteUrl || displayUrl;
-
-  const handleImgError = () => {
-    if (useLocal && remoteUrl) {
-      setUseLocal(false); // local lỗi → fallback CDN ngay, không flash
-    } else {
-      setLoadFailed(true);
-    }
-  };
-
-  const handleShowInFolder = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (localFilePath) await ipc.file?.showItemInFolder(localFilePath);
-  };
-
-  const handleSaveAs = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (saving) return;
-    setSaving(true);
-    try {
-      const defaultName = localFilePath
-        ? localFilePath.replace(/.*[/\\]/, '')
-        : `img_${msg.msg_id || Date.now()}.jpg`;
-      await ipc.file?.saveAs({
-        localPath: localFilePath || undefined,
-        remoteUrl: remoteUrl || undefined,
-        defaultName,
-      });
-    } finally { setSaving(false); }
-  };
-
-  if (loadFailed) {
-    return (
-      <div className="flex flex-col items-center justify-center gap-1.5 max-w-xs w-full h-32 rounded-xl bg-gray-700/40 text-gray-400 select-none">
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="opacity-40">
-          <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
-          <polyline points="21 15 16 10 5 21"/>
-          <line x1="2" y1="2" x2="22" y2="22" strokeWidth="1.5"/>
-        </svg>
-        <span className="text-xs opacity-60">Không tải được ảnh</span>
-        {remoteUrl && (
-          <button onClick={() => ipc.shell?.openExternal(remoteUrl)}
-            className="text-[11px] text-blue-400 hover:text-blue-300 hover:underline transition-colors">
-            Mở link Zalo
-          </button>
-        )}
-      </div>
-    );
-  }
-
-  // Multi-image grid (FB batch send temp)
-  if (fbLocalUrls.length > 1) {
-    const cols = fbLocalUrls.length <= 2 ? 2 : fbLocalUrls.length <= 4 ? 2 : 3;
-    return (
-      <div className="grid gap-1 rounded-xl overflow-hidden" style={{ gridTemplateColumns: `repeat(${cols}, 1fr)`, maxWidth: 260 }}>
-        {fbLocalUrls.map((src, i) => (
-          <img key={i} src={src} alt="" onClick={() => onView(src)}
-            className="w-full aspect-square object-cover cursor-pointer hover:opacity-90 transition-opacity bg-gray-700/30" />
-        ))}
-      </div>
-    );
-  }
-
-  if (!displayUrl) {
-    // Không có cả remote lẫn local - hiển thị placeholder tĩnh (không animation)
-    return (
-      <div className="flex items-center justify-center max-w-xs w-full h-32 rounded-xl bg-gray-700/40 text-gray-400 select-none">
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="opacity-30">
-          <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
-          <polyline points="21 15 16 10 5 21"/>
-        </svg>
-      </div>
-    );
-  }
-
-  const imgNode = (
-    <div className={`relative group/media max-w-xs h-64 overflow-hidden${caption ? ' rounded-t-xl' : ' rounded-xl'}`}>
-      <img
-        src={displayUrl}
-        alt=""
-        className={`h-64 cursor-pointer hover:opacity-90 bg-gray-700/30 object-contain w-full${caption ? ' rounded-t-xl' : ' rounded-xl'}`}
-        onClick={() => onView(viewUrl)}
-        onError={handleImgError}
-      />
-      {/* Viền mờ overlay - hiển thị rõ ở cả giao diện sáng lẫn tối */}
-      <div className={`absolute inset-0 pointer-events-none ring-1 ring-inset ring-black/[0.12]${caption ? ' rounded-t-xl' : ' rounded-xl'}`} />
-      {/* Hover action buttons */}
-      <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover/media:opacity-100 transition-opacity">
-        {localFilePath && (
-          <button onClick={handleShowInFolder} title="Mở trong thư mục"
-            className="w-7 h-7 bg-black/60 hover:bg-black/80 rounded-lg flex items-center justify-center text-white transition-colors backdrop-blur-sm">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
-            </svg>
-          </button>
-        )}
-        <button onClick={handleSaveAs} disabled={saving} title="Lưu về máy"
-          className="w-7 h-7 bg-black/60 hover:bg-black/80 rounded-lg flex items-center justify-center text-white transition-colors backdrop-blur-sm disabled:opacity-40">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
-            <polyline points="7 10 12 15 17 10"/>
-            <line x1="12" y1="15" x2="12" y2="3"/>
-          </svg>
-        </button>
-      </div>
-    </div>
-  );
-
-  if (!caption) return imgNode;
-
-  // With caption: wrap in bubble with bg matching sent/received style
-  return (
-    <div className={`flex flex-col rounded-2xl overflow-hidden ring-1 ring-black/[0.12]${isSent ? ' rounded-br-sm' : ' rounded-bl-sm'}`}>
-      {imgNode}
-      <div className={`px-3 py-2 text-sm break-words${isSent ? ' bg-blue-600 text-white' : ' bg-gray-700 text-gray-200'}`}>
-        <TextWithMentions
-          text={caption}
-          allContacts={allContacts}
-          groupMembersList={groupMembersList}
-          onMentionClick={onMentionClick}
-        />
-      </div>
-    </div>
-  );
-}
-
-/** VideoBubble - hiển thị tin nhắn video với thumbnail và nút play */
-function VideoBubble({ msg, isSent }: { msg: any; isSent: boolean }) {
-  const [saving, setSaving] = React.useState(false);
-  // local-first thumbnail; fallback remote khi local chưa tải hoặc lỗi
-  const [thumbSrcMode, setThumbSrcMode] = React.useState<'local' | 'remote'>('local');
-
-  const localPathsStr = typeof msg.local_paths === 'string' ? msg.local_paths : JSON.stringify(msg.local_paths ?? '');
-  React.useEffect(() => { setThumbSrcMode('local'); }, [localPathsStr]);
-
-  // Parse local paths
-  let thumbLocalPath = '';
-  let videoLocalPath = '';
-  try {
-    const lp: Record<string, string> = typeof msg.local_paths === 'string'
-      ? JSON.parse(msg.local_paths || '{}') : (msg.local_paths || {});
-    thumbLocalPath = lp.thumb || lp.main || '';
-    videoLocalPath = lp.file || lp.video || '';
-  } catch {}
-
-  // Parse remote URLs từ content
-  let remoteThumb = '';
-  let remoteVideo = '';
-  let duration = 0;
-  let width = 0;
-  let height = 0;
-  try {
-    const parsed = JSON.parse(msg.content || '{}');
-    remoteThumb = parsed.thumb || '';
-    remoteVideo = parsed.href || '';
-    const params = typeof parsed.params === 'string' ? JSON.parse(parsed.params) : (parsed.params || {});
-    duration = params.duration ? Math.round(params.duration / 1000) : 0;
-    width = params.video_width || 0;
-    height = params.video_height || 0;
-  } catch {}
-
-  const localThumbUrl = thumbLocalPath ? toLocalMediaUrl(thumbLocalPath) : '';
-  // Local-first: ưu tiên local; fallback remote khi local lỗi (file chưa tải xong)
-  const thumbUrl = thumbSrcMode === 'remote'
-    ? (remoteThumb || localThumbUrl)
-    : (localThumbUrl || remoteThumb);
-
-  const handlePlay = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    // Mở video local trước, nếu không có thì mở remote
-    if (videoLocalPath) {
-      await ipc.file?.openPath(videoLocalPath);
-    } else if (remoteVideo) {
-      ipc.shell?.openExternal(remoteVideo);
-    }
-  };
-
-  const handleOpenFolder = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (videoLocalPath) {
-      const parentDir = videoLocalPath.replace(/[/\\][^/\\]+$/, '');
-      await ipc.file?.openPath(parentDir);
-    }
-  };
-
-  const handleSaveAs = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (saving) return;
-    setSaving(true);
-    try {
-      const defaultName = videoLocalPath
-        ? videoLocalPath.replace(/.*[/\\]/, '')
-        : `video_${msg.msg_id || Date.now()}.mp4`;
-      await ipc.file?.saveAs({
-        localPath: videoLocalPath || undefined,
-        remoteUrl: remoteVideo || undefined,
-        defaultName,
-      });
-    } finally { setSaving(false); }
-  };
-
-  const formatDuration = (s: number) => {
-    if (!s) return '';
-    const m = Math.floor(s / 60);
-    const sec = s % 60;
-    return `${m}:${sec.toString().padStart(2, '0')}`;
-  };
-
-  const isHD = width >= 720 || height >= 720;
-  const aspectRatio = width && height ? width / height : 16 / 9;
-  const displayHeight = Math.min(200, Math.round(280 / aspectRatio));
-
-  return (
-    <div
-      className="relative group/video cursor-pointer rounded-xl overflow-hidden bg-black ring-1 ring-black/[0.12]"
-      style={{ width: '17.5rem', height: displayHeight || 160 }}
-      onClick={handlePlay}
-    >
-      {/* Thumbnail */}
-      {thumbUrl ? (
-        <img
-          src={thumbUrl}
-          alt=""
-          className="w-full h-full object-cover"
-          onError={(e) => {
-            if (thumbSrcMode === 'local' && remoteThumb && remoteThumb !== thumbUrl) {
-              setThumbSrcMode('remote'); // Local lỗi → thử remote Zalo CDN
-            } else {
-              (e.target as HTMLImageElement).style.display = 'none'; // Cả hai lỗi → ẩn
-            }
-          }}
-        />
-      ) : (
-        <div className="w-full h-full bg-gray-800 flex items-center justify-center">
-          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-400">
-            <polygon points="23 7 16 12 23 17 23 7"/>
-            <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
-          </svg>
-        </div>
-      )}
-
-      {/* Overlay gradient */}
-      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-black/50" />
-
-      {/* Play button ở giữa */}
-      <div className="absolute inset-0 flex items-center justify-center">
-        <div className="w-14 h-14 bg-black/60 backdrop-blur-sm rounded-full flex items-center justify-center group-hover/video:bg-black/80 transition-colors shadow-lg">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="white">
-            <polygon points="5 3 19 12 5 21 5 3"/>
-          </svg>
-        </div>
-      </div>
-
-      {/* Duration + HD badge - bottom left */}
-      <div className="absolute bottom-2 left-2 flex items-center gap-1.5">
-        {duration > 0 && (
-          <span className="text-[11px] text-white font-medium bg-black/50 px-1.5 py-0.5 rounded">
-            {formatDuration(duration)}
-          </span>
-        )}
-        {isHD && (
-          <span className="text-[11px] text-white font-bold bg-blue-600/70 px-1.5 py-0.5 rounded">HD</span>
-        )}
-        {!videoLocalPath && (
-          <span className="text-[11px] text-yellow-300 bg-black/50 px-1.5 py-0.5 rounded">Đang tải...</span>
-        )}
-      </div>
-
-      {/* Action buttons - top right, on hover */}
-      <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover/video:opacity-100 transition-opacity">
-        {videoLocalPath && (
-          <button onClick={handleOpenFolder} title="Mở thư mục"
-            className="w-7 h-7 bg-black/60 hover:bg-black/80 rounded-lg flex items-center justify-center text-white transition-colors">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
-            </svg>
-          </button>
-        )}
-        <button onClick={handleSaveAs} disabled={saving} title="Lưu về máy"
-          className="w-7 h-7 bg-black/60 hover:bg-black/80 rounded-lg flex items-center justify-center text-white transition-colors disabled:opacity-40">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
-            <polyline points="7 10 12 15 17 10"/>
-            <line x1="12" y1="15" x2="12" y2="3"/>
-          </svg>
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/** VoiceBubble - hiển thị tin nhắn ghi âm (chat.voice) */
-function VoiceBubble({ msg, isSent }: { msg: any; isSent: boolean }) {
-  const [isPlaying, setIsPlaying] = React.useState(false);
-  const [progress, setProgress] = React.useState(0);
-  const [currentTime, setCurrentTime] = React.useState(0);
-  const [duration, setDuration] = React.useState(0);
-  const audioRef = React.useRef<HTMLAudioElement | null>(null);
-  const animRef = React.useRef<number>(0);
-
-  // Parse voice URL + duration from Zalo message content (memo to avoid re-parse)
-  const { voiceUrl, paramsDurationSec, localPath } = React.useMemo(() => {
-    let _voiceUrl = '';
-    let _paramsDur = 0;
-    try {
-      const parsed = JSON.parse(msg.content || '{}');
-      _voiceUrl = parsed.href || '';
-      const params = typeof parsed.params === 'string' ? JSON.parse(parsed.params || '{}') : (parsed.params || {});
-      if (!_voiceUrl) {
-        _voiceUrl = params.m4a || params.url || '';
-      }
-      // Zalo lưu duration dạng ms (vd: 5000 = 5s) hoặc giây
-      const rawDur = Number(params.duration || params.dur || 0);
-      _paramsDur = rawDur > 300 ? rawDur / 1000 : rawDur;
-    } catch {}
-
-    let _localPath = '';
-    try {
-      const lp = typeof msg.local_paths === 'string' ? JSON.parse(msg.local_paths || '{}') : (msg.local_paths || {});
-      _localPath = lp.file || lp.voice || lp.main || '';
-    } catch {}
-
-    return { voiceUrl: _voiceUrl, paramsDurationSec: _paramsDur, localPath: _localPath };
-  }, [msg.content, msg.local_paths]);
-
-  // Sync duration from params khi chưa có audio metadata
-  React.useEffect(() => {
-    if (paramsDurationSec > 0 && duration === 0) {
-      setDuration(paramsDurationSec);
-    }
-  }, [paramsDurationSec]);
-
-  const audioSrc = localPath ? toLocalMediaUrl(localPath) : voiceUrl;
-
-  const formatDur = (s: number) => {
-    if (!s || !isFinite(s)) return '0:00';
-    const m = Math.floor(s / 60);
-    const sec = Math.floor(s % 60);
-    return `${m}:${sec.toString().padStart(2, '0')}`;
-  };
-
-  const tick = React.useCallback(() => {
-    const audio = audioRef.current;
-    if (audio && isPlaying) {
-      const ct = audio.currentTime;
-      const dur = audio.duration || duration || 1;
-      setCurrentTime(ct);
-      setProgress(ct / dur);
-      animRef.current = requestAnimationFrame(tick);
-    }
-  }, [isPlaying, duration]);
-
-  React.useEffect(() => {
-    if (isPlaying) {
-      animRef.current = requestAnimationFrame(tick);
-    }
-    return () => cancelAnimationFrame(animRef.current);
-  }, [isPlaying, tick]);
-
-  const togglePlay = () => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    if (isPlaying) {
-      audio.pause();
-      setIsPlaying(false);
-    } else {
-      audio.play().then(() => setIsPlaying(true)).catch(() => {});
-    }
-  };
-
-  const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
-    const audio = audioRef.current;
-    if (!audio || !audio.duration) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    audio.currentTime = pct * audio.duration;
-    setProgress(pct);
-    setCurrentTime(audio.currentTime);
-  };
-
-  return (
-    <div className={`flex items-center gap-2.5 px-3 py-2 rounded-2xl min-w-[200px] max-w-[280px] ${
-      isSent ? 'bg-blue-600' : 'bg-gray-700'
-    }`}>
-      <audio
-        ref={audioRef}
-        src={audioSrc}
-        preload="metadata"
-        onLoadedMetadata={(e) => {
-          const audioDur = (e.target as HTMLAudioElement).duration;
-          if (audioDur && isFinite(audioDur)) setDuration(audioDur);
-        }}
-        onEnded={() => { setIsPlaying(false); setProgress(0); setCurrentTime(0); }}
-      />
-
-      {/* Play/Pause button */}
-      <button onClick={togglePlay} className="w-9 h-9 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center flex-shrink-0 transition-colors">
-        {isPlaying ? (
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="white">
-            <rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>
-          </svg>
-        ) : (
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="white">
-            <polygon points="5 3 19 12 5 21 5 3"/>
-          </svg>
-        )}
-      </button>
-
-      {/* Waveform / progress */}
-      <div className="flex-1 flex flex-col gap-1">
-        <div className="relative h-6 flex items-center cursor-pointer" onClick={handleSeek}>
-          <div className="flex items-center gap-[2px] w-full h-full">
-            {Array.from({ length: 24 }, (_, i) => {
-              const h = [3, 5, 8, 4, 10, 6, 12, 5, 9, 4, 11, 7, 6, 10, 5, 8, 4, 12, 6, 9, 5, 7, 4, 6][i] || 5;
-              const filled = i / 24 < progress;
-              return (
-                <div
-                  key={i}
-                  className={`rounded-full transition-colors duration-100 ${filled ? 'bg-white' : 'bg-white/30'}`}
-                  style={{ width: '0.125rem', height: h * 1.5, minHeight: '0.1875rem' }}
-                />
-              );
-            })}
-          </div>
-        </div>
-        <span className="text-[10px] text-white/70 font-mono tabular-nums leading-none">
-          {isPlaying ? formatDur(currentTime) : formatDur(duration)}
-        </span>
-      </div>
-
-      {/* Mic icon */}
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/50 flex-shrink-0">
-        <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/>
-        <path d="M19 10v2a7 7 0 01-14 0v-2"/>
-      </svg>
-    </div>
-  );
-}
-
-/** Preview sticker nhỏ dùng trong khung trích dẫn (quote) - tải URL từ DB cache hoặc API */
-function QuotedStickerPreview({ content }: { content: string }) {
-  const [stickerUrl, setStickerUrl] = React.useState<string | null>(null);
-
-  React.useEffect(() => {
-    let cancelled = false;
-
-    // Try direct URL from content first (params.staticIcon / params.icon)
-    try {
-      const c = JSON.parse(content || '{}');
-      const params = typeof c.params === 'string' ? JSON.parse(c.params) : (c.params || {});
-      const directUrl = params?.staticIcon || params?.icon || c?.stickerUrl || c?.icon || '';
-      if (directUrl) { setStickerUrl(directUrl); return; }
-    } catch {}
-
-    const load = async () => {
-      let stickerId: number | null = null;
-      try {
-        const parsed = JSON.parse(content || '{}');
-        stickerId = parsed?.id ?? parsed?.sticker_id ?? null;
-      } catch {}
-      if (!stickerId) return;
-
-      // DB cache lookup
-      try {
-        const res = await DataAccessor.getStickerById(stickerId);
-        if (res?.sticker?.stickerUrl && !res.sticker._unsupported) {
-          if (!cancelled) setStickerUrl(res.sticker.stickerUrl);
-          return;
-        }
-      } catch {}
-
-      // Fallback: fetch from API
-      try {
-        const accountsRes = await ipc.login?.getAccounts();
-        const accounts: any[] = accountsRes?.accounts || [];
-        const active = accounts.find((a: any) => a.is_active) || accounts[0];
-        if (!active) return;
-        const auth = { cookies: active.cookies, imei: active.imei, userAgent: active.user_agent };
-        const detailRes = await ipc.zalo?.getStickersDetail({ auth, stickerIds: [stickerId] });
-        const stickers: any[] = detailRes?.response || [];
-        if (stickers.length && stickers[0]?.stickerUrl) {
-          if (!cancelled) setStickerUrl(stickers[0].stickerUrl);
-          DataAccessor.saveStickers({ stickers }).catch(() => {});
-        }
-      } catch {}
-    };
-    load();
-    return () => { cancelled = true; };
-  }, [content]);
-
-  if (!stickerUrl) {
-    return (
-      <div className="w-12 h-12 rounded-lg bg-gray-700/50 flex items-center justify-center animate-pulse flex-shrink-0">
-        <span className="text-lg">🎭</span>
-      </div>
-    );
-  }
-  return <img src={stickerUrl} alt="sticker" className="w-12 h-12 object-contain rounded-lg flex-shrink-0" />;
-}
-
-/** Hiển thị nhiều sticker liền nhau từ cùng người gửi trong 30 phút - mỗi sticker có thể right-click riêng */
-function StickerGroupBubble({
-  msgs: groupMsgs,
-  onContextMenu,
-}: {
-  msgs: any[];
-  onContextMenu: (e: React.MouseEvent, msg: any) => void;
-}) {
-  // w-28 = 112px × 3 + gap-1.5 (6px) × 2 = 348px → maxWidth 22rem = 352px đủ để hiện 3/dòng
-  return (
-    <div className="flex flex-wrap gap-1.5" style={{ maxWidth: '22rem' }}>
-      {groupMsgs.map((stickerMsg) => (
-        <div
-          key={stickerMsg.msg_id}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onContextMenu(e, stickerMsg);
-          }}
-          className="cursor-default select-none"
-        >
-          <StickerBubble msg={stickerMsg} />
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/** Trích xuất groupLayoutId từ tin nhắn ảnh gửi theo nhóm (is_group_layout=1) */
-function getGroupLayoutId(msg: any): string | null {  if (!isMediaType(msg.msg_type, msg.content)) return null;
-  try {
-    const parsed = JSON.parse(msg.content || '{}');
-    const params = typeof parsed.params === 'string' ? JSON.parse(parsed.params) : (parsed.params || {});
-    if (params.is_group_layout && params.group_layout_id) return String(params.group_layout_id);
-  } catch {}
-  return null;
-}
-
-/** Hiển thị nhóm ảnh gửi cùng 1 batch - tối đa 4 ảnh/hàng, chiều cao cố định */
-function MediaGroupBubble({ msgs: groupMsgs, onView, isSelecting: isSelectingProp, selectedMsgIds: selectedMsgIdsProp, onToggleSelect }: {
-  msgs: any[]; onView: (src: string) => void;
-  isSelecting?: boolean; selectedMsgIds?: Set<string>; onToggleSelect?: (msgId: string) => void;
-}) {
-  const sorted = React.useMemo(() => {
-    return [...groupMsgs].sort((a, b) => {
-      try {
-        const pa = JSON.parse(a.content || '{}');
-        const ppa = typeof pa.params === 'string' ? JSON.parse(pa.params) : (pa.params || {});
-        const pb = JSON.parse(b.content || '{}');
-        const ppb = typeof pb.params === 'string' ? JSON.parse(pb.params) : (pb.params || {});
-        return (ppa.id_in_group || 0) - (ppb.id_in_group || 0);
-      } catch { return 0; }
-    });
-  }, [groupMsgs]);
-
-  // Chia thành hàng, mỗi hàng tối đa 4 ảnh
-  const rows: any[][] = [];
-  for (let i = 0; i < sorted.length; i += 4) rows.push(sorted.slice(i, i + 4));
-
-  return (
-    <div className="flex flex-col gap-0.5 overflow-hidden rounded-xl max-w-xs ring-1 ring-black/[0.12]">
-      {rows.map((row, ri) => (
-        <div key={ri} className="flex gap-0.5">
-          {row.map((m) => (
-            <SingleImageInGroup key={m.msg_id} msg={m} onView={onView} isSelecting={isSelectingProp} isSelected={selectedMsgIdsProp?.has(m.msg_id)} onToggleSelect={onToggleSelect} />
-          ))}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/** Ảnh đơn bên trong MediaGroupBubble - chiều cao cố định h-40 */
-function SingleImageInGroup({ msg, onView, isSelecting: isSelectingProp, isSelected, onToggleSelect }: {
-  msg: any; onView: (src: string) => void;
-  isSelecting?: boolean; isSelected?: boolean; onToggleSelect?: (msgId: string) => void;
-}) {
-  // Remote-first: hiển thị CDN ngay; chuyển local khi file đã tải xong
-  const [useLocal, setUseLocal] = React.useState(false);
-  const [loadFailed, setLoadFailed] = React.useState(false);
-  const [saving, setSaving] = React.useState(false);
-
-  const localPathsStr = typeof msg.local_paths === 'string' ? msg.local_paths : JSON.stringify(msg.local_paths ?? '');
-  React.useEffect(() => {
-    setLoadFailed(false);
-    try {
-      const lp: Record<string, string> = JSON.parse(localPathsStr || '{}');
-      const hasPath = !!(lp.main || lp.hd || (Object.values(lp)[0] as string));
-      setUseLocal(hasPath);
-    } catch { setUseLocal(false); }
-  }, [localPathsStr]);
-
-  let localUrl = '';
-  let localFilePath = '';
-  try {
-    const lp: Record<string, string> = typeof msg.local_paths === 'string'
-      ? JSON.parse(msg.local_paths || '{}') : (msg.local_paths || {});
-    localFilePath = lp.main || lp.hd || (Object.values(lp)[0] as string) || '';
-    if (localFilePath) localUrl = toLocalMediaUrl(localFilePath);
-  } catch {}
-
-  // FB: use localPath from attachments for immediate preview
-  let fbLocalUrls: string[] = [];
-  if (msg.channel === 'facebook') {
-    try {
-      const atts = JSON.parse(msg.attachments || '[]');
-      fbLocalUrls = atts.map((a: any) => a.localPath ? toLocalMediaUrl(a.localPath) : (a.url || '')).filter(Boolean);
-      if (!localUrl && fbLocalUrls.length > 0) localUrl = fbLocalUrls[0];
-    } catch {}
-  }
-
-  let remoteUrl = '';
-  try {
-    const parsed = JSON.parse(msg.content || '{}');
-    if (parsed && typeof parsed === 'object') {
-      const params = typeof parsed.params === 'string' ? JSON.parse(parsed.params) : (parsed.params || {});
-      remoteUrl = params.hd || params.rawUrl || parsed.href || parsed.thumb || '';
-    }
-  } catch {}
-  // FB fallback: lấy URL từ attachments
-  if (!remoteUrl && msg.channel === 'facebook') {
-    try {
-      const attachments = JSON.parse(msg.attachments || '[]');
-      remoteUrl = attachments[0]?.url || attachments[0]?.href || attachments[0]?.thumb || '';
-    } catch {}
-  }
-
-  // Remote-first: CDN hiển thị ngay; chuyển local khi file đã tải xong
-  const displayUrl = useLocal ? (localUrl || remoteUrl) : (remoteUrl || localUrl);
-  const viewUrl = remoteUrl || displayUrl;
-
-  const handleImgError = () => {
-    if (useLocal && remoteUrl) {
-      setUseLocal(false); // local lỗi → fallback CDN ngay
-    } else setLoadFailed(true);
-  };
-
-  const handleSaveAs = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (saving) return;
-    setSaving(true);
-    try {
-      const defaultName = localFilePath
-        ? localFilePath.replace(/.*[/\\]/, '')
-        : `img_${msg.msg_id || Date.now()}.jpg`;
-      await ipc.file?.saveAs({ localPath: localFilePath || undefined, remoteUrl: remoteUrl || undefined, defaultName });
-    } finally { setSaving(false); }
-  };
-
-  if (loadFailed || !displayUrl) {
-    return (
-      <div className="h-40 flex-1 min-w-0 bg-gray-700/50 flex items-center justify-center text-gray-400 select-none">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="opacity-30">
-          <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
-          <polyline points="21 15 16 10 5 21"/>
-          {loadFailed && <line x1="2" y1="2" x2="22" y2="22"/>}
-        </svg>
-      </div>
-    );
-  }
-  const handleClick = (e: React.MouseEvent) => {
-    if (isSelectingProp) {
-      e.stopPropagation();
-      onToggleSelect?.(msg.msg_id);
-    } else {
-      onView(viewUrl);
-    }
-  };
-
-  return (
-    <div className={`relative flex-1 min-w-0 group/singleimg cursor-pointer${isSelected ? ' ring-2 ring-blue-500' : ''}`}
-      onClick={handleClick}
-    >
-      <img
-        src={displayUrl}
-        alt=""
-        className={`h-40 w-full object-cover transition-opacity bg-gray-700/30${isSelectingProp ? '' : ' hover:opacity-90'}`}
-        onError={handleImgError}
-      />
-      {/* Selection overlay */}
-      {isSelectingProp && isSelected && (
-        <div className="absolute inset-0 bg-blue-500/30 flex items-center justify-center pointer-events-none">
-          <div className="w-7 h-7 rounded-full bg-blue-500 flex items-center justify-center">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
-          </div>
-        </div>
-      )}
-      {/* Viền overlay - hiển thị ở cả giao diện sáng lẫn tối */}
-      <div className="absolute inset-0 pointer-events-none ring-1 ring-inset ring-black/[0.12]" />
-      {/* Hover action buttons - hidden in selection mode */}
-      {!isSelectingProp && (
-        <div className="absolute top-1 right-1 flex gap-0.5 opacity-0 group-hover/singleimg:opacity-100 transition-opacity">
-          {localFilePath && (
-            <button onClick={(e) => { e.stopPropagation(); ipc.file?.showItemInFolder(localFilePath); }}
-              title="Mở trong thư mục"
-              className="w-6 h-6 bg-black/60 hover:bg-black/80 rounded-md flex items-center justify-center text-white transition-colors">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
-              </svg>
-            </button>
-          )}
-          <button onClick={handleSaveAs} disabled={saving} title="Lưu về máy"
-            className="w-6 h-6 bg-black/60 hover:bg-black/80 rounded-md flex items-center justify-center text-white transition-colors disabled:opacity-40">
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
-              <polyline points="7 10 12 15 17 10"/>
-              <line x1="12" y1="15" x2="12" y2="3"/>
-            </svg>
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** StickerBubble - hiển thị sticker với lazy load từ DB cache hoặc API */
-function StickerBubble({ msg }: { msg: any }) {
-  const [stickerUrl, setStickerUrl] = React.useState<string | null>(null);
-  const [failed, setFailed] = React.useState(false);
-  const [unsupported, setUnsupported] = React.useState(false);
-
-  React.useEffect(() => {
-    let cancelled = false;
-
-    // ── Facebook sticker ────────────────────────────────────────────────
-    if (msg.channel === 'facebook') {
-      // Check local file trước (đã được download từ main process)
-      try {
-        const lp: Record<string, string> = typeof msg.local_paths === 'string'
-          ? JSON.parse(msg.local_paths || '{}') : (msg.local_paths || {});
-        const localFile = lp.main || (Object.values(lp)[0] as string) || '';
-        if (localFile) {
-          const localUrl = toLocalMediaUrl(localFile);
-          if (localUrl) {
-            // Reset failed trước đó (set ở lần effect chạy đầu khi chưa có local_paths)
-            setFailed(false);
-            setStickerUrl(localUrl);
-            return;
-          }
-        }
-      } catch {}
-
-      // E2EE sticker không có directPath → unsupported (bridge không cung cấp)
-      try {
-        const atts = JSON.parse(msg.attachments || '[]');
-        const hasDirectPath = atts[0]?.directPath;
-        if (!hasDirectPath && !atts[0]?.url) {
-          if (!cancelled) setUnsupported(true);
-          return;
-        }
-      } catch {}
-
-      // Có directPath nhưng chưa có local file → đang download, giữ loading
-      if (!cancelled && !stickerUrl) setFailed(true);
-      return;
-    }
-
-    // ── Zalo sticker ────────────────────────────────────────────────────
-    const load = async () => {
-      let stickerId: number | null = null;
-      try {
-        const parsed = JSON.parse(msg.content || '{}');
-        stickerId = parsed?.id ?? parsed?.sticker_id ?? null;
-      } catch {}
-      if (!stickerId) { if (!cancelled) setFailed(true); return; }
-
-      // 1. Check DB cache first (includes unsupported flag)
-      try {
-        const res = await DataAccessor.getStickerById(stickerId);
-        if (res?.sticker) {
-          if (res.sticker._unsupported) {
-            if (!cancelled) setUnsupported(true);
-            return;
-          }
-          if (res.sticker.stickerUrl) {
-            if (!cancelled) setStickerUrl(res.sticker.stickerUrl);
-            return;
-          }
-        }
-      } catch {}
-
-      // 2. Fetch from API using the active account session
-      try {
-        const accountsRes = await ipc.login?.getAccounts();
-        const accounts: any[] = accountsRes?.accounts || [];
-        const active = accounts.find((a: any) => a.is_active) || accounts[0];
-        if (!active) { if (!cancelled) setFailed(true); return; }
-        const auth = { cookies: active.cookies, imei: active.imei, userAgent: active.user_agent };
-        const detailRes = await ipc.zalo?.getStickersDetail({ auth, stickerIds: [stickerId] });
-        if (!detailRes?.success) {
-          ipc.db?.markStickerUnsupported({ stickerId }).catch(() => {});
-          if (!cancelled) setUnsupported(true);
-          return;
-        }
-        const stickers: any[] = detailRes?.response || [];
-        if (stickers.length && stickers[0]?.stickerUrl) {
-          if (!cancelled) setStickerUrl(stickers[0].stickerUrl);
-          DataAccessor.saveStickers({ stickers }).catch(() => {});
-        } else {
-          ipc.db?.markStickerUnsupported({ stickerId }).catch(() => {});
-          if (!cancelled) setUnsupported(true);
-        }
-      } catch {
-        ipc.db?.markStickerUnsupported({ stickerId: stickerId! }).catch(() => {});
-        if (!cancelled) setUnsupported(true);
-      }
-    };
-    load();
-    return () => { cancelled = true; };
-  }, [msg.content, msg.local_paths, msg.attachments]);
-
-  if (unsupported) {
-    return (
-      <div className="w-28 h-28 rounded-xl bg-gray-700/30 border border-gray-600/30 flex flex-col items-center justify-center gap-1">
-        <span className="text-2xl opacity-40">🎭</span>
-        <span className="text-[10px] text-gray-400 text-center px-1 leading-tight">Sticker chưa hỗ trợ</span>
-      </div>
-    );
-  }
-
-  if (failed) return <span className="text-xs text-gray-400 px-2 py-1">[Sticker]</span>;
-
-  if (!stickerUrl) {
-    return (
-      <div className="w-28 h-28 rounded-xl bg-gray-700/50 flex items-center justify-center animate-pulse">
-        <span className="text-2xl">🎭</span>
-      </div>
-    );
-  }
-
-  return (
-    <img
-      src={stickerUrl}
-      alt="sticker"
-      className="w-28 h-28 object-contain rounded-xl"
-      onError={() => setFailed(true)}
-    />
-  );
-}
-
-function parseContent(content: string, msgType?: string): string {
-  if (!content || content === 'null') return '';
-  // Location message (chat.location.new): show description or coordinates
-  if (msgType === 'chat.location.new') {
-    try {
-      const parsed = JSON.parse(content);
-      if (parsed?.description) return `📍 ${parsed.description}`;
-      const params = typeof parsed?.params === 'string' ? JSON.parse(parsed.params) : (parsed?.params || {});
-      if (params?.latitude && params?.longitude) return `📍 ${params.latitude.slice(0, 8)}, ${params.longitude.slice(0, 8)}`;
-    } catch {}
-    return '📍 [Vị trí]';
-  }
-  try {
-    const parsed = JSON.parse(content);
-    if (parsed === null || parsed === undefined) return '';
-    if (typeof parsed === 'string') return convertZaloEmojis(parsed);
-    if (typeof parsed !== 'object') return convertZaloEmojis(String(parsed));
-    if (parsed?.action === 'zinstant.bankcard') return '🏦 [Tài khoản ngân hàng]';
-    if (parsed?.content && typeof parsed.content === 'string') return convertZaloEmojis(parsed.content);
-    if (parsed?.msg && typeof parsed.msg === 'string') return convertZaloEmojis(parsed.msg);
-    if (parsed?.message && typeof parsed.message === 'string') return convertZaloEmojis(parsed.message);
-    if (parsed?.href || parsed?.thumb || parsed?.params) return '[Đính kèm]';
-    if (parsed?.title) return parsed.title;
-    return JSON.stringify(parsed);
-  } catch {
-    return convertZaloEmojis(content) || '';
-  }
-}
-
-function formatMsgTime(timestamp: number): string {
-  const d = new Date(timestamp);
-  const now = new Date();
-  const isToday = d.toDateString() === now.toDateString();
-  if (isToday) {
-    return d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
-  }
-  return d.toLocaleString('vi-VN', {
-    hour: '2-digit',
-    minute: '2-digit',
-    day: '2-digit',
-    month: '2-digit',
-  });
-}
-
-/** Parse reactions ra full ReactionData (có users) để check current user và hiển thị popup */
-function parseReactionsFull(raw: any): { total: number; emoji: Record<string, { total: number; users: Record<string, number> }> } {
-  const empty = { total: 0, emoji: {} };
-  if (!raw) return empty;
-  let parsed = raw;
-  if (typeof parsed === 'string') {
-    try { parsed = JSON.parse(parsed); } catch { return empty; }
-  }
-  if (!parsed || typeof parsed !== 'object') return empty;
-
-  const convertKey = (k: string) => zaloCodeToEmoji(k);
-
-  // New format: has .emoji with user counts - convert Zalo codes to emoji
-  if (parsed.emoji && typeof parsed.emoji === 'object') {
-    const converted: Record<string, { total: number; users: Record<string, number> }> = {};
-    for (const [code, data] of Object.entries(parsed.emoji as any)) {
-      const key = convertKey(code);
-      if (!converted[key]) converted[key] = { total: 0, users: {} };
-      converted[key].total += (data as any).total || 0;
-      for (const [uid, cnt] of Object.entries((data as any).users || {})) {
-        converted[key].users[uid] = ((converted[key].users[uid] || 0)) + (cnt as number);
-      }
-    }
-    return { total: parsed.total || 0, emoji: converted };
-  }
-
-  // Old format: { userId: emojiChar } - convert Zalo codes to emoji
-  const result = { total: 0, emoji: {} as Record<string, { total: number; users: Record<string, number> }> };
-  for (const [uid, emo] of Object.entries(parsed as Record<string, string>)) {
-    if (!emo || typeof emo !== 'string') continue;
-    const key = convertKey(emo);
-    if (!result.emoji[key]) result.emoji[key] = { total: 0, users: {} };
-    result.emoji[key].total++;
-    result.emoji[key].users[uid] = (result.emoji[key].users[uid] || 0) + 1;
-    result.total++;
-  }
-  return result;
-}
-
-// ─── Reaction Context Menu ────────────────────────────────────────────────────
-// Right-click on a reaction pill: pick emoji to react or X to cancel current reaction
-
-const REACTION_EMOJIS = ['❤️', '👍', '😄', '😮', '😢', '😡', '😘', '😂', '💩', '🌹', '💔', '👎', '😍', '👌', '✌️', '🙏', '😉', '👋', '🫶', '😭'];
-
-function ReactionContextMenu({ x, y, msg, myEmoji, onClose, onReact, onCancel }: {
-  x: number; y: number; msg: any; myEmoji: string | null;
-  onClose: () => void;
-  onReact: (msg: any, emoji: string) => void;
-  onCancel: (msg: any) => void;
-}) {
-  const menuRef = React.useRef<HTMLDivElement>(null);
-  React.useEffect(() => {
-    const handler = (e: MouseEvent) => { if (menuRef.current && !menuRef.current.contains(e.target as Node)) onClose(); };
-    const keyHandler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('mousedown', handler);
-    document.addEventListener('keydown', keyHandler);
-    return () => { document.removeEventListener('mousedown', handler); document.removeEventListener('keydown', keyHandler); };
-  }, [onClose]);
-
-  const style: React.CSSProperties = {
-    position: 'fixed',
-    left: Math.min(x, window.innerWidth - 240),
-    top: Math.min(y, window.innerHeight - 100),
-    zIndex: 9999,
-  };
-
-  return (
-    <div ref={menuRef} style={style} className="bg-gray-800 border border-gray-600 rounded-xl shadow-2xl py-2 px-2">
-      <p className="text-xs text-gray-400 px-2 mb-1.5">Thả cảm xúc</p>
-      <div className="flex items-center gap-1 flex-wrap max-w-[220px]">
-        {REACTION_EMOJIS.map(emoji => (
-          <button
-            key={emoji}
-            onClick={() => onReact(msg, emoji)}
-            className={`text-xl p-1 rounded-lg hover:bg-gray-700 transition-colors hover:scale-125 ${myEmoji === emoji ? 'bg-gray-700 ring-1 ring-blue-400' : ''}`}
-            title={emoji}
-          >
-            {emoji}
-          </button>
-        ))}
-        {/* X button to cancel current reaction */}
-        {myEmoji && (
-          <button
-            onClick={() => onCancel(msg)}
-            className="text-sm px-2 py-1 rounded-lg bg-gray-700 hover:bg-red-700 text-gray-300 hover:text-white transition-colors ml-1"
-            title="Huỷ reaction của bạn"
-          >
-            ✕ Huỷ
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─── Reaction Popup ──────────────────────────────────────────────────────────
-
-function ReactionPopup({ msg, initialEmoji, contacts, groupMembers, currentUserId, onClose }: {
-  msg: any; initialEmoji: string;
-  contacts: any[]; groupMembers?: any[]; currentUserId: string;
-  onClose: () => void;
-}) {
-  const [tab, setTab] = React.useState(initialEmoji || 'all');
-  const data = parseReactionsFull(msg.reactions);
-  const totalAll = data.total;
-
-  const getUsersForTab = (): { uid: string; emojis: Record<string, number>; total: number }[] => {
-    if (tab === 'all') {
-      const userMap: Record<string, { emojis: Record<string, number>; total: number }> = {};
-      for (const [emo, emoData] of Object.entries(data.emoji)) {
-        for (const [uid, count] of Object.entries(emoData.users)) {
-          if (!userMap[uid]) userMap[uid] = { emojis: {}, total: 0 };
-          userMap[uid].emojis[emo] = count;
-          userMap[uid].total += count;
-        }
-      }
-      return Object.entries(userMap).map(([uid, info]) => ({ uid, ...info }))
-        .sort((a, b) => b.total - a.total);
-    }
-    const emoData = data.emoji[tab];
-    if (!emoData) return [];
-    return Object.entries(emoData.users)
-      .sort(([, a], [, b]) => b - a)
-      .map(([uid, count]) => ({ uid, emojis: { [tab]: count }, total: count }));
-  };
-
-  const getName = (uid: string) => {
-    if (uid === currentUserId) return 'Bạn';
-    const c = contacts.find(c => c.contact_id === uid);
-    if (c?.alias || c?.display_name) return c.alias || c.display_name;
-    // Fallback: look up in group members list
-    const m = groupMembers?.find(m => m.userId === uid);
-    if (m?.displayName) return m.displayName;
-    return uid;
-  };
-  const getAvatar = (uid: string) => {
-    const c = contacts.find(c => c.contact_id === uid);
-    if (c?.avatar_url) return c.avatar_url;
-    const m = groupMembers?.find(m => m.userId === uid);
-    return m?.avatar || '';
-  };
-  const users = getUsersForTab();
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
-      <div className="bg-gray-800 rounded-2xl w-96 max-h-[70vh] flex flex-col shadow-2xl border border-gray-700" onClick={(e) => e.stopPropagation()}>
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
-          <h3 className="text-sm font-semibold text-white">Biểu cảm</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-white w-6 h-6 flex items-center justify-center rounded-full hover:bg-gray-700">✕</button>
-        </div>
-        {/* Tabs */}
-        <div className="flex border-b border-gray-700 overflow-x-auto scrollbar-hide">
-          <button
-            onClick={() => setTab('all')}
-            className={`flex items-center gap-1 px-3 py-2 text-xs whitespace-nowrap border-b-2 transition-colors ${tab === 'all' ? 'text-white border-blue-500' : 'text-gray-400 border-transparent hover:text-gray-200'}`}
-          >
-            Tất cả <span className="bg-gray-700 px-1.5 py-0.5 rounded-full text-gray-300">{totalAll}</span>
-          </button>
-          {Object.entries(data.emoji).map(([emo, emoData]) => (
-            <button
-              key={emo}
-              onClick={() => setTab(emo)}
-              className={`flex items-center gap-1 px-3 py-2 text-xs whitespace-nowrap border-b-2 transition-colors ${tab === emo ? 'text-white border-blue-500' : 'text-gray-400 border-transparent hover:text-gray-200'}`}
-            >
-              {emo} <span className="bg-gray-700 px-1.5 py-0.5 rounded-full text-gray-300">{emoData.total}</span>
-            </button>
-          ))}
-        </div>
-        {/* User list */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-2 min-h-[100px]">
-          {users.map(({ uid, emojis, total }) => (
-            <div key={uid} className="flex items-center gap-3 py-1">
-              {getAvatar(uid) ? (
-                <img src={getAvatar(uid)} alt="" className="w-9 h-9 rounded-full object-cover flex-shrink-0" />
-              ) : (
-                <div className="w-9 h-9 rounded-full bg-blue-600 flex items-center justify-center text-white text-sm font-bold flex-shrink-0">
-                  {(getName(uid) || 'U').charAt(0).toUpperCase()}
-                </div>
-              )}
-              <div className="flex-1 min-w-0">
-                <p className="text-sm text-white truncate">{getName(uid)}</p>
-              </div>
-              <div className="flex items-center gap-0.5 flex-shrink-0">
-                {Object.entries(emojis).map(([emo, cnt]) => (
-                  <span key={emo} className="text-base">
-                    {emo}{(cnt as number) > 1 && <span className="text-xs text-gray-400">{cnt as number}</span>}
-                  </span>
-                ))}
-              </div>
-            </div>
-          ))}
-          {users.length === 0 && (
-            <p className="text-xs text-gray-400 text-center py-6">Chưa có ai thả cảm xúc này</p>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── MsgActionBtn ────────────────────────────────────────────────────────────
-function MsgActionBtn({ title, onClick, children }: {
-  title: string;
-  onClick: ((e: React.MouseEvent) => void) | (() => void);
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      title={title}
-      onClick={onClick as React.MouseEventHandler}
-      className="w-7 h-7 flex items-center justify-center rounded-full text-gray-400 hover:text-white hover:bg-gray-600 transition-colors flex-shrink-0"
-    >
-      {children}
-    </button>
-  );
-}
-
-// ─── CardBubble - dispatches to LinkBubble, CallBubble or ContactCardBubble ───
-// ─── EcardBubble - thông báo hệ thống dạng thẻ (vd: trở thành phó nhóm, nhắc hẹn) ─────
-function EcardBubble({ msg, onManage }: { msg: any; onManage?: () => void }) {
-  let parsed: any = {};
-  try { parsed = JSON.parse(msg.content || '{}'); } catch {}
-
-  const title: string = parsed.title || '';
-  const description: string = parsed.description || '';
-  const imageHref: string = parsed.href || '';
-  let params: any = {};
-  try { params = typeof parsed.params === 'string' ? JSON.parse(parsed.params) : (parsed.params || {}); } catch {}
-
-  // ── Detect reminder card (action.open.reminder) ──
-  const isReminderCard = (params.actions || []).some(
-    (a: any) => a.actionId === 'action.open.reminder'
-  );
-
-  if (isReminderCard) {
-    // Parse reminder details from action data
-    let reminderData: any = {};
-    const reminderAction = (params.actions || []).find((a: any) => a.actionId === 'action.open.reminder');
-    try {
-      if (reminderAction?.data) {
-        const outerData = typeof reminderAction.data === 'string' ? JSON.parse(reminderAction.data) : reminderAction.data;
-        if (outerData?.data) {
-          reminderData = typeof outerData.data === 'string' ? JSON.parse(outerData.data) : outerData.data;
-        }
-      }
-    } catch {}
-
-    const startTime = Number(reminderData.startTime || 0);
-    const repeat: number = Number(reminderData.repeat ?? 0);
-    const repeatText = repeat === 1 ? 'Nhắc theo ngày' : repeat === 2 ? 'Nhắc theo tuần' : repeat === 3 ? 'Nhắc theo tháng' : '';
-    const emoji = reminderData.emoji || '⏰';
-
-    const formatReminderDateFull = (ts: number) => {
-      if (!ts) return description || '';
-      const d = new Date(ts);
-      const pad = (n: number) => n.toString().padStart(2, '0');
-      const weekDays = ['Chủ Nhật','Thứ Hai','Thứ Ba','Thứ Tư','Thứ Năm','Thứ Sáu','Thứ Bảy'];
-      const months = ['tháng 1','tháng 2','tháng 3','tháng 4','tháng 5','tháng 6','tháng 7','tháng 8','tháng 9','tháng 10','tháng 11','tháng 12'];
-      return `${weekDays[d.getDay()]}, ${d.getDate()} ${months[d.getMonth()]} lúc ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    };
-
-    const formatDayNum = (ts: number) => ts ? new Date(ts).getDate() : '';
-    const formatMonth = (ts: number) => {
-      if (!ts) return '';
-      const d = new Date(ts);
-      const months = ['THÁNG 1','THÁNG 2','THÁNG 3','THÁNG 4','THÁNG 5','THÁNG 6','THÁNG 7','THÁNG 8','THÁNG 9','THÁNG 10','THÁNG 11','THÁNG 12'];
-      return months[d.getMonth()];
-    };
-    const formatWeekDay = (ts: number) => {
-      if (!ts) return '';
-      const days = ['CHỦ NHẬT','THỨ HAI','THỨ BA','THỨ TƯ','THỨ NĂM','THỨ SÁU','THỨ BẢY'];
-      return days[new Date(ts).getDay()];
-    };
-
-    // Extract reminder title from params.notifyTxt or card title
-    const reminderTitle = (params.notifyTxt || title || '').replace(/^(?:[⏰📅🔔⭐📌💡🎯🎉]|Clock:|Calendar:|Bell:|Star:|Pin:|Lightbulb:|Target:)\s*/i, '');
-
-    return (
-      <div className="flex justify-center w-full my-1">
-        <div className="bg-gray-800 border border-gray-700 rounded-2xl overflow-hidden max-w-[300px] w-full shadow-lg">
-          {/* Reminder card body */}
-          <div className="flex gap-3 p-4">
-            {/* Calendar icon */}
-            {startTime > 0 && (
-              <div className="flex-shrink-0 w-14 rounded-xl overflow-hidden border border-gray-600 bg-gray-750 flex flex-col items-center">
-                <div className="w-full bg-blue-600 py-0.5 text-center text-white text-[11px] font-bold tracking-wide">
-                  {formatWeekDay(startTime)}
-                </div>
-                <div className="flex-1 flex flex-col items-center justify-center py-1">
-                  <span className="text-white text-2xl font-bold leading-none">{formatDayNum(startTime)}</span>
-                  <span className="text-gray-400 text-[11px] mt-0.5">{formatMonth(startTime)}</span>
-                </div>
-              </div>
-            )}
-            {/* Info */}
-            <div className="flex-1 min-w-0">
-              <p className="text-white font-semibold text-sm truncate">{emoji} {reminderTitle}</p>
-              {/* Time */}
-              <div className="flex items-center gap-1 mt-1 text-xs text-gray-400">
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
-                </svg>
-                <span>{startTime ? formatReminderDateFull(startTime) : description}</span>
-              </div>
-              {/* Repeat */}
-              {repeatText && (
-                <div className="flex items-center gap-1 mt-0.5 text-xs text-orange-400">
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 014-4h14"/>
-                    <path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 01-4 4H3"/>
-                  </svg>
-                  <span>{repeatText}</span>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // ── Standard ecard (group events etc.) ──
-  const actions: any[] = (params.actions || []).filter(
-    (a: any) => a.actionId === 'action.group.open.admintool'
-  );
-
-  return (
-    <div className="flex justify-center w-full my-1">
-      <div className="bg-gray-800 border border-gray-700 rounded-2xl overflow-hidden max-w-[280px] w-full shadow-lg">
-        {/* Ảnh header */}
-        {imageHref && (
-          <div className="w-full h-28 overflow-hidden bg-gray-700">
-            <img
-              src={imageHref}
-              alt={title}
-              className="w-full h-full object-cover"
-              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-            />
-          </div>
-        )}
-        {/* Nội dung */}
-        <div className="px-4 py-3 space-y-1">
-          {title && (
-            <p className="text-white font-semibold text-sm leading-snug">{title}</p>
-          )}
-          {description && (
-            <p className="text-gray-400 text-xs leading-relaxed">{description}</p>
-          )}
-        </div>
-        {/* Actions - chỉ nút Quản lý nhóm */}
-        {actions.length > 0 && onManage && (
-          <div className="border-t border-gray-700">
-            {actions.map((a: any, i: number) => (
-              <button
-                key={i}
-                onClick={onManage}
-                className="w-full px-4 py-2.5 text-sm text-blue-400 hover:bg-gray-700 hover:text-blue-300 transition-colors font-medium text-center"
-              >
-                {a.name || 'Quản lý nhóm'}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function CardBubble({ msg, isSent, onOpenProfile }: { msg: any; isSent: boolean; onOpenProfile?: (userId: string, e: React.MouseEvent) => void }) {
-  let parsed: any = {};
-  try { parsed = JSON.parse(msg.content || '{}'); } catch {}
-  const action = String(parsed.action || '');
-  if (action === 'recommened.link') return <LinkBubble parsed={parsed} isSent={isSent} />;
-  // recommened.calltime = cuộc gọi có thời gian, recommened.misscall = cuộc gọi nhỡ
-  if (action === 'recommened.calltime' || action === 'recommened.misscall') return <CallBubble parsed={parsed} isSent={isSent} />;
-  return <ContactCardBubble parsed={parsed} isSent={isSent} onOpenProfile={onOpenProfile} />;
-}
-
-// ─── LinkBubble - hiển thị tin nhắn link preview như Zalo ────────────────────
-function LinkBubble({ parsed, isSent }: { parsed: any; isSent: boolean }) {
-  const href = String(parsed.href || parsed.title || '');
-  const params = (() => { try { const p = parsed.params; return typeof p === 'string' ? JSON.parse(p) : (p || {}); } catch { return {}; } })();
-  const rawTitle = String(parsed.title || '').trim();
-  const mediaTitle = String(params.mediaTitle || '').trim();
-  const domain = String(params.src || '').trim();
-  const description = String(parsed.description || '').trim();
-  const thumb = String(parsed.thumb || '');
-
-  // chat.recommended có thể chứa "text + url" trong title.
-  // Ưu tiên tách phần text user nhập để hiển thị đúng ý nghĩa tin nhắn.
-  const stripKnownLinks = (txt: string): string => {
-    let out = txt;
-    if (href) out = out.split(href).join(' ');
-    if (mediaTitle) out = out.split(mediaTitle).join(' ');
-    out = out.replace(/https?:\/\/\S+/gi, ' ');
-    return out.replace(/\s+/g, ' ').trim();
-  };
-
-  const userCaption = stripKnownLinks(rawTitle);
-  const displayTitle = userCaption || rawTitle || mediaTitle || href;
-  const primaryUrl = (href || mediaTitle || description).trim();
-  const urlLine = primaryUrl && primaryUrl !== displayTitle ? primaryUrl : '';
-  const derivedDomain = (() => {
-    if (domain) return domain;
-    if (!primaryUrl) return '';
-    try { return new URL(primaryUrl).hostname || ''; } catch { return ''; }
-  })();
-
-  // Shorten description if too long
-  const descriptionIsDuplicate =
-    !!description &&
-    (description === href || description === mediaTitle || description === displayTitle);
-  const displayDesc = descriptionIsDuplicate ? '' : description;
-  const shortDesc = displayDesc.length > 100 ? displayDesc.substring(0, 100) + '...' : displayDesc;
-  const previewTitle = mediaTitle && mediaTitle !== displayTitle ? mediaTitle : (derivedDomain || href);
-
-  return (
-    <div
-      className={`flex flex-col overflow-hidden rounded-2xl min-w-[260px] max-w-sm text-left shadow-lg ${isSent ? 'bg-gray-750' : 'bg-gray-800'} border ${isSent ? 'border-gray-700' : 'border-gray-700'}`}
-    >
-      {/* Message content: text + link - hiển thị bình thường, không bấm mở link */}
-      <div className="px-3 py-2.5 space-y-1.5 select-text cursor-text">
-        {displayTitle && (
-          <p className="text-sm text-white leading-snug">
-            {displayTitle}
-          </p>
-        )}
-
-        {urlLine && (
-          <p className="text-xs text-blue-500 leading-relaxed line-clamp-2 break-word">
-            {urlLine}
-          </p>
-        )}
-
-        {/* Description */}
-        {shortDesc && (
-          <p className="text-xs text-gray-400 leading-relaxed line-clamp-2">
-            {shortDesc}
-          </p>
-        )}
-      </div>
-
-      {/* Preview section - CHỈ bấm vào đây mới mở link */}
-      <button
-        onClick={() => href && ipc.shell?.openExternal(href)}
-        className="mx-2 mb-2 border border-gray-700/80 rounded-xl overflow-hidden bg-gray-900/60 text-left cursor-pointer hover:opacity-90 active:scale-[0.98] transition-all"
-        title={href}
-      >
-        {thumb && (
-          <div className="w-full h-36 overflow-hidden bg-gray-900 flex-shrink-0">
-            <img
-              src={thumb}
-              alt={previewTitle}
-              className="w-full h-full object-cover"
-              onError={(e) => {
-                (e.target as HTMLImageElement).style.display = 'none';
-                (e.target as HTMLImageElement).parentElement!.style.display = 'none';
-              }}
-            />
-          </div>
-        )}
-        <div className="px-2.5 py-2 space-y-1">
-          {previewTitle && (
-            <p className="text-xs text-white leading-snug line-clamp-2">{previewTitle}</p>
-          )}
-          {derivedDomain && (
-            <p className="text-[11px] text-gray-400 truncate">{derivedDomain}</p>
-          )}
-        </div>
-      </button>
-    </div>
-  );
-}
-
-// ─── CallBubble - hiển thị tin nhắn cuộc gọi ─────────────────────────────────
-function CallBubble({ parsed, isSent }: { parsed: any; isSent: boolean }) {
-  const params = (() => { try { const p = parsed.params; return typeof p === 'string' ? JSON.parse(p) : (p || {}); } catch { return {}; } })();
-  const duration: number = params.duration || 0;
-  const reason: number = params.reason || 0;
-  const isCaller: boolean = params.isCaller === 1;
-  const isVideo: boolean = params.calltype === 1;
-  const callTypeLabel = isVideo ? 'Cuộc gọi video' : 'Cuộc gọi thoại';
-  const action = String(parsed.action || '');
-  const isMissed = action === 'recommened.misscall';
-
-  let statusLabel = 'Cuộc gọi nhỡ';
-  let statusRed = true;
-  if (!isMissed && duration > 0) {
-    const m = Math.floor(duration / 60), s = duration % 60;
-    statusLabel = `Đã kết thúc · ${m > 0 ? `${m}p ` : ''}${s}s`;
-    statusRed = false;
-  } else if (!isMissed && duration === 0) {
-    // calltime nhưng duration=0 → cuộc gọi rất ngắn / vừa kết thúc
-    statusLabel = 'Đã kết thúc';
-    statusRed = false;
-  } else if (reason === 4 && isCaller) {
-    statusLabel = 'Bạn đã hủy'; statusRed = false;
-  } else if (reason === 2) {
-    statusLabel = isCaller ? 'Đã từ chối' : 'Bạn đã từ chối';
-  }
-
-  return (
-    <div className={`flex flex-col px-3 py-2.5 rounded-2xl min-w-[200px] max-w-xs ${isSent ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-200'}`}>
-      <div className="flex items-center gap-3">
-        <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${isSent ? 'bg-blue-500' : 'bg-gray-600'}`}>
-          {isVideo ? (
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
-          ) : (
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.63 19.79 19.79 0 01.01 1a2 2 0 012-2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z"/></svg>
-          )}
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className={`text-sm font-semibold ${statusRed ? 'text-red-400' : isSent ? 'text-white' : 'text-gray-200'}`}>{statusLabel}</p>
-          <p className={`text-xs mt-0.5`}>{callTypeLabel}</p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── ContactCardBubble - hiển thị danh thiếp Zalo ────────────────────────────
-function ContactCardBubble({ parsed, isSent, onOpenProfile }: { parsed: any; isSent: boolean; onOpenProfile?: (userId: string, e: React.MouseEvent) => void }) {
-  const title = parsed.title || '';
-  const thumbUrl = parsed.thumb || '';
-  const desc = typeof parsed.description === 'string'
-    ? (() => { try { return JSON.parse(parsed.description); } catch { return {}; } })()
-    : (parsed.description || {});
-  let phone = formatPhone(String(desc.phone || ''));
-  const qrCodeUrl = String(desc.qrCodeUrl || '');
-  const { contacts } = useChatStore();
-  const { activeAccountId, getActiveAccount } = useAccountStore();
-  const contactList = activeAccountId ? (contacts[activeAccountId] || []) : [];
-
-  const directUid = String(
-    desc.uid ||
-    desc.userId ||
-    desc.id ||
-    parsed.userId ||
-    parsed.uid ||
-    parsed.id ||
-    ''
-  ).trim();
-  const paramsUid = typeof parsed.params === 'string' ? parsed.params.trim() : '';
-  const gUid = String(desc.gUid || parsed.gUid || '').trim();
-
-  const normalizePhoneDigits = (v: string): string => String(v || '').replace(/\D/g, '');
-  const targetPhoneDigits = normalizePhoneDigits(String(desc.phone || ''));
-
-  const byDirectId = directUid
-    ? contactList.find(c => String(c.contact_id || '') === directUid)
-    : undefined;
-  const byParamsId = paramsUid && paramsUid !== '0'
-    ? contactList.find(c => String(c.contact_id || '') === paramsUid)
-    : undefined;
-  const byPhone = targetPhoneDigits
-    ? contactList.find(c => {
-        const cp = normalizePhoneDigits(String(c.phone || ''));
-        if (!cp) return false;
-        return cp === targetPhoneDigits || cp.endsWith(targetPhoneDigits) || targetPhoneDigits.endsWith(cp);
-      })
-    : undefined;
-
-  const resolvedUserId = String(
-    byDirectId?.contact_id ||
-    byParamsId?.contact_id ||
-    byPhone?.contact_id ||
-    directUid ||
-    (paramsUid && paramsUid !== '0' ? paramsUid : '') ||
-    gUid ||
-    ''
-  ).trim();
-
-  // Check friend status
-  const matchedContact = byDirectId || byParamsId || byPhone;
-  const isFriend = matchedContact ? (matchedContact.isFr === 1 || matchedContact.is_friend === 1) : false;
-
-  const [sendingReq, setSendingReq] = React.useState(false);
-
-  const handleOpenCardChat = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!resolvedUserId) return;
-    const activeZaloId = useAccountStore.getState().activeAccountId || undefined;
-    useAppStore.getState().openQuickChat({
-      zaloId: activeZaloId,
-      target: {
-        userId: resolvedUserId,
-        displayName: title || resolvedUserId,
-        avatarUrl: thumbUrl || undefined,
-        threadType: 0,
-        phone: phone || undefined,
-      },
-    });
-  };
-
-  const handleOpenProfile = (e: React.MouseEvent) => {
-    if (!resolvedUserId || !onOpenProfile) return;
-    // Chỉ mở profile khi click vào avatar, không block select text ở tên/SĐT
-    const target = e.target as HTMLElement;
-    if (target.closest('.card-avatar-area')) {
-      onOpenProfile(resolvedUserId, e);
-    }
-  };
-
-  const handleAddFriend = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!resolvedUserId || sendingReq) return;
-    setSendingReq(true);
-    try {
-      const account = getActiveAccount();
-      if (!account) return;
-      const auth = { cookies: account.cookies, imei: account.imei, userAgent: account.user_agent };
-      const res = await ipc.zalo?.sendFriendRequest({ auth, userId: resolvedUserId, msg: 'Làm quen qua danh thiếp Zalo' });
-      if (res?.success || res?.response?.success) {
-        useAppStore.getState().showNotification('Đã gửi lời mời kết bạn', 'success');
-      } else {
-        useAppStore.getState().showNotification(res?.error || 'Gửi lời mời thất bại', 'error');
-      }
-    } catch (err: any) {
-      useAppStore.getState().showNotification('Gửi lời mời thất bại: ' + err.message, 'error');
-    } finally {
-      setSendingReq(false);
-    }
-  };
-
-  return (
-    <div
-      className={`rounded-2xl max-w-[340px] ${isSent ? 'bg-blue-600/70 text-white' : 'bg-gray-700 text-gray-200'}`}
-    >
-      <div className="flex items-center gap-3.5 px-4 py-3.5 select-text">
-        {/* Avatar - click mở profile */}
-        <div
-          className={`card-avatar-area w-14 h-14 rounded-full overflow-hidden flex-shrink-0 bg-gray-600 ${resolvedUserId && onOpenProfile ? 'cursor-pointer hover:opacity-85 transition-opacity' : ''}`}
-          onClick={handleOpenProfile}
-        >
-          {thumbUrl ? (
-            <img src={thumbUrl} alt={title} className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center text-white text-xl font-bold">{(title || 'U').charAt(0).toUpperCase()}</div>
-          )}
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-base font-semibold truncate select-text cursor-text">{title || 'Danh thiếp'}</p>
-          {phone && <PhoneDisplay phone={phone} className={`text-sm ${isSent ? 'text-blue-100' : 'text-gray-300'}`} />}
-          <p className={`text-xs mt-1 ${isSent ? 'text-blue-200' : 'text-gray-400'}`}>Danh thiếp Zalo</p>
-        </div>
-        {qrCodeUrl && (
-          <div className="w-12 h-12 flex-shrink-0">
-            <img src={qrCodeUrl} alt="QR" className="w-full h-full object-contain rounded" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-          </div>
-        )}
-      </div>
-
-      {resolvedUserId && (
-        <div className={`px-4 pb-3.5 ${isSent ? 'bg-blue-700/40' : 'bg-gray-800/50'} border-t ${isSent ? 'border-blue-400/25' : 'border-gray-600/70'}`}>
-          <button
-            onClick={handleOpenCardChat}
-            className={`mt-2 w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors ${
-              isSent
-                ? 'bg-blue-600 hover:bg-blue-500 text-white'
-                : 'bg-blue-600 hover:bg-blue-700 text-white'
-            }`}
-            title="Gửi tin nhắn"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-            </svg>
-            Gửi tin nhắn
-          </button>
-          {/* Nút kết bạn - chỉ hiện nếu chưa là bạn bè */}
-          {!isFriend && !isSent && (
-            <button
-              onClick={handleAddFriend}
-              disabled={sendingReq}
-              className={`mt-1.5 w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors border border-dashed ${
-                sendingReq
-                  ? 'opacity-50 cursor-not-allowed'
-                  : 'hover:bg-white/10'
-              } ${isSent ? 'border-blue-400/30 text-blue-200' : 'border-gray-500/40 text-gray-300'}`}
-              title="Gửi lời mời kết bạn"
-            >
-              {sendingReq ? (
-                <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
-                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeDasharray="31.4 31.4" strokeLinecap="round" />
-                </svg>
-              ) : (
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/>
-                  <line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/>
-                </svg>
-              )}
-              {sendingReq ? 'Đang gửi...' : 'Kết bạn'}
-            </button>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── BankCardBubble - imported from MessageBubbles (shared component) ────────
-
-// ─── RtfBubble - webchat + action=rtf (rich text formatting) ────────────────
-// Zalo TextStyle: b=bold, i=italic, u=underline, s=strikethrough
-// Colors: c_db342e=red, c_f27806=orange, c_f7b503=yellow, c_15a85f=green
-// Size: f_13=small, f_18=big
-// List: lst_1=unordered, lst_2=ordered, ind_X=indent
-
-const RTF_COLOR_MAP: Record<string, string> = {
-  'c_db342e': '#db342e',
-  'c_f27806': '#f27806',
-  'c_f7b503': '#f7b503',
-  'c_15a85f': '#15a85f',
-};
-
-interface RtfStyle {
-  start: number;
-  len: number;
-  st: string;
-  indentSize?: number;
-}
-
-interface RtfMention {
-  pos: number;
-  len: number;
-  uid: string;
-}
-
-function applyRtfStyles(text: string, styles: RtfStyle[], mentions?: RtfMention[], onMentionClick?: (uid: string, e: React.MouseEvent) => void): React.ReactNode {
-  if (!text) return null;
-
-  // Build character-level style map
-  type CharStyle = { bold?: boolean; italic?: boolean; underline?: boolean; strike?: boolean; color?: string; small?: boolean; big?: boolean; mentionUid?: string };
-  const charStyles: CharStyle[] = Array.from({ length: text.length }, () => ({}));
-
-  // Apply RTF styles (st can be comma-separated like "b,c_db342e")
-  for (const style of (styles || [])) {
-    const { start, len } = style;
-    const parts = String(style.st || '').split(',').map(s => s.trim()).filter(Boolean);
-    for (let i = start; i < Math.min(start + len, text.length); i++) {
-      const cs = charStyles[i];
-      for (const st of parts) {
-        if (st === 'b') cs.bold = true;
-        else if (st === 'i') cs.italic = true;
-        else if (st === 'u') cs.underline = true;
-        else if (st === 's') cs.strike = true;
-        else if (st === 'f_13') cs.small = true;
-        else if (st === 'f_18') cs.big = true;
-        else if (st in RTF_COLOR_MAP) cs.color = RTF_COLOR_MAP[st];
-      }
-    }
-  }
-
-  // Apply mention highlights with uid tracking
-  for (const mention of (mentions || [])) {
-    for (let i = mention.pos; i < Math.min(mention.pos + mention.len, text.length); i++) {
-      charStyles[i].mentionUid = mention.uid || 'unknown';
-    }
-  }
-
-  // Merge consecutive chars with same style into spans
-  const nodes: React.ReactNode[] = [];
-  let i = 0;
-  while (i < text.length) {
-    const cs = charStyles[i];
-    let j = i + 1;
-    while (j < text.length && JSON.stringify(charStyles[j]) === JSON.stringify(cs)) j++;
-    const chunk = convertZaloEmojis(text.slice(i, j));
-    const inlineStyle: React.CSSProperties = {};
-    const cls: string[] = [];
-    if (cs.bold) cls.push('font-bold');
-    if (cs.italic) cls.push('italic');
-    if (cs.underline) cls.push('underline');
-    if (cs.strike) cls.push('line-through');
-    if (cs.small) cls.push('text-xs');
-    if (cs.big) cls.push('text-base font-medium');
-    if (cs.mentionUid) {
-      cls.push('font-semibold');
-      if (onMentionClick && cs.mentionUid !== 'unknown') cls.push('cursor-pointer hover:underline');
-      inlineStyle.color = '#5398f3';
-    } else if (cs.color) {
-      inlineStyle.color = cs.color;
-    }
-    const uid = cs.mentionUid;
-    nodes.push(
-      <span
-        key={i}
-        className={cls.join(' ')}
-        style={Object.keys(inlineStyle).length ? inlineStyle : undefined}
-        onClick={uid && uid !== 'unknown' && onMentionClick ? (e) => { e.stopPropagation(); onMentionClick(uid, e); } : undefined}
-      >{chunk}</span>
-    );
-    i = j;
-  }
-
-  return <span className="whitespace-pre-wrap select-text break-word">{nodes}</span>;
-}
-
-/** Render normal text, highlighting @mentions in blue, with optional click-to-profile */
-function TextWithMentions({
-  text,
-  allContacts,
-  groupMembersList,
-  onMentionClick,
-  highlight,
-}: {
-  text: string;
-  allContacts?: any[];
-  groupMembersList?: any[];
-  onMentionClick?: (userId: string, e: React.MouseEvent) => void;
-  highlight?: string;
-}) {
-  if (!text) return null;
-  const converted = convertZaloEmojis(text);
-
-  // Helper: wrap text segment with search highlight marks
-  const applyHighlight = (str: string, key: string | number): React.ReactNode => {
-    if (!highlight || !highlight.trim()) return <span key={key}>{str}</span>;
-    const q = highlight.toLowerCase();
-    const lower = str.toLowerCase();
-    const parts: React.ReactNode[] = [];
-    let last = 0;
-    let hi = lower.indexOf(q, 0);
-    while (hi !== -1) {
-      if (hi > last) parts.push(<span key={`${key}_t${hi}`}>{str.slice(last, hi)}</span>);
-      parts.push(
-        <mark key={`${key}_h${hi}`} className="bg-yellow-400/40 text-yellow-200 rounded-sm px-0.5">
-          {str.slice(hi, hi + highlight.length)}
-        </mark>
-      );
-      last = hi + highlight.length;
-      hi = lower.indexOf(q, last);
-    }
-    if (last < str.length) parts.push(<span key={`${key}_e${last}`}>{str.slice(last)}</span>);
-    return parts.length ? <React.Fragment key={key}>{parts}</React.Fragment> : <span key={key}>{str}</span>;
-  };
-
-  // Match @Name: greedy - capture everything after @ until a newline or double-space
-  // We try to find the longest matching display name from contacts/members
-  const allPeople = [...(allContacts || []), ...(groupMembersList || [])];
-
-  // Build segments by scanning for @ then greedily matching known display names
-  const segments: React.ReactNode[] = [];
-  let i = 0;
-  while (i < converted.length) {
-    const atIdx = converted.indexOf('@', i);
-    if (atIdx === -1) {
-      segments.push(applyHighlight(converted.slice(i), i));
-      break;
-    }
-    // Text before @
-    if (atIdx > i) segments.push(applyHighlight(converted.slice(i, atIdx), i));
-
-    // Try to match a known display name after @
-    let matched = false;
-    if (allPeople.length > 0) {
-      // Sort longest name first for greedy match
-      const sorted = [...allPeople].sort((a, b) => {
-        const na = (a.display_name || a.displayName || '').length;
-        const nb = (b.display_name || b.displayName || '').length;
-        return nb - na;
-      });
-      for (const person of sorted) {
-        const name = person.display_name || person.displayName || '';
-        if (!name) continue;
-        const expected = '@' + name;
-        if (converted.startsWith(expected, atIdx)) {
-          const uid = person.contact_id || person.userId || '';
-          const mentionText = expected;
-          segments.push(
-            <span
-              key={atIdx}
-              className={`font-semibold${uid && onMentionClick ? ' cursor-pointer hover:underline' : ''}`}
-              style={{ color: '#5398f3' }}
-              onClick={uid && onMentionClick ? (e) => { e.stopPropagation(); onMentionClick(uid, e); } : undefined}
-            >{mentionText}</span>
-          );
-          i = atIdx + mentionText.length;
-          matched = true;
-          break;
-        }
-      }
-    }
-    if (!matched) {
-      // No name match - grab @word (stop at whitespace)
-      const restStr = converted.slice(atIdx + 1);
-      const spaceIdx = restStr.search(/[\s,!?;:\n]/);
-      const end = spaceIdx === -1 ? converted.length : atIdx + 1 + spaceIdx;
-      const mentionText = converted.slice(atIdx, end);
-      segments.push(
-        <span key={atIdx} className="font-semibold" style={{ color: '#79b4fd' }}>{mentionText}</span>
-      );
-      i = end;
-    }
-  }
-
-  if (segments.length === 0) return <span className="whitespace-pre-wrap select-text break-word">{converted}</span>;
-  return <span className="whitespace-pre-wrap select-text break-word">{segments}</span>;
-}
-
-function RtfBubble({
-  msg,
-  allContacts,
-  groupMembersList,
-  onMentionClick,
-}: {
-  msg: any;
-  allContacts?: any[];
-  groupMembersList?: any[];
-  onMentionClick?: (userId: string, e: React.MouseEvent) => void;
-}) {
-  let title = '';
-  let styles: RtfStyle[] = [];
-  let mentions: RtfMention[] = [];
-
-  try {
-    const parsed = JSON.parse(msg.content || '{}');
-    title = parsed.title || '';
-    const paramsRaw = parsed.params;
-    const params = typeof paramsRaw === 'string' ? JSON.parse(paramsRaw) : (paramsRaw || {});
-    styles = params.styles || [];
-    mentions = params.mentions || [];
-  } catch {}
-
-  if (!title) return <span className="text-xs opacity-60">[Tin nhắn định dạng]</span>;
-
-  return (
-    <span>{applyRtfStyles(title, styles, mentions, onMentionClick)}</span>
-  );
-}
-
-export function ActionRow({ icon, label, onClick, textColor = 'text-gray-300' }: {
-  icon: React.ReactNode; label: string; onClick: () => void; textColor?: string;
-}) {
-  return (
-    <button onClick={onClick}
-      className={`w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-700/50 transition-colors text-left ${textColor}`}>
-      <span className="flex-shrink-0 text-gray-400">{icon}</span>
-      <span className="text-sm">{label}</span>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="ml-auto text-gray-400 flex-shrink-0">
-        <polyline points="9 18 15 12 9 6"/>
-      </svg>
-    </button>
-  );
-}
-
-
-/** Trích xuất nội dung text từ msg.content để dùng làm fallback cho forward */
-function extractMsgText(msg: any): string {
-  try {
-    const c = msg.content;
-    if (!c || c === 'null') return '[Tin nhắn]';
-
-    // Location message: include Google Maps link
-    if (msg.msg_type === 'chat.location.new') {
-      const parsed = JSON.parse(c);
-      const params = typeof parsed?.params === 'string' ? JSON.parse(parsed.params) : (parsed?.params || {});
-      const lat = params?.latitude;
-      const lng = params?.longitude;
-      const desc = parsed?.description || '';
-      const mapLink = lat && lng ? `https://www.google.com/maps?q=${lat},${lng}` : '';
-      let result = `📍 ${desc || 'Vị trí'}`;
-      if (mapLink) result += `\n${mapLink}`;
-      return result;
-    }
-
-    const parsed = JSON.parse(c);
-    if (typeof parsed === 'string') return parsed;
-    if (parsed?.msg && typeof parsed.msg === 'string') return parsed.msg;
-    if (parsed?.message && typeof parsed.message === 'string') return parsed.message;
-    if (parsed?.content && typeof parsed.content === 'string') return parsed.content;
-    if (parsed?.title) return `File: ${parsed.title}`;
-    return '[Tin nhắn]';
-  } catch { return msg.content || '[Tin nhắn]'; }
-}
+// extractMsgText: imported from @/lib/chat/messageParser
 
 /** Gửi 1 tin nhắn đến 1 target - dùng trong forward loop */
 async function sendOneForward(
@@ -5747,946 +3089,4 @@ async function sendOneForward(
   }
 }
 
-function ForwardMessageModal({ messages, contacts, onClose, onForward }: {
-  messages: any[];
-  contacts: any[];
-  onClose: () => void;
-  onForward: (messages: any[], targets: Array<{ threadId: string; threadType: number }>, composeText: string) => void;
-}) {
-  const { labels: allLabels, groupInfoCache } = useAppStore();
-  const { activeAccountId } = useAccountStore();
-  const labels = activeAccountId ? (allLabels[activeAccountId] || []) : [];
-
-  const [search, setSearch] = React.useState('');
-  const [tab, setTab] = React.useState<'recent' | 'friends' | 'groups' | 'categories'>('recent');
-  const [selectedLabelId, setSelectedLabelId] = React.useState<number | null>(null);
-  const [selected, setSelected] = React.useState<Set<string>>(new Set());
-  const [labelSource, setLabelSource] = React.useState<'local' | 'zalo'>('local');
-  const [composeText, setComposeText] = React.useState('');
-
-  // ── Local labels ──────────────────────────────────────────────────────────
-  const [localLabels, setLocalLabels] = React.useState<{ id: number; name: string; color: string; text_color?: string; emoji?: string }[]>([]);
-  const [localLabelThreadMap, setLocalLabelThreadMap] = React.useState<Record<string, number[]>>({});
-
-  React.useEffect(() => {
-    if (!activeAccountId) return;
-    (async () => {
-      try {
-        const [labelsRes, threadsRes] = await Promise.all([
-          DataAccessor.getLocalLabels({ zaloId: activeAccountId }),
-          DataAccessor.getLocalLabelThreads({ zaloId: activeAccountId }),
-        ]);
-        const raw = (labelsRes?.labels || [])
-          .filter((l: any) => (l?.is_active ?? 1) === 1)
-          .sort((a: any, b: any) => {
-            const sa = Number(a?.sort_order ?? 0);
-            const sb = Number(b?.sort_order ?? 0);
-            if (sa !== sb) return sa - sb;
-            return String(a?.name || '').localeCompare(String(b?.name || ''));
-          });
-        setLocalLabels(raw);
-        const map: Record<string, number[]> = {};
-        (threadsRes?.threads || []).forEach((row: any) => {
-          const tid = String(row.thread_id || '');
-          if (!tid) return;
-          if (!map[tid]) map[tid] = [];
-          map[tid].push(Number(row.label_id));
-        });
-        setLocalLabelThreadMap(map);
-      } catch {}
-    })();
-  }, [activeAccountId]);
-
-  // Build a reverse map: localLabelId -> Set<threadId>
-  const localLabelToThreads = React.useMemo(() => {
-    const m: Record<number, Set<string>> = {};
-    for (const [tid, lids] of Object.entries(localLabelThreadMap)) {
-      for (const lid of lids) {
-        if (!m[lid]) m[lid] = new Set();
-        m[lid].add(tid);
-      }
-    }
-    return m;
-  }, [localLabelThreadMap]);
-
-  const activeLabelsForPills = labelSource === 'local' ? localLabels : labels;
-
-  const getFiltered = () => {
-    let list = contacts;
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      list = list.filter(c => (c.display_name || c.contact_id || '').toLowerCase().includes(q));
-    }
-    switch (tab) {
-      case 'recent':
-        return [...list].sort((a, b) => (b.last_message_time || 0) - (a.last_message_time || 0));
-      case 'friends':
-        return list.filter(c => c.contact_type !== 'group').sort((a, b) => (b.last_message_time || 0) - (a.last_message_time || 0));
-      case 'groups':
-        return list.filter(c => c.contact_type === 'group').sort((a, b) => (b.last_message_time || 0) - (a.last_message_time || 0));
-      case 'categories': {
-        if (labelSource === 'local') {
-          if (selectedLabelId !== null) {
-            const threadSet = localLabelToThreads[selectedLabelId] || new Set();
-            return list.filter(c => threadSet.has(c.contact_id));
-          }
-          // All local-labeled threads
-          const allLabeledIds = new Set(Object.keys(localLabelThreadMap));
-          return [...list].filter(c => allLabeledIds.has(c.contact_id)).sort((a, b) => (b.last_message_time || 0) - (a.last_message_time || 0));
-        } else {
-          const targetLabel = selectedLabelId !== null ? labels.find(l => l.id === selectedLabelId) : null;
-          if (targetLabel) return list.filter(c => targetLabel.conversations.includes(c.contact_id));
-          const labeledIds = new Set(labels.flatMap(l => l.conversations));
-          return [...list].filter(c => labeledIds.has(c.contact_id)).sort((a, b) => (b.last_message_time || 0) - (a.last_message_time || 0));
-        }
-      }
-      default: return list;
-    }
-  };
-
-  const filtered = getFiltered();
-
-  const toggleSelect = (contactId: string) => {
-    setSelected(prev => {
-      const next = new Set(prev);
-      if (next.has(contactId)) next.delete(contactId);
-      else next.add(contactId);
-      return next;
-    });
-  };
-
-  const handleForward = () => {
-    const targets = filtered
-      .filter(c => selected.has(c.contact_id))
-      .map(c => ({ threadId: c.contact_id, threadType: c.contact_type === 'group' ? 1 : 0 }));
-    if (targets.length === 0) return;
-    onForward(messages, targets, composeText);
-  };
-
-  const msgCount = messages.length;
-  const previewText = msgCount === 1
-    ? (() => { try { const c = messages[0].content; if (!c || c === 'null') return '[Tin nhắn]'; const p = JSON.parse(c); if (typeof p === 'string') return p; if (p?.title) return `File: ${p.title}`; if (p?.href || p?.thumb) return '[Hình ảnh]'; if (p?.msg) return String(p.msg); return '[Tin nhắn]'; } catch { return messages[0].content || '[Tin nhắn]'; } })()
-    : `[${msgCount} tin nhắn]`;
-
-  const TABS: { key: 'recent' | 'friends' | 'groups' | 'categories'; label: string; icon: React.ReactNode }[] = [
-    { key: 'recent', label: 'Gần nhất', icon: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> },
-    { key: 'friends', label: 'Bạn bè', icon: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> },
-    { key: 'groups', label: 'Nhóm', icon: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg> },
-    { key: 'categories', label: 'Nhãn', icon: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg> },
-  ];
-
-  // Helper to get contact labels for display in categories tab
-  const getContactLabelBadges = (contactId: string) => {
-    if (labelSource === 'local') {
-      const lids = localLabelThreadMap[contactId] || [];
-      if (!lids.length) return null;
-      const matched = lids.map(lid => localLabels.find(l => l.id === lid)).filter(Boolean) as typeof localLabels;
-      if (!matched.length) return null;
-      return (
-        <div className="flex items-center gap-1 mt-0.5 flex-wrap">
-          {matched.map(l => (
-            <span key={l.id} className="text-[9px] px-1.5 py-0.5 rounded-full" style={{ backgroundColor: (l.color || '#3b82f6') + '30', color: l.color || '#3b82f6', border: `1px solid ${l.color || '#3b82f6'}60` }}>
-              {l.emoji ? `${l.emoji} ` : ''}{l.name}
-            </span>
-          ))}
-        </div>
-      );
-    } else {
-      const clabels = labels.filter(l => l.conversations.includes(contactId));
-      if (!clabels.length) return null;
-      return (
-        <div className="flex items-center gap-1 mt-0.5 flex-wrap">
-          {clabels.map(l => (
-            <span key={l.id} className="text-[9px] px-1.5 py-0.5 rounded-full" style={{ backgroundColor: (l.color || '#3b82f6') + '30', color: l.color || '#3b82f6', border: `1px solid ${l.color || '#3b82f6'}60` }}>
-              {l.emoji} {l.text}
-            </span>
-          ))}
-        </div>
-      );
-    }
-  };
-
-  const grpCache = activeAccountId ? (groupInfoCache[activeAccountId] || {}) : {};
-
-  return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70" onClick={onClose}>
-      <div className="bg-gray-800 rounded-2xl shadow-2xl w-[420px] max-h-[85vh] flex flex-col border border-gray-700 overflow-hidden"
-        onClick={e => e.stopPropagation()}>
-
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700">
-          <div>
-            <h2 className="text-white font-semibold text-base">Chuyển tiếp {msgCount > 1 ? `${msgCount} tin nhắn` : 'tin nhắn'}</h2>
-            <p className="text-xs text-gray-400 mt-0.5 truncate max-w-[300px]">{previewText}</p>
-          </div>
-          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-700 text-gray-400 hover:text-white transition-colors">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
-        </div>
-
-        {/* Compose text */}
-        <div className="px-4 py-2.5 border-b border-gray-700 flex-shrink-0">
-          <textarea
-            value={composeText}
-            onChange={e => setComposeText(e.target.value)}
-            placeholder="Nhập nội dung kèm..."
-            rows={2}
-            className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 resize-none focus:outline-none focus:border-blue-500"
-          />
-        </div>
-
-        {/* Tabs */}
-        <div className="flex border-b border-gray-700 flex-shrink-0">
-          {TABS.map(t => (
-            <button key={t.key}
-              onClick={() => { setTab(t.key); setSelectedLabelId(null); }}
-              className={`flex-1 flex items-center justify-center gap-1 py-2.5 text-xs transition-colors border-b-2 ${tab === t.key ? 'border-blue-500 text-blue-400' : 'border-transparent text-gray-400 hover:text-gray-300'}`}
-            >
-              {t.icon}
-              <span>{t.label}</span>
-            </button>
-          ))}
-        </div>
-
-        {/* Label source tabs + filter pills - only for categories tab */}
-        {tab === 'categories' && (
-          <div className="border-b border-gray-700 flex-shrink-0">
-            {/* Local / Zalo sub-tabs */}
-            <div className="flex items-center gap-1 px-3 pt-2 pb-1">
-              <button
-                onClick={() => { setLabelSource('local'); setSelectedLabelId(null); }}
-                className={`text-[11px] px-3 py-1 rounded-full border transition-colors ${labelSource === 'local' ? 'bg-blue-600 border-blue-500 text-white' : 'border-gray-600 text-gray-400 hover:border-gray-500 hover:text-gray-300'}`}
-              ><HardDriveIcon className="w-4 h-4 inline" /> Local</button>
-              <button
-                onClick={() => { setLabelSource('zalo'); setSelectedLabelId(null); }}
-                className={`text-[11px] px-3 py-1 rounded-full border transition-colors ${labelSource === 'zalo' ? 'bg-blue-600 border-blue-500 text-white' : 'border-gray-600 text-gray-400 hover:border-gray-500 hover:text-gray-300'}`}
-              ><CloudIcon className="w-4 h-4 inline" /> Zalo</button>
-            </div>
-
-            {/* Label pills */}
-            {activeLabelsForPills.length > 0 && (
-              <div className="px-3 py-1.5 flex items-center gap-1.5 overflow-x-auto">
-                <button
-                  onClick={() => setSelectedLabelId(null)}
-                  className={`flex-shrink-0 text-xs px-2.5 py-1 rounded-full border transition-colors ${selectedLabelId === null ? 'bg-blue-600 border-blue-500 text-white' : 'border-gray-600 text-gray-400 hover:border-gray-500'}`}
-                >Tất cả</button>
-                {labelSource === 'local'
-                  ? localLabels.map(l => (
-                    <button key={l.id}
-                      onClick={() => setSelectedLabelId(selectedLabelId === l.id ? null : l.id)}
-                      className={`flex-shrink-0 flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border transition-colors ${selectedLabelId === l.id ? 'text-white' : 'text-gray-300 hover:border-gray-400'}`}
-                      style={{ borderColor: selectedLabelId === l.id ? (l.color || '#3b82f6') : '#4b5563', backgroundColor: selectedLabelId === l.id ? (l.color || '#3b82f6') + '40' : 'transparent' }}
-                    >
-                      {l.emoji && <span>{l.emoji}</span>}
-                      <span>{l.name}</span>
-                    </button>
-                  ))
-                  : labels.map(l => (
-                    <button key={l.id}
-                      onClick={() => setSelectedLabelId(selectedLabelId === l.id ? null : l.id)}
-                      className={`flex-shrink-0 flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border transition-colors ${selectedLabelId === l.id ? 'text-white' : 'text-gray-300 hover:border-gray-400'}`}
-                      style={{ borderColor: selectedLabelId === l.id ? (l.color || '#3b82f6') : '#4b5563', backgroundColor: selectedLabelId === l.id ? (l.color || '#3b82f6') + '40' : 'transparent' }}
-                    >
-                      {l.emoji && <span>{l.emoji}</span>}
-                      <span>{l.text}</span>
-                    </button>
-                  ))
-                }
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Search */}
-        <div className="px-4 py-2.5 border-b border-gray-700 flex-shrink-0">
-          <div className="relative">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            <input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              autoFocus
-              placeholder="Tìm hội thoại..."
-              className="w-full bg-gray-700 border border-gray-600 rounded-full pl-9 pr-3 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
-            />
-          </div>
-        </div>
-
-        {/* Contact list */}
-        <div className="flex-1 overflow-y-auto">
-          {filtered.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-gray-400">
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mb-2 opacity-40"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-              <p className="text-sm">Không tìm thấy</p>
-            </div>
-          ) : filtered.map(c => {
-            const isSelected = selected.has(c.contact_id);
-            return (
-              <button
-                key={c.contact_id}
-                onClick={() => toggleSelect(c.contact_id)}
-                className={`w-full flex items-center gap-3 px-4 py-2.5 transition-colors text-left ${isSelected ? 'bg-blue-600/20' : 'hover:bg-gray-700'}`}
-              >
-                {/* Checkbox */}
-                <div className={`w-5 h-5 rounded border flex-shrink-0 flex items-center justify-center transition-colors ${isSelected ? 'bg-blue-500 border-blue-500' : 'border-gray-500'}`}>
-                  {isSelected && (
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
-                  )}
-                </div>
-                {c.contact_type === 'group' ? (
-                  <GroupAvatar
-                    avatarUrl={c.avatar_url}
-                    groupInfo={grpCache[c.contact_id]}
-                    name={c.display_name || c.contact_id}
-                    size="md"
-                  />
-                ) : c.avatar_url ? (
-                  <img src={c.avatar_url} alt="" className="w-10 h-10 rounded-full object-cover flex-shrink-0"
-                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-                ) : (
-                  <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold flex-shrink-0 bg-blue-600">
-                    {(c.display_name || 'U').charAt(0).toUpperCase()}
-                  </div>
-                )}
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm text-gray-200 truncate">{c.alias || c.display_name || c.contact_id}
-                    {c.alias && c.display_name && <span className="text-xs text-gray-400 ml-1">({c.display_name})</span>}</p>
-                  {c.contact_type === 'group'
-                    ? <p className="text-xs text-gray-400">Nhóm</p>
-                    : c.last_message_time
-                      ? <p className="text-xs text-gray-400">{formatMsgTime(c.last_message_time)}</p>
-                      : null}
-                  {tab === 'categories' && getContactLabelBadges(c.contact_id)}
-                </div>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Footer */}
-        {selected.size > 0 && (
-          <div className="flex items-center justify-between px-4 py-3 border-t border-gray-700 flex-shrink-0">
-            <button
-              onClick={() => setSelected(new Set())}
-              className="text-xs text-gray-400 hover:text-gray-200 transition-colors"
-            >
-              Bỏ chọn tất cả
-            </button>
-            <button
-              onClick={handleForward}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
-            >
-              Chuyển tiếp ({selected.size})
-            </button>
-          </div>
-        )}
-
-      </div>
-    </div>
-  );
-}
-
-// ─── NoteViewModal ────────────────────────────────────────────────────────────
-export function NoteViewModal({ topicId, initialTitle, groupId, onClose, onNotePinned, creatorName, createTime, isGroup: isGroupProp, activeAccountId: activeAccountIdProp }: {
-  topicId?: string;
-  initialTitle: string;
-  groupId: string;
-  onClose: () => void;
-  onNotePinned?: (note: PinnedNote) => void;
-  creatorName?: string;
-  createTime?: number;
-  isGroup?: boolean;
-  activeAccountId?: string;
-}) {
-  // Tab: 'zalo' only available for group conversations
-  const showZaloTab = !!isGroupProp;
-  const [activeTab, setActiveTab] = React.useState<'zalo' | 'local'>(showZaloTab ? 'zalo' : 'local');
-
-  // ── Local notes state ──
-  const [localNotes, setLocalNotes] = React.useState<any[]>([]);
-  const [localNoteLoading, setLocalNoteLoading] = React.useState(false);
-  const [newNoteText, setNewNoteText] = React.useState('');
-  const [editNoteId, setEditNoteId] = React.useState<number | null>(null);
-  const [editNoteText, setEditNoteText] = React.useState('');
-  const [savingLocal, setSavingLocal] = React.useState(false);
-  const zaloId = activeAccountIdProp || useAccountStore.getState().activeAccountId || '';
-
-  // Load local notes when tab = 'local'
-  React.useEffect(() => {
-    if (activeTab !== 'local' || !zaloId || !groupId) return;
-    setLocalNoteLoading(true);
-    ipc.crm?.getNotes({ zaloId, contactId: groupId })
-      .then((res: any) => setLocalNotes(res?.notes || []))
-      .catch(() => {})
-      .finally(() => setLocalNoteLoading(false));
-  }, [activeTab, zaloId, groupId]);
-
-  const handleAddLocalNote = async () => {
-    if (!newNoteText.trim() || !zaloId) return;
-    setSavingLocal(true);
-    try {
-      const res = await ipc.crm?.saveNote({ zaloId, note: { contact_id: groupId, content: newNoteText.trim() } });
-      if (res?.success) {
-        setNewNoteText('');
-        const reload = await ipc.crm?.getNotes({ zaloId, contactId: groupId });
-        setLocalNotes(reload?.notes || []);
-        showNotification('Đã thêm ghi chú', 'success');
-      }
-    } catch {} finally { setSavingLocal(false); }
-  };
-
-  const handleEditLocalNote = async (note: any) => {
-    if (!editNoteText.trim() || !zaloId) return;
-    setSavingLocal(true);
-    try {
-      await ipc.crm?.saveNote({ zaloId, note: { id: note.id, contact_id: groupId, content: editNoteText.trim() } });
-      setEditNoteId(null);
-      const reload = await ipc.crm?.getNotes({ zaloId, contactId: groupId });
-      setLocalNotes(reload?.notes || []);
-      showNotification('Đã cập nhật ghi chú', 'success');
-    } catch {} finally { setSavingLocal(false); }
-  };
-
-  const handleDeleteLocalNote = async (noteId: number) => {
-    if (!zaloId) return;
-    await ipc.crm?.deleteNote({ zaloId, noteId });
-    setLocalNotes(prev => prev.filter((n: any) => n.id !== noteId));
-    showNotification('Đã xóa ghi chú', 'success');
-  };
-
-  // 'view' mode when opening an existing note, 'edit' mode when creating or editing
-  const [mode, setMode] = React.useState<'view' | 'edit'>(topicId ? 'view' : 'edit');
-  const [title, setTitle] = React.useState(initialTitle);
-  const [pinAct, setPinAct] = React.useState(!!topicId);
-  const [saving, setSaving] = React.useState(false);
-  const [error, setError] = React.useState('');
-  const { showNotification } = useAppStore();
-  const { getActiveAccount } = useAccountStore();
-  const isEdit = !!topicId;
-
-  const getAuth = () => {
-    const acc = getActiveAccount();
-    if (!acc) return null;
-    return { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
-  };
-
-  const handleSave = async () => {
-    const trimmed = title.trim();
-    if (!trimmed) { setError('Tiêu đề không được để trống'); return; }
-    const auth = getAuth();
-    if (!auth) return;
-    setSaving(true);
-    setError('');
-    try {
-      let res: any;
-      if (isEdit && topicId) {
-        res = await ipc.zalo?.editNote({ auth, groupId, topicId, title: trimmed, pinAct });
-      } else {
-        res = await ipc.zalo?.createNote({ auth, groupId, title: trimmed, pinAct });
-      }
-      if (res?.success === false) {
-        setError(res.error || 'Thao tác thất bại');
-        return;
-      }
-      if (pinAct && onNotePinned) {
-        const noteId = res?.response?.id || res?.response?.topicId || topicId || String(Date.now());
-        onNotePinned({
-          topicId: String(noteId),
-          title: trimmed,
-          creatorId: '',
-          createTime: Date.now(),
-          editTime: Date.now(),
-        });
-      }
-      showNotification(isEdit ? 'Đã cập nhật ghi chú' : 'Đã tạo ghi chú', 'success');
-      onClose();
-    } catch (e: any) {
-      setError(e.message || 'Lỗi không xác định');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  React.useEffect(() => {
-    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', h);
-    return () => document.removeEventListener('keydown', h);
-  }, [onClose]);
-
-  // ── Format create time ──
-  const formatNoteTime = (ts?: number): string => {
-    if (!ts) return '';
-    const d = new Date(ts);
-    const now = new Date();
-    const isToday = d.toDateString() === now.toDateString();
-    const hm = d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
-    return isToday ? `${hm} Hôm nay` : d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' }) + ` ${hm}`;
-  };
-
-  return (
-    <div
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-    >
-      <div className="bg-gray-800 border border-gray-700 rounded-2xl shadow-2xl w-full max-w-md mx-4 flex flex-col max-h-[85vh]">
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700 flex-shrink-0">
-          <span className="font-semibold text-white text-base">Ghi chú</span>
-          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors p-1 rounded-lg hover:bg-gray-700">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-            </svg>
-          </button>
-        </div>
-
-        {/* Tabs: only show if group has Zalo notes */}
-        {showZaloTab && (
-          <div className="flex border-b border-gray-700 flex-shrink-0 px-4 pt-2 gap-1">
-            <button onClick={() => setActiveTab('zalo')}
-              className={`px-4 py-1.5 rounded-t-lg text-sm font-medium transition-colors ${activeTab === 'zalo' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700'}`}>
-              <CloudIcon className="w-4 h-4 inline" /> Zalo
-            </button>
-            <button onClick={() => setActiveTab('local')}
-              className={`px-4 py-1.5 rounded-t-lg text-sm font-medium transition-colors ${activeTab === 'local' ? 'bg-green-600 text-white' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700'}`}><HardDriveIcon className="w-4 h-4 inline" /> Local
-            </button>
-          </div>
-        )}
-
-        {/* ── Zalo tab ── */}
-        {activeTab === 'zalo' && (
-          <>
-            {mode === 'view' ? (
-              <>
-                <div className="px-5 py-5 min-h-[120px] overflow-y-auto">
-                  {(creatorName || createTime) && (
-                    <p className="text-xs text-gray-400 text-center mb-4">
-                      {creatorName ? `Tạo bởi ${creatorName}` : 'Ghi chú'}
-                      {createTime ? ` - ${formatNoteTime(createTime)}` : ''}
-                    </p>
-                  )}
-                  <p className="text-sm text-gray-100 leading-relaxed whitespace-pre-wrap">{title || <span className="text-gray-400 italic">Không có nội dung</span>}</p>
-                </div>
-                <div className="flex items-center gap-3 px-5 pb-5 pt-2 border-t border-gray-700/50 flex-shrink-0">
-                  <button onClick={() => { navigator.clipboard.writeText(title).catch(() => {}); showNotification('Đã sao chép', 'success'); }}
-                    className="w-10 h-10 rounded-xl bg-gray-700 hover:bg-gray-600 flex items-center justify-center text-gray-400 hover:text-white transition-colors flex-shrink-0" title="Sao chép">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <rect x="9" y="9" width="13" height="13" rx="2"/>
-                      <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
-                    </svg>
-                  </button>
-                  <button onClick={onClose} className="flex-1 py-2.5 rounded-xl bg-gray-700 hover:bg-gray-600 text-sm text-gray-200 font-medium transition-colors">Đóng</button>
-                  <button onClick={() => setMode('edit')} className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-sm text-white font-semibold transition-colors">Chỉnh sửa</button>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="px-5 py-4 space-y-4 overflow-y-auto">
-                  <div>
-                    <label className="text-xs text-gray-400 font-medium block mb-1.5">Nội dung ghi chú</label>
-                    <textarea autoFocus value={title} onChange={e => { setTitle(e.target.value); setError(''); }}
-                      onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) handleSave(); }}
-                      placeholder="Nhập nội dung ghi chú..." rows={4}
-                      className="w-full bg-gray-700 border border-gray-600 focus:border-blue-500 rounded-xl px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none resize-none transition-colors" />
-                    {error && <p className="text-xs text-red-400 mt-1">{error}</p>}
-                  </div>
-                  <div className="flex items-center justify-between py-2 px-3 bg-gray-700/50 rounded-xl">
-                    <div>
-                      <p className="text-sm text-gray-200 font-medium">Ghim ghi chú</p>
-                      <p className="text-xs text-gray-400">Hiển thị ở đầu hội thoại</p>
-                    </div>
-                    <button type="button" onClick={() => setPinAct(v => !v)}
-                      className={`relative w-10 h-5 rounded-full transition-colors flex-shrink-0 ${pinAct ? 'bg-blue-500' : 'bg-gray-600'}`}>
-                      <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${pinAct ? 'translate-x-5' : 'translate-x-0.5'}`} />
-                    </button>
-                  </div>
-                </div>
-                <div className="flex gap-3 px-5 pb-5 pt-1 flex-shrink-0">
-                  <button onClick={() => isEdit ? setMode('view') : onClose()} className="flex-1 py-2.5 rounded-xl bg-gray-700 hover:bg-gray-600 text-sm text-gray-300 transition-colors">Huỷ</button>
-                  <button onClick={handleSave} disabled={saving || !title.trim()}
-                    className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-sm text-white font-semibold transition-colors flex items-center justify-center gap-2">
-                    {saving && <Spinner size={4} />}
-                    {isEdit ? 'Lưu thay đổi' : 'Tạo ghi chú'}
-                  </button>
-                </div>
-              </>
-            )}
-          </>
-        )}
-
-        {/* ── Local tab ── */}
-        {activeTab === 'local' && (
-          <div className="flex flex-col flex-1 overflow-hidden">
-            <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
-              {localNoteLoading ? (
-                <div className="flex items-center justify-center py-6">
-                  <Spinner size={5} className="text-green-400" />
-                </div>
-              ) : localNotes.length === 0 ? (
-                <p className="text-xs text-gray-400 text-center py-4">Chưa có ghi chú local nào</p>
-              ) : localNotes.map((note: any) => (
-                <div key={note.id} className="bg-gray-700/50 border border-gray-600/50 rounded-xl p-3 group">
-                  {editNoteId === note.id ? (
-                    <div className="space-y-2">
-                      <textarea autoFocus value={editNoteText} onChange={e => setEditNoteText(e.target.value)} rows={3}
-                        className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 resize-none" />
-                      <div className="flex gap-2">
-                        <button onClick={() => setEditNoteId(null)} className="flex-1 py-1.5 rounded-lg bg-gray-600 text-xs text-gray-300 hover:bg-gray-500 transition-colors">Huỷ</button>
-                        <button onClick={() => handleEditLocalNote(note)} disabled={savingLocal} className="flex-1 py-1.5 rounded-lg bg-blue-600 text-xs text-white hover:bg-blue-500 disabled:opacity-50 transition-colors">Lưu</button>
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      <p className="text-sm text-gray-200 whitespace-pre-wrap leading-relaxed">{note.content}</p>
-                      <div className="flex items-center justify-between mt-2">
-                        <span className="text-[11px] text-gray-400">{formatNoteTime(note.updated_at)}</span>
-                        <div className="opacity-0 group-hover:opacity-100 flex gap-3 transition-opacity">
-                          <button onClick={() => { setEditNoteId(note.id); setEditNoteText(note.content); }} className="text-xs text-blue-400 hover:text-blue-300 transition-colors">Sửa</button>
-                          <button onClick={() => handleDeleteLocalNote(note.id)} className="text-xs text-red-400 hover:text-red-300 transition-colors">Xóa</button>
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </div>
-              ))}
-            </div>
-            <div className="px-4 pb-4 pt-2 border-t border-gray-700/50 flex-shrink-0 space-y-2">
-              <textarea value={newNoteText} onChange={e => setNewNoteText(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) handleAddLocalNote(); }}
-                placeholder="Thêm ghi chú local... (Ctrl+Enter để lưu)" rows={2}
-                className="w-full bg-gray-700 border border-gray-600 focus:border-green-500 rounded-xl px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none resize-none transition-colors" />
-              <button onClick={handleAddLocalNote} disabled={savingLocal || !newNoteText.trim()}
-                className="w-full py-2.5 rounded-xl bg-green-600 hover:bg-green-500 disabled:opacity-50 text-sm text-white font-semibold transition-colors">
-                Lưu ghi chú
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─── FriendRequestBar ─────────────────────────────────────────────────────────
-// Hiển thị thanh kết bạn phía dưới pinned bar khi chat với người chưa là bạn
-
-type FriendStatus =
-  | 'loading'
-  | 'friend'           // đã là bạn bè
-  | 'stranger'         // chưa kết bạn
-  | 'sent'             // đã gửi yêu cầu, đang chờ đối phương chấp nhận
-  | 'received';        // đối phương đã gửi yêu cầu đến mình
-
-function FriendRequestBar({ zaloId, userId, contact, getAuth, onReady }: {
-  zaloId: string;
-  userId: string;
-  contact: any;
-  getAuth: () => { cookies: string; imei: string; userAgent: string } | null;
-  onReady?: () => void;
-}) {
-  const [status, setStatus] = React.useState<FriendStatus>('loading');
-  const [sendPopupOpen, setSendPopupOpen] = React.useState(false);
-  const [sendMsg, setSendMsg] = React.useState('');
-  const [sending, setSending] = React.useState(false);
-  const { showNotification } = useAppStore();
-
-  // Khi status thoát khỏi 'loading' → thông báo parent để scroll to bottom
-  React.useEffect(() => {
-    if (status !== 'loading') {
-      onReady?.();
-    }
-  }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Check friendship + request status
-  React.useEffect(() => {
-    // Skip for non-Zalo channels (FB doesn't have friend requests)
-    const acc = useAccountStore.getState().accounts.find(a => a.zalo_id === zaloId);
-    if (acc && (acc.channel || 'zalo') !== 'zalo') {
-      setStatus('friend'); // FB contacts are always "accessible"
-      return;
-    }
-
-    // Fast sync check: contact already has is_friend flag from Zalo sync
-    // Kiểm tra cả is_friend (số) và isFr (flag bổ sung trong store)
-    if (contact?.is_friend === 1 || contact?.isFr === 1) {
-      setStatus('friend');
-      return;
-    }
-
-    let cancelled = false;
-    const check = async () => {
-      try {
-        // 1. Check DB (friends table)
-        const friendRes = await DataAccessor.isFriend({ zaloId, userId });
-        if (cancelled) return;
-        if (friendRes?.isFriend) { setStatus('friend'); return; }
-
-        // 2. Confirm via Zalo API (authoritative source)
-        // zca-js getFriendRequestStatus trả về: { is_friend, is_requested, is_requesting }
-        // is_friend=1 → bạn bè
-        // is_requested=1 → mình đã gửi yêu cầu (đang chờ đối phương chấp nhận)
-        // is_requesting=1 → đối phương đã gửi yêu cầu đến mình
-        const auth = getAuth();
-        if (!auth) { setStatus('stranger'); return; }
-        const res = await ipc.zalo?.getFriendRequestStatus({ auth, userId });
-        if (cancelled) return;
-
-        const resp = res?.response ?? res;
-        if (resp?.is_friend === 1) setStatus('friend');
-        else if (resp?.is_requested === 1) setStatus('sent');
-        else if (resp?.is_requesting === 1) setStatus('received');
-        else setStatus('stranger');
-      } catch {
-        if (!cancelled) setStatus('stranger');
-      }
-    };
-    check();
-    return () => { cancelled = true; };
-  }, [zaloId, userId, contact?.is_friend, contact?.isFr]);
-
-  // Realtime: đồng bộ trạng thái kết bạn ngay khi có event từ listener
-  React.useEffect(() => {
-    const unsubAccepted = ipc.on?.('event:friendAccepted', (data: any) => {
-      if (data?.zaloId === zaloId && data?.userId === userId) {
-        setStatus('friend');
-      }
-    });
-
-    const unsubSent = ipc.on?.('event:friendRequestSent', (data: any) => {
-      const sentUserId = data?.requester?.userId || '';
-      if (data?.zaloId === zaloId && sentUserId === userId) {
-        setStatus('sent');
-      }
-    });
-
-    const unsubRemoved = ipc.on?.('event:friendRequestRemoved', (data: any) => {
-      if (data?.zaloId === zaloId && data?.userId === userId) {
-        setStatus('stranger');
-      }
-    });
-
-    return () => {
-      unsubAccepted?.();
-      unsubSent?.();
-      unsubRemoved?.();
-    };
-  }, [zaloId, userId]);
-
-  const handleSendRequest = async () => {
-    if (sending) return;
-    setSending(true);
-    try {
-      const auth = getAuth();
-      if (!auth) throw new Error('No auth');
-      await ipc.zalo?.sendFriendRequest({ auth, userId, msg: sendMsg.trim() });
-      setStatus('sent');
-      setSendPopupOpen(false);
-      showNotification('Đã gửi yêu cầu kết bạn', 'success');
-    } catch (e: any) {
-      showNotification('Gửi yêu cầu thất bại: ' + e.message, 'error');
-    } finally { setSending(false); }
-  };
-
-  const handleAccept = async () => {
-    if (sending) return;
-    setSending(true);
-    try {
-      const auth = getAuth();
-      if (!auth) throw new Error('No auth');
-      await ipc.zalo?.acceptFriendRequest({ auth, userId });
-      setStatus('friend');
-      showNotification('Đã chấp nhận kết bạn', 'success');
-      // Update local DB - also remove from friend_requests
-      DataAccessor.addFriend({ zaloId, friend: { userId, displayName: contact?.display_name || contact?.alias || '', avatar: contact?.avatar_url || contact?.avatar || '' } }).catch(() => {});
-      DataAccessor.removeFriendRequest({ zaloId, userId, direction: 'received' }).catch(() => {});
-    } catch (e: any) {
-      showNotification('Thất bại: ' + e.message, 'error');
-    } finally { setSending(false); }
-  };
-
-  const handleReject = async () => {
-    if (sending) return;
-    setSending(true);
-    try {
-      const auth = getAuth();
-      if (!auth) throw new Error('No auth');
-      await ipc.zalo?.rejectFriendRequest({ auth, userId });
-      setStatus('stranger');
-      showNotification('Đã từ chối yêu cầu kết bạn', 'success');
-    } catch (e: any) {
-      showNotification('Từ chối thất bại: ' + e.message, 'error');
-    } finally { setSending(false); }
-  };
-
-  const handleUndo = async () => {
-    if (sending) return;
-    setSending(true);
-    try {
-      const auth = getAuth();
-      if (!auth) throw new Error('No auth');
-      await ipc.zalo?.undoFriendRequest({ auth, userId });
-      setStatus('stranger');
-      showNotification('Đã huỷ yêu cầu kết bạn', 'success');
-    } catch (e: any) {
-      showNotification('Huỷ thất bại: ' + e.message, 'error');
-    } finally { setSending(false); }
-  };
-
-  // Đã là bạn bè → không hiện
-  if (status === 'loading' || status === 'friend') return null;
-
-  const displayName = contact?.alias || contact?.display_name || userId;
-
-  return (
-    <>
-      <div className="flex items-center gap-3 px-4 py-2.5 bg-gray-800/80 border-b border-gray-700/60 flex-shrink-0">
-        {/* Icon */}
-        <div className="w-7 h-7 rounded-full bg-blue-500/20 flex items-center justify-center flex-shrink-0">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-400">
-            <path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/>
-            <circle cx="9" cy="7" r="4"/>
-            <line x1="19" y1="8" x2="19" y2="14"/>
-            <line x1="22" y1="11" x2="16" y2="11"/>
-          </svg>
-        </div>
-
-        {/* Text */}
-        <div className="flex-1 min-w-0">
-          {status === 'stranger' && (
-            <span className="text-sm text-gray-300">
-              Gửi yêu cầu kết bạn tới <span className="font-medium text-white">{displayName}</span>
-            </span>
-          )}
-          {status === 'sent' && (
-            <span className="text-sm text-gray-400">
-              Đã gửi yêu cầu kết bạn tới <span className="font-medium text-gray-300">{displayName}</span> - đang chờ chấp nhận
-            </span>
-          )}
-          {status === 'received' && (
-            <span className="text-sm text-gray-300">
-              <span className="font-medium text-white">{displayName}</span> đã gửi cho bạn yêu cầu kết bạn
-            </span>
-          )}
-        </div>
-
-        {/* Action buttons */}
-        <div className="flex items-center gap-2 flex-shrink-0">
-          {status === 'stranger' && (
-            <button
-              onClick={() => setSendPopupOpen(true)}
-              disabled={sending}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50"
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              Kết bạn
-            </button>
-          )}
-          {status === 'sent' && (
-            <button
-              onClick={handleUndo}
-              disabled={sending}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
-            >
-              {sending
-                ? <Spinner size={3} />
-                : <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-              }
-              Huỷ yêu cầu
-            </button>
-          )}
-          {status === 'received' && (
-            <>
-              <button
-                onClick={handleReject}
-                disabled={sending}
-                className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
-              >
-                Từ chối
-              </button>
-              <button
-                onClick={handleAccept}
-                disabled={sending}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50"
-              >
-                {sending
-                  ? <Spinner size={3} />
-                  : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-                }
-                Chấp nhận
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Send friend request popup */}
-      {sendPopupOpen && (
-        <div
-          className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm"
-          onClick={() => setSendPopupOpen(false)}
-        >
-          <div
-            className="bg-gray-800 border border-gray-700 rounded-2xl shadow-2xl w-full max-w-sm mx-4 flex flex-col"
-            onClick={e => e.stopPropagation()}
-          >
-            {/* Header */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700">
-              <div className="flex items-center gap-3">
-                {contact?.avatar_url ? (
-                  <img src={contact.avatar_url} alt="" className="w-10 h-10 rounded-full object-cover"
-                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-                ) : (
-                  <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-white font-bold">
-                    {(displayName || 'U').charAt(0).toUpperCase()}
-                  </div>
-                )}
-                <div>
-                  <p className="font-semibold text-white text-sm">{displayName}</p>
-                  <p className="text-xs text-gray-400">Gửi yêu cầu kết bạn</p>
-                </div>
-              </div>
-              <button onClick={() => setSendPopupOpen(false)}
-                className="w-7 h-7 rounded-full flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 transition-colors">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-              </button>
-            </div>
-
-            {/* Body */}
-            <div className="px-5 py-4 space-y-3">
-              <div>
-                <label className="text-xs text-gray-400 font-medium block mb-1.5">Lời nhắn kèm theo (tùy chọn)</label>
-                <textarea
-                  autoFocus
-                  value={sendMsg}
-                  onChange={e => setSendMsg(e.target.value)}
-                  maxLength={150}
-                  placeholder="Xin chào, tôi muốn kết bạn với bạn!"
-                  rows={3}
-                  className="w-full bg-gray-700 border border-gray-600 focus:border-blue-500 rounded-xl px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none resize-none transition-colors"
-                  onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) handleSendRequest(); }}
-                />
-                <p className="text-right text-[11px] text-gray-400 mt-0.5">{sendMsg.length}/150</p>
-              </div>
-            </div>
-
-            {/* Footer */}
-            <div className="flex gap-3 px-5 pb-5 pt-1">
-              <button onClick={() => setSendPopupOpen(false)}
-                className="flex-1 py-2.5 rounded-xl bg-gray-700 hover:bg-gray-600 text-sm text-gray-300 transition-colors">
-                Huỷ
-              </button>
-              <button
-                onClick={handleSendRequest}
-                disabled={sending}
-                className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-sm text-white font-semibold transition-colors flex items-center justify-center gap-2"
-              >
-                {sending && <Spinner size={4} />}
-                Gửi yêu cầu
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </>
-  );
-}
-
-
+// FriendRequestBar extracted to ./FriendRequestBar.tsx

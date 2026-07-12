@@ -1,9 +1,15 @@
 import { create } from 'zustand';
 import ipc from '@/lib/ipc';
+import DataAccessor from '@/lib/data/DataAccessor';
+import { useEmployeeStore } from '@/store/employeeStore';
 import type {
   ErpDepartment, ErpPosition, ErpEmployeeProfile,
   ErpAttendance, ErpLeaveRequest,
 } from '../../../models/erp';
+
+function isEmployee(): boolean {
+  try { return useEmployeeStore.getState().mode === 'employee'; } catch { return false; }
+}
 
 interface ErpEmployeeState {
   departments: ErpDepartment[];
@@ -57,16 +63,37 @@ export const useErpEmployeeStore = create<ErpEmployeeState>((set, get) => ({
   seat: null,
 
   loadDepartments: async () => {
-    const res = await ipc.erp?.departmentList?.();
-    if (res?.success) set({ departments: res.departments });
+    try {
+      if (isEmployee()) {
+        const res: any = await DataAccessor.erpDepartments();
+        if (res?.success) set({ departments: res.data?.departments || res.departments || [] });
+      } else {
+        const res = await ipc.erp?.departmentList?.();
+        if (res?.success) set({ departments: res.departments });
+      }
+    } catch {}
   },
   loadPositions: async () => {
-    const res = await ipc.erp?.positionList?.();
-    if (res?.success) set({ positions: res.positions });
+    try {
+      if (isEmployee()) {
+        const res: any = await DataAccessor.erpPositions();
+        if (res?.success) set({ positions: res.data?.positions || res.positions || [] });
+      } else {
+        const res = await ipc.erp?.positionList?.();
+        if (res?.success) set({ positions: res.positions });
+      }
+    } catch {}
   },
   loadProfiles: async (departmentId) => {
-    const res = await ipc.erp?.employeeListByDepartment?.({ departmentId });
-    if (res?.success) set({ profiles: res.profiles });
+    try {
+      if (isEmployee()) {
+        const res: any = await DataAccessor.erpProfiles(departmentId);
+        if (res?.success) set({ profiles: res.data?.profiles || res.profiles || [] });
+      } else {
+        const res = await ipc.erp?.employeeListByDepartment?.({ departmentId });
+        if (res?.success) set({ profiles: res.profiles });
+      }
+    } catch {}
   },
   loadMyLeaves: async () => {
     const res = await ipc.erp?.leaveListMy?.();
@@ -89,13 +116,26 @@ export const useErpEmployeeStore = create<ErpEmployeeState>((set, get) => ({
     if (res?.success) set({ seat: res.seat });
   },
   loadProfile: async (employeeId) => {
-    const res = await ipc.erp?.employeeGetProfile?.({ employeeId });
-    if (res?.success && res.profile) {
-      set(s => ({
-        profiles: upsert(s.profiles, res.profile, (p: any) => p.employee_id === employeeId),
-      }));
-      return res.profile;
-    }
+    try {
+      if (isEmployee()) {
+        const res: any = await DataAccessor.erpProfile(employeeId);
+        const profile = res?.data?.profile || res?.profile;
+        if (res?.success && profile) {
+          set(s => ({
+            profiles: upsert(s.profiles, profile, (p: any) => p.employee_id === employeeId),
+          }));
+          return profile;
+        }
+      } else {
+        const res = await ipc.erp?.employeeGetProfile?.({ employeeId });
+        if (res?.success && res.profile) {
+          set(s => ({
+            profiles: upsert(s.profiles, res.profile, (p: any) => p.employee_id === employeeId),
+          }));
+          return res.profile;
+        }
+      }
+    } catch {}
     return undefined;
   },
 

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import DataAccessor from '@/lib/data/DataAccessor';
-import ipc from '@/lib/ipc';
+import ipc, { buildZaloAuth } from '@/lib/ipc';
 import { AccountInfo } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
 import { showConfirm } from '../../common/ConfirmDialog';
@@ -750,7 +750,7 @@ export default function QuickMessageSettings({ accounts, filterAccounts, searchT
   const buildAuth = (zaloId: string) => {
     const acc = accounts.find(a => a.zalo_id === zaloId);
     if (!acc) return null;
-    return { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+    return buildZaloAuth(acc);
   };
 
   const getAccountName = (zaloId: string) => {
@@ -834,7 +834,23 @@ export default function QuickMessageSettings({ accounts, filterAccounts, searchT
     }
     const targets = data.owner_zalo_id ? [data.owner_zalo_id] : (data.target_zalo_ids || []);
     if (!targets.length) return;
-    const mediaObj = data.localMediaFiles?.length ? { localFiles: data.localMediaFiles } : undefined;
+
+    // Upload media files to boss if in employee mode
+    let processedMedia = data.localMediaFiles;
+    if (data.localMediaFiles && data.localMediaFiles.length > 0) {
+      const uploaded: LocalMediaFile[] = [];
+      for (const f of data.localMediaFiles) {
+        const result = await DataAccessor.uploadMediaFile(f.path, targets[0]);
+        if (result.success && result.bossPath) {
+          uploaded.push({ ...f, path: result.bossPath });
+        } else {
+          uploaded.push(f);
+        }
+      }
+      processedMedia = uploaded;
+    }
+
+    const mediaObj = processedMedia?.length ? { localFiles: processedMedia } : undefined;
     for (const zId of targets) {
       await DataAccessor.upsertLocalQuickMessage({ zaloId: zId, item: { keyword: data.keyword, title: data.title, media: mediaObj } });
     }

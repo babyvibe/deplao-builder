@@ -82,9 +82,9 @@ export function registerEmployeeIpc(): void {
                         const existing = db.queryOne(`SELECT 1 FROM erp_employee_profiles WHERE employee_id = ?`, [employeeId]);
                         if (!existing) {
                             db.run(
-                                `INSERT OR IGNORE INTO erp_employee_profiles (employee_id, erp_role, extra_json, created_at, updated_at)
-                                 VALUES (?, 'member', '{}', ?, ?)`,
-                                [employeeId, Date.now(), Date.now()]
+                                `INSERT OR IGNORE INTO erp_employee_profiles (employee_id, erp_role, extra_json, updated_at)
+                                 VALUES (?, 'member', '{}', ?)`,
+                                [employeeId, Date.now()]
                             );
                             Logger.log(`[employeeIpc] Auto-created ERP profile for employee ${employeeId} with role 'member'`);
                         }

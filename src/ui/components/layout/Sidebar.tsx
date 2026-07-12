@@ -178,7 +178,19 @@ export default function Sidebar({ onAddAccount }: SidebarProps) {
                 >
                   {account.avatar_url ? (
                     <img src={account.avatar_url} alt={account.full_name} className="w-full h-full object-cover"
-                      onError={(e) => { (e.target as HTMLImageElement).src = ''; }} />
+                      onError={(e) => {
+                        const img = e.target as HTMLImageElement;
+                        img.src = '';
+                        // Retry avatar cho cả Zalo + Facebook
+                        import('@/lib/avatarRetry').then(({ handleAvatarError }) =>
+                          handleAvatarError({ ownerId: zaloId, contactId: zaloId, channel: account.channel || 'zalo' })
+                        ).then(newUrl => {
+                          if (newUrl) {
+                            useAccountStore.getState().updateAccount(zaloId, { avatar_url: newUrl });
+                            img.src = newUrl;
+                          }
+                        }).catch(() => {});
+                      }} />
                   ) : (
                     <div className="w-full h-full bg-blue-600 flex items-center justify-center text-white font-bold text-sm">
                       {(account.full_name || account.zalo_id).charAt(0).toUpperCase()}
@@ -261,7 +273,18 @@ export default function Sidebar({ onAddAccount }: SidebarProps) {
                         src={account.avatar_url}
                         alt={account.full_name}
                         className="w-full h-full object-cover"
-                        onError={(e) => { (e.target as HTMLImageElement).src = ''; }}
+                        onError={(e) => {
+                          const img = e.target as HTMLImageElement;
+                          img.src = '';
+                          import('@/lib/avatarRetry').then(({ handleAvatarError }) =>
+                            handleAvatarError({ ownerId: zaloId, contactId: zaloId, channel: account.channel || 'zalo' })
+                          ).then(newUrl => {
+                            if (newUrl) {
+                              useAccountStore.getState().updateAccount(zaloId, { avatar_url: newUrl });
+                              img.src = newUrl;
+                            }
+                          }).catch(() => {});
+                        }}
                       />
                     ) : (
                       <div className="w-full h-full bg-blue-600 flex items-center justify-center text-white font-bold text-sm">

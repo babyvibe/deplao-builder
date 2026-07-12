@@ -6,6 +6,7 @@ import { useCRMStore } from '@/store/crmStore';
 import { useEmployeeStore } from '@/store/employeeStore';
 import ipc from '../lib/ipc'
 import DataAccessor from '../lib/data/DataAccessor';;
+import { messageQueue } from '@/lib/MessageQueue';
 import { fetchAllAliases } from '../lib/zaloAliasUtils';
 import { sendSeenForThread } from '@/lib/sendSeenHelper';
 import { playNotificationSound, showDesktopNotification, requestNotificationPermission } from '../utils/NotificationService';
@@ -1008,17 +1009,17 @@ export function useZaloEvents() {
         // Tìm tin nhắn gốc trong store để lấy đầy đủ thông tin (vì rawQuote thường rỗng)
         const allMessages = useChatStore.getState().messages[`${zaloId}_${threadId}`] || [];
         const origMsg = allMessages.find(m => m.msg_id === String(rawQuote.globalMsgId));
-        
+
         let quotedMsg = rawQuote.msg ?? '';
         let quotedMsgType = rawQuote.msgType || '';
         let quotedAttach = rawQuote.attach ?? '';
-        
+
         // CRITICAL: Zalo platformType 2 (web) đặt content vào attach, platformType 1 (app) đặt vào msg
         // Nếu msg rỗng và attach có data → lấy từ attach
         if ((!quotedMsg || quotedMsg === 'null' || quotedMsg === '') && quotedAttach && quotedAttach !== 'null') {
           quotedMsg = quotedAttach;
         }
-        
+
         // Nếu tìm thấy tin nhắn gốc, lấy thông tin từ đó
         if (origMsg) {
           quotedMsgType = origMsg.msg_type || '';
@@ -1059,9 +1060,9 @@ export function useZaloEvents() {
             } catch {}
           }
         }
-        
+
         const quoteImageUrl = extractQuoteImageUrl(rawQuote) || (origMsg ? extractQuoteImageFromContent(origMsg.content, origMsg.msg_type) : '');
-        
+
         quote_data = JSON.stringify({
           msg: quotedMsg,
           fromD: rawQuote.fromD || '',
@@ -1090,9 +1091,15 @@ export function useZaloEvents() {
         timestamp,
         is_sent: isSelf ? 1 : 0,
         status: 'received',
+        ...(isSelf ? { send_status: 'received' as const } : {}),
         ...(quote_data ? { quote_data } : {}),
         ...(empInfo?.employee_id ? { handled_by_employee: empInfo.employee_id } : {}),
       } as any);
+
+      // Nếu là self-image → báo cho MessageQueue để đếm batch
+      if (isSelf && (msgType === 'image' || msgType === 'photo')) {
+        messageQueue.onImageMessageReceived(zaloId, threadId);
+      }
 
       // After adding message, try to apply any pending employee sender info (race condition fix)
       if (isSelf) {

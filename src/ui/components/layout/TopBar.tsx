@@ -218,6 +218,13 @@ export default function TopBar() {
     ipc.lockScreen?.status().then(res => {
       if (res?.success && res.enabled) setLockScreenEnabled(true);
     });
+    // Listen for lock screen enable/disable from Settings
+    const handleChanged = (e: Event) => {
+      const enabled = (e as CustomEvent).detail?.enabled ?? false;
+      setLockScreenEnabled(enabled);
+    };
+    window.addEventListener('lockScreen:changed', handleChanged);
+    return () => window.removeEventListener('lockScreen:changed', handleChanged);
   }, []);
 
   // Đóng reconnect popup khi click ra ngoài

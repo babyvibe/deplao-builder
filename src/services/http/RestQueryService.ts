@@ -281,6 +281,44 @@ class RestQueryService {
     return this.request<T>({ method: 'DELETE', path, timeout });
   }
 
+  /** Upload binary data to boss. Returns bossPath on success. */
+  public async postBinary(path: string, data: Uint8Array | Blob, headers: Record<string, string>, timeout = 120000): Promise<RestResponse> {
+    if (!this.connected) {
+      return { success: false, error: 'Chưa kết nối tới BOSS', code: 'NOT_CONNECTED' };
+    }
+    const url = new URL(path, this.baseUrl);
+    const startTime = Date.now();
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    try {
+      // Convert Buffer to Uint8Array for fetch compatibility
+      const body = data instanceof Blob ? data : new Uint8Array(data);
+      const res = await fetch(url.toString(), {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.token}`,
+          ...headers,
+        },
+        body,
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      const elapsed = Date.now() - startTime;
+      const json: any = await res.json().catch(() => ({}));
+      if (!res.ok || !json.success) {
+        Logger.warn(`[RestQueryService] ❌ postBinary ${path} (${elapsed}ms) — ${json.error || `HTTP ${res.status}`}`);
+        return { success: false, error: json.error || `HTTP ${res.status}` };
+      }
+      Logger.log(`[RestQueryService] ✅ postBinary ${path} (${elapsed}ms)`);
+      this.onSuccess();
+      return { success: true, data: json };
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      Logger.warn(`[RestQueryService] ❌ postBinary ${path} — ${err.message}`);
+      return { success: false, error: err.message };
+    }
+  }
+
   // ── Convenience: login (không cần token) ─────────────────────────
 
   /** Gọi POST /api/auth/login — đặc biệt vì chưa có token */

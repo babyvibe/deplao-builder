@@ -44,6 +44,24 @@ export interface MessageItem {
   handled_by_employee?: string | null;  // employee_id of employee who sent/handled this message
   /** Kênh chat: 'zalo' | 'facebook'. Default 'zalo' cho backward compat */
   channel?: Channel;
+
+  // ── Optimistic message fields (MessageQueue) ───────────────────────────
+  /** ID tạm thời do FE sinh (temp_xxx) — dùng để track trước khi có real msgId */
+  temp_id?: string;
+  /** Trạng thái gửi: pending → sending → sent → received | failed | timeout */
+  send_status?: 'pending' | 'sending' | 'sent' | 'received' | 'failed' | 'timeout';
+  /** Số lần retry (0 = lần đầu) */
+  retry_count?: number;
+  /** Message ID thật từ Zalo/Facebook API response (dùng để match với webhook echo) */
+  real_msg_id?: string;
+  /** Error message nếu gửi thất bại */
+  send_error?: string;
+  /** Thời điểm enqueue vào MessageQueue (epoch ms, để tính timeout) */
+  enqueued_at?: number;
+  /** Loại media đang upload (để hiển thị progress indicator) */
+  media_type?: 'text' | 'image' | 'file' | 'video' | 'voice' | 'sticker' | 'link';
+  /** Progress upload (0-100), chỉ áp dụng cho media */
+  upload_progress?: number;
 }
 
 export interface ContactItem {
@@ -124,6 +142,11 @@ interface ChatStore {
   updateLocalPaths: (zaloId: string, threadId: string, msgId: string, localPaths: Record<string, string>) => void;
   updateMessageLocalPath: (zaloId: string, threadId: string, msgId: string, localPaths: Record<string, string>) => void;
   removeContact: (zaloId: string, contactId: string) => void;
+  // ── Optimistic message actions ──
+  /** Cập nhật send_status + các field liên quan cho 1 temp message */
+  updateMessageStatus: (zaloId: string, threadId: string, tempId: string, status: MessageItem['send_status'], extra?: Partial<MessageItem>) => void;
+  /** Tìm temp message có real_msg_id match — dùng cho dedup khi webhook echo đến */
+  findPendingByRealMsgId: (zaloId: string, threadId: string, realMsgId: string) => MessageItem | undefined;
   // Typing & seen
   typingUsers: Record<string, number>;      // key=`${zaloId}_${threadId}_${userId}`, value=timestamp
   seenInfo: Record<string, SeenEntry>;       // key=`${zaloId}_${threadId}`
@@ -249,8 +272,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
       // Khi real sent message đến (không phải temp_), xóa temp_ message trùng nội dung
       // để tránh hiển thị 2 lần do optimistic update + self-listen echo.
-      // RTF/styled messages arrive as webchat with JSON content {action:'rtf', title, params:{styles}}
-      // so we compare extracted plain text to handle both plain and RTF temp messages.
+      //
+      // DEDUP STRATEGY (ưu tiên từ cao → thấp):
+      //   1. Match bằng real_msg_id (set bởi MessageQueue khi API trả về msgId)
+      //   2. Fallback: match bằng content text (cho trường hợp API không trả msgId)
       const extractDedupText = (c: string): string => {
         try {
           const p = JSON.parse(c);
@@ -261,10 +286,25 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       };
       let filtered = existing;
       if (message.is_sent === 1 && !message.msg_id.startsWith('temp_')) {
+        const incomingMsgId = String(message.msg_id);
         const incomingText = extractDedupText(message.content);
-        filtered = existing.filter(
-          (m) => !(m.msg_id.startsWith('temp_') && m.is_sent === 1 && extractDedupText(m.content) === incomingText)
+
+        // Strategy 1: match bằng real_msg_id (ưu tiên cao nhất)
+        const hasRealIdMatch = existing.some(
+          (m) => m.msg_id.startsWith('temp_') && m.is_sent === 1 && m.real_msg_id === incomingMsgId
         );
+
+        if (hasRealIdMatch) {
+          // Chỉ xóa temp_ có real_msg_id match
+          filtered = existing.filter(
+            (m) => !(m.msg_id.startsWith('temp_') && m.is_sent === 1 && m.real_msg_id === incomingMsgId)
+          );
+        } else {
+          // Strategy 2 (fallback): match bằng content text
+          filtered = existing.filter(
+            (m) => !(m.msg_id.startsWith('temp_') && m.is_sent === 1 && extractDedupText(m.content) === incomingText)
+          );
+        }
       }
 
       const updated = [...filtered, message];
@@ -710,6 +750,31 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       delete newMessages[msgKey];
       return { contacts: { ...state.contacts, [zaloId]: updated }, messages: newMessages };
     });
+  },
+
+  // ── Optimistic message actions ───────────────────────────────────────────
+
+  updateMessageStatus: (zaloId, threadId, tempId, status, extra) => {
+    const key = `${zaloId}_${threadId}`;
+    set((state) => {
+      const msgs = state.messages[key];
+      if (!msgs) return state;
+      const idx = msgs.findIndex(m => m.msg_id === tempId);
+      if (idx < 0) return state;
+      const updated = [...msgs];
+      updated[idx] = { ...updated[idx], send_status: status, ...extra };
+      return { messages: { ...state.messages, [key]: updated } };
+    });
+  },
+
+  findPendingByRealMsgId: (zaloId, threadId, realMsgId) => {
+    const key = `${zaloId}_${threadId}`;
+    const msgs = get().messages[key] || [];
+    return msgs.find(m =>
+      m.msg_id.startsWith('temp_') &&
+      m.is_sent === 1 &&
+      m.real_msg_id === realMsgId
+    );
   },
 }));
 

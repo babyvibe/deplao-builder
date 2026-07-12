@@ -3,7 +3,7 @@ import { useChatStore, MessageItem, ContactItem } from '@/store/chatStore';
 import { useAccountStore } from '@/store/accountStore';
 import { useEmployeeStore } from '@/store/employeeStore';
 import { useAppStore } from '@/store/appStore';
-import ipc from '../lib/ipc';
+import ipc, { buildZaloAuth } from '../lib/ipc';
 import * as channelIpc from '../lib/channelIpc';
 import { sendSeenForThread } from '@/lib/sendSeenHelper';
 import DataAccessor from '../lib/data/DataAccessor';
@@ -33,7 +33,7 @@ export function useChat() {
   const getAuth = useCallback(() => {
     const acc = getActiveAccount();
     if (!acc) return null;
-    return { cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent };
+    return buildZaloAuth(acc);
   }, [getActiveAccount]);
 
   /** Tải danh sách hội thoại từ DB (hoặc REST cho employee) */
@@ -53,6 +53,7 @@ export function useChat() {
   const selectThread = useCallback(
     async (contactId: string, threadType: number) => {
       if (!activeAccountId) return;
+      useChatStore.getState().setMessagesLoading(true);
       setActiveThread(contactId, threadType);
       clearUnread(activeAccountId, contactId);
 
@@ -106,6 +107,7 @@ export function useChat() {
           zaloId: activeAccountId,
           threadId,
           limit: 30,
+          offset: currentCount,
           before: undefined, // sẽ dùng offset-based tạm thời
         });
         // Fallback: nếu REST không trả về items, thử IPC
@@ -187,4 +189,3 @@ export function useChat() {
     clearUnread,
   };
 }
-

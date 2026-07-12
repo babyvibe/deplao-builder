@@ -131,7 +131,20 @@ function wrap(channel: string, fn: (service: ZaloService, params: any) => Promis
             let { auth, isReconnection = false, _fromRelay, ...rest } = params;
             if (!auth) return { error: 'Missing auth' };
 
-            const zaloId = resolveZaloId(auth);
+            let zaloId = resolveZaloId(auth);
+
+            // ─── Fallback: suy luận zaloId từ cookies-less auth + activeAccountId ──
+            // Khi có nhiều connection và cookies rỗng, resolveZaloId không match được.
+            // Thử dùng zaloId từ auth object (nếu UI truyền activeAccountId) hoặc
+            // từ cookies lookup trong DB.
+            if (!zaloId) {
+                const authObj = typeof auth === 'string' ? JSON.parse(auth) : auth;
+                const candidateId = authObj?.zaloId || authObj?.zalo_id || authObj?.accountId || '';
+                if (candidateId && ConnectionManager.isConnected(String(candidateId))) {
+                    zaloId = String(candidateId);
+                    Logger.log(`[zaloIpc] resolveZaloId: matched from auth.zaloId: ${zaloId}`);
+                }
+            }
 
             // ─── Chặn tài khoản không có connection (đã ngắt kết nối) ──
             if (!isReconnection && !zaloId) {

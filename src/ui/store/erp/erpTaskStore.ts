@@ -1,6 +1,12 @@
 import { create } from 'zustand';
 import ipc from '@/lib/ipc';
+import DataAccessor from '@/lib/data/DataAccessor';
+import { useEmployeeStore } from '@/store/employeeStore';
 import type { CreateTaskInput, ErpProject, ErpTask, ErpTaskPriority, ErpTaskStatus, TaskInboxFilter, UpdateTaskInput } from '../../../models/erp';
+
+function isEmployee(): boolean {
+  try { return useEmployeeStore.getState().mode === 'employee'; } catch { return false; }
+}
 
 type TaskListFilter = {
   projectId?: string;
@@ -57,62 +63,133 @@ export const useErpTaskStore = create<ErpTaskState>((set) => ({
 
   loadProjects: async () => {
     set({ loading: true });
-    const res = await ipc.erp?.projectList();
-    if (res?.success) set({ projects: res.projects, loading: false });
-    else set({ error: res?.error, loading: false });
+    try {
+      if (isEmployee()) {
+        const res: any = await DataAccessor.erpProjects();
+        if (res?.success) set({ projects: res.data?.projects || res.projects || [], loading: false });
+        else set({ error: res?.error, loading: false });
+      } else {
+        const res = await ipc.erp?.projectList();
+        if (res?.success) set({ projects: res.projects, loading: false });
+        else set({ error: res?.error, loading: false });
+      }
+    } catch (e: any) { set({ error: e.message, loading: false }); }
   },
 
   createProject: async (params) => {
-    const res = await ipc.erp?.projectCreate({ ...params });
-    if (res?.success && res.project) {
-      set(s => ({ projects: [...s.projects, res.project] }));
-      return res.project;
-    }
-    return null;
+    try {
+      if (isEmployee()) {
+        const res: any = await DataAccessor.erpCreateProject(params);
+        if (res?.success && res.data?.project) {
+          set(s => ({ projects: [...s.projects, res.data.project] }));
+          return res.data.project;
+        }
+        return null;
+      } else {
+        const res = await ipc.erp?.projectCreate({ ...params });
+        if (res?.success && res.project) {
+          set(s => ({ projects: [...s.projects, res.project] }));
+          return res.project;
+        }
+        return null;
+      }
+    } catch { return null; }
   },
 
   setActiveProject: (id) => set({ activeProjectId: id }),
 
   loadTasks: async (filter = {}) => {
     set({ loading: true, lastFilter: filter });
-    const res = await ipc.erp?.taskList(filter);
-    if (res?.success) {
-      set({ ...buildTaskCollections(res.tasks as ErpTask[]), loading: false });
-    } else set({ error: res?.error, loading: false });
+    try {
+      if (isEmployee()) {
+        const res: any = await DataAccessor.erpTasks(filter);
+        if (res?.success) {
+          set({ ...buildTaskCollections((res.data?.tasks || res.tasks || []) as ErpTask[]), loading: false });
+        } else set({ error: res?.error, loading: false });
+      } else {
+        const res = await ipc.erp?.taskList(filter);
+        if (res?.success) {
+          set({ ...buildTaskCollections(res.tasks as ErpTask[]), loading: false });
+        } else set({ error: res?.error, loading: false });
+      }
+    } catch (e: any) { set({ error: e.message, loading: false }); }
   },
 
   createTask: async (input) => {
-    const res = await ipc.erp?.taskCreate({ input });
-    if (res?.success && res.task) {
-      const task = res.task as ErpTask;
-      set(state => reconcileTaskInState(state, task));
-      return task;
-    }
-    return null;
+    try {
+      if (isEmployee()) {
+        const res: any = await DataAccessor.erpCreateTask(input);
+        if (res?.success && (res.data?.task || res.task)) {
+          const task = (res.data?.task || res.task) as ErpTask;
+          set(state => reconcileTaskInState(state, task));
+          return task;
+        }
+        return null;
+      } else {
+        const res = await ipc.erp?.taskCreate({ input });
+        if (res?.success && res.task) {
+          const task = res.task as ErpTask;
+          set(state => reconcileTaskInState(state, task));
+          return task;
+        }
+        return null;
+      }
+    } catch { return null; }
   },
 
   updateTask: async (id, patch) => {
-    const res = await ipc.erp?.taskUpdate({ id, patch });
-    if (res?.success && res.task) {
-      set(state => reconcileTaskInState(state, res.task as ErpTask));
-    }
+    try {
+      if (isEmployee()) {
+        const res: any = await DataAccessor.erpUpdateTask(id, patch);
+        if (res?.success && (res.data?.task || res.task)) {
+          set(state => reconcileTaskInState(state, (res.data?.task || res.task) as ErpTask));
+        }
+      } else {
+        const res = await ipc.erp?.taskUpdate({ id, patch });
+        if (res?.success && res.task) {
+          set(state => reconcileTaskInState(state, res.task as ErpTask));
+        }
+      }
+    } catch {}
   },
 
   updateTaskStatus: async (id, status) => {
-    const res = await ipc.erp?.taskUpdateStatus({ id, status });
-    if (res?.success && res.task) {
-      set(state => reconcileTaskInState(state, res.task as ErpTask));
-    }
+    try {
+      if (isEmployee()) {
+        const res: any = await DataAccessor.erpUpdateTaskStatus(id, status);
+        if (res?.success && (res.data?.task || res.task)) {
+          set(state => reconcileTaskInState(state, (res.data?.task || res.task) as ErpTask));
+        }
+      } else {
+        const res = await ipc.erp?.taskUpdateStatus({ id, status });
+        if (res?.success && res.task) {
+          set(state => reconcileTaskInState(state, res.task as ErpTask));
+        }
+      }
+    } catch {}
   },
 
   deleteTask: async (id) => {
-    await ipc.erp?.taskDelete({ id });
+    try {
+      if (isEmployee()) {
+        await DataAccessor.erpDeleteTask(id);
+      } else {
+        await ipc.erp?.taskDelete({ id });
+      }
+    } catch {}
     set(state => removeTaskFromState(state, id));
   },
 
   loadInbox: async (filter) => {
-    const res = await ipc.erp?.taskListMyInbox({ filter });
-    if (res?.success) set({ inboxTasks: res.tasks });
+    try {
+      if (isEmployee()) {
+        const res: any = await DataAccessor.erpMyInbox(filter);
+        if (res?.success) set({ inboxTasks: res.data?.tasks || res.tasks || [] });
+      } else {
+        const res = await ipc.erp?.taskListMyInbox({ filter });
+        if (res?.success) set({ inboxTasks: res.tasks });
+      }
+    } catch {}
   },
 
   _onProjectCreated: (project) => set(state => ({
