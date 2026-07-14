@@ -55,6 +55,11 @@ export default function Sidebar({ onAddAccount }: SidebarProps) {
   const [showToolsGuide, setShowToolsGuide] = useState(false);
   const hasNewCRMRequests = Object.values(crmRequestUnseenByAccount || {}).some(Boolean);
 
+  // Red dot cho CRM → Nhóm → Quét thành viên (chưa xem)
+  const hasScanNewDot = (() => {
+    try { return localStorage.getItem('scanTabSeen') !== 'true'; } catch { return false; }
+  })();
+
   // Chấm đỏ trên nút Settings - tắt khi người dùng đã xem hết các tab quan trọng
   const [hasNewSettings, setHasNewSettings] = useState(() => hasUnseenSettingsTabs());
   useEffect(() => {
@@ -277,10 +282,10 @@ export default function Sidebar({ onAddAccount }: SidebarProps) {
                           const img = e.target as HTMLImageElement;
                           img.src = '';
                           import('@/lib/avatarRetry').then(({ handleAvatarError }) =>
-                            handleAvatarError({ ownerId: zaloId, contactId: zaloId, channel: account.channel || 'zalo' })
+                            handleAvatarError({ ownerId: account.zalo_id, contactId: account.zalo_id, channel: account.channel || 'zalo' })
                           ).then(newUrl => {
                             if (newUrl) {
-                              useAccountStore.getState().updateAccount(zaloId, { avatar_url: newUrl });
+                              useAccountStore.getState().updateAccount(account.zalo_id, { avatar_url: newUrl });
                               img.src = newUrl;
                             }
                           }).catch(() => {});
@@ -353,7 +358,7 @@ export default function Sidebar({ onAddAccount }: SidebarProps) {
         <NavBtn icon="chat"       label="Chat"         active={view === 'chat'}       onClick={() => setView('chat')} />
         )}
         {hasPerm('crm') && (
-        <NavBtn icon="crm"        label="CRM"          active={view === 'crm'}        onClick={() => setView('crm')} dot={hasNewCRMRequests} />
+        <NavBtn icon="crm"        label="CRM"          active={view === 'crm'}        onClick={() => setView('crm')} dot={hasNewCRMRequests || hasScanNewDot} />
         )}
         {(hasPerm('workflow') || hasPerm('integration')) && (
         <NavFlyout

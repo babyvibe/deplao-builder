@@ -15,6 +15,22 @@ interface VersionEntry {
 // ─── Changelog data - thêm entry mới vào ĐẦU mảng khi có bản cập nhật ────────
 const CHANGELOG: VersionEntry[] = [
   {
+    version: '26.7.3',
+    date: '07/2026',
+    type: 'minor',
+    highlights: [
+      '🔍 CRM Quét thành viên nhóm — quét toàn bộ thành viên từ nhóm Zalo, lưu vào CRM để chạy chiến dịch',
+    ],
+    changes: [
+      {
+        category: 'new',
+        items: [
+          'CRM tab "Quét thành viên" (Premium) — dán link nhóm Zalo, quét thành viên nhóm ẩn/chờ duyệt, hiển thị tên + avatar + UID, tự động lưu vào DB',
+        ],
+      },
+    ],
+  },
+  {
     version: '26.7.2',
     date: '07/2026',
     type: 'minor',

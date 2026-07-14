@@ -107,7 +107,7 @@ export default class ZaloService {
      * @param isReconnection Whether this is a reconnection (force delete old connection and create new)
      */
     public static async getInstance(auth: any, isReconnection: boolean = false): Promise<ZaloService> {
-        const parsedAuth = JSON.parse(auth);
+        const parsedAuth = typeof auth === 'string' ? JSON.parse(auth) : auth;
         const key = Buffer.from(parsedAuth.cookies).toString('base64');
 
         // If reconnection, remove existing instance to force recreation
@@ -1110,7 +1110,11 @@ export default class ZaloService {
         if (!this.api) throw new Error("API not initialized. Please ensure you've called initialize() first.");
         try {
             return await (this.api as any).joinGroupLink(link);
-        } catch (error) {
+        } catch (error: any) {
+            // error code 240 = "Waiting for approve" — join request sent, needs admin approval
+            if (error?.code === 240 || error?.message?.includes('Waiting for approve')) {
+                return { success: true, pendingApproval: true, errorCode: 240, message: 'Yêu cầu tham gia đã gửi, chờ admin duyệt' };
+            }
             throw error;
         }
     }

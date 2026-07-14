@@ -73,6 +73,11 @@ export default function CRMPage() {
   const store = useCRMStore();
   const hasUnreadRequestDot = !!(activeAccountId && crmRequestUnseenByAccount[activeAccountId]);
 
+  // Red dot cho tab Nhóm → Quét thành viên (chưa xem)
+  const [hasScanNewDot, setHasScanNewDot] = useState(() => {
+    try { return localStorage.getItem('scanTabSeen') !== 'true'; } catch { return false; }
+  });
+
   const activeAccount = accounts.find(a => a.zalo_id === activeAccountId);
   const isFacebookAccount = (activeAccount?.channel || 'zalo') === 'facebook';
   const channelCap = getCapability((activeAccount?.channel || 'zalo') as Channel);
@@ -661,11 +666,24 @@ export default function CRMPage() {
             if (t === 'scan' || t === 'scan_history' || t === 'scan_stats') return channelCap.supportsScanData;
             return true; // contacts always shown
           }).map(t => (
-            <button key={t} onClick={() => store.setTab(t)}
+            <button key={t} onClick={() => {
+              store.setTab(t);
+              if (t === 'groups' && hasScanNewDot) {
+                setHasScanNewDot(false);
+                try { localStorage.setItem('scanTabSeen', 'true'); } catch {}
+              }
+            }}
               className={`px-4 py-1.5 rounded-md text-xs font-medium flex transition-colors ${store.tab === t ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}>
               {t === 'search' ? <><SearchIcon className="w-4 h-4 mr-2" /> Tìm kiếm</>
                 : t === 'contacts' ? <><UserIcon className="w-4 h-4 mr-2" /> Liên hệ{store.totalContacts ? ` (${store.totalContacts})` : ''}</>
-                : t === 'groups' ? <><UsersIcon className="w-4 h-4 mr-2" /> Nhóm{store.groupCount ? ` (${store.groupCount})` : ''}</>
+                : t === 'groups' ? (
+                  <span className="relative inline-flex items-center gap-1.5">
+                    <span className="flex"><UsersIcon className="w-4 h-4 mr-2" /> Nhóm{store.groupCount ? ` (${store.groupCount})` : ''}</span>
+                    {hasScanNewDot && (
+                      <span className="w-2 h-2 bg-red-500 rounded-full border border-gray-900 flex-shrink-0 animate-pulse" />
+                    )}
+                  </span>
+                )
                 : t === 'requests' ? (
                   <span className="relative inline-flex items-center gap-1.5">
                     <span className="flex"><UserPlusIcon className="w-4 h-4 mr-2" /> Lời mời{store.requestCount ? ` (${store.requestCount})` : ''}</span>

@@ -119,6 +119,30 @@ export default function GroupMembersTab() {
   // ── Add to contacts modal state ─────────────────────────────────────────
   const [showAddToContacts, setShowAddToContacts] = useState(false);
 
+  // ── Tab state ─────────────────────────────────────────────────────────
+  const [activeTab, setActiveTab] = useState<'members' | 'scan'>('members');
+
+  // ── Scan tab state ────────────────────────────────────────────────────
+  const [scanLinkInput, setScanLinkInput] = useState('');
+  const [scanTabLoading, setScanTabLoading] = useState(false);
+  const [scanTabError, setScanTabError] = useState('');
+  const [scanTabResults, setScanTabResults] = useState<Array<{ userId: string; displayName: string; avatar: string }>>([]);
+  const [scanTabGroupId, setScanTabGroupId] = useState<string | null>(null);
+  const [scanJoinLoading, setScanJoinLoading] = useState(false);
+  const [scanJoinMsg, setScanJoinMsg] = useState('');
+  const [scanJoinType, setScanJoinType] = useState<'idle' | 'success' | 'pending' | 'already' | 'error'>('idle');
+
+  // ── Premium state ────────────────────────────────────────────────────
+  const [premiumLoaded, setPremiumLoaded] = useState(false);
+  const [premiumLoading, setPremiumLoading] = useState(false);
+  const [isPremium, setIsPremium] = useState(false);
+  const [premiumExpiresAt, setPremiumExpiresAt] = useState<string | null>(null);
+
+  // ── Red dot: "mới" badge cho tab Quét thành viên ─────────────────────
+  const [scanTabSeen, setScanTabSeen] = useState(() => {
+    try { return localStorage.getItem('scanTabSeen') === 'true'; } catch { return false; }
+  });
+
   // ── Groups 3-dot menu ─────────────────────────────────────────────────────
   const [showGroupMenu, setShowGroupMenu] = useState(false);
   const groupMenuRef = useRef<HTMLDivElement>(null);
@@ -447,6 +471,182 @@ export default function GroupMembersTab() {
       setLinkJoinLoading(false);
     }
   }, [activeAccountId, linkScanInput, loadGroupsFromDB]);
+
+  // ── Scan from "Quét thành viên" tab (gọi backend API) ──────────────
+  const handleScanTab = useCallback(async () => {
+    if (!activeAccountId || !scanLinkInput.trim()) return;
+
+    // Kiểm tra premium trước khi quét
+    if (!isPremium) {
+      setScanTabError('Cần kích hoạt gói Premium để sử dụng tính năng này. Bấm nút mua gói hoặc liên hệ @babyvibe trên Telegram.');
+      return;
+    }
+
+    const acc = useAccountStore.getState().getActiveAccount();
+    if (!acc) { setScanTabError('Không tìm thấy tài khoản'); return; }
+    const auth = buildZaloAuth(acc, activeAccountId);
+
+    setScanTabLoading(true);
+    setScanTabError('');
+    setScanTabResults([]);
+    setScanTabGroupId(null);
+    try {
+      let groupId = scanLinkInput.trim();
+
+      // Nếu là link zalo.me → gọi getGroupLinkInfo để lấy groupId
+      if (groupId.includes('zalo.me') || groupId.includes('chat.zalo.me')) {
+        const linkRes: any = await ipc.zalo?.getGroupLinkInfo({ auth, link: groupId, memberPage: 1 });
+        if (!linkRes?.success || !linkRes?.response?.groupId) {
+          setScanTabError(linkRes?.error || 'Không lấy được thông tin nhóm từ link. Kiểm tra lại đường dẫn.');
+          return;
+        }
+        groupId = linkRes.response.groupId;
+      }
+
+      // Validate groupId
+      if (!/^\d+$/.test(groupId)) {
+        setScanTabError('Group ID không hợp lệ. Nhập link nhóm hoặc Group ID dạng số.');
+        return;
+      }
+
+      // Gọi backend API quét thành viên
+      const { scanGroupViaBackend } = await import('@/lib/backendService');
+      const result = await scanGroupViaBackend({
+        pageId: activeAccountId,
+        cookie: acc.cookies,
+        imei: acc.imei,
+        groupId,
+      });
+
+      if (!result?.success) {
+        setScanTabError(result?.error || 'Quét thất bại');
+        return;
+      }
+
+      const members = result.members || [];
+      if (members.length === 0) {
+        setScanTabError('Không tìm thấy thành viên nào trong nhóm.');
+        return;
+      }
+
+      setScanTabResults(members);
+      setScanTabGroupId(groupId);
+
+      // Lưu vào DB
+      await DataAccessor.saveGroupMembers({
+        zaloId: activeAccountId,
+        groupId,
+        members: members.map((m: any) => ({
+          memberId: m.userId || m.id,
+          displayName: m.displayName || m.zaloName || m.userId || m.id,
+          avatar: m.avatar || '',
+          role: 0,
+        })),
+      });
+
+      // Reload members tab
+      await loadMembersFromDB(groupId);
+    } catch (err: any) {
+      setScanTabError(err?.message || 'Lỗi không xác định');
+    } finally {
+      setScanTabLoading(false);
+    }
+  }, [activeAccountId, scanLinkInput, loadMembersFromDB]);
+
+  // ── Join group from scan tab ──────────────────────────────────────────
+  const handleJoinFromScanTab = useCallback(async () => {
+    if (!activeAccountId || !scanLinkInput.trim()) return;
+    const acc = useAccountStore.getState().getActiveAccount();
+    if (!acc) return;
+    const auth = buildZaloAuth(acc, activeAccountId);
+
+    setScanJoinLoading(true);
+    setScanJoinType('idle');
+    setScanJoinMsg('');
+    try {
+      const res = await ipc.zalo?.joinGroupLink({ auth, link: scanLinkInput.trim() });
+      const errCode = res?.errorCode ?? res?.error_code ?? (res?.response?.error);
+      if (errCode === 178 || res?.response?.msg?.includes('already')) {
+        setScanJoinType('already');
+        setScanJoinMsg('Bạn đã là thành viên của nhóm này.');
+      } else if (errCode === 240 || res?.response?.msg?.includes('pending') || res?.response?.msg?.includes('approval')) {
+        setScanJoinType('pending');
+        setScanJoinMsg('Nhóm bật chế độ duyệt thành viên. Yêu cầu đã được gửi, chờ admin duyệt. Bạn có thể quét thành viên nhóm được rồi!');
+      } else if (!res?.success && errCode) {
+        setScanJoinType('error');
+        setScanJoinMsg(res?.error || `Lỗi (${errCode}): Không thể tham gia nhóm.`);
+      } else {
+        setScanJoinType('success');
+        setScanJoinMsg('Đã tham gia nhóm thành công!');
+        await loadGroupsFromDB();
+      }
+    } catch (err: any) {
+      setScanJoinType('error');
+      setScanJoinMsg(err?.message || 'Lỗi không xác định');
+    } finally {
+      setScanJoinLoading(false);
+    }
+  }, [activeAccountId, scanLinkInput, loadGroupsFromDB]);
+
+  // ── Load premium status ───────────────────────────────────────────────
+  // Lần đầu (không có localStorage): gọi backend → lưu localStorage
+  // Các lần sau: đọc localStorage, chỉ gọi backend khi user ấn nút cấp nhật
+  const loadPremiumStatus = useCallback(async (fromBackend = false) => {
+    if (!activeAccountId) return;
+
+    const storageKey = `premium_${activeAccountId}`;
+
+    // Đọc từ localStorage trước
+    let cached = false;
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (raw) {
+        const data = JSON.parse(raw);
+        const expiresDate = new Date(data.expiresAt);
+        setIsPremium(expiresDate > new Date());
+        setPremiumExpiresAt(data.expiresAt);
+        cached = true;
+      }
+    } catch {}
+
+    if (!cached) {
+      setIsPremium(false);
+      setPremiumExpiresAt(null);
+    }
+    setPremiumLoaded(true);
+
+    // Nếu có cache rồi mà không phải manual reload → không gọi backend
+    if (cached && !fromBackend) return;
+
+    // Gọi backend (lần đầu hoặc manual reload)
+    setPremiumLoading(true);
+    try {
+      const { getPremiumStatus } = await import('@/lib/backendService');
+      const status = await getPremiumStatus(activeAccountId);
+
+      setIsPremium(status.isPremium);
+      setPremiumExpiresAt(status.expiresAt);
+
+      // Lưu vào localStorage
+      localStorage.setItem(storageKey, JSON.stringify({
+        expiresAt: status.expiresAt,
+        updatedAt: new Date().toISOString(),
+      }));
+    } catch (err) {
+      console.error('[GroupMembersTab] loadPremiumStatus error:', err);
+      // Lỗi → lưu ngày hôm qua để không gọi spam lại
+      const yesterday = new Date(Date.now() - 86400000).toISOString();
+      setIsPremium(false);
+      setPremiumExpiresAt(yesterday);
+      localStorage.setItem(storageKey, JSON.stringify({
+        expiresAt: yesterday,
+        updatedAt: new Date().toISOString(),
+      }));
+    } finally {
+      setPremiumLoading(false);
+    }
+  }, [activeAccountId]);
+
   const toggleMember = (id: string) => {
     setSelectedMemberIds(prev => {
       const next = new Set(prev);
@@ -521,6 +721,13 @@ export default function GroupMembersTab() {
     if (selectedGroupId) loadMembersFromDB(selectedGroupId);
   }, [selectedGroupId]);
 
+  // Load premium status when scan tab is opened (once per account)
+  useEffect(() => {
+    if (activeTab === 'scan' && activeAccountId && !premiumLoaded) {
+      loadPremiumStatus();
+    }
+  }, [activeTab, activeAccountId, premiumLoaded, loadPremiumStatus]);
+
   // ── Filtered lists ────────────────────────────────────────────────────────
   const filteredGroups = groups.filter(g =>
     !searchGroup.trim() ||
@@ -548,7 +755,237 @@ export default function GroupMembersTab() {
   }
 
   return (
-    <div className="flex flex-1 overflow-hidden relative">
+    <div className="flex flex-col flex-1 overflow-hidden relative">
+
+      {/* ── Tab bar ──────────────────────────────────────────────────────── */}
+      <div className="flex items-center border-b border-gray-700 flex-shrink-0 bg-gray-900/50">
+        <button
+          onClick={() => setActiveTab('members')}
+          className={`px-5 py-2.5 text-sm font-medium transition-colors relative
+            ${activeTab === 'members'
+              ? 'text-blue-400 border-b-2 border-blue-400'
+              : 'text-gray-400 hover:text-gray-200'}`}>
+          Thành viên nhóm
+        </button>
+        <button
+          onClick={() => {
+            setActiveTab('scan');
+            if (!scanTabSeen) {
+              setScanTabSeen(true);
+              try { localStorage.setItem('scanTabSeen', 'true'); } catch {}
+            }
+          }}
+          className={`px-5 py-2.5 text-sm font-medium transition-colors relative flex items-center gap-1.5
+            ${activeTab === 'scan'
+              ? 'text-purple-400 border-b-2 border-purple-400'
+              : 'text-gray-400 hover:text-gray-200'}`}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          Quét thành viên
+          <span className="ml-1 px-1.5 py-0.5 text-[10px] font-bold bg-gradient-to-r from-yellow-600 to-orange-600 text-white-important rounded-full leading-none">Premium</span>
+          {!scanTabSeen && (
+            <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+          )}
+        </button>
+      </div>
+
+      {/* ── Tab content ──────────────────────────────────────────────────── */}
+      {activeTab === 'scan' ? (
+        /* ── Tab: Quét thành viên (Premium) ──────────────────────────────── */
+        <div className="flex-1 overflow-y-auto">
+          <div className="max-w-2xl mx-auto px-6 py-6 space-y-5">
+
+            {/* Header */}
+            <div className="text-center pb-2">
+              <h2 className="text-lg font-bold text-white">Quét thành viên nhóm ẩn</h2>
+              <p className="text-sm text-gray-400 mt-1">Tiếp cận hàng nghìn khách hàng tiềm năng từ các nhóm Zalo chất lượng</p>
+            </div>
+
+            {/* Feature cards */}
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                { icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-purple-400"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>, title: 'Nhóm ẩn thành viên', desc: 'Bạn đã tham gia nhưng admin ẩn danh sách - quét vẫn lấy được hết' },
+                { icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-400"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>, title: 'Nhóm chờ duyệt', desc: 'Chưa được duyệt vào nhóm vẫn quét được thành viên - không cần chờ admin phê duyệt' },
+                { icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-green-400"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>, title: 'Nhanh chóng', desc: '1000+ thành viên chỉ trong vài giây' },
+                { icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-yellow-400"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>, title: 'Kết quả chi tiết', desc: 'Tên, ảnh đại diện, SĐT - thêm vào chiến dịch kết bạn, nhắn tin ngay' },
+              ].map((f, i) => (
+                <div key={i} className="bg-gray-800 border border-gray-700 rounded-xl p-3.5 flex gap-3">
+                  <div className="w-9 h-9 rounded-lg bg-gray-700/50 flex items-center justify-center flex-shrink-0">{f.icon}</div>
+                  <div>
+                    <p className="text-xs font-semibold text-white">{f.title}</p>
+                    <p className="text-[11px] text-gray-400 mt-0.5 leading-relaxed">{f.desc}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Scan input */}
+            <div className="bg-gray-800 border border-gray-700 rounded-xl p-4 space-y-3">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={scanLinkInput}
+                  onChange={e => { setScanLinkInput(e.target.value); setScanTabError(''); }}
+                  onKeyDown={e => { if (e.key === 'Enter' && !scanTabLoading) handleScanTab(); }}
+                  placeholder="Dán link nhóm Zalo (vd: https://zalo.me/g/xxxxxx)"
+                  disabled={scanTabLoading}
+                  className="flex-1 bg-gray-900 border border-gray-600 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 disabled:opacity-50"
+                />
+                <button
+                  onClick={handleJoinFromScanTab}
+                  disabled={scanJoinLoading || !scanLinkInput.trim()}
+                  className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-1.5 flex-shrink-0">
+                  {scanJoinLoading ? <>{SpinIcon} Đang join...</> : <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg> Tham gia</>}
+                </button>
+                <button
+                  onClick={handleScanTab}
+                  disabled={scanTabLoading || !scanLinkInput.trim()}
+                  className="px-5 py-2.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-1.5 flex-shrink-0">
+                  {scanTabLoading ? (
+                    <>{SpinIcon} Đang quét...</>
+                  ) : (
+                    <>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                      </svg>
+                      Quét
+                    </>
+                  )}
+                </button>
+              </div>
+              <p className="text-[11px] text-gray-500">Kết quả sẽ lưu vào tab Thành viên nhóm để bạn sử dụng đầy đủ tính năng</p>
+            </div>
+
+            {/* Join status */}
+            {scanJoinType !== 'idle' && (
+              <div className={`px-4 py-3 rounded-xl text-xs border flex items-center gap-2 ${
+                scanJoinType === 'success' ? 'bg-green-500/10 border-green-500/30 text-green-400' :
+                scanJoinType === 'pending' ? 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400' :
+                scanJoinType === 'already' ? 'bg-blue-500/10 border-blue-500/30 text-blue-400' :
+                'bg-red-500/10 border-red-500/30 text-red-400'
+              }`}>
+                {scanJoinMsg}
+              </div>
+            )}
+
+            {/* Scan error */}
+            {scanTabError && (
+              <div className="px-4 py-3 bg-red-500/10 border border-red-500/30 rounded-xl text-xs text-red-400 flex items-center gap-2">
+                <AlertIcon className="w-4 h-4 flex-shrink-0" /> {scanTabError}
+              </div>
+            )}
+
+            {/* Scan results */}
+            {scanTabResults.length > 0 && (
+              <div className="bg-gray-800 border border-gray-700 rounded-xl overflow-hidden">
+                <div className="px-4 py-3 border-b border-gray-700 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-white">Đã quét xong</p>
+                    <p className="text-[11px] text-gray-400 mt-0.5">
+                      <span className="text-green-400 font-medium">{scanTabResults.length}</span> thành viên · Đã lưu vào tab Thành viên nhóm
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => { setActiveTab('members'); setSelectedGroupId(scanTabGroupId); }}
+                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg transition-colors">
+                    Xem trong tab Thành viên →
+                  </button>
+                </div>
+                <div className="max-h-80 overflow-y-auto divide-y divide-gray-700/50">
+                  {scanTabResults.slice(0, 50).map((m, i) => (
+                    <div key={m.userId || i} className="flex items-center gap-3 px-4 py-2.5">
+                      <Avatar src={m.avatar} name={m.displayName || m.userId} size={32} />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm text-white truncate">{m.displayName || m.userId}</p>
+                        <p className="text-[11px] text-gray-500">{m.userId}</p>
+                      </div>
+                    </div>
+                  ))}
+                  {scanTabResults.length > 50 && (
+                    <div className="px-4 py-2 text-xs text-gray-500 text-center">
+                      ... và {scanTabResults.length - 50} thành viên khác. Xem đầy đủ ở tab Thành viên nhóm.
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Premium status */}
+            <div className="bg-gray-800 border border-gray-700 rounded-xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className={`w-2 h-2 rounded-full ${isPremium ? 'bg-green-400' : 'bg-gray-500'}`} />
+                  <span className="text-sm text-white font-medium">Premium</span>
+                  <button
+                    onClick={() => loadPremiumStatus(true)}
+                    disabled={premiumLoading}
+                    className={`px-2 py-0.5 rounded-md text-[11px] font-medium transition-colors flex items-center gap-1 ${
+                      premiumLoading
+                        ? 'bg-green-700 text-white'
+                        : 'bg-green-600 hover:bg-green-700 text-white'
+                    }`}>
+                    {premiumLoading ? <>{SpinIcon} Đang cập nhật...</> : <>{RefreshIcon} Cập nhật</>}
+                  </button>
+                  {isPremium && premiumExpiresAt && (
+                    <span className="text-xs text-gray-500">· Hết hạn: {new Date(premiumExpiresAt).toLocaleDateString('vi-VN')}</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  {isPremium ? (
+                    <span className="px-2 py-0.5 bg-green-500/15 text-green-400 text-[11px] font-medium rounded-full">Đang hoạt động</span>
+                  ) : (
+                    <span className="px-2 py-0.5 bg-gray-600/50 text-gray-400 text-[11px] font-medium rounded-full">Chưa kích hoạt</span>
+                  )}
+                </div>
+              </div>
+              {!isPremium && (
+                <>
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="font-bold text-white">265.000đ</span>
+                    <span className="text-sm text-gray-400">/ năm / tài khoản</span>
+                  </div>
+                  <p className="text-xs text-gray-400 leading-relaxed">
+                    Chỉ <span className="text-white font-semibold">~700đ/ngày</span> - tiếp cận hàng chục nghìn khách hàng tiềm năng từ các nhóm chất lượng trên Zalo
+                  </p>
+                  <button
+                    onClick={() => window.open('https://t.me/babyvibe', '_blank')}
+                    className="w-full py-2.5 bg-blue-500 hover:bg-blue-600 text-white text-sm font-semibold rounded-lg transition-colors flex items-center justify-center gap-2">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.161c-.18 1.897-.962 6.502-1.359 8.627-.168.9-.5 1.201-.82 1.23-.697.064-1.226-.461-1.901-.903-1.056-.692-1.653-1.123-2.678-1.799-1.185-.78-.417-1.21.258-1.911.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.479.33-.913.492-1.302.484-.428-.008-1.252-.241-1.865-.44-.752-.244-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.831-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635.099-.002.321.023.465.141a.506.506 0 0 1 .171.325c.016.093.036.306.02.472z"/>
+                    </svg>
+                    Liên hệ mua gói
+                  </button>
+                </>
+              )}
+              {isPremium && (
+                <p className="text-xs text-gray-400">Quét không giới hạn thành viên nhóm</p>
+              )}
+            </div>
+
+            {/* How it works */}
+            <div className="bg-gray-800 border border-gray-700 rounded-xl p-4">
+              <p className="text-xs font-medium text-gray-300 mb-3">Cách sử dụng</p>
+              <div className="space-y-2.5">
+                {[
+                  { step: '1', text: 'Dán link nhóm Zalo vào ô bên trên' },
+                  { step: '2', text: 'Nhấn Tham gia nếu chưa là thành viên' },
+                  { step: '3', text: 'Nhấn Quét — kết quả hiện ở tab Thành viên nhóm' },
+                  { step: '4', text: 'Chọn thành viên → thêm vào chiến dịch, gửi tin, kết bạn...' },
+                ].map(s => (
+                  <div key={s.step} className="flex items-start gap-2.5">
+                    <span className="w-5 h-5 rounded-full bg-gray-700 text-[11px] font-bold text-gray-300 flex items-center justify-center flex-shrink-0 mt-0.5">{s.step}</span>
+                    <p className="text-xs text-gray-400 leading-relaxed">{s.text}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+          </div>
+        </div>
+      ) : (
+      /* ── Tab: Thành viên nhóm (hiện tại) ──────────────────────────────── */
+      <div className="flex flex-1 overflow-hidden relative">
 
       {/* ── Left: Groups ──────────────────────────────────────────────────── */}
       <div className="w-72 flex-shrink-0 border-r border-gray-700 flex flex-col overflow-hidden">
@@ -1139,6 +1576,8 @@ export default function GroupMembersTab() {
             )}
           </div>
         </div>
+      )}
+      </div>
       )}
     </div>
   );
