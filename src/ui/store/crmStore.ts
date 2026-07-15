@@ -105,7 +105,7 @@ interface CRMStore {
   clearSelection: () => void;
   setActiveContact: (id: string | null) => void;
   setActiveCampaign: (id: number | null) => void;
-  setFilter: (f: Partial<Pick<CRMStore, 'searchText' | 'filterLabelIds' | 'filterLocalLabelIds' | 'filterContactTypes' | 'filterGender' | 'filterBirthday' | 'sortBy' | 'sortDir' | 'page'>>) => void;
+  setFilter: (f: Partial<Pick<CRMStore, 'searchText' | 'filterLabelIds' | 'filterLocalLabelIds' | 'filterContactTypes' | 'filterGender' | 'filterBirthday' | 'sortBy' | 'sortDir' | 'page' | 'pageSize'>>) => void;
   setContactsLoading: (v: boolean) => void;
   setCampaignsLoading: (v: boolean) => void;
   updateQueueStatus: (zaloId: string, status: any) => void;

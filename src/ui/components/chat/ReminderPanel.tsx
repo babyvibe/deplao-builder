@@ -122,7 +122,7 @@ const defaultForm = (): FormState => {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function ReminderPanel({ threadId, threadType, onClose, anchorRef }: Props) {
-  const { getActiveAccount } = useAccountStore();
+  const { getActiveAccount, activeAccountId } = useAccountStore();
 
   const [reminders, setReminders] = useState<ReminderItem[]>([]);
   const [loading, setLoading] = useState(false);

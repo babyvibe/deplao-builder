@@ -905,14 +905,14 @@ app.whenReady().then(async () => {
   });
   console.log('[MediaCleanup] Scheduler initialized - runs daily at 3:00 AM');
 
-  // Check for updates
+  // Check for updates (không tự động tải — user tự quyết định)
   if (!isDev) {
-    autoUpdater.autoDownload = true;          // tự tải nền - phù hợp app chạy 24/7
-    autoUpdater.autoInstallOnAppQuit = true; // tự cài khi quit nếu đã tải xong
+    autoUpdater.autoDownload = false;
+    autoUpdater.autoInstallOnAppQuit = false;
 
-    // Check lần đầu khi khởi động và mỗi 4 giờ
-    autoUpdater.checkForUpdatesAndNotify();
-    setInterval(() => autoUpdater.checkForUpdatesAndNotify(), 4 * 60 * 60 * 1000);
+    // Check lần đầu khi khởi động và mỗi 4 giờ (chỉ notify, không download)
+    autoUpdater.checkForUpdates();
+    setInterval(() => autoUpdater.checkForUpdates(), 4 * 60 * 60 * 1000);
 
     autoUpdater.on('update-available', (info) => {
       mainWindow?.webContents.send('update:available', {
@@ -941,9 +941,7 @@ app.whenReady().then(async () => {
     });
 
     autoUpdater.on('error', (err) => {
-      // Không crash app nếu update server down
       console.error('[AutoUpdate] Error:', err.message);
-      // Gửi lỗi về renderer để UI hiển thị thay vì treo vô hạn
       mainWindow?.webContents.send('update:error', {
         message: err.message,
         platform: process.platform,
@@ -951,7 +949,12 @@ app.whenReady().then(async () => {
     });
   }
 
-  // IPC từ renderer: trigger download
+  // IPC từ renderer: trigger check for update
+  ipcMain.on('update:check', () => {
+    if (!isDev) autoUpdater.checkForUpdates();
+  });
+
+  // IPC từ renderer: trigger download (user confirmed)
   ipcMain.on('update:download', () => {
     if (!isDev) autoUpdater.downloadUpdate();
   });

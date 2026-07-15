@@ -173,6 +173,18 @@ export default function Dashboard() {
 
         <div className="ml-auto flex items-center gap-2 flex-wrap">
 
+          {/* Thêm tài khoản - always visible */}
+          <button
+            onClick={() => useAppStore.getState().setAddAccountModalOpen(true)}
+            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-green-600 hover:bg-green-500 text-white transition-colors"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="8.5" cy="7" r="4"/>
+              <line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/>
+            </svg>
+            Thêm tài khoản
+          </button>
+
           {/* Gộp tài khoản button - available for both boss and employee (uses visible/assigned accounts) */}
           {accounts.length > 1 && (
             mergedInboxMode ? (
@@ -319,41 +331,44 @@ export default function Dashboard() {
               <div className="absolute -top-1.5 right-4 w-3 h-3 bg-gray-800 border-l border-t border-gray-600/60 rotate-45" />
             </div>
           </div>
-          {/* Search */}
-          <div className="relative">
-            <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
-              width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
-            </svg>
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Tên, SĐT, UID..."
-              className="bg-gray-700 text-gray-200 placeholder-gray-400 text-sm pl-8 pr-3 py-1.5 rounded-lg border border-gray-600 focus:outline-none focus:border-blue-500 w-44"
-            />
-            {search && (
-              <button onClick={() => setSearch('')}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-200">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
-            )}
-          </div>
         </div>
       </div>
 
-      {!q && (
-        <p className="text-xs text-gray-400 mb-3 flex items-center gap-1">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/>
-            <polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/>
-            <line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/>
+      {/* Search + drag hint row */}
+      <div className="flex items-center gap-2 mb-4">
+        {!q && (
+          <p className="text-xs text-gray-400 flex items-center gap-1">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/>
+              <polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/>
+              <line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/>
+            </svg>
+            Kéo thả để sắp xếp thứ tự
+          </p>
+        )}
+        <div className="flex-1" />
+        <div className="relative w-64">
+          <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
+            width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
           </svg>
-          Kéo thả để sắp xếp thứ tự
-        </p>
-      )}
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Tên, SĐT, UID..."
+            className="bg-gray-700 text-gray-200 placeholder-gray-400 text-sm pl-8 pr-3 py-1.5 rounded-lg border border-gray-600 focus:outline-none focus:border-blue-500 w-full"
+          />
+          {search && (
+            <button onClick={() => setSearch('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-200">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          )}
+        </div>
+      </div>
 
       {/* Separator */}
       {!q && accounts.length > 0 && (

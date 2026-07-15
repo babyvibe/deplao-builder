@@ -156,7 +156,7 @@ export default function CRMPage() {
     });
     store.setContactsLoading(false);
     if (res?.success) store.setContacts(res.contacts, res.total);
-  }, [activeAccountId, store.searchText, store.filterContactTypes, store.sortBy, store.sortDir, store.page]);
+  }, [activeAccountId, store.searchText, store.filterContactTypes, store.sortBy, store.sortDir, store.page, store.pageSize]);
 
   const loadCampaigns = useCallback(async () => {
     if (!activeAccountId) return;
@@ -200,7 +200,7 @@ export default function CRMPage() {
     if (disabledTabs[store.tab]) store.setTab('contacts');
     loadContacts(); loadCampaigns(); loadGroupCount(); loadRequestCount();
   }, [activeAccountId]);
-  useEffect(() => { loadContacts(); }, [store.searchText, store.filterContactTypes, store.sortBy, store.sortDir, store.page]);
+  useEffect(() => { loadContacts(); }, [store.searchText, store.filterContactTypes, store.sortBy, store.sortDir, store.page, store.pageSize]);
   useEffect(() => {
     if (activeAccountId && store.tab === 'requests') {
       clearCRMRequestUnseen(activeAccountId);
@@ -517,27 +517,6 @@ export default function CRMPage() {
     }
   };
 
-  /** Select ALL contacts across all pages (not just current page) */
-  const handleSelectAllPages = useCallback(async () => {
-    if (!activeAccountId) return;
-    const backendContactTypes = store.filterContactTypes.filter(t => t !== 'has_phone' && t !== 'has_notes');
-    const res = await DataAccessor.getCRMContacts({
-      zaloId: activeAccountId,
-      opts: {
-        search: store.searchText,
-        contactTypes: backendContactTypes.length > 0 ? backendContactTypes : undefined,
-        contactType: backendContactTypes.length === 0 ? 'all' : undefined,
-        sortBy: store.sortBy,
-        sortDir: store.sortDir,
-        limit: 100000,
-        offset: 0,
-      },
-    });
-    if (res?.success) {
-      store.selectAllContacts(res.contacts.map((c: any) => c.contact_id));
-    }
-  }, [activeAccountId, store.searchText, store.filterContactTypes, store.sortBy, store.sortDir]);
-
   /** Fetch toàn bộ liên hệ theo bộ lọc hiện tại (không phân trang) để xuất CSV */
   const handleExportAll = useCallback(async (): Promise<any[]> => {
     if (!activeAccountId) return [];
@@ -755,10 +734,10 @@ export default function CRMPage() {
                   onActivateContact={id => store.setActiveContact(store.activeContactId === id ? null : id)}
                   onSelectAll={() => store.selectAllContacts(filteredContacts.map(c => c.contact_id))}
                   onClearAll={store.clearSelection}
-                  onSelectAllPages={handleSelectAllPages}
                   onExportAll={handleExportAll}
                   onFilterChange={store.setFilter}
                   onPageChange={p => store.setFilter({ page: p })}
+                  onPageSizeChange={size => store.setFilter({ pageSize: size, page: 0 })}
                   onMessage={handleMessage}
                   onImportPhones={channelCap.supportsCRMPhoneImport ? () => setShowPhoneImport(true) : undefined}
                 />

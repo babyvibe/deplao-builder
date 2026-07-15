@@ -1,87 +1,80 @@
-import { useEffect, useRef, useCallback, useState } from 'react';
+﻿import { useEffect, useRef, useCallback, useState } from 'react';
 import { useAppStore } from '@/store/appStore';
-import { useUpdateStore, UpdateInfo, ProgressInfo, UpdateError, POSTPONE_MS, POSTPONE_OPTIONS } from '@/store/updateStore';
-import { InboxIcon, MonitorIcon, RefreshIcon, SparklesIcon } from '@/components/common/icons';
+import { useUpdateStore, UpdateInfo, ProgressInfo, UpdateError } from '@/store/updateStore';
 
+const DOWNLOAD_STALL_TIMEOUT_MS = 45_000;
+const APP_VERSION: string = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '?';
 
-const AUTO_RESTART_SECS = 120;   // đếm ngược 2 phút trước khi tự restart
-const DOWNLOAD_STALL_TIMEOUT_MS = 45_000; // 45s không progress → coi như treo (macOS)
+/** Fetch aggregated release notes from GitHub for all versions between current and target */
+async function fetchAggregatedNotes(currentVersion: string, targetVersion: string): Promise<string> {
+  try {
+    const res = await fetch(`https://api.github.com/repos/babyvibe/deplao-builder/releases?per_page=30`);
+    if (!res.ok) return '';
+    const releases: any[] = await res.json();
+
+    // Collect releases newer than current version, up to target
+    const notes: string[] = [];
+    for (const r of releases) {
+      const v = (r.tag_name || '').replace(/^v/, '');
+      if (!v) continue;
+      // Include if v > currentVersion and v <= targetVersion
+      if (compareVersions(v, currentVersion) > 0 && compareVersions(v, targetVersion) <= 0) {
+        const body = (r.body || '').trim();
+        notes.push(`## v${v}\n${body || '_Không có ghi chú_'}`);
+      }
+    }
+    return notes.length > 0 ? notes.join('\n\n---\n\n') : '';
+  } catch {
+    return '';
+  }
+}
+
+/** Simple semver compare: returns 1 if a > b, -1 if a < b, 0 if equal */
+function compareVersions(a: string, b: string): number {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const na = pa[i] || 0;
+    const nb = pb[i] || 0;
+    if (na > nb) return 1;
+    if (na < nb) return -1;
+  }
+  return 0;
+}
 
 export function UpdateNotification() {
   const {
-    status, updateInfo, progress, error, dismissed, postponedUntil, platform,
-    setStatus, setUpdateInfo, setProgress, setError, setDismissed, setPostponedUntil, postpone,
+    status, updateInfo, progress, error, showPopup, platform,
+    setStatus, setUpdateInfo, setProgress, setError, setShowPopup, startDownload, installUpdate, dismiss,
   } = useUpdateStore();
 
-  const [countdown, setCountdown] = useState(AUTO_RESTART_SECS);
-  const [postponeOpen, setPostponeOpen] = useState(false);
-  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const postponeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isLight = useAppStore(s => s.theme) === 'light';
   const isMac = platform === 'darwin';
+  const [aggregatedNotes, setAggregatedNotes] = useState('');
+  const [notesLoading, setNotesLoading] = useState(false);
 
-  // Bắt đầu đếm ngược khi đã tải xong
-  const startCountdown = useCallback(() => {
-    setCountdown(AUTO_RESTART_SECS);
-    if (countdownRef.current) clearInterval(countdownRef.current);
-    countdownRef.current = setInterval(() => {
-      setCountdown(prev => {
-        if (prev <= 1) {
-          clearInterval(countdownRef.current!);
-          countdownRef.current = null;
-          (window as any).electronAPI?.update?.install();
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-  }, []);
-
-  // Hoãn với duration tuỳ chọn
-  const handlePostpone = useCallback((ms: number = POSTPONE_MS) => {
-    if (countdownRef.current) { clearInterval(countdownRef.current); countdownRef.current = null; }
-    setPostponeOpen(false);
-    postpone(ms);
-  }, [postpone]);
-
-  // Watch postponedUntil - khi nó được set, đặt timer để re-show sau đúng thời điểm
+  // Fetch aggregated release notes when update info arrives
   useEffect(() => {
-    if (!postponedUntil) return;
-    if (postponeTimerRef.current) clearTimeout(postponeTimerRef.current);
-    const remaining = postponedUntil - Date.now();
-    if (remaining <= 0) {
-      setDismissed(false);
-      setPostponedUntil(null);
+    if (!updateInfo || !showPopup) return;
+    // If we already have releaseNotes from electron-updater, use that
+    // Otherwise fetch from GitHub for all skipped versions
+    if (updateInfo.releaseNotes) {
+      setAggregatedNotes(updateInfo.releaseNotes);
       return;
     }
-    postponeTimerRef.current = setTimeout(() => {
-      setDismissed(false);
-      setPostponedUntil(null);
-      if (useUpdateStore.getState().status === 'downloaded') startCountdown();
-    }, remaining);
-    return () => { if (postponeTimerRef.current) clearTimeout(postponeTimerRef.current); };
-  }, [postponedUntil, setDismissed, setPostponedUntil, startCountdown]);
+    setNotesLoading(true);
+    fetchAggregatedNotes(APP_VERSION, updateInfo.version)
+      .then(notes => setAggregatedNotes(notes))
+      .finally(() => setNotesLoading(false));
+  }, [updateInfo, showPopup]);
 
-  // Retry download thủ công
-  const handleRetryDownload = useCallback(() => {
-    setError(null);
-    setStatus('downloading');
-    setProgress(null);
-    (window as any).electronAPI?.update?.download();
-    if (stallTimerRef.current) clearTimeout(stallTimerRef.current);
-    stallTimerRef.current = setTimeout(() => {
-      setStatus('stalled');
-    }, DOWNLOAD_STALL_TIMEOUT_MS);
-  }, [setError, setStatus, setProgress]);
-
-  // Stall timer helper
   const resetStallTimer = useCallback(() => {
     if (stallTimerRef.current) clearTimeout(stallTimerRef.current);
     stallTimerRef.current = setTimeout(() => {
-      setStatus('stalled');
+      setError({ message: 'Tải bị gián đoạn', platform });
     }, DOWNLOAD_STALL_TIMEOUT_MS);
-  }, [setStatus]);
+  }, [setError, platform]);
 
   useEffect(() => {
     const api = (window as any).electronAPI;
@@ -89,10 +82,8 @@ export function UpdateNotification() {
 
     const offAvailable = api.on('update:available', (info: UpdateInfo) => {
       setUpdateInfo(info);
-      setDismissed(false);
-      setError(null);
       setStatus('available');
-      resetStallTimer();
+      setError(null);
     });
 
     const offProgress = api.on('update:progress', (p: ProgressInfo) => {
@@ -107,8 +98,9 @@ export function UpdateNotification() {
       setError(null);
       setProgress(null);
       if (stallTimerRef.current) clearTimeout(stallTimerRef.current);
-      startCountdown();
     });
+
+    const offNotAvailable = api.on('update:not-available', () => {});
 
     const offError = api.on('update:error', (err: UpdateError) => {
       setError(err);
@@ -120,219 +112,149 @@ export function UpdateNotification() {
       offAvailable?.();
       offProgress?.();
       offDownloaded?.();
+      offNotAvailable?.();
       offError?.();
-      if (countdownRef.current) clearInterval(countdownRef.current);
       if (stallTimerRef.current) clearTimeout(stallTimerRef.current);
     };
-  }, [startCountdown, resetStallTimer, setStatus, setUpdateInfo, setProgress, setError, setDismissed]);
+  }, [resetStallTimer, setStatus, setUpdateInfo, setProgress, setError]);
 
-  if (!updateInfo || dismissed) return null;
+  if (!showPopup || !updateInfo) return null;
 
   const formatBytes = (bytes: number) => {
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
     return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   };
 
-  const formatCountdown = (s: number) => {
-    const m = Math.floor(s / 60);
-    const sec = s % 60;
-    return `${m}:${String(sec).padStart(2, '0')}`;
+  const handleConfirmDownload = () => {
+    if (isMac) return;
+    startDownload();
   };
 
-  const showStallOrError = (status === 'error' || status === 'stalled');
-
   return (
-    <div className={`fixed bottom-5 right-5 z-[9999] w-80 rounded-2xl shadow-2xl p-4 ${
-      isLight
-        ? 'bg-white border border-gray-200 text-gray-800 shadow-gray-200/60'
-        : 'bg-gradient-to-br from-blue-600 to-blue-700 text-white'
-    }`}>
-      {/* Header */}
-      <div className="flex items-start justify-between gap-2 mb-2">
-        <div>
-          <p className="font-bold text-sm"><SparklesIcon className="w-4 h-4 inline" /> Bản cập nhật mới</p>
-          <p className={`text-xs ${isLight ? 'text-gray-400' : 'text-blue-100'}`}>Phiên bản {updateInfo.version}</p>
-        </div>
-        {/* Nút hoãn có dropdown - ẩn khi đã tải xong (dùng nút riêng bên dưới) */}
-        {status !== 'downloaded' && (
-          <div className="relative flex-shrink-0">
-            <button
-              onClick={() => setPostponeOpen(v => !v)}
-              className={`w-6 h-6 flex items-center justify-center rounded-full transition-colors text-xs ${
-                isLight ? 'text-gray-400 hover:text-gray-400 hover:bg-gray-100' : 'text-blue-200 hover:text-white hover:bg-white/10'
-              }`}
-              title="Hoãn"
-            >
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2">
-                <line x1="0" y1="0" x2="10" y2="10" /><line x1="10" y1="0" x2="0" y2="10" />
-              </svg>
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center" onClick={() => { if (status !== 'downloading') dismiss(); }}>
+      <div className={`w-[420px] rounded-2xl shadow-2xl p-6 ${isLight ? 'bg-white border border-gray-200 text-gray-800' : 'bg-gray-800 border border-gray-600 text-white'}`} onClick={e => e.stopPropagation()}>
+        <div className="flex items-start justify-between mb-4">
+          <div>
+            <h3 className="text-lg font-bold flex items-center gap-2">
+              Bản cập nhật mới
+            </h3>
+            <p className={`text-sm mt-0.5 ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>Phiên bản {APP_VERSION} → <span className="font-semibold text-white">{updateInfo.version}</span></p>
+          </div>
+          {status !== 'downloading' && (
+            <button onClick={dismiss} className={`w-7 h-7 flex items-center justify-center rounded-full transition-colors ${isLight ? 'text-gray-400 hover:bg-gray-100' : 'text-gray-400 hover:bg-gray-700'}`}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             </button>
-            {postponeOpen && (
-              <div className="absolute right-0 top-full mt-1 w-28 bg-gray-900 border border-gray-600 rounded-lg shadow-xl z-50 overflow-hidden">
-                {POSTPONE_OPTIONS.map(opt => (
-                  <button
-                    key={opt.ms}
-                    onClick={() => handlePostpone(opt.ms)}
-                    className="w-full text-left px-3 py-1.5 text-xs text-gray-200 hover:bg-blue-600 transition-colors"
-                  >
-                    {opt.label}
+          )}
+        </div>
+
+        {/* Release notes - aggregated across skipped versions */}
+        {notesLoading ? (
+          <div className={`mb-4 p-3 rounded-xl text-xs ${isLight ? 'bg-gray-50 text-gray-400' : 'bg-gray-900/50 text-gray-400'}`}>
+            <span className="animate-pulse">Đang tải danh sách thay đổi...</span>
+          </div>
+        ) : aggregatedNotes ? (
+          <div className={`mb-4 p-3 rounded-xl text-xs leading-relaxed whitespace-pre-line max-h-48 overflow-y-auto ${isLight ? 'bg-gray-50 text-gray-600' : 'bg-gray-900/50 text-gray-300'}`}>{aggregatedNotes}</div>
+        ) : null}
+
+        {status === 'available' && !error && (
+          <>
+            {isMac ? (
+              <div className="space-y-3">
+                <p className={`text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
+                  macOS không hỗ trợ cập nhật tự động. Vui lòng tải bản mới nhất về cài đặt:
+                </p>
+                <div className="flex gap-2">
+                  <a href={`https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-${updateInfo.version}-arm64.dmg`} target="_blank" rel="noopener noreferrer" onClick={dismiss}
+                    className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium transition-colors no-underline">
+                    Apple Silicon (M)
+                  </a>
+                  <a href={`https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-${updateInfo.version}.dmg`} target="_blank" rel="noopener noreferrer" onClick={dismiss}
+                    className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-gray-600 hover:bg-gray-500 text-white text-sm font-medium transition-colors no-underline">
+                    Intel Mac
+                  </a>
+                </div>
+                <button onClick={() => { startDownload(); }}
+                  className={`w-full py-2 rounded-xl text-xs transition-colors ${isLight ? 'bg-gray-100 hover:bg-gray-200 text-gray-600' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'}`}>
+                  Thử cập nhật tự động (có thể không hoạt động)
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className={`text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
+                  Nhấn "Cập nhật ngay" để tải và cài đặt bản mới. Ứng dụng sẽ khởi động lại sau khi cài xong.
+                </p>
+                <div className="flex gap-2">
+                  <button onClick={dismiss}
+                    className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-colors ${isLight ? 'bg-gray-100 hover:bg-gray-200 text-gray-600' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'}`}>
+                    Để sau
                   </button>
-                ))}
+                  <button onClick={handleConfirmDownload}
+                    className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium transition-colors">
+                    Cập nhật ngay
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {status === 'downloading' && (
+          <div className="space-y-3">
+            <div className="flex justify-between text-xs">
+              <span className={isLight ? 'text-gray-500' : 'text-gray-400'}>Đang tải...</span>
+              <span className="text-blue-400 font-medium">{progress?.percent ?? 0}%</span>
+            </div>
+            <div className={`h-2 rounded-full overflow-hidden ${isLight ? 'bg-gray-200' : 'bg-gray-700'}`}>
+              <div className="h-full bg-blue-500 rounded-full transition-all duration-300" style={{ width: `${progress?.percent ?? 0}%` }} />
+            </div>
+            {progress && (
+              <div className={`flex justify-between text-xs ${isLight ? 'text-gray-400' : 'text-gray-500'}`}>
+                <span>{formatBytes(progress.transferred)} / {formatBytes(progress.total)}</span>
+                <span>{formatBytes(progress.bytesPerSecond)}/s</span>
               </div>
             )}
           </div>
         )}
+
+        {status === 'downloaded' && (
+          <div className="space-y-3">
+            <p className={`text-sm ${isLight ? 'text-green-600' : 'text-green-400'}`}>
+              Đã tải xong! Nhấn "Khởi động lại" để cài đặt.
+            </p>
+            <button onClick={installUpdate}
+              className="w-full py-2.5 rounded-xl bg-green-600 hover:bg-green-700 text-white text-sm font-medium transition-colors">
+              Khởi động lại & cài đặt
+            </button>
+          </div>
+        )}
+
+        {status === 'error' && (
+          <div className="space-y-3">
+            <p className={`text-xs ${isLight ? 'text-red-500' : 'text-red-400'}`}>
+              {error?.message || 'Không thể tải bản cập nhật'}
+            </p>
+            <div className="flex gap-2">
+              <button onClick={() => { setStatus('available'); setError(null); }}
+                className={`flex-1 py-2 rounded-xl text-xs font-medium transition-colors ${isLight ? 'bg-gray-100 hover:bg-gray-200 text-gray-600' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'}`}>
+                Thử lại
+              </button>
+              {isMac ? (
+                <div className="flex-1 flex gap-1">
+                  <a href={`https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-${updateInfo.version}-arm64.dmg`} target="_blank" rel="noopener noreferrer" onClick={dismiss}
+                    className="flex-1 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium text-center no-underline">ARM (chip M+)</a>
+                  <a href={`https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-${updateInfo.version}.dmg`} target="_blank" rel="noopener noreferrer" onClick={dismiss}
+                    className="flex-1 py-2 rounded-xl bg-gray-600 hover:bg-gray-500 text-white text-xs font-medium text-center no-underline">Intel</a>
+                </div>
+              ) : (
+                <a href={`https://github.com/babyvibe/deplao-builder/releases/tag/v${updateInfo.version}`} target="_blank" rel="noopener noreferrer"
+                  className="flex-1 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium text-center no-underline">
+                  Tải thủ công
+                </a>
+              )}
+            </div>
+          </div>
+        )}
       </div>
-
-      {/* Đang tải tự động - có progress */}
-      {status === 'downloading' && progress && !showStallOrError && (
-        <div className="mt-2 space-y-1">
-          <div className={`flex justify-between text-xs ${isLight ? 'text-gray-400' : 'text-blue-100'}`}>
-            <span>Đang tải tự động...</span>
-            <span>{progress.percent}%</span>
-          </div>
-          <div className={`rounded-full h-2 overflow-hidden ${isLight ? 'bg-gray-200' : 'bg-blue-500'}`}>
-            <div
-              className={`h-2 rounded-full transition-all duration-300 ${isLight ? 'bg-blue-500' : 'bg-white'}`}
-              style={{ width: `${progress.percent}%` }}
-            />
-          </div>
-          <div className={`flex justify-between text-xs ${isLight ? 'text-gray-400' : 'text-blue-200'}`}>
-            <span>{formatBytes(progress.transferred)} / {formatBytes(progress.total)}</span>
-            <span>{formatBytes(progress.bytesPerSecond)}/s</span>
-          </div>
-        </div>
-      )}
-
-      {/* Đang đợi tải (autoDownload đã bật, chưa có progress, chưa lỗi) */}
-      {(status === 'available' || (status === 'downloading' && !progress)) && !showStallOrError && (
-        <div className="mt-1 space-y-1">
-          <p className={`text-xs ${isLight ? 'text-gray-400' : 'text-blue-100'}`}>
-            ⏳ Đang chuẩn bị tải bản cập nhật...
-          </p>
-        </div>
-      )}
-
-      {/* Lỗi hoặc treo - hiện nút retry + tải thủ công */}
-      {showStallOrError && (
-        <div className="mt-2 space-y-2">
-          <p className={`text-xs ${isLight ? 'text-red-500' : 'text-red-200'}`}>
-            {error
-              ? '⚠️ Không thể tải tự động. Vui lòng thử lại hoặc tải thủ công.'
-              : '⚠️ Quá trình tải bị gián đoạn. Vui lòng thử lại.'}
-          </p>
-          <div className="flex gap-2">
-            <button
-              onClick={handleRetryDownload}
-              className={`flex-1 text-xs font-semibold py-1.5 rounded-lg transition-colors ${
-                isLight
-                  ? 'bg-blue-500 hover:bg-blue-600 text-white'
-                  : 'bg-white/20 hover:bg-white/30 text-white'
-              }`}
-            ><RefreshIcon className="w-4 h-4 inline" /> Thử lại
-            </button>
-            {isMac ? (
-              <MacDownloadLinks version={updateInfo.version} isLight={isLight} />
-            ) : (
-              <a
-                href="https://deplaoapp.com"
-                target="_blank"
-                rel="noopener noreferrer"
-                className={`flex-1 text-xs font-semibold py-1.5 rounded-lg text-center transition-colors ${
-                  isLight
-                    ? 'bg-gray-100 hover:bg-gray-200 text-gray-700'
-                    : 'bg-white/10 hover:bg-white/20 text-white'
-                }`}
-              ><InboxIcon className="w-4 h-4 inline" /> Tải thủ công
-              </a>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Đã tải xong - đếm ngược tự restart */}
-      {status === 'downloaded' && (
-        <div className="mt-2 space-y-2">
-          <p className={`text-xs ${isLight ? 'text-gray-400' : 'text-blue-100'}`}>
-            ✅ Đã tải xong. Tự khởi động lại sau <strong className={isLight ? 'text-blue-600' : 'text-white'}>{formatCountdown(countdown)}</strong>
-          </p>
-
-          {/* Progress bar đếm ngược */}
-          <div className={`rounded-full h-1.5 overflow-hidden ${isLight ? 'bg-gray-200' : 'bg-blue-500/40'}`}>
-            <div
-              className={`h-1.5 rounded-full transition-all duration-1000 ease-linear ${isLight ? 'bg-blue-500' : 'bg-white'}`}
-              style={{ width: `${(countdown / AUTO_RESTART_SECS) * 100}%` }}
-            />
-          </div>
-
-          <button
-            onClick={() => (window as any).electronAPI?.update?.install()}
-            className={`w-full font-semibold text-sm py-1.5 rounded-lg transition-colors ${
-              isLight
-                ? 'bg-blue-500 hover:bg-blue-600 text-white'
-                : 'bg-green-400 hover:bg-green-300 text-white'
-            }`}
-          >
-            Khởi động lại ngay
-          </button>
-          {/* Hoãn với dropdown chọn thời gian */}
-          <div className="relative">
-            <button
-              onClick={() => setPostponeOpen(v => !v)}
-              className={`w-full text-xs text-center transition-colors ${
-                isLight ? 'text-gray-400 hover:text-gray-400' : 'text-blue-200 hover:text-white'
-              }`}
-            >
-              ⏰ Hoãn…
-            </button>
-            {postponeOpen && (
-              <div className="absolute bottom-full mb-1 left-0 right-0 bg-gray-900 border border-gray-600 rounded-lg shadow-xl z-50 overflow-hidden">
-                {POSTPONE_OPTIONS.map(opt => (
-                  <button
-                    key={opt.ms}
-                    onClick={() => handlePostpone(opt.ms)}
-                    className="w-full text-left px-3 py-1.5 text-xs text-gray-200 hover:bg-blue-600 transition-colors"
-                  >
-                    ⏰ Hoãn {opt.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** macOS: hiện 2 link tải DMG (ARM64 / Intel) */
-export function MacDownloadLinks({ version, isLight }: { version: string; isLight: boolean }) {
-  const baseUrl = 'https://deplaoapp.com/file';
-  return (
-    <div className="flex-1 flex flex-col gap-1">
-      <a
-        href={`${baseUrl}/Deplao-${version}-arm64.dmg`}
-        target="_blank"
-        rel="noopener noreferrer"
-        className={`text-xs font-semibold py-1 rounded-lg text-center transition-colors ${
-          isLight
-            ? 'bg-gray-100 hover:bg-gray-200 text-gray-700'
-            : 'bg-white/10 hover:bg-white/20 text-white'
-        }`}
-      >
-        🍎 Apple Silicon
-      </a>
-      <a
-        href={`${baseUrl}/Deplao-${version}.dmg`}
-        target="_blank"
-        rel="noopener noreferrer"
-        className={`text-xs font-semibold py-1 rounded-lg text-center transition-colors ${
-          isLight
-            ? 'bg-gray-100 hover:bg-gray-200 text-gray-700'
-            : 'bg-white/10 hover:bg-white/20 text-white'
-        }`}
-      ><MonitorIcon className="w-4 h-4 inline" /> Intel Mac
-      </a>
     </div>
   );
 }

@@ -143,6 +143,9 @@ export default function GroupMembersTab() {
     try { return localStorage.getItem('scanTabSeen') === 'true'; } catch { return false; }
   });
 
+  // ── Resolved group info (hiện ảnh + tên nhóm khi tham gia / quét) ─────
+  const [resolvedGroupInfo, setResolvedGroupInfo] = useState<{ groupId: string; name: string; avatar: string; creatorId?: string; adminIds?: string[] } | null>(null);
+
   // ── Groups 3-dot menu ─────────────────────────────────────────────────────
   const [showGroupMenu, setShowGroupMenu] = useState(false);
   const groupMenuRef = useRef<HTMLDivElement>(null);
@@ -472,13 +475,41 @@ export default function GroupMembersTab() {
     }
   }, [activeAccountId, linkScanInput, loadGroupsFromDB]);
 
+  // ── Helper: Resolve group link → get info + save to DB ────────────────────
+  const resolveAndSaveGroupInfo = useCallback(async (auth: any, linkOrId: string): Promise<{ groupId: string; name: string; avatar: string; creatorId: string; adminIds: string[] } | null> => {
+    try {
+      const linkRes: any = await ipc.zalo?.getGroupLinkInfo({ auth, link: linkOrId, memberPage: 1 });
+      if (!linkRes?.success || !linkRes?.response?.groupId) return null;
+      const data = linkRes.response;
+      const groupId = data.groupId || '';
+      const name = data.name || data.groupId || '';
+      const avatar = data.fullAvt || data.avt || '';
+      const creatorId = String(data.creatorId || '').replace(/_0$/, '');
+      const adminIds: string[] = (data.adminIds || []).map((a: string) => String(a).replace(/_0$/, ''));
+
+      if (groupId) {
+        // Save group contact to DB if not exists
+        await DataAccessor.updateContactProfile({
+          zaloId: activeAccountId!, contactId: groupId,
+          displayName: name, avatarUrl: avatar, phone: '', contactType: 'group',
+        });
+        // Reload group list so it appears in left panel
+        await loadGroupsFromDB();
+      }
+      return { groupId, name, avatar, creatorId, adminIds };
+    } catch (err) {
+      console.warn('[GroupMembersTab] resolveAndSaveGroupInfo error:', err);
+      return null;
+    }
+  }, [activeAccountId, loadGroupsFromDB]);
+
   // ── Scan from "Quét thành viên" tab (gọi backend API) ──────────────
   const handleScanTab = useCallback(async () => {
     if (!activeAccountId || !scanLinkInput.trim()) return;
 
     // Kiểm tra premium trước khi quét
     if (!isPremium) {
-      setScanTabError('Cần kích hoạt gói Premium để sử dụng tính năng này. Bấm nút mua gói hoặc liên hệ @babyvibe trên Telegram.');
+      setScanTabError('Cần kích hoạt gói Premium để sử dụng tính năng này. Bấm nút mua gói hoặc liên hệ @babyvibe9 trên Telegram.');
       return;
     }
 
@@ -492,15 +523,25 @@ export default function GroupMembersTab() {
     setScanTabGroupId(null);
     try {
       let groupId = scanLinkInput.trim();
+      let groupInfoFromLink: { groupId: string; name: string; avatar: string; creatorId?: string; adminIds?: string[] } | null = null;
 
-      // Nếu là link zalo.me → gọi getGroupLinkInfo để lấy groupId
+      // Nếu là link zalo.me → gọi getGroupLinkInfo để lấy groupId + save group info
       if (groupId.includes('zalo.me') || groupId.includes('chat.zalo.me')) {
-        const linkRes: any = await ipc.zalo?.getGroupLinkInfo({ auth, link: groupId, memberPage: 1 });
-        if (!linkRes?.success || !linkRes?.response?.groupId) {
-          setScanTabError(linkRes?.error || 'Không lấy được thông tin nhóm từ link. Kiểm tra lại đường dẫn.');
+        const info = await resolveAndSaveGroupInfo(auth, groupId);
+        if (!info) {
+          setScanTabError('Không lấy được thông tin nhóm từ link. Kiểm tra lại đường dẫn.');
           return;
         }
-        groupId = linkRes.response.groupId;
+        groupId = info.groupId;
+        groupInfoFromLink = info;
+        setResolvedGroupInfo(info);
+      } else if (/^\d+$/.test(groupId)) {
+        // Nhập groupId dạng số → thử resolve info để hiện tên + ảnh + lấy creator/admin
+        const info = await resolveAndSaveGroupInfo(auth, groupId);
+        if (info) {
+          groupInfoFromLink = info;
+          setResolvedGroupInfo(info);
+        }
       }
 
       // Validate groupId
@@ -532,16 +573,32 @@ export default function GroupMembersTab() {
       setScanTabResults(members);
       setScanTabGroupId(groupId);
 
+      // Update resolvedGroupInfo nếu chưa có (trường hợp nhập groupId số)
+      if (!resolvedGroupInfo && !groupInfoFromLink) {
+        setResolvedGroupInfo({ groupId, name: groupId, avatar: '', creatorId: '', adminIds: [] });
+      }
+
+      // Xác định role từ creatorId/adminIds (lấy từ getGroupLinkInfo)
+      const creatorId = groupInfoFromLink?.creatorId || '';
+      const adminIdList = groupInfoFromLink?.adminIds || [];
+      const adminSet = new Set([creatorId, ...adminIdList].filter(Boolean));
+
       // Lưu vào DB
       await DataAccessor.saveGroupMembers({
         zaloId: activeAccountId,
         groupId,
-        members: members.map((m: any) => ({
-          memberId: m.userId || m.id,
-          displayName: m.displayName || m.zaloName || m.userId || m.id,
-          avatar: m.avatar || '',
-          role: 0,
-        })),
+        members: members.map((m: any) => {
+          const mid = m.userId || m.id;
+          let role = 0;
+          if (mid === creatorId) role = 2;       // Trưởng nhóm
+          else if (adminSet.has(mid)) role = 1;  // Phó nhóm
+          return {
+            memberId: mid,
+            displayName: m.displayName || m.zaloName || m.userId || m.id,
+            avatar: m.avatar || '',
+            role,
+          };
+        }),
       });
 
       // Reload members tab
@@ -551,7 +608,7 @@ export default function GroupMembersTab() {
     } finally {
       setScanTabLoading(false);
     }
-  }, [activeAccountId, scanLinkInput, loadMembersFromDB]);
+  }, [activeAccountId, scanLinkInput, isPremium, loadMembersFromDB, resolveAndSaveGroupInfo, resolvedGroupInfo]);
 
   // ── Join group from scan tab ──────────────────────────────────────────
   const handleJoinFromScanTab = useCallback(async () => {
@@ -564,6 +621,10 @@ export default function GroupMembersTab() {
     setScanJoinType('idle');
     setScanJoinMsg('');
     try {
+      // Resolve group info + save to DB
+      const info = await resolveAndSaveGroupInfo(auth, scanLinkInput.trim());
+      if (info) setResolvedGroupInfo(info);
+
       const res = await ipc.zalo?.joinGroupLink({ auth, link: scanLinkInput.trim() });
       const errCode = res?.errorCode ?? res?.error_code ?? (res?.response?.error);
       if (errCode === 178 || res?.response?.msg?.includes('already')) {
@@ -586,7 +647,7 @@ export default function GroupMembersTab() {
     } finally {
       setScanJoinLoading(false);
     }
-  }, [activeAccountId, scanLinkInput, loadGroupsFromDB]);
+  }, [activeAccountId, scanLinkInput, loadGroupsFromDB, resolveAndSaveGroupInfo]);
 
   // ── Load premium status ───────────────────────────────────────────────
   // Lần đầu (không có localStorage): gọi backend → lưu localStorage
@@ -826,7 +887,7 @@ export default function GroupMembersTab() {
                 <input
                   type="text"
                   value={scanLinkInput}
-                  onChange={e => { setScanLinkInput(e.target.value); setScanTabError(''); }}
+                  onChange={e => { setScanLinkInput(e.target.value); setScanTabError(''); setResolvedGroupInfo(null); }}
                   onKeyDown={e => { if (e.key === 'Enter' && !scanTabLoading) handleScanTab(); }}
                   placeholder="Dán link nhóm Zalo (vd: https://zalo.me/g/xxxxxx)"
                   disabled={scanTabLoading}
@@ -856,6 +917,31 @@ export default function GroupMembersTab() {
               </div>
               <p className="text-[11px] text-gray-500">Kết quả sẽ lưu vào tab Thành viên nhóm để bạn sử dụng đầy đủ tính năng</p>
             </div>
+
+            {/* Resolved group info card */}
+            {resolvedGroupInfo && (
+              <div className="bg-gray-800 border border-purple-500/30 rounded-xl p-4 flex items-center gap-3">
+                {resolvedGroupInfo.avatar ? (
+                  <img src={resolvedGroupInfo.avatar} alt={resolvedGroupInfo.name}
+                    className="w-12 h-12 rounded-xl object-cover flex-shrink-0"
+                    onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                ) : (
+                  <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center text-white font-bold text-lg flex-shrink-0">
+                    {(resolvedGroupInfo.name || '?').charAt(0).toUpperCase()}
+                  </div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-white truncate">{resolvedGroupInfo.name}</p>
+                  <p className="text-[11px] text-gray-400 mt-0.5">ID: {resolvedGroupInfo.groupId}</p>
+                </div>
+                <button onClick={() => setResolvedGroupInfo(null)}
+                  className="text-gray-500 hover:text-gray-300 transition-colors p-1">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                  </svg>
+                </button>
+              </div>
+            )}
 
             {/* Join status */}
             {scanJoinType !== 'idle' && (
@@ -887,7 +973,10 @@ export default function GroupMembersTab() {
                     </p>
                   </div>
                   <button
-                    onClick={() => { setActiveTab('members'); setSelectedGroupId(scanTabGroupId); }}
+                    onClick={() => {
+                      setActiveTab('members');
+                      setSelectedGroupId(scanTabGroupId);
+                    }}
                     className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg transition-colors">
                     Xem trong tab Thành viên →
                   </button>
@@ -949,7 +1038,7 @@ export default function GroupMembersTab() {
                     Chỉ <span className="text-white font-semibold">~700đ/ngày</span> - tiếp cận hàng chục nghìn khách hàng tiềm năng từ các nhóm chất lượng trên Zalo
                   </p>
                   <button
-                    onClick={() => window.open('https://t.me/babyvibe', '_blank')}
+                    onClick={() => window.open('https://t.me/babyvibe9', '_blank')}
                     className="w-full py-2.5 bg-blue-500 hover:bg-blue-600 text-white text-sm font-semibold rounded-lg transition-colors flex items-center justify-center gap-2">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
                       <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.161c-.18 1.897-.962 6.502-1.359 8.627-.168.9-.5 1.201-.82 1.23-.697.064-1.226-.461-1.901-.903-1.056-.692-1.653-1.123-2.678-1.799-1.185-.78-.417-1.21.258-1.911.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.479.33-.913.492-1.302.484-.428-.008-1.252-.241-1.865-.44-.752-.244-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.831-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635.099-.002.321.023.465.141a.506.506 0 0 1 .171.325c.016.093.036.306.02.472z"/>

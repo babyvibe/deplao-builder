@@ -3061,10 +3061,11 @@ async function sendOneForward(
   } catch {}
 
   if (channel === 'facebook' && accountId) {
-    if ((isFile || isVideo) && localPath) {
+    if ((isFile || isVideo || isImage) && localPath) {
       await channelIpc.sendAttachment('facebook', { accountId, threadId: target.threadId, filePath: localPath, threadType: target.threadType });
-    } else if (isImage && localPath) {
-      await channelIpc.sendAttachment('facebook', { accountId, threadId: target.threadId, filePath: localPath, threadType: target.threadType });
+    } else if ((isFile || isVideo || isImage) && !localPath && msg.msg_id) {
+      // Media không có file local → gửi native forward
+      await ipc.fb?.forwardMessage({ accountId, messageId: String(msg.msg_id), targetThreadId: target.threadId, isGroup: target.threadType === 1 });
     } else {
       const text = composeText || extractMsgText(msg);
       await channelIpc.sendMessage('facebook', { accountId, threadId: target.threadId, body: text, threadType: target.threadType });
@@ -3076,10 +3077,29 @@ async function sendOneForward(
   }
 
   // Zalo path (existing)
-  if ((isFile || isVideo) && localPath) {
-    await ipc.zalo?.sendFile({ auth, filePath: localPath, threadId: target.threadId, type: target.threadType });
-  } else if (isImage && localPath) {
-    await ipc.zalo?.sendImage({ auth, filePath: localPath, threadId: target.threadId, type: target.threadType, message: '' });
+  if ((isFile || isVideo || isImage) && localPath) {
+    // Có file local → gửi lại như tin mới
+    if (isFile || isVideo) {
+      await ipc.zalo?.sendFile({ auth, filePath: localPath, threadId: target.threadId, type: target.threadType });
+    } else {
+      await ipc.zalo?.sendImage({ auth, filePath: localPath, threadId: target.threadId, type: target.threadType, message: '' });
+    }
+  } else if ((isFile || isVideo || isImage) && !localPath && msg.msg_id) {
+    // Media nhưng không có file local → dùng native forward API (Zalo tự chuyển tiếp nội dung)
+    await ipc.zalo?.forwardMessage({
+      auth,
+      payload: {
+        message: composeText || '',
+        reference: {
+          id: String(msg.msg_id),
+          ts: msg.timestamp || Date.now(),
+          logSrcType: 0,
+          fwLvl: 0,
+        },
+      },
+      threadIds: [target.threadId],
+      type: target.threadType,
+    });
   } else {
     const text = composeText || extractMsgText(msg);
     await ipc.zalo?.sendMessage({ auth, message: text, threadId: target.threadId, type: target.threadType });

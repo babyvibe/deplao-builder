@@ -853,12 +853,9 @@ class HttpClientService {
         this.stopHeartbeat();
         this.consecutiveHeartbeatFailures = 0;
         this.heartbeatTimer = setInterval(async () => {
-            if (!this.connected) return;
-
+            // Kể cả khi đã disconnected → vẫn thử heartbeat để tự reconnect
             const start = Date.now();
             try {
-                // Send callbackUrl + SSE health for LAN fallback & half-open detection
-                // Boss closes half-open SSE when sseAlive=false → events queue instead of lost
                 const sioConnected = this.socketIOClient.isConnected();
                 const result = await this.httpPost(
                     `${this.bossUrl}/api/auth/heartbeat`,
@@ -869,27 +866,34 @@ class HttpClientService {
 
                 if (result.success) {
                     this.latencyMs = Date.now() - start;
+                    // Nếu trước đó đang disconnected mà heartbeat thành công → reconnect!
+                    if (!this.connected) {
+                        this.connected = true;
+                        Logger.log('[HttpClientService] ✅ Reconnected via heartbeat');
+                    }
                     this.consecutiveHeartbeatFailures = 0;
                     this.onStatusChange?.(true, this.latencyMs);
                 } else {
                     this.consecutiveHeartbeatFailures++;
-                    this.onStatusChange?.(false, 0);
-                    // After MAX failures, mark as disconnected
+                    if (this.connected) this.onStatusChange?.(false, 0);
                     if (this.consecutiveHeartbeatFailures >= HttpClientService.MAX_HEARTBEAT_FAILURES) {
-                        Logger.warn(`[HttpClientService] ${this.consecutiveHeartbeatFailures} consecutive heartbeat failures - marking disconnected`);
-                        this.connected = false;
-                        this.onStatusChange?.(false, 0);
+                        if (this.connected) {
+                            Logger.warn(`[HttpClientService] ${this.consecutiveHeartbeatFailures} consecutive heartbeat failures - marking disconnected`);
+                            this.connected = false;
+                            this.onStatusChange?.(false, 0);
+                        }
                     }
                 }
             } catch (err) {
                 this.latencyMs = 0;
                 this.consecutiveHeartbeatFailures++;
-                this.onStatusChange?.(false, 0);
-                // After MAX failures, mark as disconnected
+                if (this.connected) this.onStatusChange?.(false, 0);
                 if (this.consecutiveHeartbeatFailures >= HttpClientService.MAX_HEARTBEAT_FAILURES) {
-                    Logger.warn(`[HttpClientService] ${this.consecutiveHeartbeatFailures} consecutive heartbeat failures (error) - marking disconnected`);
-                    this.connected = false;
-                    this.onStatusChange?.(false, 0);
+                    if (this.connected) {
+                        Logger.warn(`[HttpClientService] ${this.consecutiveHeartbeatFailures} consecutive heartbeat failures (error) - marking disconnected`);
+                        this.connected = false;
+                        this.onStatusChange?.(false, 0);
+                    }
                 }
             }
         }, 15_000);

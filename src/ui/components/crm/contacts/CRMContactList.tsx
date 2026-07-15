@@ -13,6 +13,97 @@ import { CalendarIcon, ClockIcon, CloseIcon, CloudIcon, EditIcon, FolderIcon, Gh
 
 
 
+/** Pagination bar with page numbers + jump-to-page + page size selector */
+function PaginationBar({ page, totalPages, total, pageSize, onPageChange, onPageSizeChange }: {
+  page: number; totalPages: number; total: number; pageSize: number;
+  onPageChange: (p: number) => void;
+  onPageSizeChange?: (size: number) => void;
+}) {
+  const [jumpInput, setJumpInput] = useState('');
+  const [showJump, setShowJump] = useState(false);
+
+  // Generate page numbers to display: always show first, last, current ± 2
+  const getPageNumbers = (): (number | '...')[] => {
+    if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i);
+    const pages: (number | '...')[] = [0];
+    const start = Math.max(1, page - 1);
+    const end = Math.min(totalPages - 2, page + 1);
+    if (start > 1) pages.push('...');
+    for (let i = start; i <= end; i++) pages.push(i);
+    if (end < totalPages - 2) pages.push('...');
+    pages.push(totalPages - 1);
+    return pages;
+  };
+
+  const handleJump = () => {
+    const p = parseInt(jumpInput, 10);
+    if (!isNaN(p) && p >= 1 && p <= totalPages) {
+      onPageChange(p - 1);
+      setJumpInput('');
+      setShowJump(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center justify-between px-4 py-2 border-t border-gray-700 flex-shrink-0">
+      <div className="flex items-center gap-2">
+        <span className="text-[11px] text-gray-500">{total.toLocaleString('vi-VN')} liên hệ</span>
+        {onPageSizeChange && (
+          <select
+            value={pageSize}
+            onChange={e => onPageSizeChange(Number(e.target.value))}
+            className="bg-gray-800 border border-gray-600 rounded px-1.5 py-0.5 text-[11px] text-gray-300 focus:outline-none focus:border-blue-500 cursor-pointer">
+            {[50, 100, 200, 500].map(s => (
+              <option key={s} value={s}>{s}/trang</option>
+            ))}
+          </select>
+        )}
+      </div>
+      <div className="flex items-center gap-1">
+        <button disabled={page === 0} onClick={() => onPageChange(0)}
+          className="px-1.5 py-1 rounded bg-gray-700 text-xs text-gray-300 hover:bg-gray-600 disabled:opacity-30">«</button>
+        <button disabled={page === 0} onClick={() => onPageChange(page - 1)}
+          className="px-1.5 py-1 rounded bg-gray-700 text-xs text-gray-300 hover:bg-gray-600 disabled:opacity-30">‹</button>
+
+        {getPageNumbers().map((p, i) =>
+          p === '...' ? (
+            <button key={`e${i}`} onClick={() => setShowJump(v => !v)}
+              className="px-1.5 py-1 text-xs text-gray-500 hover:text-gray-300 cursor-pointer">…</button>
+          ) : (
+            <button key={p} onClick={() => onPageChange(p)}
+              className={`min-w-[28px] px-1.5 py-1 rounded text-xs font-medium transition-colors ${
+                p === page
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              }`}>{p + 1}</button>
+          )
+        )}
+
+        <button disabled={page >= totalPages - 1} onClick={() => onPageChange(page + 1)}
+          className="px-1.5 py-1 rounded bg-gray-700 text-xs text-gray-300 hover:bg-gray-600 disabled:opacity-30">›</button>
+        <button disabled={page >= totalPages - 1} onClick={() => onPageChange(totalPages - 1)}
+          className="px-1.5 py-1 rounded bg-gray-700 text-xs text-gray-300 hover:bg-gray-600 disabled:opacity-30">»</button>
+
+        {showJump && (
+          <div className="flex items-center gap-1 ml-2">
+            <input
+              value={jumpInput}
+              onChange={e => setJumpInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleJump(); }}
+              placeholder="Trang..."
+              className="w-14 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 text-center"
+              autoFocus
+            />
+            <button onClick={handleJump}
+              className="px-2 py-1 rounded bg-blue-600 text-xs text-white hover:bg-blue-700">Đến</button>
+          </div>
+        )}
+      </div>
+      <span className="text-[11px] text-gray-500">Trang {page + 1}/{totalPages}</span>
+    </div>
+  );
+}
+
 interface CRMContactListProps {
   contacts: CRMContact[];
   total: number;
@@ -37,10 +128,10 @@ interface CRMContactListProps {
   onActivateContact: (id: string) => void;
   onSelectAll: () => void;
   onClearAll: () => void;
-  onSelectAllPages?: () => Promise<void>;
   onExportAll?: () => Promise<any[]>;
   onFilterChange: (f: any) => void;
   onPageChange: (page: number) => void;
+  onPageSizeChange?: (size: number) => void;
   onMessage?: (contact: CRMContact) => void;
   onImportPhones?: () => void;
 }
@@ -433,15 +524,14 @@ export default function CRMContactList({
   contacts, total, page, pageSize, loading, selectedIds, activeContactId,
   allLabels, filterLabelIds, filterLocalLabelIds, filterContactTypes, filterGender, filterBirthday, searchText, sortBy, sortDir,
   activeAccountId, localLabels, localLabelThreadMap,
-  onSelectContact, onActivateContact, onSelectAll, onClearAll, onSelectAllPages,
+  onSelectContact, onActivateContact, onSelectAll, onClearAll,
   onExportAll,
-  onFilterChange, onPageChange, onMessage, onImportPhones,
+  onFilterChange, onPageChange, onPageSizeChange, onMessage, onImportPhones,
 }: CRMContactListProps) {
   const totalPages = Math.ceil(total / pageSize);
   const groupInfoCache = useAppStore(s => s.groupInfoCache);
 
   const [avatarPopup, setAvatarPopup] = useState<{ userId: string; x: number; y: number } | null>(null);
-  const [selectingAllPages, setSelectingAllPages] = useState(false);
   const [exportingCSV, setExportingCSV] = useState(false);
 
   const fmt = (ts: number) => {
@@ -527,41 +617,6 @@ export default function CRMContactList({
     <div className="flex flex-col h-full">
       {/* Toolbar */}
       <div className="flex items-center gap-2 px-4 py-2.5 border-b border-gray-700 flex-shrink-0">
-        {/* Select-all button - chọn TOÀN BỘ tất cả trang */}
-        <button
-          disabled={selectingAllPages}
-          onClick={async () => {
-            if (selectedIds.size >= total && total > 0) {
-              onClearAll();
-            } else if (onSelectAllPages) {
-              setSelectingAllPages(true);
-              try { await onSelectAllPages(); } finally { setSelectingAllPages(false); }
-            } else {
-              onSelectAll();
-            }
-          }}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap flex-shrink-0 transition-colors border disabled:opacity-50
-            ${selectedIds.size >= total && total > 0
-              ? 'bg-blue-600/20 border-blue-500/50 text-blue-300 hover:bg-blue-600/30'
-              : 'bg-blue-600 border-blue-600 text-white hover:bg-blue-700'}`}>
-          {selectedIds.size >= total && total > 0 ? (
-            <>
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-              Bỏ chọn tất cả
-            </>
-          ) : selectingAllPages ? (
-            <>
-              <svg className="animate-spin" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-              Đang chọn...
-            </>
-          ) : (
-            <>
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="3" width="18" height="18" rx="2"/><polyline points="9 11 12 14 22 4"/></svg>
-              Chọn tất cả {total > 0 ? `(${total})` : ''}
-            </>
-          )}
-        </button>
-
         {/* Label dropdown filter (Local + Zalo) */}
         <LabelFilterDropdown
           allLabels={allLabels}
@@ -774,15 +829,7 @@ export default function CRMContactList({
       </div>
 
       {/* Pagination */}
-      {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-2 px-4 py-2.5 border-t border-gray-700 flex-shrink-0">
-          <button disabled={page === 0} onClick={() => onPageChange(page - 1)}
-            className="px-2.5 py-1 rounded-lg bg-gray-700 text-xs text-gray-300 hover:bg-gray-600 disabled:opacity-40">‹</button>
-          <span className="text-xs text-gray-400">{page + 1} / {totalPages}</span>
-          <button disabled={page >= totalPages - 1} onClick={() => onPageChange(page + 1)}
-            className="px-2.5 py-1 rounded-lg bg-gray-700 text-xs text-gray-300 hover:bg-gray-600 disabled:opacity-40">›</button>
-        </div>
-      )}
+      {totalPages > 1 && <PaginationBar page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={onPageChange} onPageSizeChange={onPageSizeChange} />}
 
       {/* UserProfilePopup */}
       {avatarPopup && (

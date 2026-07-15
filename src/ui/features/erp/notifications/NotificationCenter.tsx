@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useErpNotificationStore } from '@/store/erp/erpNotificationStore';
 import { useCurrentEmployeeId, useErpPermissions } from '@/hooks/erp/useErpContext';
-import { useUpdateStore, POSTPONE_MS, POSTPONE_OPTIONS } from '@/store/updateStore';
+import { useUpdateStore } from '@/store/updateStore';
 import { DownloadIcon, MonitorIcon, RefreshIcon, SparklesIcon } from '@/components/common/icons';
 
 
@@ -11,10 +11,9 @@ export default function NotificationCenter({ onClose }: Props) {
   const eid = useCurrentEmployeeId();
   const erpPerms = useErpPermissions();
   const { inbox, loadInbox, markRead, markAllRead, deleteNotifications, deleteAllNotifications } = useErpNotificationStore();
-  const { status, updateInfo, progress, platform, dismissed, postpone } = useUpdateStore();
+  const { status, updateInfo, progress, platform, setShowPopup, openUpdatePopup } = useUpdateStore();
   const isMac = platform === 'darwin';
-  const hasUpdate = !!updateInfo && !dismissed;
-  const [postponeOpen, setPostponeOpen] = useState(false);
+  const hasUpdate = !!updateInfo && status === 'available';
 
   useEffect(() => {
     if (erpPerms.can('erp.access')) loadInbox(eid);
@@ -28,26 +27,13 @@ export default function NotificationCenter({ onClose }: Props) {
     switch (status) {
       case 'downloaded': return { text: 'Đã tải xong – sẵn sàng cài đặt', color: 'text-green-400' };
       case 'downloading': return { text: progress ? `Đang tải… ${progress.percent.toFixed(0)}%` : 'Đang tải…', color: 'text-blue-300' };
-      case 'error':
-      case 'stalled':    return { text: 'Tải thất bại – nhấn để thử lại', color: 'text-red-400' };
-      default:           return { text: 'Bản cập nhật sẵn sàng tải', color: 'text-yellow-300' };
+      case 'error':      return { text: 'Tải thất bại – nhấn để thử lại', color: 'text-red-400' };
+      default:           return { text: 'Bản cập nhật mới sẵn sàng', color: 'text-yellow-300' };
     }
   };
 
   const handleUpdateAction = () => {
-    const api = (window as any).electronAPI;
-    if (status === 'downloaded') {
-      api?.update?.install();
-    } else {
-      useUpdateStore.getState().setDismissed(false);
-      api?.update?.download?.();
-    }
-  };
-
-  // Hoãn với duration tuỳ chọn - timer re-show được quản lý bởi UpdateNotification (luôn mounted)
-  const handlePostpone = (ms: number = POSTPONE_MS) => {
-    setPostponeOpen(false);
-    postpone(ms);
+    openUpdatePopup();
   };
 
   return (
@@ -85,67 +71,17 @@ export default function NotificationCenter({ onClose }: Props) {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between gap-1">
                   <span className="text-xs font-semibold text-white">Phiên bản {updateInfo.version}</span>
-                  {/* Dropdown hoãn */}
-                  <div className="relative flex-shrink-0">
-                    <button
-                      onClick={() => setPostponeOpen(v => !v)}
-                      className="text-[10px] text-gray-400 hover:text-gray-200 transition-colors"
-                      title="Hoãn"
-                    >⏰ Hoãn</button>
-                    {postponeOpen && (
-                      <div className="absolute right-0 top-full mt-1 w-28 bg-gray-900 border border-gray-600 rounded-lg shadow-xl z-[10000] overflow-hidden">
-                        {POSTPONE_OPTIONS.map(opt => (
-                          <button
-                            key={opt.ms}
-                            onClick={() => handlePostpone(opt.ms)}
-                            className="w-full text-left px-3 py-1.5 text-xs text-gray-200 hover:bg-blue-600 transition-colors"
-                          >
-                            {opt.label}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
                 </div>
                 <div className={`text-[11px] mt-0.5 ${updateStatusLabel().color}`}>
                   {updateStatusLabel().text}
                 </div>
-                {/* Progress bar */}
-                {status === 'downloading' && progress && (
-                  <div className="mt-1.5 h-1 rounded-full bg-gray-700 overflow-hidden">
-                    <div
-                      className="h-1 rounded-full bg-blue-400 transition-all duration-500"
-                      style={{ width: `${progress.percent}%` }}
-                    />
-                  </div>
-                )}
-                <div className="mt-2 flex gap-1.5">
-                  {status === 'downloaded' ? (
-                    <button
-                      onClick={handleUpdateAction}
-                      className="flex-1 py-1 rounded-lg bg-green-600 hover:bg-green-500 text-white text-[11px] font-semibold transition-colors"
-                    >Khởi động lại để cập nhật</button>
-                  ) : isMac ? (
-                    <>
-                      <a
-                        href={`https://deplaoapp.com/file/Deplao-${updateInfo.version}-arm64.dmg`}
-                        target="_blank" rel="noopener noreferrer"
-                        className="flex-1 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] text-center font-semibold transition-colors no-underline"
-                      >🍎 Apple Silicon</a>
-                      <a
-                        href={`https://deplaoapp.com/file/Deplao-${updateInfo.version}.dmg`}
-                        target="_blank" rel="noopener noreferrer"
-                        className="flex-1 py-1 rounded-lg bg-gray-600 hover:bg-gray-500 text-white text-[11px] text-center font-semibold transition-colors no-underline"
-                      ><MonitorIcon className="w-4 h-4 inline" /> Intel Mac</a>
-                    </>
-                  ) : (
-                    <button
-                      onClick={handleUpdateAction}
-                      className="flex-1 py-1 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-[11px] font-semibold transition-colors"
-                    >
-                      {status === 'error' || status === 'stalled' ? <><RefreshIcon className="w-4 h-4 inline" /> Thử lại</> : <><DownloadIcon className="w-4 h-4 inline" /> Tải ngay</>}
-                    </button>
-                  )}
+                <div className="mt-2">
+                  <button
+                    onClick={handleUpdateAction}
+                    className="w-full py-1 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-[11px] font-semibold transition-colors"
+                  >
+                    <DownloadIcon className="w-4 h-4 inline" /> Xem cập nhật
+                  </button>
                 </div>
               </div>
             </div>

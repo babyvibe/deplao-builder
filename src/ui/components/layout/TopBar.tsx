@@ -36,10 +36,8 @@ export default function TopBar() {
   const [fontTemp, setFontTemp] = useState(fontSizeScale);
 
   // Update state
-  const { status: updateStatus, updateInfo, platform, setDismissed } = useUpdateStore();
+  const { status: updateStatus, updateInfo, platform, setShowPopup, openUpdatePopup } = useUpdateStore();
   const isMac = platform === 'darwin';
-  const [macDropdownOpen, setMacDropdownOpen] = useState(false);
-  const macDropdownRef = useRef<HTMLDivElement>(null);
 
   // Employee store
   const { mode: empMode, currentEmployee, bossConnected, bossUrl, latency, previewEmployeeId, employees, setBossConnected, setToken } = useEmployeeStore();
@@ -206,8 +204,7 @@ export default function TopBar() {
     setFontTemp(fontSizeScale);
   }, [fontSizeScale]);
 
-  // Hiện nút update khi: có bản mới + (chưa tải xong HOẶC lỗi/treo)
-  const showUpdateBtn = !!updateInfo && ['available', 'error', 'stalled', 'downloading'].includes(updateStatus);
+  // Update: now using badge next to version + popup (see below)
 
   useEffect(() => {
     ipc.window?.isMaximized().then(setIsMaximized);
@@ -239,18 +236,6 @@ export default function TopBar() {
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [reconnectOpen]);
-
-  // Đóng macOS dropdown khi click ra ngoài
-  useEffect(() => {
-    if (!macDropdownOpen) return;
-    const handleClick = (e: MouseEvent) => {
-      if (macDropdownRef.current && !macDropdownRef.current.contains(e.target as Node)) {
-        setMacDropdownOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [macDropdownOpen]);
 
   // ── Tải tin nhắn cũ / đồng bộ lại hội thoại ────────────────────────────────
   const handleRequestOldMessages = useCallback(async () => {
@@ -311,20 +296,6 @@ export default function TopBar() {
     }
   }, [activeAccountId, loadingOldMsgs, showNotification]);
 
-  // Xử lý click nút update
-  const handleUpdateClick = useCallback(() => {
-    if (isMac) {
-      // macOS: mở dropdown chọn bản tải
-      setMacDropdownOpen(prev => !prev);
-    } else {
-      // Windows: trigger auto-update download + hiện popup
-      setDismissed(false);
-      if (updateStatus === 'error' || updateStatus === 'stalled') {
-        (window as any).electronAPI?.update?.download();
-      }
-    }
-  }, [isMac, setDismissed, updateStatus]);
-
   return (
     <>
       <style>{`
@@ -348,6 +319,14 @@ export default function TopBar() {
       <div className="flex items-center gap-2 px-3" style={{ WebkitAppRegion: 'no-drag' } as any}>
         <span className="text-blue-400 font-bold text-sm">Deplao</span>
         <span className="text-gray-400 text-xs">v{APP_VERSION}</span>
+        {updateInfo && updateStatus === 'available' && (
+          <button onClick={openUpdatePopup}
+            className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-orange-500/15 border border-orange-500/30 text-orange-600 text-[10px] font-semibold hover:bg-orange-500/25 transition-colors"
+            title={`Có bản mới v${updateInfo.version} - nhấn để cập nhật`}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 2v13M5 12l7 7 7-7"/><line x1="3" y1="22" x2="21" y2="22"/></svg>
+            New v{updateInfo.version}
+          </button>
+        )}
 
         {/* Workspace switcher - only shows when multiple workspaces exist */}
         <WorkspaceSwitcher />
@@ -491,72 +470,7 @@ export default function TopBar() {
           </button>
         )}
 
-        {/* ── Nút cập nhật ── */}
-        {showUpdateBtn && (
-          <div className="relative" ref={macDropdownRef}>
-            <button
-              onClick={handleUpdateClick}
-              className="w-9 h-9 flex items-center justify-center text-orange-400 hover:bg-orange-500/20 hover:text-orange-300 transition-colors relative"
-              title={`Cập nhật v${updateInfo!.version} ${isMac ? '- Chọn bản tải' : '- Nhấn để cập nhật'}`}
-            >
-              {/* Arrow-down-circle icon */}
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 2v13M5 12l7 7 7-7"/>
-                <line x1="3" y1="22" x2="21" y2="22"/>
-              </svg>
-              {/* Chấm đỏ nhỏ */}
-              <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-            </button>
-
-            {/* macOS dropdown: chọn bản tải */}
-            {isMac && macDropdownOpen && updateInfo && (
-              <div className="absolute right-0 top-full mt-1 w-56 bg-gray-800 border border-gray-600 rounded-xl shadow-2xl z-[9999] overflow-hidden">
-                <div className="px-3 py-2 border-b border-gray-700">
-                  <p className="text-xs text-gray-400">Cập nhật v{updateInfo.version}</p>
-                  <p className="text-[10px] text-gray-400 mt-0.5">Chọn bản phù hợp với máy Mac của bạn</p>
-                </div>
-                <a
-                  href={`https://deplaoapp.com/file/Deplao-${updateInfo.version}-arm64.dmg`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={() => setMacDropdownOpen(false)}
-                  className="flex items-center gap-2.5 px-3 py-2.5 text-sm text-gray-200 hover:bg-blue-600/20 hover:text-white transition-colors no-underline"
-                >
-                  <span className="text-base">🍎</span>
-                  <div>
-                    <p className="text-xs font-semibold">Apple Silicon</p>
-                    <p className="text-[10px] text-gray-400">MacBook Chip M</p>
-                  </div>
-                </a>
-                <a
-                  href={`https://deplaoapp.com/file/Deplao-${updateInfo.version}.dmg`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={() => setMacDropdownOpen(false)}
-                  className="flex items-center gap-2.5 px-3 py-2.5 text-sm text-gray-200 hover:bg-blue-600/20 hover:text-white transition-colors no-underline"
-                >
-                  <span className="text-base"><MonitorIcon className="w-4 h-4" /></span>
-                  <div>
-                    <p className="text-xs font-semibold">Intel Mac</p>
-                    <p className="text-[10px] text-gray-400">MacBook Chip Intel</p>
-                  </div>
-                </a>
-                {/* Thử cập nhật tự động */}
-                <button
-                  onClick={() => {
-                    setMacDropdownOpen(false);
-                    setDismissed(false);
-                    (window as any).electronAPI?.update?.download();
-                  }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-gray-400 hover:bg-gray-700 hover:text-gray-200 transition-colors border-t border-gray-700"
-                >
-                  <span className="text-base"><RefreshIcon className="w-4 h-4" /></span>
-                  <p className="text-xs">Thử cập nhật tự động</p>
-                </button>
-              </div>
-            )}
-          </div>
-        )}
+        {/* Update: now handled by badge next to version + UpdateNotification popup */}
 
         {/*/!* ── ERP Attendance quick check-in ── *!/*/}
         {/*{erpPerms.can('attendance.checkin') && (*/}

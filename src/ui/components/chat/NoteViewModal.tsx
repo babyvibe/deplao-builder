@@ -87,7 +87,7 @@ export function NoteViewModal({ topicId, initialTitle, groupId, onClose, onNoteP
   const getAuth = () => {
     const acc = getActiveAccount();
     if (!acc) return null;
-    return buildZaloAuth(acc, activeAccountId);
+    return buildZaloAuth(acc, activeAccountIdProp);
   };
 
   const handleSave = async () => {

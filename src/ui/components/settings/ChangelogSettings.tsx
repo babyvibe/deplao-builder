@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import { BellIcon, BookIcon, BotIcon, BugIcon, ChartIcon, ChatIcon, ClipboardListIcon, CloseIcon, FolderIcon, GlobeIcon, ImageIcon, LightningIcon, LinkIcon, LockIcon, PackageIcon, PluginIcon, RefreshIcon, RepeatIcon, RocketIcon, SendIcon, SparklesIcon, TagIcon, TrashIcon, UserIcon, UsersIcon, WifiIcon, WrenchIcon } from '@/components/common/icons';
 
 interface VersionEntry {
@@ -14,6 +14,40 @@ interface VersionEntry {
 
 // ─── Changelog data - thêm entry mới vào ĐẦU mảng khi có bản cập nhật ────────
 const CHANGELOG: VersionEntry[] = [
+  {
+    version: '26.7.4',
+    date: '07/2026',
+    type: 'patch',
+    highlights: [
+      '🚀 Cập nhật không bắt buộc update bản mới — nút "New version" trên TopBar, xác nhận trước khi tải, tổng hợp ghi chú từ nhiều phiên bản',
+      '📱 Chuyển tiếp ảnh/file/video hoạt động đúng với workspace employee — dùng native forward API khi không có file local',
+      '🔄 Nhân viên tự kết nối lại — heartbeat không dừng khi mất mạng, tự phục hồi khi có mạng',
+      '📄 CRM phân trang tối ưu — bỏ chọn tất cả hàng loạt, thêm nhảy trang + chọn số dòng/trang',
+    ],
+    changes: [
+      {
+        category: 'new',
+        items: [
+          'Hệ thống cập nhật mới: không tự động tải, hiển thị nút "New v{version}" trên TopBar cạnh phiên bản hiện tại',
+          'Popup xác nhận cập nhật: hiện ghi chú phát hành (tổng hợp từ GitHub nếu bỏ qua nhiều phiên bản), nút "Cập nhật ngay" / "Để sau"',
+          'macOS: popup hiển thị link tải Apple Silicon + Intel DMG + nút thử cập nhật tự động',
+          'Dashboard: thêm nút "Thêm tài khoản" (giống sidebar) — mở AddAccountModal ngay từ Dashboard',
+          'CRM phân trang: nút số trang + nhảy đến trang + chọn 50/100/200/500 dòng mỗi trang',
+          'Quét thành viên nhóm: hiển thị role Trưởng nhóm / Phó nhóm khi quét qua backend API (lấy từ getGroupLinkInfo)',
+        ],
+      },
+      {
+        category: 'improved',
+        items: [
+          'Loại bỏ bắt buộc cập nhật: bỏ autoDownload, autoInstallOnAppQuit, đếm ngược tự restart, hệ thống hoãn (postpone)',
+          'Ghi chú phát hành: tự động fetch từ GitHub API, tổng hợp tất cả phiên bản giữa phiên bản hiện tại và mới',
+          'CRM danh sách liên hệ: bỏ nút "Chọn tất cả" toàn bộ — tránh lag khi 10-50k dòng, chỉ chọn theo trang',
+          'Nhân viên tunnel: heartbeat tiếp tục chạy khi disconnected — mỗi 15s thử lại, tự reconnect khi boss reachable',
+          'Dashboard: search input nằm cùng hàng với "Kéo thả để sắp xếp thứ tự" để gọn hơn',
+        ],
+      },
+    ],
+  },
   {
     version: '26.7.3',
     date: '07/2026',
