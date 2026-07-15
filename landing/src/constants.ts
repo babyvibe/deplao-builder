@@ -6,7 +6,7 @@
 // ──────────────────────────────────────────────────────────────
 
 /** Phiên bản hiện tại - đồng bộ với package.json root */
-export const APP_VERSION = '26.7.1';
+export const APP_VERSION = '26.7.3';
 
 const GH_RELEASES = 'https://github.com/babyvibe/deplao-builder/releases';
 const GH_LATEST   = `${GH_RELEASES}/latest/download`;
