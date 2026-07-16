@@ -1,19 +1,19 @@
 ﻿# Deplao
-*Website giá»›i thiá»‡u*:  https://deplaoapp.com/
+*Website giới thiệu*:  https://deplaoapp.com/
 
 <p>
-  <strong>ðŸŒ Language:</strong>
-  &nbsp;ðŸ‡»ðŸ‡³ <strong>Tiáº¿ng Viá»‡t</strong>
+  <strong>🌐 Language:</strong>
+  &nbsp;🇻🇳 <strong>Tiếng Việt</strong>
   &nbsp;|&nbsp;
-  ðŸ‡¬ðŸ‡§ <a href="./README.en.md">English</a>
+  🇬🇧 <a href="./README.en.md">English</a>
 </p>
 
 
 ---
 
-> Pháº§n má»m desktop quáº£n lÃ½ Zalo & Facebook cÃ¡ nhÃ¢n Äa tÃ i khoáº£n tÃ­ch há»£p CRM, ERP, POS, Workflow vÃ  AI Assistant giÃºp Ä‘á»™i nhÃ³m bÃ¡n hÃ ng, chÄƒm sÃ³c khÃ¡ch hÃ ng vÃ  marketing trÃªn Zalo vÃ  Facebook váº­n hÃ nh táº­p trung trong má»™t á»©ng dá»¥ng duy nháº¥t.
+> Phần mềm desktop quản lý Zalo & Facebook cá nhân Đa tài khoản tích hợp CRM, ERP, POS, Workflow và AI Assistant giúp đội nhóm bán hàng, chăm sóc khách hàng và marketing trên Zalo và Facebook vận hành tập trung trong một ứng dụng duy nhất.
 
-[![Version](https://img.shields.io/badge/version-26.7.4-22c55e)](#)
+[![Version](https://img.shields.io/badge/version-26.7.3-22c55e)](#)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-3b82f6)](#-runtime-requirements)
 [![Electron](https://img.shields.io/badge/Electron-41-47848f?logo=electron&logoColor=white)](#)
 [![React](https://img.shields.io/badge/React-18-61dafb?logo=react&logoColor=white)](#)
@@ -21,121 +21,121 @@
 [![SQLite](https://img.shields.io/badge/SQLite-local--first-003b57?logo=sqlite&logoColor=white)](#)
 [![Vite](https://img.shields.io/badge/Vite-6-646cff?logo=vite&logoColor=white)](#)
 [![Node.js](https://img.shields.io/badge/Node.js-18+-339933?logo=node.js&logoColor=white)](#)
-[![License](https://img.shields.io/badge/license-MIT-22c55e)](#giáº¥y-phÃ©p)
+[![License](https://img.shields.io/badge/license-MIT-22c55e)](#giấy-phép)
 [![Support](https://img.shields.io/badge/support-GitHub_Issues-0ea5e9)](https://github.com/babyvibe/deplao-builder/issues)
 
 
 <p align="center">
-  <a href="#-táº£i-xuá»‘ng">ðŸ“¥ Táº£i xuá»‘ng</a> &nbsp;|&nbsp;
-  <a href="#-cÃ´ng-nghá»‡-ngÃ´n-ngá»¯-sá»­-dá»¥ng">ðŸ› ï¸ CÃ´ng nghá»‡</a> &nbsp;|&nbsp;
-  <a href="#cÃ i-Ä‘áº·t">ðŸ“¦ CÃ i Ä‘áº·t</a> &nbsp;|&nbsp;
-  <a href="#-cÃ¡c-nhÃ³m-tÃ­nh-nÄƒng-chÃ­nh">âœ¨ TÃ­nh nÄƒng</a> &nbsp;|&nbsp;
-  <a href="#-báº£o-máº­t-dá»¯-liá»‡u">ðŸ”’ Báº£o máº­t</a> &nbsp;|&nbsp;
-  <a href="#-giáº¥y-phÃ©p">ðŸ“ MIT</a> &nbsp;|&nbsp;
-  <a href="#-liÃªn-há»‡">ðŸ“ž LiÃªn há»‡</a>
+  <a href="#-tải-xuống">📥 Tải xuống</a> &nbsp;|&nbsp;
+  <a href="#-công-nghệ-ngôn-ngữ-sử-dụng">🛠️ Công nghệ</a> &nbsp;|&nbsp;
+  <a href="#cài-đặt">📦 Cài đặt</a> &nbsp;|&nbsp;
+  <a href="#-các-nhóm-tính-năng-chính">✨ Tính năng</a> &nbsp;|&nbsp;
+  <a href="#-bảo-mật-dữ-liệu">🔒 Bảo mật</a> &nbsp;|&nbsp;
+  <a href="#-giấy-phép">📝 MIT</a> &nbsp;|&nbsp;
+  <a href="#-liên-hệ">📞 Liên hệ</a>
 </p>
 
 ---
 
-## â¬‡ï¸ Táº£i xuá»‘ng
+## ⬇️ Tải xuống
 
 <table>
 <tr>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-Setup-26.7.4.exe">
-<img src="https://img.shields.io/badge/ðŸªŸ_Windows_10/11-v26.7.4-0078d4?style=for-the-badge&logo=windows&logoColor=white" alt="Download Windows" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-Setup-26.7.3.exe">
+<img src="https://img.shields.io/badge/🪟_Windows_10/11-v26.7.3-0078d4?style=for-the-badge&logo=windows&logoColor=white" alt="Download Windows" />
 </a>
 
-<big><strong>Deplao-Setup-26.7.4.exe</strong></big>
+<big><strong>Deplao-Setup-26.7.3.exe</strong></big>
 
 </td>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.7.4-arm64.dmg">
-<img src="https://img.shields.io/badge/ðŸŽ_macOS_M1+-v26.7.4-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Apple Silicon" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.7.3-arm64.dmg">
+<img src="https://img.shields.io/badge/🍎_macOS_M1+-v26.7.3-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Apple Silicon" />
 </a>
 
-<big><strong>Deplao-26.7.4-arm64.dmg</strong></big>
+<big><strong>Deplao-26.7.3-arm64.dmg</strong></big>
 
 </td>
 </tr>
 <tr>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.7.4.AppImage">
-<img src="https://img.shields.io/badge/ðŸ§_Ubuntu_Linux-v26.7.4-e95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Download Ubuntu" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.7.3.AppImage">
+<img src="https://img.shields.io/badge/🐧_Ubuntu_Linux-v26.7.3-e95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Download Ubuntu" />
 </a>
 
-<big><strong>Deplao-26.7.4.AppImage</strong></big><br>
-<big>cháº¡y má»i distro - <code>chmod +x</code> lÃ  dÃ¹ng Ä‘Æ°á»£c</big>
+<big><strong>Deplao-26.7.3.AppImage</strong></big><br>
+<big>chạy mọi distro - <code>chmod +x</code> là dùng được</big>
 
 </td>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.7.4.dmg">
-<img src="https://img.shields.io/badge/ðŸŽ_macOS_Intel-v26.7.4-555555?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Intel" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.7.3.dmg">
+<img src="https://img.shields.io/badge/🍎_macOS_Intel-v26.7.3-555555?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Intel" />
 </a>
 
-<big><strong>Deplao-26.7.4.dmg</strong></big>
+<big><strong>Deplao-26.7.3.dmg</strong></big>
 
 </td>
 </tr>
 </table>
 
 <p align="center">
-ðŸ‘‰ <strong><a href="https://github.com/babyvibe/deplao-builder/releases">Xem táº¥t cáº£ phiÃªn báº£n</a></strong>
+👉 <strong><a href="https://github.com/babyvibe/deplao-builder/releases">Xem tất cả phiên bản</a></strong>
 </p>
 
 <details>
-<summary>âš ï¸ LÆ°u Ã½ khi má»Ÿ file cÃ i Ä‘áº·t (bá»‹ cháº·n bá»Ÿi Windows / macOS / Linux)</summary>
+<summary>⚠️ Lưu ý khi mở file cài đặt (bị chặn bởi Windows / macOS / Linux)</summary>
 
-Do Deplao chÆ°a Ä‘Æ°á»£c kÃ½ chá»©ng chá»‰ (code signing) - nÃ³i tháº³ng ra lÃ  nghÃ¨o, nÃªn há»‡ Ä‘iá»u hÃ nh cÃ³ thá»ƒ hiá»ƒn thá»‹ cáº£nh bÃ¡o khi má»Ÿ file. Báº¡n cÃ³ thá»ƒ lÃ m theo hÆ°á»›ng dáº«n dÆ°á»›i Ä‘Ã¢y:
-
----
-
-### ðŸªŸ Windows (.exe)
-
-Khi má»Ÿ file `.exe`, Windows cÃ³ thá»ƒ hiá»ƒn thá»‹ cáº£nh bÃ¡o **"Windows protected your PC"**:
-
-ðŸ‘‰ CÃ¡ch xá»­ lÃ½:
-1. Nháº¥n **More info**
-2. Chá»n **Run anyway**
+Do Deplao chưa được ký chứng chỉ (code signing) - nói thẳng ra là nghèo, nên hệ điều hành có thể hiển thị cảnh báo khi mở file. Bạn có thể làm theo hướng dẫn dưới đây:
 
 ---
 
-### ðŸŽ macOS (.dmg)
+### 🪟 Windows (.exe)
 
-Khi má»Ÿ file `.dmg`, macOS cÃ³ thá»ƒ bÃ¡o **"cannot be opened because it is from an unidentified developer"**
+Khi mở file `.exe`, Windows có thể hiển thị cảnh báo **"Windows protected your PC"**:
 
-ðŸ‘‰ CÃ¡ch xá»­ lÃ½:
-
-**CÃ¡ch 1:**
-- Chuá»™t pháº£i vÃ o file â†’ chá»n **Open**
-- Nháº¥n **Open** láº§n ná»¯a
-
-**CÃ¡ch 2 (náº¿u váº«n bá»‹ cháº·n):**
-1. VÃ o **System Settings â†’ Privacy & Security**
-2. KÃ©o xuá»‘ng pháº§n Security
-3. Nháº¥n **Open Anyway**
+👉 Cách xử lý:
+1. Nhấn **More info**
+2. Chọn **Run anyway**
 
 ---
 
-### ðŸ§ Ubuntu Linux (.AppImage)
+### 🍎 macOS (.dmg)
 
-Sau khi táº£i file `.AppImage`:
+Khi mở file `.dmg`, macOS có thể báo **"cannot be opened because it is from an unidentified developer"**
+
+👉 Cách xử lý:
+
+**Cách 1:**
+- Chuột phải vào file → chọn **Open**
+- Nhấn **Open** lần nữa
+
+**Cách 2 (nếu vẫn bị chặn):**
+1. Vào **System Settings → Privacy & Security**
+2. Kéo xuống phần Security
+3. Nhấn **Open Anyway**
+
+---
+
+### 🐧 Ubuntu Linux (.AppImage)
+
+Sau khi tải file `.AppImage`:
 
 ```bash
 chmod +x Deplao-*.AppImage
 ./Deplao-*.AppImage
 ```
 
-> Náº¿u gáº·p lá»—i "FUSE: fuse2 not available", cÃ i `libfuse2`:
+> Nếu gặp lỗi "FUSE: fuse2 not available", cài `libfuse2`:
 > ```bash
 > sudo apt install libfuse2
 > ```
 
-Hoáº·c cÃ i báº£n `.deb`:
+Hoặc cài bản `.deb`:
 ```bash
 sudo dpkg -i Deplao_*_amd64.deb
 ```
@@ -143,44 +143,44 @@ sudo dpkg -i Deplao_*_amd64.deb
 </details>
 
 <p align="center">
-  <img src="./assets/deplao-overview-map.svg" alt="SÆ¡ Ä‘á»“ trá»±c quan mÃ´ táº£ Deplao lÃ  workspace desktop táº­p trung cho bÃ¡n hÃ ng vÃ  chÄƒm sÃ³c khÃ¡ch hÃ ng trÃªn Zalo" width="960" />
+  <img src="./assets/deplao-overview-map.svg" alt="Sơ đồ trực quan mô tả Deplao là workspace desktop tập trung cho bán hàng và chăm sóc khách hàng trên Zalo" width="960" />
 </p>
 
-## ðŸ› ï¸ CÃ´ng nghá»‡ & ngÃ´n ngá»¯ sá»­ dá»¥ng
+## 🛠️ Công nghệ & ngôn ngữ sử dụng
 
-Deplao hiá»‡n Ä‘Æ°á»£c xÃ¢y dá»±ng trÃªn cÃ¡c cÃ´ng nghá»‡ chÃ­nh sau:
+Deplao hiện được xây dựng trên các công nghệ chính sau:
 
-- **ThÆ° viá»‡n chÃ­nh:** zca-js & fbchat-v2
+- **Thư viện chính:** zca-js & fbchat-v2
 - **AI Gateway:** 9router
-- **NgÃ´n ngá»¯:** TypeScript, JavaScript, SQL, HTML, CSS
-- **á»¨ng dá»¥ng desktop:** Electron, React, Vite
-- **Giao diá»‡n:** Tailwind CSS, PostCSS, React Router
-- **LÆ°u trá»¯ dá»¯ liá»‡u cá»¥c bá»™:** SQLite qua `better-sqlite3`
-- **State & UI chuyÃªn biá»‡t:** Zustand, React Flow, Recharts, Quill
-- **Backend dá»‹ch vá»¥:** Node.js + Express
-- **TÃ­ch há»£p & automation:** Axios, Google APIs / Google Sheets, node-cron, Discord.js, Telegram Bot API, OpenAI API, v.v.
+- **Ngôn ngữ:** TypeScript, JavaScript, SQL, HTML, CSS
+- **Ứng dụng desktop:** Electron, React, Vite
+- **Giao diện:** Tailwind CSS, PostCSS, React Router
+- **Lưu trữ dữ liệu cục bộ:** SQLite qua `better-sqlite3`
+- **State & UI chuyên biệt:** Zustand, React Flow, Recharts, Quill
+- **Backend dịch vụ:** Node.js + Express
+- **Tích hợp & automation:** Axios, Google APIs / Google Sheets, node-cron, Discord.js, Telegram Bot API, OpenAI API, v.v.
 
 ---
 
 
-## CÃ i Ä‘áº·t
+## Cài đặt
 
 <details open>
-<summary>ðŸ› ï¸ Tá»± build tá»« source</summary>
+<summary>🛠️ Tự build từ source</summary>
 
-### YÃªu cáº§u
+### Yêu cầu
 
-- Windows 10/11, macOS (Apple Silicon), hoáº·c Ubuntu 20.04+
-- Node.js 18+ khuyáº¿n nghá»‹
+- Windows 10/11, macOS (Apple Silicon), hoặc Ubuntu 20.04+
+- Node.js 18+ khuyến nghị
 - npm 9+
 
-### CÃ i Ä‘áº·t
+### Cài đặt
 
 ```powershell
 npm install --legacy-peer-deps
 ```
 
-### Cháº¡y development
+### Chạy development
 
 ```powershell
 npm run dev
@@ -192,42 +192,42 @@ npm run dev
 npm run production
 ```
 
-### Dá»¯ liá»‡u cá»¥c bá»™
+### Dữ liệu cục bộ
 
-- Dá»¯ liá»‡u app dÃ¹ng SQLite cá»¥c bá»™
-- CÃ³ thá»ƒ Ä‘á»•i thÆ° má»¥c lÆ°u trá»¯ trong pháº§n `CÃ i Ä‘áº·t`
+- Dữ liệu app dùng SQLite cục bộ
+- Có thể đổi thư mục lưu trữ trong phần `Cài đặt`
 
 </details>
 
-## ðŸ—ºï¸ SÆ¡ Ä‘á»“ kiáº¿n trÃºc & luá»“ng hoáº¡t Ä‘á»™ng
+## 🗺️ Sơ đồ kiến trúc & luồng hoạt động
 
 ---
 
-### 1ï¸âƒ£ Luá»“ng Build
+### 1️⃣ Luồng Build
 
 ```mermaid
 flowchart LR
-    subgraph SRC["ðŸ“ Source Code"]
-        E("âš¡ electron/\n*.ts")
-        S("ðŸ”§ services/\n*.ts")
-        R("ðŸŽ¨ src/ui/\n*.tsx")
+    subgraph SRC["📁 Source Code"]
+        E("⚡ electron/\n*.ts")
+        S("🔧 services/\n*.ts")
+        R("🎨 src/ui/\n*.tsx")
     end
 
-    subgraph COMPILE["ðŸ”¨ Compile"]
+    subgraph COMPILE["🔨 Compile"]
         TSC("tsc\ntsconfig.electron")
         VITE("vite build\n+ Tailwind CSS")
     end
 
-    subgraph OUT["ðŸ“¦ Output"]
-        DE("dist-electron/\nmain Â· services Â· ipc")
-        D("dist/\nindex.html Â· assets")
+    subgraph OUT["📦 Output"]
+        DE("dist-electron/\nmain · services · ipc")
+        D("dist/\nindex.html · assets")
     end
 
-    subgraph PKG["ðŸš€ ÄÃ³ng gÃ³i"]
+    subgraph PKG["🚀 Đóng gói"]
         EB(("electron\nbuilder"))
-        WIN("ðŸªŸ Windows\n.exe / dir")
-        MAC("ðŸŽ macOS\n.dmg arm64")
-        LIN("ðŸ§ Linux\n.AppImage Â· .deb")
+        WIN("🪟 Windows\n.exe / dir")
+        MAC("🍎 macOS\n.dmg arm64")
+        LIN("🐧 Linux\n.AppImage · .deb")
     end
 
     E & S --> TSC --> DE
@@ -237,17 +237,17 @@ flowchart LR
 
 ---
 
-### 2ï¸âƒ£ Kiáº¿n trÃºc Runtime
+### 2️⃣ Kiến trúc Runtime
 
 ```mermaid
 mindmap
-  root((ðŸ–¥ï¸ Deplao))
-    âš™ï¸ Main Process
-      ðŸ“¡ IPC Handlers
-        login Â· zalo Â· crm
-        workflow Â· erp Â· sync
-        facebook Â· relay Â· file
-      ðŸ”§ Services
+  root((🖥️ Deplao))
+    ⚙️ Main Process
+      📡 IPC Handlers
+        login · zalo · crm
+        workflow · erp · sync
+        facebook · relay · file
+      🔧 Services
         DatabaseService
         WorkspaceManager
         WorkflowEngine
@@ -255,58 +255,58 @@ mindmap
         HttpConnectionManager
         FileStorageService
         AIAssistantService
-    ðŸŽ¨ Renderer
-      âš›ï¸ React Pages
+    🎨 Renderer
+      ⚛️ React Pages
         Dashboard
         Chat & Inbox
         CRM & Campaign
         Workflow Editor
-        POS & TÃ­ch há»£p
-        ERP Â· Settings
-      ðŸ—ƒï¸ Zustand State
+        POS & Tích hợp
+        ERP · Settings
+      🗃️ Zustand State
         accountStore
         chatStore
         workspaceStore
         employeeStore
-    ðŸ“± Giao thá»©c Zalo
+    📱 Giao thức Zalo
       zca-js
         QR Login
         Cookie Session
         WebSocket realtime
-    ðŸŒ External APIs
-      OpenAI Â· Google Sheets
-      Telegram Â· Discord
-      KiotViet Â· Haravan Â· Sapo
-      GHN Â· GHTK
+    🌐 External APIs
+      OpenAI · Google Sheets
+      Telegram · Discord
+      KiotViet · Haravan · Sapo
+      GHN · GHTK
 ```
 
 ---
 
-### 3ï¸âƒ£ MÃ´ hÃ¬nh Boss â†” NhÃ¢n viÃªn (REST API)
+### 3️⃣ Mô hình Boss ↔ Nhân viên (REST API)
 
 ```mermaid
 flowchart TB
-    subgraph BOSS["ðŸ–¥ï¸ MÃ¡y BOSS - Local Workspace"]
-        BZ("ðŸ“± Zalo / FB\nAccounts")
-        BSV("ðŸ”§ Services\nCRM Â· ERP Â· AI Â· Workflow Â· Library")
-        BSD[("ðŸ—„ï¸ SQLite DB\n+ Media Files")]
-        BRL("ðŸ” Relay Server\nHTTP REST + Socket.IO :9900")
-        BRS("ðŸ“¡ REST API Handlers\n/api/query | /api/command\n/api/library | /api/media")
+    subgraph BOSS["🖥️ Máy BOSS - Local Workspace"]
+        BZ("📱 Zalo / FB\nAccounts")
+        BSV("🔧 Services\nCRM · ERP · AI · Workflow · Library")
+        BSD[("🗄️ SQLite DB\n+ Media Files")]
+        BRL("🔁 Relay Server\nHTTP REST + Socket.IO :9900")
+        BRS("📡 REST API Handlers\n/api/query | /api/command\n/api/library | /api/media")
     end
 
-    subgraph NET["ðŸŒ Káº¿t ná»‘i"]
-        LAN("ðŸ  LAN\n192.168.x.x:9900")
-        WAN("ðŸŒ Tunnel / VPN\ntruy cáº­p tá»« xa")
+    subgraph NET["🌐 Kết nối"]
+        LAN("🏠 LAN\n192.168.x.x:9900")
+        WAN("🌍 Tunnel / VPN\ntruy cập từ xa")
     end
 
-    subgraph EMP["ðŸ’» NhÃ¢n ViÃªn - Remote Workspace"]
-        EA("ðŸ“² Deplao App\nEmployee Mode")
-        DA("ðŸ”€ DataAccessor\ntá»± Ä‘á»™ng routing")
-        RQ("ðŸŒ RestQueryService\nHTTP REST client")
-        EP("ðŸ” Permission Filter\nerp Â· crm Â· workflow Â· ...")
-        EU("ðŸ‘ï¸ UI\nchá»‰ tháº¥y TK Ä‘Æ°á»£c gÃ¡n")
-        MC("ðŸ“¦ Media Cache\nworkspace â†’ Boss â†’ CDN")
-        EC("âš¡ Employee Cache\nconversations Â· messages Â· labels")
+    subgraph EMP["💻 Nhân Viên - Remote Workspace"]
+        EA("📲 Deplao App\nEmployee Mode")
+        DA("🔀 DataAccessor\ntự động routing")
+        RQ("🌐 RestQueryService\nHTTP REST client")
+        EP("🔐 Permission Filter\nerp · crm · workflow · ...")
+        EU("👁️ UI\nchỉ thấy TK được gán")
+        MC("📦 Media Cache\nworkspace → Boss → CDN")
+        EC("⚡ Employee Cache\nconversations · messages · labels")
     end
 
     BZ --> BSV
@@ -316,252 +316,252 @@ flowchart TB
     BRL <-->|HTTP REST + Socket.IO| LAN & WAN
     LAN <-->|HTTP fetch| RQ
     WAN <-->|HTTP fetch| RQ
-    RQ -->|/api/query Â· /api/command| BRS
+    RQ -->|/api/query · /api/command| BRS
     RQ -->|/api/media| MC
     RQ -->|/api/library| BSV
-    EA --> DA -->|boss mode â†’ IPC| EU
-    DA -->|employee â†’ REST| RQ
+    EA --> DA -->|boss mode → IPC| EU
+    DA -->|employee → REST| RQ
     EA --> EP --> EU
     EA --> EC
     EA --> MC
 ```
 
-> **Kiáº¿n trÃºc má»›i tá»« v26.7.4:** Employee gá»i dá»¯ liá»‡u qua **REST API** (HTTP fetch â†’ Boss) thay vÃ¬ sync toÃ n bá»™ DB nhÆ° trÆ°á»›c. DataAccessor tá»± Ä‘á»™ng routing: standalone/boss â†’ IPC trá»±c tiáº¿p, employee â†’ RestQueryService â†’ Boss. Socket.IO thay SSE cho realtime event á»•n Ä‘á»‹nh hÆ¡n. Media Ä‘Æ°á»£c cache local vá»›i cascade workspace â†’ Boss â†’ CDN. Employee váº«n cÃ³ workspace riÃªng, nhÆ°ng khÃ´ng cáº§n sync hÃ ng GB khi vÃ o app.
+> **Kiến trúc mới từ v26.7.3:** Employee gọi dữ liệu qua **REST API** (HTTP fetch → Boss) thay vì sync toàn bộ DB như trước. DataAccessor tự động routing: standalone/boss → IPC trực tiếp, employee → RestQueryService → Boss. Socket.IO thay SSE cho realtime event ổn định hơn. Media được cache local với cascade workspace → Boss → CDN. Employee vẫn có workspace riêng, nhưng không cần sync hàng GB khi vào app.
 
 ---
 
-### 4ï¸âƒ£ Äa tÃ i khoáº£n & LÆ°u trá»¯
+### 4️⃣ Đa tài khoản & Lưu trữ
 
 ```mermaid
 flowchart LR
-    subgraph ACCS["ðŸ‘¤ TÃ i khoáº£n"]
+    subgraph ACCS["👤 Tài khoản"]
         Z1("Zalo #1\nzca-js")
         Z2("Zalo #2\nzca-js")
         ZN("Zalo #N\nzca-js")
         FB("Facebook\nGraph API")
     end
 
-    subgraph STORE["ðŸ’¾ LÆ°u trá»¯ cá»¥c bá»™"]
-        DB[("ðŸ—„ï¸ SQLite\ndeplao-tool.db\nmessages Â· contacts\ncrm Â· workflow Â· erp")]
-        MED("ðŸ“ FileStorage\n~/media/\náº£nh Â· video Â· file")
-        ES("ðŸ”‘ electron-store\ncookies Â· tokens\nsettings")
+    subgraph STORE["💾 Lưu trữ cục bộ"]
+        DB[("🗄️ SQLite\ndeplao-tool.db\nmessages · contacts\ncrm · workflow · erp")]
+        MED("📁 FileStorage\n~/media/\nảnh · video · file")
+        ES("🔑 electron-store\ncookies · tokens\nsettings")
     end
 
-    subgraph WS["ðŸ—‚ï¸ Workspace Manager"]
-        WA("ðŸ  Local WS\nDefault")
-        WB("ðŸŒ Remote WS\nBoss")
-        WC("âš™ï¸ Custom WS\npath tuá»³ chá»‰nh")
+    subgraph WS["🗂️ Workspace Manager"]
+        WA("🏠 Local WS\nDefault")
+        WB("🌐 Remote WS\nBoss")
+        WC("⚙️ Custom WS\npath tuỳ chỉnh")
     end
 
-    Z1 & Z2 & ZN & FB -->|"tin nháº¯n Â· danh báº¡"| DB
-    Z1 & Z2 & ZN & FB -->|"áº£nh Â· video Â· file"| MED
+    Z1 & Z2 & ZN & FB -->|"tin nhắn · danh bạ"| DB
+    Z1 & Z2 & ZN & FB -->|"ảnh · video · file"| MED
     ES -->|"cookie session"| Z1 & Z2 & ZN
     DB & ES <-->|"path resolve\nswitch workspace"| WS
-    WA & WB & WC -.-|"má»—i WS = DB riÃªng"| DB
+    WA & WB & WC -.-|"mỗi WS = DB riêng"| DB
 ```
 
-> Má»—i **Workspace** cÃ³ DB + media folder Ä‘á»™c láº­p - Ä‘á»•i hoáº·c di chuyá»ƒn sang á»• Ä‘Ä©a khÃ¡c khÃ´ng máº¥t dá»¯ liá»‡u.
+> Mỗi **Workspace** có DB + media folder độc lập - đổi hoặc di chuyển sang ổ đĩa khác không mất dữ liệu.
 
 ---
 
 
-## ðŸš€ Deplao lÃ  gÃ¬?
+## 🚀 Deplao là gì?
 
 
-Náº¿u nhÃ¬n nhanh, cÃ³ thá»ƒ hiá»ƒu Deplao lÃ :
+Nếu nhìn nhanh, có thể hiểu Deplao là:
 
-- **trung tÃ¢m váº­n hÃ nh Zalo**: nhiá»u tÃ i khoáº£n, inbox táº­p trung, tráº£ lá»i nhanh
-- **lá»›p quáº£n lÃ½ khÃ¡ch hÃ ng**: CRM, nhÃ£n, lá»‹ch sá»­ tÆ°Æ¡ng tÃ¡c, campaign
-- **lá»›p tá»± Ä‘á»™ng hÃ³a**: workflow, AI, trigger vÃ  action cháº¡y ná»n
-- **lá»›p káº¿t ná»‘i kinh doanh**: POS, váº­n chuyá»ƒn, API vÃ  cÃ´ng cá»¥ ngoÃ i
-- **lá»›p quáº£n trá»‹ ná»™i bá»™**: bÃ¡o cÃ¡o, ERP, phÃ¢n quyá»n, workspace nhÃ¢n viÃªn
-
-
-## âœ¨ Äiá»ƒm ná»•i báº­t
-
-- ðŸ‘¤ **Äa tÃ i khoáº£n Zalo** - Ä‘Äƒng nháº­p khÃ´ng giá»›i háº¡n tÃ i khoáº£n, chuyá»ƒn Ä‘á»•i qua láº¡i nhanh
-- ðŸ’¬ **Há»™p thÆ° táº­p trung** - cháº¿ Ä‘á»™ gá»™p tÃ i khoáº£n giÃºp gom vÃ  xá»­ lÃ½ há»™i thoáº¡i tá»« nhiá»u tÃ i khoáº£n trong má»™t giao diá»‡n duy nháº¥t
-- ðŸ‘¥ **CRM & Campaign** - quáº£n lÃ½ liÃªn há»‡, nhÃ£n, ghi chÃº ná»™i bá»™, chÄƒm sÃ³c khÃ¡ch cÅ©. QuÃ©t thÃ nh viÃªn nhÃ³m áº©n, nhÃ³m chÆ°a tham gia Ä‘á»ƒ tÃ¬m khÃ¡ch má»›i.
-- âš™ï¸ **Workflow tá»± Ä‘á»™ng hÃ³a** - kÃ©o-tháº£ Trigger â†’ Node â†’ Action hoáº·c dÃ¹ng AI táº¡o quy trÃ¬nh, cháº¡y ná»n 24/7 khÃ´ng cáº§n code
-- ðŸ¤– **AI Assistant** - há»— trá»£ gá»£i Ã½ cÃ¢u tráº£ lá»i, chat trá»±c tiáº¿p trong há»™i thoáº¡i. CÃ²n giÃºp phÃ¢n loáº¡i tin nháº¯n, tráº£ lá»i khÃ¡ch hÃ ng 24/7.
-- ðŸ”— **TÃ­ch há»£p ngoÃ i** - POS, váº­n chuyá»ƒn, thanh toÃ¡n, Google Sheets, Telegram, Discord, Email, HTTP Request... Káº¿t há»£p sá»­ dá»¥ng khi chat hoáº·c workflow
-- ðŸ“ˆ **BÃ¡o cÃ¡o & phÃ¢n tÃ­ch** - theo dÃµi tin nháº¯n, liÃªn há»‡, nhÃ£n, nhÃ¢n viÃªn, chiáº¿n dá»‹ch, workflow, AI.
-- ðŸ—‚ï¸ **ERP ná»™i bá»™** - task, lá»‹ch lÃ m viá»‡c, notes vÃ  phá»‘i há»£p váº­n hÃ nh ná»™i bá»™ ngay trong cÃ¹ng há»‡ thá»‘ng
-- ðŸ§‘â€ðŸ’¼ **Workspace boss â†” nhÃ¢n viÃªn** - káº¿t ná»‘i qua **LAN hoáº·c WAN** (Cloudflare Tunnel), phÃ¢n quyá»n chi tiáº¿t vÃ  theo dÃµi hiá»‡u suáº¥t tá»«ng nhÃ¢n viÃªn
-- ðŸ”’ **Proxy per-account** - gÃ¡n Proxy riÃªng cho tá»«ng tÃ i khoáº£n Zalo trÆ°á»›c khi Ä‘Äƒng nháº­p
-- ðŸ” **Dá»¯ liá»‡u lÆ°u cá»¥c bá»™** - Æ°u tiÃªn quyá»n kiá»ƒm soÃ¡t dá»¯ liá»‡u vÃ  báº£o máº­t trÃªn mÃ¡y ngÆ°á»i dÃ¹ng
+- **trung tâm vận hành Zalo**: nhiều tài khoản, inbox tập trung, trả lời nhanh
+- **lớp quản lý khách hàng**: CRM, nhãn, lịch sử tương tác, campaign
+- **lớp tự động hóa**: workflow, AI, trigger và action chạy nền
+- **lớp kết nối kinh doanh**: POS, vận chuyển, API và công cụ ngoài
+- **lớp quản trị nội bộ**: báo cáo, ERP, phân quyền, workspace nhân viên
 
 
-### Xem nhanh giao diá»‡n Deplao
+## ✨ Điểm nổi bật
 
-CÃ¡c mÃ n hÃ¬nh dÆ°á»›i Ä‘Ã¢y Ä‘Æ°á»£c sáº¯p theo luá»“ng sá»­ dá»¥ng thá»±c táº¿: tá»« dashboard â†’ chat â†’ CRM â†’ workflow â†’ POS / bÃ¡o cÃ¡o / ERP.
+- 👤 **Đa tài khoản Zalo** - đăng nhập không giới hạn tài khoản, chuyển đổi qua lại nhanh
+- 💬 **Hộp thư tập trung** - chế độ gộp tài khoản giúp gom và xử lý hội thoại từ nhiều tài khoản trong một giao diện duy nhất
+- 👥 **CRM & Campaign** - quản lý liên hệ, nhãn, ghi chú nội bộ, chăm sóc khách cũ. Quét thành viên nhóm ẩn, nhóm chưa tham gia để tìm khách mới.
+- ⚙️ **Workflow tự động hóa** - kéo-thả Trigger → Node → Action hoặc dùng AI tạo quy trình, chạy nền 24/7 không cần code
+- 🤖 **AI Assistant** - hỗ trợ gợi ý câu trả lời, chat trực tiếp trong hội thoại. Còn giúp phân loại tin nhắn, trả lời khách hàng 24/7.
+- 🔗 **Tích hợp ngoài** - POS, vận chuyển, thanh toán, Google Sheets, Telegram, Discord, Email, HTTP Request... Kết hợp sử dụng khi chat hoặc workflow
+- 📈 **Báo cáo & phân tích** - theo dõi tin nhắn, liên hệ, nhãn, nhân viên, chiến dịch, workflow, AI.
+- 🗂️ **ERP nội bộ** - task, lịch làm việc, notes và phối hợp vận hành nội bộ ngay trong cùng hệ thống
+- 🧑‍💼 **Workspace boss ↔ nhân viên** - kết nối qua **LAN hoặc WAN** (Cloudflare Tunnel), phân quyền chi tiết và theo dõi hiệu suất từng nhân viên
+- 🔒 **Proxy per-account** - gán Proxy riêng cho từng tài khoản Zalo trước khi đăng nhập
+- 🔐 **Dữ liệu lưu cục bộ** - ưu tiên quyền kiểm soát dữ liệu và bảo mật trên máy người dùng
+
+
+### Xem nhanh giao diện Deplao
+
+Các màn hình dưới đây được sắp theo luồng sử dụng thực tế: từ dashboard → chat → CRM → workflow → POS / báo cáo / ERP.
 
 <table>
   <tr>
     <td>
-      <img src="./assets/dashboard.png" alt="Dashboard quáº£n lÃ½ Ä‘a tÃ i khoáº£n Zalo trong Deplao" width="360" />
+      <img src="./assets/dashboard.png" alt="Dashboard quản lý đa tài khoản Zalo trong Deplao" width="360" />
       <br />
-      <sub><strong>Dashboard Ä‘a tÃ i khoáº£n</strong></sub>
+      <sub><strong>Dashboard đa tài khoản</strong></sub>
     </td>
     <td>
-      <img src="./assets/chat.png" alt="Giao diá»‡n chat táº­p trung trong Deplao" width="360" />
+      <img src="./assets/chat.png" alt="Giao diện chat tập trung trong Deplao" width="360" />
       <br />
-      <sub><strong>Chat táº­p trung tÃ­ch há»£p AI gá»£i Ã½ tráº£ lá»i</strong></sub>
+      <sub><strong>Chat tập trung tích hợp AI gợi ý trả lời</strong></sub>
     </td>
     <td>
-      <img src="./assets/crm.png" alt="MÃ n hÃ¬nh CRM vÃ  quáº£n lÃ½ liÃªn há»‡ trong Deplao" width="360" />
+      <img src="./assets/crm.png" alt="Màn hình CRM và quản lý liên hệ trong Deplao" width="360" />
       <br />
-      <sub><strong>CRM & liÃªn há»‡</strong></sub>
+      <sub><strong>CRM & liên hệ</strong></sub>
     </td>
   </tr>
   <tr>
     <td>
-      <img src="./assets/scan-members-group.png" alt="QuÃ©t thÃ nh viÃªn nhÃ³m Zalo trong Deplao" width="360" />
+      <img src="./assets/scan-members-group.png" alt="Quét thành viên nhóm Zalo trong Deplao" width="360" />
       <br />
-      <sub><strong>QuÃ©t thÃ nh viÃªn nhÃ³m</strong></sub>
+      <sub><strong>Quét thành viên nhóm</strong></sub>
     </td>
     <td>
-      <img src="./assets/campaign.png" alt="Chiáº¿n dá»‹ch gá»­i tin hÃ ng loáº¡t trong Deplao" width="360" />
+      <img src="./assets/campaign.png" alt="Chiến dịch gửi tin hàng loạt trong Deplao" width="360" />
       <br />
-      <sub><strong>Chiáº¿n dá»‹ch gá»­i tin hÃ ng loáº¡t</strong></sub>
+      <sub><strong>Chiến dịch gửi tin hàng loạt</strong></sub>
     </td>
     <td>
-      <img src="./assets/workflow.png" alt="TrÃ¬nh thiáº¿t káº¿ workflow kÃ©o tháº£ trong Deplao" width="360" />
+      <img src="./assets/workflow.png" alt="Trình thiết kế workflow kéo thả trong Deplao" width="360" />
       <br />
       <sub><strong>Workflow editor</strong></sub>
     </td>
   </tr>
   <tr>
     <td>
-      <img src="./assets/detail-workflow.png" alt="Chi tiáº¿t cáº¥u hÃ¬nh workflow trong Deplao" width="360" />
+      <img src="./assets/detail-workflow.png" alt="Chi tiết cấu hình workflow trong Deplao" width="360" />
       <br />
-      <sub><strong>Chi tiáº¿t workflow</strong></sub>
+      <sub><strong>Chi tiết workflow</strong></sub>
     </td>
     <td>
-      <img src="./assets/workflow-ai.png" alt="Workflow káº¿t há»£p AI trong Deplao" width="360" />
+      <img src="./assets/workflow-ai.png" alt="Workflow kết hợp AI trong Deplao" width="360" />
       <br />
-      <sub><strong>Ra lá»‡nh táº¡o Workflow báº±ng AI</strong></sub>
+      <sub><strong>Ra lệnh tạo Workflow bằng AI</strong></sub>
     </td>
     <td>
-      <img src="./assets/pos.png" alt="TÃ­ch há»£p POS vÃ  bÃ¡n hÃ ng trong Deplao" width="360" />
+      <img src="./assets/pos.png" alt="Tích hợp POS và bán hàng trong Deplao" width="360" />
       <br />
-      <sub><strong>TÃ­ch há»£p POS, VC, Thanh toÃ¡n</strong></sub>
+      <sub><strong>Tích hợp POS, VC, Thanh toán</strong></sub>
     </td>
   </tr>
   <tr>
     <td>
-      <img src="./assets/report.jpg" alt="BÃ¡o cÃ¡o vÃ  phÃ¢n tÃ­ch hiá»‡u suáº¥t trong Deplao" width="360" />
+      <img src="./assets/report.jpg" alt="Báo cáo và phân tích hiệu suất trong Deplao" width="360" />
       <br />
-      <sub><strong>BÃ¡o cÃ¡o & phÃ¢n tÃ­ch</strong></sub>
+      <sub><strong>Báo cáo & phân tích</strong></sub>
     </td>
     <td>
-      <img src="./assets/report-employee.png" alt="BÃ¡o cÃ¡o hiá»‡u suáº¥t nhÃ¢n viÃªn trong Deplao" width="360" />
+      <img src="./assets/report-employee.png" alt="Báo cáo hiệu suất nhân viên trong Deplao" width="360" />
       <br />
-      <sub><strong>BÃ¡o cÃ¡o nhÃ¢n viÃªn</strong></sub>
+      <sub><strong>Báo cáo nhân viên</strong></sub>
     </td>
     <td>
-      <img src="./assets/erp.png" alt="ERP ná»™i bá»™ vÃ  phá»‘i há»£p váº­n hÃ nh trong Deplao" width="360" />
+      <img src="./assets/erp.png" alt="ERP nội bộ và phối hợp vận hành trong Deplao" width="360" />
       <br />
-      <sub><strong>ERP ná»™i bá»™</strong></sub>
+      <sub><strong>ERP nội bộ</strong></sub>
     </td>
   </tr>
 </table>
 
-## ðŸŽ¯ PhÃ¹ há»£p vá»›i ai?
+## 🎯 Phù hợp với ai?
 
-Deplao phÃ¹ há»£p cho:
+Deplao phù hợp cho:
 
-- shop online vÃ  Ä‘á»™i ngÅ© chá»‘t Ä‘Æ¡n qua Zalo
-- doanh nghiá»‡p SME cáº§n nhiá»u nhÃ¢n viÃªn xá»­ lÃ½ inbox cÃ¹ng lÃºc
-- marketing agency hoáº·c freelancer quáº£n lÃ½ nhiá»u tÃ i khoáº£n khÃ¡ch hÃ ng
-- spa, phÃ²ng khÃ¡m, giÃ¡o dá»¥c, F&B vÃ  cÃ¡c mÃ´ hÃ¬nh cáº§n chÄƒm sÃ³c khÃ¡ch hÃ ng Ä‘á»‹nh ká»³
-- Ä‘á»™i nhÃ³m muá»‘n káº¿t há»£p chat, CRM, workflow, AI vÃ  ERP trong má»™t desktop app duy nháº¥t
+- shop online và đội ngũ chốt đơn qua Zalo
+- doanh nghiệp SME cần nhiều nhân viên xử lý inbox cùng lúc
+- marketing agency hoặc freelancer quản lý nhiều tài khoản khách hàng
+- spa, phòng khám, giáo dục, F&B và các mô hình cần chăm sóc khách hàng định kỳ
+- đội nhóm muốn kết hợp chat, CRM, workflow, AI và ERP trong một desktop app duy nhất
 
-## ðŸ§© CÃ¡c nhÃ³m tÃ­nh nÄƒng chÃ­nh
+## 🧩 Các nhóm tính năng chính
 
-### 1) Quáº£n lÃ½ Ä‘a tÃ i khoáº£n & inbox táº­p trung
-- Ä‘Äƒng nháº­p nhiá»u tÃ i khoáº£n Zalo báº±ng QR Code, Facebook báº±ng tÃ i khoáº£n hoáº·c cookie
-- dashboard quáº£n lÃ½ tÃ i khoáº£n trá»±c quan
-- gá»™p nhiá»u tÃ i khoáº£n vÃ o má»™t inbox há»£p nháº¥t
-- tÃ¬m kiáº¿m theo tÃªn, biá»‡t danh, sá»‘ Ä‘iá»‡n thoáº¡i
-- lá»c nhanh theo chÆ°a Ä‘á»c, chÆ°a tráº£ lá»i, nhÃ£n vÃ  tráº¡ng thÃ¡i há»™i thoáº¡i
-- **proxy per-account**: gÃ¡n Proxy riÃªng cho tá»«ng tÃ i khoáº£n Zalo
+### 1) Quản lý đa tài khoản & inbox tập trung
+- đăng nhập nhiều tài khoản Zalo bằng QR Code, Facebook bằng tài khoản hoặc cookie
+- dashboard quản lý tài khoản trực quan
+- gộp nhiều tài khoản vào một inbox hợp nhất
+- tìm kiếm theo tên, biệt danh, số điện thoại
+- lọc nhanh theo chưa đọc, chưa trả lời, nhãn và trạng thái hội thoại
+- **proxy per-account**: gán Proxy riêng cho từng tài khoản Zalo
 
-### 2) Chat Ä‘áº§y Ä‘á»§ tÃ­nh nÄƒng
-- gá»­i tin nháº¯n vÄƒn báº£n, áº£nh, video, file
-- emoji, sticker, reply, tag thÃ nh viÃªn
-- poll, ghi chÃº nhÃ³m, nháº¯c nhá»Ÿ, gá»­i danh thiáº¿p
-- quick messages Ä‘á»ƒ lÆ°u máº«u tin vÃ  gá»i nhanh báº±ng tá»« khÃ³a
-- ghim tin nháº¯n khÃ´ng giá»›i háº¡n, quáº£n lÃ½ media vÃ  file Ä‘Ã­nh kÃ¨m
+### 2) Chat đầy đủ tính năng
+- gửi tin nhắn văn bản, ảnh, video, file
+- emoji, sticker, reply, tag thành viên
+- poll, ghi chú nhóm, nhắc nhở, gửi danh thiếp
+- quick messages để lưu mẫu tin và gọi nhanh bằng từ khóa
+- ghim tin nhắn không giới hạn, quản lý media và file đính kèm
 
-### 3) CRM & chÄƒm sÃ³c khÃ¡ch hÃ ng
-- Ä‘á»“ng bá»™ báº¡n bÃ¨, thÃ nh viÃªn nhÃ³m vÃ  há»“ sÆ¡ liÃªn há»‡
-- lÆ°u sá»‘ Ä‘iá»‡n thoáº¡i, giá»›i tÃ­nh, ngÃ y sinh, ghi chÃº ná»™i bá»™
-- táº¡o vÃ  quáº£n lÃ½ nhÃ£n Zalo hai chiá»u
-- lá»c liÃªn há»‡ theo nhiá»u tiÃªu chÃ­ Ä‘á»ƒ chÄƒm sÃ³c Ä‘Ãºng nhÃ³m khÃ¡ch hÃ ng
-- táº¡o campaign gá»­i tin, káº¿t báº¡n, má»i vÃ o nhÃ³m vá»›i tiáº¿n Ä‘á»™ realtime
+### 3) CRM & chăm sóc khách hàng
+- đồng bộ bạn bè, thành viên nhóm và hồ sơ liên hệ
+- lưu số điện thoại, giới tính, ngày sinh, ghi chú nội bộ
+- tạo và quản lý nhãn Zalo hai chiều
+- lọc liên hệ theo nhiều tiêu chí để chăm sóc đúng nhóm khách hàng
+- tạo campaign gửi tin, kết bạn, mời vào nhóm với tiến độ realtime
 
-### 4) Workflow tá»± Ä‘á»™ng hÃ³a
-- workflow kÃ©o-tháº£ khÃ´ng cáº§n code
-- tÃ­ch há»£p trá»£ lÃ½ AI táº¡o node vÃ  workflow báº±ng cÃ¢u lá»‡nh (xem má»¥c 7)
-- há»— trá»£ trigger tá»« tin nháº¯n, nhÃ£n, react, lá»‹ch cron, sá»± kiá»‡n nhÃ³m...
-- action gá»­i tin, gá»­i áº£nh/file, tÃ¬m user, quáº£n lÃ½ nhÃ³m, mute, forward, recall...
-- tÃ­ch há»£p logic, Google Sheets, AI, Telegram, Discord, Email, Notion vÃ  HTTP Request
-- cÃ³ lá»‹ch sá»­ cháº¡y Ä‘á»ƒ kiá»ƒm tra vÃ  debug dá»… dÃ ng
+### 4) Workflow tự động hóa
+- workflow kéo-thả không cần code
+- tích hợp trợ lý AI tạo node và workflow bằng câu lệnh (xem mục 7)
+- hỗ trợ trigger từ tin nhắn, nhãn, react, lịch cron, sự kiện nhóm...
+- action gửi tin, gửi ảnh/file, tìm user, quản lý nhóm, mute, forward, recall...
+- tích hợp logic, Google Sheets, AI, Telegram, Discord, Email, Notion và HTTP Request
+- có lịch sử chạy để kiểm tra và debug dễ dàng
 
-### 5) TÃ­ch há»£p phá»¥c vá»¥ bÃ¡n hÃ ng
+### 5) Tích hợp phục vụ bán hàng
 - POS: KiotViet, Haravan, Sapo, Nhanh.vn, Pancake POS
-- váº­n chuyá»ƒn: GHN, GHTK
-- AI Assistant gá»£i Ã½ tráº£ lá»i, há»i Ä‘Ã¡p trá»±c tiáº¿p trong há»™i thoáº¡i (xem má»¥c 7)
-- dá»… káº¿t há»£p thÃ nh quy trÃ¬nh bÃ¡n hÃ ng vÃ  chÄƒm sÃ³c khÃ¡ch hÃ ng khÃ©p kÃ­n
+- vận chuyển: GHN, GHTK
+- AI Assistant gợi ý trả lời, hỏi đáp trực tiếp trong hội thoại (xem mục 7)
+- dễ kết hợp thành quy trình bán hàng và chăm sóc khách hàng khép kín
 
-### 6) BÃ¡o cÃ¡o, ERP vÃ  nhÃ¢n viÃªn
-- bÃ¡o cÃ¡o tin nháº¯n, liÃªn há»‡, chiáº¿n dá»‹ch, workflow, AI, nhÃ¢n viÃªn
-- ERP ná»™i bá»™ gá»“m Task, Calendar, Notes
-- mÃ´ hÃ¬nh boss â†” nhÃ¢n viÃªn vÃ  phÃ¢n quyá»n module
-- há»— trá»£ theo dÃµi hiá»‡u suáº¥t lÃ m viá»‡c theo tá»«ng ngÆ°á»i vÃ  tá»«ng giai Ä‘oáº¡n
+### 6) Báo cáo, ERP và nhân viên
+- báo cáo tin nhắn, liên hệ, chiến dịch, workflow, AI, nhân viên
+- ERP nội bộ gồm Task, Calendar, Notes
+- mô hình boss ↔ nhân viên và phân quyền module
+- hỗ trợ theo dõi hiệu suất làm việc theo từng người và từng giai đoạn
 
-### 7) ðŸ¤– Trá»£ lÃ½ AI (AI Assistant)
-- gá»£i Ã½ tráº£ lá»i thÃ´ng minh trong há»™i thoáº¡i Zalo vÃ  Facebook
-- há»i Ä‘Ã¡p trá»±c tiáº¿p vá»›i AI ngay trong khung chat
-- táº¡o workflow tá»± Ä‘á»™ng báº±ng cÃ¢u lá»‡nh tiáº¿ng Viá»‡t mÃ  khÃ´ng cáº§n kÃ©o-tháº£
-- dÃ¹ng node AI trong workflow Ä‘á»ƒ xÃ¢y dá»±ng chatbot tráº£ lá»i tá»± Ä‘á»™ng 24/7
-- há»— trá»£ Ä‘a ná»n táº£ng AI: OpenAI, Claude, Gemini vÃ  9router (AI gateway local)
+### 7) 🤖 Trợ lý AI (AI Assistant)
+- gợi ý trả lời thông minh trong hội thoại Zalo và Facebook
+- hỏi đáp trực tiếp với AI ngay trong khung chat
+- tạo workflow tự động bằng câu lệnh tiếng Việt mà không cần kéo-thả
+- dùng node AI trong workflow để xây dựng chatbot trả lời tự động 24/7
+- hỗ trợ đa nền tảng AI: OpenAI, Claude, Gemini và 9router (AI gateway local)
 
-## ðŸ”’ Báº£o máº­t & dá»¯ liá»‡u
+## 🔒 Bảo mật & dữ liệu
 
-Deplao Æ°u tiÃªn kiáº¿n trÃºc cháº¡y cá»¥c bá»™ trÃªn mÃ¡y ngÆ°á»i dÃ¹ng:
+Deplao ưu tiên kiến trúc chạy cục bộ trên máy người dùng:
 
-- táº¥t cáº£ dá»¯ liá»‡u tin nháº¯n, danh báº¡, CRM, cÃ i Ä‘áº·t vÃ  media Ä‘Æ°á»£c lÆ°u trÃªn mÃ¡y
-- Ä‘Äƒng nháº­p báº±ng QR Code, khÃ´ng yÃªu cáº§u lÆ°u máº­t kháº©u Zalo, Cookie Ä‘Æ°á»£c mÃ£ hÃ³a lÆ°u trÃªn mÃ¡y
-- ngÆ°á»i dÃ¹ng cÃ³ thá»ƒ Ä‘á»•i thÆ° má»¥c lÆ°u trá»¯ dá»¯ liá»‡u sang á»• Ä‘Ä©a khÃ¡c khi cáº§n
-- phÃ¹ há»£p vá»›i Ä‘á»™i nhÃ³m muá»‘n kiá»ƒm soÃ¡t dá»¯ liá»‡u ná»™i bá»™ cháº·t cháº½ hÆ¡n
+- tất cả dữ liệu tin nhắn, danh bạ, CRM, cài đặt và media được lưu trên máy
+- đăng nhập bằng QR Code, không yêu cầu lưu mật khẩu Zalo, Cookie được mã hóa lưu trên máy
+- người dùng có thể đổi thư mục lưu trữ dữ liệu sang ổ đĩa khác khi cần
+- phù hợp với đội nhóm muốn kiểm soát dữ liệu nội bộ chặt chẽ hơn
 
-## ðŸ’» YÃªu cáº§u váº­n hÃ nh
+## 💻 Yêu cầu vận hành
 
-- káº¿t ná»‘i Internet 24/7 á»•n Ä‘á»‹nh Ä‘á»ƒ Ä‘á»“ng bá»™ há»™i thoáº¡i vÃ  automation
-- nÃªn Ä‘á»ƒ app hoáº¡t Ä‘á»™ng liÃªn tá»¥c náº¿u dÃ¹ng workflow hoáº·c váº­n hÃ nh Ä‘á»™i nhÃ³m
+- kết nối Internet 24/7 ổn định để đồng bộ hội thoại và automation
+- nên để app hoạt động liên tục nếu dùng workflow hoặc vận hành đội nhóm
 
 
 ---------------------------------------------------------------------------------------------------------------------------------------------
 
-## ðŸ“£ LiÃªn há»‡
+## 📣 Liên hệ
 
-- BÃ¡o lá»—i, gÃ³p Ã½ hoáº·c cáº§n há»— trá»£: ðŸ‘‰ [Táº¡o issue táº¡i Ä‘Ã¢y](https://github.com/babyvibe/deplao-builder/issues)
+- Báo lỗi, góp ý hoặc cần hỗ trợ: 👉 [Tạo issue tại đây](https://github.com/babyvibe/deplao-builder/issues)
 
-## ðŸ™ Lá»i cáº£m Æ¡n
+## 🙏 Lời cảm ơn
 
-Deplao xin gá»­i lá»i cáº£m Æ¡n Ä‘áº¿n dá»± Ã¡n:
-ðŸ‘‰ https://github.com/RFS-ADRENO/zca-js
-ðŸ‘‰ https://github.com/m008v/fbchat-v2
-Nhá» nhá»¯ng Ä‘Ã³ng gÃ³p vÃ  ná»n táº£ng tá»« dá»± Ã¡n nÃ y ðŸ’™
+Deplao xin gửi lời cảm ơn đến dự án:
+👉 https://github.com/RFS-ADRENO/zca-js
+👉 https://github.com/m008v/fbchat-v2
+Nhờ những đóng góp và nền tảng từ dự án này 💙
 
 ---
 
-## ðŸ“ Giáº¥y phÃ©p
+## 📝 Giấy phép
 
-Dá»± Ã¡n Ä‘Æ°á»£c phÃ¢n phá»‘i dÆ°á»›i giáº¥y phÃ©p **MIT**.
-Xem file [LICENSE](LICENSE) Ä‘á»ƒ biáº¿t thÃªm chi tiáº¿t.
+Dự án được phân phối dưới giấy phép **MIT**.
+Xem file [LICENSE](LICENSE) để biết thêm chi tiết.
 
 ---
 

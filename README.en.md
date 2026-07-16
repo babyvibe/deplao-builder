@@ -2,17 +2,17 @@
 *Website Introduction*:  https://deplaoapp.com/
 
 <p>
-  <strong>ðŸŒ Language:</strong>
-  &nbsp;ðŸ‡»ðŸ‡³ <a href="./README.md">Tiáº¿ng Viá»‡t</a>
+  <strong>🌐 Language:</strong>
+  &nbsp;🇻🇳 <a href="./README.md">Tiếng Việt</a>
   &nbsp;|&nbsp;
-  ðŸ‡¬ðŸ‡§ <strong>English</strong>
+  🇬🇧 <strong>English</strong>
 </p>
 
 ---
 
 > A multi-account Zalo & Facebook desktop app with integrated CRM, ERP, POS, Workflow automation and AI Assistant - helping sales, customer care teams and marketing operate centrally on Zalo and Facebook in one single application.
 
-[![Version](https://img.shields.io/badge/version-26.7.4-22c55e)](#)
+[![Version](https://img.shields.io/badge/version-26.7.3-22c55e)](#)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-3b82f6)](#-runtime-requirements)
 [![Electron](https://img.shields.io/badge/Electron-41-47848f?logo=electron&logoColor=white)](#)
 [![React](https://img.shields.io/badge/React-18-61dafb?logo=react&logoColor=white)](#)
@@ -24,102 +24,102 @@
 [![Support](https://img.shields.io/badge/support-GitHub_Issues-0ea5e9)](https://github.com/babyvibe/deplao-builder/issues)
 
 <p align="center">
-  <a href="#-download">ðŸ“¥ Download</a> &nbsp;|&nbsp;
-  <a href="#-tech-stack">ðŸ› ï¸ Tech Stack</a> &nbsp;|&nbsp;
-  <a href="#installation">ðŸ“¦ Install</a> &nbsp;|&nbsp;
-  <a href="#-core-feature-groups">âœ¨ Features</a> &nbsp;|&nbsp;
-  <a href="#-security-data">ðŸ”’ Security</a> &nbsp;|&nbsp;
-  <a href="#-license">ðŸ“ MIT</a> &nbsp;|&nbsp;
-  <a href="#-contact-support">ðŸ“ž Contact</a>
+  <a href="#-download">📥 Download</a> &nbsp;|&nbsp;
+  <a href="#-tech-stack">🛠️ Tech Stack</a> &nbsp;|&nbsp;
+  <a href="#installation">📦 Install</a> &nbsp;|&nbsp;
+  <a href="#-core-feature-groups">✨ Features</a> &nbsp;|&nbsp;
+  <a href="#-security-data">🔒 Security</a> &nbsp;|&nbsp;
+  <a href="#-license">📝 MIT</a> &nbsp;|&nbsp;
+  <a href="#-contact-support">📞 Contact</a>
 </p>
 
 ---
 
-## â¬‡ï¸ Download
+## ⬇️ Download
 
 <table>
 <tr>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-Setup-26.7.4.exe">
-<img src="https://img.shields.io/badge/ðŸªŸ_Windows_10/11-v26.7.4-0078d4?style=for-the-badge&logo=windows&logoColor=white" alt="Download Windows" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-Setup-26.7.3.exe">
+<img src="https://img.shields.io/badge/🪟_Windows_10/11-v26.7.3-0078d4?style=for-the-badge&logo=windows&logoColor=white" alt="Download Windows" />
 </a>
 
-<big><strong>Deplao-Setup-26.7.4.exe</strong></big>
+<big><strong>Deplao-Setup-26.7.3.exe</strong></big>
 
 </td>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.7.4-arm64.dmg">
-<img src="https://img.shields.io/badge/ðŸŽ_macOS_M1+-v26.7.4-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Apple Silicon" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.7.3-arm64.dmg">
+<img src="https://img.shields.io/badge/🍎_macOS_M1+-v26.7.3-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Apple Silicon" />
 </a>
 
-<big><strong>Deplao-26.7.4-arm64.dmg</strong></big>
+<big><strong>Deplao-26.7.3-arm64.dmg</strong></big>
 
 </td>
 </tr>
 <tr>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.7.4.AppImage">
-<img src="https://img.shields.io/badge/ðŸ§_Ubuntu_Linux-v26.7.4-e95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Download Ubuntu" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.7.3.AppImage">
+<img src="https://img.shields.io/badge/🐧_Ubuntu_Linux-v26.7.3-e95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Download Ubuntu" />
 </a>
 
-<big><strong>Deplao-26.7.4.AppImage</strong></big><br>
+<big><strong>Deplao-26.7.3.AppImage</strong></big><br>
 <big>works on any distro - <code>chmod +x</code> & run</big>
 
 </td>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.7.4.dmg">
-<img src="https://img.shields.io/badge/ðŸŽ_macOS_Intel-v26.7.4-555555?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Intel" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.7.3.dmg">
+<img src="https://img.shields.io/badge/🍎_macOS_Intel-v26.7.3-555555?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Intel" />
 </a>
 
-<big><strong>Deplao-26.7.4.dmg</strong></big>
+<big><strong>Deplao-26.7.3.dmg</strong></big>
 
 </td>
 </tr>
 </table>
 
 <p align="center">
-ðŸ‘‰ <strong><a href="https://github.com/babyvibe/deplao-builder/releases">View all releases</a></strong>
+👉 <strong><a href="https://github.com/babyvibe/deplao-builder/releases">View all releases</a></strong>
 </p>
 
 <details>
-<summary>âš ï¸ Security warning on first launch (blocked by Windows / macOS / Linux)</summary>
+<summary>⚠️ Security warning on first launch (blocked by Windows / macOS / Linux)</summary>
 
 Deplao is not code-signed (we're bootstrapped), so your OS may show a warning when opening the installer.
 
 ---
 
-### ðŸªŸ Windows (.exe)
+### 🪟 Windows (.exe)
 
 Windows may show **"Windows protected your PC"**:
 
-ðŸ‘‰ How to proceed:
+👉 How to proceed:
 1. Click **More info**
 2. Click **Run anyway**
 
 ---
 
-### ðŸŽ macOS (.dmg)
+### 🍎 macOS (.dmg)
 
 macOS may show **"cannot be opened because it is from an unidentified developer"**
 
-ðŸ‘‰ How to proceed:
+👉 How to proceed:
 
 **Option 1:**
-- Right-click the file â†’ **Open**
+- Right-click the file → **Open**
 - Click **Open** again
 
 **Option 2 (if still blocked):**
-1. Go to **System Settings â†’ Privacy & Security**
+1. Go to **System Settings → Privacy & Security**
 2. Scroll down to Security
 3. Click **Open Anyway**
 
 ---
 
-### ðŸ§ Ubuntu Linux (.AppImage)
+### 🐧 Ubuntu Linux (.AppImage)
 
 After downloading the `.AppImage` file:
 
@@ -144,7 +144,7 @@ sudo dpkg -i Deplao_*_amd64.deb
   <img src="./assets/deplao-overview-map.svg" alt="Deplao - centralized desktop workspace for Zalo sales and customer care" width="960" />
 </p>
 
-## ðŸ› ï¸ Tech Stack
+## 🛠️ Tech Stack
 
 - **Core library:** zca-js - https://github.com/RFS-ADRENO/zca-js, fbchat-v2 (Facebook E2EE bridge Go)
 - **AI Gateway:** 9router
@@ -158,35 +158,35 @@ sudo dpkg -i Deplao_*_amd64.deb
 
 ---
 
-## ðŸ—ºï¸ Architecture & Flow Diagrams
+## 🗺️ Architecture & Flow Diagrams
 
 ---
 
-### 1ï¸âƒ£ Build Pipeline
+### 1️⃣ Build Pipeline
 
 ```mermaid
 flowchart LR
-    subgraph SRC["ðŸ“ Source Code"]
-        E("âš¡ electron/\n*.ts")
-        S("ðŸ”§ services/\n*.ts")
-        R("ðŸŽ¨ src/ui/\n*.tsx")
+    subgraph SRC["📁 Source Code"]
+        E("⚡ electron/\n*.ts")
+        S("🔧 services/\n*.ts")
+        R("🎨 src/ui/\n*.tsx")
     end
 
-    subgraph COMPILE["ðŸ”¨ Compile"]
+    subgraph COMPILE["🔨 Compile"]
         TSC("tsc\ntsconfig.electron")
         VITE("vite build\n+ Tailwind CSS")
     end
 
-    subgraph OUT["ðŸ“¦ Output"]
-        DE("dist-electron/\nmain Â· services Â· ipc")
-        D("dist/\nindex.html Â· assets")
+    subgraph OUT["📦 Output"]
+        DE("dist-electron/\nmain · services · ipc")
+        D("dist/\nindex.html · assets")
     end
 
-    subgraph PKG["ðŸš€ Package"]
+    subgraph PKG["🚀 Package"]
         EB(("electron\nbuilder"))
-        WIN("ðŸªŸ Windows\n.exe / dir")
-        MAC("ðŸŽ macOS\n.dmg arm64")
-        LIN("ðŸ§ Linux\n.AppImage Â· .deb")
+        WIN("🪟 Windows\n.exe / dir")
+        MAC("🍎 macOS\n.dmg arm64")
+        LIN("🐧 Linux\n.AppImage · .deb")
     end
 
     E & S --> TSC --> DE
@@ -196,17 +196,17 @@ flowchart LR
 
 ---
 
-### 2ï¸âƒ£ Runtime Architecture
+### 2️⃣ Runtime Architecture
 
 ```mermaid
 mindmap
-  root((ðŸ–¥ï¸ Deplao))
-    âš™ï¸ Main Process
-      ðŸ“¡ IPC Handlers
-        login Â· zalo Â· crm
-        workflow Â· erp Â· sync
-        facebook Â· relay Â· file
-      ðŸ”§ Services
+  root((🖥️ Deplao))
+    ⚙️ Main Process
+      📡 IPC Handlers
+        login · zalo · crm
+        workflow · erp · sync
+        facebook · relay · file
+      🔧 Services
         DatabaseService
         WorkspaceManager
         WorkflowEngine
@@ -214,58 +214,58 @@ mindmap
         HttpConnectionManager
         FileStorageService
         AIAssistantService
-    ðŸŽ¨ Renderer
-      âš›ï¸ React Pages
+    🎨 Renderer
+      ⚛️ React Pages
         Dashboard
         Chat & Inbox
         CRM & Campaign
         Workflow Editor
         POS & Integrations
-        ERP Â· Settings
-      ðŸ—ƒï¸ Zustand State
+        ERP · Settings
+      🗃️ Zustand State
         accountStore
         chatStore
         workspaceStore
         employeeStore
-    ðŸ“± Zalo Protocol
+    📱 Zalo Protocol
       zca-js
         QR Login
         Cookie Session
         WebSocket realtime
-    ðŸŒ External APIs
-      OpenAI Â· Google Sheets
-      Telegram Â· Discord
-      KiotViet Â· Haravan Â· Sapo
-      GHN Â· GHTK
+    🌐 External APIs
+      OpenAI · Google Sheets
+      Telegram · Discord
+      KiotViet · Haravan · Sapo
+      GHN · GHTK
 ```
 
 ---
 
-### 3ï¸âƒ£ Boss â†” Employee Model (REST API)
+### 3️⃣ Boss ↔ Employee Model (REST API)
 
 ```mermaid
 flowchart TB
-    subgraph BOSS["ðŸ–¥ï¸ Boss Machine - Local Workspace"]
-        BZ("ðŸ“± Zalo / FB\nAccounts")
-        BSV("ðŸ”§ Services\nCRM Â· ERP Â· AI Â· Workflow Â· Library")
-        BSD[("ðŸ—„ï¸ SQLite DB\n+ Media Files")]
-        BRL("ðŸ” Relay Server\nHTTP REST + Socket.IO :9900")
-        BRS("ðŸ“¡ REST API Handlers\n/api/query | /api/command\n/api/library | /api/media")
+    subgraph BOSS["🖥️ Boss Machine - Local Workspace"]
+        BZ("📱 Zalo / FB\nAccounts")
+        BSV("🔧 Services\nCRM · ERP · AI · Workflow · Library")
+        BSD[("🗄️ SQLite DB\n+ Media Files")]
+        BRL("🔁 Relay Server\nHTTP REST + Socket.IO :9900")
+        BRS("📡 REST API Handlers\n/api/query | /api/command\n/api/library | /api/media")
     end
 
-    subgraph NET["ðŸŒ Network"]
-        LAN("ðŸ  LAN\n192.168.x.x:9900")
-        WAN("ðŸŒ Tunnel / VPN\nremote access")
+    subgraph NET["🌐 Network"]
+        LAN("🏠 LAN\n192.168.x.x:9900")
+        WAN("🌍 Tunnel / VPN\nremote access")
     end
 
-    subgraph EMP["ðŸ’» Employee Machine - Remote Workspace"]
-        EA("ðŸ“² Deplao App\nEmployee Mode")
-        DA("ðŸ”€ DataAccessor\nauto-routing layer")
-        RQ("ðŸŒ RestQueryService\nHTTP REST client")
-        EP("ðŸ” Permission Filter\nerp Â· crm Â· workflow Â· ...")
-        EU("ðŸ‘ï¸ UI\nassigned accounts only")
-        MC("ðŸ“¦ Media Cache\nworkspace â†’ Boss â†’ CDN")
-        EC("âš¡ Employee Cache\nconversations Â· messages Â· labels")
+    subgraph EMP["💻 Employee Machine - Remote Workspace"]
+        EA("📲 Deplao App\nEmployee Mode")
+        DA("🔀 DataAccessor\nauto-routing layer")
+        RQ("🌐 RestQueryService\nHTTP REST client")
+        EP("🔐 Permission Filter\nerp · crm · workflow · ...")
+        EU("👁️ UI\nassigned accounts only")
+        MC("📦 Media Cache\nworkspace → Boss → CDN")
+        EC("⚡ Employee Cache\nconversations · messages · labels")
     end
 
     BZ --> BSV
@@ -275,45 +275,45 @@ flowchart TB
     BRL <-->|HTTP REST + Socket.IO| LAN & WAN
     LAN <-->|HTTP fetch| RQ
     WAN <-->|HTTP fetch| RQ
-    RQ -->|/api/query Â· /api/command| BRS
+    RQ -->|/api/query · /api/command| BRS
     RQ -->|/api/media| MC
     RQ -->|/api/library| BSV
-    EA --> DA -->|boss mode â†’ IPC| EU
-    DA -->|employee â†’ REST| RQ
+    EA --> DA -->|boss mode → IPC| EU
+    DA -->|employee → REST| RQ
     EA --> EP --> EU
     EA --> EC
     EA --> MC
 ```
 
-> **New architecture since v26.7.4:** Employees fetch data via **REST API** (HTTP fetch â†’ Boss) instead of syncing the entire database as before. DataAccessor auto-routes: standalone/boss â†’ direct IPC, employee â†’ RestQueryService â†’ Boss. Socket.IO replaces SSE for more reliable real-time events. Media is cached locally with a workspace â†’ Boss â†’ CDN cascade. Employees still have their own workspace, but no longer need to sync gigabytes of data when launching the app.
+> **New architecture since v26.7.3:** Employees fetch data via **REST API** (HTTP fetch → Boss) instead of syncing the entire database as before. DataAccessor auto-routes: standalone/boss → direct IPC, employee → RestQueryService → Boss. Socket.IO replaces SSE for more reliable real-time events. Media is cached locally with a workspace → Boss → CDN cascade. Employees still have their own workspace, but no longer need to sync gigabytes of data when launching the app.
 
 ---
 
-### 4ï¸âƒ£ Multi-account & Local Storage
+### 4️⃣ Multi-account & Local Storage
 
 ```mermaid
 flowchart LR
-    subgraph ACCS["ðŸ‘¤ Accounts"]
+    subgraph ACCS["👤 Accounts"]
         Z1("Zalo #1\nzca-js")
         Z2("Zalo #2\nzca-js")
         ZN("Zalo #N\nzca-js")
         FB("Facebook\nGraph API")
     end
 
-    subgraph STORE["ðŸ’¾ Local Storage"]
-        DB[("ðŸ—„ï¸ SQLite\ndeplao-tool.db\nmessages Â· contacts\ncrm Â· workflow Â· erp")]
-        MED("ðŸ“ FileStorage\n~/media/\nimages Â· videos Â· files")
-        ES("ðŸ”‘ electron-store\ncookies Â· tokens\nsettings")
+    subgraph STORE["💾 Local Storage"]
+        DB[("🗄️ SQLite\ndeplao-tool.db\nmessages · contacts\ncrm · workflow · erp")]
+        MED("📁 FileStorage\n~/media/\nimages · videos · files")
+        ES("🔑 electron-store\ncookies · tokens\nsettings")
     end
 
-    subgraph WS["ðŸ—‚ï¸ Workspace Manager"]
-        WA("ðŸ  Local WS\nDefault")
-        WB("ðŸŒ Remote WS\nBoss")
-        WC("âš™ï¸ Custom WS\ncustom path")
+    subgraph WS["🗂️ Workspace Manager"]
+        WA("🏠 Local WS\nDefault")
+        WB("🌐 Remote WS\nBoss")
+        WC("⚙️ Custom WS\ncustom path")
     end
 
-    Z1 & Z2 & ZN & FB -->|"messages Â· contacts"| DB
-    Z1 & Z2 & ZN & FB -->|"images Â· videos Â· files"| MED
+    Z1 & Z2 & ZN & FB -->|"messages · contacts"| DB
+    Z1 & Z2 & ZN & FB -->|"images · videos · files"| MED
     ES -->|"cookie session"| Z1 & Z2 & ZN
     DB & ES <-->|"path resolve\nswitch workspace"| WS
     WA & WB & WC -.-|"each WS = own DB"| DB
@@ -327,7 +327,7 @@ flowchart LR
 ## Installation
 
 <details>
-<summary>ðŸ› ï¸ Build from source</summary>
+<summary>🛠️ Build from source</summary>
 
 ### Requirements
 
@@ -360,7 +360,7 @@ npm run production
 
 </details>
 
-## ðŸš€ What is Deplao?
+## 🚀 What is Deplao?
 
 At a glance, Deplao is:
 
@@ -370,23 +370,23 @@ At a glance, Deplao is:
 - **Business integration layer** - POS, shipping, APIs and external tools
 - **Internal management layer** - reports, ERP, permissions, employee workspaces
 
-## âœ¨ Highlights
+## ✨ Highlights
 
-- ðŸ‘¤ **Multi-account Zalo** - unlimited accounts, quick switching
-- ðŸ’¬ **Unified inbox** - merged mode combines conversations from all accounts in one view
-- ðŸ‘¥ **CRM & Campaigns** - manage contacts, labels, internal notes, re-engage existing customers; scan hidden group members to find new leads
-- âš™ï¸ **Workflow automation** - drag-and-drop Trigger â†’ Node â†’ Action, or use AI to build flows - runs 24/7 without code
-- ðŸ¤– **AI Assistant** - reply suggestions, in-chat AI, auto-classify and respond to customers around the clock
-- ðŸ”— **External integrations** - POS, shipping, payments, Google Sheets, Telegram, Discord, Email, HTTP Request - usable in chat and workflow
-- ðŸ“ˆ **Reports & analytics** - track messages, contacts, labels, employees, campaigns, workflows, AI usage
-- ðŸ—‚ï¸ **Internal ERP** - tasks, calendar, notes and team operations in the same system
-- ðŸ§‘â€ðŸ’¼ **Boss â†” Employee workspace** - connect over **LAN or WAN** (Cloudflare Tunnel), granular permissions, per-employee performance tracking
-- ðŸ”’ **Per-account proxy** - assign an independent HTTP/HTTPS/SOCKS5 proxy to each Zalo account before login
-- ðŸ” **Local-first data** - all data stays on the user's machine
+- 👤 **Multi-account Zalo** - unlimited accounts, quick switching
+- 💬 **Unified inbox** - merged mode combines conversations from all accounts in one view
+- 👥 **CRM & Campaigns** - manage contacts, labels, internal notes, re-engage existing customers; scan hidden group members to find new leads
+- ⚙️ **Workflow automation** - drag-and-drop Trigger → Node → Action, or use AI to build flows - runs 24/7 without code
+- 🤖 **AI Assistant** - reply suggestions, in-chat AI, auto-classify and respond to customers around the clock
+- 🔗 **External integrations** - POS, shipping, payments, Google Sheets, Telegram, Discord, Email, HTTP Request - usable in chat and workflow
+- 📈 **Reports & analytics** - track messages, contacts, labels, employees, campaigns, workflows, AI usage
+- 🗂️ **Internal ERP** - tasks, calendar, notes and team operations in the same system
+- 🧑‍💼 **Boss ↔ Employee workspace** - connect over **LAN or WAN** (Cloudflare Tunnel), granular permissions, per-employee performance tracking
+- 🔒 **Per-account proxy** - assign an independent HTTP/HTTPS/SOCKS5 proxy to each Zalo account before login
+- 🔐 **Local-first data** - all data stays on the user's machine
 
 ### Screenshots
 
-Screens are ordered by typical usage flow: dashboard â†’ chat â†’ CRM â†’ workflow â†’ POS / reports / ERP.
+Screens are ordered by typical usage flow: dashboard → chat → CRM → workflow → POS / reports / ERP.
 
 <table>
   <tr>
@@ -459,7 +459,7 @@ Screens are ordered by typical usage flow: dashboard â†’ chat â†’ CRM 
   </tr>
 </table>
 
-## ðŸŽ¯ Who is it for?
+## 🎯 Who is it for?
 
 - Online shops and sales teams closing deals via Zalo
 - SMEs that need multiple staff handling the inbox simultaneously
@@ -467,7 +467,7 @@ Screens are ordered by typical usage flow: dashboard â†’ chat â†’ CRM 
 - Spas, clinics, education, F&B - any business that needs recurring customer care
 - Teams wanting to combine chat, CRM, workflow, AI and ERP in one desktop app
 
-## ðŸ§© Core feature groups
+## 🧩 Core feature groups
 
 ### 1) Multi-account & unified inbox
 - Log in to multiple Zalo accounts via QR Code
@@ -494,8 +494,8 @@ Screens are ordered by typical usage flow: dashboard â†’ chat â†’ CRM 
 ### 4) Workflow automation
 - No-code drag-and-drop workflow builder
 - AI assistant generates nodes and workflows from plain-text commands (see section 7)
-- Triggers: message received, label applied, reaction, cron schedule, group eventsâ€¦
-- Actions: send message/image/file, find user, manage group, mute, forward, recallâ€¦
+- Triggers: message received, label applied, reaction, cron schedule, group events…
+- Actions: send message/image/file, find user, manage group, mute, forward, recall…
 - Integrations: logic, Google Sheets, AI, Telegram, Discord, Email, Notion, HTTP Request
 - Execution history for easy inspection and debugging
 
@@ -508,17 +508,17 @@ Screens are ordered by typical usage flow: dashboard â†’ chat â†’ CRM 
 ### 6) Reports, ERP & employee management
 - Reports: messages, contacts, campaigns, workflows, AI, employees
 - Internal ERP: Tasks, Calendar, Notes
-- Boss â†” employee model with relay server and module-level permissions
+- Boss ↔ employee model with relay server and module-level permissions
 - Track work performance per person and per time period
 
-### 7) ðŸ¤– AI Assistant
+### 7) 🤖 AI Assistant
 - Smart reply suggestions in Zalo and Facebook conversations
 - Real-time Q&A with AI directly in the chat window
 - Create workflows using plain natural language commands - no drag-and-drop needed
 - Use AI action nodes in workflows to build 24/7 auto-reply chatbots
 - Multi-platform AI support: OpenAI, Claude, Gemini and 9Router (local AI gateway)
 
-## ðŸ”’ Security & data
+## 🔒 Security & data
 
 Deplao prioritizes a local-first architecture:
 
@@ -527,27 +527,27 @@ Deplao prioritizes a local-first architecture:
 - Users can move the storage directory to another drive at any time
 - Ideal for teams that require strict internal data control
 
-## ðŸ’» Runtime requirements
+## 💻 Runtime requirements
 
 - Stable 24/7 internet connection for conversation sync and automation
 - Keep the app running continuously when using workflows or managing a team
 
 ---
 
-## ðŸ“£ Contact & support
+## 📣 Contact & support
 
-- Bug reports, feature requests, questions: ðŸ‘‰ [Open an issue](https://github.com/babyvibe/deplao-builder/issues)
+- Bug reports, feature requests, questions: 👉 [Open an issue](https://github.com/babyvibe/deplao-builder/issues)
 
-## ðŸ™ Acknowledgements
+## 🙏 Acknowledgements
 
 Deplao would like to thank the project:
-ðŸ‘‰ https://github.com/RFS-ADRENO/zca-js
-ðŸ‘‰ https://github.com/m008v/fbchat-v2
+👉 https://github.com/RFS-ADRENO/zca-js
+👉 https://github.com/m008v/fbchat-v2
 Without the contributions and foundation from this project, Deplao would not have been possible.
 
 ---
 
-## ðŸ“ License
+## 📝 License
 
 This project is distributed under the **MIT License**.
 See the [LICENSE](LICENSE) file for details.
