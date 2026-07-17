@@ -40,6 +40,7 @@
     "otplib": "^13.4.0",
     "proxy-agent": "^8.0.1",
     "quill": "^2.0.3",
+    "react-is": "^18.3.1",
     "react-quill-new": "^3.8.3",
     "react-zoom-pan-pinch": "^3.7.0",
     "reactflow": "^11.11.4",
