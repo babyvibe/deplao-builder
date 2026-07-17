@@ -118,14 +118,13 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          repository: babyvibe/deplao-builder
           tag_name: ${{ steps.get_tag.outputs.tag }}
           name: "Deplao ${{ steps.get_tag.outputs.tag }}"
           files: |
             dist-electron-build/*.dmg
             dist-electron-build/*.blockmap
             dist-electron-build/latest-mac.yml
-          token: ${{ secrets.GH_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           draft: false
           prerelease: false
           make_latest: true
