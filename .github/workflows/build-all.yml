@@ -102,7 +102,6 @@ jobs:
         if: needs.resolve-tag.outputs.should_publish == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          repository: babyvibe/deplao-builder
           tag_name: ${{ needs.resolve-tag.outputs.tag }}
           name: "Deplao ${{ needs.resolve-tag.outputs.tag }}"
           files: |
@@ -152,7 +151,6 @@ jobs:
         if: needs.resolve-tag.outputs.should_publish == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          repository: babyvibe/deplao-builder
           tag_name: ${{ needs.resolve-tag.outputs.tag }}
           name: "Deplao ${{ needs.resolve-tag.outputs.tag }}"
           files: |
@@ -219,7 +217,6 @@ jobs:
         if: needs.resolve-tag.outputs.should_publish == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          repository: babyvibe/deplao-builder
           tag_name: ${{ needs.resolve-tag.outputs.tag }}
           name: "Deplao ${{ needs.resolve-tag.outputs.tag }}"
           files: |

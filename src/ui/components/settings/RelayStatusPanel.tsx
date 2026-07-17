@@ -16,6 +16,24 @@ export default function RelayStatusPanel() {
     const [tunnelActive, setTunnelActive] = useState(false);
     const [tunnelUrl, setTunnelUrl] = useState<string | null>(null);
     const [tunnelLoading, setTunnelLoading] = useState(false);
+    // Tunnel provider config: cloudflare (URL random) | ngrok (static domain)
+    const [tunnelProvider, setTunnelProvider] = useState<'cloudflare' | 'ngrok'>('cloudflare');
+    const [ngrokToken, setNgrokToken] = useState('');
+    const [ngrokDomain, setNgrokDomain] = useState('');
+
+    useEffect(() => {
+        ipc.relay?.getTunnelConfig?.().then((res: any) => {
+            if (res?.success) {
+                setTunnelProvider(res.provider === 'ngrok' ? 'ngrok' : 'cloudflare');
+                setNgrokToken(res.authtoken || '');
+                setNgrokDomain(res.domain || '');
+            }
+        }).catch(() => {});
+    }, []);
+
+    const saveTunnelConfig = useCallback(async (cfg: { provider?: string; authtoken?: string; domain?: string }) => {
+        try { await ipc.relay?.setTunnelConfig?.(cfg); } catch { /* */ }
+    }, []);
 
     useEffect(() => {
         ipc.workspace?.getActive().then((res: any) => {
@@ -232,8 +250,47 @@ export default function RelayStatusPanel() {
                     <div className="space-y-0.5">
                         <p className="text-[10px] text-green-400">✓ Kết nối từ bất kỳ đâu qua internet</p>
                         <p className="text-[10px] text-green-400">✓ Không cần IP tĩnh hay port forward</p>
-                        <p className="text-[10px] text-gray-400">✗ URL thay đổi mỗi lần bật tunnel</p>
-                        <p className="text-[10px] text-gray-400">✗ Phụ thuộc server localtunnel.me</p>
+                        {tunnelProvider === 'ngrok'
+                            ? <p className="text-[10px] text-green-400">✓ URL cố định (ngrok static domain)</p>
+                            : <p className="text-[10px] text-gray-400">✗ URL thay đổi mỗi lần bật tunnel</p>}
+                    </div>
+
+                    {/* Provider selector — đổi được khi tunnel đang tắt */}
+                    <div className="space-y-1.5 pt-1 border-t border-gray-700/50">
+                        <div className="flex gap-1.5">
+                            {(['cloudflare', 'ngrok'] as const).map(p => (
+                                <button
+                                    key={p}
+                                    disabled={tunnelActive}
+                                    onClick={() => { setTunnelProvider(p); saveTunnelConfig({ provider: p }); }}
+                                    className={`flex-1 py-1 text-[10px] rounded-lg transition-colors disabled:opacity-50 ${
+                                        tunnelProvider === p ? 'bg-blue-600 text-white-important' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                                    }`}
+                                >{p === 'cloudflare' ? 'Cloudflare (random)' : 'ngrok (cố định)'}</button>
+                            ))}
+                        </div>
+                        {tunnelProvider === 'ngrok' && (
+                            <div className="space-y-1">
+                                <input
+                                    value={ngrokToken}
+                                    onChange={e => setNgrokToken(e.target.value)}
+                                    onBlur={() => saveTunnelConfig({ authtoken: ngrokToken })}
+                                    disabled={tunnelActive}
+                                    type="password"
+                                    placeholder="ngrok authtoken"
+                                    className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded-lg text-[10px] text-gray-200 disabled:opacity-50"
+                                />
+                                <input
+                                    value={ngrokDomain}
+                                    onChange={e => setNgrokDomain(e.target.value)}
+                                    onBlur={() => saveTunnelConfig({ domain: ngrokDomain })}
+                                    disabled={tunnelActive}
+                                    placeholder="static domain (vd: abc.ngrok-free.app)"
+                                    className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded-lg text-[10px] text-gray-200 disabled:opacity-50"
+                                />
+                                <p className="text-[10px] text-gray-400">Lấy token + tạo domain free tại dashboard.ngrok.com</p>
+                            </div>
+                        )}
                     </div>
 
                     {/* Toggle button */}
@@ -266,14 +323,18 @@ export default function RelayStatusPanel() {
                                     className="text-gray-400 hover:text-blue-400 flex-shrink-0" title="Copy"
                                 ><ClipboardListIcon className="w-4 h-4" /></button>
                             </div>
-                            <p className="text-[10px] text-yellow-500/70"><AlertIcon className="w-4 h-4 inline" /> URL thay đổi mỗi lần bật lại</p>
+                            {tunnelProvider === 'ngrok'
+                                ? <p className="text-[10px] text-green-400/80">✓ URL cố định, không đổi khi bật lại</p>
+                                : <p className="text-[10px] text-yellow-500/70"><AlertIcon className="w-4 h-4 inline" /> URL thay đổi mỗi lần bật lại</p>}
                         </div>
                     )}
 
                     {/* Hint when idle */}
                     {relayRunning && !tunnelActive && (
                         <p className="text-[10px] text-gray-400 leading-relaxed pt-1 border-t border-gray-700/50">
-                            Dùng <span className="text-gray-400">localtunnel</span> - miễn phí, không cần cài đặt thêm. Phù hợp cho nhân viên làm việc từ xa hoặc work-from-home.
+                            {tunnelProvider === 'ngrok'
+                                ? 'Dùng ngrok static domain - URL cố định, nhân viên không cần cập nhật lại mỗi lần bật.'
+                                : 'Dùng Cloudflare tunnel - miễn phí, URL random mỗi lần. Chuyển sang ngrok nếu muốn URL cố định.'}
                         </p>
                     )}
                 </div>

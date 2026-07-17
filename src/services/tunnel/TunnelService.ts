@@ -44,10 +44,27 @@ try {
   Logger.warn('[TunnelService] cloudflared package not found');
 }
 
+// ngrok provider (optional). Cấp static domain cố định — dùng cho relay nhân viên.
+let ngrok: any = null;
+try {
+  ngrok = require('@ngrok/ngrok');
+} catch {
+  Logger.warn('[TunnelService] @ngrok/ngrok package not found');
+}
+
+export type TunnelProvider = 'cloudflare' | 'ngrok';
+
+export interface TunnelOptions {
+  provider?: TunnelProvider;
+  authtoken?: string;
+  domain?: string;
+}
+
 // ─── Multi-tunnel store ──────────────────────────────────────────────────────
 
 interface TunnelEntry {
-  tunnel: any;
+  tunnel: any;          // cloudflared Tunnel hoặc ngrok listener
+  provider: TunnelProvider;
   url: string | null;
   label: string;
   onChangeCbs: Set<(url: string | null) => void>;
@@ -59,14 +76,20 @@ const tunnels = new Map<number, TunnelEntry>();
 
 export const TunnelService = {
   /**
-   * Start a Cloudflare Quick Tunnel pointing to a local port.
+   * Start a tunnel pointing to a local port.
+   * Provider mặc định là 'cloudflare' (Quick Tunnel, URL random). Truyền
+   * opts.provider='ngrok' + authtoken/domain để có URL cố định.
    * Multiple tunnels can run concurrently (keyed by port).
    * Returns the public URL.
    */
-  async start(port: number, label?: string): Promise<string> {
+  async start(port: number, label?: string, opts?: TunnelOptions): Promise<string> {
     // If a tunnel already exists for this port, stop it first before restarting
     if (tunnels.has(port)) {
       await this.stop(port);
+    }
+
+    if (opts?.provider === 'ngrok') {
+      return this._startNgrok(port, label, opts);
     }
 
     if (!Tunnel || !bin || !install) {
@@ -102,6 +125,7 @@ export const TunnelService = {
 
           const entry: TunnelEntry = {
             tunnel,
+            provider: 'cloudflare',
             url,
             label: label || `Port ${port}`,
             onChangeCbs: new Set(),
@@ -141,13 +165,55 @@ export const TunnelService = {
   },
 
   /**
+   * Start an ngrok tunnel với static domain cố định.
+   * Yêu cầu authtoken (bắt buộc) và domain (tùy chọn — không có domain thì
+   * ngrok cấp URL random như cloudflare, chỉ khác provider).
+   */
+  async _startNgrok(port: number, label?: string, opts?: TunnelOptions): Promise<string> {
+    if (!ngrok) {
+      throw new Error('Chưa cài gói @ngrok/ngrok. Chạy: npm install @ngrok/ngrok');
+    }
+    if (!opts?.authtoken) {
+      throw new Error('Thiếu ngrok authtoken. Nhập trong Cài đặt → Tunnel.');
+    }
+
+    Logger.log(`[TunnelService] Starting ngrok tunnel on port ${port}${opts.domain ? ` (${opts.domain})` : ''}...`);
+
+    const listener = await ngrok.forward({
+      addr: port,
+      authtoken: opts.authtoken,
+      ...(opts.domain ? { domain: opts.domain } : {}),
+    });
+    const url = listener.url();
+
+    const entry: TunnelEntry = {
+      tunnel: listener,
+      provider: 'ngrok',
+      url,
+      label: label || `Port ${port}`,
+      onChangeCbs: tunnels.get(port)?.onChangeCbs ?? new Set(),
+    };
+    tunnels.set(port, entry);
+
+    Logger.log(`[TunnelService] ✅ Tunnel active [${port}]: ${url} (ngrok${label ? ` - ${label}` : ''})`);
+    TunnelService._notifyChange(port, url);
+    return url;
+  },
+
+  /**
    * Stop a specific tunnel by port.
    * Usage: TunnelService.stop(9888)
    */
   async stop(port: number): Promise<void> {
     const entry = tunnels.get(port);
     if (entry) {
-      try { entry.tunnel.stop(); } catch { /* ignore */ }
+      try {
+        if (entry.provider === 'ngrok') {
+          await entry.tunnel?.close();   // ngrok listener
+        } else {
+          entry.tunnel?.stop();          // cloudflared
+        }
+      } catch { /* ignore */ }
       tunnels.delete(port);
       TunnelService._notifyChange(port, null);
       Logger.log(`[TunnelService] Stopped tunnel [${port}]${entry.label ? ` (${entry.label})` : ''}`);
@@ -202,7 +268,7 @@ export const TunnelService = {
     if (!entry) {
       // Create a placeholder entry so we don't lose the callback
       // when the tunnel hasn't started yet. It will be replaced on start().
-      entry = { tunnel: null as any, url: null, label: `Port ${port}`, onChangeCbs: new Set() };
+      entry = { tunnel: null as any, provider: 'cloudflare', url: null, label: `Port ${port}`, onChangeCbs: new Set() };
       tunnels.set(port, entry);
     }
     entry.onChangeCbs.add(cb);

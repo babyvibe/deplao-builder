@@ -907,6 +907,11 @@ class HttpClientService {
             if (hostname.endsWith('.loca.lt') || hostname.endsWith('.localtunnel.me')) {
                 return { 'bypass-tunnel-reminder': 'true' };
             }
+            // ngrok free domains chèn trang cảnh báo trình duyệt → header này bỏ qua,
+            // trả JSON trực tiếp thay vì HTML interstitial.
+            if (hostname.endsWith('.ngrok-free.dev') || hostname.endsWith('.ngrok-free.app') || hostname.endsWith('.ngrok.app') || hostname.endsWith('.ngrok.io')) {
+                return { 'ngrok-skip-browser-warning': 'true' };
+            }
         } catch { /* ignore */ }
         return {};
     }

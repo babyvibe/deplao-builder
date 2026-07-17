@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron';
 import HttpRelayService from '../../src/services/http/HttpRelayService';
+import DatabaseService from '../../src/services/database/DatabaseService';
 import Logger from '../../src/utils/Logger';
 import os from 'os';
 
@@ -84,5 +85,32 @@ export function registerRelayIpc(): void {
         }
     });
 
-    Logger.log('[relayIpc] Registered 7 relay IPC channels');
+    // ─── Tunnel provider config (cloudflare | ngrok static domain) ──────────────
+    ipcMain.handle('relay:getTunnelConfig', async () => {
+        try {
+            const db = DatabaseService.getInstance();
+            return {
+                success: true,
+                provider: db.getSetting('relay_tunnel_provider') || 'cloudflare',
+                authtoken: db.getSetting('relay_ngrok_authtoken') || '',
+                domain: db.getSetting('relay_ngrok_domain') || '',
+            };
+        } catch (err: any) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    ipcMain.handle('relay:setTunnelConfig', async (_e, cfg: { provider?: string; authtoken?: string; domain?: string } = {}) => {
+        try {
+            const db = DatabaseService.getInstance();
+            if (cfg.provider !== undefined) db.setSetting('relay_tunnel_provider', cfg.provider);
+            if (cfg.authtoken !== undefined) db.setSetting('relay_ngrok_authtoken', cfg.authtoken);
+            if (cfg.domain !== undefined) db.setSetting('relay_ngrok_domain', cfg.domain);
+            return { success: true };
+        } catch (err: any) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    Logger.log('[relayIpc] Registered 9 relay IPC channels');
 }

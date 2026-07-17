@@ -66,9 +66,22 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
           && a.channel === b?.channel;
       })
     ) {
+      // Danh sách không đổi, nhưng vẫn đảm bảo có active account nếu đang thiếu.
+      const cur = get().activeAccountId;
+      if ((!cur || !current.some(a => a.zalo_id === cur)) && accounts.length > 0) {
+        set({ activeAccountId: accounts[0].zalo_id });
+      }
       return;
     }
-    set({ accounts });
+    // Tự chọn active account đầu tiên nếu chưa có hoặc active cũ không còn tồn tại.
+    // Nhiều đường load account (workspace switch, employee snapshot, reconnect) không tự set active
+    // → thiếu bước này khiến CRM/nhãn/campaign nhận activeAccountId=null lúc khởi động.
+    const curActive = get().activeAccountId;
+    const stillValid = curActive && accounts.some(a => a.zalo_id === curActive);
+    set({
+      accounts,
+      ...(stillValid ? {} : { activeAccountId: accounts.length > 0 ? accounts[0].zalo_id : null }),
+    });
   },
 
   addAccount: (account) =>

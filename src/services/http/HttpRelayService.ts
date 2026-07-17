@@ -7,7 +7,7 @@ import EmployeeService from '../employee/EmployeeService';
 import DatabaseService from '../database/DatabaseService';
 import EventBroadcaster from '../event/EventBroadcaster';
 import ConnectionManager from '../../utils/ConnectionManager';
-import TunnelService from '../tunnel/TunnelService';
+import TunnelService, { TunnelOptions, TunnelProvider } from '../tunnel/TunnelService';
 import SocketIOService from '../socket/SocketIOService';
 import { handlers as restHandlers } from './handlers/RestApiHandlers';
 import { handleMediaRequest as handleMediaFileServe } from './handlers/MediaHandler';
@@ -95,6 +95,9 @@ class HttpRelayService {
     /** Tunnel state */
     private tunnelActive = false;
     private tunnelUrl: string | null = null;
+
+    /** powerSaveBlocker id — chặn Mac/OS ngủ khi relay đang phục vụ nhân viên */
+    private powerSaveId: number | null = null;
 
     /**
      * Pending employee sender info: msgId → employee data.
@@ -347,6 +350,7 @@ class HttpRelayService {
             return new Promise((resolve) => {
                 this.httpServer!.listen(this.port, () => {
                     this.running = true;
+                    this.startPowerSaveBlocker();
                     Logger.log(`[HttpRelayService] ✅ Server started on port ${this.port}`);
                     resolve({ success: true, port: this.port });
                 });
@@ -392,6 +396,7 @@ class HttpRelayService {
             this.employees.clear();
             this.running = false;
             this.pinnedDbPath = null;
+            this.stopPowerSaveBlocker();
             EmployeeService.getInstance().unpinDb();
             Logger.log('[HttpRelayService] Server stopped');
             return { success: true };
@@ -2219,7 +2224,7 @@ class HttpRelayService {
             return { success: false, error: 'Relay server chưa được bật' };
         }
         try {
-            const url = await TunnelService.start(this.port, 'Employee Relay');
+            const url = await TunnelService.start(this.port, 'Employee Relay', this.getTunnelOptions());
             this.tunnelActive = true;
             this.tunnelUrl = url;
             Logger.log(`[HttpRelayService] 🌐 Tunnel active: ${url}`);
@@ -2252,6 +2257,46 @@ class HttpRelayService {
 
     public getTunnelStatus(): { active: boolean; tunnelUrl: string | null } {
         return { active: this.tunnelActive, tunnelUrl: this.tunnelUrl };
+    }
+
+    /** Đọc provider config (cloudflare mặc định, hoặc ngrok static domain) từ DB. */
+    private getTunnelOptions(): TunnelOptions {
+        try {
+            const db = DatabaseService.getInstance();
+            const provider = (db.getSetting('relay_tunnel_provider') as TunnelProvider) || 'cloudflare';
+            if (provider === 'ngrok') {
+                return {
+                    provider: 'ngrok',
+                    authtoken: db.getSetting('relay_ngrok_authtoken') || undefined,
+                    domain: db.getSetting('relay_ngrok_domain') || undefined,
+                };
+            }
+        } catch (err: any) {
+            Logger.warn(`[HttpRelayService] getTunnelOptions failed: ${err.message}`);
+        }
+        return { provider: 'cloudflare' };
+    }
+
+    /** Chặn OS ngủ (idle sleep) khi relay chạy — nhân viên vẫn truy cập được. */
+    private startPowerSaveBlocker(): void {
+        if (this.powerSaveId !== null) return;
+        try {
+            const { powerSaveBlocker } = require('electron');
+            this.powerSaveId = powerSaveBlocker.start('prevent-app-suspension');
+            Logger.log(`[HttpRelayService] powerSaveBlocker started (id ${this.powerSaveId})`);
+        } catch (err: any) {
+            Logger.warn(`[HttpRelayService] powerSaveBlocker start failed: ${err.message}`);
+        }
+    }
+
+    private stopPowerSaveBlocker(): void {
+        if (this.powerSaveId === null) return;
+        try {
+            const { powerSaveBlocker } = require('electron');
+            powerSaveBlocker.stop(this.powerSaveId);
+            Logger.log(`[HttpRelayService] powerSaveBlocker stopped (id ${this.powerSaveId})`);
+        } catch { /* ignore */ }
+        this.powerSaveId = null;
     }
 
     // ─── Event relay (push to employees) ──────────────────────────────
