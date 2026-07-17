@@ -4,6 +4,7 @@ import ipc from '@/lib/ipc';
 import { toLocalMediaUrl } from '@/lib/localMedia';
 import { Spinner } from '@/components/common/PageLoading';
 import { AlertIcon, ChartIcon, ChatIcon, ClipboardListIcon, EditIcon, RocketIcon, SendIcon, ShuffleIcon, UserCheckIcon, UsersIcon } from '@/components/common/icons';
+import { parseMarkup } from '../../../../services/crm/message-markup';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -12,7 +13,7 @@ type MixedAction  = 'message' | 'friend_request' | 'invite_to_groups';
 type SendMode     = 'random' | 'all';
 
 export interface MixedConfig   { actions: MixedAction[]; group_ids?: string[]; }
-export interface ContentBlock  { id: string; text: string; images: string[]; }
+export interface ContentBlock  { id: string; text: string; images: string[]; tagAll?: boolean; tagAllText?: string; }
 export interface ContentConfig { mode: SendMode; blocks: ContentBlock[]; }
 
 interface CampaignFormData {
@@ -343,6 +344,45 @@ function GroupPicker({
   );
 }
 
+// ── Markup Preview ────────────────────────────────────────────────────────────
+
+// Render text có markup thành các <span> có style, khớp với cách zca-js hiển thị.
+const STYLE_CSS: Record<string, React.CSSProperties> = {
+  b: { fontWeight: 700 },
+  i: { fontStyle: 'italic' },
+  u: { textDecoration: 'underline' },
+  s: { textDecoration: 'line-through' },
+  c_db342e: { color: '#db342e' },
+  c_f27806: { color: '#f27806' },
+  c_f7b503: { color: '#f7b503' },
+  c_15a85f: { color: '#15a85f' },
+  f_18: { fontSize: '1.15em' },
+  f_13: { fontSize: '0.85em' },
+};
+
+function MarkupPreview({ text }: { text: string }) {
+  const { text: clean, styles } = parseMarkup(text);
+  if (!styles.length) return <span className="text-gray-300">{clean}</span>;
+  // Gộp style theo từng ký tự rồi cắt thành đoạn liên tiếp cùng style.
+  const css: React.CSSProperties[] = Array.from({ length: clean.length }, () => ({}));
+  for (const s of styles) {
+    const props = STYLE_CSS[s.st] || {};
+    for (let i = s.start; i < s.start + s.len && i < clean.length; i++) {
+      Object.assign(css[i], props);
+    }
+  }
+  const spans: React.ReactNode[] = [];
+  let i = 0;
+  while (i < clean.length) {
+    let j = i + 1;
+    const key = JSON.stringify(css[i]);
+    while (j < clean.length && JSON.stringify(css[j]) === key) j++;
+    spans.push(<span key={i} style={css[i]}>{clean.slice(i, j)}</span>);
+    i = j;
+  }
+  return <span className="text-gray-300">{spans}</span>;
+}
+
 // ── Block Editor ──────────────────────────────────────────────────────────────
 
 function BlockEditor({
@@ -360,6 +400,20 @@ function BlockEditor({
     const e = ta.selectionEnd ?? block.text.length;
     onUpdate({ text: block.text.slice(0, s) + v + block.text.slice(e) });
     setTimeout(() => { ta.focus(); ta.setSelectionRange(s + v.length, s + v.length); }, 0);
+  };
+
+  // Bọc đoạn đang bôi đen bằng cặp thẻ markup ([b]…[/b], [red]…[/red]…).
+  // Không bôi đen thì chèn cặp thẻ rỗng và đặt con trỏ vào giữa.
+  const wrapSelection = (tag: string) => {
+    const ta = taRef.current;
+    const open = `[${tag}]`, close = `[/${tag}]`;
+    if (!ta) { onUpdate({ text: `${block.text}${open}${close}` }); return; }
+    const s = ta.selectionStart ?? block.text.length;
+    const e = ta.selectionEnd ?? block.text.length;
+    const sel = block.text.slice(s, e);
+    onUpdate({ text: block.text.slice(0, s) + open + sel + close + block.text.slice(e) });
+    const caret = s + open.length + sel.length;
+    setTimeout(() => { ta.focus(); ta.setSelectionRange(caret, caret); }, 0);
   };
 
   const pickImages = async () => {
@@ -383,6 +437,28 @@ function BlockEditor({
         ))}
       </div>
 
+      {/* Toolbar định dạng */}
+      <div className="flex items-center gap-1 flex-wrap flex-shrink-0">
+        <button type="button" onClick={() => wrapSelection('b')} title="In đậm"
+          className="text-[12px] font-bold w-6 h-6 rounded border border-gray-600 text-gray-300 hover:bg-gray-700 transition-colors">B</button>
+        <button type="button" onClick={() => wrapSelection('i')} title="In nghiêng"
+          className="text-[12px] italic w-6 h-6 rounded border border-gray-600 text-gray-300 hover:bg-gray-700 transition-colors">I</button>
+        <button type="button" onClick={() => wrapSelection('u')} title="Gạch chân"
+          className="text-[12px] underline w-6 h-6 rounded border border-gray-600 text-gray-300 hover:bg-gray-700 transition-colors">U</button>
+        <button type="button" onClick={() => wrapSelection('s')} title="Gạch ngang"
+          className="text-[12px] line-through w-6 h-6 rounded border border-gray-600 text-gray-300 hover:bg-gray-700 transition-colors">S</button>
+        <span className="w-px h-4 bg-gray-600 mx-0.5" />
+        {([['red','#db342e'],['orange','#f27806'],['yellow','#f7b503'],['green','#15a85f']] as const).map(([tag, hex]) => (
+          <button key={tag} type="button" onClick={() => wrapSelection(tag)} title={`Màu ${tag}`}
+            className="w-5 h-5 rounded-full border border-gray-500 hover:scale-110 transition-transform" style={{ background: hex }} />
+        ))}
+        <span className="w-px h-4 bg-gray-600 mx-0.5" />
+        <button type="button" onClick={() => wrapSelection('big')} title="Cỡ lớn"
+          className="text-[13px] font-semibold px-1.5 h-6 rounded border border-gray-600 text-gray-300 hover:bg-gray-700 transition-colors">A+</button>
+        <button type="button" onClick={() => wrapSelection('small')} title="Cỡ nhỏ"
+          className="text-[10px] px-1.5 h-6 rounded border border-gray-600 text-gray-300 hover:bg-gray-700 transition-colors">A-</button>
+      </div>
+
       {/* Textarea - takes most space */}
       <textarea
         ref={taRef}
@@ -391,6 +467,31 @@ function BlockEditor({
         placeholder={'Soạn nội dung tin nhắn...\nDùng {name} để chèn tên người nhận'}
         className="flex-1 min-h-0 w-full bg-gray-800 border border-gray-600 rounded-xl px-3 py-2.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500 resize-none transition-colors"
       />
+
+      {/* Xem trước định dạng */}
+      {block.text.includes('[') && (
+        <div className="flex-shrink-0 bg-gray-800/50 border border-gray-700 rounded-lg px-3 py-2">
+          <div className="text-[10px] text-gray-500 mb-1">Xem trước</div>
+          <div className="text-sm whitespace-pre-wrap break-words"><MarkupPreview text={block.text} /></div>
+        </div>
+      )}
+
+      {/* Tag @all khi gửi nhóm */}
+      <label className="flex items-center gap-2 flex-shrink-0 cursor-pointer text-xs text-gray-400 select-none flex-wrap">
+        <input type="checkbox" checked={!!block.tagAll} onChange={e => onUpdate({ tagAll: e.target.checked })}
+          className="accent-blue-500 w-3.5 h-3.5" />
+        Tag toàn nhóm khi gửi vào nhóm
+        {block.tagAll && (
+          <span className="flex items-center gap-1" onClick={e => e.preventDefault()}>
+            <span className="font-mono text-blue-400">@</span>
+            <input type="text" value={block.tagAllText ?? 'all'}
+              onChange={e => onUpdate({ tagAllText: e.target.value })}
+              placeholder="all"
+              className="w-28 bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 font-mono text-blue-400 text-xs focus:outline-none focus:border-blue-500" />
+          </span>
+        )}
+        <span className="text-gray-500">(bỏ qua với chat cá nhân)</span>
+      </label>
 
       {/* Images */}
       <div className="flex-shrink-0">

@@ -5,6 +5,7 @@ import Logger from '../../utils/Logger';
 import * as fs from 'fs';
 import * as path from 'path';
 import imageSize from 'image-size';
+import { parseMarkup } from './message-markup';
 
 /**
  * CRMQueueService - chạy trong main process
@@ -254,7 +255,7 @@ class CRMQueueService {
             mixedGroupIds = mixedConfig.group_ids || [];
 
             // ── Multi-block template support ───────────────────────────────
-            type ContentBlock = { id: string; text: string; images: string[] };
+            type ContentBlock = { id: string; text: string; images: string[]; tagAll?: boolean; tagAllText?: string };
             const parseContentBlocks = (raw: string): { blocks: ContentBlock[]; mode: 'random' | 'all' } => {
                 try {
                     const p = JSON.parse(raw);
@@ -276,9 +277,21 @@ class CRMQueueService {
             // Helper: send one block (text + images)
             const sendBlock = async (block: ContentBlock, threadId: string, threadType: number): Promise<any[]> => {
                 const responses: any[] = [];
-                const text = substitute(block.text || '');
-                if (text.trim()) {
-                    const resp = await (conn.api as any).sendMessage({ msg: text }, threadId, threadType);
+                const { text: cleanText, styles } = parseMarkup(substitute(block.text || ''));
+                if (cleanText.trim()) {
+                    const content: any = { msg: cleanText };
+                    let finalStyles = styles;
+                    // Tag-all chỉ có nghĩa trong nhóm (threadType 1); user thường (0) bỏ qua.
+                    if (threadType === 1 && block.tagAll) {
+                        const label = '@' + ((block.tagAllText || 'all').trim() || 'all');
+                        const prefix = label + ' ';
+                        content.msg = prefix + cleanText;
+                        // uid "-1" = mention toàn nhóm; len phải bao đúng đoạn label (đã trừ dấu cách)
+                        content.mentions = [{ pos: 0, uid: '-1', len: label.length }];
+                        finalStyles = styles.map(s => ({ ...s, start: s.start + prefix.length }));
+                    }
+                    if (finalStyles.length) content.styles = finalStyles;
+                    const resp = await (conn.api as any).sendMessage(content, threadId, threadType);
                     responses.push(resp);
                 }
                 const imgs = (block.images || []).filter(Boolean);
