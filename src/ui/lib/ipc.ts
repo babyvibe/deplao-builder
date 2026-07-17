@@ -352,6 +352,10 @@ declare global {
         download: () => void;
         install:  () => void;
       };
+      logs: {
+        getBuffer: () => Promise<{ ts: number; level: string; msg: string }[]>;
+        clear:     () => Promise<boolean>;
+      };
       workflow: {
         list: () => Promise<{ success: boolean; workflows: any[]; error?: string }>;
         get: (id: string) => Promise<{ success: boolean; workflow?: any; error?: string }>;
@@ -461,6 +465,8 @@ declare global {
         startTunnel: () => Promise<{ success: boolean; tunnelUrl?: string; error?: string }>;
         stopTunnel: () => Promise<{ success: boolean; error?: string }>;
         getTunnelStatus: () => Promise<{ success: boolean; active?: boolean; tunnelUrl?: string | null; error?: string }>;
+        getTunnelConfig: () => Promise<{ success: boolean; provider?: string; authtoken?: string; domain?: string; error?: string }>;
+        setTunnelConfig: (cfg: { provider?: string; authtoken?: string; domain?: string }) => Promise<{ success: boolean; error?: string }>;
       };
       // ─── Facebook ─────────────────────────────────────────────────────
       fb: {
@@ -689,6 +695,7 @@ export const ipc = {
   erp,
   lockScreen: window.electronAPI?.lockScreen,
   library: window.electronAPI?.library,
+  logs: window.electronAPI?.logs,
   on: window.electronAPI?.on,
   removeAllListeners: window.electronAPI?.removeAllListeners,
 };

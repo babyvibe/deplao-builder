@@ -16,9 +16,10 @@ import ProxySettings from './ProxySettings';
 import LockScreenSettings from './LockScreenSettings';
 import AccountSettings from './AccountSettings';
 import TunnelSettings from './TunnelSettings';
+import LogViewer from './LogViewer';
 import { loadSeenTabs, markTabSeen, SETTINGS_WATCHLIST, hasUnseenChangelog, markChangelogSeen } from '@/utils/settingsSeenTabs';
 
-type SettingsTab = 'notifications' | 'accounts' | 'storage' | 'conversation' | 'employees' | 'workspace' | 'introduction' | 'changelog' | 'appearance' | 'proxy' | 'security' | 'webhooks';
+type SettingsTab = 'notifications' | 'accounts' | 'storage' | 'conversation' | 'employees' | 'workspace' | 'introduction' | 'changelog' | 'appearance' | 'proxy' | 'security' | 'webhooks' | 'logs';
 
 export default function Settings() {
   const [activeTab, setActiveTab] = useState<SettingsTab>('conversation');
@@ -168,6 +169,7 @@ export default function Settings() {
     { id: 'storage',       icon: <FolderIcon className="w-4 h-4" />, label: 'Lưu trữ' },
     { id: 'introduction',  icon: <BookIcon className="w-4 h-4" />, label: 'Giới thiệu' },
     { id: 'changelog',     icon: <ClipboardIcon className="w-4 h-4" />, label: 'Log phiên bản' },
+    { id: 'logs',          icon: <ClipboardListIcon className="w-4 h-4" />, label: 'Nhật ký' },
   ];
 
   // Filter nav items by permission - employee/simulation mode may hide certain tabs
@@ -517,6 +519,8 @@ export default function Settings() {
 
         {/* ── Security ── */}
         {activeTab === 'security' && <LockScreenSettings />}
+
+        {activeTab === 'logs' && <LogViewer />}
 
         {/* ── Employees ── */}
         {activeTab === 'proxy' && <ProxySettings />}

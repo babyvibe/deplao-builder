@@ -27,6 +27,11 @@ interface TargetSelectorProps {
 
 type SelectMode = 'manual' | 'by_label' | 'friends_only' | 'groups_only' | 'by_phone' | 'by_uid';
 
+/** Nhãn Zalo lưu ID nhóm với tiền tố "g" (vd "g4579..."); contact_id trong CRM thì không. Bỏ tiền tố để so khớp. */
+function stripGroupPrefix(id: string): string {
+  return id.startsWith('g') ? id.slice(1) : id;
+}
+
 /** Normalize a phone string: remove spaces/dashes, convert +84/84 prefix → 0 */
 function normalizePhone(raw: string): string {
   let s = raw.replace(/[\s\-().]/g, '');
@@ -40,7 +45,7 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
   const [mode, setMode] = useState<SelectMode>('manual');
   const [selectedZaloLabelIds, setSelectedZaloLabelIds] = useState<number[]>([]);
   const [selectedLocalLabelIds, setSelectedLocalLabelIds] = useState<number[]>([]);
-  const [manualSelected, setManualSelected] = useState<Set<string>>(new Set());
+  const [manualSelected, setManualSelected] = useState<Set<string>>(new Set());  // Với mode lọc (nhóm/bạn bè/nhãn) mọi item được chọn sẵn; user có thể bỏ chọn từng cái → lưu ở đây.
   const [search, setSearch] = useState('');
   const [allContacts, setAllContacts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -103,6 +108,9 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
       .finally(() => setLoading(false));
   }, [zaloId]);
 
+  // Đổi mode/nhãn → reset danh sách đã chọn để không giữ nhầm sang tập khác.
+  useEffect(() => { setManualSelected(new Set()); }, [mode, selectedZaloLabelIds, selectedLocalLabelIds]);
+
   // Available = not already in campaign
   const available = useMemo(() =>
     (allContacts || []).filter(c => !existingContactIds.has(c.contact_id)),
@@ -115,13 +123,16 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
     if (mode === 'friends_only') list = list.filter(c => c.is_friend === 1);
     if (mode === 'groups_only') list = list.filter(c => c.contact_type === 'group');
     if (mode === 'by_label') {
-      // Filter by selected Zalo labels
+      // Filter by selected Zalo labels.
+      // Nhãn Zalo lưu ID nhóm có tiền tố "g" (vd "g4579..."), còn contact_id trong CRM
+      // không có tiền tố → chuẩn hóa cả hai đầu trước khi so khớp.
       if (selectedZaloLabelIds.length > 0) {
-        list = list.filter(c =>
-          selectedZaloLabelIds.every(labelId =>
-            allLabels.find(l => l.id === labelId)?.conversations?.includes(c.contact_id)
-          )
-        );
+        list = list.filter(c => {
+          const cid = stripGroupPrefix(c.contact_id);
+          return selectedZaloLabelIds.every(labelId =>
+            allLabels.find(l => l.id === labelId)?.conversations?.some(conv => stripGroupPrefix(conv) === cid)
+          );
+        });
       }
       // Filter by selected Local labels
       if (selectedLocalLabelIds.length > 0 && effectiveThreadMap) {
@@ -262,8 +273,8 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
           return true;
         });
     }
-    if (mode === 'manual') return available.filter(c => manualSelected.has(c.contact_id));
-    return filtered;
+    // Mode manual & mode lọc theo nhãn: mặc định không tích, user tự chọn từng liên hệ.
+    return filtered.filter(c => manualSelected.has(c.contact_id));
   }, [mode, available, manualSelected, filtered, phoneList, phoneResolved, uidList, uidResolved, existingContactIds]);
 
   const toggleManual = (id: string) => {
@@ -651,11 +662,9 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
                   placeholder="Tìm tên, SĐT, UID..."
                   className="w-full bg-gray-700 border border-gray-600 rounded-full pl-7 pr-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500" />
               </div>
-              {mode === 'manual' && (
-                <button onClick={selectAllFiltered} className="text-xs text-blue-400 hover:text-blue-300 flex-shrink-0">
-                  Chọn tất cả ({filtered.length})
-                </button>
-              )}
+              <button onClick={selectAllFiltered} className="text-xs text-blue-400 hover:text-blue-300 flex-shrink-0">
+                Chọn tất cả ({filtered.length})
+              </button>
             </div>
 
             {/* Contact list */}
@@ -671,20 +680,18 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
               ) : (
                 filtered.map(c => {
                   const name = c.alias || c.display_name || c.contact_id;
-                  const isChecked = mode === 'manual' ? manualSelected.has(c.contact_id) : true;
-                  const contactLabels = allLabels.filter(l => l.conversations?.includes(c.contact_id));
+                  const isChecked = manualSelected.has(c.contact_id);
+                  const cidNoPrefix = stripGroupPrefix(c.contact_id);
+                  const contactLabels = allLabels.filter(l => l.conversations?.some(conv => stripGroupPrefix(conv) === cidNoPrefix));
                   const contactLocalLabelIds = effectiveThreadMap[c.contact_id] || [];
                   const contactLocalLabels = effectiveLocalLabels.filter(l => contactLocalLabelIds.includes(l.id));
                   return (
                     <label key={c.contact_id}
-                      className={`flex items-center gap-2.5 px-4 py-2.5 border-b border-gray-700/50 transition-colors ${
-                        mode === 'manual' ? 'cursor-pointer hover:bg-gray-700/40' : 'cursor-default'
-                      } ${isChecked && mode !== 'manual' ? 'bg-blue-500/5' : ''}`}>
-                      {mode === 'manual'
-                        ? <input type="checkbox" checked={isChecked} onChange={() => toggleManual(c.contact_id)} className="accent-blue-500 flex-shrink-0" />
-                        : <span className="w-4 h-4 rounded-full bg-blue-600/30 border border-blue-500/50 flex items-center justify-center flex-shrink-0">
-                            <span className="text-blue-400 text-[9px]">✓</span>
-                          </span>}
+                      className={`flex items-center gap-2.5 px-4 py-2.5 border-b border-gray-700/50 transition-colors cursor-pointer hover:bg-gray-700/40 ${
+                        isChecked ? 'bg-blue-500/5' : ''
+                      }`}>
+                      <input type="checkbox" checked={isChecked} className="accent-blue-500 flex-shrink-0"
+                        onChange={() => toggleManual(c.contact_id)} />
                       {/* Avatar */}
                       <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0">
                         {c.avatar
