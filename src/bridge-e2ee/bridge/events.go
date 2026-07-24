@@ -229,29 +229,25 @@ func (c *Client) handleEvent(ctx context.Context, evt any) {
 	})
 
 	switch e := evt.(type) {
-	case *messagix.Event_Ready:
-		c.emitEvent(EventTypeReady, map[string]any{
-			"isNewSession": e.IsNewSession,
-		})
+	case *messagix.ConnectedEvent:
+		c.emitEvent(EventTypeReady, nil)
 
-	case *messagix.Event_Reconnected:
+	case *messagix.ReconnectedEvent:
 		c.emitEvent(EventTypeReconnected, nil)
 
-	case *messagix.Event_SocketError:
+	case *messagix.TransientDisconnectEvent:
 		c.emitEvent(EventTypeError, &ErrorEvent{
 			Message: e.Err.Error(),
 		})
 
-	case *messagix.Event_PermanentError:
+	case *messagix.PermanentErrorEvent:
 		c.emitEvent(EventTypeError, &ErrorEvent{
 			Message: e.Err.Error(),
 			Code:    1,
 		})
 
-	case *messagix.Event_PublishResponse:
-		if e.Table != nil {
-			c.handleTable(e.Table)
-		}
+	case *table.LSTable:
+		c.handleTable(e)
 	}
 }
 
