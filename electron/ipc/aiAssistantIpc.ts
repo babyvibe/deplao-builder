@@ -2,6 +2,7 @@ import { ipcMain } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 import AIAssistantService from '../../src/services/ai/AIAssistantService';
+import DatabaseService from '../../src/services/database/DatabaseService';
 import WorkspaceManager from '../../src/utils/WorkspaceManager';
 import { proxyToBoss } from './proxyHelper';
 import Logger from '../../src/utils/Logger';
@@ -289,6 +290,52 @@ export function registerAIAssistantIpc(): void {
       return { success: true, stats };
     } catch (e: any) {
       return { success: false, error: e.message, stats: [] };
+    }
+  });
+
+  // ─── AI Conversations (chat history persistence) ──────────────────────────
+  ipcMain.handle('ai:getOrCreateConversation', async (_e, { zaloId, threadId, assistantId }: { zaloId: string; threadId: string; assistantId: string }) => {
+    try {
+      const conv = DatabaseService.getInstance().getOrCreateAIConversation(zaloId, threadId, assistantId);
+      return { success: true, conversation: conv };
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('ai:getConversationMessages', async (_e, { conversationId }: { conversationId: string }) => {
+    try {
+      const messages = DatabaseService.getInstance().getAIConversationMessages(conversationId);
+      return { success: true, messages };
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('ai:addConversationMessage', async (_e, { conversationId, role, content, segmentsJson }: { conversationId: string; role: string; content: string; segmentsJson?: string }) => {
+    try {
+      DatabaseService.getInstance().addAIConversationMessage(conversationId, role, content, segmentsJson);
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('ai:getConversations', async (_e, { zaloId, threadId }: { zaloId: string; threadId: string }) => {
+    try {
+      const conversations = DatabaseService.getInstance().getAIConversations(zaloId, threadId);
+      return { success: true, conversations };
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('ai:deleteConversation', async (_e, { conversationId }: { conversationId: string }) => {
+    try {
+      DatabaseService.getInstance().deleteAIConversation(conversationId);
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e.message };
     }
   });
 }

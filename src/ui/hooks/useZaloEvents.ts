@@ -708,7 +708,6 @@ async function fetchGroupInfoAndMembers(zaloId: string, groupId: string, forceNo
 export function useZaloEvents() {
   const { updateAccountStatus, updateListenerActive } = useAccountStore();
   const { addMessage, updateContact, incrementUnread, updateMessageReaction, updateMessageLocalPath, setTyping, setSeen, markReplied, clearUnread, setActiveThread, setMessages } = useChatStore();
-  const { activeThreadId } = useChatStore();
   const { showNotification, setGroupInfo } = useAppStore();
 
   // Track window focus state from main process (reliable, unlike document.hasFocus())
@@ -1158,7 +1157,7 @@ export function useZaloEvents() {
       } else if (isSilent) {
         // Tin nhắn cũ (old_messages / getGroupChatHistory) - KHÔNG cộng unread, KHÔNG bắn sound/notification
         // Chỉ lưu message + update contact (đã xử lý ở trên)
-      } else if (threadId !== activeThreadId || !windowFocusedRef.current) {
+      } else if (threadId !== useChatStore.getState().activeThreadId || !windowFocusedRef.current) {
         // Thread khác, HOẶC thread đang active nhưng cửa sổ bị thu nhỏ/ẩn/mất focus
         // → vẫn tính là chưa đọc
         incrementUnread(zaloId, threadId);
@@ -1288,8 +1287,12 @@ export function useZaloEvents() {
       console.log(`[useZaloEvents] 🎭 reaction: thread=${threadId} targetMsg=${targetMsgId} user=${userId} icon=${rawIcon} → ${emoji}`);
 
       if (threadId && targetMsgId) {
-        updateMessageReaction(zaloId, threadId, targetMsgId, userId, emoji);
-        // Lưu vào DB
+        // Skip UI update for self-reactions — handleReact() already did optimistic update.
+        // The Zalo webhook echo arrives later and would double the count if we update again.
+        if (!reaction.isSelf) {
+          updateMessageReaction(zaloId, threadId, targetMsgId, userId, emoji);
+        }
+        // Always persist to DB (both self and incoming reactions)
         DataAccessor.updateReaction({ zaloId, msgId: targetMsgId, userId, emoji: emoji }).catch(() => {});
       }
     });
@@ -1695,7 +1698,7 @@ export function useZaloEvents() {
       unsubGroupEvent();
       unsubEmpSender();
     };
-  }, [activeThreadId]);
+  }, []); // No dependencies — all store reads use getState() to avoid re-subscribing on every thread switch
 
   // ─── CRM / Settings real-time sync events (from Boss→Employee relay) ──
   // These events arrive when the remote side mutates labels, pins, QMs, campaigns, notes.

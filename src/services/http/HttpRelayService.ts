@@ -2033,8 +2033,11 @@ class HttpRelayService {
                 return { success: true };
             }
             if (pathname === '/api/command/messages/reaction') {
-                db.updateMessageReaction(zaloId, params.msgId, params.userId, params.emoji);
-                EventBroadcaster.emit('event:reaction', { zaloId, reaction: { msgId: params.msgId, uidFrom: params.userId, icon: params.emoji } });
+                // Note: boss DB is already updated by EventBroadcaster.broadcastReaction()
+                // via runOnBossDb. Only the employee DB needs updating here, which was
+                // already done by HttpClientService.saveRelayReactionToWorkspaceDb().
+                // Do NOT emit event:reaction back to renderer — it was already forwarded
+                // by HttpClientService via sendDirect, and emitting again causes double display.
                 return { success: true };
             }
             if (pathname === '/api/command/messages/local-paths') {
@@ -2167,7 +2170,11 @@ class HttpRelayService {
 
             // ── Workflow CRUD ──
             if (pathname === '/api/command/workflows') {
-                db.saveWorkflow(params.workflow || params);
+                try {
+                    db.saveWorkflow(params.workflow || params);
+                } catch (wfErr: any) {
+                    return { success: false, error: wfErr.message };
+                }
                 EventBroadcaster.emit('workflow:executed', { action: 'save', workflowId: params.workflow?.id || params.id });
                 return { success: true };
             }

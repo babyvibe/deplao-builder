@@ -166,6 +166,20 @@ export class DataAccessor {
     return window.electronAPI.db.getMessageById(params);
   }
 
+  /** Batch lookup: lấy nhiều messages theo IDs trong 1 IPC call */
+  static async getMessagesByIds(params: { zaloId: string; msgIds: string[] }) {
+    if (isEmployee()) {
+      // Employee mode: fallback to individual lookups (no batch REST endpoint)
+      const results: any[] = [];
+      for (const msgId of params.msgIds) {
+        const res = await this.getMessageById({ zaloId: params.zaloId, msgId });
+        if (res?.message) results.push(res.message);
+      }
+      return { success: true, messages: results };
+    }
+    return window.electronAPI.db.getMessagesByIds(params);
+  }
+
   // ═════════════════════════════════════════════════════════════════
   // CONVERSATIONS (Contacts)
   // ═════════════════════════════════════════════════════════════════

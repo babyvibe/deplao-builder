@@ -1526,9 +1526,12 @@ export default function MessageInput() {
     if (!auth) return;
     const quotePayload = buildQuotePayload(replyTo);
 
-    // Clear editor - delay 1 tick to let IME compositionend finalize on macOS
+    // Clear textarea immediately for instant visual feedback.
+    // justSentRef prevents handleEditorInput from processing the resulting input event.
+    justSentRef.current = true;
+    if (el) { el.innerHTML = ''; }
+    // Defer React state resets to next microtask (safety net for IME compositionend on macOS)
     const doClear = () => {
-      if (el) { el.innerHTML = ''; }
       setText('');
       prevTextRef.current = '';
       setMentions([]);
@@ -1537,8 +1540,6 @@ export default function MessageInput() {
       // Reset flag after a short delay so any trailing input events are ignored
       setTimeout(() => { justSentRef.current = false; }, 50);
     };
-    justSentRef.current = true;
-    // Always use setTimeout to ensure compositionEnd + its input event finish first
     setTimeout(doClear, 0);
     const imagesToSend = [...clipboardImages];
     setClipboardImages([]);

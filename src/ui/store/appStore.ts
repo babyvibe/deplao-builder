@@ -76,6 +76,8 @@ interface AppStore {
   aiSuggestionsLoading: boolean;
   aiAutoInjectZaloContext: boolean;
   aiQuickPanelContextCountOverride: number | null;
+  /** Cache: threadKey → last used assistantId for AI Quick Panel */
+  aiThreadAssistantMap: Record<string, string>;
   /** Threads where AI suggestion is disabled: Set of "zaloId_threadId" */
   aiSuggestDisabledThreads: Record<string, boolean>;
   /** Accounts where AI suggestion is disabled: Set of zaloId */
@@ -131,6 +133,7 @@ interface AppStore {
   setAiSuggestionsLoading: (loading: boolean) => void;
   setAiAutoInjectZaloContext: (enabled: boolean) => void;
   setAiQuickPanelContextCountOverride: (count: number | null) => void;
+  setAiThreadAssistant: (threadKey: string, assistantId: string) => void;
   toggleAiDisableForThread: (zaloId: string, threadId: string) => void;
   toggleAiDisableForAccount: (zaloId: string) => void;
   isAiSuggestDisabled: (zaloId: string, threadId: string) => boolean;
@@ -319,6 +322,13 @@ function loadAiQuickPanelContextCountOverride(): number | null {
   } catch {}
   return null;
 }
+function loadAiThreadAssistantMap(): Record<string, string> {
+  try {
+    const stored = localStorage.getItem('ai_thread_assistant_map');
+    return stored ? JSON.parse(stored) : {};
+  } catch {}
+  return {};
+}
 
 // ─── Helper: write flag to DB via IPC (fire-and-forget) ─────────────────────
 function persistFlag(zaloId: string, contactId: string, flags: { is_muted?: number; mute_until?: number; is_in_others?: number }) {
@@ -343,6 +353,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   aiSuggestionsLoading: false,
   aiAutoInjectZaloContext: loadAiAutoInjectZaloContext(),
   aiQuickPanelContextCountOverride: loadAiQuickPanelContextCountOverride(),
+  aiThreadAssistantMap: loadAiThreadAssistantMap(),
   aiSuggestDisabledThreads: loadAiDisabledThreads(),
   aiSuggestDisabledAccounts: loadAiDisabledAccounts(),
   quickChatOpen: false,
@@ -437,6 +448,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
       else localStorage.setItem('ai_quick_panel_context_count_override', String(normalized));
     } catch {}
     set({ aiQuickPanelContextCountOverride: normalized });
+  },
+  setAiThreadAssistant: (threadKey, assistantId) => {
+    set((s) => {
+      const next = { ...s.aiThreadAssistantMap, [threadKey]: assistantId };
+      try { localStorage.setItem('ai_thread_assistant_map', JSON.stringify(next)); } catch {}
+      return { aiThreadAssistantMap: next };
+    });
   },
   toggleAiDisableForThread: (zaloId, threadId) => set((s) => {
     const key = `${zaloId}_${threadId}`;

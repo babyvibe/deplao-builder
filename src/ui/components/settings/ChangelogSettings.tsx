@@ -15,6 +15,57 @@ interface VersionEntry {
 // ─── Changelog data - thêm entry mới vào ĐẦU mảng khi có bản cập nhật ────────
 const CHANGELOG: VersionEntry[] = [
   {
+    version: '26.7.5',
+    date: '07/2026',
+    type: 'minor',
+    highlights: [
+      '⚡ Chat mượt hơn — bỏ status indicator trên boss mode, tối ưu scroll',
+      '🤖 AI chat được lưu vào DB — đổi hội thoại quay lại vẫn giữ lịch sử chat AI, cache trợ lý theo từng thread',
+      '🔧 Sửa lỗi Reaction hiển thị 2 lần, không lưu DB, không hiển thị khi đổi hội thoại',
+      '🔧 Sửa lỗi "Lỗi lưu workflow" khi dùng kịch bản mẫu',
+      '🔍 Tìm kiếm hội thoại hoạt động ở chế độ employee',
+    ],
+    changes: [
+      {
+        category: 'new',
+        items: [
+          'Lưu lịch sử chat AI vào DB — bảng ai_conversations + ai_conversation_messages, tự động tạo conversation per (thread + assistant), auto-set title từ tin nhắn đầu',
+          'Cache trợ lý AI theo từng hội thoại — chọn assistant ở thread A → chuyển thread B → quay lại thread A → tự động restore assistant đã chọn (persist qua localStorage)',
+          'Tìm kiếm hội thoại ở chế độ nhân viên — GlobalSearchPanel gọi DataAccessor.searchConversations() qua boss API khi employee mode, merge với kết quả local',
+          'Batch query messages theo IDs — thêm getMessagesByIds IPC, giảm N individual IPC calls thành 1 batch call khi load reply quotes',
+        ],
+      },
+      {
+        category: 'improved',
+        items: [
+          'Gửi tin nhắn nhanh hơn — textarea clear ngay lập tức khi Enter (không đợi setTimeout), bỏ redundant updateStatus trong MessageQueue.enqueue',
+          'Ẩn send status indicator (pending/sending/sent/failed) trên boss mode — boss gửi trực tiếp qua Zalo rất nhanh, không cần hiện status; employee mode vẫn giữ',
+          'Tối ưu click hội thoại — bỏ activeThreadId dependency khỏi useZaloEvents useEffect (14+ listeners không còn unsub/resub mỗi lần đổi thread)',
+          'sendSeenForThread nhận lastMsg từ caller — bỏ redundant DB query khi mở hội thoại',
+          'Gộp Zustand updates trong handleSelect — 3-4 setState riêng biệt → 1 useChatStore.setState()',
+          'Giảm verbose logging trong DatabaseService.getMessages — bỏ log từng video/fb message chi tiết',
+          'Tối ưu scroll — gộp 5 scroll mechanisms thành 1 scrollToBottom() controller duy nhất, dùng stable-height detection thay vì 200ms heuristic',
+          'Trang tin nhắn: 50 → 20 tin/trang — load nhanh hơn, ít render hơn',
+          'Load tin nhắn cũ ổn định hơn — IntersectionObserver sentinel thay vì atTop state (không bị stale do React batching)',
+          'clearDraft: di chuyển IPC call ra ngoài Zustand set() callback — state update thuần, không bị block bởi IPC setup',
+        ],
+      },
+      {
+        category: 'fixed',
+        items: [
+          'Sửa lỗi Reaction hiển thị 2 lần trên boss — bỏ UI update cho self-reactions (handleReact đã optimistic update), chỉ persist DB',
+          'Sửa lỗi Reaction không lưu DB ở employee mode — parameter mismatch icon vs emoji trong databaseIpc handler',
+          'Sửa lỗi Reaction hiển thị 2 lần ở employee mode — REST handler emit event:reaction ngược lại renderer tạo vòng lặp',
+          'Sửa lỗi chat.reaction chạy qua message listener tạo duplicate — thêm filter bỏ chat.reaction trong ZaloLoginHelper',
+          'Sửa lỗi "Lỗi lưu workflow" khi dùng kịch bản mẫu — else gắn nhầm vào if (res.webhookToken) thay vì if (res?.success)',
+          'Sửa lỗi scroll không xuống đáy khi mở hội thoại — messagesReady gate quá sớm, race condition giữa 5 scroll mechanisms',
+          'Sửa lỗi load tin nhắn cũ lúc tự load lúc không — atTop state bị stale, thay bằng IntersectionObserver sentinel',
+          'Sửa lỗi clearDraft gọi IPC bên trong Zustand set() callback — anti-pattern, di chuyển ra ngoài',
+        ],
+      },
+    ],
+  },
+  {
     version: '26.7.4',
     date: '07/2026',
     type: 'patch',
@@ -49,7 +100,7 @@ const CHANGELOG: VersionEntry[] = [
     ],
   },
   {
-    version: '26.7.3',
+    version: '26.7.5',
     date: '07/2026',
     type: 'minor',
     highlights: [

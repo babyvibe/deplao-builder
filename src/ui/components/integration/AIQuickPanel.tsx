@@ -51,6 +51,7 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
   const [loadingAssistants, setLoadingAssistants] = useState(true);
   const [assistantContextMsgCount, setAssistantContextMsgCount] = useState(30);
   const [contextCountInput, setContextCountInput] = useState('30');
+  const [conversationId, setConversationId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -61,9 +62,11 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
     setAiAutoInjectZaloContext,
     aiQuickPanelContextCountOverride,
     setAiQuickPanelContextCountOverride,
+    aiThreadAssistantMap,
+    setAiThreadAssistant,
   } = useAppStore();
 
-  // Load assistants
+  // Load assistants + restore cached assistant for current thread
   useEffect(() => {
     (async () => {
       setLoadingAssistants(true);
@@ -72,7 +75,11 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
         if (res?.success) {
           const enabled = (res.assistants || []).filter((a: AssistantSummary) => a.enabled);
           setAssistants(enabled);
-          const def = enabled.find((a: AssistantSummary) => a.isDefault) || enabled[0];
+          // Restore cached assistant for current thread, fallback to default
+          const threadKey = activeAccountId && activeThreadId ? `${activeAccountId}_${activeThreadId}` : '';
+          const cachedId = threadKey ? aiThreadAssistantMap[threadKey] : '';
+          const cached = cachedId ? enabled.find(a => a.id === cachedId) : null;
+          const def = cached || enabled.find((a: AssistantSummary) => a.isDefault) || enabled[0];
           if (def) setActiveId(def.id);
         }
       } catch {}
@@ -85,11 +92,19 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages]);
 
-  // Clear chat & fetch contextMessageCount when assistant changes
+  // Load conversation when thread OR assistant changes
   useEffect(() => {
-    setMessages([]);
-    if (!activeId) return;
+    if (!activeAccountId || !activeThreadId || !activeId) {
+      setMessages([]);
+      setConversationId(null);
+      return;
+    }
 
+    // Cache assistant selection for this thread
+    const threadKey = `${activeAccountId}_${activeThreadId}`;
+    setAiThreadAssistant(threadKey, activeId);
+
+    // Fetch contextMessageCount for this assistant
     const currentAssistant = assistants.find(a => a.id === activeId);
     const initialDefault = clampContextCount(currentAssistant?.contextMessageCount || 30);
     setAssistantContextMsgCount(initialDefault);
@@ -99,14 +114,35 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
         const res = await ipc.ai?.getAssistant(activeId);
         if (res?.success && res.assistant) {
           setAssistantContextMsgCount(clampContextCount(res.assistant.contextMessageCount || 30));
+        }
+      } catch {}
+
+      // Load conversation from DB
+      try {
+        const convRes = await ipc.ai?.getOrCreateConversation({ zaloId: activeAccountId, threadId: activeThreadId, assistantId: activeId });
+        if (convRes?.success && convRes.conversation) {
+          setConversationId(convRes.conversation.id);
+          const msgRes = await ipc.ai?.getConversationMessages({ conversationId: convRes.conversation.id });
+          if (msgRes?.success && msgRes.messages?.length > 0) {
+            const loaded: ChatMsg[] = msgRes.messages.map((m: any) => ({
+              role: m.role,
+              content: m.content,
+              segments: m.segments_json ? JSON.parse(m.segments_json) : undefined,
+            }));
+            setMessages(loaded);
+          } else {
+            setMessages([]);
+          }
         } else {
-          setAssistantContextMsgCount(initialDefault);
+          setConversationId(null);
+          setMessages([]);
         }
       } catch {
-        setAssistantContextMsgCount(initialDefault);
+        setConversationId(null);
+        setMessages([]);
       }
     })();
-  }, [activeId, assistants]);
+  }, [activeId, activeThreadId, activeAccountId, assistants]);
 
   const effectiveContextMsgCount = aiQuickPanelContextCountOverride ?? assistantContextMsgCount;
   const isUsingAssistantDefaultContext = aiQuickPanelContextCountOverride === null;
@@ -145,6 +181,23 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
     setInput('');
     setLoading(true);
 
+    // Save user message to DB
+    let convId = conversationId;
+    if (activeAccountId && activeThreadId) {
+      if (!convId) {
+        try {
+          const convRes = await ipc.ai?.getOrCreateConversation({ zaloId: activeAccountId, threadId: activeThreadId, assistantId: activeId });
+          if (convRes?.success && convRes.conversation) {
+            convId = convRes.conversation.id;
+            setConversationId(convId);
+          }
+        } catch {}
+      }
+      if (convId) {
+        ipc.ai?.addConversationMessage({ conversationId: convId, role: 'user', content: text }).catch(() => {});
+      }
+    }
+
     try {
       const panelMsgs = [...messages, userMsg];
 
@@ -162,16 +215,27 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
       const res = await ipc.ai?.chat(activeId, msgsToSend, true);
       if (res?.success && res.result) {
         const segments = parseStructuredResponse(res.result);
-        setMessages(prev => [...prev, { role: 'assistant', content: res.result!, segments: segments || undefined }]);
+        const assistantMsg: ChatMsg = { role: 'assistant', content: res.result!, segments: segments || undefined };
+        setMessages(prev => [...prev, assistantMsg]);
+        // Save assistant response to DB
+        if (convId) {
+          ipc.ai?.addConversationMessage({
+            conversationId: convId,
+            role: 'assistant',
+            content: res.result!,
+            segmentsJson: segments ? JSON.stringify(segments) : undefined,
+          }).catch(() => {});
+        }
       } else {
-        setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${res?.error || 'Không có phản hồi'}` }]);
+        const errorMsg: ChatMsg = { role: 'assistant', content: `Error: ${res?.error || 'Không có phản hồi'}` };
+        setMessages(prev => [...prev, errorMsg]);
       }
     } catch (e: any) {
       setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${e.message}` }]);
     }
     setLoading(false);
     setTimeout(() => inputRef.current?.focus(), 100);
-  }, [input, activeId, loading, messages, getZaloChatContext, effectiveContextMsgCount]);
+  }, [input, activeId, loading, messages, getZaloChatContext, effectiveContextMsgCount, conversationId, activeAccountId, activeThreadId]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {

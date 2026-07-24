@@ -157,6 +157,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     updateReaction: (params: any) => ipcRenderer.invoke('db:updateReaction', params),
     updateLocalPaths: (params: any) => ipcRenderer.invoke('db:updateLocalPaths', params),
     getMessageById: (params: any) => ipcRenderer.invoke('db:getMessageById', params),
+    getMessagesByIds: (params: any) => ipcRenderer.invoke('db:getMessagesByIds', params),
     getStoragePath: () => ipcRenderer.invoke('db:getStoragePath'),
     setStoragePath: (params: any) => ipcRenderer.invoke('db:setStoragePath', params),
     selectStorageFolder: () => ipcRenderer.invoke('db:selectStorageFolder'),
@@ -361,6 +362,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getAccountAssistants: (zaloId: string) => ipcRenderer.invoke('ai:getAccountAssistants', { zaloId }),
     getUsageLogs:  (opts?: any) => ipcRenderer.invoke('ai:getUsageLogs', opts || {}),
     getUsageStats: (opts?: any) => ipcRenderer.invoke('ai:getUsageStats', opts || {}),
+    // AI Conversations
+    getOrCreateConversation: (params: any) => ipcRenderer.invoke('ai:getOrCreateConversation', params),
+    getConversationMessages: (params: any) => ipcRenderer.invoke('ai:getConversationMessages', params),
+    addConversationMessage:  (params: any) => ipcRenderer.invoke('ai:addConversationMessage', params),
+    getConversations:        (params: any) => ipcRenderer.invoke('ai:getConversations', params),
+    deleteConversation:      (params: any) => ipcRenderer.invoke('ai:deleteConversation', params),
   },
 
   // ─── Tunnel ───────────────────────────────────────────────────────

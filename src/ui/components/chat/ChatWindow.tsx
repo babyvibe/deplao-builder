@@ -1,5 +1,5 @@
 import { Spinner } from '@/components/common/PageLoading';
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useChatStore } from '@/store/chatStore';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
@@ -61,6 +61,17 @@ export default function ChatWindow() {
   // nearBottomRef: cập nhật realtime từ scroll event (không gây re-render)
   // dùng cho ResizeObserver + realtime scroll — tránh stale closure
   const nearBottomRef = useRef(true);
+  // Debounced scroll-to-bottom: gom nhiều request thành 1 lần scroll
+  const scrollRafRef = useRef(0);
+  const scrollToBottom = useCallback((reason?: string) => {
+    if (scrollRafRef.current) cancelAnimationFrame(scrollRafRef.current);
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = 0;
+      const el = messagesContainerRef.current;
+      if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'instant' });
+      nearBottomRef.current = true;
+    });
+  }, []);
 
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
@@ -418,16 +429,17 @@ export default function ChatWindow() {
 	    setLoadingSpinner(true);
   }, [activeAccountId, activeThreadId]);
 
-  // ─── Thread ready gate (đơn giản): set true ngay khi pinsReady = true ───────
-  // pinsReady reset về false mỗi khi thread đổi (trong usePinnedData hook),
-  // rồi fire true sau khi IPC getPinnedMessages hoàn thành (~50-100ms).
-  // Không dùng dataReady trung gian nữa - tránh bug RAF bị cancel khi re-render.
+  // ─── Thread ready gate: set true khi messages đã có data trong store ────────
   useEffect(() => {
     if (!activeThreadId) {
       setMessagesReady(false);
       return;
     }
-    if (msgs.length > 0 || !messagesLoading) {
+    // Require msgs.length > 0 OR loading finished (empty conversation)
+    if (msgs.length > 0) {
+      setMessagesReady(true);
+    } else if (!messagesLoading) {
+      // Empty conversation or loading finished with no messages
       setMessagesReady(true);
     }
   }, [activeThreadId, threadKey, msgs.length, messagesLoading]);
@@ -458,29 +470,60 @@ export default function ChatWindow() {
     }
   }, [threadReady, messagesReady, initialLoading]);
 
-  // ─── Scroll đồng bộ cho cached threads (trước khi browser paint) ──────
-  // Khi threadReady = true VÀ messages đã có sẵn trong store (cached),
-  // scroll ngay trong useLayoutEffect để browser paint frame đầu tiên
-  // với messages ở đáy, không bị giật từ trên nhảy xuống.
-  useLayoutEffect(() => {
+  // ─── Single scroll-to-bottom effect for initial thread load ────────────────
+  // Consolidates: useLayoutEffect cached + useEffect settling + double-RAF
+  // into one reliable mechanism using stable-height detection.
+  useEffect(() => {
     if (!threadReady || !messagesReady || !activeThreadId || !threadKey) return;
     if (!msgs.length) return;
-    // Chỉ cho thread đã từng scroll (cached) hoặc thread mới nhưng messages đã sẵn
     if (lastScrolledThreadRef.current === threadKey) return;
-    if (initialScrollDoneRef.current) return;
 
-    const el = messagesContainerRef.current;
-    if (!el) return;
+    // Wait for at least 1 real message to avoid premature lock from realtime
+    const realCount = msgs.filter(m => !String(m.msg_id).startsWith('temp_')).length;
+    if (realCount < 1 && messagesLoading) return;
 
-    // Scroll đồng bộ - browser sẽ paint với vị trí này ngay
-    el.scrollTop = el.scrollHeight;
-    bottomRef.current?.scrollIntoView({ behavior: 'instant' });
-    setAtTop(false);
-    setAtBottom(true);
-    initialScrollDoneRef.current = true;
-    lastScrolledThreadRef.current = threadKey;
-    setLoadingSpinner(false);
-  }, [threadReady, messagesReady, activeThreadId, threadKey, msgs.length]);
+    let cancelled = false;
+
+    // Stable-height detection: wait until scrollHeight stops changing
+    // (meaning all messages have been rendered by React)
+    const waitForStable = () => {
+      const el = messagesContainerRef.current;
+      if (!el || cancelled) return;
+      const h1 = el.scrollHeight;
+      requestAnimationFrame(() => {
+        if (cancelled) return;
+        const h2 = messagesContainerRef.current?.scrollHeight || 0;
+        if (h2 !== h1) {
+          // Height still changing → wait another frame
+          requestAnimationFrame(() => {
+            if (cancelled) return;
+            scrollToBottom('initial-stable');
+            lockScroll();
+          });
+        } else {
+          // Height stable → scroll now
+          scrollToBottom('initial');
+          lockScroll();
+        }
+      });
+    };
+
+    const lockScroll = () => {
+      if (cancelled) return;
+      initialScrollDoneRef.current = true;
+      lastScrolledThreadRef.current = threadKey;
+      setAtTop(false);
+      setAtBottom(true);
+      // Hide spinner after scroll has been painted
+      requestAnimationFrame(() => {
+        if (!cancelled) setLoadingSpinner(false);
+      });
+    };
+
+    // Small delay to let React render the initial batch
+    const timer = setTimeout(waitForStable, 16);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [threadReady, messagesReady, activeThreadId, threadKey, msgs.length, messagesLoading, scrollToBottom]);
 
   // ─── Drag-to-select: pointer move/up (document level) ──────────────────────
   useEffect(() => {
@@ -586,68 +629,15 @@ export default function ChatWindow() {
     }
     if (scroller && currentHeight !== prevHeight) {
       if (nearBottomRef.current) {
-        scroller.scrollTop = scroller.scrollHeight;
+        scrollToBottom('pinned-bar');
       } else {
         scroller.scrollTop += (currentHeight - prevHeight);
       }
     }
     prevPinnedBarHeightRef.current = currentHeight;
-  }, [threadReady, activeThreadId, pins.length, pinnedNotes.length]);
+  }, [threadReady, activeThreadId, pins.length, pinnedNotes.length, scrollToBottom]);
 
-  // ─── Scroll to bottom SAU KHI threadReady = true ──
-  // Dùng double-RAF để đảm bảo messages đã render + layout paint trước khi scroll.
-  // KHÔNG dùng setTimeout guess-timings nữa — ResizeObserver (effect riêng) tự động
-  // re-scroll nếu user ở bottom khi async media load xong gây layout shift.
-  //
-  // ⚠️ Race condition guard: nếu realtime message đến trong lúc chờ batch load,
-  // effect sẽ fire với 1 tin và lock thread prematurely → batch đầy đủ sau đó
-  // không được scroll (lastScrolledThreadRef đã set). Fix: chỉ lock khi có ≥3
-  // messages thực (không tính temp_), batch đầy đủ (50 tin) sẽ trigger lock thật.
-  useEffect(() => {
-    if (!threadReady || !messagesReady || !activeThreadId || !threadKey) return;
-    if (!msgs.length) return;
-    if (lastScrolledThreadRef.current === threadKey) return;
-
-    // Lock thread chỉ khi có đủ messages thực (≥3), tránh realtime lẻ lock sớm
-    const realCount = msgs.filter(m => !String(m.msg_id).startsWith('temp_')).length;
-    if (realCount < 3 && messagesLoading) return;
-
-    // 200ms settling time: đợi layout ổn định + late-loading conversations render
-    // trước khi scroll, tránh scroll sai đáy do content chưa kịp render
-    let cancelled = false;
-    const settlingTimer = setTimeout(() => {
-      if (cancelled) return;
-      // RAF 1: scroll xuống đáy
-      requestAnimationFrame(() => {
-        if (cancelled) return;
-        const el = messagesContainerRef.current;
-        if (el) el.scrollTop = el.scrollHeight;
-        // RAF 2: confirm scroll + lock flags
-        requestAnimationFrame(() => {
-          if (cancelled) return;
-          const el2 = messagesContainerRef.current;
-          if (el2) {
-            el2.scrollTop = el2.scrollHeight;
-            setAtTop(false);
-            setAtBottom(true);
-          }
-          bottomRef.current?.scrollIntoView({ behavior: 'instant' });
-          initialScrollDoneRef.current = true;
-          lastScrolledThreadRef.current = threadKey;
-          // RAF 3: tắt overlay SAU KHI browser đã paint vị trí scroll
-          // Tránh giật: overlay tồn tại xuyên suốt quá trình scroll → user không thấy content nhảy
-          requestAnimationFrame(() => {
-            if (cancelled) return;
-            setLoadingSpinner(false);
-          });
-        });
-      });
-    }, 10);
-    return () => {
-      cancelled = true;
-      clearTimeout(settlingTimer);
-    };
-  }, [threadReady, messagesReady, activeThreadId, threadKey, msgs.length, messagesLoading]);
+  // (Scroll-to-bottom consolidated into single effect above)
 
   // ─── Loading spinner fallback cho empty/cached thread ──
   // Khi initialScrollDoneRef da duoc set (cached) hoac msgs.length === 0 (empty),
@@ -663,9 +653,6 @@ export default function ChatWindow() {
 
 
   // ─── ResizeObserver: auto-scroll khi content resize mà user đang ở bottom ──
-  // Giải quyết layout shift từ ảnh/video load async, pin bar thay đổi, sticker load, v.v.
-  // Chỉ scroll nếu user đang ở gần bottom (nearBottomRef), không giật khi user đang đọc lịch sử.
-  // Debounce bằng rAF để gom nhiều resize events thành 1 lần scroll, tránh jank.
   useEffect(() => {
     const el = messagesContainerRef.current;
     if (!el || !threadReady) return;
@@ -677,14 +664,14 @@ export default function ChatWindow() {
         rafId = 0;
         if (!nearBottomRef.current) return;
         const newHeight = el.scrollHeight;
-        if (newHeight === prevScrollHeight) return; // không thay đổi → skip
+        if (newHeight === prevScrollHeight) return;
         prevScrollHeight = newHeight;
-        el.scrollTop = newHeight;
+        scrollToBottom('resize');
       });
     });
     ro.observe(el);
     return () => { ro.disconnect(); if (rafId) cancelAnimationFrame(rafId); };
-  }, [activeThreadId, threadReady]);
+  }, [activeThreadId, threadReady, scrollToBottom]);
 
   // ─── Lazy scan: quét ảnh lỗi trong conversation khi mở thread ────────────────
   // Chạy 1 lần per thread, sau khi threadReady. Background, không block UI.
@@ -1038,60 +1025,50 @@ export default function ChatWindow() {
     return () => { el.removeEventListener('scroll', onScroll); if (rafId) cancelAnimationFrame(rafId); };
   }, [activeThreadId]);
 
-  // ─── Auto-load tin nhắn cũ khi scroll lên đầu ───────────────────────────
-  const autoLoadFiredRef = useRef(false);  // true = đã auto-load, chờ user rời top mới reset
+  // ─── Auto-load tin nhắn cũ: scroll event near top ────────────────────────
+  // Dùng scroll event + ref để tránh stale closure và observer recreate频繁.
+  // Khi scrollTop < 200px → trigger loadMore.
   const loadMoreFnRef = useRef<() => void>(() => {});
+  const hasMoreRef = useRef(true);
+  const loadingMoreRef = useRef(false);
+  useEffect(() => { loadMoreFnRef.current = handleLoadMore; });
+  useEffect(() => { hasMoreRef.current = hasMore; }, [hasMore]);
+  useEffect(() => { loadingMoreRef.current = loadingMore; }, [loadingMore]);
   useEffect(() => {
-    loadMoreFnRef.current = handleLoadMore;
-  });
-  // Reset khi user rời khỏi vùng top → cho phép auto-load lại lần sau
-  useEffect(() => {
-    if (!atTop) autoLoadFiredRef.current = false;
-  }, [atTop]);
-  useEffect(() => {
-    if (!initialScrollDoneRef.current || initialLoading || !atTop || !hasMore || loadingMore || !activeThreadId) return;
-    // Đã auto-load rồi mà user chưa scroll xuống khỏi top → không load tiếp
-    if (autoLoadFiredRef.current) return;
-    // Delay nhẹ tránh trigger liên tục khi scroll
-    const timer = setTimeout(() => {
-      if (hasMore && !loadingMore && atTop) {
-        autoLoadFiredRef.current = true;
-        loadMoreFnRef.current();
-      }
-    }, 300);
-    return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [atTop, hasMore, loadingMore]);
+    const el = messagesContainerRef.current;
+    if (!el || !activeThreadId) return;
+    let rafId = 0;
+    const onScroll = () => {
+      if (rafId) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = 0;
+        if (el.scrollTop < 200 && hasMoreRef.current && !loadingMoreRef.current) {
+          loadMoreFnRef.current();
+        }
+      });
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => { el.removeEventListener('scroll', onScroll); if (rafId) cancelAnimationFrame(rafId); };
+  }, [activeThreadId]);
 
   // ─── Scroll to bottom khi AI suggestions bar xuất hiện/biến mất ──────────
-  // Khi thanh gợi ý AI thay đổi, input area đổi chiều cao → tin nhắn bị che.
-  // Nếu user đang ở cuối trang → tự động scroll xuống để bù offset.
-  // Dùng nearBottomRef (không gây re-render) thay vì atBottom state
   useEffect(() => {
     const handler = () => {
-      if (nearBottomRef.current) {
-        requestAnimationFrame(() => {
-          bottomRef.current?.scrollIntoView({ behavior: 'instant' });
-        });
-      }
+      if (nearBottomRef.current) scrollToBottom('ai-suggestions');
     };
     window.addEventListener('ai:suggestionsBarChanged', handler);
     return () => window.removeEventListener('ai:suggestionsBarChanged', handler);
-  }, []);
+  }, [scrollToBottom]);
 
   // Scroll to bottom khi LibraryPickerModal gửi xong
   useEffect(() => {
-    const handler = () => {
-      const el = messagesContainerRef.current;
-      if (el) el.scrollTop = el.scrollHeight;
-    };
+    const handler = () => scrollToBottom('library-sent');
     window.addEventListener('chat:scrollToBottom', handler);
     return () => window.removeEventListener('chat:scrollToBottom', handler);
-  }, []);
+  }, [scrollToBottom]);
 
   // Scroll to bottom chỉ khi có tin nhắn MỚI (tin cuối thay đổi), không scroll khi prepend tin cũ
-  // Initial load scroll được xử lý bởi threadReady gate - effect này chỉ handle tin nhắn realtime
-  // Dùng nearBottomRef (ref, không gây re-render) thay vì atBottom state để tránh stale closure
+  // Initial load scroll được xử lý bởi consolidated scroll effect
   useEffect(() => {
     if (!msgs.length) return;
     const lastMsg = msgs[msgs.length - 1];
@@ -1101,30 +1078,23 @@ export default function ChatWindow() {
       if (!shouldRestoreScrollRef.current) {
         const isInitial = isInitialThreadLoadRef.current;
         isInitialThreadLoadRef.current = false;
-        // Initial load: nếu < 50 tin thực thì không còn tin cũ hơn
-        // Riêng Facebook: không dùng heuristic này vì local có thể chưa có message nào
         const isFb = activeContact?.channel === 'facebook';
         if (isInitial) {
           const realCount = msgs.filter(m => !m.msg_id.startsWith('temp_')).length;
-          if (realCount < 50) setHasMore(false);
-          // SKIP scroll ở đây - threadReady gate sẽ xử lý scroll initial
-          return;
+          if (realCount < 20) setHasMore(false);
+          return; // initial scroll handled by consolidated effect
         }
-        // Tin nhắn mới (realtime) - dùng nearBottomRef (cập nhật realtime từ scroll event)
-        // thay vì atBottom state (có thể bị stale trong closure do batching)
+        // Realtime messages
         const isOutgoing =
           lastMsg?.is_sent === 1 ||
           (activeAccountId ? String(lastMsg?.sender_id || '') === String(activeAccountId) : false) ||
           String(lastMsg?.msg_id || '').startsWith('temp_');
         if (isOutgoing || nearBottomRef.current) {
-          // Dùng scrollTop trực tiếp thay vì scrollIntoView('smooth')
-          // → instant, không animation delay, mượt hơn cho realtime messages
-          const el = messagesContainerRef.current;
-          if (el) el.scrollTop = el.scrollHeight;
+          scrollToBottom('realtime');
         }
       }
     }
-  }, [msgs, activeAccountId, activeContact?.channel]);
+  }, [msgs, activeAccountId, activeContact?.channel, scrollToBottom]);
 
   // Sau khi prepend tin cũ: khôi phục vị trí scroll để không bị nhảy lên đầu
   useLayoutEffect(() => {
@@ -1172,7 +1142,7 @@ export default function ChatWindow() {
         const restResult = await DataAccessor.getMessages({
           zaloId: activeAccountId,
           threadId: activeThreadId,
-          limit: 30,
+          limit: 20,
           before,
         });
         res = { messages: restResult?.items || [] };
@@ -1180,7 +1150,7 @@ export default function ChatWindow() {
         res = await DataAccessor.getMessages({
           zaloId: activeAccountId,
           threadId: activeThreadId,
-          limit: 30,
+          limit: 20,
           before,
         });
       }
@@ -1234,7 +1204,7 @@ export default function ChatWindow() {
             }
           })();
         }
-        if (res.messages.length < 30) setHasMore(false);
+        if (res.messages.length < 20) setHasMore(false);
         return;
       }
 
@@ -2293,7 +2263,7 @@ export default function ChatWindow() {
                       isMediaMsg || isGroupMedia || isFileMsg || isCardMsg || isEcardMsg || isStickerMsg || isBankCardMsg ? '' : isSent
                         ? 'px-3 py-2 bg-blue-400/40 text-white border border-blue-200 dark:border-blue-600/50 rounded-br-sm'
                         : 'px-3 py-2 bg-gray-700 text-gray-200 border border-gray-200 dark:border-gray-600 rounded-bl-sm'
-                    } ${msg.send_status === 'pending' ? 'opacity-60' : msg.send_status === 'sending' ? 'opacity-80' : ''}`}>
+                    } ${useEmployeeStore.getState().mode === 'employee' && (msg.send_status === 'pending' ? 'opacity-60' : msg.send_status === 'sending' ? 'opacity-80' : '')}`}>
                     {/* Quote preview - supports both pre-built quote_data and reply_to_id fallback */}
                     {(msg.quote_data || msg.reply_to_id) && (() => {
                       // Build quote object from quote_data or fallback to reply_to_id + msgs lookup
@@ -2607,7 +2577,8 @@ export default function ChatWindow() {
                   })()}
 
                   {/* ── Send status indicator (optimistic messages) ──── */}
-                  {isSent && msg.send_status && msg.send_status !== 'received' && (
+                  {/* Only show in employee mode — boss sends directly via Zalo (fast, no need for status) */}
+                  {isSent && msg.send_status && msg.send_status !== 'received' && useEmployeeStore.getState().mode === 'employee' && (
                     <div className="flex items-center gap-1 mt-0.5 px-1">
                       {msg.send_status === 'pending' && (
                         <span title="Đang chờ gửi">

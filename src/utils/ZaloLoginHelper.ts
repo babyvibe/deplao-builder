@@ -721,6 +721,11 @@ class ZaloLoginHelper {
                     return;
                 }
 
+                // ─── Xử lý chat.reaction: bỏ qua, đã xử lý ở listener "reaction" ──
+                if (msgType === 'chat.reaction') {
+                    return;
+                }
+
                 // ─── Xử lý chat.ecard (reminder notification) ─────────────────
                 if (msgType === 'chat.ecard') {
                     const content = message.data?.content;

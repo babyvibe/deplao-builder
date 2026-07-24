@@ -1147,16 +1147,16 @@ export default function ConversationList() {
       console.warn(`[ConversationList] handleSelect: no zaloId (activeAccountId=${currentAccountId})`);
       return;
     }
-    useChatStore.getState().setMessagesLoading(true);
-    setActiveThread(contactId, threadType);
+    useChatStore.setState({
+      activeThreadId: contactId,
+      activeThreadType: threadType,
+      messagesLoading: true,
+    });
     // On mobile, switch to chat detail view
     if (isMobile) setMobileShowChat(true);
-    if (!zaloId) return;
 
     DataAccessor.markAsRead({ zaloId, contactId }).catch(() => {});
     clearUnread(zaloId, contactId);
-    // Gửi sự kiện đã đọc cho Zalo
-    sendSeenForThread(zaloId, contactId, threadType);
 
     // Cập nhật badge taskbar - tổng unread của tất cả tài khoản
     ipc.app?.setBadge(getFilteredUnreadCount());
@@ -1166,7 +1166,7 @@ export default function ConversationList() {
 
     try {
       console.log(`[ConversationList] handleSelect: calling DataAccessor.getMessages zaloId=${zaloId} threadId=${contactId} isEmp=${useEmployeeStore.getState().mode}`);
-    const res = await DataAccessor.getMessages({ zaloId, threadId: contactId, limit: 50, offset: 0 });
+    const res = await DataAccessor.getMessages({ zaloId, threadId: contactId, limit: 20, offset: 0 });
     const dbMessages = res?.messages || res?.items || [];
     console.log(`[ConversationList] handleSelect: result keys=${Object.keys(res||{}).join(',')} messages=${res?.messages?.length ?? 0} items=${res?.items?.length ?? 0}`);
     if (dbMessages.length > 0) {
@@ -1189,33 +1189,44 @@ export default function ConversationList() {
         return m;
       });
       setMessages(zaloId, contactId, [...mapped].reverse());
-      // Async fixup: query DB for original messages not in the loaded batch
+      // Gửi sự kiện đã đọc — truyền lastMsg để tránh query lại DB
+      const lastMsg = dbMessages[0]; // already sorted DESC
+      sendSeenForThread(zaloId, contactId, threadType, null, lastMsg);
+      // Async fixup: batch query DB for original messages not in the loaded batch
       if (missingLookup.length > 0) {
         (async () => {
-          for (const item of missingLookup) {
-            try {
-              const dbRes = await DataAccessor.getMessageById({ zaloId, msgId: item.replyToId });
-              const origMsg = dbRes?.message;
-              if (origMsg?.msg_type || origMsg?.content) {
-                const store = useChatStore.getState();
-                const key = `${zaloId}_${contactId}`;
-                const msgs = (store.messages[key] || []).slice();
-                const idx = msgs.findIndex((m2: any) => m2.msg_id === item.msg.msg_id);
-                if (idx >= 0 && !msgs[idx].quote_data) {
-                  msgs[idx] = {
-                    ...msgs[idx],
-                    quote_data: JSON.stringify({
-                      msgId: item.replyToId,
-                      msg: origMsg.content || '',
-                      senderId: '',
-                      msgType: origMsg.msg_type || 'text',
-                    }),
-                  };
-                  store.setMessages(zaloId, contactId, msgs);
-                }
+          try {
+            const replyIds = [...new Set(missingLookup.map(item => item.replyToId))];
+            const batchRes = await DataAccessor.getMessagesByIds({ zaloId, msgIds: replyIds });
+            const origMsgs = batchRes?.messages || [];
+            const origMap = new Map<string, any>();
+            for (const m of origMsgs) origMap.set(m.msg_id, m);
+
+            const store = useChatStore.getState();
+            const key = `${zaloId}_${contactId}`;
+            let msgs = store.messages[key];
+            if (!msgs) return;
+            let changed = false;
+            const updated = msgs.slice();
+            for (const item of missingLookup) {
+              const origMsg = origMap.get(item.replyToId);
+              if (!origMsg?.msg_type && !origMsg?.content) continue;
+              const idx = updated.findIndex((m2: any) => m2.msg_id === item.msg.msg_id);
+              if (idx >= 0 && !(updated[idx] as any).quote_data) {
+                updated[idx] = {
+                  ...updated[idx],
+                  quote_data: JSON.stringify({
+                    msgId: item.replyToId,
+                    msg: origMsg.content || '',
+                    senderId: '',
+                    msgType: origMsg.msg_type || 'text',
+                  }),
+                };
+                changed = true;
               }
-            } catch {}
-          }
+            }
+            if (changed) store.setMessages(zaloId, contactId, updated);
+          } catch {}
         })();
       }
       // Sync is_replied dựa trên tin nhắn cuối thực tế
@@ -1224,24 +1235,21 @@ export default function ConversationList() {
       // Employee mode: load từ REST API qua DataAccessor
       const isEmp = useEmployeeStore.getState().mode === 'employee';
       if (isEmp) {
-        useChatStore.getState().setMessagesLoading(true);
         try {
-          const result = await DataAccessor.getMessages({ zaloId: zaloId!, threadId: contactId, limit: 50 });
+          const result = await DataAccessor.getMessages({ zaloId: zaloId!, threadId: contactId, limit: 20 });
           const msgs = result?.items || [];
           console.log(`[ConversationList] handleSelect: loaded ${msgs.length} msgs from REST for ${contactId}`);
           if (msgs.length > 0) {
             setMessages(zaloId!, contactId, [...msgs].reverse());
           }
-          useChatStore.getState().setMessagesLoading(false);
         } catch (err) {
           console.warn(`[ConversationList] handleSelect REST error:`, err);
-          useChatStore.getState().setMessagesLoading(false);
         }
       } else {
         // Boss/standalone: fallback — dùng DataAccessor (-> IPC -> DB)
         console.log(`[ConversationList] handleSelect: boss mode, loading from IPC...`);
         try {
-          const result = await DataAccessor.getMessages({ zaloId: zaloId!, threadId: contactId, limit: 50 });
+          const result = await DataAccessor.getMessages({ zaloId: zaloId!, threadId: contactId, limit: 20 });
           const msgs = result?.items || [];
           if (msgs.length > 0) {
             setMessages(zaloId!, contactId, [...msgs].reverse());

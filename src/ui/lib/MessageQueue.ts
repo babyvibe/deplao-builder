@@ -155,10 +155,17 @@ class MessageQueue {
     queue.push(item);
     this.queues.set(threadKey, queue);
 
-    // Update message status → 'pending'
-    this.updateStatus(item.zaloId, item.threadId, item.tempId, 'pending', {
-      enqueued_at: item.enqueuedAt,
-    });
+    // Note: addMessage() already sets send_status='pending'. Only patch enqueued_at
+    // if the message exists (avoid redundant full status update).
+    const msgs = useChatStore.getState().messages[threadKey];
+    if (msgs) {
+      const idx = msgs.findIndex(m => m.msg_id === item.tempId);
+      if (idx >= 0 && !msgs[idx].enqueued_at) {
+        const updated = [...msgs];
+        updated[idx] = { ...updated[idx], enqueued_at: item.enqueuedAt };
+        useChatStore.setState((s) => ({ messages: { ...s.messages, [threadKey]: updated } }));
+      }
+    }
 
     console.log(`[MessageQueue] Enqueued tempId=${item.tempId} thread=${threadKey} queueSize=${queue.length}`);
 

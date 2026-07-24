@@ -148,12 +148,13 @@ export function registerWorkflowIpc(): void {
             if (hasWebhookTrigger(wf.nodes)) {
               webhookToken = ensureWebhookToken(wf.nodes);
             }
+            Logger.log(`[WorkflowIpc] Saving workflow id=${wf.id} name="${wf.name}" nodes=${wf.nodes.length} edges=${wf.edges.length} channel=${channel}`);
             DatabaseService.getInstance().saveWorkflow(wf);
             DatabaseService.getInstance().save();
             WorkflowEngineService.getInstance().reloadWorkflow(wf.id);
             return { success: true, id: wf.id, webhookToken };
         } catch (e: any) {
-            Logger.error(`[WorkflowIpc] save error: ${e.message}`);
+            Logger.error(`[WorkflowIpc] save error: ${e.message} | workflow=${JSON.stringify({ id: workflow?.id, name: workflow?.name })}`);
             return { success: false, error: e.message };
         }
     });

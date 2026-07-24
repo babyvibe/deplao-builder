@@ -458,10 +458,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     set((state) => {
       const { [key]: _, ...restDrafts } = state.drafts;
       const { [key]: __, ...restTs } = state.draftTimestamps;
-      // Persist delete to DB
-      ipc?.db?.deleteDraft({ zaloId, threadId }).catch(() => {});
       return { drafts: restDrafts, draftTimestamps: restTs };
     });
+    // Persist delete to DB (outside set() callback to avoid IPC inside state updater)
+    ipc?.db?.deleteDraft({ zaloId, threadId }).catch(() => {});
   },
 
   loadDrafts: async (zaloId) => {

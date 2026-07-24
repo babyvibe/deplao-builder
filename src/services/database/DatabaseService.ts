@@ -919,6 +919,35 @@ class DatabaseService {
             CREATE INDEX IF NOT EXISTS idx_ai_files_assistant ON ai_assistant_files(assistant_id);
         `);
 
+        // ─── AI Conversations (chat history per thread + assistant) ───────────
+        this.exec(`
+            CREATE TABLE IF NOT EXISTS ai_conversations (
+                id              TEXT PRIMARY KEY,
+                zalo_id         TEXT NOT NULL,
+                thread_id       TEXT NOT NULL,
+                assistant_id    TEXT NOT NULL,
+                title           TEXT DEFAULT '',
+                last_message_at INTEGER NOT NULL,
+                created_at      INTEGER NOT NULL,
+                updated_at      INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_ai_conv_thread ON ai_conversations(zalo_id, thread_id);
+            CREATE INDEX IF NOT EXISTS idx_ai_conv_assistant ON ai_conversations(assistant_id);
+        `);
+
+        this.exec(`
+            CREATE TABLE IF NOT EXISTS ai_conversation_messages (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id TEXT NOT NULL,
+                role            TEXT NOT NULL,
+                content         TEXT NOT NULL,
+                segments_json   TEXT DEFAULT NULL,
+                created_at      INTEGER NOT NULL,
+                FOREIGN KEY(conversation_id) REFERENCES ai_conversations(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_ai_msg_conv ON ai_conversation_messages(conversation_id);
+        `);
+
         // ─── Facebook Integration Tables ──────────────────────────────────────────
         this.exec(`
             CREATE TABLE IF NOT EXISTS fb_accounts (
@@ -2746,36 +2775,20 @@ class DatabaseService {
     }
 
     public getMessages(ownerZaloId: string, threadId: string, limit = 50, offset = 0, before?: number): Message[] {
-        Logger.log(`[DB:getMessages] DB_PATH=${this.dbPath} owner=${ownerZaloId} thread=${threadId}`);
         if (!this.initialized) return [];
         if (before && before > 0) {
             const msgs = this.query<Message>(
                 'SELECT * FROM messages WHERE owner_zalo_id = ? AND thread_id = ? AND timestamp < ? ORDER BY timestamp DESC LIMIT ?',
                 [ownerZaloId, threadId, before, limit]
             );
-            Logger.log(`[DB:getMessages] owner=${ownerZaloId} thread=${threadId} before=${before} → ${msgs.length} msgs`);
             return msgs;
         }
         const msgs = this.query<Message>(
             'SELECT * FROM messages WHERE owner_zalo_id = ? AND thread_id = ? ORDER BY timestamp DESC LIMIT ? OFFSET ?',
             [ownerZaloId, threadId, limit, offset]
         );
-        Logger.log(`[DB:getMessages] owner=${ownerZaloId} thread=${threadId} limit=${limit} offset=${offset} → ${msgs.length} msgs (first: ${msgs[0]?.msg_id || 'none'}, channel: ${msgs[0]?.channel || 'none'})`);
-        // Log local_paths for video messages to debug download persistence
-        for (const m of msgs) {
-          if (m.msg_type === 'video' || m.channel === 'facebook') {
-            Logger.log(`[DB:getMessages] DETAIL: msg_id=${m.msg_id} type=${m.msg_type} channel=${m.channel} local_paths=${m.local_paths || '(empty)'} is_sent=${m.is_sent}`);
-          }
-        }
         if (msgs.length === 0) {
-            // Diagnostic: check if there are ANY messages for this owner or thread
-            try {
-                const anyForOwner = this.queryOne<any>(`SELECT COUNT(*) as cnt FROM messages WHERE owner_zalo_id = ?`, [ownerZaloId]);
-                const anyForThread = this.queryOne<any>(`SELECT COUNT(*) as cnt FROM messages WHERE thread_id = ?`, [threadId]);
-                const fbMsgs = this.queryOne<any>(`SELECT COUNT(*) as cnt FROM fb_messages WHERE thread_id = ?`, [threadId]);
-                const sampleOwners = this.query<any>(`SELECT DISTINCT owner_zalo_id, channel FROM messages WHERE thread_id = ? LIMIT 5`, [threadId]);
-                Logger.log(`[DB:getMessages] DIAGNOSTIC: anyForOwner(${ownerZaloId})=${anyForOwner?.cnt} anyForThread(${threadId})=${anyForThread?.cnt} fb_messages(${threadId})=${fbMsgs?.cnt} sampleOwners=${JSON.stringify(sampleOwners)}`);
-            } catch {}
+            Logger.log(`[DB:getMessages] No messages found for owner=${ownerZaloId} thread=${threadId}`);
         }
         return msgs;
     }
@@ -3881,6 +3894,16 @@ class DatabaseService {
         return this.queryOne<Message>(
             'SELECT * FROM messages WHERE owner_zalo_id = ? AND msg_id = ?',
             [ownerZaloId, String(msgId)]
+        );
+    }
+
+    /** Batch lookup: lấy nhiều messages theo IDs trong 1 query */
+    public getMessagesByIds(ownerZaloId: string, msgIds: string[]): Message[] {
+        if (!this.initialized || !msgIds.length) return [];
+        const placeholders = msgIds.map(() => '?').join(',');
+        return this.query<Message>(
+            `SELECT * FROM messages WHERE owner_zalo_id = ? AND msg_id IN (${placeholders})`,
+            [ownerZaloId, ...msgIds.map(String)]
         );
     }
 
@@ -6167,29 +6190,25 @@ class DatabaseService {
     }
 
     public saveWorkflow(wf: any): void {
-        if (!this.initialized) return;
-        try {
-            // pageIds: array → comma-separated string
-            const pageIds = Array.isArray(wf.pageIds)
-                ? wf.pageIds.filter(Boolean).join(',')
-                : (wf.pageId || '');
-            const channel = this.normalizeWorkflowChannel(wf.channel);
-            this.run(
-                `INSERT OR REPLACE INTO workflows
-                 (id, name, description, enabled, channel, page_id, page_ids, nodes_json, edges_json, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [
-                    wf.id, wf.name, wf.description || '', wf.enabled ? 1 : 0,
-                    channel,
-                    pageIds,   // keep page_id in sync with first page for legacy compat
-                    pageIds,
-                    JSON.stringify(wf.nodes || []), JSON.stringify(wf.edges || []),
-                    wf.createdAt || Date.now(), wf.updatedAt || Date.now(),
-                ]
-            );
-        } catch (err: any) {
-            Logger.error(`[DB] saveWorkflow: ${err.message}`);
-        }
+        if (!this.initialized) throw new Error('DatabaseService not initialized');
+        // pageIds: array → comma-separated string
+        const pageIds = Array.isArray(wf.pageIds)
+            ? wf.pageIds.filter(Boolean).join(',')
+            : (wf.pageId || '');
+        const channel = this.normalizeWorkflowChannel(wf.channel);
+        this.run(
+            `INSERT OR REPLACE INTO workflows
+             (id, name, description, enabled, channel, page_id, page_ids, nodes_json, edges_json, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                wf.id, wf.name, wf.description || '', wf.enabled ? 1 : 0,
+                channel,
+                pageIds,   // keep page_id in sync with first page for legacy compat
+                pageIds,
+                JSON.stringify(wf.nodes || []), JSON.stringify(wf.edges || []),
+                wf.createdAt || Date.now(), wf.updatedAt || Date.now(),
+            ]
+        );
     }
 
     public deleteWorkflow(id: string): void {
@@ -7562,6 +7581,115 @@ class DatabaseService {
             Logger.log(`[DatabaseService] ✅ FTS5 migration complete (${count?.n || 0} messages indexed)`);
         } catch (err: any) {
             Logger.warn(`[DatabaseService] FTS5 migration skipped: ${err.message}. Search will use LIKE fallback.`);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // AI CONVERSATIONS — Chat history persistence per thread + assistant
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /** Tạo hoặc lấy conversation gần nhất cho (zaloId, threadId, assistantId) */
+    public getOrCreateAIConversation(zaloId: string, threadId: string, assistantId: string): any {
+        if (!this.initialized) return null;
+        try {
+            // Tìm conversation gần nhất
+            const existing = this.queryOne<any>(
+                `SELECT * FROM ai_conversations WHERE zalo_id = ? AND thread_id = ? AND assistant_id = ? ORDER BY last_message_at DESC LIMIT 1`,
+                [zaloId, threadId, assistantId]
+            );
+            if (existing) return existing;
+
+            // Tạo mới
+            const id = `aiconv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+            const now = Date.now();
+            this.run(
+                `INSERT INTO ai_conversations (id, zalo_id, thread_id, assistant_id, title, last_message_at, created_at, updated_at) VALUES (?, ?, ?, ?, '', ?, ?, ?)`,
+                [id, zaloId, threadId, assistantId, now, now, now]
+            );
+            return this.queryOne<any>(`SELECT * FROM ai_conversations WHERE id = ?`, [id]);
+        } catch (err: any) {
+            Logger.error(`[DB] getOrCreateAIConversation: ${err.message}`);
+            return null;
+        }
+    }
+
+    /** Lấy tất cả messages của 1 conversation */
+    public getAIConversationMessages(conversationId: string): any[] {
+        if (!this.initialized) return [];
+        try {
+            return this.query<any>(
+                `SELECT * FROM ai_conversation_messages WHERE conversation_id = ? ORDER BY created_at ASC`,
+                [conversationId]
+            );
+        } catch (err: any) {
+            Logger.error(`[DB] getAIConversationMessages: ${err.message}`);
+            return [];
+        }
+    }
+
+    /** Thêm message vào conversation */
+    public addAIConversationMessage(conversationId: string, role: string, content: string, segmentsJson?: string): void {
+        if (!this.initialized) return;
+        try {
+            const now = Date.now();
+            this.run(
+                `INSERT INTO ai_conversation_messages (conversation_id, role, content, segments_json, created_at) VALUES (?, ?, ?, ?, ?)`,
+                [conversationId, role, content, segmentsJson || null, now]
+            );
+            // Cập nhật last_message_at và title nếu là tin nhắn đầu
+            this.run(
+                `UPDATE ai_conversations SET last_message_at = ?, updated_at = ? WHERE id = ?`,
+                [now, now, conversationId]
+            );
+            // Auto-set title từ tin nhắn user đầu tiên
+            if (role === 'user') {
+                const msgCount = this.queryOne<any>(`SELECT COUNT(*) as cnt FROM ai_conversation_messages WHERE conversation_id = ?`, [conversationId]);
+                if (msgCount?.cnt === 1) {
+                    const title = content.slice(0, 80) + (content.length > 80 ? '...' : '');
+                    this.run(`UPDATE ai_conversations SET title = ? WHERE id = ? AND title = ''`, [title, conversationId]);
+                }
+            }
+        } catch (err: any) {
+            Logger.error(`[DB] addAIConversationMessage: ${err.message}`);
+        }
+    }
+
+    /** Lấy danh sách conversations của 1 thread */
+    public getAIConversations(zaloId: string, threadId: string): any[] {
+        if (!this.initialized) return [];
+        try {
+            return this.query<any>(
+                `SELECT * FROM ai_conversations WHERE zalo_id = ? AND thread_id = ? ORDER BY last_message_at DESC`,
+                [zaloId, threadId]
+            );
+        } catch (err: any) {
+            Logger.error(`[DB] getAIConversations: ${err.message}`);
+            return [];
+        }
+    }
+
+    /** Xóa conversation + messages */
+    public deleteAIConversation(conversationId: string): void {
+        if (!this.initialized) return;
+        try {
+            this.run(`DELETE FROM ai_conversation_messages WHERE conversation_id = ?`, [conversationId]);
+            this.run(`DELETE FROM ai_conversations WHERE id = ?`, [conversationId]);
+        } catch (err: any) {
+            Logger.error(`[DB] deleteAIConversation: ${err.message}`);
+        }
+    }
+
+    /** Xóa tất cả conversations của 1 thread */
+    public deleteAIConversationsForThread(zaloId: string, threadId: string): void {
+        if (!this.initialized) return;
+        try {
+            const convs = this.query<any>(`SELECT id FROM ai_conversations WHERE zalo_id = ? AND thread_id = ?`, [zaloId, threadId]);
+            for (const c of convs) {
+                this.run(`DELETE FROM ai_conversation_messages WHERE conversation_id = ?`, [c.id]);
+            }
+            this.run(`DELETE FROM ai_conversations WHERE zalo_id = ? AND thread_id = ?`, [zaloId, threadId]);
+        } catch (err: any) {
+            Logger.error(`[DB] deleteAIConversationsForThread: ${err.message}`);
         }
     }
 }

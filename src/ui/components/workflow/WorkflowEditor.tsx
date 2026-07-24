@@ -353,23 +353,26 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
     setSaving(true);
     try {
       const res = await ipc.workflow?.save(buildWorkflow());
-      if (res?.success) showNotification('Đã lưu workflow', 'success');
-          // Apply generated webhook token to local node state
-          if (res.webhookToken) {
-            setNodes(prev => prev.map(n => {
-              if ((n.data?.type || '').startsWith('trigger.webhook')) {
-                return {
-                  ...n,
-                  data: {
-                    ...n.data,
-                    config: { ...(n.data?.config || {}), webhookToken: res.webhookToken }
-                  }
-                };
-              }
-              return n;
-            }));
-          }
-      else showNotification(res?.error || 'Lỗi lưu workflow', 'error');
+      if (res?.success) {
+        showNotification('Đã lưu workflow', 'success');
+        // Apply generated webhook token to local node state
+        if (res.webhookToken) {
+          setNodes(prev => prev.map(n => {
+            if ((n.data?.type || '').startsWith('trigger.webhook')) {
+              return {
+                ...n,
+                data: {
+                  ...n.data,
+                  config: { ...(n.data?.config || {}), webhookToken: res.webhookToken }
+                }
+              };
+            }
+            return n;
+          }));
+        }
+      } else {
+        showNotification(res?.error || 'Lỗi lưu workflow', 'error');
+      }
     } finally {
       setSaving(false);
     }

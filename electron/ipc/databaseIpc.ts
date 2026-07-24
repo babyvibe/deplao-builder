@@ -204,10 +204,11 @@ export function registerDatabaseIpc() {
         }
     });
 
-    ipcMain.handle('db:updateReaction', async (_event, { zaloId, msgId, userId, icon }) => {
+    ipcMain.handle('db:updateReaction', async (_event, { zaloId, msgId, userId, icon, emoji }) => {
         try {
-            if (isEmployeeMode()) proxyToBoss('db:updateReaction', { zaloId, msgId, userId, icon });
-            DatabaseService.getInstance().updateMessageReaction(zaloId, String(msgId), userId, icon || '');
+            const iconValue = icon || emoji || '';
+            if (isEmployeeMode()) proxyToBoss('db:updateReaction', { zaloId, msgId, userId, icon: iconValue });
+            DatabaseService.getInstance().updateMessageReaction(zaloId, String(msgId), userId, iconValue);
             return { success: true };
         } catch (error: any) {
             return { success: false, error: error.message };
@@ -228,6 +229,16 @@ export function registerDatabaseIpc() {
             if (isEmployeeMode()) return { success: true };
             const message = DatabaseService.getInstance().getMessageById(zaloId, String(msgId));
             return { success: true, message: message || null };
+        } catch (error: any) {
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('db:getMessagesByIds', async (_event, { zaloId, msgIds }) => {
+        try {
+            if (isEmployeeMode()) return { success: true, messages: [] };
+            const messages = DatabaseService.getInstance().getMessagesByIds(zaloId, (msgIds || []).map(String));
+            return { success: true, messages };
         } catch (error: any) {
             return { success: false, error: error.message };
         }

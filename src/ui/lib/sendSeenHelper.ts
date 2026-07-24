@@ -4,18 +4,20 @@ import { useAccountStore } from '@/store/accountStore';
 
 /**
  * Gửi sự kiện đã đọc (sendSeenEvent) cho Zalo.
- * Lấy tin nhắn cuối cùng trong thread từ DB rồi gọi API.
+ * Nếu lastMsg được truyền vào → dùng luôn, nếu không → query DB.
  *
  * @param zaloId - owner zalo ID
  * @param threadId - contactId / groupId
  * @param threadType - 0 = User, 1 = Group
  * @param authOverride - nếu có sẵn auth thì truyền vào, không thì tự lấy
+ * @param lastMsg - tin nhắn cuối cùng đã có sẵn (tránh query lại DB)
  */
 export function sendSeenForThread(
   zaloId: string,
   threadId: string,
   threadType: number,
   authOverride?: { cookies: string; imei: string; userAgent: string } | null,
+  lastMsg?: { msg_id: string; cli_msg_id?: string; sender_id?: string; msg_type?: string; status?: string; timestamp?: number } | null,
 ): void {
   try {
     // Skip for non-Zalo channels
@@ -31,24 +33,31 @@ export function sendSeenForThread(
 
     const finalAuth = auth;
 
-    // Lấy tin nhắn cuối cùng từ DB để build params cho sendSeenEvent
-    DataAccessor.getMessages({ zaloId, threadId, limit: 1, offset: 0 }).then((res: any) => {
-      const msgs = res?.messages || [];
-      if (msgs.length === 0) return;
-      const lastMsg = msgs[0];
+    const buildAndSend = (msg: any) => {
+      if (!msg) return;
       const seenMessages = [{
-        msgId: lastMsg.msg_id || '',
-        cliMsgId: lastMsg.cli_msg_id || lastMsg.msg_id || '',
-        uidFrom: lastMsg.sender_id || '',
+        msgId: msg.msg_id || '',
+        cliMsgId: msg.cli_msg_id || msg.msg_id || '',
+        uidFrom: msg.sender_id || '',
         idTo: threadId,
-        msgType: lastMsg.msg_type || 'text',
-        st: lastMsg.status === 'sent' ? 1 : 0,
+        msgType: msg.msg_type || 'text',
+        st: msg.status === 'sent' ? 1 : 0,
         at: 0,
         cmd: 0,
-        ts: lastMsg.timestamp || Date.now(),
+        ts: msg.timestamp || Date.now(),
       }];
       ipc.zalo?.sendSeenEvent({ auth: finalAuth, messages: seenMessages, type: threadType }).catch(() => {});
-    }).catch(() => {});
+    };
+
+    if (lastMsg) {
+      buildAndSend(lastMsg);
+    } else {
+      DataAccessor.getMessages({ zaloId, threadId, limit: 1, offset: 0 }).then((res: any) => {
+        const msgs = res?.messages || [];
+        if (msgs.length === 0) return;
+        buildAndSend(msgs[0]);
+      }).catch(() => {});
+    }
   } catch {
     // Silent fail - seen event is best-effort
   }

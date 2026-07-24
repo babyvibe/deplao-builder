@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import ipc, { buildZaloAuth } from '@/lib/ipc'
-import DataAccessor from '@/lib/data/DataAccessor';;
+import DataAccessor from '@/lib/data/DataAccessor';
+import { useEmployeeStore } from '@/store/employeeStore';
 import GroupAvatar from '../common/GroupAvatar';
 import AddFriendModal from '../common/AddFriendModal';
 import { channelSupports } from '@/../configs/channelConfig';
@@ -326,6 +327,11 @@ export default function GlobalSearchPanel({
   const [phoneSearching, setPhoneSearching] = useState(false);
   const [phonePendingAccounts, setPhonePendingAccounts] = useState(false); // merged mode: need to pick account
 
+  // Server-side contact search for employee mode (boss API has full DB)
+  const isEmployeeMode = useEmployeeStore(s => s.mode === 'employee');
+  const [serverContactResults, setServerContactResults] = useState<any[]>([]);
+  const contactSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Add friend modal state
   const [addFriendModal, setAddFriendModal] = useState<{ userId: string; displayName: string; avatar: string } | null>(null);
   const [sendingFriendReq, setSendingFriendReq] = useState(false);
@@ -377,6 +383,27 @@ export default function GlobalSearchPanel({
     setMessagesPage(1);
   }, [tab]);
 
+  // ── Server-side contact search for employee mode ─────────────────────────────
+  // In employee mode, contacts are loaded paginated — local filter misses contacts
+  // not yet loaded. Use boss API to search the full DB.
+  useEffect(() => {
+    if (contactSearchTimerRef.current) clearTimeout(contactSearchTimerRef.current);
+    if (!isEmployeeMode || !query.trim() || !activeAccountId) {
+      setServerContactResults([]);
+      return;
+    }
+    contactSearchTimerRef.current = setTimeout(async () => {
+      try {
+        const res = await DataAccessor.searchConversations(activeAccountId, query.trim());
+        const items = res?.items || [];
+        setServerContactResults(items);
+      } catch {
+        setServerContactResults([]);
+      }
+    }, 300);
+    return () => { if (contactSearchTimerRef.current) clearTimeout(contactSearchTimerRef.current); };
+  }, [query, activeAccountId, isEmployeeMode]);
+
   // ── Contact filtering with Vietnamese normalization ──────────────────────────
   // Build a set of contact IDs already in conversations for quick lookup
   const contactIdSet = useMemo(() => {
@@ -420,8 +447,14 @@ export default function GlobalSearchPanel({
         _isFriendOnly: true, // flag to indicate this is from friends table, no conversation yet
       }));
 
-    return [...fromContacts, ...fromFriends];
-  }, [contacts, friendsList, contactIdSet, query, activeAccountId]);
+    // 3. Merge server-side results (employee mode) — dedupe by contact_id
+    const seenIds = new Set([...fromContacts.map(c => c.contact_id), ...fromFriends.map(c => c.contact_id)]);
+    const fromServer = serverContactResults
+      .filter(c => c.contact_id && !seenIds.has(c.contact_id))
+      .map(c => ({ ...c, _isServerResult: true }));
+
+    return [...fromContacts, ...fromFriends, ...fromServer];
+  }, [contacts, friendsList, contactIdSet, query, activeAccountId, serverContactResults]);
 
   // ── Message search (debounced) ───────────────────────────────────────────────
   useEffect(() => {

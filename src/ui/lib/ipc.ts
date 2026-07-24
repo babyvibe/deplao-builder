@@ -148,6 +148,7 @@ declare global {
         updateReaction: (params: any) => Promise<any>;
         updateLocalPaths: (params: any) => Promise<any>;
         getMessageById: (params: any) => Promise<any>;
+        getMessagesByIds: (params: any) => Promise<any>;
         getStoragePath: () => Promise<any>;
         setStoragePath: (params: any) => Promise<any>;
         selectStorageFolder: () => Promise<any>;
@@ -399,6 +400,12 @@ declare global {
         getAccountAssistants: (zaloId: string) => Promise<{ success: boolean; suggestion?: string | null; panel?: string | null; error?: string }>;
         getUsageLogs:  (opts?: { assistantId?: string; dateFrom?: number; dateTo?: number; limit?: number }) => Promise<{ success: boolean; logs: any[]; error?: string }>;
         getUsageStats: (opts?: { assistantId?: string; days?: number }) => Promise<{ success: boolean; stats: any[]; error?: string }>;
+        // AI Conversations
+        getOrCreateConversation: (params: { zaloId: string; threadId: string; assistantId: string }) => Promise<{ success: boolean; conversation?: any; error?: string }>;
+        getConversationMessages: (params: { conversationId: string }) => Promise<{ success: boolean; messages: any[]; error?: string }>;
+        addConversationMessage:  (params: { conversationId: string; role: string; content: string; segmentsJson?: string }) => Promise<{ success: boolean; error?: string }>;
+        getConversations:        (params: { zaloId: string; threadId: string }) => Promise<{ success: boolean; conversations: any[]; error?: string }>;
+        deleteConversation:      (params: { conversationId: string }) => Promise<{ success: boolean; error?: string }>;
       };
       tunnel: {
         start:  () => Promise<{ success: boolean; url?: string; error?: string }>;
