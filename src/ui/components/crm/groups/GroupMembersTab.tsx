@@ -11,6 +11,8 @@ import AddToContactsModal from '@/components/crm/contacts/AddToContactsModal';
 import PaymentQrSection from '@/components/crm/groups/PaymentQrSection';
 import ShareGroupModal from '@/components/crm/groups/ShareGroupModal';
 import SharedGroupsCategoryPopup from '@/components/crm/groups/SharedGroupsCategoryPopup';
+import BulkImportGroupsModal from '@/components/crm/groups/BulkImportGroupsModal';
+import AffiliateIntroPopup from '@/components/crm/groups/AffiliateIntroPopup';
 import { syncZaloGroups, MemberPlaceholder, SyncGroupsProgress } from '@/lib/zaloGroupUtils';
 import { AlertIcon, CheckIcon, SearchIcon } from '@/components/common/icons';
 import { usePremiumMemberSync } from '@/hooks/usePremiumMemberSync';
@@ -137,6 +139,8 @@ export default function GroupMembersTab() {
 
   // ── Shared groups popup state ────────────────────────────────────────────
   const [showSharedGroupsPopup, setShowSharedGroupsPopup] = useState(false);
+  const [showBulkImport, setShowBulkImport] = useState(false);
+  const [showAffiliateIntro, setShowAffiliateIntro] = useState(false);
 
   // ── Scan tab state ────────────────────────────────────────────────────
   const [scanLinkInput, setScanLinkInput] = useState('');
@@ -809,6 +813,23 @@ export default function GroupMembersTab() {
     }
   }, [activeTab, activeAccountId, premiumLoaded, loadPremiumStatus]);
 
+  // ── Listen for external navigation to scan tab (from TopBar "Kiếm tiền") ──
+  useEffect(() => {
+    const handler = () => {
+      setActiveTab('scan');
+      try { localStorage.removeItem('crm_open_scan_tab'); } catch {}
+    };
+    window.addEventListener('crm:openScanTab', handler);
+    // Also check localStorage on mount (in case event fired before component mounted)
+    try {
+      if (localStorage.getItem('crm_open_scan_tab') === 'true') {
+        localStorage.removeItem('crm_open_scan_tab');
+        setActiveTab('scan');
+      }
+    } catch {}
+    return () => window.removeEventListener('crm:openScanTab', handler);
+  }, []);
+
   // ── Filtered lists ────────────────────────────────────────────────────────
   const filteredGroups = groups.filter(g =>
     !searchGroup.trim() ||
@@ -875,10 +896,40 @@ export default function GroupMembersTab() {
       {activeTab === 'scan' ? (
         /* ── Tab: Quét thành viên (Premium) ──────────────────────────────── */
         <div className="flex-1 overflow-y-auto">
-          <div className="mx-auto px-6 py-6 space-y-5">
+          <div className="mx-auto px-6 py-6 space-y-5 relative">
 
             {/* Header */}
-            <div className="text-center pb-2">
+            <div className="text-center pb-2 relative">
+              {/* ── Nút Kiếm tiền + Hỗ trợ ────────────────────────────── */}
+              <div className="absolute top-0 right-0 flex items-center gap-2 z-10">
+                <button
+                  onClick={() => ipc.shell?.openExternal('https://fb.com/deplaoapp')}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full
+                    bg-gray-700 border border-gray-600
+                    text-gray-300 text-xs font-medium
+                    hover:bg-gray-600 hover:text-white
+                    transition-all duration-200"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+                  </svg>
+                  Hỗ trợ
+                </button>
+                <button
+                  onClick={() => setShowAffiliateIntro(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full
+                    bg-gradient-to-r from-amber-600 via-orange-600 to-red-600
+                    text-white-important text-xs font-bold shadow-lg shadow-orange-500/30
+                    hover:shadow-orange-500/50 hover:scale-105
+                    animate-pulse transition-all duration-200"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+                  </svg>
+                  Kiếm tiền
+                </button>
+              </div>
+
               <h2 className="text-lg font-bold text-white">Quét thành viên nhóm ẩn</h2>
               <p className="text-sm text-gray-400 mt-1">Tiếp cận hàng nghìn khách hàng tiềm năng từ các nhóm Zalo chất lượng</p>
             </div>
@@ -895,7 +946,7 @@ export default function GroupMembersTab() {
                   <div className="w-9 h-9 rounded-lg bg-gray-700/50 flex items-center justify-center flex-shrink-0">{f.icon}</div>
                   <div>
                     <p className="text-sm font-semibold text-white">{f.title}</p>
-                    <p className="text-[11px] text-gray-600 mt-0.5 leading-relaxed">{f.desc}</p>
+                    <p className="text-[11px] text-gray-400 mt-0.5 leading-relaxed">{f.desc}</p>
                   </div>
                 </div>
               ))}
@@ -961,54 +1012,10 @@ export default function GroupMembersTab() {
                   Chia sẻ
                 </button>
               </div>
-              <p className="text-[12px] text-gray-600">Kết quả khi quét xong sẽ lưu vào tab `Thành viên nhóm` để bạn sử dụng thêm vào chiến dịch.</p>
-              <p className="text-[12px] text-gray-600">UID thành viên nhóm không thể chia sẻ giữa các tài khoản với nhau do chính sách từ Zalo.</p>
-              <p className="text-[12px] text-gray-600">Nếu bạn quét nhóm chưa join cần ít nhất ở chế độ chờ duyệt, với trường hợp nhóm tắt chờ duyệt thì bạn không thể quét được nhóm này.</p>
-              <p className="text-[12px] text-gray-600">Bạn có thể chia sẻ group cho cộng đồng để xây dựng kho nhóm dùng chung toàn bộ app.</p>
-            </div>
-
-            {/* Shared groups description */}
-            <div className="bg-gray-800 border border-gray-700 rounded-xl p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="w-7 h-7 rounded-lg bg-green-500/15 flex items-center justify-center flex-shrink-0">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2">
-                      <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
-                      <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
-                    </svg>
-                  </div>
-                  <div>
-                    <p className="text-md font-semibold text-white">Nhóm chung từ cộng đồng</p>
-                    <p className="text-[10px] text-gray-600">Cùng nhau phát triển, chia sẻ giá trị</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Benefits grid */}
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  { icon: '🎯', title: 'Tiết kiệm thời gian', desc: 'Không cần tự tìm nhóm, đã có danh sách nhóm chất lượng' },
-                  { icon: '🤝', title: 'Cùng nhau phát triển', desc: 'Chia sẻ nhóm tốt giúp cộng đồng cùng tiếp cận khách hàng' },
-                  { icon: '✅', title: 'Đảm bảo chất lượng', desc: 'Mọi nhóm đều qua kiểm duyệt, không spam không ảo hoặc nhóm ít thành viên' },
-                ].map((b, i) => (
-                  <div key={i} className="bg-gray-700/30 rounded-lg p-2 text-center">
-                    <span className="text-base">{b.icon}</span>
-                    <p className="text-[14px] text-white font-medium mt-1 leading-tight">{b.title}</p>
-                    <p className="text-[12px] text-gray-600 mt-0.5 leading-tight">{b.desc}</p>
-                  </div>
-                ))}
-              </div>
-
-              {/* CTA */}
-              <button
-                onClick={() => setShowSharedGroupsPopup(true)}
-                className="w-full py-4 bg-green-600/10 hover:bg-green-600/20 border border-green-500/20 text-green-400 text-xs font-medium rounded-lg transition-colors flex items-center justify-center gap-1.5">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
-                  <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
-                </svg>
-                Khám phá kho nhóm chung
-              </button>
+              <p className="text-[12px] text-gray-400">Kết quả khi quét xong sẽ lưu vào tab `Thành viên nhóm` để bạn sử dụng thêm vào chiến dịch.</p>
+              <p className="text-[12px] text-gray-400">UID thành viên nhóm không thể chia sẻ giữa các tài khoản với nhau do chính sách từ Zalo.</p>
+              <p className="text-[12px] text-gray-400">Nếu bạn quét nhóm chưa join cần ít nhất ở chế độ chờ duyệt, với trường hợp nhóm tắt chờ duyệt thì bạn không thể quét được nhóm này.</p>
+              <p className="text-[12px] text-gray-400">Bạn có thể chia sẻ group cho cộng đồng để xây dựng kho nhóm dùng chung toàn bộ app.</p>
             </div>
 
             {/* Resolved group info card */}
@@ -1109,6 +1116,50 @@ export default function GroupMembersTab() {
                 </div>
               </div>
             )}
+
+            {/* Shared groups description */}
+            <div className="bg-gray-800 border border-gray-700 rounded-xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-green-500/15 flex items-center justify-center flex-shrink-0">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2">
+                      <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+                      <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-md font-semibold text-white">Nhóm chung từ cộng đồng</p>
+                    <p className="text-[10px] text-gray-300">Cùng nhau phát triển, chia sẻ giá trị</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Benefits grid */}
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { icon: '🎯', title: 'Tiết kiệm thời gian', desc: 'Không cần tự tìm nhóm, đã có danh sách nhóm chất lượng' },
+                  { icon: '🤝', title: 'Cùng nhau phát triển', desc: 'Chia sẻ nhóm tốt giúp cộng đồng cùng tiếp cận khách hàng' },
+                  { icon: '✅', title: 'Đảm bảo chất lượng', desc: 'Mọi nhóm đều qua kiểm duyệt, không spam không ảo hoặc nhóm ít thành viên' },
+                ].map((b, i) => (
+                    <div key={i} className="bg-gray-700/30 rounded-lg p-2 text-center">
+                      <span className="text-base">{b.icon}</span>
+                      <p className="text-[14px] text-white font-medium mt-1 leading-tight">{b.title}</p>
+                      <p className="text-[12px] text-gray-400 mt-0.5 leading-tight">{b.desc}</p>
+                    </div>
+                ))}
+              </div>
+
+              {/* CTA */}
+              <button
+                  onClick={() => setShowSharedGroupsPopup(true)}
+                  className="w-full py-4 bg-green-600/10 hover:bg-green-600/20 border border-green-500/20 text-green-400 text-xs font-medium rounded-lg transition-colors flex items-center justify-center gap-1.5">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+                  <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+                </svg>
+                Khám phá kho nhóm chung
+              </button>
+            </div>
 
             {/* Premium status */}
             <div className="bg-gray-800 border border-gray-700 rounded-xl p-4 space-y-3">
@@ -1896,7 +1947,29 @@ export default function GroupMembersTab() {
             });
             setShowShareModal(true);
           }}
+          onBulkImport={() => {
+            setShowSharedGroupsPopup(false);
+            setShowBulkImport(true);
+          }}
         />
+      )}
+
+      {/* ── Bulk Import Groups Modal ──────────────────────────────────── */}
+      {showBulkImport && (
+        <BulkImportGroupsModal
+          pageId={activeAccountId}
+          onClose={() => setShowBulkImport(false)}
+          onImported={() => {
+            setShowBulkImport(false);
+            // Reload groups from DB
+            loadGroupsFromDB?.();
+          }}
+        />
+      )}
+
+      {/* ── Affiliate Intro Popup ─────────────────────────────────────── */}
+      {showAffiliateIntro && (
+        <AffiliateIntroPopup onClose={() => setShowAffiliateIntro(false)} />
       )}
 
       {/* ── Export success notification ──────────────────────────────── */}

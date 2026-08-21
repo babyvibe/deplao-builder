@@ -316,6 +316,7 @@ declare global {
         getVideoMeta: (params: { filePath: string }) => Promise<{ success: boolean; thumbPath: string; duration: number; width: number; height: number; error?: string }>;
         readImageAsBase64: (params: { localPath?: string; remoteUrl?: string }) => Promise<{ success: boolean; base64?: string; mimeType?: string; error?: string }>;
         repairImage: (params: { zaloId: string; msgId: string; threadId?: string; localPath?: string; remoteUrl?: string }) => Promise<{ success: boolean; newLocalPath?: string; error?: string }>;
+        ensureFaststart: (params: { filePath: string }) => Promise<{ success: boolean; fixed?: boolean; reason?: string; error?: string }>;
         validateLocalImages: (items: Array<{ zaloId: string; msgId: string; threadId?: string; localPath: string; remoteUrl?: string }>) => Promise<{ success: boolean; corrupted: Array<{ zaloId: string; msgId: string; threadId?: string; localPath: string; remoteUrl?: string; reason: string }> }>;
         captureScreenshot: () => Promise<{ success: boolean; screenshots?: Array<{ name: string; id: string; displayId: string; thumbnail: string; width: number; height: number }>; error?: string }>;
         // Media cache cho employee mode

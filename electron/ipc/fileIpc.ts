@@ -9,6 +9,8 @@ import * as path from 'path';
 
 /** Repair queue: dedup concurrent repairs for the same file */
 const pendingRepairs = new Map<string, Promise<{ success: boolean; newLocalPath?: string; error?: string }>>();
+/** Faststart repair queue: dedup concurrent ensureFaststart calls for the same file */
+const pendingFaststart = new Map<string, Promise<{ success: boolean; fixed?: boolean; reason?: string; error?: string }>>();
 
 /** Lấy đường dẫn ffmpeg: ưu tiên ffmpeg-static, fallback về PATH */
 function getFfmpegBin(): string {
@@ -415,6 +417,77 @@ export function registerFileIpc() {
         pendingRepairs.set(queueKey, repairPromise);
         repairPromise.finally(() => pendingRepairs.delete(queueKey));
         return repairPromise;
+    });
+
+    /**
+     * Ensure MP4 file is faststart (moov atom at beginning).
+     * Returns { fixed: true } if file was modified, { fixed: false } if already OK or failed.
+     * Dedup: concurrent calls for the same file share one Promise.
+     */
+    ipcMain.handle('file:ensureFaststart', async (_event, { filePath }: { filePath: string }) => {
+        // Dedup: if already processing this file, wait for existing result
+        const existing = pendingFaststart.get(filePath);
+        if (existing) return existing;
+
+        const promise = (async () => {
+            try {
+                const absPath = FileStorageService.resolveAbsolutePath(filePath);
+                if (!absPath || !fs.existsSync(absPath)) {
+                    return { success: false, error: 'File not found' };
+                }
+                const ext = path.extname(absPath).toLowerCase();
+                if (ext !== '.mp4') {
+                    return { success: true, fixed: false, reason: 'Not MP4' };
+                }
+
+                // Check if already faststart by scanning first 64KB for moov atom
+                const stat = fs.statSync(absPath);
+                const scanBuf = Buffer.alloc(Math.min(stat.size, 64 * 1024));
+                const fd = fs.openSync(absPath, 'r');
+                fs.readSync(fd, scanBuf, 0, scanBuf.length, 0);
+                fs.closeSync(fd);
+
+                let offset = 0;
+                while (offset < scanBuf.length - 8) {
+                    const boxSize = scanBuf.readUInt32BE(offset);
+                    const boxType = scanBuf.toString('ascii', offset + 4, offset + 8);
+                    if (boxType === 'moov') {
+                        return { success: true, fixed: false, reason: 'Already faststart' };
+                    }
+                    if (boxSize < 8) break;
+                    offset += boxSize;
+                }
+
+                // Not faststart — fix with ffmpeg
+                Logger.log(`[fileIpc] ensureFaststart: fixing ${absPath}`);
+                const ffmpegBin = getFfmpegBin();
+                const tempPath = absPath + '.faststart.tmp.mp4';
+
+                const { spawnSync } = require('child_process');
+                const result = spawnSync(ffmpegBin, [
+                    '-y', '-i', absPath,
+                    '-c', 'copy',
+                    '-movflags', '+faststart',
+                    tempPath,
+                ], { timeout: 120_000, stdio: 'pipe' });
+
+                if (result.status === 0 && fs.existsSync(tempPath)) {
+                    fs.renameSync(tempPath, absPath);
+                    Logger.log(`[fileIpc] ensureFaststart: fixed ${absPath}`);
+                    return { success: true, fixed: true };
+                } else {
+                    try { fs.unlinkSync(tempPath); } catch {}
+                    return { success: false, error: `ffmpeg exit ${result.status}` };
+                }
+            } catch (err: any) {
+                Logger.error(`[fileIpc] ensureFaststart error: ${err.message}`);
+                return { success: false, error: err.message };
+            }
+        })();
+
+        pendingFaststart.set(filePath, promise);
+        promise.finally(() => pendingFaststart.delete(filePath));
+        return promise;
     });
 
     /**

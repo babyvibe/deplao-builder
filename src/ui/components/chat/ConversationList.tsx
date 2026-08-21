@@ -2544,6 +2544,24 @@ export default function ConversationList() {
                   </span>
                   <div className="flex items-center gap-1 flex-shrink-0">
                     {isMuted && <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-400"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>}
+                    {contact.has_main_app === 1 && isTelegramUser(contact.channel) && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          (async () => {
+                            try {
+                              const res = await (ipc as any).telegramUser?.requestMainWebView({
+                                accountId: contact.owner_zalo_id, botId: contact.contact_id,
+                              });
+                              if (res?.success && res.webViewUrl) window.open(res.webViewUrl, '_blank');
+                            } catch {}
+                          })();
+                        }}
+                        className="text-[10px] text-blue-400 hover:text-blue-300 font-medium px-1.5 py-0.5 rounded hover:bg-blue-500/10 transition-colors"
+                      >
+                        Open
+                      </button>
+                    )}
                     {contact.has_mention === 1 && contact.unread_count > 0 && (
                       <span className="bg-cyan-600 text-white-important text-[10px] rounded-full w-4 h-4 flex items-center justify-center font-bold">@</span>
                     )}

@@ -57,6 +57,7 @@ interface SharedGroupsCategoryPopupProps {
   pageId: string;
   onClose: () => void;
   onShareGroup: () => void;
+  onBulkImport?: () => void;
 }
 
 const PAGE_SIZE = 50;
@@ -68,7 +69,7 @@ function removeDiacritics(str: string): string {
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
-export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGroup }: SharedGroupsCategoryPopupProps) {
+export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGroup, onBulkImport }: SharedGroupsCategoryPopupProps) {
   const [allGroups, setAllGroups] = useState<SharedGroupItem[]>([]);
   const [categories, setCategories] = useState<SharedGroupCategory[]>([]);
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
@@ -163,13 +164,13 @@ export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGrou
               className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors
                 ${selectedCategoryId === null
                   ? 'bg-green-500/10 border-r-2 border-green-500 text-white'
-                  : 'text-gray-400 hover:bg-gray-700/50 hover:text-gray-200'}`}>
+                  : 'text-gray-200 hover:bg-gray-700 hover:text-gray-200'}`}>
               <span className="text-lg flex-shrink-0">📋</span>
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-medium">Tất cả</p>
               </div>
               <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full
-                ${selectedCategoryId === null ? 'bg-green-500/20 text-green-400' : 'bg-gray-700 text-gray-500'}`}>
+                ${selectedCategoryId === null ? 'bg-green-500/10 text-green-400' : 'bg-gray-700 text-gray-200'}`}>
                 {totalGroups}
               </span>
             </button>
@@ -195,7 +196,7 @@ export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGrou
                     <p className="text-xs font-medium truncate">{cat.name}</p>
                   </div>
                   <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full
-                    ${isActive ? 'bg-green-500/20 text-green-400' : 'bg-gray-700 text-gray-500'}`}>
+                    ${isActive ? 'bg-green-500/20 text-green-400' : 'bg-gray-700 text-gray-300'}`}>
                     {cat.count ?? 0}
                   </span>
                 </button>
@@ -204,9 +205,19 @@ export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGrou
           </div>
 
           {/* Share group button */}
-          <div className="px-3 py-3 border-t border-gray-700">
+          <div className="px-3 py-3 border-t border-gray-700 flex gap-2">
+            {/*{onBulkImport && (*/}
+            {/*  <button onClick={onBulkImport}*/}
+            {/*    className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-1.5">*/}
+            {/*    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">*/}
+            {/*      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>*/}
+            {/*      <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>*/}
+            {/*    </svg>*/}
+            {/*    Nhập hàng loạt*/}
+            {/*  </button>*/}
+            {/*)}*/}
             <button onClick={onShareGroup}
-              className="w-full py-2 bg-green-600 hover:bg-green-700 text-white text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-1.5">
+              className="flex-1 py-2 bg-green-600 hover:bg-green-700 text-white text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-1.5">
               {ShareIcon} Chia sẻ nhóm
             </button>
           </div>

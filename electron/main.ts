@@ -831,6 +831,7 @@ async function startupAllWorkspaces(): Promise<void> {
 
 app.whenReady().then(async () => {
   // ── Register local-media:// protocol handler ───────────────────────────
+  // Supports Range requests for video/audio streaming (seeking, partial load)
   protocol.handle('local-media', (request) => {
     try {
       let filePath = decodeURIComponent(new URL(request.url).pathname);
@@ -840,10 +841,12 @@ app.whenReady().then(async () => {
       }
 
       const configFolder = path.dirname(FileStorageService.getBaseDir());
+      console.log(`[local-media] Request: url=${request.url} → filePath=${filePath} configFolder=${configFolder}`);
 
       if (!path.isAbsolute(filePath)) {
         // Relative path: "media/zaloId/date/img.jpg" → configFolder/media/zaloId/...
         filePath = path.join(configFolder, filePath);
+        console.log(`[local-media] Resolved relative → ${filePath}`);
       } else if (!fs.existsSync(filePath)) {
         // Absolute path but file not found (old drive/folder after move).
         const normalized = filePath.replace(/\\/g, '/');
@@ -880,30 +883,128 @@ app.whenReady().then(async () => {
       }
 
       if (!fs.existsSync(filePath)) {
-        console.warn(`[local-media] NOT FOUND: ${filePath}`);
+        console.warn(`[local-media] NOT FOUND: ${filePath} (original request: ${request.url})`);
         return new Response('Not Found', { status: 404 });
       }
 
+      console.log(`[local-media] Serving: ${filePath}`);
+
       const absPath = path.resolve(filePath);
+      const stat = fs.statSync(absPath);
+      const fileSize = stat.size;
       const ext = path.extname(absPath).toLowerCase();
+
+      // ── Debug: check file header for MP4 validity ──
+      if (ext === '.mp4' || ext === '.webm' || ext === '.mov') {
+        try {
+          const headerBuf = Buffer.alloc(32);
+          const fd = fs.openSync(absPath, 'r');
+          fs.readSync(fd, headerBuf, 0, 32, 0);
+          fs.closeSync(fd);
+          // Check MP4 ftyp box: bytes 4-7 should be 'ftyp'
+          const boxSize = headerBuf.readUInt32BE(0);
+          const boxType = headerBuf.toString('ascii', 4, 8);
+          const brand = headerBuf.toString('ascii', 8, 12);
+          console.log(`[local-media] File header: size=${fileSize} bytes, box=${boxType}, brand=${brand}, boxSize=${boxSize}`);
+          // Check for HEVC brand
+          if (brand.includes('hvc1') || brand.includes('hev1')) {
+            console.warn(`[local-media] WARNING: HEVC/H.265 codec detected (brand=${brand}) - may not play in Chromium!`);
+          }
+
+          // Scan for moov atom position (critical for <video> playback)
+          // moov should be before mdat for faststart, otherwise <video> can't read metadata
+          try {
+            const scanBuf = Buffer.alloc(Math.min(fileSize, 64 * 1024)); // scan first 64KB
+            const fdScan = fs.openSync(absPath, 'r');
+            fs.readSync(fdScan, scanBuf, 0, scanBuf.length, 0);
+            fs.closeSync(fdScan);
+            let moovOffset = -1;
+            let mdatOffset = -1;
+            let offset = 0;
+            while (offset < scanBuf.length - 8) {
+              const boxSize = scanBuf.readUInt32BE(offset);
+              const boxType = scanBuf.toString('ascii', offset + 4, offset + 8);
+              if (boxType === 'moov') { moovOffset = offset; break; }
+              if (boxType === 'mdat') { mdatOffset = offset; }
+              if (boxSize < 8) break; // invalid box
+              offset += boxSize;
+            }
+            if (moovOffset >= 0) {
+              console.log(`[local-media] moov atom found at offset ${moovOffset} (faststart OK)`);
+            } else {
+              console.warn(`[local-media] WARNING: moov atom NOT found in first 64KB! File is NOT faststart.`);
+              console.warn(`[local-media] <video> will fail to read metadata. Need to transcode with: ffmpeg -i input.mp4 -c copy -movflags +faststart output.mp4`);
+            }
+            if (mdatOffset >= 0) {
+              console.log(`[local-media] mdat atom found at offset ${mdatOffset}`);
+            }
+          } catch (e2: any) {
+            console.warn(`[local-media] Could not scan for moov: ${e2.message}`);
+          }
+        } catch (e: any) {
+          console.warn(`[local-media] Could not read header: ${e.message}`);
+        }
+      }
       const mimeTypes: Record<string, string> = {
         '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime',
+        '.mkv': 'video/x-matroska', '.avi': 'video/x-msvideo',
         '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4',
         '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
         '.gif': 'image/gif', '.webp': 'image/webp',
       };
       const contentType = mimeTypes[ext] || 'application/octet-stream';
 
+      // ── Range request support (needed for <video> seeking/streaming) ──
+      const rangeHeader = request.headers.get('range');
+      const corsHeaders = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+        'Access-Control-Allow-Headers': 'Range',
+        'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges',
+      };
+
+      // Handle CORS preflight
+      if (request.method === 'OPTIONS') {
+        return new Response(null, { status: 204, headers: corsHeaders });
+      }
+
+      if (rangeHeader) {
+        // Parse "bytes=start-end" or "bytes=start-"
+        const match = rangeHeader.match(/bytes=(\d*)-(\d*)/);
+        if (match) {
+          const start = match[1] ? parseInt(match[1], 10) : 0;
+          const end = match[2] ? parseInt(match[2], 10) : fileSize - 1;
+          const chunkSize = end - start + 1;
+
+          console.log(`[local-media] Range request: bytes=${start}-${end}/${fileSize} (chunk=${chunkSize})`);
+
+          // Use readFileSync + subarray for maximum compatibility with <video> element
+          const fullData = fs.readFileSync(absPath);
+          const chunk = fullData.subarray(start, end + 1);
+
+          return new Response(chunk, {
+            status: 206,
+            headers: {
+              'Content-Type': contentType,
+              'Content-Length': String(chunkSize),
+              'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+              'Accept-Ranges': 'bytes',
+              ...corsHeaders,
+            },
+          });
+        }
+      }
+
+      // ── Full file response (no Range header) ──
       const data = fs.readFileSync(absPath);
-      // Use Uint8Array to ensure compatibility with Response constructor
       const body = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
       return new Response(body, {
         status: 200,
         headers: {
           'Content-Type': contentType,
-          'Content-Length': String(data.length),
+          'Content-Length': String(fileSize),
           'Accept-Ranges': 'bytes',
-          'Access-Control-Allow-Origin': '*',
+          ...corsHeaders,
         },
       });
     } catch (err: any) {

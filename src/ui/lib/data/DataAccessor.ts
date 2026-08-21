@@ -1067,6 +1067,7 @@ export class DataAccessor {
   static async updateContactProfile(params: {
     zaloId: string; contactId: string; displayName: string; avatarUrl: string;
     phone?: string; contactType?: string; gender?: number | null; birthday?: string | null;
+    isBot?: number | null;
   }) {
     if (isEmployee()) {
       return rest().post('/api/command/conversations/update-profile', params);

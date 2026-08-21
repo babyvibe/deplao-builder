@@ -1352,7 +1352,6 @@ function WorkflowTab({ loading, workflowData, wfPieData }: {
   if (!workflowData || workflowData.totalRuns === 0) {
     return (
       <div className="text-center py-16 text-gray-400 text-sm">
-        <span className="text-3xl mb-3 block">⚡</span>
         Chưa có dữ liệu workflow trong khoảng thời gian đã chọn
       </div>
     );
@@ -1456,7 +1455,6 @@ function AITab({ loading, aiData, aiModelPie }: {
   if (!aiData || aiData.totalRequests === 0) {
     return (
       <div className="text-center py-16 text-gray-400 text-sm">
-        <span className="text-3xl mb-3 block"><BotIcon className="w-4 h-4" /></span>
         Chưa có dữ liệu AI trong khoảng thời gian đã chọn
       </div>
     );

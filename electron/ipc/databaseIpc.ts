@@ -210,10 +210,10 @@ export function registerDatabaseIpc() {
         }
     });
 
-    ipcMain.handle('db:updateContactProfile', async (_event, { zaloId, contactId, displayName, avatarUrl, phone, contactType, gender, birthday }) => {
+    ipcMain.handle('db:updateContactProfile', async (_event, { zaloId, contactId, displayName, avatarUrl, phone, contactType, gender, birthday, isBot }) => {
         try {
             if (isEmployeeMode()) proxyToBoss('db:updateContactProfile', { zaloId, contactId });
-            DatabaseService.getInstance().updateContactProfile(zaloId, contactId, displayName || '', avatarUrl || '', phone || '', contactType || '', gender ?? null, birthday ?? null);
+            DatabaseService.getInstance().updateContactProfile(zaloId, contactId, displayName || '', avatarUrl || '', phone || '', contactType || '', gender ?? null, birthday ?? null, isBot ?? null);
             return { success: true };
         } catch (error: any) {
             return { success: false, error: error.message };

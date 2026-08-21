@@ -7,7 +7,7 @@ import AddFriendModal from '../common/AddFriendModal';
 import { channelSupports } from '@/../configs/channelConfig';
 import { CHANNEL, isFacebook, isTelegram } from '@/lib/channelHelper';
 import { Spinner } from '@/components/common/PageLoading';
-import { ChatIcon, CloseIcon, LinkIcon } from '@/components/common/icons';
+import { ChatIcon, CloseIcon} from '@/components/common/icons';
 
 // ─── Vietnamese-aware normalization for fuzzy matching ────────────────────────
 function normalizeStr(s: string): string {
@@ -37,10 +37,12 @@ function isPhoneNumber(s: string): boolean {
   return /^(\+84|0)\d{8,10}$/.test(s.trim().replace(/\s/g, ''));
 }
 
-/** Detect Telegram @username pattern: starts with @ or is a valid username (5-32 chars, alphanumeric + underscore) */
+/** Detect Telegram @username pattern: must start with @ followed by valid username (5-32 chars, alphanumeric + underscore) */
 function isTelegramUsername(s: string): boolean {
-  const cleaned = s.trim().replace(/^@/, '');
-  return /^[a-zA-Z][a-zA-Z0-9_]{4,31}$/.test(cleaned);
+  const trimmed = s.trim();
+  if (!trimmed.startsWith('@')) return false;
+  const username = trimmed.slice(1);
+  return /^[a-zA-Z][a-zA-Z0-9_]{4,31}$/.test(username);
 }
 
 // ─── Highlight matching text ──────────────────────────────────────────────────
@@ -335,7 +337,7 @@ function UsernameResultCard({ result, searching, onOpen }: {
         {result.id && <p className="text-[11px] text-gray-500">ID: {result.id}</p>}
       </div>
       <div className="flex gap-1.5 flex-shrink-0">
-        <button onClick={onOpen} className="bg-cyan-600 hover:bg-cyan-700 text-white text-xs px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1">
+        <button onClick={onOpen} className="bg-cyan-600 hover:bg-cyan-700 text-white-important text-xs px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1">
           <ChatIcon className="w-3.5 h-3.5" /> Nhắn tin
         </button>
       </div>
@@ -583,8 +585,8 @@ export default function GlobalSearchPanel({
         let avatar = '';
         try {
           const profileRes = await ipc.telegramUser?.getUserProfile({ accountId: acc.zalo_id, userId });
-          if (profileRes?.success && profileRes.profile?.avatar) {
-            avatar = profileRes.profile.avatar;
+          if (profileRes?.success && (profileRes.profile?.avatarUrl || profileRes.profile?.avatar)) {
+            avatar = profileRes.profile.avatarUrl || profileRes.profile.avatar;
           }
         } catch {}
         setUsernameResult({
@@ -663,7 +665,7 @@ export default function GlobalSearchPanel({
     const userInfo = {
       display_name: result.displayName || result.username || result.id,
       avatar_url: result.avatar || '',
-      channel: 'telegram_user' as Channel,
+      channel: 'telegram_user',
     };
     onSelectConversation(String(result.id), 0, overrideZaloId, userInfo);
   };

@@ -8,6 +8,8 @@ import { useAccountStore } from '@/store/accountStore';
 import { useUpdateStore } from '@/store/updateStore';
 import { useEmployeeStore } from '@/store/employeeStore';
 import { useWorkspaceStore } from '@/store/workspaceStore';
+import { useCRMStore } from '@/store/crmStore';
+import { hasUnseenAffiliate, markAffiliateSeen } from '@/utils/settingsSeenTabs';
 import { useChatStore } from '@/store/chatStore';
 import WorkspaceSwitcher from '@/components/common/WorkspaceSwitcher';
 import { useErpNotificationStore } from '@/store/erp/erpNotificationStore';
@@ -36,6 +38,14 @@ export default function TopBar() {
   const moreRef = useRef<HTMLDivElement>(null);
   // Font size slider: local temp value, only applies on release
   const [fontTemp, setFontTemp] = useState(fontSizeScale);
+
+  // ── Affiliate red dot ────────────────────────────────────────────────
+  const [hasNewAffiliate, setHasNewAffiliate] = useState(() => hasUnseenAffiliate());
+  useEffect(() => {
+    const handler = () => setHasNewAffiliate(hasUnseenAffiliate());
+    window.addEventListener('settings:tabSeen', handler);
+    return () => window.removeEventListener('settings:tabSeen', handler);
+  }, []);
 
   // Update state
   const { status: updateStatus, updateInfo, platform, setShowPopup, openUpdatePopup } = useUpdateStore();
@@ -642,9 +652,12 @@ export default function TopBar() {
         <div className="relative" ref={moreRef}>
           <button
             onClick={() => setMoreOpen(v => !v)}
-            className="w-9 h-9 flex items-center justify-center text-gray-400 hover:bg-gray-700 hover:text-white transition-colors"
+            className="w-9 h-9 flex items-center justify-center text-gray-400 hover:bg-gray-700 hover:text-white transition-colors relative"
             title="Thêm (cỡ chữ, hướng dẫn, báo lỗi)"
           >
+            {hasNewAffiliate && (
+              <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full animate-pulse z-10" />
+            )}
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="1.5"/>
               <circle cx="5" cy="12" r="1.5"/>
@@ -720,6 +733,51 @@ export default function TopBar() {
                 <div>
                   <p className="text-xs font-medium">Báo lỗi</p>
                   <p className="text-[10px] text-gray-400">Gửi phản hồi & báo cáo lỗi</p>
+                </div>
+              </button>
+
+              {/* Kiếm tiền */}
+              <button
+                onClick={() => {
+                  setMoreOpen(false);
+                  markAffiliateSeen();
+                  setHasNewAffiliate(false);
+                  // Navigate to CRM → Nhóm → Quét thành viên
+                  window.dispatchEvent(new CustomEvent('nav:view', { detail: { view: 'crm' } }));
+                  useCRMStore.getState().setTab('groups');
+                  try { localStorage.setItem('crm_open_scan_tab', 'true'); } catch {}
+                  setTimeout(() => window.dispatchEvent(new CustomEvent('crm:openScanTab')), 150);
+                }}
+                className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-700 hover:text-amber-400 transition-colors text-left border-t border-gray-700/50 relative"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0">
+                  <line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+                </svg>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs font-medium">Kiếm tiền</p>
+                    {hasNewAffiliate && (
+                      <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse flex-shrink-0" />
+                    )}
+                  </div>
+                  <p className="text-[10px] text-gray-400">Giới thiệu Deplao Premium - Nhận hoa hồng trọn đời</p>
+                </div>
+              </button>
+
+              {/* Hỗ trợ */}
+              <button
+                onClick={() => {
+                  setMoreOpen(false);
+                  ipc.shell?.openExternal('https://fb.com/deplaoapp');
+                }}
+                className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-700 hover:text-blue-400 transition-colors text-left"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0">
+                  <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+                </svg>
+                <div>
+                  <p className="text-xs font-medium">Hỗ trợ</p>
+                  <p className="text-[10px] text-gray-400">Liên hệ Facebook khi gặp vấn đề</p>
                 </div>
               </button>
 

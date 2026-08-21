@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  PLANS, createPaymentQr, checkPaymentStatus, getPremiumStatus,
-  type PlanCode, type CreateQrResponse, type CheckPaymentResponse,
+  PLANS, createPaymentQr, checkPaymentStatus, getPremiumStatus, validateAffCode,
+  type PlanCode, type CreateQrResponse, type CheckPaymentResponse, type ValidateAffCodeResult,
 } from '@/lib/backendService';
 
 // ─── Icons ──────────────────────────────────────────────────────────────────
@@ -93,6 +93,11 @@ export default function PaymentQrSection({ accounts, onClose, onPaymentSuccess }
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
 
+  // ── Mã giới thiệu ──────────────────────────────────────────────────
+  const [affCode, setAffCode] = useState('');
+  const [affValidation, setAffValidation] = useState<ValidateAffCodeResult | null>(null);
+  const [validatingAff, setValidatingAff] = useState(false);
+
   const [pollCount, setPollCount] = useState(0);
   const [polling, setPolling] = useState(false);
   const [checkResult, setCheckResult] = useState<CheckPaymentResponse | null>(null);
@@ -115,8 +120,15 @@ export default function PaymentQrSection({ accounts, onClose, onPaymentSuccess }
     setSelectedPageIds(new Set(accountsData.map(a => a.pageId)));
   }, [accountsData]);
 
-  const plan = PLANS.find(p => p.code === selectedPlan) || PLANS[2];
+  const PRICE_PER_MONTH = 80000;
+  const plan = PLANS.find(p => p.code === selectedPlan) || PLANS[PLANS.length - 1];
+  const months = Math.round(plan.durationDays / 30);
+  const originalPrice = PRICE_PER_MONTH * months * selectedPageIds.size;
   const totalPrice = plan.price * selectedPageIds.size;
+  const planSaving = originalPrice - totalPrice;
+  const hasDiscount = affValidation?.valid === true;
+  const discountAmount = hasDiscount ? Math.round(totalPrice * 0.05) : 0;
+  const finalPrice = totalPrice - discountAmount;
 
   // ── Step 1 → 2: Create QR ────────────────────────────────────────────────
   const handleCreateQr = useCallback(async () => {
@@ -128,6 +140,7 @@ export default function PaymentQrSection({ accounts, onClose, onPaymentSuccess }
         pageIds: Array.from(selectedPageIds),
         plan: selectedPlan,
         pageId: accounts[0]?.pageId || '',
+        affCode: hasDiscount ? affCode.trim() : undefined,
       });
       if (!res.success) { setCreateError(res.error || 'Không thể tạo mã QR'); return; }
       setPaymentData(res);
@@ -137,7 +150,7 @@ export default function PaymentQrSection({ accounts, onClose, onPaymentSuccess }
     } finally {
       setCreating(false);
     }
-  }, [selectedPageIds, selectedPlan, accounts]);
+  }, [selectedPageIds, selectedPlan, accounts, affCode, hasDiscount]);
 
   // ── Step 2 → 3: Start polling ────────────────────────────────────────────
   const handleConfirmPayment = useCallback(() => {
@@ -188,6 +201,20 @@ export default function PaymentQrSection({ accounts, onClose, onPaymentSuccess }
     setPolling(false);
   }, []);
 
+  // ── Validate mã giới thiệu ──────────────────────────────────────────
+  const handleValidateAff = useCallback(async () => {
+    if (!affCode.trim()) { setAffValidation(null); return; }
+    setValidatingAff(true);
+    try {
+      const result = await validateAffCode(affCode);
+      setAffValidation(result);
+    } catch {
+      setAffValidation({ valid: false, error: 'Lỗi kết nối' });
+    } finally {
+      setValidatingAff(false);
+    }
+  }, [affCode]);
+
   // ── Step header ──────────────────────────────────────────────────────────
   const stepIdx = STEP_ORDER.indexOf(step);
 
@@ -214,11 +241,11 @@ export default function PaymentQrSection({ accounts, onClose, onPaymentSuccess }
                   <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0
                     ${i < stepIdx ? 'bg-green-500 text-white' :
                       i === stepIdx ? 'bg-blue-500 text-white' :
-                      'bg-gray-700 text-gray-500'}`}>
+                      'bg-gray-700 text-gray-400'}`}>
                     {i < stepIdx ? '✓' : i + 1}
                   </div>
                   <span className={`text-[11px] font-medium hidden sm:inline
-                    ${i === stepIdx ? 'text-white' : i < stepIdx ? 'text-green-400' : 'text-gray-500'}`}>
+                    ${i === stepIdx ? 'text-white' : i < stepIdx ? 'text-green-400' : 'text-gray-400'}`}>
                     {STEP_LABELS[s]}
                   </span>
                 </div>
@@ -281,30 +308,80 @@ export default function PaymentQrSection({ accounts, onClose, onPaymentSuccess }
               {/* Plans */}
               <div>
                 <span className="text-xs text-gray-400 font-medium block mb-2">Chọn gói gia hạn</span>
-                <div className="grid grid-cols-3 gap-2">
-                  {PLANS.map(p => (
-                    <button key={p.code} onClick={() => setSelectedPlan(p.code)}
-                      className={`px-2 py-3 rounded-lg border text-center transition-colors relative
-                        ${selectedPlan === p.code ? 'border-green-500 bg-green-500/10' : 'border-gray-600 hover:border-gray-500'}`}>
-                      {p.code === '6months' && (
-                        <span className="absolute -top-2 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-green-500 text-white text-[12px] font-bold rounded-full leading-none whitespace-nowrap">-15%</span>
-                      )}
-                      {p.code === '1year' && (
-                        <span className="absolute -top-2 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-red-500 text-white text-[12px] font-bold rounded-full leading-none whitespace-nowrap">-35%</span>
-                      )}
-                      <p className="text-xs text-white font-bold">{p.name}</p>
-                      <p className="text-[12px] text-green-400 font-semibold mt-1">{formatCurrency(p.price)}</p>
-                      <p className="text-[10px] text-gray-600 mt-0.5">~{Math.round(p.price / p.durationDays).toLocaleString()}đ/ngày</p>
-                    </button>
-                  ))}
+                <div className="grid grid-cols-2 gap-2">
+                  {PLANS.map(p => {
+                    const orig = PRICE_PER_MONTH * Math.round(p.durationDays / 30);
+                    const save = orig - p.price;
+                    const savePercent = Math.round((save / orig) * 100);
+                    return (
+                      <button key={p.code} onClick={() => setSelectedPlan(p.code)}
+                        className={`px-3 py-3 rounded-lg border text-center transition-colors relative
+                          ${selectedPlan === p.code ? 'border-green-500 bg-green-500/10' : 'border-gray-600 hover:border-gray-500'}`}>
+                        <span className="absolute -top-2 right-0 -translate-x-1/2 px-2 py-0.5 bg-red-500 text-white text-[11px] font-bold rounded-full leading-none whitespace-nowrap">
+                          -{savePercent}%
+                        </span>
+                        <p className="text-xs text-white font-bold">{p.name}</p>
+                        <p className="text-[12px] text-gray-300 line-through mt-1">{formatCurrency(orig)}</p>
+                        <p className="text-[14px] text-green-400 font-bold">{formatCurrency(p.price)}</p>
+                        <p className="text-[10px] text-gray-300 mt-0.5">Tiết kiệm {formatCurrency(save)}</p>
+                      </button>
+                    );
+                  })}
                 </div>
+              </div>
+
+              {/* ── Mã giới thiệu ──────────────────────────────────────── */}
+              <div>
+                <span className="text-xs text-gray-400 font-medium block mb-2">Mã giới thiệu (tùy chọn)</span>
+                <div className="flex items-center gap-2">
+                  <input
+                    value={affCode}
+                    onChange={e => { setAffCode(e.target.value); setAffValidation(null); }}
+                    onKeyDown={e => { if (e.key === 'Enter') handleValidateAff(); }}
+                    placeholder="Nhập mã để được giảm 5%"
+                    className="flex-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                  />
+                  <button
+                    onClick={handleValidateAff}
+                    disabled={!affCode.trim() || validatingAff}
+                    className="px-3 py-2 text-xs font-medium rounded-lg bg-gray-600 hover:bg-gray-500 text-gray-200 transition-colors disabled:opacity-40 flex-shrink-0"
+                  >
+                    {validatingAff ? '...' : 'Áp dụng'}
+                  </button>
+                </div>
+                {affValidation && (
+                  <div className={`mt-2 px-3 py-2 rounded-lg text-xs flex items-center gap-2
+                    ${affValidation.valid ? 'bg-green-500/10 border border-green-500/30 text-green-400' : 'bg-red-500/10 border border-red-500/30 text-red-400'}`}>
+                    {affValidation.valid ? (
+                      <>✅ Mã hợp lệ: <span className="font-medium">{affValidation.name}</span> — Giảm 5%</>
+                    ) : (
+                      <>❌ {affValidation.error || 'Mã không hợp lệ'}</>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Total */}
               {selectedPageIds.size > 0 && (
-                <div className="bg-gray-700/50 rounded-lg px-4 py-3 flex items-center justify-between">
-                  <span className="text-sm text-gray-300">{selectedPageIds.size} TK × {formatCurrency(plan.price)}</span>
-                  <span className="text-lg font-bold text-white">{formatCurrency(totalPrice)}</span>
+                <div className="bg-gray-700/50 rounded-lg px-4 py-3 space-y-1.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-gray-400">Giá gốc ({selectedPageIds.size} TK × {formatCurrency(PRICE_PER_MONTH)}/tháng × {months} tháng)</span>
+                    <span className="text-gray-400 line-through">{formatCurrency(originalPrice)}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-green-400">Ưu đãi gói {plan.name}</span>
+                    <span className="text-green-400">-{formatCurrency(planSaving)}</span>
+                  </div>
+                  {hasDiscount && (
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-green-400">Mã giới thiệu giảm 5%</span>
+                      <span className="text-green-400">-{formatCurrency(discountAmount)}</span>
+                    </div>
+                  )}
+                  <div className="border-t border-gray-600 pt-2 flex items-center justify-between">
+                    <span className="text-sm text-gray-300 font-medium">Thanh toán</span>
+                    <span className={`text-lg font-bold ${hasDiscount ? 'text-green-400' : 'text-white'}`}>{formatCurrency(finalPrice)}</span>
+                  </div>
                 </div>
               )}
 
@@ -333,9 +410,23 @@ export default function PaymentQrSection({ accounts, onClose, onPaymentSuccess }
                 <div className="flex justify-between"><span className="text-gray-400">Số TK</span><span className="text-white font-medium">{paymentData.bankInfo.accountNumber}</span></div>
                 <div className="flex justify-between"><span className="text-gray-400">Chủ TK</span><span className="text-white font-medium">{paymentData.bankInfo.accountName}</span></div>
                 <div className="flex justify-between"><span className="text-gray-400">Nội dung CK</span><span className="text-yellow-400 font-mono font-medium text-xs">{paymentData.transferContent}</span></div>
-                <div className="border-t border-gray-600 pt-2 flex justify-between">
-                  <span className="text-gray-400">Số tiền</span>
-                  <span className="text-white font-bold text-lg">{formatCurrency(paymentData.amount)}</span>
+                <div className="border-t border-gray-600 pt-2 space-y-1">
+                  {paymentData.discount ? (
+                    <>
+                      <div className="flex justify-between text-xs">
+                        <span className="text-gray-400">Gốc</span>
+                        <span className="text-gray-400 line-through">{formatCurrency(paymentData.originalAmount || 0)}</span>
+                      </div>
+                      <div className="flex justify-between text-xs">
+                        <span className="text-green-400">Giảm 5%</span>
+                        <span className="text-green-400">-{formatCurrency(paymentData.discount)}</span>
+                      </div>
+                    </>
+                  ) : null}
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Số tiền</span>
+                    <span className={`font-bold text-lg ${paymentData.discount ? 'text-green-400' : 'text-white'}`}>{formatCurrency(paymentData.amount)}</span>
+                  </div>
                 </div>
               </div>
 

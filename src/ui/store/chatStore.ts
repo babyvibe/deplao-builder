@@ -113,6 +113,8 @@ export interface MessageItem {
   media_type?: 'text' | 'image' | 'file' | 'video' | 'voice' | 'sticker' | 'link';
   /** Progress upload (0-100), chỉ áp dụng cho media */
   upload_progress?: number;
+  /** Telegram inline keyboard buttons (JSON string) */
+  inline_buttons?: string;
 }
 
 export interface ContactItem {
@@ -152,6 +154,12 @@ export interface ContactItem {
   telegram_state_updated_at?: number;
   telegram_membership_state?: 'member' | 'joinable' | 'request' | 'pending' | 'left' | 'forbidden' | string;
   telegram_join_action?: 'join' | 'request' | 'none' | string;
+  /** Telegram: 1 = contact is a bot */
+  is_cov_bot?: number;
+  /** Telegram bot menu button: { type: 'default' | 'commands' | 'custom', text?, url? } */
+  menu_button?: string;
+  /** Telegram bot has Main Mini App */
+  has_main_app?: number;
   // Facebook-specific fields (nullable)
   fb_emoji?: string;
   fb_participant_count?: number;

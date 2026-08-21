@@ -139,6 +139,40 @@ export function registerTelegramUserIpc(): void {
     }
   });
 
+  // ── Refresh contact avatar (re-download when file missing) ─────────────
+  ipcMain.handle('telegramUser:refreshContactAvatar', async (_event, params: { accountId: string; chatId: string }) => {
+    try {
+      return await TelegramUser.refreshContactAvatar(params.accountId, params.chatId);
+    } catch (err: any) {
+      Logger.error(`[telegramUser:refreshContactAvatar] ${err.message}`);
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ── Get bot commands (via users.getFullUser → botInfo.commands) ─────────
+  ipcMain.handle('telegramUser:getBotCommands', async (_event, params: { accountId: string; botId: string }) => {
+    try {
+      return await TelegramUser.getBotCommands(params.accountId, params.botId);
+    } catch (err: any) {
+      Logger.error(`[telegramUser:getBotCommands] ${err.message}`);
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ── Telegram WebView (Mini App) ────────────────────────────────────────
+  ipcMain.handle('telegramUser:requestWebView', async (_event, params: { accountId: string; botId: string; url: string; fromBotMenu?: boolean }) => {
+    try { return await TelegramUser.requestWebView(params.accountId, params.botId, params.url, params.fromBotMenu); }
+    catch (err: any) { return { success: false, error: err.message }; }
+  });
+  ipcMain.handle('telegramUser:requestMainWebView', async (_event, params: { accountId: string; botId: string; startParam?: string }) => {
+    try { return await TelegramUser.requestMainWebView(params.accountId, params.botId, params.startParam); }
+    catch (err: any) { return { success: false, error: err.message }; }
+  });
+  ipcMain.handle('telegramUser:prolongWebView', async (_event, params: { accountId: string; botId: string; queryId: string }) => {
+    try { return await TelegramUser.prolongWebView(params.accountId, params.botId, params.queryId); }
+    catch (err: any) { return { success: false, error: err.message }; }
+  });
+
   // ─── New: Message operations ────────────────────────────────────────────
 
   ipcMain.handle('telegramUser:editMessage', async (_event, params: { accountId: string; chatId: string; messageId: string; text: string }) => {

@@ -117,6 +117,37 @@ export async function getPremiumStatus(pageId: string): Promise<PremiumStatus> {
   }
 }
 
+// ─── Affiliate API ─────────────────────────────────────────────────────────
+
+export interface ValidateAffCodeResult {
+  valid: boolean;
+  name?: string;
+  error?: string;
+}
+
+/**
+ * Validate mã affiliate.
+ * GET /api/affiliate/validate/:code
+ */
+export async function validateAffCode(code: string): Promise<ValidateAffCodeResult> {
+  if (!code?.trim()) return { valid: false, error: 'Vui lòng nhập mã' };
+  try {
+    const url = `${BACKEND_URL}/api/affiliate/validate/${encodeURIComponent(code.trim())}`;
+    const res = await fetch(url, {
+      headers: { 'x-api-key': SECRET_KEY },
+    });
+    const data = await res.json();
+    return {
+      valid: data.valid ?? false,
+      name: data.name,
+      error: data.error,
+    };
+  } catch (err: any) {
+    console.error('[backendService] validateAffCode error:', err);
+    return { valid: false, error: 'Lỗi kết nối' };
+  }
+}
+
 /**
  * Quét thành viên nhóm qua backend.
  * FE gọi khi user ấn "Quét" (sau khi đã check premium từ localStorage).
@@ -143,7 +174,7 @@ export async function scanGroupViaBackend(params: {
 
 // ─── Payment Types ──────────────────────────────────────────────────────────
 
-export type PlanCode = '3months' | '6months' | '1year';
+export type PlanCode = '6months' | '1year';
 
 export interface PlanInfo {
   code: PlanCode;
@@ -153,21 +184,22 @@ export interface PlanInfo {
 }
 
 export const PLANS: PlanInfo[] = [
-  { code: '3months', name: '3 tháng', durationDays: 90, price: 117000 },
-  { code: '6months', name: '6 tháng', durationDays: 180, price: 198900 },
-  { code: '1year', name: '1 năm', durationDays: 365, price: 304200 },
+  { code: '6months', name: '6 tháng', durationDays: 180, price: 360000 },
+  { code: '1year', name: '1 năm', durationDays: 365, price: 499000 },
 ];
 
 export interface CreateQrResponse {
   success: boolean;
   paymentId: string;
   amount: number;
+  originalAmount?: number;
+  discount?: number;
   qrCodeUrl: string;
   qrCodeBase64?: string;
   bankInfo: { bankName: string; accountNumber: string; accountName: string };
   transferContent: string;
   expiresAt: string;
-  breakdown: Array<{ pageId: string; plan: PlanCode; amount: number }>;
+  breakdown: Array<{ pageId: string; plan: PlanCode; amount: number; originalPrice?: number; discount?: number }>;
   error?: string;
 }
 
@@ -188,13 +220,15 @@ export async function createPaymentQr(params: {
   pageIds: string[];
   plan: PlanCode;
   pageId: string;
+  affCode?: string;
 }): Promise<CreateQrResponse> {
   const pageIdsArray = Array.isArray(params.pageIds) ? params.pageIds : [params.pageIds];
-  const body = {
+  const body: Record<string, any> = {
     page_ids: pageIdsArray,
     plan: params.plan,
     page_id: params.pageId,
   };
+  if (params.affCode) body.aff_code = params.affCode;
   console.log('[createPaymentQr] body:', JSON.stringify(body, null, 2));
 
   // Gửi raw JSON (không encrypt) — BE payment endpoint không cần encrypt
@@ -215,6 +249,8 @@ export async function createPaymentQr(params: {
     success: data.success,
     paymentId: data.payment_id,
     amount: data.amount,
+    originalAmount: data.original_amount,
+    discount: data.discount,
     qrCodeUrl: data.qr_code_url,
     qrCodeBase64: data.qr_code_base64,
     bankInfo: data.bank_info ? {
@@ -228,6 +264,8 @@ export async function createPaymentQr(params: {
       pageId: b.page_id,
       plan: b.plan,
       amount: b.amount,
+      originalPrice: b.original_price,
+      discount: b.discount,
     })),
     error: data.error,
   } as CreateQrResponse;

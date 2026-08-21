@@ -236,6 +236,8 @@ function persistTelegramDialogState(accountId: string, chatId: string, dialog: a
   const contactType = peerType === 'user' ? 'user' : 'group';
   // Saved Messages (self-chat) → auto pin local
   const isSelfChat = peerType === 'user' && chatId === accountId;
+  // Update is_cov_bot flag — only set to 1 when confirmed bot, leave untouched otherwise
+  const isBot = entity?.className === 'User' && entity?.bot ? 1 : null;
   // Lấy unread_count từ Telegram dialog (đồng bộ chính xác với Telegram)
   const dialogUnreadCount = Number(dialog?.unreadCount ?? 0);
   db.run(
@@ -243,8 +245,8 @@ function persistTelegramDialogState(accountId: string, chatId: string, dialog: a
        (owner_zalo_id, contact_id, display_name, avatar_url, is_friend, contact_type, unread_count, channel,
         is_muted, mute_until, telegram_folder_id, telegram_archived, telegram_can_send,
         telegram_send_reason, telegram_peer_type, telegram_members_count, telegram_online_count, telegram_state_updated_at,
-        telegram_membership_state, telegram_join_action, is_in_others)
-     VALUES (?, ?, ?, '', 0, ?, ?, 'telegram_user', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        telegram_membership_state, telegram_join_action, is_in_others, is_cov_bot)
+     VALUES (?, ?, ?, '', 0, ?, ?, 'telegram_user', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(owner_zalo_id, contact_id) DO UPDATE SET
        display_name = CASE WHEN contacts.display_name = '' THEN excluded.display_name ELSE contacts.display_name END,
        contact_type = excluded.contact_type, channel = 'telegram_user',
@@ -258,12 +260,13 @@ function persistTelegramDialogState(accountId: string, chatId: string, dialog: a
        telegram_state_updated_at = excluded.telegram_state_updated_at,
        telegram_membership_state = excluded.telegram_membership_state,
        telegram_join_action = excluded.telegram_join_action,
-       is_in_others = excluded.is_in_others`,
+       is_in_others = excluded.is_in_others,
+       is_cov_bot = CASE WHEN excluded.is_cov_bot = 1 THEN 1 ELSE contacts.is_cov_bot END`,
     [accountId, chatId, displayName, contactType, dialogUnreadCount, foreverMuted ? 1 : 0, muteUntilMs,
       folderId, folderId === 1 ? 1 : 0, capability.canSend ? 1 : 0, capability.reason,
       peerType, membersCount, onlineCount, Date.now(), membership.state, membership.action,
       // is_in_others: archived | chưa tham gia (joinable/request/left/forbidden)
-      (folderId === 1 || membership.state !== 'member') ? 1 : 0],
+      (folderId === 1 || membership.state !== 'member') ? 1 : 0, isBot],
   );
   // Saved Messages (self-chat) → auto pin local
   if (isSelfChat) {
@@ -703,6 +706,30 @@ function normalizeTelegramMessageMedia(message: any, peerType?: TelegramPeerType
   return { content, msgType, attachments };
 }
 
+/** Parse ReplyInlineMarkup from message into structured button rows */
+function parseInlineButtons(message: any): Array<Array<{ text: string; type: 'url' | 'webview' | 'callback'; url?: string }>> | null {
+  const replyMarkup = (message as any)?.replyMarkup;
+  if (!replyMarkup || replyMarkup.className !== 'ReplyInlineMarkup') return null;
+
+  const rows = replyMarkup.rows || [];
+  return rows.map((row: any) => {
+    const buttons = row.buttons || [];
+    return buttons.map((btn: any) => {
+      if (btn.className === 'KeyboardButtonUrl') {
+        return { text: btn.text || '', type: 'url' as const, url: btn.url || '' };
+      }
+      if (btn.className === 'KeyboardButtonWebView') {
+        return { text: btn.text || '', type: 'webview' as const, url: btn.url || '' };
+      }
+      if (btn.className === 'KeyboardButtonCallback') {
+        return { text: btn.text || '', type: 'callback' as const };
+      }
+      // Other button types — render as text-only
+      return { text: btn.text || btn.className || '', type: 'callback' as const };
+    });
+  });
+}
+
 // ─── Phase B: Identity derivation (peerId-first, no getChat dependency) ──────
 
 /** Derive canonical chatId, threadType, and topicId from a message without
@@ -756,7 +783,7 @@ function persistTelegramMessage(
     msgId: string; accountId: string; chatId: string; threadType: number;
     senderId: string; content: string; msgType: string; timestamp: number;
     isSelf: boolean; attachments: any[]; replyToId?: string; quoteData?: string;
-    topicId?: string; reactions?: any;
+    topicId?: string; reactions?: any; inlineButtons?: any;
   },
 ): ProcessResult {
   if (!msg.msgId || !msg.chatId) return { status: 'ignored' };
@@ -812,14 +839,15 @@ function persistTelegramMessage(
   try {
     db.run(`
       INSERT INTO messages
-        (msg_id, owner_zalo_id, thread_id, thread_type, sender_id, content, msg_type, timestamp, is_sent, attachments, reactions, status, channel, reply_to_id, quote_data, topic_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'telegram_user', ?, ?, ?)
+        (msg_id, owner_zalo_id, thread_id, thread_type, sender_id, content, msg_type, timestamp, is_sent, attachments, reactions, status, channel, reply_to_id, quote_data, topic_id, inline_buttons)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'telegram_user', ?, ?, ?, ?)
     `, [
       msg.msgId, msg.accountId, msg.chatId, msg.threadType,
       msg.senderId, msg.content, msg.msgType, msg.timestamp,
       msg.isSelf ? 1 : 0, JSON.stringify(msg.attachments), JSON.stringify(msg.reactions || { total: 0, lastReact: '', emoji: {} }),
       msg.isSelf ? 'sent' : 'received',
       msg.replyToId || null, msg.quoteData || null, msg.topicId || null,
+      msg.inlineButtons ? JSON.stringify(msg.inlineButtons) : null,
     ]);
     return { status: 'inserted', chatId: msg.chatId, messageId: msg.msgId };
   } catch (err: any) {
@@ -1273,7 +1301,10 @@ async function drainChannelDifferenceNow(
         force: false,
       }));
     } catch (err: any) {
-      tgLog('warn', accountId, source, `getChannelDifference failed for ${channelId}: ${err.message}`);
+      // CHANNEL_PRIVATE = không phải member → bỏ qua, chỉ log lỗi khác
+      if (!err.message?.includes('CHANNEL_PRIVATE')) {
+        tgLog('warn', accountId, source, `getChannelDifference failed for ${channelId}: ${err.message}`);
+      }
       return false; // Don't commit PTS on failure
     }
 
@@ -2020,6 +2051,19 @@ async function handleServiceMessage(accountId: string, message: any, client?: Te
   const serviceTimestamp = (message.date || Math.floor(Date.now() / 1000)) * 1000;
   const className = action.className || '';
 
+  // Membership check: skip service messages from unjoined channels
+  if (serviceChatId && client) {
+    try {
+      const chat = await message.getChat();
+      if (chat && getTelegramPeerType(chat) !== 'user') {
+        const membership = getTelegramMembership(chat);
+        if (membership.state !== 'member') {
+          return { status: 'ignored', chatId: serviceChatId, messageId: serviceMsgId };
+        }
+      }
+    } catch {}
+  }
+
   // Check identity before emitting any lifecycle side effect. Difference and
   // socket may replay the same MessageService.
   if (serviceChatId) {
@@ -2227,10 +2271,24 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
 
   // ── Membership check: skip messages from unjoined groups/channels ────
   // This prevents unjoined channels from appearing in the inbox.
-  if (chat && rawIdentity.peerKind !== 'user' && !message.out) {
-    const membership = getTelegramMembership(chat);
-    if (membership.state !== 'member') {
-      tgLog('info', accountId, source, `Skip msg from unjoined ${membership.state} chat ${chatId}`, { msgId: messageId });
+  if (rawIdentity.peerKind !== 'user' && !message.out) {
+    let isMember = true; // default: allow if we can't determine
+    if (chat) {
+      const membership = getTelegramMembership(chat);
+      isMember = membership.state === 'member';
+    } else {
+      // Fallback: check DB membership state
+      const dbInst = DatabaseService.getInstance();
+      const dbContact = dbInst?.queryOne<any>(
+        `SELECT telegram_membership_state FROM contacts WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'telegram_user'`,
+        [accountId, chatId]
+      );
+      if (dbContact && dbContact.telegram_membership_state && dbContact.telegram_membership_state !== 'member') {
+        isMember = false;
+      }
+    }
+    if (!isMember) {
+      tgLog('info', accountId, source, `Skip msg from unjoined chat ${chatId}`, { msgId: messageId });
       return { status: 'ignored', chatId, messageId };
     }
   }
@@ -2332,10 +2390,13 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
     return '';
   })();
 
+  const inlineButtons = parseInlineButtons(message);
+
   const result = persistTelegramMessage(db, {
     msgId: messageId, accountId, chatId, threadType,
     senderId, content: displayContent, msgType, timestamp,
     isSelf, attachments, replyToId, quoteData, topicId, reactions,
+    inlineButtons,
   });
 
   tgLog('info', accountId, source, `msg ${messageId}`, {
@@ -2381,20 +2442,24 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
       }
     }
 
+    // Detect if peer is a bot (for DM conversations with bots)
+    const peerIsBot = chat?.className === 'User' && chat?.bot ? 1 : null;
+
     db.run(`
-      INSERT INTO contacts (owner_zalo_id, contact_id, display_name, avatar_url, is_friend, contact_type, unread_count, last_message, last_message_time, channel, is_in_others)
-      VALUES (?, ?, ?, '', 0, ?, ?, ?, ?, 'telegram_user', ?)
+      INSERT INTO contacts (owner_zalo_id, contact_id, display_name, avatar_url, is_friend, contact_type, unread_count, last_message, last_message_time, channel, is_in_others, is_cov_bot)
+      VALUES (?, ?, ?, '', 0, ?, ?, ?, ?, 'telegram_user', ?, ?)
       ON CONFLICT(owner_zalo_id, contact_id) DO UPDATE SET
         display_name = CASE WHEN excluded.display_name != '' AND contacts.display_name = '' THEN excluded.display_name ELSE contacts.display_name END,
         last_message = CASE WHEN excluded.last_message_time >= COALESCE(contacts.last_message_time, 0) THEN excluded.last_message ELSE contacts.last_message END,
         last_message_time = CASE WHEN excluded.last_message_time >= COALESCE(contacts.last_message_time, 0) THEN excluded.last_message_time ELSE contacts.last_message_time END,
         unread_count = CASE WHEN ? = 0 THEN contacts.unread_count ELSE contacts.unread_count + 1 END,
-        channel = 'telegram_user'
+        channel = 'telegram_user',
+        is_cov_bot = CASE WHEN excluded.is_cov_bot = 1 THEN 1 ELSE contacts.is_cov_bot END
     `, [
       accountId, chatId, chatTitle,
       isGroup ? 'group' : 'user',
       isSelf ? 0 : 1, lastMessagePreview, timestamp,
-      shouldBeInOthers ? 1 : 0,
+      shouldBeInOthers ? 1 : 0, peerIsBot,
       isSelf ? 0 : 1,
     ]);
 
@@ -2705,9 +2770,86 @@ async function saveMediaToDisk(buffer: Buffer, filename: string, msgType: string
 
     const filePath = path.join(mediaDir, filename);
     fs.writeFileSync(filePath, buffer);
+
+    // Auto-fix non-faststart MP4 files (moov atom at end → move to front)
+    // Without faststart, <video> element can't read metadata and fails to play
+    if (msgType === 'video' && filename.endsWith('.mp4')) {
+      ensureFaststart(filePath).catch(err => {
+        Logger.warn(`[TG:download] faststart fix failed for ${filename}: ${err.message}`);
+      });
+    }
+
     return filePath;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Ensure MP4 file has moov atom at the beginning (faststart).
+ * If not, run ffmpeg to move moov to front without re-encoding.
+ * This is critical for <video> element to read metadata for playback.
+ */
+async function ensureFaststart(filePath: string): Promise<void> {
+  const { spawnSync } = require('child_process') as typeof import('child_process');
+
+  // Get ffmpeg binary path
+  let ffmpegBin = 'ffmpeg';
+  try {
+    let ffmpegStatic = require('ffmpeg-static') as string;
+    if (ffmpegStatic && ffmpegStatic.includes('app.asar') && !ffmpegStatic.includes('app.asar.unpacked')) {
+      ffmpegStatic = ffmpegStatic.replace('app.asar', 'app.asar.unpacked');
+    }
+    if (ffmpegStatic && fs.existsSync(ffmpegStatic)) {
+      ffmpegBin = ffmpegStatic;
+    }
+  } catch {}
+
+  // Check if already faststart by scanning first 64KB for moov atom
+  try {
+    const scanBuf = Buffer.alloc(Math.min(fs.statSync(filePath).size, 64 * 1024));
+    const fd = fs.openSync(filePath, 'r');
+    fs.readSync(fd, scanBuf, 0, scanBuf.length, 0);
+    fs.closeSync(fd);
+
+    let offset = 0;
+    while (offset < scanBuf.length - 8) {
+      const boxSize = scanBuf.readUInt32BE(offset);
+      const boxType = scanBuf.toString('ascii', offset + 4, offset + 8);
+      if (boxType === 'moov') {
+        Logger.log(`[faststart] ${filePath} already faststart`);
+        return; // Already faststart, nothing to do
+      }
+      if (boxSize < 8) break;
+      offset += boxSize;
+    }
+  } catch {}
+
+  // Not faststart — fix with ffmpeg
+  Logger.log(`[faststart] Fixing non-faststart MP4: ${filePath}`);
+  const tempPath = filePath + '.faststart.tmp.mp4';
+
+  try {
+    const result = spawnSync(ffmpegBin, [
+      '-y', '-i', filePath,
+      '-c', 'copy',
+      '-movflags', '+faststart',
+      tempPath,
+    ], { timeout: 120_000, stdio: 'pipe' });
+
+    if (result.status === 0 && fs.existsSync(tempPath)) {
+      // Replace original with fixed version
+      fs.renameSync(tempPath, filePath);
+      Logger.log(`[faststart] Fixed: ${filePath}`);
+    } else {
+      // Cleanup temp file on failure
+      try { fs.unlinkSync(tempPath); } catch {}
+      const stderr = result.stderr?.toString() || '';
+      Logger.warn(`[faststart] ffmpeg failed (exit=${result.status}): ${stderr.slice(0, 200)}`);
+    }
+  } catch (err: any) {
+    try { fs.unlinkSync(tempPath); } catch {}
+    Logger.warn(`[faststart] ffmpeg error: ${err.message}`);
   }
 }
 
@@ -3414,6 +3556,189 @@ async function saveAvatarToDisk(buffer: Buffer, filename: string): Promise<strin
   }
 }
 
+/**
+ * Re-download avatar for a specific Telegram contact (user/group/channel).
+ */
+export async function refreshContactAvatar(accountId: string, chatId: string): Promise<{ success: boolean; avatarUrl?: string; error?: string }> {
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+  try {
+    const entity = await resolvePeerEntity(accountId, conn.client, chatId);
+    if (!entity) return { success: false, error: 'Entity not found' };
+    const photo = await downloadProfilePhotoQueued(accountId, conn.client, entity, `refresh:${chatId}`, false);
+    if (!photo || photo.length === 0) return { success: false, error: 'No photo available' };
+    const avatarPath = `telegram_avatar_${chatId}_${Date.now()}.jpg`;
+    const savedPath = await saveAvatarToDisk(Buffer.from(photo), avatarPath);
+    if (!savedPath) return { success: false, error: 'Failed to save avatar' };
+    const normalized = savedPath.replace(/\\/g, '/');
+    const avatarUrl = 'local-media://' + (normalized.startsWith('/') ? normalized : '/' + normalized);
+    const db = DatabaseService.getInstance();
+    db?.run(`UPDATE contacts SET avatar_url = ? WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'telegram_user'`, [avatarUrl, accountId, chatId]);
+    resetAvatarCache(accountId, chatId);
+    EventBroadcaster.emit('db:unreadChanged', { zaloId: accountId, source: 'telegram_avatar_refresh' });
+    return { success: true, avatarUrl };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
+/** Cache for bot commands: `${accountId}_${botId}` → { commands, fetchedAt } */
+const botCommandsCache = new Map<string, { commands: Array<{ command: string; description: string }>; fetchedAt: number }>();
+const BOT_COMMANDS_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+
+/**
+ * Fetch bot commands via users.getFullUser → UserFull.botInfo.commands.
+ * Any user account can call this — no bot owner credentials needed.
+ */
+export async function getBotCommands(accountId: string, botId: string): Promise<{ success: boolean; commands?: Array<{ command: string; description: string }>; error?: string }> {
+  const cacheKey = `${accountId}_${botId}`;
+  const cached = botCommandsCache.get(cacheKey);
+  if (cached && Date.now() - cached.fetchedAt < BOT_COMMANDS_CACHE_TTL) {
+    return { success: true, commands: cached.commands };
+  }
+
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+
+  try {
+    const { Api } = require('telegram');
+    const entity = await resolvePeerEntity(accountId, conn.client, botId) as any;
+    if (!entity) return { success: false, error: 'Bot not found' };
+
+    // Build InputUser from entity (avoids resolveInputUser which fails for large IDs)
+    const accessHash = entity.accessHash;
+    if (!accessHash) return { success: false, error: 'Cannot get bot access hash' };
+
+    const inputUser = new Api.InputUser({ userId: BigInt(String(botId)), accessHash: BigInt(String(accessHash)) });
+    const full = await conn.client.invoke(new Api.users.GetFullUser({ id: inputUser })) as any;
+
+    // Extract botInfo from UserFull
+    const botInfo = full?.fullUser?.botInfo;
+    if (!botInfo) return { success: true, commands: [] }; // Not a bot or no commands
+
+    const commands = (botInfo.commands || []).map((cmd: any) => ({
+      command: cmd.command || '',
+      description: cmd.description || '',
+    }));
+
+    botCommandsCache.set(cacheKey, { commands, fetchedAt: Date.now() });
+    return { success: true, commands };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
+// ─── Telegram WebView (Mini App) ─────────────────────────────────────────────
+
+/**
+ * Open a Mini App via messages.requestWebView.
+ * Used for: inline keyboard WebView buttons, custom bot menu buttons.
+ */
+export async function requestWebView(
+  accountId: string, botId: string, url: string, fromBotMenu = false
+): Promise<{ success: boolean; webViewUrl?: string; queryId?: string; error?: string }> {
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+
+  try {
+    const { Api } = require('telegram');
+    const entity = await resolvePeerEntity(accountId, conn.client, botId);
+    if (!entity) return { success: false, error: 'Bot not found' };
+
+    const accessHash = entity.accessHash;
+    if (!accessHash) return { success: false, error: 'Cannot get bot access hash' };
+
+    const peer = await resolveInputPeer(accountId, conn.client, botId);
+    const bot = new Api.InputUser({ userId: BigInt(String(botId)), accessHash: BigInt(String(accessHash)) });
+
+    const result = await conn.client.invoke(new Api.messages.RequestWebView({
+      peer,
+      bot,
+      url: url || undefined,
+      platform: 'desktop',
+      ...(fromBotMenu ? { fromBotMenu: true } : {}),
+    })) as any;
+
+    return {
+      success: true,
+      webViewUrl: result?.url || '',
+      queryId: String(result?.queryId || ''),
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Open a bot's Main Mini App via messages.requestMainWebView.
+ * Used for: "Open" button in conversation list for bots with Main Mini App.
+ */
+export async function requestMainWebView(
+  accountId: string, botId: string, startParam?: string
+): Promise<{ success: boolean; webViewUrl?: string; queryId?: string; error?: string }> {
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+
+  try {
+    const { Api } = require('telegram');
+    const entity = await resolvePeerEntity(accountId, conn.client, botId);
+    if (!entity) return { success: false, error: 'Bot not found' };
+
+    const accessHash = entity.accessHash;
+    if (!accessHash) return { success: false, error: 'Cannot get bot access hash' };
+
+    const peer = await resolveInputPeer(accountId, conn.client, botId);
+    const bot = new Api.InputUser({ userId: BigInt(String(botId)), accessHash: BigInt(String(accessHash)) });
+
+    const result = await conn.client.invoke(new Api.messages.RequestMainWebView({
+      peer,
+      bot,
+      platform: 'desktop',
+      ...(startParam ? { startParam } : {}),
+    })) as any;
+
+    return {
+      success: true,
+      webViewUrl: result?.url || '',
+      queryId: String(result?.queryId || ''),
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Keep WebView alive. Must be called every ~60s while WebView is open.
+ */
+export async function prolongWebView(
+  accountId: string, botId: string, queryId: string
+): Promise<{ success: boolean; error?: string }> {
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+
+  try {
+    const { Api } = require('telegram');
+    const entity = await resolvePeerEntity(accountId, conn.client, botId);
+    if (!entity) return { success: false, error: 'Bot not found' };
+
+    const accessHash = entity.accessHash;
+    if (!accessHash) return { success: false, error: 'Cannot get bot access hash' };
+
+    const peer = await resolveInputPeer(accountId, conn.client, botId);
+    const bot = new Api.InputUser({ userId: BigInt(String(botId)), accessHash: BigInt(String(accessHash)) });
+
+    await conn.client.invoke(new Api.messages.ProlongWebView({
+      peer,
+      bot,
+      queryId: BigInt(queryId),
+    }));
+
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
 // ─── Rate Limiting ───────────────────────────────────────────────────────────
 
 /** Rate limiter: 30 tin/phút per account, refill dần (1 token mỗi 2 giây) */
@@ -3536,6 +3861,11 @@ async function hydrateTelegramIdentity(
     const entity = entityHint || await resolvePeerEntity(accountId, client, userId);
     if (!entity) return null;
     cacheTelegramPeer(accountId, userId, entity);
+    // Update is_cov_bot flag for bot users
+    if (entity.className === 'User' && entity.bot) {
+      const db = DatabaseService.getInstance();
+      db?.run(`UPDATE contacts SET is_cov_bot = 1 WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'telegram_user'`, [accountId, userId]);
+    }
     const displayName = [entity.firstName, entity.lastName].filter(Boolean).join(' ')
       || entity.title || entity.username || userId;
     let cachedAvatar = '';
@@ -5766,9 +6096,20 @@ export async function getUserProfile(accountId: string, userId: string, chatId?:
     const entity = await resolvePeerEntity(accountId, conn.client, userId) as any;
     const peerType = entity ? getTelegramPeerType(entity) : await resolveChatPeerType(accountId, conn.client, userId);
     if (peerType !== 'user') return { success: false, error: 'Đây không phải tài khoản người dùng Telegram' };
-    const full = await conn.client.invoke(new Api.users.GetFullUser({ id: await resolveInputUser(accountId, conn.client, userId) })) as any;
-    const rawUserId = String(userId).replace(/^-/, '');
-    const user = full?.users?.find((item: any) => String(item?.id) === rawUserId) || entity || full?.users?.[0] || {};
+    let full: any = null;
+    let user: any = entity; // Default to entity (has bot flag from resolvePeerEntity)
+    try {
+      // Build InputUser from entity accessHash — avoids resolveInputUser which fails for large IDs
+      const accessHash = entity?.accessHash;
+      if (accessHash) {
+        const inputUser = new Api.InputUser({ userId: BigInt(String(userId)), accessHash: BigInt(String(accessHash)) });
+        full = await conn.client.invoke(new Api.users.GetFullUser({ id: inputUser })) as any;
+        const rawUserId = String(userId).replace(/^-/, '');
+        user = full?.users?.find((item: any) => String(item?.id) === rawUserId) || entity || full?.users?.[0] || {};
+      }
+    } catch {
+      // GetFullUser may fail — fallback to entity
+    }
     let avatarUrl = '';
     try {
       const photo = await downloadProfilePhotoQueued(accountId, conn.client, user, `profile:${userId}`, false);
@@ -5788,9 +6129,18 @@ export async function getUserProfile(accountId: string, userId: string, chatId?:
         username: user.username || '', phone: user.phone || '', bio: fullUser.about || '',
         commonChatsCount: Number(fullUser.commonChatsCount || 0),
         status: user.status?.className || '', avatarUrl,
-        isBot: !!user.bot, isVerified: !!user.verified, isPremium: !!user.premium,
+        isBot: !!(user.bot || entity?.bot || full?.users?.[0]?.bot), isVerified: !!user.verified, isPremium: !!user.premium,
         isScam: !!user.scam, isFake: !!user.fake, isRestricted: !!user.restricted,
         isContact: !!user.contact, isMutualContact: !!user.mutualContact,
+        menuButton: (() => {
+          const botInfo = full?.fullUser?.botInfo;
+          if (!botInfo?.menuButton) return null;
+          const mb = botInfo.menuButton;
+          if (mb.className === 'BotMenuButtonCommands') return { type: 'commands' as const };
+          if (mb.className === 'BotMenuButton') return { type: 'custom' as const, text: mb.text || '', url: mb.url || '' };
+          return { type: 'default' as const };
+        })(),
+        hasMainApp: !!(full?.fullUser?.botInfo?.appSettings),
     };
     if (chatId && String(chatId) !== String(userId)) {
       const db = DatabaseService.getInstance();

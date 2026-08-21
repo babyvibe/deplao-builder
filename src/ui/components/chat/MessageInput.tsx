@@ -78,6 +78,12 @@ export default function MessageInput() {
   const [quickTriggerPos, setQuickTriggerPos] = useState(-1);
   const [showQuickManager, setShowQuickManager] = useState(false);
   const [showReminderPopup, setShowReminderPopup] = useState(false);
+  // Bot commands menu state
+  const [showBotMenu, setShowBotMenu] = useState(false);
+  const [botCommands, setBotCommands] = useState<Array<{ command: string; description: string }>>([]);
+  const [botCommandsLoading, setBotCommandsLoading] = useState(false);
+  const [botCmdSelectedIdx, setBotCmdSelectedIdx] = useState(0);
+  const botMenuRef = useRef<HTMLDivElement>(null);
   // Voice recording states
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
@@ -2439,10 +2445,59 @@ export default function MessageInput() {
     };
   }, [showAiMenu]);
 
+  // Close bot menu when clicking outside
+  useEffect(() => {
+    if (!showBotMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (botMenuRef.current && !botMenuRef.current.contains(e.target as Node)) {
+        setShowBotMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handler, true);
+    return () => document.removeEventListener('mousedown', handler, true);
+  }, [showBotMenu]);
+
+  // Scroll selected bot command into view
+  useEffect(() => {
+    if (!showBotMenu || !botMenuRef.current) return;
+    const items = botMenuRef.current.querySelectorAll('[data-bot-cmd]');
+    items[botCmdSelectedIdx]?.scrollIntoView({ block: 'nearest' });
+  }, [botCmdSelectedIdx, showBotMenu]);
+
   const handleSendSticker = () => {
     setShowEmojiPicker(false);
     setShowAiMenu(false);
     setShowStickerPicker((v) => !v);
+  };
+
+  const handleToggleBotMenu = async () => {
+    if (showBotMenu) { setShowBotMenu(false); return; }
+    setShowBotMenu(true);
+    setBotCmdSelectedIdx(0);
+    if (botCommands.length > 0) return;
+    if (!activeAccountId || !activeThreadId) return;
+    setBotCommandsLoading(true);
+    try {
+      const res = await (ipc as any).telegramUser?.getBotCommands({ accountId: activeAccountId, botId: activeThreadId });
+      if (res?.success && res.commands) setBotCommands(res.commands);
+    } catch {}
+    setBotCommandsLoading(false);
+  };
+
+  const handleSelectBotCommand = (command: string) => {
+    const el = textareaRef.current;
+    if (!el) return;
+    const cmdText = `/${command} `;
+    setText(cmdText);
+    el.textContent = cmdText;
+    setShowBotMenu(false);
+    el.focus();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
   };
 
   const handleSendStickerItem = async (sticker: any) => {
@@ -2621,15 +2676,36 @@ export default function MessageInput() {
     }
 
     const isSlashAtStart = textBeforeCursor.match(/^\/([^\s]*)$/);
+    // Bot conversation: / → show bot commands menu
+    const isBotChat = isTelegramUser(activeContact?.channel) && activeContact?.is_cov_bot === 1;
     if (isSlashAtStart) {
-      setShowQuickDropdown(true);
-      setQuickFilter(isSlashAtStart[1]);
-      setQuickTriggerPos(0);
-      setQuickSelectedIdx(0);
+      if (isBotChat) {
+        // Auto-load bot commands and show menu
+        if (!showBotMenu) setShowBotMenu(true);
+        if (botCommands.length === 0 && !botCommandsLoading && activeAccountId && activeThreadId) {
+          setBotCommandsLoading(true);
+          (async () => {
+            try {
+              const res = await (ipc as any).telegramUser?.getBotCommands({ accountId: activeAccountId, botId: activeThreadId });
+              if (res?.success && res.commands) setBotCommands(res.commands);
+            } catch {}
+            setBotCommandsLoading(false);
+          })();
+        }
+        setShowQuickDropdown(false);
+      } else {
+        setShowQuickDropdown(true);
+        setQuickFilter(isSlashAtStart[1]);
+        setQuickTriggerPos(0);
+        setQuickSelectedIdx(0);
+      }
     } else {
       setShowQuickDropdown(false);
       setQuickFilter('');
       setQuickTriggerPos(-1);
+      if (isBotChat && !textBeforeCursor.startsWith('/')) {
+        setShowBotMenu(false);
+      }
     }
 
     updateActiveFmtsAtPos(realCursor, activeRanges);
@@ -2654,6 +2730,18 @@ export default function MessageInput() {
       }
     }
 
+    // Handle bot commands menu navigation
+    if (showBotMenu && botCommands.length > 0) {
+      const filtered = text.startsWith('/')
+        ? botCommands.filter(cmd => cmd.command.toLowerCase().includes(text.slice(1).toLowerCase()))
+        : botCommands;
+      if (e.key === 'ArrowDown') { e.preventDefault(); setBotCmdSelectedIdx(i => Math.min(i + 1, filtered.length - 1)); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); setBotCmdSelectedIdx(i => Math.max(i - 1, 0)); return; }
+      if (e.key === 'Enter' && !e.shiftKey && filtered[botCmdSelectedIdx]) {
+        e.preventDefault(); handleSelectBotCommand(filtered[botCmdSelectedIdx].command); return;
+      }
+      if (e.key === 'Escape') { setShowBotMenu(false); return; }
+    }
     // Handle quick message dropdown navigation
     const quickFiltered = quickFilter
       ? quickMessages.filter(i =>
@@ -3692,7 +3780,92 @@ export default function MessageInput() {
 
       {/* ── Input row ── */}
       <div className="relative flex items-end gap-2 px-3 py-2">
-        {/* Quick message dropdown - show whenever / is typed at start */}
+        {/* Bot Menu button — trước ô nhập tin nhắn */}
+        {isTelegramUser(activeContact?.channel) && activeContact?.is_cov_bot === 1 && (() => {
+          const hasMainApp = activeContact?.has_main_app === 1;
+          let menuBtnLabel = hasMainApp ? 'Open' : 'Menu';
+          let menuBtnType: 'main_app' | 'commands' | 'custom' | 'default' = hasMainApp ? 'main_app' : 'commands';
+          let menuBtnUrl = '';
+          if (!hasMainApp) {
+            try {
+              const mb = activeContact.menu_button ? JSON.parse(activeContact.menu_button) : null;
+              if (mb?.type === 'custom' && mb.text) { menuBtnLabel = mb.text; menuBtnType = 'custom'; menuBtnUrl = mb.url || ''; }
+              else if (mb?.type === 'commands') { menuBtnType = 'commands'; }
+              else if (mb?.type === 'default') { menuBtnType = 'default'; }
+            } catch {}
+          }
+          return (<>
+          <div className="relative flex-shrink-0 mb-0.5">
+            <button
+              onClick={() => {
+                if (menuBtnType === 'main_app') {
+                  // Open Main Mini App via requestMainWebView
+                  (async () => {
+                    try {
+                      const res = await (ipc as any).telegramUser?.requestMainWebView({
+                        accountId: activeAccountId || '', botId: activeThreadId || '',
+                      });
+                      if (res?.success && res.webViewUrl) {
+                        window.open(res.webViewUrl, '_blank');
+                      }
+                    } catch {}
+                  })();
+                } else if (menuBtnType === 'custom' && menuBtnUrl) {
+                  // Open Mini App via requestWebView
+                  (async () => {
+                    try {
+                      const res = await (ipc as any).telegramUser?.requestWebView({
+                        accountId: activeAccountId || '', botId: activeThreadId || '',
+                        url: menuBtnUrl, fromBotMenu: true,
+                      });
+                      if (res?.success && res.webViewUrl) {
+                        window.open(res.webViewUrl, '_blank');
+                      }
+                    } catch {}
+                  })();
+                } else {
+                  handleToggleBotMenu();
+                }
+              }}
+              className={`px-3 py-2 text-xs font-medium rounded-xl transition-colors ${showBotMenu ? 'bg-blue-600 text-white' : menuBtnType === 'main_app' ? 'bg-green-600 text-white hover:bg-green-500' : 'bg-blue-600/80 text-white hover:bg-blue-500'}`}
+            >
+              {menuBtnLabel}
+            </button>
+            {showBotMenu && (
+              <div ref={botMenuRef} className="absolute bottom-full left-0 mb-2 w-80 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl z-50 max-h-72 overflow-y-auto">
+                {botCommandsLoading ? (
+                  <div className="flex items-center justify-center py-6 text-gray-400 text-xs">
+                    <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mr-2" />
+                    Đang tải lệnh...
+                  </div>
+                ) : botCommands.length === 0 ? (
+                  <div className="py-6 text-center text-gray-500 text-xs">
+                    Bot này chưa có lệnh nào
+                  </div>
+                ) : (
+                  <div className="py-1">
+                    {botCommands
+                      .filter(cmd => !text.startsWith('/') || cmd.command.toLowerCase().includes(text.slice(1).toLowerCase()))
+                      .map((cmd, idx) => (
+                      <button
+                        key={cmd.command}
+                        data-bot-cmd
+                        onClick={() => handleSelectBotCommand(cmd.command)}
+                        onMouseEnter={() => setBotCmdSelectedIdx(idx)}
+                        className={`w-full flex items-start gap-3 px-4 py-2.5 transition-colors text-left ${idx === botCmdSelectedIdx ? 'bg-gray-700' : 'hover:bg-gray-700'}`}
+                      >
+                        <span className="text-blue-400 font-medium text-sm flex-shrink-0">/{cmd.command}</span>
+                        <span className="text-gray-400 text-xs mt-0.5 leading-relaxed">{cmd.description}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          </>
+        )})()}
+        {/* Quick message dropdown - show whenever / is typed at start (skip for bot chats) */}
         {showQuickDropdown && (
           <div className="absolute bottom-full left-3 right-3 mb-1 z-30">
             <QuickMessageDropdown

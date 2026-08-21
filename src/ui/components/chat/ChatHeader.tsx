@@ -142,6 +142,7 @@ export default function ChatHeader() {
     // Kiểm tra nếu chưa có tên thật (display_name = contact_id hoặc chỉ toàn số)
     const hasRealName = !!(ct.display_name && ct.display_name !== activeThreadId && !/^\d+$/.test(ct.display_name));
     const hasAvatar = !!ct.avatar_url;
+    const isBotUnknown = ct.is_cov_bot == null; // null = chưa load, 0/1 = đã load
     if (isGroupThread) {
       if (isTelegram(channel)) {
         import('@/lib/adapters/registry').then(({ getAdapter }) =>
@@ -176,7 +177,9 @@ export default function ChatHeader() {
       }
       return;
     }
-    if (hasRealName && hasAvatar) return; // Đã có đủ thông tin
+    // Telegram user: nếu is_cov_bot chưa biết (null) → phải fetch profile để xác định
+    const isTelegramUserDM = !isGroupThread && isTelegram(channel);
+    if (hasRealName && hasAvatar && !(isTelegramUserDM && isBotUnknown)) return;
 
     if (isZalo(channel)) {
       // Dùng fetchContactInfo đã có cache 7 ngày + xử lý alias
@@ -209,14 +212,20 @@ export default function ChatHeader() {
           const profile = res?.profile;
           if (!res?.success || !profile) return;
           const name = profile.displayName || [profile.firstName, profile.lastName].filter(Boolean).join(' ') || profile.username || activeThreadId;
+          const ct = useChatStore.getState().contacts[activeAccountId]?.find((c: any) => c.contact_id === activeThreadId);
           updateContact(activeAccountId, {
             contact_id: activeThreadId, display_name: name,
             ...(profile.avatarUrl ? { avatar_url: profile.avatarUrl } : {}),
             ...(profile.phone ? { phone: profile.phone } : {}), channel: 'telegram_user',
+            is_cov_bot: profile.isBot ? 1 : 0,
+            ...(profile.menuButton ? { menu_button: JSON.stringify(profile.menuButton) } : {}),
+            // Only set has_main_app if not already set (prevent overwrite)
+            ...((ct?.has_main_app == null) ? (profile.hasMainApp ? { has_main_app: 1 } : { has_main_app: 0 }) : {}),
           });
           DataAccessor.updateContactProfile({
             zaloId: activeAccountId, contactId: activeThreadId, displayName: name,
             avatarUrl: profile.avatarUrl || '', phone: profile.phone || '', contactType: 'user',
+            isBot: profile.isBot ? 1 : 0,
           }).catch(() => {});
         }).catch(() => {});
     }

@@ -1,6 +1,6 @@
 /**
- * Shared avatar retry logic cho cả Zalo và Facebook contacts.
- * Xử lý khi avatar load lỗi (403, expired CDN, broken URL) bằng cách
+ * Shared avatar retry logic cho Zalo, Facebook và Telegram contacts.
+ * Xử lý khi avatar load lỗi (403, expired CDN, broken URL, file missing) bằng cách
  * gọi API refresh và cập nhật lại contact store.
  *
  * Dùng ở: ConversationList, ChatWindow, AccountCard, GroupInfoPanel...
@@ -60,11 +60,19 @@ async function _doRefresh(ownerId: string, contactId: string, channel: string): 
         newUrl = res.avatarUrl;
       }
     } else if (isTelegram(channel)) {
-      // Telegram User: gọi fetchSelfAvatar nếu là chính account
-      // Nếu là contact khác → skip (avatar được fetch khi nhận tin nhắn)
+      // Telegram: re-fetch avatar khi file bị xóa (404)
       if (contactId === ownerId) {
+        // Self avatar
         try {
           const res = await (ipc as any).telegramUser?.fetchSelfAvatar?.(ownerId);
+          if (res?.success && res.avatarUrl) {
+            newUrl = res.avatarUrl;
+          }
+        } catch {}
+      } else {
+        // Other contacts (users, groups, channels)
+        try {
+          const res = await (ipc as any).telegramUser?.refreshContactAvatar?.({ accountId: ownerId, chatId: contactId });
           if (res?.success && res.avatarUrl) {
             newUrl = res.avatarUrl;
           }

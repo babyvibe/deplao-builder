@@ -2008,6 +2008,9 @@ class DatabaseService {
                 ['telegram_state_updated_at', 'INTEGER DEFAULT 0'],
                 ['telegram_membership_state', "TEXT DEFAULT 'member'"],
                 ['telegram_join_action', "TEXT DEFAULT 'none'"],
+                ['is_cov_bot', 'INTEGER DEFAULT NULL'],
+                ['menu_button', "TEXT DEFAULT NULL"],
+                ['has_main_app', 'INTEGER DEFAULT 0'],
             ];
             for (const [column, definition] of telegramColumns) {
                 if (!names.includes(column)) {
@@ -2017,6 +2020,9 @@ class DatabaseService {
                 }
             }
             if (needSave) this.save();
+            // Reset is_cov_bot=0 and has_main_app=0 to NULL so existing contacts get re-checked
+            try { db!.exec(`UPDATE contacts SET is_cov_bot = NULL WHERE is_cov_bot = 0 AND channel = 'telegram_user'`); } catch {}
+            try { db!.exec(`UPDATE contacts SET has_main_app = NULL WHERE has_main_app = 0 AND channel = 'telegram_user'`); } catch {}
         } catch (err: any) {
             Logger.warn(`[DatabaseService] contacts flags migration warning: ${err.message}`);
         }
@@ -2465,6 +2471,18 @@ class DatabaseService {
             }
         } catch (err: any) {
             Logger.warn(`[DatabaseService] is_forum migration: ${err.message}`);
+        }
+
+        // ── messages.inline_buttons (Telegram inline keyboard) ────────────────
+        try {
+            const msgCols = this.query<any>(`PRAGMA table_info(messages)`);
+            if (!msgCols.some((c: any) => c.name === 'inline_buttons')) {
+                db!.exec(`ALTER TABLE messages ADD COLUMN inline_buttons TEXT DEFAULT NULL`);
+                this.save();
+                Logger.log('[DatabaseService] Migration: added inline_buttons column to messages');
+            }
+        } catch (err: any) {
+            Logger.warn(`[DatabaseService] inline_buttons migration: ${err.message}`);
         }
 
         // Telegram message IDs are only unique inside a chat. The original
@@ -3426,7 +3444,7 @@ class DatabaseService {
      * Cập nhật display_name và avatar_url của contact vào DB.
      * Được gọi khi có thông tin tên/ảnh (từ senderInfo trong message event hoặc getUserInfo API).
      */
-    public updateContactProfile(ownerZaloId: string, contactId: string, displayName: string, avatarUrl: string, phone: string = '', contactType: string = '', gender?: number | null, birthday?: string | null): void {
+    public updateContactProfile(ownerZaloId: string, contactId: string, displayName: string, avatarUrl: string, phone: string = '', contactType: string = '', gender?: number | null, birthday?: string | null, isBot?: number | null): void {
         if (!this.initialized || !contactId || contactId === 'undefined') return;
         try {
             const normalizedPhone = this.normalizeVietnamPhone(phone || '');
@@ -3464,6 +3482,12 @@ class DatabaseService {
                 this.run(
                     `UPDATE contacts SET birthday=? WHERE owner_zalo_id=? AND contact_id=?`,
                     [birthday, ownerZaloId, contactId]
+                );
+            }
+            if (isBot !== undefined && isBot !== null) {
+                this.run(
+                    `UPDATE contacts SET is_cov_bot=? WHERE owner_zalo_id=? AND contact_id=?`,
+                    [isBot, ownerZaloId, contactId]
                 );
             }
         } catch (err: any) {

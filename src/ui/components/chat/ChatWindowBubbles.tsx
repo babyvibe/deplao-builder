@@ -1101,10 +1101,13 @@ export function MediaGroupBubble({
                                      isSent,
                                      isSelecting: isSelectingProp,
                                      selectedMsgIds: selectedMsgIdsProp,
-                                     onToggleSelect
+                                     onToggleSelect,
+                                     onVideoPlay
                                  }: {
     msgs: any[]; onView: (src: string) => void; isSent?: boolean;
     isSelecting?: boolean; selectedMsgIds?: Set<string>; onToggleSelect?: (msgId: string) => void;
+    /** Called when user clicks play on a video tile in the group */
+    onVideoPlay?: (msg: any) => void;
 }) {
     const sorted = React.useMemo(() => {
         return [...groupMsgs].sort((a, b) => {
@@ -1144,7 +1147,8 @@ export function MediaGroupBubble({
                         {row.map((m) => (
                             <SingleImageInGroup key={m.msg_id} msg={m} onView={onView} isSent={isSent} isSelecting={isSelectingProp}
                                                 isSelected={selectedMsgIdsProp?.has(m.msg_id)}
-                                                onToggleSelect={onToggleSelect}/>
+                                                onToggleSelect={onToggleSelect}
+                                                onVideoPlay={onVideoPlay}/>
                         ))}
                     </div>
                 ))}
@@ -1160,9 +1164,11 @@ export function MediaGroupBubble({
 }
 
 /** Ảnh đơn bên trong MediaGroupBubble - chiều cao cố định h-40 */
-export function SingleImageInGroup({msg, onView, isSent, isSelecting: isSelectingProp, isSelected, onToggleSelect}: {
+export function SingleImageInGroup({msg, onView, isSent, isSelecting: isSelectingProp, isSelected, onToggleSelect, onVideoPlay}: {
     msg: any; onView: (src: string) => void; isSent?: boolean;
     isSelecting?: boolean; isSelected?: boolean; onToggleSelect?: (msgId: string) => void;
+    /** Called when user clicks play on a video tile. If provided, opens inline player. */
+    onVideoPlay?: (msg: any) => void;
 }) {
     // Remote-first: hiển thị CDN ngay; chuyển local khi file đã tải xong
     const [useLocal, setUseLocal] = React.useState(false);
@@ -1280,9 +1286,14 @@ export function SingleImageInGroup({msg, onView, isSent, isSelecting: isSelectin
             if (isSelectingProp) {
                 e.stopPropagation();
                 onToggleSelect?.(msg.msg_id);
-            } else if (localFilePath) {
+            } else {
                 e.stopPropagation();
-                void ipc.file?.openPath(localFilePath);
+                // Use inline player callback if provided, otherwise fallback to external app
+                if (onVideoPlay) {
+                    onVideoPlay(msg);
+                } else if (localFilePath) {
+                    void ipc.file?.openPath(localFilePath);
+                }
             }
         };
         // Extract caption from content (Telegram video + text)

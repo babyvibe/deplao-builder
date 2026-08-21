@@ -32,6 +32,8 @@ interface SharedMessageContentProps {
   renderRtf?: () => React.ReactNode;
   renderBankCard?: () => React.ReactNode;
   renderText?: () => React.ReactNode;
+  inlineButtons?: Array<Array<{ text: string; type: 'url' | 'webview' | 'callback'; url?: string }>>;
+  onInlineButtonClick?: (button: { text: string; type: string; url?: string }) => void;
 }
 
 /**
@@ -69,6 +71,8 @@ export default function SharedMessageContent({
   renderRtf,
   renderBankCard,
   renderText,
+  inlineButtons,
+  onInlineButtonClick,
 }: SharedMessageContentProps) {
   if (isGroupMedia && renderGroupMedia) return <>{renderGroupMedia()}</>;
   if (isPoll && renderPoll) return <>{renderPoll()}</>;
@@ -95,7 +99,7 @@ export default function SharedMessageContent({
   }
   if (renderText) return <>{renderText()}</>;
 
-  return (
+  const mainContent = (
     <MessageBubble
       msg={msg}
       isSelf={isSelf}
@@ -104,6 +108,29 @@ export default function SharedMessageContent({
       onView={onView}
       onOpenProfile={onOpenProfile}
     />
+  );
+
+  if (!inlineButtons || inlineButtons.length === 0) return mainContent;
+
+  return (
+    <div className="flex flex-col">
+      {mainContent}
+      <div className="mt-1 flex flex-col gap-1">
+        {inlineButtons.map((row, rowIdx) => (
+          <div key={rowIdx} className="flex flex-wrap gap-1">
+            {row.map((btn, btnIdx) => (
+              <button
+                key={btnIdx}
+                onClick={() => onInlineButtonClick?.(btn)}
+                className="px-3 py-1.5 text-xs font-medium rounded-lg border border-blue-500/50 text-blue-400 hover:bg-blue-500/10 transition-colors"
+              >
+                {btn.text}
+              </button>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

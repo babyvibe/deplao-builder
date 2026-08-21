@@ -15,6 +15,50 @@ interface VersionEntry {
 // ─── Changelog data - thêm entry mới vào ĐẦU mảng khi có bản cập nhật ────────
 const CHANGELOG: VersionEntry[] = [
   {
+    version: '26.8.4',
+    date: '08/2026',
+    type: 'minor',
+    highlights: [
+      '🎬 Video Player inline — Xem video ngay trong app, hỗ trợ seek/scrub, auto-fix MP4 faststart',
+      '🤖 Telegram Bot Commands — Menu lệnh bot, Mini App WebView, inline buttons trên tin nhắn',
+      '💰 CRM nâng cấp — Quét nhóm premium hỗ trợ Affiliate',
+    ],
+    changes: [
+      {
+        category: 'new',
+        items: [
+          'VideoPlayer modal — Xem video inline (giống Telegram), hỗ trợ play/pause, volume, progress bar, fullscreen, keyboard shortcuts (Space, Esc, F, Arrow keys)',
+          'Auto-fix MP4 không faststart — Tự động detect và chạy ffmpeg movflags +faststart cho video Telegram',
+          'Bot commands menu — Khi chat với Telegram bot, gõ / hiện menu lệnh, Enter để chọn, filter theo từ khóa',
+          'Telegram Mini App (WebView) — Mở Mini App trong modal iframe, auto prolong session mỗi 55s',
+          'Inline buttons trên tin nhắn — Parse và render ReplyInlineMarkup từ Telegram (url, webview, callback)',
+          'Bot detection (is_cov_bot) — Tự động nhận diện bot khi sync dialog hoặc nhận message mới',
+          'Refresh avatar contact — Thêm IPC refreshContactAvatar để tải lại avatar khi file bị mất',
+          'DB migration: contacts.is_cov_bot, menu_button, has_main_app + messages.inline_buttons',
+        ],
+      },
+      {
+        category: 'improved',
+        items: [
+          'Bot menu button — Hiển thị nút Menu/Open/tên custom trước ô nhập tin nhắn dựa trên menu_button của bot',
+          'Open button cho bot có Main App — Hiển thị nút "Open" trên conversation list',
+          'Telegram username search chặt hơn — Bắt buộc phải bắt đầu bằng @ mới nhận diện là username',
+          'Avatar profile từ getUserProfile — Ưu tiên avatarUrl trước khi fallback avatar',
+          'Skip service messages từ channel chưa join — Filter service messages nếu membership state != member',
+          'Fallback DB membership check — Query DB để kiểm tra membership state khi không có chat object',
+        ],
+      },
+      {
+        category: 'fixed',
+        items: [
+          'Sửa lỗi GROUP_PRIVATE error spam — Không log warning khi getChannelDifference gặp lỗi CHANNEL_PRIVATE',
+          'Sửa lỗi reset is_cov_bot/has_main_app — Auto-reset giá trị cũ (0) về NULL để contacts được re-check',
+          'Sửa lỗi vô hiệu hóa LinkIcon import không cần thiết trong GlobalSearchPanel',
+        ],
+      },
+    ],
+  },
+  {
     version: '26.8.3',
     date: '08/2026',
     type: 'minor',

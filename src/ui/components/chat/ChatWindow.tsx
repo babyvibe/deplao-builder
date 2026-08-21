@@ -9,6 +9,8 @@ import MessageContextMenu from './MessageContextMenu';
 import PinnedBar, { buildPinFromMsg, usePinnedData } from './PinnedMessages';
 import ChatHistoryList from './ChatHistoryList';
 import SharedMessageContent from './SharedMessageContent';
+import TelegramWebViewModal from './TelegramWebViewModal';
+import VideoPlayer from './VideoPlayer';
 import * as channelIpc from '../../lib/channelIpc';
 import { getCapability, type Channel } from '@/../configs/channelConfig';
 import { CHANNEL, isNonZalo, isZalo, isFacebook, isTelegram as isTelegramCh, isTelegramForumGeneral } from '@/lib/channelHelper';
@@ -108,6 +110,19 @@ export default function ChatWindow() {
   const emptyMessageRepairAttemptedRef = useRef<Set<string>>(new Set());
   const [manageGroupOpen, setManageGroupOpen] = useState(false);
   const [noteModal, setNoteModal] = useState<{ topicId?: string; title?: string; creatorName?: string; createTime?: number } | null>(null);
+  // Telegram WebView modal
+  const [webviewModal, setWebviewModal] = useState<{ botId: string; url: string; title?: string } | null>(null);
+  // Video player modal
+  const [videoPlayerState, setVideoPlayerState] = useState<{
+    localPath?: string;
+    remoteUrl?: string;
+    thumbUrl?: string;
+    width?: number;
+    height?: number;
+    duration?: number;
+    msgId?: string;
+    threadId?: string;
+  } | null>(null);
   // Drag-and-drop state (forward to MessageInput)
   const dragCounterRef = useRef(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -2343,6 +2358,57 @@ export default function ChatWindow() {
     }
   }, [activeAccountId, activeThreadId, buildImagesFromCurrentThread, buildImageEntry, dedupeViewerImages, findViewerIndex]);
 
+  /** Mở video player inline từ 1 tin nhắn video */
+  const openVideoPlayer = React.useCallback((msg: any) => {
+    let localPath = '';
+    let remoteUrl = '';
+    let thumbUrl = '';
+    let width = 0;
+    let height = 0;
+    let duration = 0;
+
+    // Parse local paths
+    try {
+      const lp: Record<string, string> = typeof msg.local_paths === 'string'
+        ? JSON.parse(msg.local_paths || '{}') : (msg.local_paths || {});
+      localPath = lp.file || lp.video || lp.main || '';
+      if (!localPath) {
+        const attKey = Object.keys(lp).find(k => k.startsWith('att_'));
+        if (attKey) localPath = lp[attKey];
+      }
+      thumbUrl = lp.thumb || '';
+    } catch {}
+
+    // Facebook fallback for localPath
+    if (!localPath && isFacebook(msg.channel)) {
+      localPath = getLocalMediaPath(msg, 'video') || getLocalMediaPath(msg) || '';
+    }
+
+    // Parse remote URLs from content
+    try {
+      const parsed = JSON.parse(msg.content || '{}');
+      remoteUrl = parsed.href || '';
+      thumbUrl = thumbUrl || parsed.thumb || '';
+      const params = typeof parsed.params === 'string' ? JSON.parse(parsed.params) : (parsed.params || {});
+      width = params.video_width || 0;
+      height = params.video_height || 0;
+      duration = params.duration ? Math.round(params.duration / 1000) : 0;
+    } catch {}
+
+    if (!localPath && !remoteUrl) return;
+
+    setVideoPlayerState({
+      localPath: localPath || undefined,
+      remoteUrl: remoteUrl || undefined,
+      thumbUrl: thumbUrl || undefined,
+      width: width || undefined,
+      height: height || undefined,
+      duration: duration || undefined,
+      msgId: String(msg.msg_id || ''),
+      threadId: activeThreadId || undefined,
+    });
+  }, [activeThreadId]);
+
   // ── Drag-and-drop handlers (forward to MessageInput) ────────────────
   // MUST be placed BEFORE early returns to maintain React hooks order
   const handleDragEnter = React.useCallback((e: React.DragEvent) => {
@@ -3022,7 +3088,7 @@ export default function ChatWindow() {
 
                         return (
                           <div
-                            className={`border-l-2 ${isSent ? 'border-blue-200 bg-blue-200/30' : 'border-gray-400 bg-gray-600/50'} rounded pl-2 pr-1 py-1 mb-1 text-xs cursor-pointer hover:opacity-100 overflow-hidden min-w-0 max-w-full`}
+                            className={`border-l-2 ${isSent ? 'border-blue-600 bg-blue-200/30' : 'border-gray-600 bg-gray-600/50'} rounded pl-2 pr-1 py-1 mb-1 text-xs cursor-pointer hover:opacity-100 overflow-hidden min-w-0 max-w-full`}
                             onClick={() => q.msgId && handleScrollToMsg(String(q.msgId))}
                           >
                             {q.fromD && <p className={`font-semibold truncate ${isSent ? 'text-white' : 'text-gray-200'}`}>{q.fromD}</p>}
@@ -3060,6 +3126,16 @@ export default function ChatWindow() {
                       onManage={() => setManageGroupOpen(true)}
                       onView={openViewer}
                       onOpenProfile={(userId, e) => setUserProfilePopup({ userId, x: e.clientX, y: e.clientY })}
+                      inlineButtons={(() => {
+                        try { return msg.inline_buttons ? JSON.parse(msg.inline_buttons) : undefined; } catch { return undefined; }
+                      })()}
+                      onInlineButtonClick={(btn) => {
+                        if (btn.type === 'url' && btn.url) {
+                          window.open(btn.url, '_blank');
+                        } else if (btn.type === 'webview' && btn.url) {
+                          setWebviewModal({ botId: msg.sender_id, url: btn.url, title: btn.text });
+                        }
+                      }}
                       isGroupMedia={isGroupMedia}
                       isPoll={isPollMsg}
                       isVideo={isVideoMsg}
@@ -3074,7 +3150,7 @@ export default function ChatWindow() {
                       isLocation={isLocationMsg}
                       renderGroupMedia={() => <MediaGroupBubble msgs={groupMediaMsgs!} onView={openViewer} isSent={isSent} isSelecting={isSelecting} selectedMsgIds={selectedMsgIds} onToggleSelect={(id) => {
                         setSelectedMsgIds(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
-                      }} />}
+                      }} onVideoPlay={openVideoPlayer} />}
                       renderPoll={() => (
                         <PollBubble msg={msg} isSent={isSent} activeAccountId={activeAccountId || ''} threadId={activeThreadId || ''} />
                       )}
@@ -3099,7 +3175,7 @@ export default function ChatWindow() {
                           videoCaption = typeof parsed === 'string' ? parsed : (parsed.title || parsed.text || parsed.caption || '');
                         } catch { videoCaption = ''; }
                         if (!videoCaption && msg.content && !msg.content.startsWith('{')) videoCaption = msg.content;
-                        const videoNode = <FBVideoThumb videoPath={videoPath} />;
+                        const videoNode = <FBVideoThumb videoPath={videoPath} onPlay={() => openVideoPlayer(msg)} />;
                         if (videoCaption) {
                           return (
                             <div className={`flex flex-col max-w-xs`}>
@@ -3577,6 +3653,21 @@ export default function ChatWindow() {
         />
       )}
 
+      {/* Video player modal */}
+      {videoPlayerState && (
+        <VideoPlayer
+          localPath={videoPlayerState.localPath}
+          remoteUrl={videoPlayerState.remoteUrl}
+          thumbUrl={videoPlayerState.thumbUrl}
+          width={videoPlayerState.width}
+          height={videoPlayerState.height}
+          duration={videoPlayerState.duration}
+          msgId={videoPlayerState.msgId}
+          threadId={videoPlayerState.threadId}
+          onClose={() => setVideoPlayerState(null)}
+        />
+      )}
+
       {contextMenu && (
         <MessageContextMenu
           x={contextMenu.x}
@@ -3733,6 +3824,17 @@ export default function ChatWindow() {
               return [note, ...filtered];
             });
           }}
+        />
+      )}
+
+      {/* Telegram WebView Modal */}
+      {webviewModal && activeAccountId && (
+        <TelegramWebViewModal
+          accountId={activeAccountId}
+          botId={webviewModal.botId}
+          url={webviewModal.url}
+          title={webviewModal.title}
+          onClose={() => setWebviewModal(null)}
         />
       )}
     </div>
