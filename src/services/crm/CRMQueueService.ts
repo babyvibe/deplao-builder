@@ -213,6 +213,7 @@ class CRMQueueService {
                     db.updateCampaignContactStatus(item.id!, 'failed', 'Không tìm thấy SĐT trên Zalo');
                     db.save();
                     this.broadcastProgress(zaloId, item.campaign_id, item.contact_id, 'failed', 'Không tìm thấy SĐT trên Zalo');
+                    this.checkCampaignCompletion(item.campaign_id, zaloId);
                     this.isProcessing.set(zaloId, false);
                     return;
                 }
@@ -541,6 +542,7 @@ class CRMQueueService {
                 Logger.error(`[CRMQueue] ❌ Failed to save error log: ${logErr.message}`);
             }
             this.broadcastProgress(zaloId, item.campaign_id, effectiveContactId, 'failed', errMsg);
+            this.checkCampaignCompletion(item.campaign_id, zaloId);
         } finally {
             this.isProcessing.set(zaloId, false);
         }
