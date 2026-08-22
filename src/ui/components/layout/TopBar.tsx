@@ -367,7 +367,7 @@ export default function TopBar() {
       className="flex items-center justify-between h-9 bg-gray-900 border-b border-gray-700 flex-shrink-0"
       style={{ WebkitAppRegion: 'drag' } as any}
     >
-      <div className="flex items-center gap-2 px-3" style={{ WebkitAppRegion: 'no-drag' } as any}>
+      <div className="flex items-center gap-2 px-3" style={{ WebkitAppRegion: 'no-drag', paddingLeft: isMac ? 72 : 12 } as any}>
         <span className="text-blue-400 font-bold text-sm">Deplao</span>
         <span className="text-gray-400 text-xs">v{APP_VERSION}</span>
         {updateInfo && (updateStatus === 'available' || updateStatus === 'downloading' || updateStatus === 'downloaded') && (
@@ -806,44 +806,48 @@ export default function TopBar() {
           )}
         </div>
 
-        <button
-          onClick={() => ipc.window?.minimize()}
-          className="w-9 h-9 flex items-center justify-center text-gray-400 hover:bg-gray-700 hover:text-white transition-colors"
-          title="Thu nhỏ"
-        >
-          <svg width="10" height="1" viewBox="0 0 10 1" fill="currentColor">
-            <rect width="10" height="1" />
-          </svg>
-        </button>
-        <button
-          onClick={() => {
-            ipc.window?.maximize();
-            setIsMaximized(!isMaximized);
-          }}
-          className="w-9 h-9 flex items-center justify-center text-gray-400 hover:bg-gray-700 hover:text-white transition-colors"
-          title={isMaximized ? 'Phục hồi' : 'Phóng to'}
-        >
-          {isMaximized ? (
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1">
-              <rect x="2" y="0" width="8" height="8" />
-              <rect x="0" y="2" width="8" height="8" fill="none" />
-            </svg>
-          ) : (
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1">
-              <rect x="0" y="0" width="10" height="10" />
-            </svg>
-          )}
-        </button>
-        <button
-          onClick={() => ipc.window?.close()}
-          className="w-9 h-9 flex items-center justify-center text-gray-400 hover:bg-red-600 hover:text-white transition-colors"
-          title="Đóng"
-        >
-          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2">
-            <line x1="0" y1="0" x2="10" y2="10" />
-            <line x1="10" y1="0" x2="0" y2="10" />
-          </svg>
-        </button>
+        {!isMac && (
+          <>
+            <button
+              onClick={() => ipc.window?.minimize()}
+              className="w-9 h-9 flex items-center justify-center text-gray-400 hover:bg-gray-700 hover:text-white transition-colors"
+              title="Thu nhỏ"
+            >
+              <svg width="10" height="1" viewBox="0 0 10 1" fill="currentColor">
+                <rect width="10" height="1" />
+              </svg>
+            </button>
+            <button
+              onClick={() => {
+                ipc.window?.maximize();
+                setIsMaximized(!isMaximized);
+              }}
+              className="w-9 h-9 flex items-center justify-center text-gray-400 hover:bg-gray-700 hover:text-white transition-colors"
+              title={isMaximized ? 'Phục hồi' : 'Phóng to'}
+            >
+              {isMaximized ? (
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1">
+                  <rect x="2" y="0" width="8" height="8" />
+                  <rect x="0" y="2" width="8" height="8" fill="none" />
+                </svg>
+              ) : (
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1">
+                  <rect x="0" y="0" width="10" height="10" />
+                </svg>
+              )}
+            </button>
+            <button
+              onClick={() => ipc.window?.close()}
+              className="w-9 h-9 flex items-center justify-center text-gray-400 hover:bg-red-600 hover:text-white transition-colors"
+              title="Đóng"
+            >
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2">
+                <line x1="0" y1="0" x2="10" y2="10" />
+                <line x1="10" y1="0" x2="0" y2="10" />
+              </svg>
+            </button>
+          </>
+        )}
       </div>
     </div>
     </>
