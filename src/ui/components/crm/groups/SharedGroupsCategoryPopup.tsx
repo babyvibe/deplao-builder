@@ -77,6 +77,7 @@ export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGrou
   const [searchText, setSearchText] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [totalCount, setTotalCount] = useState(0);
 
   // ── Copy link handler ─────────────────────────────────────────────────────
   const handleCopyLink = useCallback(async (group: SharedGroupItem) => {
@@ -95,26 +96,30 @@ export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGrou
     setTimeout(() => setCopiedId(null), 2000);
   }, []);
 
-  // ── Load all groups ───────────────────────────────────────────────────────
-  const loadGroups = useCallback(async () => {
+  // ── Load groups (server-side pagination + category filter) ──────────────────
+  const loadGroups = useCallback(async (categoryId?: number | null, page?: number) => {
     setLoading(true);
     try {
-      const res = await getSharedGroups({ pageId });
+      const res = await getSharedGroups({
+        pageId,
+        categoryId: categoryId ?? undefined,
+        page: page ?? 1,
+        limit: PAGE_SIZE,
+      });
       if (res.success) {
         setAllGroups(res.items);
         setCategories(res.categories);
+        setTotalCount(res.pagination?.total ?? res.items.length);
       }
     } catch { /* ignore */ } finally { setLoading(false); }
   }, [pageId]);
 
+  // Initial load
   useEffect(() => { loadGroups(); }, [loadGroups]);
 
-  // ── Filter + search ───────────────────────────────────────────────────────
+  // ── Search (client-side on current page) ───────────────────────────────────
   const filteredGroups = useMemo(() => {
     let items = allGroups;
-    if (selectedCategoryId !== null) {
-      items = items.filter(g => g.category.id === selectedCategoryId);
-    }
     if (searchText.trim()) {
       const q = removeDiacritics(searchText.toLowerCase());
       items = items.filter(g =>
@@ -125,17 +130,27 @@ export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGrou
       );
     }
     return items;
-  }, [allGroups, selectedCategoryId, searchText]);
+  }, [allGroups, searchText]);
 
   // ── Pagination ────────────────────────────────────────────────────────────
-  const totalPages = Math.ceil(filteredGroups.length / PAGE_SIZE);
-  const pagedGroups = filteredGroups.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const totalPages = Math.ceil(totalCount / PAGE_SIZE);
+  const pagedGroups = filteredGroups; // API already returns one page
 
-  // Reset page when filter/search changes
-  useEffect(() => { setCurrentPage(1); }, [selectedCategoryId, searchText]);
+  // Reset page when category changes → refetch from server
+  const handleCategoryChange = (catId: number | null) => {
+    setSelectedCategoryId(catId);
+    setCurrentPage(1);
+    loadGroups(catId, 1);
+  };
+
+  // Page change → refetch from server
+  const handlePageChange = (page: number) => {
+    setCurrentPage(page);
+    loadGroups(selectedCategoryId, page);
+  };
 
   const selectedCategory = categories.find(c => c.id === selectedCategoryId);
-  const totalGroups = categories.reduce((sum, c) => sum + (c.count ?? 0), 0);
+  const totalGroups = totalCount || categories.reduce((sum, c) => sum + (c.count ?? 0), 0);
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onClose}>
@@ -160,7 +175,7 @@ export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGrou
           {/* Category list */}
           <div className="flex-1 overflow-y-auto py-1">
             {/* "Tất cả" */}
-            <button onClick={() => setSelectedCategoryId(null)}
+            <button onClick={() => handleCategoryChange(null)}
               className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors
                 ${selectedCategoryId === null
                   ? 'bg-green-500/10 border-r-2 border-green-500 text-white'
@@ -186,7 +201,7 @@ export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGrou
             {categories.map(cat => {
               const isActive = selectedCategoryId === cat.id;
               return (
-                <button key={cat.id} onClick={() => setSelectedCategoryId(cat.id)}
+                <button key={cat.id} onClick={() => handleCategoryChange(cat.id)}
                   className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors
                     ${isActive
                       ? 'bg-green-500/10 border-r-2 border-green-500 text-white'
@@ -322,10 +337,10 @@ export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGrou
           {totalPages > 1 && (
             <div className="px-4 py-2.5 border-t border-gray-700 flex items-center justify-between">
               <span className="text-[11px] text-gray-500">
-                Trang {currentPage}/{totalPages} · {filteredGroups.length} nhóm
+                Trang {currentPage}/{totalPages} · {totalCount} nhóm
               </span>
               <div className="flex items-center gap-1">
-                <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                <button onClick={() => handlePageChange(Math.max(1, currentPage - 1))}
                   disabled={currentPage <= 1}
                   className="w-7 h-7 rounded-md bg-gray-700 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center text-gray-300 transition-colors">
                   {PrevIcon}
@@ -343,7 +358,7 @@ export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGrou
                     page = currentPage - 2 + i;
                   }
                   return (
-                    <button key={page} onClick={() => setCurrentPage(page)}
+                    <button key={page} onClick={() => handlePageChange(page)}
                       className={`w-7 h-7 rounded-md text-[11px] font-medium transition-colors
                         ${currentPage === page
                           ? 'bg-green-600 text-white'
@@ -352,7 +367,7 @@ export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGrou
                     </button>
                   );
                 })}
-                <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                <button onClick={() => handlePageChange(Math.min(totalPages, currentPage + 1))}
                   disabled={currentPage >= totalPages}
                   className="w-7 h-7 rounded-md bg-gray-700 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center text-gray-300 transition-colors">
                   {NextIcon}
