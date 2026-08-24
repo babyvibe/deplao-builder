@@ -3748,10 +3748,8 @@ function ContactPickerField({
                 isLight ? 'bg-blue-100 text-blue-700' : 'bg-blue-500/20 text-blue-300'
               }`}>
                 {id}
-                {contactMode === 'multi' && (
-                  <button type="button" onClick={() => handleChange(selectedIds.filter(x => x !== id))}
-                    className="hover:text-white transition-colors">&times;</button>
-                )}
+                <button type="button" onClick={() => handleChange(selectedIds.filter(x => x !== id))}
+                  className="hover:text-white transition-colors">&times;</button>
               </span>
             ))
           ) : (
