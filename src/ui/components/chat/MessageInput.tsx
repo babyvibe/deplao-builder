@@ -3260,7 +3260,24 @@ export default function MessageInput() {
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-blue-200 truncate">{contactCardSuggestion.displayName}</p>
-                <p className="text-xs text-blue-300/80 mt-0.5">{contactCardSuggestion.phone}</p>
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <p className="text-xs text-blue-300/80">{contactCardSuggestion.phone}</p>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigator.clipboard.writeText(contactCardSuggestion.phone).then(() => {
+                        showNotification('Đã copy số điện thoại', 'success');
+                      }).catch(() => {});
+                    }}
+                    className="text-[10px] text-blue-400/60 hover:text-blue-200 transition-colors px-1 py-0.5 rounded hover:bg-blue-800/40"
+                    title="Copy số điện thoại"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                      <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+                    </svg>
+                  </button>
+                </div>
               </div>
               <span className="text-[11px] text-blue-300/70 flex-shrink-0 bg-blue-900/40 px-2.5 py-1 rounded-full border border-blue-500/30">
                 Danh thiếp
