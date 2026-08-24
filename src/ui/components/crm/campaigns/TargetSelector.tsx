@@ -26,7 +26,7 @@ interface TargetSelectorProps {
   headerContent?: React.ReactNode;
 }
 
-type SelectMode = 'manual' | 'by_label' | 'friends_only' | 'groups_only' | 'by_phone' | 'by_uid';
+type SelectMode = 'manual' | 'by_label' | 'friends_only' | 'groups_only' | 'by_phone' | 'by_uid' | 'by_group';
 
 /** Nhãn Zalo lưu ID nhóm với tiền tố "g" (vd "g4579..."); contact_id trong CRM thì không. Bỏ tiền tố để so khớp. */
 function stripGroupPrefix(id: string): string {
@@ -60,6 +60,11 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
   const [uidInput, setUidInput] = useState('');
   const [uidList, setUidList] = useState<string[]>([]);
   const [uidResolved, setUidResolved] = useState<Map<string, { name: string; avatar?: string } | null>>(new Map());
+
+  // ── Group tab state ──
+  const [selectedGroupIds, setSelectedGroupIds] = useState<Set<string>>(new Set());
+  const [groupMemberCounts, setGroupMemberCounts] = useState<Record<string, number>>({});
+  const [groupConfirmLoading, setGroupConfirmLoading] = useState(false);
 
   // Label section scroll ref
   const labelScrollRef = useRef<HTMLDivElement>(null);
@@ -110,7 +115,10 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
   }, [zaloId]);
 
   // Đổi mode/nhãn → reset danh sách đã chọn để không giữ nhầm sang tập khác.
-  useEffect(() => { setManualSelected(new Set()); }, [mode, selectedZaloLabelIds, selectedLocalLabelIds]);
+  useEffect(() => {
+    setManualSelected(new Set());
+    setSelectedGroupIds(new Set());
+  }, [mode, selectedZaloLabelIds, selectedLocalLabelIds]);
 
   // Available = not already in campaign
   const available = useMemo(() =>
@@ -227,6 +235,38 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
       return changed ? next : prev;
     });
   }, [uidList, allContacts]);
+
+  // ── Groups list (for by_group mode) ──
+  const groups = useMemo(() =>
+    (allContacts || []).filter(c => c.contact_type === 'group'),
+    [allContacts]
+  );
+
+  // Load member counts from DB when groups are available
+  useEffect(() => {
+    if (!zaloId || groups.length === 0) return;
+    DataAccessor.getAllGroupMembers(zaloId).then(res => {
+      const rows = res?.rows || [];
+      const countMap: Record<string, number> = {};
+      for (const row of rows) {
+        const gid = row.group_id;
+        if (gid) countMap[gid] = (countMap[gid] || 0) + 1;
+      }
+      setGroupMemberCounts(countMap);
+    }).catch(() => {});
+  }, [zaloId, groups.length]);
+
+  // Get member count for a group
+  const getMemberCount = (groupId: string): number => {
+    return groupMemberCounts[groupId] || 0;
+  };
+
+  // Total members across selected groups (estimated from counts)
+  const totalEstimatedMembers = useMemo(() => {
+    let sum = 0;
+    for (const gid of selectedGroupIds) sum += groupMemberCounts[gid] || 0;
+    return sum;
+  }, [selectedGroupIds, groupMemberCounts]);
 
   // Final selected contacts
   const finalSelected: any[] = useMemo(() => {
@@ -352,6 +392,42 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
     }
   };
 
+  // Confirm groups - fetch all members from DB, then add to campaign
+  const handleConfirmGroups = async () => {
+    if (selectedGroupIds.size === 0) return;
+    setGroupConfirmLoading(true);
+    try {
+      const allMembers: any[] = [];
+      for (const groupId of selectedGroupIds) {
+        try {
+          const dbRes = await DataAccessor.getGroupMembers({ zaloId, groupId });
+          const rows = (dbRes?.members || []).filter((m: any) => {
+            const id = (m.member_id || m.memberId || '').trim();
+            return id && /^\d+$/.test(id);
+          });
+          for (const m of rows) {
+            const uid = m.member_id || m.memberId || '';
+            if (uid && !existingContactIds.has(uid)) {
+              allMembers.push({
+                contact_id: uid,
+                display_name: m.display_name || m.displayName || uid,
+                avatar: m.avatar || '',
+                source: 'group',
+                groupId,
+              });
+            }
+          }
+        } catch { /* skip this group */ }
+      }
+      if (allMembers.length > 0) {
+        onConfirm(allMembers);
+      }
+      onClose();
+    } finally {
+      setGroupConfirmLoading(false);
+    }
+  };
+
   const totalLabelFilters = selectedZaloLabelIds.length + selectedLocalLabelIds.length;
 
   return (
@@ -380,12 +456,13 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
         {/* Mode selector */}
         <div className="flex gap-1 px-4 py-2.5 border-b border-gray-700 flex-shrink-0 overflow-x-auto">
           {([
-            { key: 'manual' as const, label: '☑ Thủ công' },
+            { key: 'manual' as const, label: 'Thủ công' },
             { key: 'by_label' as const, label: 'Theo nhãn' },
             { key: 'by_phone' as const, label: 'Theo SĐT' },
             { key: 'by_uid' as const, label: 'Theo UID' },
-            { key: 'friends_only' as const, label: '🤝 Bạn bè' },
-            { key: 'groups_only' as const, label: '👥 Nhóm' },
+            { key: 'friends_only' as const, label: 'Bạn bè' },
+            { key: 'groups_only' as const, label: 'Nhóm' },
+            { key: 'by_group' as const, label: 'Theo thành viên nhóm' },
           ]).map(({ key, label }) => (
             <button key={key} onClick={() => setMode(key)}
               className={`text-xs px-3 py-1.5 rounded-lg border transition-colors whitespace-nowrap flex-shrink-0 ${
@@ -647,6 +724,62 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
                 onClick={handleConfirmUids}
                 className="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-40">
                 Thêm {uidList.length} UID
+              </button>
+            </div>
+          </>
+        ) : mode === 'by_group' ? (
+          <>
+            {/* Group list */}
+            <div className="flex-1 overflow-y-auto">
+              {groups.length === 0 ? (
+                <p className="text-xs text-gray-400 text-center py-8">Không có nhóm nào</p>
+              ) : (
+                groups.map(g => {
+                  const isSelected = selectedGroupIds.has(g.contact_id);
+                  const memberCount = getMemberCount(g.contact_id);
+                  return (
+                    <label key={g.contact_id}
+                      className={`flex items-center gap-2.5 px-4 py-2.5 border-b border-gray-700/50 cursor-pointer transition-colors hover:bg-gray-700/40 ${
+                        isSelected ? 'bg-blue-500/5' : ''
+                      }`}>
+                      <input type="checkbox" checked={isSelected} className="accent-blue-500 flex-shrink-0"
+                        onChange={() => {
+                          setSelectedGroupIds(prev => {
+                            const next = new Set(prev);
+                            next.has(g.contact_id) ? next.delete(g.contact_id) : next.add(g.contact_id);
+                            return next;
+                          });
+                        }} />
+                      <div className="w-8 h-8 rounded-lg overflow-hidden flex-shrink-0">
+                        {g.avatar
+                          ? <img src={g.avatar} alt="" className="w-full h-full object-cover" />
+                          : <div className="w-full h-full bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center text-white text-xs font-bold">
+                              {(g.display_name || '?').charAt(0).toUpperCase()}
+                            </div>}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs text-gray-200 truncate font-medium">{g.display_name || g.contact_id}</p>
+                        <p className="text-[10px] text-gray-400">
+                          {memberCount > 0 ? `${memberCount} thành viên` : 'Chưa có thông tin'}
+                        </p>
+                      </div>
+                    </label>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Group footer */}
+            <div className="flex items-center gap-2 px-4 py-3 border-t border-gray-700 flex-shrink-0">
+              <span className="text-xs text-gray-400 flex-1">
+                {selectedGroupIds.size} nhóm · ~{totalEstimatedMembers} thành viên
+              </span>
+              <button onClick={onClose} className="px-4 py-2 rounded-xl bg-gray-700 text-gray-300 text-sm hover:bg-gray-600">Hủy</button>
+              <button
+                disabled={selectedGroupIds.size === 0 || groupConfirmLoading}
+                onClick={handleConfirmGroups}
+                className="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-40">
+                {groupConfirmLoading ? 'Đang tải...' : `Thêm thành viên`}
               </button>
             </div>
           </>
