@@ -757,7 +757,7 @@ export default function MessageInput() {
 
   // ─── Phone number detection → contact card suggestion ──────────────────
   // Pattern: 0 + 10 digits (SĐT Việt Nam)
-  const PHONE_REGEX = /0\d{10}/g;
+  const PHONE_REGEX = /0\d{9}/g;
 
   // Clear suggestion when thread changes
   useEffect(() => {
@@ -824,10 +824,11 @@ export default function MessageInput() {
 
           try {
             const infoRes = await ipc.zalo?.getUserInfo({ auth, zaloId: activeAccountId, userId: uid });
-            if (infoRes?.response) {
-              const info = infoRes.response;
-              displayName = info.displayName || info.name || displayName;
-              avatarUrl = info.avatar || info.avatarUrl || info.avatar_url || avatarUrl;
+            // API trả data trong changed_profiles[userId], không phải trực tiếp response
+            const profile = infoRes?.response?.changed_profiles?.[uid] || infoRes?.response;
+            if (profile) {
+              displayName = profile.displayName || profile.name || profile.zaloName || displayName;
+              avatarUrl = profile.avatar || profile.avatarUrl || profile.avatar_url || avatarUrl;
             }
           } catch { /* best-effort */ }
 
