@@ -2663,15 +2663,26 @@ export default function MessageInput() {
     }
 
     // Detect @ mention trigger
-    // Requirement: @ must be followed by at least 1 word char (a-z, 0-9, _)
-    // This prevents false triggers on: @ alone, @@, @ followed by space
+    // @ must be followed by at least 1 letter/digit/underscore
+    // Prevents: @ alone, @@, @@@, @ followed by space
     const textBeforeCursor = newText.slice(0, realCursor);
-    const atMatch = textBeforeCursor.match(/@(\w[^@\n]*)?$/);
-    // Only show dropdown if there's actual text after @ (atMatch[1] is non-empty)
-    if (atMatch && atMatch[1] && isGroupThread && groupMembers.length > 0) {
+    // Find last @ in textBeforeCursor
+    const lastAtIndex = textBeforeCursor.lastIndexOf('@');
+    let isValidMention = false;
+    let mentionSearchText = '';
+    if (lastAtIndex >= 0) {
+      const afterAt = textBeforeCursor.slice(lastAtIndex + 1);
+      // Must NOT have newline between @ and cursor (user moved to new line)
+      const hasNewline = afterAt.includes('\n');
+      if (!hasNewline && /^[a-zA-Z0-9_]/.test(afterAt) && afterAt.length > 0) {
+        mentionSearchText = afterAt;
+        isValidMention = true;
+      }
+    }
+    if (isValidMention && isGroupThread && groupMembers.length > 0) {
       setShowMentionDropdown(true);
-      setMentionSearch(atMatch[1]);
-      setMentionTriggerPos(realCursor - atMatch[0].length);
+      setMentionSearch(mentionSearchText);
+      setMentionTriggerPos(lastAtIndex);
       setMentionSelectedIdx(0);
     } else {
       setShowMentionDropdown(false);
