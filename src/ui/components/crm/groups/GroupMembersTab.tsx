@@ -16,6 +16,7 @@ import AffiliateIntroPopup from '@/components/crm/groups/AffiliateIntroPopup';
 import { syncZaloGroups, MemberPlaceholder, SyncGroupsProgress } from '@/lib/zaloGroupUtils';
 import { AlertIcon, CheckIcon, SearchIcon } from '@/components/common/icons';
 import { usePremiumMemberSync } from '@/hooks/usePremiumMemberSync';
+import { toLocalMediaUrl } from '@/lib/localMedia';
 
 interface ZaloGroup {
   contact_id: string;
@@ -43,9 +44,10 @@ function roleLabel(role: number) {
 function Avatar({ src, name, size = 36 }: { src?: string; name: string; size?: number }) {
   const [err, setErr] = useState(false);
   const initials = (name || '?').charAt(0).toUpperCase();
-  if (src && !err) {
+  const avatarUrl = src ? toLocalMediaUrl(src) : '';
+  if (avatarUrl && !err) {
     return (
-      <img src={src} alt={name} style={{ width: size, height: size }}
+      <img src={avatarUrl} alt={name} style={{ width: size, height: size }}
         className="rounded-full object-cover flex-shrink-0"
         onError={() => setErr(true)} />
     );
@@ -86,7 +88,15 @@ const SpinIcon = (
   </svg>
 );
 
-export default function GroupMembersTab() {
+/** Channels are broadcast/news feeds, not CRM groups with a member list. */
+const TELEGRAM_MEMBER_GROUP_TYPES = new Set(['basic_group', 'supergroup', 'forum']);
+const isTelegramMemberGroup = (contact: any) => {
+  const peerType = String(contact?.telegram_peer_type || '');
+  // Keep legacy rows with no stored peer type until the user refreshes them.
+  return !peerType || TELEGRAM_MEMBER_GROUP_TYPES.has(peerType);
+};
+
+function ZaloGroupMembersTab() {
   const { activeAccountId } = useAccountStore();
   const { setGroupCount } = useCRMStore();
   const groupInfoCache = useAppStore(s => s.groupInfoCache);
@@ -2002,4 +2012,295 @@ export default function GroupMembersTab() {
       `}</style>
     </div>
   );
+}
+
+/** Telegram deliberately gets a compact CRM group view.  The Zalo component
+ * above contains scan, payment and affiliate flows that have no Telegram API
+ * equivalent, so none of those controls leak into this branch. */
+function TelegramGroupMembersTab({ channel }: { channel: 'telegram_user' | 'telegram_bot' }) {
+  const { activeAccountId } = useAccountStore();
+  const { setGroupCount } = useCRMStore();
+  const { showNotification } = useAppStore();
+  const [groups, setGroups] = useState<any[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [members, setMembers] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [refreshingGroups, setRefreshingGroups] = useState(false);
+  const [memberLoading, setMemberLoading] = useState(false);
+  const [query, setQuery] = useState('');
+  const [memberQuery, setMemberQuery] = useState('');
+  const [selectedMemberIds, setSelectedMemberIds] = useState<Set<string>>(new Set());
+  const [showCampaignPicker, setShowCampaignPicker] = useState(false);
+  const [showCreateCampaign, setShowCreateCampaign] = useState(false);
+  const [campaigns, setCampaigns] = useState<any[]>([]);
+  const [pickedCampaignId, setPickedCampaignId] = useState<number | null>(null);
+  const [addingToCampaign, setAddingToCampaign] = useState(false);
+  const [showAddToContacts, setShowAddToContacts] = useState(false);
+
+  const normaliseMember = useCallback((member: any) => ({
+    id: String(member.id || member.memberId || member.member_id || ''),
+    firstName: member.firstName || member.displayName || member.display_name || '',
+    lastName: member.lastName || '',
+    username: member.username || '',
+    phone: member.phone || '',
+    avatar: member.avatar || member.avatar_url || '',
+    role: Number(member.role || 0),
+  }), []);
+
+  const loadGroups = useCallback(async () => {
+    if (!activeAccountId) return;
+    setLoading(true);
+    try {
+      const res = await DataAccessor.getConversations(activeAccountId, 999, 0);
+      const all = (res as any)?.items || [];
+      const next = all.filter((c: any) => c.contact_type === 'group' && c.channel === channel && isTelegramMemberGroup(c));
+      setGroups(next);
+      setGroupCount(next.length);
+      if (selectedId && !next.some((g: any) => g.contact_id === selectedId)) setSelectedId(null);
+    } finally { setLoading(false); }
+  }, [activeAccountId, channel, selectedId, setGroupCount]);
+
+  useEffect(() => { loadGroups(); }, [loadGroups]);
+
+  /**
+   * Resolve only a bounded batch of rows without avatars. This is intentionally
+   * not a whole-account scan: Telegram photo downloads are costly and can make
+   * the MTProto connection unstable on large accounts.
+   */
+  const refreshGroupsAndMissingAvatars = useCallback(async () => {
+    if (!activeAccountId || refreshingGroups) return;
+    if (channel !== 'telegram_user') {
+      await loadGroups();
+      return;
+    }
+    setRefreshingGroups(true);
+    try {
+      const res = await DataAccessor.getConversations(activeAccountId, 999, 0);
+      const all = (res as any)?.items || [];
+      const initialGroups = all.filter((contact: any) => contact.contact_type === 'group' && contact.channel === channel && isTelegramMemberGroup(contact));
+      const candidates = initialGroups.filter((group: any) =>
+        !group.telegram_peer_type || (!group.avatar_url && !group.avatar)
+      ).slice(0, 12);
+      const excludedChannelIds = new Set<string>();
+      const avatarByGroupId = new Map<string, string>();
+
+      for (const group of candidates) {
+        const infoRes = await (ipc.telegramUser as any)?.getGroupInfo({ accountId: activeAccountId, chatId: group.contact_id });
+        if (!infoRes?.success) continue;
+        if (infoRes.info?.peerType === 'channel') {
+          excludedChannelIds.add(String(group.contact_id));
+          continue;
+        }
+        if (infoRes.info?.avatarUrl) avatarByGroupId.set(String(group.contact_id), infoRes.info.avatarUrl);
+      }
+
+      const next = initialGroups.filter((group: any) => !excludedChannelIds.has(String(group.contact_id))).map((group: any) => ({
+        ...group,
+        avatar_url: avatarByGroupId.get(String(group.contact_id)) || group.avatar_url || '',
+      }));
+      setGroups(next);
+      setGroupCount(next.length);
+      if (selectedId && !next.some((group: any) => group.contact_id === selectedId)) {
+        setSelectedId(null);
+        setMembers([]);
+        setSelectedMemberIds(new Set());
+      }
+      const message = [
+        avatarByGroupId.size ? `đã cập nhật ${avatarByGroupId.size} avatar` : '',
+        excludedChannelIds.size ? `đã loại ${excludedChannelIds.size} kênh tin tức` : '',
+      ].filter(Boolean).join(', ');
+      if (message) showNotification(`Telegram Nhóm: ${message}`, 'success');
+    } finally { setRefreshingGroups(false); }
+  }, [activeAccountId, channel, refreshingGroups, selectedId, setGroupCount, showNotification, loadGroups]);
+
+  const loadGroupMembers = useCallback(async (groupId: string) => {
+    if (!activeAccountId || channel !== 'telegram_user') return;
+    setMemberLoading(true);
+    try {
+      // Show the persistent cache first. Avatar hydration is intentionally
+      // backgrounded by the Telegram service to keep its MTProto connection stable.
+      const cachedRes = await DataAccessor.getGroupMembers({ zaloId: activeAccountId, groupId });
+      const cached = (cachedRes?.members || []).map(normaliseMember).filter((m: any) => m.id);
+      if (cached.length) setMembers(cached);
+
+      const [groupInfo, memberRes] = await Promise.all([
+        (ipc.telegramUser as any)?.getGroupInfo({ accountId: activeAccountId, chatId: groupId }),
+        (ipc.telegramUser as any)?.getGroupMembers({ accountId: activeAccountId, chatId: groupId, limit: 200 }),
+      ]);
+      if (groupInfo?.success && groupInfo.info?.avatarUrl) {
+        setGroups(previous => previous.map(group => group.contact_id === groupId
+          ? { ...group, avatar_url: groupInfo.info.avatarUrl }
+          : group));
+      }
+      if (groupInfo?.success && groupInfo.info?.peerType === 'channel') {
+        setGroups(previous => {
+          const next = previous.filter(group => group.contact_id !== groupId);
+          setGroupCount(next.length);
+          return next;
+        });
+        setSelectedId(null);
+        setMembers([]);
+        showNotification('Đây là kênh tin tức Telegram, không có danh sách thành viên để quản lý.', 'info');
+        return;
+      }
+      if (memberRes?.success) {
+        const cachedById = new Map(cached.map((member: any) => [member.id, member]));
+        const fresh = (memberRes.members || []).map(normaliseMember).filter((m: any) => m.id)
+          .map((member: any) => ({ ...cachedById.get(member.id), ...member, avatar: member.avatar || cachedById.get(member.id)?.avatar || '' }));
+        // Telegram chỉ trả về một phần participant list, trong khi những người
+        // từng nhắn tin đã được lưu theo group_id ở DB. Giữ cả hai nguồn để
+        // CRM không làm mất các thành viên đã thu thập từ lịch sử tin nhắn.
+        const freshIds = new Set(fresh.map((member: any) => member.id));
+        setMembers([...fresh, ...cached.filter((member: any) => !freshIds.has(member.id))]);
+      } else if (!cached.length) {
+        showNotification(memberRes?.error || 'Không thể tải thành viên nhóm', 'error');
+      }
+    } finally { setMemberLoading(false); }
+  }, [activeAccountId, channel, normaliseMember, showNotification]);
+
+  const selectGroup = useCallback(async (groupId: string) => {
+    setSelectedId(groupId);
+    setMembers([]);
+    setSelectedMemberIds(new Set());
+    setMemberQuery('');
+    await loadGroupMembers(groupId);
+  }, [loadGroupMembers]);
+
+  // Patch the currently displayed member as the Telegram main process finishes
+  // downloading each photo into the local group-member cache.
+  useEffect(() => {
+    return ipc.on('event:groupMemberAvatar', (data: any) => {
+      if (data?.zaloId !== activeAccountId || String(data?.groupId) !== String(selectedId) || !data?.avatar) return;
+      setMembers(previous => previous.map(member => String(member.id) === String(data.memberId)
+        ? { ...member, avatar: data.avatar, firstName: member.firstName || data.displayName || '' }
+        : member));
+    });
+  }, [activeAccountId, selectedId]);
+
+  const toggleMember = (memberId: string) => setSelectedMemberIds(previous => {
+    const next = new Set(previous);
+    next.has(memberId) ? next.delete(memberId) : next.add(memberId);
+    return next;
+  });
+
+  const openCampaignPicker = useCallback(async () => {
+    if (!activeAccountId || selectedMemberIds.size === 0) return;
+    const res = await DataAccessor.getCRMCampaigns({ zaloId: activeAccountId });
+    if (res?.success) setCampaigns((res.campaigns || []).filter((campaign: any) => campaign.status !== 'done' && campaign.channel === channel));
+    setPickedCampaignId(null);
+    setShowCampaignPicker(true);
+  }, [activeAccountId, channel, selectedMemberIds.size]);
+
+  const handleAddToCampaign = useCallback(async () => {
+    if (!activeAccountId || !pickedCampaignId || selectedMemberIds.size === 0) return;
+    setAddingToCampaign(true);
+    try {
+      const contacts = members.filter(member => selectedMemberIds.has(member.id)).map(member => ({
+        contactId: member.id,
+        displayName: [member.firstName, member.lastName].filter(Boolean).join(' ') || member.username || member.id,
+        avatar: member.avatar || '',
+      }));
+      const res = await DataAccessor.addCampaignContacts({ zaloId: activeAccountId, campaignId: pickedCampaignId, contacts });
+      if (res?.success === false) throw new Error(res.error || 'Không thể thêm vào chiến dịch');
+      showNotification(`Đã thêm ${contacts.length} thành viên vào chiến dịch`, 'success');
+      setShowCampaignPicker(false);
+      setSelectedMemberIds(new Set());
+    } catch (err: any) {
+      showNotification(err?.message || 'Không thể thêm vào chiến dịch', 'error');
+    } finally { setAddingToCampaign(false); }
+  }, [activeAccountId, pickedCampaignId, selectedMemberIds, members, showNotification]);
+
+  const handleCreateCampaign = useCallback(async (data: any) => {
+    if (!activeAccountId) return;
+    const res = await DataAccessor.saveCRMCampaign({ zaloId: activeAccountId, campaign: { ...data, channel } });
+    if (res?.success === false) throw new Error(res.error || 'Không thể tạo chiến dịch');
+    const next = await DataAccessor.getCRMCampaigns({ zaloId: activeAccountId });
+    if (next?.success) {
+      setCampaigns((next.campaigns || []).filter((campaign: any) => campaign.status !== 'done' && campaign.channel === channel));
+      if (res?.id) setPickedCampaignId(res.id);
+    }
+  }, [activeAccountId, channel]);
+
+  const visibleGroups = groups.filter(g => (g.display_name || g.contact_id).toLowerCase().includes(query.toLowerCase()));
+  const visibleMembers = members.filter(member => {
+    const text = `${member.firstName || ''} ${member.lastName || ''} ${member.username || ''} ${member.id || ''}`.toLowerCase();
+    return text.includes(memberQuery.toLowerCase());
+  });
+  const allVisibleSelected = visibleMembers.length > 0 && visibleMembers.every(member => selectedMemberIds.has(member.id));
+  return (
+    <div className="flex flex-1 min-h-0 overflow-hidden">
+      <aside className="w-80 flex-shrink-0 border-r border-gray-700 flex flex-col">
+        <div className="p-3 border-b border-gray-700 flex gap-2">
+          <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Tìm nhóm Telegram..."
+            className="flex-1 bg-gray-800 border border-gray-600 rounded-lg px-2.5 py-2 text-xs text-gray-200 focus:outline-none focus:border-blue-500" />
+          <button onClick={refreshGroupsAndMissingAvatars} disabled={loading || refreshingGroups} title="Tải lại nhóm và avatar còn thiếu" className="px-2 text-xs text-blue-400 hover:text-blue-300 disabled:opacity-50">{refreshingGroups ? '…' : '↻'}</button>
+        </div>
+        <div className="flex-1 overflow-y-auto divide-y divide-gray-700/70">
+          {visibleGroups.map(g => <button key={g.contact_id} onClick={() => selectGroup(g.contact_id)}
+            className={`w-full text-left px-3 py-3 flex items-center gap-2 hover:bg-gray-800/70 ${selectedId === g.contact_id ? 'bg-blue-500/10' : ''}`}>
+            <Avatar src={g.avatar_url || g.avatar} name={g.display_name || g.contact_id} size={32} />
+            <span className="min-w-0 flex-1 text-xs text-gray-200 truncate">{g.display_name || g.contact_id}</span>
+          </button>)}
+          {!loading && visibleGroups.length === 0 && <p className="p-5 text-center text-xs text-gray-400">Chưa có nhóm Telegram đã đồng bộ.</p>}
+        </div>
+      </aside>
+      <section className="flex-1 min-w-0 flex flex-col">
+        {!selectedId ? <div className="m-auto text-center text-gray-400"><p className="text-sm">Chọn một nhóm để xem CRM nhóm</p><p className="text-xs mt-1">Chỉ hiển thị nhóm đã có trong dữ liệu Telegram.</p></div>
+          : channel === 'telegram_bot' ? <div className="m-auto text-center text-gray-400 max-w-sm"><p className="text-sm">Telegram Bot không có danh sách thành viên đầy đủ.</p><p className="text-xs mt-1">Bot API chỉ cho phép campaign tới chat mà bot đã nhận được hoặc nhóm bot đang tham gia.</p></div>
+          : <>
+            <div className="px-4 py-3 border-b border-gray-700 flex items-center gap-3">
+              <div className="min-w-0 flex-1 text-sm text-gray-200 truncate">{groups.find(g => g.contact_id === selectedId)?.display_name || selectedId} <span className="text-xs text-gray-400">· {members.length} thành viên</span></div>
+              <button onClick={() => loadGroupMembers(selectedId)} disabled={memberLoading} title="Tải lại thành viên"
+                className="px-2.5 py-1.5 rounded-lg border border-gray-600 text-xs text-blue-400 hover:border-blue-500 disabled:opacity-50">
+                {memberLoading ? 'Đang tải…' : '↻ Tải lại'}
+              </button>
+            </div>
+            <div className="px-4 py-2 border-b border-gray-700 flex items-center gap-2">
+              <input value={memberQuery} onChange={event => setMemberQuery(event.target.value)} placeholder="Tìm thành viên..."
+                className="flex-1 bg-gray-800 border border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-200 outline-none focus:border-blue-500" />
+              <button onClick={() => setSelectedMemberIds(allVisibleSelected ? new Set() : new Set(visibleMembers.map(member => member.id)))} disabled={!visibleMembers.length}
+                className="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40">{allVisibleSelected ? 'Bỏ chọn' : 'Chọn tất cả'}</button>
+            </div>
+            <div className="flex-1 overflow-y-auto divide-y divide-gray-700/70 pb-16">{memberLoading && members.length === 0 ? <p className="p-5 text-xs text-gray-400">Đang tải thành viên…</p>
+              : visibleMembers.map(member => {
+                const selected = selectedMemberIds.has(member.id);
+                const name = [member.firstName, member.lastName].filter(Boolean).join(' ') || member.username || member.id;
+                return <button key={member.id} onClick={() => toggleMember(member.id)} className={`w-full px-4 py-2.5 flex gap-2 items-center text-left hover:bg-gray-800/70 ${selected ? 'bg-blue-500/10' : ''}`}>
+                  <span className={`w-4 h-4 rounded border flex items-center justify-center text-[10px] ${selected ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-600'}`}>{selected ? '✓' : ''}</span>
+                  <Avatar src={member.avatar} name={name} size={28} />
+                  <span className="min-w-0"><span className="block text-xs text-gray-200 truncate">{name}</span><span className="block text-[10px] text-gray-400">{member.username ? '@' + member.username : member.id}</span></span>
+                </button>;
+              })}</div>
+            <div className="border-t border-gray-700 px-4 py-2.5 flex items-center gap-2 bg-gray-850">
+              <span className="text-xs text-gray-400 flex-1">{selectedMemberIds.size ? `Đã chọn ${selectedMemberIds.size} thành viên` : 'Chọn thành viên để thao tác'}</span>
+              <button onClick={openCampaignPicker} disabled={!selectedMemberIds.size} className="px-2.5 py-1.5 rounded-lg bg-blue-600 text-xs text-white hover:bg-blue-700 disabled:bg-gray-700 disabled:text-gray-500">Thêm vào chiến dịch</button>
+              <button onClick={() => setShowAddToContacts(true)} disabled={!selectedMemberIds.size} className="px-2.5 py-1.5 rounded-lg bg-green-600 text-xs text-white hover:bg-green-700 disabled:bg-gray-700 disabled:text-gray-500">Thêm vào liên hệ</button>
+            </div>
+          </>}
+      </section>
+      {showCampaignPicker && !showCreateCampaign && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setShowCampaignPicker(false)}>
+          <div className="w-80 rounded-2xl border border-gray-600 bg-gray-800 p-5 shadow-2xl" onClick={event => event.stopPropagation()}>
+            <div className="mb-3 flex items-center justify-between"><h3 className="text-sm font-semibold text-white">Thêm vào chiến dịch</h3><button onClick={() => setShowCreateCampaign(true)} className="text-xs text-blue-400 hover:text-blue-300">+ Tạo mới</button></div>
+            <p className="mb-3 text-xs text-gray-400">Chỉ hiển thị chiến dịch Telegram của tài khoản này.</p>
+            <div className="mb-4 max-h-52 space-y-1 overflow-y-auto">{campaigns.length ? campaigns.map(campaign => <button key={campaign.id} onClick={() => setPickedCampaignId(campaign.id)} className={`w-full rounded-lg border px-3 py-2 text-left text-xs ${pickedCampaignId === campaign.id ? 'border-blue-500 bg-blue-500/15 text-white' : 'border-gray-600 text-gray-300 hover:border-gray-500'}`}>{campaign.name}</button>) : <p className="py-4 text-center text-xs text-gray-400">Chưa có chiến dịch Telegram.</p>}</div>
+            <div className="flex gap-2"><button onClick={() => setShowCampaignPicker(false)} className="flex-1 rounded-lg bg-gray-700 py-2 text-xs text-gray-200">Huỷ</button><button onClick={handleAddToCampaign} disabled={!pickedCampaignId || addingToCampaign} className="flex-1 rounded-lg bg-blue-600 py-2 text-xs text-white disabled:opacity-40">{addingToCampaign ? 'Đang thêm…' : 'Thêm'}</button></div>
+          </div>
+        </div>
+      )}
+      {showCreateCampaign && <CampaignCreateModal channel={channel} onClose={() => setShowCreateCampaign(false)} onSave={handleCreateCampaign} />}
+      {showAddToContacts && <AddToContactsModal
+        contacts={members.filter(member => selectedMemberIds.has(member.id)).map(member => ({ contactId: member.id, displayName: [member.firstName, member.lastName].filter(Boolean).join(' ') || member.username || member.id, avatar: member.avatar || '', phone: member.phone || '' }))}
+        onClose={() => setShowAddToContacts(false)}
+        onDone={() => { setShowAddToContacts(false); setSelectedMemberIds(new Set()); }}
+      />}
+    </div>
+  );
+}
+
+export default function GroupMembersTab() {
+  const { activeAccountId, accounts } = useAccountStore();
+  const channel = accounts.find(a => a.zalo_id === activeAccountId)?.channel;
+  if (channel === 'telegram_user' || channel === 'telegram_bot') return <TelegramGroupMembersTab channel={channel} />;
+  return <ZaloGroupMembersTab />;
 }

@@ -6,6 +6,7 @@ import ipc from '@/lib/ipc';
 import TargetSelector from './TargetSelector';
 import CampaignCreateModal from './CampaignCreateModal';
 import { ChartIcon, ClockIcon, EditIcon, SendIcon, UsersIcon } from '@/components/common/icons';
+import type { Channel } from '../../../../configs/channelConfig';
 
 function fmtDelayRange(min: number, max: number): string {
   const fmt = (s: number) => {
@@ -27,6 +28,7 @@ interface LocalLabelItem {
 interface CampaignDetailProps {
   campaign: CRMCampaign;
   zaloId: string;
+  channel?: Channel;
   allLabels: LabelData[];
   localLabels?: LocalLabelItem[];
   localLabelThreadMap?: Record<string, number[]>;
@@ -40,7 +42,7 @@ const STATUS_STYLE: Record<string, string> = {
   sent: 'text-green-400', failed: 'text-red-400',
 };
 
-export default function CampaignDetail({ campaign, zaloId, allLabels, localLabels, localLabelThreadMap, onStatusChange, onAddContacts, onUpdate }: CampaignDetailProps) {
+export default function CampaignDetail({ campaign, zaloId, channel, allLabels, localLabels, localLabelThreadMap, onStatusChange, onAddContacts, onUpdate }: CampaignDetailProps) {
   const [contacts, setContacts] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [showTargetSelector, setShowTargetSelector] = useState(false);
@@ -323,6 +325,7 @@ export default function CampaignDetail({ campaign, zaloId, allLabels, localLabel
         <CampaignCreateModal
           editMode
           zaloId={zaloId}
+          channel={channel}
           initialData={{
             name: campaign.name,
             template_message: campaign.template_message,

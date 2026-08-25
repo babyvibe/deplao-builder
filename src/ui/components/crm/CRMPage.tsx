@@ -26,7 +26,7 @@ import ScanPanel from './scan/ScanPanel';
 import ScanHistoryTab from './scan/ScanHistoryTab';
 import ScanStatsTab from './scan/ScanStatsTab';
 import { Spinner } from '@/components/common/PageLoading';
-import { CHANNEL, isFacebook } from '@/lib/channelHelper';
+import { CHANNEL } from '@/lib/channelHelper';
 import {
   CampaignIcon, ChartIcon, ClipboardListIcon, CloudIcon, HardDriveIcon, SearchIcon, SendIcon, UserIcon,
   UserPlusIcon, UsersIcon, WifiIcon
@@ -80,7 +80,6 @@ export default function CRMPage() {
   });
 
   const activeAccount = accounts.find(a => a.zalo_id === activeAccountId);
-  const isFacebookAccount = isFacebook(activeAccount?.channel);
   const channelCap = getCapability((activeAccount?.channel || CHANNEL.ZALO) as Channel);
 
   const zaloLabels: LabelData[] = activeAccountId ? (labels[activeAccountId] || []) : [];
@@ -172,7 +171,9 @@ export default function CRMPage() {
     if (!activeAccountId) return;
     const res = await DataAccessor.getConversations(activeAccountId, 999, 0);
     const allContacts = res?.items || [];
-    const count = (allContacts || []).filter((c: any) => c.contact_type === 'group').length;
+    const count = (allContacts || []).filter((c: any) =>
+      c.contact_type === 'group' && !(String(c.channel || '').startsWith('telegram') && c.telegram_peer_type === 'channel')
+    ).length;
     store.setGroupCount(count);
   }, [activeAccountId]);
 
@@ -199,6 +200,18 @@ export default function CRMPage() {
       scan_stats: !channelCap.supportsScanData,
     };
     if (disabledTabs[store.tab]) store.setTab('contacts');
+    // Không để filter chỉ có ý nghĩa ở Zalo còn treo khi đổi account.
+    // Nếu giữ lại, UI đã ẩn filter nhưng query Telegram vẫn trả về rỗng.
+    if (!channelCap.supportsLabel) {
+      store.setFilter({ filterLabelIds: [] });
+    }
+    if ((activeAccount?.channel || CHANNEL.ZALO) !== CHANNEL.ZALO) {
+      store.setFilter({
+        filterContactTypes: store.filterContactTypes.filter(t => t !== 'friend' && t !== 'non_friend'),
+        filterGender: 'all',
+        filterBirthday: 'all',
+      });
+    }
     loadContacts(); loadCampaigns(); loadGroupCount(); loadRequestCount();
   }, [activeAccountId]);
   useEffect(() => { loadContacts(); }, [store.searchText, store.filterContactTypes, store.sortBy, store.sortDir, store.page, store.pageSize]);
@@ -742,6 +755,7 @@ export default function CRMPage() {
                   sortBy={store.sortBy}
                   sortDir={store.sortDir}
                   activeAccountId={activeAccountId || ''}
+                  channel={(activeAccount?.channel || CHANNEL.ZALO) as Channel}
                   localLabels={localLabels}
                   localLabelThreadMap={localLabelThreadMap}
                   onSelectContact={store.toggleSelectContact}
@@ -759,6 +773,7 @@ export default function CRMPage() {
               {activeContact && (
                 <CRMContactDetailPanel
                   contact={activeContact}
+                  channel={(activeAccount?.channel || CHANNEL.ZALO) as Channel}
                   allLabels={zaloLabels}
                   localLabels={localLabels}
                   localLabelThreadMap={localLabelThreadMap}
@@ -789,6 +804,7 @@ export default function CRMPage() {
                   <CampaignDetail
                     campaign={activeCampaign}
                     zaloId={activeAccountId || ''}
+                    channel={(activeAccount?.channel || CHANNEL.ZALO) as Channel}
                     allLabels={zaloLabels}
                     localLabels={localLabels}
                     localLabelThreadMap={localLabelThreadMap}
@@ -869,13 +885,16 @@ export default function CRMPage() {
         onAddToCampaign={handleBulkAddToCampaign}
         onBulkTagLocal={handleBulkTagLocal}
         onBulkTagZalo={handleBulkTagZalo}
-        onBulkLeaveGroup={handleBulkLeaveGroup}
+        // Bulk leave is still implemented through Zalo IPC only. Hide it on
+        // Telegram until its channel-specific confirmation flow is added.
+        onBulkLeaveGroup={activeAccount?.channel === CHANNEL.ZALO ? handleBulkLeaveGroup : undefined}
       />
 
       {/* ── Modals ── */}
       {showCreateCampaign && (
         <CampaignCreateModal
           zaloId={activeAccountId || ''}
+          channel={(activeAccount?.channel || CHANNEL.ZALO) as Channel}
           onClose={wizardActive ? handleWizardCreateClose : () => setShowCreateCampaign(false)}
           onSave={handleCreateCampaign}
         />
@@ -1073,6 +1092,7 @@ export default function CRMPage() {
       {showCreateInAddModal && (
         <CampaignCreateModal
           zaloId={activeAccountId || ''}
+          channel={(activeAccount?.channel || CHANNEL.ZALO) as Channel}
           onClose={() => setShowCreateInAddModal(false)}
           onSave={async (data) => {
             await handleCreateCampaignInAddModal(data);

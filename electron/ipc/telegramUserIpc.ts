@@ -120,9 +120,11 @@ export function registerTelegramUserIpc(): void {
   });
 
   // ── Explicit message catch-up from the TopBar refresh action ───────────
+  // A full Telegram history pass can take minutes. Acknowledge immediately
+  // and let the service notify the renderer when background work completes.
   ipcMain.handle('telegramUser:refreshMessages', async (_event, params: { accountId: string }) => {
     try {
-      return await TelegramUser.refreshAccountMessages(params.accountId);
+      return TelegramUser.startAccountMessageRefresh(params.accountId);
     } catch (err: any) {
       Logger.error(`[telegramUser:refreshMessages] ${err.message}`);
       return { success: false, error: err.message };

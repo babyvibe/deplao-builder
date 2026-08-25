@@ -841,12 +841,12 @@ app.whenReady().then(async () => {
       }
 
       const configFolder = path.dirname(FileStorageService.getBaseDir());
-      console.log(`[local-media] Request: url=${request.url} → filePath=${filePath} configFolder=${configFolder}`);
+      // console.log(`[local-media] Request: url=${request.url} → filePath=${filePath} configFolder=${configFolder}`);
 
       if (!path.isAbsolute(filePath)) {
         // Relative path: "media/zaloId/date/img.jpg" → configFolder/media/zaloId/...
         filePath = path.join(configFolder, filePath);
-        console.log(`[local-media] Resolved relative → ${filePath}`);
+        // console.log(`[local-media] Resolved relative → ${filePath}`);
       } else if (!fs.existsSync(filePath)) {
         // Absolute path but file not found (old drive/folder after move).
         const normalized = filePath.replace(/\\/g, '/');
@@ -866,7 +866,7 @@ app.whenReady().then(async () => {
         for (const ext of exts) {
           const candidate = path.join(dir, base + ext);
           if (fs.existsSync(candidate)) {
-            console.log(`[local-media] Found with extension: ${candidate}`);
+            // console.log(`[local-media] Found with extension: ${candidate}`);
             filePath = candidate;
             break;
           }
@@ -887,7 +887,7 @@ app.whenReady().then(async () => {
         return new Response('Not Found', { status: 404 });
       }
 
-      console.log(`[local-media] Serving: ${filePath}`);
+      // console.log(`[local-media] Serving: ${filePath}`);
 
       const absPath = path.resolve(filePath);
       const stat = fs.statSync(absPath);
@@ -905,7 +905,7 @@ app.whenReady().then(async () => {
           const boxSize = headerBuf.readUInt32BE(0);
           const boxType = headerBuf.toString('ascii', 4, 8);
           const brand = headerBuf.toString('ascii', 8, 12);
-          console.log(`[local-media] File header: size=${fileSize} bytes, box=${boxType}, brand=${brand}, boxSize=${boxSize}`);
+          // console.log(`[local-media] File header: size=${fileSize} bytes, box=${boxType}, brand=${brand}, boxSize=${boxSize}`);
           // Check for HEVC brand
           if (brand.includes('hvc1') || brand.includes('hev1')) {
             console.warn(`[local-media] WARNING: HEVC/H.265 codec detected (brand=${brand}) - may not play in Chromium!`);
@@ -930,13 +930,13 @@ app.whenReady().then(async () => {
               offset += boxSize;
             }
             if (moovOffset >= 0) {
-              console.log(`[local-media] moov atom found at offset ${moovOffset} (faststart OK)`);
+              // console.log(`[local-media] moov atom found at offset ${moovOffset} (faststart OK)`);
             } else {
               console.warn(`[local-media] WARNING: moov atom NOT found in first 64KB! File is NOT faststart.`);
               console.warn(`[local-media] <video> will fail to read metadata. Need to transcode with: ffmpeg -i input.mp4 -c copy -movflags +faststart output.mp4`);
             }
             if (mdatOffset >= 0) {
-              console.log(`[local-media] mdat atom found at offset ${mdatOffset}`);
+              // console.log(`[local-media] mdat atom found at offset ${mdatOffset}`);
             }
           } catch (e2: any) {
             console.warn(`[local-media] Could not scan for moov: ${e2.message}`);
@@ -976,7 +976,7 @@ app.whenReady().then(async () => {
           const end = match[2] ? parseInt(match[2], 10) : fileSize - 1;
           const chunkSize = end - start + 1;
 
-          console.log(`[local-media] Range request: bytes=${start}-${end}/${fileSize} (chunk=${chunkSize})`);
+          // console.log(`[local-media] Range request: bytes=${start}-${end}/${fileSize} (chunk=${chunkSize})`);
 
           // Use readFileSync + subarray for maximum compatibility with <video> element
           const fullData = fs.readFileSync(absPath);

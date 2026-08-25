@@ -432,8 +432,12 @@ export default function ChatHeader() {
   /** Tải tin nhắn từ Telegram API */
   const handleTgDownload = async () => {
     if (!activeAccountId || !activeThreadId) return;
-    const limit = parseInt(tgDownloadCount, 10);
-    if (isNaN(limit) || limit <= 0) return;
+    const requestedLimit = parseInt(tgDownloadCount, 10);
+    if (isNaN(requestedLimit) || requestedLimit <= 0) return;
+    const limit = Math.min(requestedLimit, 5000);
+    if (requestedLimit > limit) {
+      showNotification('Mỗi lần chỉ có thể tải tối đa 5.000 tin nhắn Telegram.', 'info');
+    }
     setTgDownloading(true);
     showNotification(`Đang tải ${limit} tin nhắn từ Telegram...`, 'info');
     try {
@@ -1059,7 +1063,7 @@ export default function ChatHeader() {
           <div className="bg-gray-800 border border-gray-600 rounded-2xl w-80 p-5 shadow-2xl"
             onClick={e => e.stopPropagation()}>
             <h3 className="font-semibold text-white mb-1">Tải tin nhắn từ Telegram</h3>
-            <p className="text-xs text-gray-400 mb-3">Nhập số lượng tin nhắn muốn tải từ Telegram API.</p>
+            <p className="text-xs text-gray-400 mb-3">Nhập số lượng tin nhắn muốn tải từ Telegram API (tối đa 5.000).</p>
             <input
               type="number"
               value={tgDownloadCount}

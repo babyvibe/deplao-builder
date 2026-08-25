@@ -27,7 +27,7 @@ import { useEmployeeStore } from '@/store/employeeStore';
 import { ChatIcon } from '@/components/common/icons';
 import { handleAvatarError } from '@/lib/avatarRetry';
 import { EMOJI_TO_REACTION } from '@/lib/chat/emojiUtils';
-import { parseContent, parseQuoteMsg, extractQuoteImage, extractMediaUrl, formatMsgTime, extractMsgText } from '@/lib/chat/messageParser';
+import { parseContent, parseQuoteMsg, extractQuoteImage, extractMediaUrl, formatMsgTime, extractMsgText, getTelegramMentionRanges } from '@/lib/chat/messageParser';
 import { isCardType, isEcardType, isFileType, isStickerType, isRtfMsg, isMediaType, isVideoType, isBankCardType } from '@/lib/chat/messageTypeUtils';
 import { NoteViewModal } from './NoteViewModal';
 import ForwardMessageModal from './ForwardMessageModal';
@@ -1977,13 +1977,15 @@ export default function ChatWindow() {
     }
     const pin = buildPinFromMsg(msg, senderName);
 
-    // Kiểm tra giới hạn ghim trước khi lưu
+    const ch = msg.channel || activeContact?.channel || CHANNEL.ZALO;
+    // The three-message limit is a Zalo server constraint. Telegram's API
+    // supports multiple pinned messages in a chat, so never downgrade a
+    // Telegram pin to local-only based on the Zalo rule.
     const alreadyPinned = pins.some(p => p.msg_id === msg.msg_id);
-    const overLimit = !alreadyPinned && pins.length >= 3;
+    const overLimit = isZalo(ch) && !alreadyPinned && pins.length >= 3;
 
     try {
       // Server-side pin for Telegram
-      const ch = msg.channel || 'zalo';
       if (ch === 'telegram_user') {
         const res = await ipc.telegramUser?.pinMessage({ accountId: activeAccountId, chatId: activeThreadId, messageId: String(msg.msg_id) });
         if (!res?.success) {
@@ -3148,7 +3150,10 @@ export default function ChatWindow() {
                       isRtf={isRtf}
                       isBankCard={isBankCardMsg}
                       isLocation={isLocationMsg}
-                      renderGroupMedia={() => <MediaGroupBubble msgs={groupMediaMsgs!} onView={openViewer} isSent={isSent} isSelecting={isSelecting} selectedMsgIds={selectedMsgIds} onToggleSelect={(id) => {
+                      renderGroupMedia={() => <MediaGroupBubble msgs={groupMediaMsgs!} onView={openViewer} isSent={isSent} isSelecting={isSelecting} selectedMsgIds={selectedMsgIds}
+                        allContacts={contactList} groupMembersList={groupMembers}
+                        onMentionClick={(uid, e) => setUserProfilePopup({ userId: uid, x: e.clientX, y: e.clientY })}
+                        onToggleSelect={(id) => {
                         setSelectedMsgIds(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
                       }} onVideoPlay={openVideoPlayer} />}
                       renderPoll={() => (
@@ -3221,6 +3226,7 @@ export default function ChatWindow() {
                       renderText={() => (
                         <>
                           <TextWithMentions text={content} channel={msg.channel} allContacts={contactList} groupMembersList={groupMembers}
+                            mentionRanges={getTelegramMentionRanges(msg.attachments)}
                             highlight={searchHighlightQuery}
                             onMentionClick={(uid, e) => setUserProfilePopup({ userId: uid, x: e.clientX, y: e.clientY })} />
                           {msg.is_edited === 1 && (

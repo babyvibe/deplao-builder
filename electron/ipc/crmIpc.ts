@@ -6,6 +6,7 @@ import AppModeManager from '../../src/utils/AppModeManager';
 import WorkspaceManager from '../../src/utils/WorkspaceManager';
 import Logger from '../../src/utils/Logger';
 import { proxyToBoss, uploadEmployeeMedia } from './proxyHelper';
+import { getCRMChannelDecision, validateCampaignForChannel } from '../../src/services/crm/CRMChannelCapabilityService';
 
 function isEmployeeMode(): boolean {
     try {
@@ -70,6 +71,8 @@ export function registerCRMIpc(): void {
     ipcMain.handle('crm:getCampaigns', async (_e, { zaloId }: { zaloId: string }) => {
         try {
             if (isEmployeeMode()) return { success: true, campaigns: [] };
+            const capability = getCRMChannelDecision(zaloId, 'campaign');
+            if (!capability.allowed) return { success: true, campaigns: [] };
             return { success: true, campaigns: DatabaseService.getInstance().getCRMCampaigns(zaloId) };
         }
         catch (e: any) { return { success: false, error: e.message }; }
@@ -77,6 +80,8 @@ export function registerCRMIpc(): void {
 
     ipcMain.handle('crm:saveCampaign', async (_e, { zaloId, campaign }: { zaloId: string; campaign: any }) => {
         try {
+            const capability = validateCampaignForChannel(zaloId, campaign);
+            if (!capability.allowed) return { success: false, error: capability.reason };
             const id = DatabaseService.getInstance().saveCRMCampaign({ ...campaign, owner_zalo_id: zaloId });
             DatabaseService.getInstance().save();
             EventBroadcaster.emit('crm:campaignChanged', { action: 'save', ownerZaloId: zaloId, id, campaign });
@@ -125,6 +130,10 @@ export function registerCRMIpc(): void {
     ipcMain.handle('crm:cloneCampaign', async (_e, { zaloId, campaignId, includeContacts, newName }: { zaloId: string; campaignId: number; includeContacts: boolean; newName?: string }) => {
         try {
             const db = DatabaseService.getInstance();
+            const source = db.getCRMCampaign(campaignId);
+            if (!source || source.owner_zalo_id !== zaloId) return { success: false, error: 'Không tìm thấy chiến dịch' };
+            const capability = validateCampaignForChannel(zaloId, source);
+            if (!capability.allowed) return { success: false, error: capability.reason };
             const newId = db.cloneCRMCampaign(campaignId, zaloId, includeContacts, newName);
             if (!newId) return { success: false, error: 'Không thể nhân bản chiến dịch' };
             db.save();
@@ -137,6 +146,10 @@ export function registerCRMIpc(): void {
     ipcMain.handle('crm:updateCampaignStatus', async (_e, { campaignId, status }: { campaignId: number; status: string }) => {
         try {
             const db = DatabaseService.getInstance();
+            const existing = db.getCRMCampaign(campaignId);
+            if (!existing) return { success: false, error: 'Không tìm thấy chiến dịch' };
+            const capability = validateCampaignForChannel(existing.owner_zalo_id, existing);
+            if (!capability.allowed) return { success: false, error: capability.reason };
             db.updateCRMCampaignStatus(campaignId, status as any);
             db.save();
             // Start/stop queue
@@ -153,6 +166,10 @@ export function registerCRMIpc(): void {
 
     ipcMain.handle('crm:addCampaignContacts', async (_e, { zaloId, campaignId, contacts }: { zaloId: string; campaignId: number; contacts: any[] }) => {
         try {
+            const campaign = DatabaseService.getInstance().getCRMCampaign(campaignId);
+            if (!campaign || campaign.owner_zalo_id !== zaloId) return { success: false, error: 'Không tìm thấy chiến dịch' };
+            const capability = validateCampaignForChannel(zaloId, campaign);
+            if (!capability.allowed) return { success: false, error: capability.reason };
             DatabaseService.getInstance().addCampaignContacts(campaignId, zaloId, contacts);
             DatabaseService.getInstance().save();
             EventBroadcaster.emit('crm:campaignChanged', { action: 'contactsAdded', ownerZaloId: zaloId, campaignId });
@@ -182,7 +199,11 @@ export function registerCRMIpc(): void {
 
     // ─── Send Log ──────────────────────────────────────────────────────────
     ipcMain.handle('crm:getSendLog', async (_e, { zaloId, opts }: { zaloId: string; opts?: any }) => {
-        try { return { success: true, logs: DatabaseService.getInstance().getSendLog(zaloId, opts || {}) }; }
+        try {
+            const capability = getCRMChannelDecision(zaloId, 'history');
+            if (!capability.allowed) return { success: true, logs: [] };
+            return { success: true, logs: DatabaseService.getInstance().getSendLog(zaloId, opts || {}) };
+        }
         catch (e: any) { return { success: false, error: e.message }; }
     });
 

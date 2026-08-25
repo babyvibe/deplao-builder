@@ -2663,26 +2663,29 @@ export default function MessageInput() {
     }
 
     // Detect @ mention trigger
-    // @ must be followed by at least 1 letter/digit/underscore
-    // Prevents: @ alone, @@, @@@, @ followed by space
+    // Detect @ mention trigger
+    // @ alone → show all members. @@, @@@ → skip.
     const textBeforeCursor = newText.slice(0, realCursor);
-    // Find last @ in textBeforeCursor
-    const lastAtIndex = textBeforeCursor.lastIndexOf('@');
     let isValidMention = false;
     let mentionSearchText = '';
-    if (lastAtIndex >= 0) {
-      const afterAt = textBeforeCursor.slice(lastAtIndex + 1);
-      // Must NOT have newline between @ and cursor (user moved to new line)
-      const hasNewline = afterAt.includes('\n');
-      if (!hasNewline && /^[a-zA-Z0-9_]/.test(afterAt) && afterAt.length > 0) {
-        mentionSearchText = afterAt;
+    let mentionTriggerIdx = -1;
+    // Find last @ that has a non-@ char before it (or is at position 0)
+    // and has a non-space non-newline char after it
+    for (let i = textBeforeCursor.length - 1; i >= 0; i--) {
+      if (textBeforeCursor[i] !== '@') continue;
+      const charBefore = i > 0 ? textBeforeCursor[i - 1] : '';
+      const afterAt = textBeforeCursor.slice(i + 1);
+      if (charBefore !== '@' && afterAt.length > 0 && !afterAt.startsWith(' ') && !afterAt.startsWith('@') && !afterAt.includes('\n')) {
         isValidMention = true;
+        mentionSearchText = afterAt;
+        mentionTriggerIdx = i;
+        break;
       }
     }
     if (isValidMention && isGroupThread && groupMembers.length > 0) {
       setShowMentionDropdown(true);
       setMentionSearch(mentionSearchText);
-      setMentionTriggerPos(lastAtIndex);
+      setMentionTriggerPos(mentionTriggerIdx);
       setMentionSelectedIdx(0);
     } else {
       setShowMentionDropdown(false);

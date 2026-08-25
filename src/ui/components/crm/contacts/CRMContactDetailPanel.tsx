@@ -15,9 +15,11 @@ import PhoneDisplay from '@/components/common/PhoneDisplay';
 import type { PinnedNote } from '@/components/chat/PinnedMessages';
 import { CHANNEL } from '@/lib/channelHelper';
 import { GiftIcon } from '@/components/common/icons';
+import type { Channel } from '../../../../configs/channelConfig';
 
 interface CRMContactDetailPanelProps {
   contact: CRMContact;
+  channel?: Channel;
   allLabels: LabelData[];
   localLabels?: LocalLabelItem[];
   localLabelThreadMap?: Record<string, number[]>;
@@ -27,7 +29,17 @@ interface CRMContactDetailPanelProps {
 
 type DetailTab = 'info' | 'history';
 
-export default function CRMContactDetailPanel({ contact, allLabels, localLabels, localLabelThreadMap, onClose, onMessage }: CRMContactDetailPanelProps) {
+const toBirthdayInputValue = (birthday?: string | null) => {
+  const match = String(birthday || '').trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  return match ? `${match[3]}-${match[2]}-${match[1]}` : '';
+};
+
+const fromBirthdayInputValue = (dateValue: string) => {
+  const match = dateValue.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : '';
+};
+
+export default function CRMContactDetailPanel({ contact, channel = CHANNEL.ZALO, allLabels, localLabels, localLabelThreadMap, onClose, onMessage }: CRMContactDetailPanelProps) {
   const { activeAccountId } = useAccountStore();
   const { showNotification, setLabels } = useAppStore();
   const [detailTab, setDetailTab] = useState<DetailTab>('info');
@@ -36,8 +48,14 @@ export default function CRMContactDetailPanel({ contact, allLabels, localLabels,
   const [noteTab, setNoteTab] = useState<'local' | 'zalo'>('local');
   const [sendLog, setSendLog] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [editingDetails, setEditingDetails] = useState(false);
+  const [savingDetails, setSavingDetails] = useState(false);
+  const [manualPhone, setManualPhone] = useState(contact.phone || '');
+  const [manualGender, setManualGender] = useState<number | null>(contact.gender ?? null);
+  const [manualBirthday, setManualBirthday] = useState(toBirthdayInputValue(contact.birthday));
 
   const isGroup = contact.contact_type === 'group';
+  const isZalo = channel === CHANNEL.ZALO;
 
   // Derive current labels for this contact (groups use 'g' prefix in Zalo conversations)
   const getLabelThreadId = (cId: string, isGroup: boolean) => isGroup ? `g${cId}` : cId;
@@ -93,17 +111,26 @@ export default function CRMContactDetailPanel({ contact, allLabels, localLabels,
     setLabelsDirty(false);
   }, [contact.contact_id, allLabels]);
 
+  // Khi đổi liên hệ hoặc danh sách được nạp lại, đồng bộ form với dữ liệu mới.
+  // Không làm việc này trong lúc đang sửa để tránh mất nội dung người dùng vừa nhập.
+  useEffect(() => {
+    if (editingDetails) return;
+    setManualPhone(contact.phone || '');
+    setManualGender(contact.gender ?? null);
+    setManualBirthday(toBirthdayInputValue(contact.birthday));
+  }, [contact.contact_id, contact.phone, contact.gender, contact.birthday, editingDetails]);
+
   useEffect(() => {
     if (!activeAccountId) return;
     setLoading(true);
     const promises: Promise<any>[] = [];
     if (detailTab === 'info') {
       promises.push(loadNotes());
-      if (isGroup) promises.push(loadZaloNotes());
+      if (isZalo && isGroup) promises.push(loadZaloNotes());
     }
     if (detailTab === 'history') promises.push(loadHistory());
     Promise.all(promises).finally(() => setLoading(false));
-  }, [detailTab, contact.contact_id]);
+  }, [detailTab, contact.contact_id, isZalo, isGroup]);
 
   // Re-fetch notes when remote CRM note changes arrive
   useEffect(() => {
@@ -211,6 +238,46 @@ export default function CRMContactDetailPanel({ contact, allLabels, localLabels,
     setNotes(prev => prev.filter(n => n.id !== noteId));
   };
 
+  const handleSaveManualDetails = async () => {
+    if (!activeAccountId) return;
+    const birthday = fromBirthdayInputValue(manualBirthday);
+    if (manualBirthday && !birthday) {
+      showNotification('Ngày sinh không hợp lệ', 'error');
+      return;
+    }
+
+    setSavingDetails(true);
+    try {
+      const res = await DataAccessor.updateContactProfile({
+        zaloId: activeAccountId,
+        contactId: contact.contact_id,
+        displayName: contact.display_name || contact.alias || contact.contact_id,
+        avatarUrl: contact.avatar || '',
+        phone: manualPhone.trim(),
+        contactType: contact.contact_type || 'user',
+        gender: manualGender,
+        birthday: birthday || null,
+        manualDetails: true,
+      });
+      if (res?.success === false) throw new Error(res.error || 'Không thể lưu thông tin liên hệ');
+      setManualBirthday(toBirthdayInputValue(birthday));
+      setEditingDetails(false);
+      showNotification('Đã cập nhật thông tin liên hệ', 'success');
+      window.dispatchEvent(new CustomEvent('crm-contacts-changed', { detail: { zaloId: activeAccountId } }));
+    } catch (err: any) {
+      showNotification(err?.message || 'Không thể lưu thông tin liên hệ', 'error');
+    } finally {
+      setSavingDetails(false);
+    }
+  };
+
+  const cancelEditManualDetails = () => {
+    setManualPhone(contact.phone || '');
+    setManualGender(contact.gender ?? null);
+    setManualBirthday(toBirthdayInputValue(contact.birthday));
+    setEditingDetails(false);
+  };
+
   const name = contact.alias || contact.display_name || contact.contact_id;
   const fmt = (ts: number) => ts ? new Date(ts).toLocaleString('vi-VN', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '-';
 
@@ -249,18 +316,20 @@ export default function CRMContactDetailPanel({ contact, allLabels, localLabels,
           {contact.phone && <p className="text-xs text-gray-400 mt-0.5"><PhoneDisplay phone={contact.phone} className="text-xs text-gray-400" /></p>}
           {/* Gender & Birthday */}
           <div className="flex items-center gap-2 mt-1.5">
+            {isZalo && <>
             <span className={`inline-block mt-1 px-2 py-0.5 rounded-full text-[11px] font-medium ${contact.is_friend ? 'bg-green-500/20 text-green-400' : 'bg-gray-600/50 text-gray-400'}`}>
               {contact.is_friend ? '✓ Bạn bè' : 'Chưa kết bạn'}
             </span>
             {contact.gender === 0 && <span className="text-[11px] text-blue-400 bg-blue-400/10 px-1.5 py-0.5 rounded">♂ Nam</span>}
             {contact.gender === 1 && <span className="text-[11px] text-pink-400 bg-pink-400/10 px-1.5 py-0.5 rounded">♀ Nữ</span>}
             {contact.birthday && <span className="text-[11px] text-gray-400 bg-gray-600/30 px-1.5 py-0.5 rounded"><GiftIcon className="w-4 h-4 inline" /> {contact.birthday}</span>}
+            </>}
           </div>
         </div>
         {/* Current labels pills (Zalo + Local) */}
-        {(currentContactLabels.length > 0 || threadLocalLabelIds.length > 0) && (
+        {((isZalo && currentContactLabels.length > 0) || threadLocalLabelIds.length > 0) && (
           <div className="flex flex-wrap gap-1 justify-center">
-            {currentContactLabels.map(l => <ZaloLabelBadge key={l.id} label={l} size="xs" />)}
+            {isZalo && currentContactLabels.map(l => <ZaloLabelBadge key={l.id} label={l} size="xs" />)}
             {threadLocalLabelIds.map(lid => {
               const ll = localLabels?.find(l => l.id === lid);
               if (!ll) return null;
@@ -298,44 +367,93 @@ export default function CRMContactDetailPanel({ contact, allLabels, localLabels,
           <>
             {detailTab === 'info' && (
               <div className="space-y-3">
+                {/* Manual contact fields are shared by every channel. */}
+                <section className="rounded-xl border border-gray-600 bg-gray-800 p-3 shadow-sm">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-xs text-gray-300 font-medium">Thông tin liên hệ</p>
+                    {!editingDetails && (
+                      <button onClick={() => setEditingDetails(true)} className="text-[11px] text-blue-400 hover:text-blue-300">
+                        Sửa
+                      </button>
+                    )}
+                  </div>
+                  {editingDetails ? (
+                    <div className="space-y-2">
+                      <label className="block text-[11px] text-gray-400">
+                        Điện thoại
+                        <input value={manualPhone} onChange={e => setManualPhone(e.target.value)} type="tel" placeholder="Nhập số điện thoại"
+                          className="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-2 text-xs text-gray-100 placeholder:text-gray-500 outline-none transition-colors focus:border-blue-500 focus:ring-1 focus:ring-blue-500" />
+                      </label>
+                      <label className="block text-[11px] text-gray-400">
+                        Giới tính
+                        <select value={manualGender ?? ''} onChange={e => setManualGender(e.target.value === '' ? null : Number(e.target.value))}
+                          style={{ colorScheme: 'dark' }}
+                          className="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-2 text-xs text-gray-100 outline-none transition-colors focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                          <option value="">Chưa xác định</option>
+                          <option value="0">Nam</option>
+                          <option value="1">Nữ</option>
+                        </select>
+                      </label>
+                      <label className="block text-[11px] text-gray-400">
+                        Sinh nhật
+                        <input type="date" value={manualBirthday} onChange={e => setManualBirthday(e.target.value)}
+                          style={{ colorScheme: 'dark' }}
+                          className="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-2 text-xs text-gray-100 outline-none transition-colors focus:border-blue-500 focus:ring-1 focus:ring-blue-500" />
+                      </label>
+                      <div className="flex justify-end gap-2 pt-1">
+                        <button onClick={cancelEditManualDetails} disabled={savingDetails} className="px-2.5 py-1 rounded text-[11px] text-gray-300 hover:bg-gray-700 disabled:opacity-50">Huỷ</button>
+                        <button onClick={handleSaveManualDetails} disabled={savingDetails} className="px-2.5 py-1 rounded bg-blue-600 text-[11px] text-white hover:bg-blue-700 disabled:opacity-50">
+                          {savingDetails ? 'Đang lưu...' : 'Lưu'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <dl className="space-y-1.5 text-xs">
+                      <div className="flex justify-between gap-3"><dt className="text-gray-400">Điện thoại</dt><dd className="text-gray-200 text-right break-all">{contact.phone ? <PhoneDisplay phone={contact.phone} className="text-xs text-gray-200" /> : '—'}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-gray-400">Giới tính</dt><dd className="text-gray-200">{contact.gender === 0 ? 'Nam' : contact.gender === 1 ? 'Nữ' : 'Chưa xác định'}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-gray-400">Sinh nhật</dt><dd className="text-gray-200">{contact.birthday || '—'}</dd></div>
+                    </dl>
+                  )}
+                </section>
+
                 {/* Local labels */}
-                {localLabels && localLabels.length > 0 && (
-                  <>
-                    <p className="text-xs text-gray-400 font-medium">Nhãn Local</p>
-                    <LocalLabelSelector
-                      labels={localLabels}
-                      selectedIds={threadLocalLabelIds}
-                      onChange={handleLocalLabelChange}
-                      togglingId={localLabelToggling}
-                      placeholder="Chọn Nhãn Local..."
-                      emptyText="Chưa có Nhãn Local nào"
-                    />
-                  </>
-                )}
+                <>
+                  <p className="text-xs text-gray-400 font-medium">Nhãn Local</p>
+                  <LocalLabelSelector
+                    labels={localLabels || []}
+                    selectedIds={threadLocalLabelIds}
+                    onChange={handleLocalLabelChange}
+                    togglingId={localLabelToggling}
+                    placeholder="Chọn Nhãn Local..."
+                    emptyText="Chưa có Nhãn Local nào"
+                  />
+                </>
 
                 {/* Zalo labels */}
-                <p className="text-xs text-gray-400 font-medium">Nhãn Zalo</p>
-                {allLabels.length === 0 ? (
-                  <p className="text-xs text-gray-400">Chưa tải nhãn. Hãy đồng bộ nhãn từ header.</p>
-                ) : (
-                  <ZaloLabelSelector
-                    allLabels={allLabels}
-                    selectedIds={selectedLabelIds}
-                    singleSelect
-                    onChange={(ids) => { setSelectedLabelIds(ids); setLabelsDirty(true); }}
-                  />
-                )}
-                {labelsDirty && (
-                  <button onClick={handleSaveLabels} disabled={savingLabels}
-                    className="w-full py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs disabled:opacity-50">
-                    {savingLabels ? 'Đang lưu...' : 'Lưu nhãn'}
-                  </button>
-                )}
+                {isZalo && <>
+                  <p className="text-xs text-gray-400 font-medium">Nhãn Zalo</p>
+                  {allLabels.length === 0 ? (
+                    <p className="text-xs text-gray-400">Chưa tải nhãn. Hãy đồng bộ nhãn từ header.</p>
+                  ) : (
+                    <ZaloLabelSelector
+                      allLabels={allLabels}
+                      selectedIds={selectedLabelIds}
+                      singleSelect
+                      onChange={(ids) => { setSelectedLabelIds(ids); setLabelsDirty(true); }}
+                    />
+                  )}
+                  {labelsDirty && (
+                    <button onClick={handleSaveLabels} disabled={savingLabels}
+                      className="w-full py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs disabled:opacity-50">
+                      {savingLabels ? 'Đang lưu...' : 'Lưu nhãn'}
+                    </button>
+                  )}
+                </>}
 
                 <p className="text-xs text-gray-400 font-medium">Ghi chú</p>
 
                 {/* Tab switcher - chỉ hiện với nhóm */}
-                {isGroup && (
+                {isZalo && isGroup && (
                   <div className="flex rounded-lg overflow-hidden border border-gray-600 text-[11px] mb-1">
                     <button
                       onClick={() => setNoteTab('local')}
@@ -356,7 +474,7 @@ export default function CRMContactDetailPanel({ contact, allLabels, localLabels,
                 )}
 
                 {/* Zalo group notes - read-only, logic cũ */}
-                {isGroup && noteTab === CHANNEL.ZALO && (
+                {isZalo && isGroup && noteTab === CHANNEL.ZALO && (
                   <div className="space-y-2">
                     {zaloNotes.length === 0 && (
                       <p className="text-xs text-gray-400 text-center py-2">Chưa có ghi chú Zalo nào</p>

@@ -6,6 +6,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import imageSize from 'image-size';
 import { parseMarkup } from './message-markup';
+import * as TelegramUser from '../telegram/TelegramUserListener';
+import * as TelegramBot from '../telegram/TelegramBotChannelService';
 
 /**
  * CRMQueueService - chạy trong main process
@@ -176,7 +178,11 @@ class CRMQueueService {
 
         // Get connection
         const conn = ConnectionManager.getConnection(zaloId);
-        if (!conn?.api) {
+        const account = db.getAccounts().find(a => a.zalo_id === zaloId);
+        // Account is authoritative for legacy campaigns created before the
+        // channel snapshot migration; new campaigns persist the same value.
+        const channel = account?.channel || (campaignData as any)?.channel || 'zalo';
+        if (channel === 'zalo' && !conn?.api) {
             Logger.warn(`[CRMQueue] No connection for ${zaloId}, skipping`);
             return;
         }
@@ -204,7 +210,7 @@ class CRMQueueService {
             db.updateCampaignContactStatus(item.id!, 'sending');
 
             // ── Phone resolution at send time ──────────────────────────────
-            if (item.contact_id.startsWith('phone:')) {
+            if (channel === 'zalo' && item.contact_id.startsWith('phone:')) {
                 const phone = item.contact_id.slice(6);
                 Logger.log(`[CRMQueue] Resolving phone ${phone} at send time...`);
                 const resolved = await this.resolvePhoneContact(phone, conn.api);
@@ -224,7 +230,7 @@ class CRMQueueService {
             }
 
             // ── UID resolution at send time ────────────────────────────────
-            if (!effectiveDisplayName && /^\d{5,}$/.test(effectiveContactId)) {
+            if (channel === 'zalo' && !effectiveDisplayName && /^\d{5,}$/.test(effectiveContactId)) {
                 Logger.log(`[CRMQueue] Resolving UID ${effectiveContactId} via getUserInfo...`);
                 try {
                     const infoRes = await (conn.api as any).getUserInfo(effectiveContactId);
@@ -278,7 +284,35 @@ class CRMQueueService {
             // Helper: send one block (text + images)
             const sendBlock = async (block: ContentBlock, threadId: string, threadType: number): Promise<any[]> => {
                 const responses: any[] = [];
-                const { text: cleanText, styles } = parseMarkup(substitute(block.text || ''));
+                const substitutedText = substitute(block.text || '');
+                // CRM markup is a Zalo-only transport feature. Telegram must
+                // receive exactly what the user composed (including literal
+                // square-bracket text) and never run through the Zalo parser.
+                const { text: cleanText, styles } = channel === 'zalo'
+                    ? parseMarkup(substitutedText)
+                    : { text: substitutedText, styles: [] };
+                // Telegram senders live in the main process and return a normalized
+                // result.  Markup/@all are Zalo-specific, so they are intentionally
+                // stripped rather than rendered as an unsupported action.
+                if (channel === 'telegram_user' || channel === 'telegram_bot') {
+                    const sendText = async (text: string) => channel === 'telegram_user'
+                        ? TelegramUser.sendMessage(zaloId, threadId, text)
+                        : TelegramBot.sendMessage(zaloId, threadId, text);
+                    const sendImage = async (filePath: string) => channel === 'telegram_user'
+                        ? TelegramUser.sendFile(zaloId, threadId, filePath, undefined, 'image')
+                        : TelegramBot.sendPhoto(zaloId, threadId, filePath);
+                    if (cleanText.trim()) {
+                        const resp = await sendText(cleanText);
+                        if (!resp.success) throw new Error(resp.error || 'Telegram không gửi được tin nhắn');
+                        responses.push(resp);
+                    }
+                    for (const filePath of (block.images || []).filter(Boolean)) {
+                        const resp = await sendImage(filePath);
+                        if (!resp.success) throw new Error(resp.error || 'Telegram không gửi được ảnh');
+                        responses.push(resp);
+                    }
+                    return responses;
+                }
                 if (cleanText.trim()) {
                     const content: any = { msg: cleanText };
                     let finalStyles = styles;
@@ -323,7 +357,11 @@ class CRMQueueService {
 
             // Legacy single-message string for log display
             const firstBlock = blocksToSend[0];
-            const firstBlockText = firstBlock ? substitute(firstBlock.text || '') : '';
+            const displayText = (raw: string) => {
+                const substituted = substitute(raw);
+                return channel === 'zalo' ? parseMarkup(substituted).text : substituted;
+            };
+            const firstBlockText = firstBlock ? displayText(firstBlock.text || '') : '';
             const firstBlockImgCount = firstBlock?.images?.filter(Boolean).length || 0;
             message = firstBlockText.trim()
               ? firstBlockText + (firstBlockImgCount > 0 ? ` + ${firstBlockImgCount} ảnh` : '')
@@ -333,7 +371,7 @@ class CRMQueueService {
 
             // Helper: describe block content for log (dùng trong catch)
             describeBlock = (block: ContentBlock): string => {
-                const txt = substitute(block.text || '').trim();
+                const txt = displayText(block.text || '').trim();
                 const imgCount = (block.images || []).filter(Boolean).length;
                 if (txt && imgCount > 0) return `${txt} + ${imgCount} ảnh`;
                 if (txt) return txt;
@@ -344,6 +382,7 @@ class CRMQueueService {
             // Common log base fields
             logBase = {
                 owner_zalo_id: zaloId,
+                channel,
                 contact_id: effectiveContactId,
                 display_name: effectiveDisplayName || '',
                 phone: (item as any).phone || '',
@@ -642,4 +681,3 @@ function isMixedFallbackError(err: any): boolean {
         msg.includes('permission')
     );
 }
-

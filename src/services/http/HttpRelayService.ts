@@ -1825,7 +1825,11 @@ class HttpRelayService {
             }
             // MUST be BEFORE the generic delete pattern — the regex /^\/api\/command\/conversations\/[^/]+$/ would match "update-profile" as a contactId
             if (pathname === '/api/command/conversations/update-profile') {
-                db.updateContactProfile(zaloId, params.contactId, params.displayName || '', params.avatarUrl || '', params.phone || '', params.contactType || '', params.gender ?? null, params.birthday ?? null);
+                db.updateContactProfile(
+                    zaloId, params.contactId, params.displayName || '', params.avatarUrl || '',
+                    params.phone || '', params.contactType || '', params.gender ?? null,
+                    params.birthday ?? null, null, Boolean(params.manualDetails)
+                );
                 EventBroadcaster.emit('db:contactProfileUpdated', {
                     ownerZaloId: zaloId, contactId: params.contactId,
                     displayName: params.displayName, avatarUrl: params.avatarUrl,

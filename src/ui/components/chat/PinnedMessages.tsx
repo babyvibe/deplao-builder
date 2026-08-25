@@ -3,6 +3,7 @@ import ipc from '@/lib/ipc';
 import { toLocalMediaUrl } from '@/lib/localMedia';
 import { useAppStore } from '@/store/appStore';
 import { ChartIcon, EditIcon, PinIcon } from '@/components/common/icons';
+import { isZalo } from '@/lib/channelHelper';
 
 
 export interface PinnedMsg {
@@ -45,6 +46,7 @@ export default function PinnedBar({ zaloId, threadId, pins, onPinsChange, onScro
 
   const hasMsg = pins.length > 0;
   const hasNote = pinnedNotes.length > 0;
+  const showsZaloPinLimit = isZalo(channel);
 
   if (!hasMsg && !hasNote) return null;
 
@@ -159,8 +161,9 @@ export default function PinnedBar({ zaloId, threadId, pins, onPinsChange, onScro
             />
           )}
 
-          {/* Tooltip ? - giải thích giới hạn ghim */}
-          {effectiveTab === 'msg' && (
+          {/* Zalo has a three-message remote pin limit. Telegram supports
+              multiple pinned messages, so do not show a Zalo-only warning. */}
+          {effectiveTab === 'msg' && showsZaloPinLimit && (
             <div className="relative group">
               <span className="w-4 h-4 rounded-full border border-gray-600 text-gray-400 hover:border-blue-400 hover:text-blue-400 flex items-center justify-center text-[11px] font-bold cursor-default select-none transition-colors">
                 ?

@@ -5,6 +5,7 @@ import { toLocalMediaUrl } from '@/lib/localMedia';
 import { Spinner } from '@/components/common/PageLoading';
 import { AlertIcon, ChartIcon, ChatIcon, ClipboardListIcon, EditIcon, RocketIcon, SendIcon, ShuffleIcon, UserCheckIcon, UsersIcon } from '@/components/common/icons';
 import { parseMarkup } from '../../../../services/crm/message-markup';
+import { type Channel } from '../../../../configs/channelConfig';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -35,6 +36,7 @@ interface CampaignCreateModalProps {
   initialData?: Partial<CampaignFormData>;
   editMode?: boolean;
   zaloId?: string;
+  channel?: Channel;
   onClose: () => void;
   onSave: (data: CampaignFormData) => Promise<void>;
 }
@@ -117,7 +119,7 @@ const INVITE_ERROR_LABELS: Record<number, string> = {
 
 function LivePreview({
   blocks, activeIdx, mode, type, friendMsg,
-  onTabChange,
+  onTabChange, supportsFormatting,
 }: {
   blocks: ContentBlock[];
   activeIdx: number;
@@ -125,6 +127,7 @@ function LivePreview({
   type: CampaignType;
   friendMsg: string;
   onTabChange: (i: number) => void;
+  supportsFormatting: boolean;
 }) {
   const block = blocks[activeIdx] ?? blocks[0];
 
@@ -167,10 +170,10 @@ function LivePreview({
       <div className="flex-1 min-h-0 flex flex-col border border-gray-600 rounded-xl overflow-hidden">
         {/* Top bar */}
         <div className="flex items-center gap-2 px-3 py-2 bg-gray-700 border-b border-gray-600 flex-shrink-0">
-          <div className="w-6 h-6 rounded-full bg-blue-600 flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0">Z</div>
+          <div className="w-6 h-6 rounded-full bg-blue-600 flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0">{supportsFormatting ? 'Z' : 'T'}</div>
           <div className="flex-1 min-w-0">
             <p className="text-[11px] font-semibold text-gray-200 truncate">Nguyễn Văn A</p>
-            <p className="text-[9px] text-gray-400">Zalo</p>
+            <p className="text-[9px] text-gray-400">{supportsFormatting ? 'Zalo' : 'Telegram'}</p>
           </div>
         </div>
 
@@ -187,7 +190,7 @@ function LivePreview({
                 {/* Text bubble */}
                 {previewText && (
                   <div className="bg-blue-600 text-white rounded-2xl rounded-br-sm px-3 py-2 text-xs leading-relaxed break-words whitespace-pre-wrap">
-                    {previewText}
+                    {supportsFormatting ? <MarkupPreview text={previewText} className="text-white" /> : previewText}
                   </div>
                 )}
                 {/* Image thumbnails */}
@@ -360,9 +363,9 @@ const STYLE_CSS: Record<string, React.CSSProperties> = {
   f_13: { fontSize: '0.85em' },
 };
 
-function MarkupPreview({ text }: { text: string }) {
+function MarkupPreview({ text, className = 'text-gray-300' }: { text: string; className?: string }) {
   const { text: clean, styles } = parseMarkup(text);
-  if (!styles.length) return <span className="text-gray-300">{clean}</span>;
+  if (!styles.length) return <span className={className}>{clean}</span>;
   // Gộp style theo từng ký tự rồi cắt thành đoạn liên tiếp cùng style.
   const css: React.CSSProperties[] = Array.from({ length: clean.length }, () => ({}));
   for (const s of styles) {
@@ -380,16 +383,18 @@ function MarkupPreview({ text }: { text: string }) {
     spans.push(<span key={i} style={css[i]}>{clean.slice(i, j)}</span>);
     i = j;
   }
-  return <span className="text-gray-300">{spans}</span>;
+  return <span className={className}>{spans}</span>;
 }
 
 // ── Block Editor ──────────────────────────────────────────────────────────────
 
 function BlockEditor({
-  block, onUpdate,
+  block, onUpdate, supportsTagAll = true, supportsFormatting = true,
 }: {
   block: ContentBlock;
   onUpdate: (u: Partial<ContentBlock>) => void;
+  supportsTagAll?: boolean;
+  supportsFormatting?: boolean;
 }) {
   const taRef = useRef<HTMLTextAreaElement>(null);
 
@@ -438,7 +443,7 @@ function BlockEditor({
       </div>
 
       {/* Toolbar định dạng */}
-      <div className="flex items-center gap-1 flex-wrap flex-shrink-0">
+      {supportsFormatting && <div className="flex items-center gap-1 flex-wrap flex-shrink-0">
         <button type="button" onClick={() => wrapSelection('b')} title="In đậm"
           className="text-[12px] font-bold w-6 h-6 rounded border border-gray-600 text-gray-300 hover:bg-gray-700 transition-colors">B</button>
         <button type="button" onClick={() => wrapSelection('i')} title="In nghiêng"
@@ -457,7 +462,7 @@ function BlockEditor({
           className="text-[13px] font-semibold px-1.5 h-6 rounded border border-gray-600 text-gray-300 hover:bg-gray-700 transition-colors">A+</button>
         <button type="button" onClick={() => wrapSelection('small')} title="Cỡ nhỏ"
           className="text-[10px] px-1.5 h-6 rounded border border-gray-600 text-gray-300 hover:bg-gray-700 transition-colors">A-</button>
-      </div>
+      </div>}
 
       {/* Textarea - takes most space */}
       <textarea
@@ -468,16 +473,8 @@ function BlockEditor({
         className="flex-1 min-h-0 w-full bg-gray-800 border border-gray-600 rounded-xl px-3 py-2.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500 resize-none transition-colors"
       />
 
-      {/* Xem trước định dạng */}
-      {block.text.includes('[') && (
-        <div className="flex-shrink-0 bg-gray-800/50 border border-gray-700 rounded-lg px-3 py-2">
-          <div className="text-[10px] text-gray-500 mb-1">Xem trước</div>
-          <div className="text-sm whitespace-pre-wrap break-words"><MarkupPreview text={block.text} /></div>
-        </div>
-      )}
-
       {/* Tag @all khi gửi nhóm */}
-      <label className="flex items-center gap-2 flex-shrink-0 cursor-pointer text-xs text-gray-400 select-none flex-wrap">
+      {supportsTagAll && <label className="flex items-center gap-2 flex-shrink-0 cursor-pointer text-xs text-gray-400 select-none flex-wrap">
         <input type="checkbox" checked={!!block.tagAll} onChange={e => onUpdate({ tagAll: e.target.checked })}
           className="accent-blue-500 w-3.5 h-3.5" />
         Tag toàn nhóm khi gửi vào nhóm
@@ -491,7 +488,7 @@ function BlockEditor({
           </span>
         )}
         <span className="text-gray-500">(bỏ qua với chat cá nhân)</span>
-      </label>
+      </label>}
 
       {/* Images */}
       <div className="flex-shrink-0">
@@ -528,10 +525,12 @@ function BlockEditor({
 // ── Main Modal ────────────────────────────────────────────────────────────────
 
 export default function CampaignCreateModal({
-  initialData, editMode = false, zaloId, onClose, onSave,
+  initialData, editMode = false, zaloId, channel = 'zalo', onClose, onSave,
 }: CampaignCreateModalProps) {
   const [name,          setName]         = useState(initialData?.name ?? '');
   const [type,          setType]         = useState<CampaignType>(initialData?.campaign_type ?? 'message');
+  const telegramCampaign = channel === 'telegram_user' || channel === 'telegram_bot';
+  const availableTypes = telegramCampaign ? TYPE_OPTIONS.filter(opt => opt.value === 'message') : TYPE_OPTIONS;
   const [saving,        setSaving]       = useState(false);
   const [friendReqMsg,  setFriendReqMsg] = useState(initialData?.friend_request_message ?? '');
   const [activeBlock,   setActiveBlock]  = useState(0);
@@ -579,6 +578,10 @@ export default function CampaignCreateModal({
   const hasMsg    = type === 'message' || (type === 'mixed' && mixedActions.includes('message'));
   const hasFR     = type === 'friend_request' || (type === 'mixed' && mixedActions.includes('friend_request'));
   const hasInvite = type === 'invite_to_group' || (type === 'mixed' && mixedActions.includes('invite_to_groups'));
+
+  useEffect(() => {
+    if (telegramCampaign && type !== 'message') setType('message');
+  }, [telegramCampaign, type]);
 
   // Clamp activeBlock when blocks change
   useEffect(() => {
@@ -713,7 +716,7 @@ export default function CampaignCreateModal({
             <div>
               <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider block mb-1.5">Loại *</label>
               <div className="space-y-1">
-                {TYPE_OPTIONS.map(opt => (
+                {availableTypes.map(opt => (
                   <button key={opt.value} type="button" onClick={() => setType(opt.value)}
                     className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg border text-left transition-colors ${
                       type === opt.value
@@ -888,7 +891,7 @@ export default function CampaignCreateModal({
             <div className="border border-yellow-500/20 rounded-lg p-2.5 mt-auto">
               <p className="text-[10px] text-yellow-400 font-semibold mb-1"><AlertIcon className="w-3.5 h-3.5 inline" /> Cảnh báo</p>
               <p className="text-[9px] text-yellow-300/60 leading-relaxed">
-                Hành động càng nhiều, nội dung càng dài, và delay càng ngắn sẽ làm tăng nguy cơ bị Zalo đánh spam. Hãy cân nhắc kỹ lưỡng khi cấu hình chiến dịch, và luôn tuân thủ nguyên tắc cộng đồng của Zalo.
+                Hành động càng nhiều, nội dung càng dài, và delay càng ngắn sẽ làm tăng nguy cơ bị đánh spam. Hãy cân nhắc kỹ lưỡng khi cấu hình chiến dịch, và luôn tuân thủ nguyên tắc cộng đồng của nền tảng.
               </p>
             </div>
           </div>
@@ -973,6 +976,8 @@ export default function CampaignCreateModal({
                   <BlockEditor
                     block={currentBlock}
                     onUpdate={u => updateBlock(currentBlock.id, u)}
+                    supportsTagAll={!telegramCampaign}
+                    supportsFormatting={!telegramCampaign}
                   />
                 </div>
               )}
@@ -1033,6 +1038,7 @@ export default function CampaignCreateModal({
               type={type}
               friendMsg={friendReqMsg}
               onTabChange={setActiveBlock}
+              supportsFormatting={!telegramCampaign}
             />
           </div>
         </div>

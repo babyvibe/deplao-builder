@@ -5,10 +5,13 @@ import ipc from '@/lib/ipc';
 import { useAccountStore } from '@/store/accountStore';
 import { formatPhone } from '@/utils/phoneUtils';
 import { CampaignIcon, ChatIcon, ClipboardListIcon, SearchIcon, UserCheckIcon, UsersIcon } from '@/components/common/icons';
+import type { Channel } from '../../../../configs/channelConfig';
+import { CHANNEL } from '@/lib/channelHelper';
 
 interface SendLogEntry {
   id: number;
   owner_zalo_id: string;
+  channel?: string;
   contact_id: string;
   display_name: string;
   phone: string;
@@ -131,7 +134,8 @@ function DebugModal({ log, onClose }: { log: SendLogEntry; onClose: () => void }
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function SendHistoryLog(_props: SendHistoryLogProps) {
-  const { activeAccountId } = useAccountStore();
+  const { activeAccountId, accounts } = useAccountStore();
+  const channel = (accounts.find(account => account.zalo_id === activeAccountId)?.channel || CHANNEL.ZALO) as Channel;
   const [logs, setLogs] = useState<SendLogEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [allCampaigns, setAllCampaigns] = useState<Array<{ id: number; name: string; campaign_type: string }>>([]);
@@ -154,6 +158,11 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
     Object.fromEntries(allCampaigns.map(c => [c.id, { name: c.name, campaign_type: c.campaign_type || 'message' }])),
     [allCampaigns]
   );
+
+  const supportsZaloCampaignActions = channel === CHANNEL.ZALO;
+  useEffect(() => {
+    if (!supportsZaloCampaignActions && filterSendType !== 'all' && filterSendType !== 'message') setFilterSendType('all');
+  }, [supportsZaloCampaignActions, filterSendType]);
 
   const suggestions = useMemo(() => {
     if (!filterCampaignName.trim()) return [];
@@ -381,8 +390,8 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
           className="bg-gray-700 border border-gray-600 rounded-full text-xs text-gray-300 px-2.5 py-1.5 focus:outline-none focus:border-blue-500 flex-shrink-0">
           <option value="all">Tất cả loại</option>
           <option value="message"><ChatIcon className="w-4 h-4 inline" /> Tin nhắn</option>
-          <option value="friend_request"><UserCheckIcon className="w-4 h-4 inline" /> Kết bạn</option>
-          <option value="invite_to_group"><UsersIcon className="w-4 h-4 inline" /> Mời nhóm</option>
+          {supportsZaloCampaignActions && <option value="friend_request"><UserCheckIcon className="w-4 h-4 inline" /> Kết bạn</option>}
+          {supportsZaloCampaignActions && <option value="invite_to_group"><UsersIcon className="w-4 h-4 inline" /> Mời nhóm</option>}
         </select>
 
         <span className="ml-auto text-xs text-gray-400">{filtered.length} kết quả</span>
@@ -432,6 +441,9 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
                       <p className="text-gray-300 truncate font-medium">{recipientName}</p>
                       {log.contact_type === 'group' && (
                         <span className="text-[9px] text-purple-400 flex-shrink-0 bg-purple-400/10 px-1 rounded">nhóm</span>
+                      )}
+                      {log.channel?.startsWith('telegram') && (
+                        <span className="text-[9px] text-sky-400 flex-shrink-0 bg-sky-400/10 px-1 rounded">Telegram</span>
                       )}
                     </div>
                     {phone

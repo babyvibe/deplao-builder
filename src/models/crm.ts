@@ -18,6 +18,8 @@ export interface CRMNote {
 export interface CRMCampaign {
     id?: number;
     owner_zalo_id: string;
+    /** Immutable channel snapshot for new records; legacy records resolve from account. */
+    channel?: 'zalo' | 'facebook' | 'telegram_user' | 'telegram_bot';
     name: string;
     template_message: string;
     friend_request_message: string;
@@ -65,6 +67,7 @@ export interface CRMCampaignContact {
 export interface CRMSendLog {
     id?: number;
     owner_zalo_id: string;
+    channel?: 'zalo' | 'facebook' | 'telegram_user' | 'telegram_bot';
     contact_id: string;
     display_name?: string;
     phone?: string;

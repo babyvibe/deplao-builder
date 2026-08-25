@@ -268,9 +268,10 @@ export const CHANNEL_CONFIG: Record<Channel, ChannelCapability> = {
     supportsSeenStatus: false,       // Bot can't mark as read
     supportsTypingIndicator: false,  // Bot can't send typing
     supportsCRMSearch: false,
-    supportsCRMHistory: false,
+    supportsCRMHistory: true,
     supportsCRMPhoneImport: false,
-    supportsCRMGroups: false,
+    // Chỉ hiển thị các nhóm mà Bot đã nhận được update / đã biết.
+    supportsCRMGroups: true,
     supportsScanData: false,
 
     supportsChangeGroupAvatar: true, // Bot API: setChatPhoto
@@ -280,7 +281,8 @@ export const CHANNEL_CONFIG: Record<Channel, ChannelCapability> = {
     supportsGroupReload: false,
     supportsQuickMessages: true,     // Local-only feature
     supportsInviteToGroup: true,     // Bot API: invite link
-    supportsCampaigns: false,
+    // Chỉ chạy campaign tin nhắn đến các chat Bot đã biết.
+    supportsCampaigns: true,
     quickMessageSyncMode: 'local',
 
     loginMethods: ['credentials'],  // botToken
@@ -336,9 +338,9 @@ export const CHANNEL_CONFIG: Record<Channel, ChannelCapability> = {
     supportsSeenStatus: true,
     supportsTypingIndicator: true,
     supportsCRMSearch: false,
-    supportsCRMHistory: false,
+    supportsCRMHistory: true,
     supportsCRMPhoneImport: false,
-    supportsCRMGroups: false,          // Tạm tắt - cần cải thiện thêm
+    supportsCRMGroups: true,
     supportsScanData: false,
 
     supportsChangeGroupAvatar: true,
@@ -348,7 +350,7 @@ export const CHANNEL_CONFIG: Record<Channel, ChannelCapability> = {
     supportsGroupReload: false,
     supportsQuickMessages: true,     // Local-only feature
     supportsInviteToGroup: true,
-    supportsCampaigns: false,
+    supportsCampaigns: true,
     quickMessageSyncMode: 'local',
 
     loginMethods: ['phone_otp'],
@@ -393,4 +395,3 @@ export function normalizeChannel(ch?: string): Channel {
 export function resolveAccountChannel(account: { channel?: string }): Channel {
   return normalizeChannel(account.channel);
 }
-

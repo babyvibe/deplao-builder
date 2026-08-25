@@ -796,6 +796,7 @@ class DatabaseService {
             CREATE TABLE IF NOT EXISTS crm_campaigns (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 owner_zalo_id TEXT NOT NULL,
+                channel TEXT NOT NULL DEFAULT 'zalo',
                 name TEXT NOT NULL,
                 template_message TEXT NOT NULL DEFAULT '',
                 friend_request_message TEXT NOT NULL DEFAULT '',
@@ -812,6 +813,7 @@ class DatabaseService {
         try { this.exec(`ALTER TABLE crm_campaigns ADD COLUMN friend_request_message TEXT NOT NULL DEFAULT ''`); } catch {}
         try { this.exec(`ALTER TABLE crm_campaigns ADD COLUMN campaign_type TEXT NOT NULL DEFAULT 'message'`); } catch {}
         try { this.exec(`ALTER TABLE crm_campaigns ADD COLUMN mixed_config TEXT NOT NULL DEFAULT '{}'`); } catch {}
+        try { this.exec(`ALTER TABLE crm_campaigns ADD COLUMN channel TEXT NOT NULL DEFAULT 'zalo'`); } catch {}
 
         this.exec(`
             CREATE TABLE IF NOT EXISTS crm_campaign_contacts (
@@ -838,6 +840,7 @@ class DatabaseService {
             CREATE TABLE IF NOT EXISTS crm_send_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 owner_zalo_id TEXT NOT NULL,
+                channel TEXT NOT NULL DEFAULT 'zalo',
                 contact_id TEXT NOT NULL,
                 display_name TEXT DEFAULT '',
                 phone TEXT DEFAULT '',
@@ -854,6 +857,7 @@ class DatabaseService {
             CREATE INDEX IF NOT EXISTS idx_crm_log_owner ON crm_send_log(owner_zalo_id, sent_at DESC);
             CREATE INDEX IF NOT EXISTS idx_crm_log_contact ON crm_send_log(owner_zalo_id, contact_id);
         `);
+        try { this.exec(`ALTER TABLE crm_send_log ADD COLUMN channel TEXT NOT NULL DEFAULT 'zalo'`); } catch {}
 
         // ─── Local Labels (custom per-app labels, independent from Zalo) ────────
         this.exec(`
@@ -2681,8 +2685,11 @@ class DatabaseService {
             INSERT INTO telegram_channel_pts (owner_zalo_id, channel_id, pts, updated_at)
             VALUES (?, ?, ?, ?)
             ON CONFLICT(owner_zalo_id, channel_id) DO UPDATE SET
-                pts = excluded.pts,
-                updated_at = excluded.updated_at
+                -- A socket update and getChannelDifference can finish in a
+                -- different order. PTS is monotonic, so accepting a stale
+                -- lower value would reopen an already-consumed interval.
+                pts = CASE WHEN excluded.pts > telegram_channel_pts.pts THEN excluded.pts ELSE telegram_channel_pts.pts END,
+                updated_at = CASE WHEN excluded.pts > telegram_channel_pts.pts THEN excluded.updated_at ELSE telegram_channel_pts.updated_at END
         `, [ownerZaloId, channelId, Number(pts || 0), Date.now()]);
     }
 
@@ -3444,7 +3451,7 @@ class DatabaseService {
      * Cập nhật display_name và avatar_url của contact vào DB.
      * Được gọi khi có thông tin tên/ảnh (từ senderInfo trong message event hoặc getUserInfo API).
      */
-    public updateContactProfile(ownerZaloId: string, contactId: string, displayName: string, avatarUrl: string, phone: string = '', contactType: string = '', gender?: number | null, birthday?: string | null, isBot?: number | null): void {
+    public updateContactProfile(ownerZaloId: string, contactId: string, displayName: string, avatarUrl: string, phone: string = '', contactType: string = '', gender?: number | null, birthday?: string | null, isBot?: number | null, manualDetails: boolean = false): void {
         if (!this.initialized || !contactId || contactId === 'undefined') return;
         try {
             const normalizedPhone = this.normalizeVietnamPhone(phone || '');
@@ -3471,14 +3478,20 @@ class DatabaseService {
                 ]
             );
 
-            // Update gender & birthday if provided (separate UPDATE to keep INSERT clean)
-            if (gender !== undefined && gender !== null) {
+            // Các lần đồng bộ chỉ bổ sung dữ liệu có sẵn; thao tác thủ công phải
+            // ghi chính xác cả giá trị rỗng để người dùng có thể xoá một trường.
+            if (manualDetails) {
+                this.run(
+                    `UPDATE contacts SET phone=?, gender=?, birthday=? WHERE owner_zalo_id=? AND contact_id=?`,
+                    [normalizedPhone, gender ?? null, birthday?.trim() || null, ownerZaloId, contactId]
+                );
+            } else if (gender !== undefined && gender !== null) {
                 this.run(
                     `UPDATE contacts SET gender=? WHERE owner_zalo_id=? AND contact_id=?`,
                     [gender, ownerZaloId, contactId]
                 );
             }
-            if (birthday !== undefined && birthday !== null && birthday !== '') {
+            if (!manualDetails && birthday !== undefined && birthday !== null && birthday !== '') {
                 this.run(
                     `UPDATE contacts SET birthday=? WHERE owner_zalo_id=? AND contact_id=?`,
                     [birthday, ownerZaloId, contactId]
@@ -4622,11 +4635,12 @@ class DatabaseService {
         display_name: string;
         avatar: string;
         role: number;
+        username: string;
         updated_at: number;
     }> {
         if (!this.initialized) return [];
         return this.query<any>(
-            `SELECT member_id, display_name, avatar, role, updated_at
+            `SELECT member_id, display_name, avatar, role, username, updated_at
              FROM page_group_member
              WHERE owner_zalo_id = ? AND group_id = ?
              ORDER BY role DESC`,
@@ -5425,6 +5439,7 @@ class DatabaseService {
         try {
             const now = Date.now();
             const type = campaign.campaign_type || 'message';
+            const channel = campaign.channel || this.queryOne<{ channel?: string }>('SELECT channel FROM accounts WHERE zalo_id=?', [campaign.owner_zalo_id])?.channel || 'zalo';
             const frMsg = campaign.friend_request_message || '';
             const status = campaign.status || 'draft';
             const mixedCfg = campaign.mixed_config || '{}';
@@ -5439,14 +5454,14 @@ class DatabaseService {
             const compatDelaySeconds = campaign.delay_seconds || Math.round((delayMin + delayMax) / 2);
             if (campaign.id) {
                 this.run(
-                    `UPDATE crm_campaigns SET name=?, template_message=?, friend_request_message=?, campaign_type=?, mixed_config=?, status=?, delay_seconds=?, delay_min_seconds=?, delay_max_seconds=?, per_contact_delay_min_seconds=?, per_contact_delay_max_seconds=?, daily_send_limit=?, daily_start_time=?, updated_at=? WHERE id=? AND owner_zalo_id=?`,
-                    [campaign.name, campaign.template_message || '', frMsg, type, mixedCfg, status, compatDelaySeconds, delayMin, delayMax, perContactMin, perContactMax, dailyLimit, dailyStartTime, now, campaign.id, campaign.owner_zalo_id]
+                    `UPDATE crm_campaigns SET channel=?, name=?, template_message=?, friend_request_message=?, campaign_type=?, mixed_config=?, status=?, delay_seconds=?, delay_min_seconds=?, delay_max_seconds=?, per_contact_delay_min_seconds=?, per_contact_delay_max_seconds=?, daily_send_limit=?, daily_start_time=?, updated_at=? WHERE id=? AND owner_zalo_id=?`,
+                    [channel, campaign.name, campaign.template_message || '', frMsg, type, mixedCfg, status, compatDelaySeconds, delayMin, delayMax, perContactMin, perContactMax, dailyLimit, dailyStartTime, now, campaign.id, campaign.owner_zalo_id]
                 );
                 return campaign.id;
             } else {
                 return this.runInsert(
-                    `INSERT INTO crm_campaigns (owner_zalo_id, name, template_message, friend_request_message, campaign_type, mixed_config, status, delay_seconds, delay_min_seconds, delay_max_seconds, per_contact_delay_min_seconds, per_contact_delay_max_seconds, daily_send_limit, daily_start_time, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-                    [campaign.owner_zalo_id, campaign.name, campaign.template_message, frMsg, type, mixedCfg, campaign.status || 'draft', compatDelaySeconds, delayMin, delayMax, perContactMin, perContactMax, dailyLimit, dailyStartTime, now, now]
+                    `INSERT INTO crm_campaigns (owner_zalo_id, channel, name, template_message, friend_request_message, campaign_type, mixed_config, status, delay_seconds, delay_min_seconds, delay_max_seconds, per_contact_delay_min_seconds, per_contact_delay_max_seconds, daily_send_limit, daily_start_time, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                    [campaign.owner_zalo_id, channel, campaign.name, campaign.template_message, frMsg, type, mixedCfg, campaign.status || 'draft', compatDelaySeconds, delayMin, delayMax, perContactMin, perContactMax, dailyLimit, dailyStartTime, now, now]
                 );
             }
         } catch (err: any) { Logger.error(`[DB] saveCRMCampaign: ${err.message}`); return 0; }
@@ -5638,8 +5653,8 @@ class DatabaseService {
         if (!this.initialized) return;
         try {
             this.run(
-                `INSERT INTO crm_send_log (owner_zalo_id, contact_id, display_name, phone, contact_type, campaign_id, message, sent_at, status, error, data_request, data_response, send_type) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-                [log.owner_zalo_id, log.contact_id, log.display_name || '', this.normalizeVietnamPhone(log.phone || ''), log.contact_type || 'user', log.campaign_id || null, log.message, log.sent_at, log.status, log.error || '', log.data_request || '', log.data_response || '', log.send_type || '']
+                `INSERT INTO crm_send_log (owner_zalo_id, channel, contact_id, display_name, phone, contact_type, campaign_id, message, sent_at, status, error, data_request, data_response, send_type) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                [log.owner_zalo_id, log.channel || 'zalo', log.contact_id, log.display_name || '', this.normalizeVietnamPhone(log.phone || ''), log.contact_type || 'user', log.campaign_id || null, log.message, log.sent_at, log.status, log.error || '', log.data_request || '', log.data_response || '', log.send_type || '']
             );
         } catch (err: any) { Logger.error(`[DB] saveSendLog failed: ${err.message}`); }
     }

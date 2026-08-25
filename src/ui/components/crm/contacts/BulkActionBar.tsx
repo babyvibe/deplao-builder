@@ -100,7 +100,7 @@ export default function BulkActionBar({
             )}
 
             {/* Rời nhóm - chỉ hiện khi có nhóm được chọn */}
-            {hasGroupSelected && onBulkLeaveGroup && (
+            {hasGroupSelected && onBulkLeaveGroup && channelCap.supportsLeaveGroup && (
               <>
                 <div className="my-1 h-px bg-gray-700 mx-3" />
                 <button

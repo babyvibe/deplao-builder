@@ -1954,6 +1954,7 @@ export function MessageBubble({ msg, isSelf, senderName, onManage, onView, onOpe
 
   // ── Text (default) ──
   const text = parseTxt(mc);
+  if (text.includes('@')) console.log('[Bubble] text with @:', JSON.stringify(text.slice(-40)), 'mc:', JSON.stringify(mc).slice(0, 100));
   const isEdited = msg.is_edited === 1;
   let editHistoryEntries: Array<{ oldBody: string; editedAt: number; editCount: number }> = [];
   if (isEdited && msg.edit_history) {

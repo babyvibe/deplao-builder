@@ -15,7 +15,7 @@ import {toLocalMediaUrl} from '@/lib/localMedia';
 import {formatPhone} from '@/utils/phoneUtils';
 import PhoneDisplay from '../common/PhoneDisplay';
 import {convertZaloEmojis} from '@/lib/chat/emojiUtils';
-import {linkifyText} from '@/lib/chat/messageParser';
+import {getTelegramMentionRanges, linkifyText, type TelegramMentionRange} from '@/lib/chat/messageParser';
 import {isMediaType} from '@/lib/chat/messageTypeUtils';
 import {TgsBubble} from './MessageBubbles';
 
@@ -622,6 +622,7 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
                     channel={msg.channel}
                     allContacts={allContacts}
                     groupMembersList={groupMembersList}
+                    mentionRanges={getTelegramMentionRanges(msg.attachments)}
                     onMentionClick={onMentionClick}
                 />
             </div>
@@ -1102,12 +1103,17 @@ export function MediaGroupBubble({
                                      isSelecting: isSelectingProp,
                                      selectedMsgIds: selectedMsgIdsProp,
                                      onToggleSelect,
-                                     onVideoPlay
+                                     onVideoPlay,
+                                     allContacts,
+                                     groupMembersList,
+                                     onMentionClick,
                                  }: {
     msgs: any[]; onView: (src: string) => void; isSent?: boolean;
     isSelecting?: boolean; selectedMsgIds?: Set<string>; onToggleSelect?: (msgId: string) => void;
     /** Called when user clicks play on a video tile in the group */
     onVideoPlay?: (msg: any) => void;
+    allContacts?: any[]; groupMembersList?: any[];
+    onMentionClick?: (userId: string, e: React.MouseEvent) => void;
 }) {
     const sorted = React.useMemo(() => {
         return [...groupMsgs].sort((a, b) => {
@@ -1126,13 +1132,12 @@ export function MediaGroupBubble({
             }
         });
     }, [groupMsgs]);
-    const telegramCaption = React.useMemo(() => {
-        const captionMessage = sorted.find((message) => {
+    const telegramCaptionMessage = React.useMemo(() => {
+        return sorted.find((message) => {
             if (!isTelegram(message.channel)) return false;
             const text = String(message.content || '').trim();
             return text && !/^(?:🖼️\s*)?(?:Hình ảnh|Image)$/i.test(text);
         });
-        return captionMessage ? String(captionMessage.content || '').trim() : '';
     }, [sorted]);
 
     // Chia thành hàng, mỗi hàng tối đa 4 ảnh
@@ -1153,10 +1158,17 @@ export function MediaGroupBubble({
                     </div>
                 ))}
             </div>
-            {telegramCaption && (
+            {telegramCaptionMessage && (
                 <div className="px-3 py-2 text-sm whitespace-pre-wrap break-words bg-gray-700 text-gray-200"
                      style={{fontFamily: '"Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif'}}>
-                    {telegramCaption}
+                    <TextWithMentions
+                        text={String(telegramCaptionMessage.content || '').trim()}
+                        channel={telegramCaptionMessage.channel}
+                        allContacts={allContacts}
+                        groupMembersList={groupMembersList}
+                        mentionRanges={getTelegramMentionRanges(telegramCaptionMessage.attachments)}
+                        onMentionClick={onMentionClick}
+                    />
                 </div>
             )}
         </div>
@@ -2323,6 +2335,7 @@ export function TextWithMentions({
                                      channel,
                                      allContacts,
                                      groupMembersList,
+                                     mentionRanges,
                                      onMentionClick,
                                      highlight,
                                  }: {
@@ -2330,6 +2343,7 @@ export function TextWithMentions({
     channel?: string;
     allContacts?: any[];
     groupMembersList?: any[];
+    mentionRanges?: TelegramMentionRange[];
     onMentionClick?: (userId: string, e: React.MouseEvent) => void;
     highlight?: string;
 }) {
@@ -2342,15 +2356,15 @@ export function TextWithMentions({
         : {};
 
     // Helper: wrap text segment with search highlight marks + URL detection
-    const applyHighlight = (str: string, key: string | number): React.ReactNode => {
-        if (!highlight || !highlight.trim()) return <span key={key}>{linkifyText(str)}</span>;
+    const applyHighlight = (str: string, key: string | number, detectMentions = true): React.ReactNode => {
+        if (!highlight || !highlight.trim()) return <span key={key}>{linkifyText(str, {detectMentions})}</span>;
         const q = highlight.toLowerCase();
         const lower = str.toLowerCase();
         const parts: React.ReactNode[] = [];
         let last = 0;
         let hi = lower.indexOf(q, 0);
         while (hi !== -1) {
-            if (hi > last) parts.push(<span key={`${key}_t${hi}`}>{linkifyText(str.slice(last, hi))}</span>);
+            if (hi > last) parts.push(<span key={`${key}_t${hi}`}>{linkifyText(str.slice(last, hi), {detectMentions})}</span>);
             parts.push(
                 <mark key={`${key}_h${hi}`} className="bg-yellow-400/40 text-yellow-200 rounded-sm px-0.5">
                     {str.slice(hi, hi + highlight.length)}
@@ -2359,9 +2373,47 @@ export function TextWithMentions({
             last = hi + highlight.length;
             hi = lower.indexOf(q, last);
         }
-        if (last < str.length) parts.push(<span key={`${key}_e${last}`}>{linkifyText(str.slice(last))}</span>);
-        return parts.length ? <React.Fragment key={key}>{parts}</React.Fragment> : <span key={key}>{linkifyText(str)}</span>;
+        if (last < str.length) parts.push(<span key={`${key}_e${last}`}>{linkifyText(str.slice(last), {detectMentions})}</span>);
+        return parts.length ? <React.Fragment key={key}>{parts}</React.Fragment> : <span key={key}>{linkifyText(str, {detectMentions})}</span>;
     };
+
+    // Telegram gives the exact UTF-16 ranges for real mentions. They are
+    // authoritative: when present, do not infer further mentions from raw @.
+    const nativeMentionRanges = isTelegram(channel)
+        ? (mentionRanges || []).filter((range) =>
+            range.offset >= 0
+            && range.length > 0
+            && range.offset + range.length <= converted.length
+        )
+        : [];
+    if (nativeMentionRanges.length > 0) {
+        const segments: React.ReactNode[] = [];
+        let cursor = 0;
+        for (const range of nativeMentionRanges) {
+            if (range.offset < cursor) continue;
+            if (range.offset > cursor) {
+                segments.push(applyHighlight(converted.slice(cursor, range.offset), `native-text-${cursor}`, false));
+            }
+            const mentionText = converted.slice(range.offset, range.offset + range.length);
+            const userId = range.userId || '';
+            segments.push(
+                <span
+                    key={`native-mention-${range.offset}`}
+                    className={`font-semibold${userId && onMentionClick ? ' cursor-pointer hover:underline' : ''}`}
+                    style={{color: '#5398f3'}}
+                    onClick={userId && onMentionClick ? (e) => {
+                        e.stopPropagation();
+                        onMentionClick(userId, e);
+                    } : undefined}
+                >{mentionText}</span>
+            );
+            cursor = range.offset + range.length;
+        }
+        if (cursor < converted.length) {
+            segments.push(applyHighlight(converted.slice(cursor), `native-text-${cursor}`, false));
+        }
+        return <span className="whitespace-pre-wrap select-text break-words" style={{ overflowWrap: 'break-word', wordBreak: 'normal', ...emojiFontStyle }}>{segments}</span>;
+    }
 
     // Match @Name: greedy - capture everything after @ until a newline or double-space
     // We try to find the longest matching display name from contacts/members
@@ -2379,6 +2431,16 @@ export function TextWithMentions({
         // Text before @
         if (atIdx > i) segments.push(applyHighlight(converted.slice(i, atIdx), i));
 
+        const beforeAt = atIdx > 0 ? converted[atIdx - 1] : '';
+        const nextChar = converted[atIdx + 1] || '';
+        // Keep @@, email-like strings, and a bare @ as ordinary text. This
+        // fallback is only for historical rows without native TG entities.
+        if (beforeAt === '@' || /[a-zA-Z0-9_]/.test(beforeAt) || !/[a-zA-Z0-9_]/.test(nextChar)) {
+            segments.push(applyHighlight(converted.slice(atIdx, atIdx + 1), atIdx, false));
+            i = atIdx + 1;
+            continue;
+        }
+
         // Try to match a known display name after @
         let matched = false;
         if (allPeople.length > 0) {
@@ -2395,11 +2457,11 @@ export function TextWithMentions({
                 // Match @displayName OR @username
                 const expectedName = name ? '@' + name : '';
                 const expectedUsername = username ? '@' + username : '';
-                const matchedExpected = (expectedName && converted.startsWith(expectedName, atIdx))
-                  ? expectedName
-                  : (expectedUsername && converted.startsWith(expectedUsername, atIdx))
-                    ? expectedUsername
-                    : '';
+                const matchedExpected = [expectedName, expectedUsername].find((candidate) =>
+                    candidate
+                    && converted.startsWith(candidate, atIdx)
+                    && !/[a-zA-Z0-9_]/.test(converted[atIdx + candidate.length] || '')
+                ) || '';
                 if (matchedExpected) {
                     const uid = person.contact_id || person.userId || '';
                     const mentionText = matchedExpected;
@@ -2421,11 +2483,12 @@ export function TextWithMentions({
             }
         }
         if (!matched) {
-            // No name match - grab @word (stop at whitespace)
-            const restStr = converted.slice(atIdx + 1);
-            const spaceIdx = restStr.search(/[\s,!?;:\n]/);
-            const end = spaceIdx === -1 ? converted.length : atIdx + 1 + spaceIdx;
-            const mentionText = converted.slice(atIdx, end);
+            // No name match - only accept a complete username token. The old
+            // logic consumed every character through whitespace, so @@ and
+            // punctuation-only strings were rendered as clickable mentions.
+            const usernameMatch = converted.slice(atIdx).match(/^@[a-zA-Z0-9_]+/);
+            const mentionText = usernameMatch?.[0] || '@';
+            const end = atIdx + mentionText.length;
             const username = mentionText.slice(1); // strip @
             segments.push(
                 <span key={atIdx} className="font-semibold cursor-pointer hover:underline"

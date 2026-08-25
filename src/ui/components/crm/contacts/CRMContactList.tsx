@@ -11,6 +11,7 @@ import GroupAvatar from '@/components/common/GroupAvatar';
 import PageLoading from '@/components/common/PageLoading';
 import { CalendarIcon, ClockIcon, CloseIcon, CloudIcon, EditIcon, FolderIcon, GhostIcon, GiftIcon, HardDriveIcon, PhoneIcon, StarIcon, TagIcon, UserCheckIcon, UserIcon, UsersIcon } from '@/components/common/icons';
 import { CHANNEL } from '@/lib/channelHelper';
+import type { Channel } from '../../../../configs/channelConfig';
 
 
 
@@ -123,6 +124,7 @@ interface CRMContactListProps {
   sortBy: 'name' | 'last_message';
   sortDir: 'asc' | 'desc';
   activeAccountId: string;
+  channel?: Channel;
   localLabels?: LocalLabelItem[];
   localLabelThreadMap?: Record<string, number[]>;
   onSelectContact: (id: string) => void;
@@ -138,12 +140,13 @@ interface CRMContactListProps {
 }
 
 /** Dropdown to pick labels for filtering - supports Local + Zalo tabs */
-function LabelFilterDropdown({ allLabels, filterLabelIds, filterLocalLabelIds, onChange, localLabels }: {
+function LabelFilterDropdown({ allLabels, filterLabelIds, filterLocalLabelIds, onChange, localLabels, supportsZaloLabels }: {
   allLabels: LabelData[];
   filterLabelIds: number[];
   filterLocalLabelIds: number[];
   onChange: (update: { filterLabelIds?: number[]; filterLocalLabelIds?: number[] }) => void;
   localLabels?: LocalLabelItem[];
+  supportsZaloLabels: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<'local' | 'zalo'>('local');
@@ -153,6 +156,7 @@ function LabelFilterDropdown({ allLabels, filterLabelIds, filterLocalLabelIds, o
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, []);
+  useEffect(() => { if (!supportsZaloLabels) setTab('local'); }, [supportsZaloLabels]);
 
   const toggleLocal = (id: number) => onChange({
     filterLocalLabelIds: filterLocalLabelIds.includes(id)
@@ -183,10 +187,10 @@ function LabelFilterDropdown({ allLabels, filterLabelIds, filterLocalLabelIds, o
                 className={`flex-1 px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
                   tab === 'local' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'
                 }`}><HardDriveIcon className="w-4 h-4 inline" /> Local</button>
-              <button onClick={() => setTab('zalo')}
+              {supportsZaloLabels && <button onClick={() => setTab('zalo')}
                 className={`flex-1 px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
                   tab === CHANNEL.ZALO ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'
-                }`}><CloudIcon className="w-4 h-4 inline" /> Zalo</button>
+                }`}><CloudIcon className="w-4 h-4 inline" /> Zalo</button>}
             </div>
           </div>
           <div className="overflow-y-auto">
@@ -233,9 +237,10 @@ function LabelFilterDropdown({ allLabels, filterLabelIds, filterLocalLabelIds, o
 }
 
 /** Multi-select dropdown for contact type filter */
-function ContactTypeFilterDropdown({ filterContactTypes, onChange }: {
+function ContactTypeFilterDropdown({ filterContactTypes, onChange, supportsFriendState }: {
   filterContactTypes: ContactTypeFilter[];
   onChange: (types: ContactTypeFilter[]) => void;
+  supportsFriendState: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -251,13 +256,16 @@ function ContactTypeFilterDropdown({ filterContactTypes, onChange }: {
       : [...filterContactTypes, type]);
   };
 
-  const OPTIONS: { key: ContactTypeFilter; label: string; icon: React.ReactNode }[] = [
+  const allOptions: { key: ContactTypeFilter; label: string; icon: React.ReactNode }[] = [
     { key: 'friend', label: 'Bạn bè', icon: <UserCheckIcon className="w-4 h-4" /> },
     { key: 'non_friend', label: 'Chưa là bạn bè', icon: <GhostIcon className="w-4 h-4" /> },
     { key: 'group', label: 'Nhóm', icon: <UsersIcon className="w-4 h-4" /> },
     { key: 'has_phone', label: 'Có SĐT', icon: <PhoneIcon className="w-4 h-4" /> },
     { key: 'has_notes', label: 'Có ghi chú', icon: <EditIcon className="w-4 h-4" /> },
   ];
+  const OPTIONS = supportsFriendState
+    ? allOptions
+    : allOptions.filter(option => option.key !== 'friend' && option.key !== 'non_friend');
 
   const activeCount = filterContactTypes.length;
   const label = activeCount === 0
@@ -524,7 +532,7 @@ function ActionsDropdown({ total, exportingCSV, onExportCSV, onImportPhones }: {
 export default function CRMContactList({
   contacts, total, page, pageSize, loading, selectedIds, activeContactId,
   allLabels, filterLabelIds, filterLocalLabelIds, filterContactTypes, filterGender, filterBirthday, searchText, sortBy, sortDir,
-  activeAccountId, localLabels, localLabelThreadMap,
+  activeAccountId, channel = CHANNEL.ZALO, localLabels, localLabelThreadMap,
   onSelectContact, onActivateContact, onSelectAll, onClearAll,
   onExportAll,
   onFilterChange, onPageChange, onPageSizeChange, onMessage, onImportPhones,
@@ -603,6 +611,7 @@ export default function CRMContactList({
   };
 
   const allSelected = contacts.length > 0 && contacts.every(c => selectedIds.has(c.contact_id));
+  const isZalo = channel === CHANNEL.ZALO;
 
   // contacts mapped to the shape UserProfilePopup expects
   const contactsForPopup = contacts.map(c => ({
@@ -625,25 +634,27 @@ export default function CRMContactList({
           filterLocalLabelIds={filterLocalLabelIds}
           onChange={update => onFilterChange({ ...update, page: 0 })}
           localLabels={localLabels}
+          supportsZaloLabels={isZalo}
         />
 
         {/* Contact type multi-select filter */}
         <ContactTypeFilterDropdown
           filterContactTypes={filterContactTypes}
           onChange={types => onFilterChange({ filterContactTypes: types, page: 0 })}
+          supportsFriendState={isZalo}
         />
 
         {/* Gender filter */}
-        <GenderFilterDropdown
+        {isZalo && <GenderFilterDropdown
           value={filterGender}
           onChange={v => onFilterChange({ filterGender: v, page: 0 })}
-        />
+        />}
 
         {/* Birthday filter */}
-        <BirthdayFilterDropdown
+        {isZalo && <BirthdayFilterDropdown
           value={filterBirthday}
           onChange={v => onFilterChange({ filterBirthday: v, page: 0 })}
-        />
+        />}
 
         {/* Sort dropdown (styled) */}
         <SortDropdown sortBy={sortBy} sortDir={sortDir} onChange={(sb, sd) => onFilterChange({ sortBy: sb, sortDir: sd, page: 0 })} />

@@ -52,11 +52,13 @@ const INITIAL_DIALOG_LIMIT = 300;
 const RECENT_DIALOG_LIMIT = 200;
 const INITIAL_MESSAGES_PER_DIALOG = 100;
 const RECOVERY_MESSAGES_PER_DIALOG = 1000;
+const MAX_MANUAL_MESSAGE_DOWNLOAD = 5000;
 
 /** Map accountId → ActiveListener */
 const activeListeners = new Map<string, ActiveListener>();
 const intentionallyDisconnectedClients = new WeakSet<TelegramClient>();
 const reconnectCatchUps = new Map<string, Promise<void>>();
+const manualRefreshTasks = new Map<string, Promise<void>>();
 const syncingAccounts = new Set<string>();
 const recoveringUpdateAccounts = new Set<string>();
 const rawUpdateHandlers = new Map<string, (update: any) => Promise<void>>();
@@ -80,6 +82,13 @@ type ProcessResult = {
   messageId?: string;
 };
 
+// Telegram receives a lot of expected duplicate/difference events. Keep the
+// production terminal useful; detailed ingress traces are opt-in for diagnosis.
+const TELEGRAM_VERBOSE_LOGGING = process.env.TELEGRAM_VERBOSE_LOGGING === '1';
+function tgDebugLog(line: string): void {
+  if (TELEGRAM_VERBOSE_LOGGING) Logger.log(line);
+}
+
 /** Structured diagnostic logger for Telegram ingress pipeline.
  *  Safe fields only — never logs session strings, access hashes, or message content. */
 function tgLog(level: 'info' | 'warn' | 'error', accountId: string, source: TelegramIngressSource, msg: string, extra?: Record<string, unknown>): void {
@@ -93,7 +102,7 @@ function tgLog(level: 'info' | 'warn' | 'error', accountId: string, source: Tele
   const line = `${prefix} ${msg} | ${fields.join(' ')}`;
   if (level === 'error') Logger.error(line);
   else if (level === 'warn') Logger.warn(line);
-  else Logger.log(line);
+  else tgDebugLog(line);
 }
 
 /** Short-lived login state is separate from persistent account listeners. */
@@ -515,6 +524,31 @@ function getTelegramCustomEmojiAttachments(message: any): Record<string, any>[] 
     .filter((entity: any) => entity.document_id && entity.length > 0);
 }
 
+/** Keep native mention ranges so the renderer never has to guess from a raw @. */
+function getTelegramMentionAttachments(message: any): Record<string, any>[] {
+  return (message?.entities || [])
+    .filter((entity: any) =>
+      entity?.className === 'MessageEntityMentionName'
+      || entity?.className === 'MessageEntityMention'
+    )
+    .map((entity: any) => {
+      let rawUserId = entity?.userId?.userId ?? entity?.userId ?? '';
+      if (rawUserId && typeof rawUserId === 'object' && typeof rawUserId.valueOf === 'function') {
+        rawUserId = rawUserId.valueOf();
+      }
+      const userId = ['string', 'number', 'bigint'].includes(typeof rawUserId)
+        ? String(rawUserId)
+        : '';
+      return {
+        type: 'telegram_mention',
+        offset: Math.max(0, Number(entity?.offset || 0)),
+        length: Math.max(0, Number(entity?.length || 0)),
+        user_id: userId,
+      };
+    })
+    .filter((entity: any) => entity.length > 0);
+}
+
 /** Normalize Telegram media once for socket, difference and API-history paths.
  * GramJS exposes stickers/voice/GIF/video-note as documents too, so the
  * specialized getters must be checked before the generic document branch. */
@@ -529,6 +563,7 @@ function normalizeTelegramMessageMedia(message: any, peerType?: TelegramPeerType
   const groupedMediaAttachment = getTelegramGroupedMediaAttachment(message);
   if (groupedMediaAttachment) attachments.push(groupedMediaAttachment);
   attachments.push(...getTelegramCustomEmojiAttachments(message));
+  attachments.push(...getTelegramMentionAttachments(message));
 
   let content = String(message?.message || message?.text || '');
   const sticker = getTelegramStickerAttachment(message);
@@ -788,7 +823,7 @@ function persistTelegramMessage(
 ): ProcessResult {
   if (!msg.msgId || !msg.chatId) return { status: 'ignored' };
 
-  Logger.log(`[TG:persist] msgId=${msg.msgId} msgType=${msg.msgType} isSelf=${msg.isSelf} attachments=${(msg.attachments || []).length}`);
+  tgDebugLog(`[TG:persist] msgId=${msg.msgId} msgType=${msg.msgType} isSelf=${msg.isSelf} attachments=${(msg.attachments || []).length}`);
 
   // Check if already exists
   const existing = db.queryOne<any>(
@@ -796,7 +831,7 @@ function persistTelegramMessage(
     [msg.msgId, msg.accountId, msg.chatId],
   );
   if (existing) {
-    Logger.log(`[TG:persist] DUPLICATE msgId=${msg.msgId} existing_attachments=${existing.attachments?.length || 0} new_attachments=${msg.attachments?.length || 0}`);
+    tgDebugLog(`[TG:persist] DUPLICATE msgId=${msg.msgId} existing_attachments=${existing.attachments?.length || 0} new_attachments=${msg.attachments?.length || 0}`);
     // A replay may carry richer post/sticker/custom-emoji metadata than an
     // earlier history row. Merge it without repeating unread/UI side effects.
     let currentAttachments: any[] = [];
@@ -832,7 +867,7 @@ function persistTelegramMessage(
     const hadAttachments = currentAttachments.length > 0;
     const newAttachments = (msg.attachments || []).length > 0;
     const mergeStatus = hadAttachments && newAttachments ? 'updated' : 'duplicate';
-    Logger.log(`[TG:persist] MERGE_RESULT msgId=${msg.msgId} status=${mergeStatus} merged_count=${merged.length}`);
+    tgDebugLog(`[TG:persist] MERGE_RESULT msgId=${msg.msgId} status=${mergeStatus} merged_count=${merged.length}`);
     return { status: mergeStatus, chatId: msg.chatId, messageId: msg.msgId };
   }
 
@@ -1123,10 +1158,16 @@ const MAX_ACTIVE_CHANNELS_PER_ACCOUNT = 10;
 
 /** Per-account channel poll serialization. Key: accountId */
 const channelPollQueues = new Map<string, Promise<void>>();
-const channelDifferenceQueues = new Map<string, Promise<boolean>>();
+type ChannelDifferenceResult = 'complete' | 'retry' | 'unavailable';
+
+const channelDifferenceQueues = new Map<string, Promise<ChannelDifferenceResult>>();
 /** Channels explicitly marked by a live PTS gap/server hint or a failed
  * reconnect recovery. This replaces the old arbitrary first-10 DB scan. */
-const pendingChannelRecoveries = new Map<string, Set<string>>();
+// The value is the earliest PTS supplied by UpdateChannelTooLong. Telegram
+// provides it specifically for a channel whose durable cursor is unavailable;
+// keeping it is essential — querying GetFullChannel first would jump to the
+// current cursor and silently discard the offline interval.
+const pendingChannelRecoveries = new Map<string, Map<string, number>>();
 const activeChannelLeases = new Map<string, Map<string, number>>();
 
 function touchActiveChannel(accountId: string, channelId: string): void {
@@ -1147,14 +1188,27 @@ function touchActiveChannel(accountId: string, channelId: string): void {
   }
 }
 
-function markChannelRecoveryPending(accountId: string, channelId: string): void {
-  const pending = pendingChannelRecoveries.get(accountId) || new Set<string>();
-  pending.add(channelId);
+function markChannelRecoveryPending(accountId: string, channelId: string, suggestedPts = 0): void {
+  const pending = pendingChannelRecoveries.get(accountId) || new Map<string, number>();
+  const existingPts = pending.get(channelId) || 0;
+  // When several hints arrive while offline, start from the earliest known
+  // cursor. A later PTS can only skip a larger part of the missed interval.
+  const nextPts = suggestedPts > 0 && existingPts > 0
+    ? Math.min(existingPts, suggestedPts)
+    : (suggestedPts || existingPts);
+  pending.set(channelId, nextPts);
   pendingChannelRecoveries.set(accountId, pending);
 }
 
-function requestChannelRecovery(listener: ActiveListener, channelId: string, reason: string): void {
-  markChannelRecoveryPending(listener.account.accountId, channelId);
+function clearChannelRecoveryPending(accountId: string, channelId: string): void {
+  const pending = pendingChannelRecoveries.get(accountId);
+  if (!pending) return;
+  pending.delete(channelId);
+  if (pending.size === 0) pendingChannelRecoveries.delete(accountId);
+}
+
+function requestChannelRecovery(listener: ActiveListener, channelId: string, reason: string, suggestedPts = 0): void {
+  markChannelRecoveryPending(listener.account.accountId, channelId, suggestedPts);
   // tgLog('warn', listener.account.accountId, 'channel_difference', `Recovery requested for ${channelId}`, { reason });
   if (recoveringUpdateAccounts.has(listener.account.accountId)) return;
   pollChannelUpdates(listener).catch((err: any) => {
@@ -1213,7 +1267,7 @@ async function pollChannelUpdatesNow(listener: ActiveListener): Promise<void> {
       }
     }
     const channelIds = [...new Set([
-      ...(pendingChannelRecoveries.get(accountId) || []),
+      ...(pendingChannelRecoveries.get(accountId)?.keys() || []),
       ...(leases?.keys() || []),
     ])];
     if (channelIds.length === 0) return;
@@ -1223,12 +1277,27 @@ async function pollChannelUpdatesNow(listener: ActiveListener): Promise<void> {
       const peer = db.getTelegramPeer(accountId, channelId);
       const accessHash = peer?.access_hash;
       if (!accessHash) continue;
-      const pts = db.getTelegramChannelPts(accountId, channelId);
-      if (pts <= 0) continue;
+      const pts = db.getTelegramChannelPts(accountId, channelId)
+        || pendingChannelRecoveries.get(accountId)?.get(channelId)
+        || 0;
+      if (pts <= 0) {
+        // Older installations may have message rows but no per-channel PTS.
+        // A bare UpdateChannelTooLong has no safe PTS seed, so use a bounded
+        // history replay instead of writing ChannelFull.pts and losing it.
+        if (pendingChannelRecoveries.get(accountId)?.has(channelId)) {
+          const history = await backfillUnseededChannelHistory(accountId, client, channelId, peer.access_hash);
+          if (!history.failed && history.complete) clearChannelRecoveryPending(accountId, channelId);
+        }
+        continue;
+      }
 
       try {
         const recovered = await drainChannelDifference(accountId, client, channelId, accessHash, pts, 'channel_difference');
-        if (recovered) pendingChannelRecoveries.get(accountId)?.delete(channelId);
+        if (recovered === 'complete' || recovered === 'unavailable') {
+          clearChannelRecoveryPending(accountId, channelId);
+        } else {
+          markChannelRecoveryPending(accountId, channelId, pts);
+        }
       } catch (err: any) {
         if (err.message?.includes('FLOOD_WAIT')) {
           const waitMatch = err.message.match(/(\d+)/);
@@ -1256,7 +1325,7 @@ async function drainChannelDifference(
   accessHash: string,
   startingPts: number,
   source: TelegramIngressSource,
-): Promise<boolean> {
+): Promise<ChannelDifferenceResult> {
   const queueKey = `${accountId}:${channelId}`;
   const existing = channelDifferenceQueues.get(queueKey);
   if (existing) return existing;
@@ -1269,6 +1338,92 @@ async function drainChannelDifference(
   }
 }
 
+/**
+ * `channelDifferenceTooLong` means the PTS interval can no longer be obtained
+ * as normal updates. Before accepting its newest snapshot, replay the bounded
+ * message-ID range after our durable checkpoint. Otherwise committing
+ * dialog.pts would turn every older missed message into a permanent gap.
+ */
+async function backfillChannelTooLongHistory(
+  accountId: string,
+  client: TelegramClient,
+  inputChannel: any,
+  channelId: string,
+  entities: Map<any, any>,
+  includeInitialSnapshot = false,
+): Promise<{ complete: boolean; failed: boolean }> {
+  const db = DatabaseService.getInstance();
+  if (!db) return { complete: false, failed: true };
+
+  const checkpoint = db.queryOne<{ lastMessageId?: number }>(
+    `SELECT MAX(CAST(msg_id AS INTEGER)) AS lastMessageId
+     FROM messages
+     WHERE owner_zalo_id = ? AND thread_id = ? AND channel = 'telegram_user'`,
+    [accountId, channelId],
+  );
+  const minId = Number(checkpoint?.lastMessageId || 0);
+  try {
+    const messages: any[] = [];
+    if (minId <= 0) {
+      // The only safe option without a checkpoint is a bounded first load.
+      // `channelDifferenceTooLong` already supplies such a snapshot, whereas
+      // a bare UpdateChannelTooLong needs us to request one explicitly.
+      if (!includeInitialSnapshot) return { complete: true, failed: false };
+      messages.push(...await client.getMessages(inputChannel, { limit: INITIAL_MESSAGES_PER_DIALOG }));
+      messages.sort((a: any, b: any) => Number(a?.id || 0) - Number(b?.id || 0));
+    } else {
+      for await (const message of client.iterMessages(inputChannel, {
+        minId,
+        limit: RECOVERY_MESSAGES_PER_DIALOG,
+        // Advance the durable checkpoint in order; if capped, the next pass
+        // continues from the oldest unprocessed message rather than skipping it.
+        reverse: true,
+      })) {
+        messages.push(message);
+      }
+    }
+    if (messages.length > 0) {
+      await processDifferenceMessages(accountId, client, messages, entities, 'history');
+    }
+    return {
+      complete: minId <= 0 || messages.length < RECOVERY_MESSAGES_PER_DIALOG,
+      failed: false,
+    };
+  } catch (err: any) {
+    tgLog('warn', accountId, 'channel_difference', `TooLong history backfill failed for ${channelId}: ${err.message}`);
+    return { complete: false, failed: true };
+  }
+}
+
+async function backfillUnseededChannelHistory(
+  accountId: string,
+  client: TelegramClient,
+  channelId: string,
+  accessHash: string,
+): Promise<{ complete: boolean; failed: boolean }> {
+  const { Api } = require('telegram');
+  const inputChannel = new Api.InputChannel({
+    channelId: BigInt(String(channelId).replace(/^-100/, '')),
+    accessHash: BigInt(accessHash),
+  });
+  const entities = new Map<any, any>();
+  try {
+    const entity = await resolvePeerEntity(accountId, client, channelId);
+    if (entity) {
+      entities.set(getPeerId(entity), entity);
+      cacheTelegramPeer(accountId, channelId, entity);
+    }
+  } catch {}
+  return backfillChannelTooLongHistory(
+    accountId,
+    client,
+    inputChannel,
+    channelId,
+    entities,
+    true,
+  );
+}
+
 async function drainChannelDifferenceNow(
   accountId: string,
   client: TelegramClient,
@@ -1276,10 +1431,10 @@ async function drainChannelDifferenceNow(
   accessHash: string,
   startingPts: number,
   source: TelegramIngressSource,
-): Promise<boolean> {
+): Promise<ChannelDifferenceResult> {
   const { Api } = require('telegram');
   const db = DatabaseService.getInstance();
-  if (!db) return false;
+  if (!db) return 'retry';
 
   const numericId = String(channelId).replace(/^-100/, '');
   const inputChannel = new Api.InputChannel({
@@ -1301,11 +1456,13 @@ async function drainChannelDifferenceNow(
         force: false,
       }));
     } catch (err: any) {
-      // CHANNEL_PRIVATE = không phải member → bỏ qua, chỉ log lỗi khác
-      if (!err.message?.includes('CHANNEL_PRIVATE')) {
+      // These errors are terminal for this peer. Keeping them in the pending
+      // queue makes reconnect/poll spam forever after the user leaves a group.
+      const unavailable = /CHANNEL_(?:PRIVATE|INVALID)|USER_BANNED_IN_CHANNEL/.test(err.message || '');
+      if (!unavailable) {
         tgLog('warn', accountId, source, `getChannelDifference failed for ${channelId}: ${err.message}`);
       }
-      return false; // Don't commit PTS on failure
+      return unavailable ? 'unavailable' : 'retry'; // Don't commit PTS on failure
     }
 
     // ── ChannelDifferenceEmpty: no new updates ────────────────────────
@@ -1316,14 +1473,28 @@ async function drainChannelDifferenceNow(
         db.saveTelegramChannelPts(accountId, channelId, emptyPts);
       }
       // tgLog('info', accountId, source, `ChannelDifferenceEmpty for ${channelId}`, { pts: emptyPts });
-      return true;
+      return 'complete';
     }
 
     // ── ChannelDifferenceTooLong: snapshot, use dialog.pts ────────────
     if (diff instanceof Api.updates.ChannelDifferenceTooLong) {
       tgLog('warn', accountId, source, `ChannelDifferenceTooLong for ${channelId}`);
-      // P0.3 fix: Process snapshot messages before committing cursor
       const entities = cacheDifferenceEntities(accountId, diff.users || [], diff.chats || []);
+      // Telegram cannot return the old PTS interval here. Fill it by message
+      // ID first; do not process/commit the newest snapshot until that bounded
+      // range is complete, or its high IDs would hide the remaining gap.
+      const history = await backfillChannelTooLongHistory(
+        accountId,
+        client,
+        inputChannel,
+        channelId,
+        entities,
+      );
+      if (history.failed || !history.complete) {
+        return 'retry';
+      }
+
+      // Process the server's latest snapshot before committing its cursor.
       const messages = diff.messages || [];
       let failedCount = 0;
       for (const msg of messages) {
@@ -1345,7 +1516,7 @@ async function drainChannelDifferenceNow(
       } else if (failedCount > 0) {
         tgLog('warn', accountId, source, `TooLong: ${failedCount} msgs failed, NOT committing PTS for ${channelId}`);
       }
-      return failedCount === 0 && dialogPts > 0;
+      return failedCount === 0 && dialogPts > 0 ? 'complete' : 'retry';
     }
 
     // ── ChannelDifference: normal incremental update ──────────────────
@@ -1391,10 +1562,10 @@ async function drainChannelDifferenceNow(
         // });
       } else if (failedCount > 0) {
         // tgLog('warn', accountId, source, `ChannelDifference: ${failedCount} failed, NOT committing PTS for ${channelId}`);
-        return false; // Don't continue draining on failure
+        return 'retry'; // Don't continue draining on failure
       } else {
         // tgLog('warn', accountId, source, `ChannelDifference returned invalid PTS for ${channelId}`);
-        return false;
+        return 'retry';
       }
 
       // If final=false, drain more slices immediately
@@ -1404,16 +1575,16 @@ async function drainChannelDifferenceNow(
       }
 
       // final=true — done
-      return true;
+      return 'complete';
     }
 
     // Unknown difference type
     tgLog('warn', accountId, source, `Unknown diff type for ${channelId}: ${diff?.className}`);
-    return false;
+    return 'retry';
   }
 
   tgLog('warn', accountId, source, `Drain slice limit reached for ${channelId}`);
-  return false;
+  return 'retry';
 }
 
 async function connectListener(listener: ActiveListener): Promise<void> {
@@ -1552,7 +1723,12 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
     client.addEventHandler(async (update: any) => {
       if (update instanceof Api.UpdateChannelTooLong) {
         if (update.channelId != null) {
-          requestChannelRecovery(listener, `-100${String(update.channelId)}`, 'UpdateChannelTooLong');
+          requestChannelRecovery(
+            listener,
+            `-100${String(update.channelId)}`,
+            'UpdateChannelTooLong',
+            Number((update as any).pts || 0),
+          );
         }
         return;
       }
@@ -1569,6 +1745,26 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
       const previousPts = db.getTelegramChannelPts(account.accountId, chatId);
       const nextPts = Number(update.pts || 0);
       const ptsCount = Math.max(1, Number(update.ptsCount || 1));
+      const hasDurableMessageWithoutCursor = previousPts <= 0 && !!db.queryOne(
+        `SELECT 1 FROM messages
+         WHERE owner_zalo_id = ? AND thread_id = ? AND channel = 'telegram_user'
+         LIMIT 1`,
+        [account.accountId, chatId],
+      );
+      const hasPtsGap = previousPts > 0 && previousPts + ptsCount < nextPts;
+      // Detect recovery before persisting this high-ID message. In particular,
+      // if Telegram later answers ChannelDifferenceTooLong, a persisted newest
+      // message would make history recovery start after the missing interval.
+      if (hasDurableMessageWithoutCursor || hasPtsGap) {
+        requestChannelRecovery(
+          listener,
+          chatId,
+          hasPtsGap
+            ? `pts_gap:${previousPts}->${nextPts}/${ptsCount}`
+            : 'missing_channel_pts_with_history',
+        );
+        return;
+      }
       const entities = (message as any)._entities instanceof Map
         ? (message as any)._entities
         : new Map<any, any>();
@@ -1577,10 +1773,6 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
 
       if (result.status === 'failed') {
         throw new Error(`Live channel message ${String(message.id)} failed persistence`);
-      }
-      if (previousPts > 0 && previousPts + ptsCount < nextPts) {
-        requestChannelRecovery(listener, chatId, `pts_gap:${previousPts}->${nextPts}/${ptsCount}`);
-        return;
       }
       if (nextPts > previousPts) {
         db.saveTelegramChannelPts(account.accountId, chatId, nextPts);
@@ -1622,7 +1814,12 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
 
         if (update instanceof Api.UpdateChannelTooLong) {
           if (update.channelId != null) {
-            requestChannelRecovery(listener, `-100${String(update.channelId)}`, 'difference_UpdateChannelTooLong');
+            requestChannelRecovery(
+              listener,
+              `-100${String(update.channelId)}`,
+              'difference_UpdateChannelTooLong',
+              Number((update as any).pts || 0),
+            );
           }
           return;
         }
@@ -2288,7 +2485,8 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
       }
     }
     if (!isMember) {
-      tgLog('info', accountId, source, `Skip msg from unjoined chat ${chatId}`, { msgId: messageId });
+      // Expected for channels/groups the account no longer belongs to. Do not
+      // emit one terminal line per incoming message from that peer.
       return { status: 'ignored', chatId, messageId };
     }
   }
@@ -2470,7 +2668,7 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
 
     // Download media (background, non-blocking)
     const hasMedia = !!(message as any).media;
-    Logger.log(`[TG:handleNew] STEP6 msgId=${messageId} hasMedia=${hasMedia} isSelf=${isSelf} source=${source} msgType=${msgType} result=${result.status}`);
+    tgDebugLog(`[TG:handleNew] STEP6 msgId=${messageId} hasMedia=${hasMedia} isSelf=${isSelf} source=${source} msgType=${msgType} result=${result.status}`);
     if (hasMedia && client) {
       downloadMediaForMessage(accountId, client, message, messageId, msgType, chatId).catch(err => {
         Logger.error(`[TG:download] QUEUE_FAILED msgId=${messageId} error=${err.message}`);
@@ -2622,7 +2820,7 @@ async function downloadMediaForMessageNow(
   msgType: string,
   threadId: string,
 ): Promise<string | null> {
-  Logger.log(`[TG:download] START msgId=${messageId} msgType=${msgType} threadId=${threadId}`);
+  tgDebugLog(`[TG:download] START msgId=${messageId} msgType=${msgType} threadId=${threadId}`);
   const db = DatabaseService.getInstance();
   if (!db) return null;
 
@@ -2681,7 +2879,7 @@ async function downloadMediaForMessageNow(
       localPaths,
     });
 
-    Logger.log(`[TG:download] DONE msgId=${messageId} msgType=${msgType} localPath=${localPath} localPaths=${JSON.stringify(localPaths)}`);
+    tgDebugLog(`[TG:download] DONE msgId=${messageId} msgType=${msgType} localPath=${localPath} localPaths=${JSON.stringify(localPaths)}`);
     return localPath;
   } catch (err: any) {
     Logger.error(`[TG:download] FAILED msgId=${messageId} error=${err.message}`);
@@ -3233,6 +3431,61 @@ export async function refreshAccountMessages(accountId: string): Promise<{
 }
 
 /**
+ * Start a user-requested full Telegram catch-up without holding an IPC invoke
+ * open for every dialog/history request. The renderer receives an immediate
+ * acknowledgement, while completion is reported through event:telegramSync.
+ */
+export function startAccountMessageRefresh(accountId: string): {
+  success: boolean;
+  started?: boolean;
+  pending?: boolean;
+  error?: string;
+} {
+  const listener = activeListeners.get(accountId);
+  if (!listener?.client || !listener.connected || !listener.client.connected || listener.stopped) {
+    return { success: false, error: 'Tài khoản Telegram chưa kết nối' };
+  }
+  if (manualRefreshTasks.has(accountId)) {
+    return { success: true, started: false, pending: true };
+  }
+
+  const client = listener.client;
+  const task = (async () => {
+    EventBroadcaster.emit('event:telegramSync', { zaloId: accountId, status: 'started' });
+    // A reconnect catch-up may already be active. Waiting here is safe because
+    // this is a background task; the topbar must never time out while it waits.
+    const idle = await waitForTelegramAccountSync(accountId, 5 * 60_000);
+    if (!idle) {
+      EventBroadcaster.emit('event:telegramSync', {
+        zaloId: accountId,
+        status: 'failed',
+        error: 'Telegram đang bận đồng bộ quá lâu. Vui lòng thử lại sau.',
+      });
+      return;
+    }
+    if (listener.client !== client || listener.stopped || !client.connected) {
+      EventBroadcaster.emit('event:telegramSync', {
+        zaloId: accountId,
+        status: 'failed',
+        error: 'Kết nối Telegram đã bị ngắt trong lúc đồng bộ.',
+      });
+      return;
+    }
+
+    const result = await refreshAccountMessages(accountId);
+    EventBroadcaster.emit('event:telegramSync', result.success
+      ? { zaloId: accountId, status: 'completed', inserted: result.inserted || 0, pending: !!result.pending }
+      : { zaloId: accountId, status: 'failed', error: result.error || 'Không thể đồng bộ tin nhắn Telegram' },
+    );
+  })();
+  manualRefreshTasks.set(accountId, task);
+  task.finally(() => {
+    if (manualRefreshTasks.get(accountId) === task) manualRefreshTasks.delete(accountId);
+  }).catch(() => {});
+  return { success: true, started: true, pending: true };
+}
+
+/**
  * Phase D: Recover updates for channels/supergroups using per-channel PTS.
  * Uses drainChannelDifference for proper state machine handling.
  * Each channel has its own PTS independent of the global PTS.
@@ -3240,47 +3493,51 @@ export async function refreshAccountMessages(accountId: string): Promise<{
 async function recoverChannelUpdates(accountId: string, client: TelegramClient): Promise<void> {
   const db = DatabaseService.getInstance();
   if (!db) return;
-  const { Api } = require('telegram');
 
   try {
-    const channels = db.query<any>(
-      `SELECT peer_id, access_hash FROM telegram_peers WHERE owner_zalo_id = ? AND peer_type IN ('channel', 'supergroup', 'forum')`,
-      [accountId]
-    );
+    // Channel PTS is independent from the global update state. Only recover a
+    // channel Telegram explicitly marked as needing a difference, plus a small
+    // set the user is actively viewing. Scanning every cached peer causes
+    // CHANNEL_PRIVATE retry loops and is not Telegram's update protocol.
+    const now = Date.now();
+    const leases = activeChannelLeases.get(accountId);
+    if (leases) {
+      for (const [channelId, expiresAt] of leases) {
+        if (expiresAt <= now) leases.delete(channelId);
+      }
+    }
+    const channelIds = [...new Set([
+      ...(pendingChannelRecoveries.get(accountId)?.keys() || []),
+      ...(leases?.keys() || []),
+    ])];
 
-    if (channels.length === 0) return;
-    // tgLog('info', accountId, 'channel_difference', `Recovering ${channels.length} channels`);
-
-    for (const ch of channels) {
-      if (!ch.access_hash) continue;
-      const channelId = ch.peer_id;
-
-      // Initialize PTS from channel info if not stored yet
-      let currentPts = db.getTelegramChannelPts(accountId, channelId);
-      if (currentPts === 0) {
-        try {
-          const numericId = String(channelId).replace(/^-100/, '');
-          const inputChannel = new Api.InputChannel({
-            channelId: BigInt(numericId),
-            accessHash: BigInt(ch.access_hash),
-          });
-          const full = await client.invoke(new Api.channels.GetFullChannel({ channel: inputChannel }));
-          const channelPts = Number((full?.fullChat as any)?.pts || 0);
-          if (channelPts > 0) {
-            db.saveTelegramChannelPts(accountId, channelId, channelPts);
-            currentPts = channelPts;
-          }
-        } catch {}
-        if (currentPts === 0) continue;
+    for (const channelId of channelIds) {
+      const peer = db.getTelegramPeer(accountId, channelId);
+      if (!peer?.access_hash) continue;
+      const currentPts = db.getTelegramChannelPts(accountId, channelId)
+        || pendingChannelRecoveries.get(accountId)?.get(channelId)
+        || 0;
+      // No durable cursor and no PTS from UpdateChannelTooLong: GetFullChannel
+      // is deliberately not used as a seed because it represents *now*, not
+      // the point before the offline gap. Use the bounded message-history
+      // fallback below until Telegram gives us a channel cursor.
+      if (currentPts <= 0) {
+        if (pendingChannelRecoveries.get(accountId)?.has(channelId)) {
+          const history = await backfillUnseededChannelHistory(accountId, client, channelId, peer.access_hash);
+          if (!history.failed && history.complete) clearChannelRecoveryPending(accountId, channelId);
+        }
+        continue;
       }
 
-      // Use the shared drain function for proper state machine handling
       try {
-        const recovered = await drainChannelDifference(accountId, client, channelId, ch.access_hash, currentPts, 'channel_difference');
-        if (recovered) pendingChannelRecoveries.get(accountId)?.delete(channelId);
-        else markChannelRecoveryPending(accountId, channelId);
+        const recovered = await drainChannelDifference(accountId, client, channelId, peer.access_hash, currentPts, 'channel_difference');
+        if (recovered === 'complete' || recovered === 'unavailable') {
+          clearChannelRecoveryPending(accountId, channelId);
+        } else {
+          markChannelRecoveryPending(accountId, channelId, currentPts);
+        }
       } catch (err: any) {
-        markChannelRecoveryPending(accountId, channelId);
+        markChannelRecoveryPending(accountId, channelId, currentPts);
         // tgLog('warn', accountId, 'channel_difference', `Recovery failed for ${channelId}: ${err.message}`);
       }
     }
@@ -4166,17 +4423,40 @@ export async function syncPinnedMessages(
   try {
     const { Api } = await import('telegram');
     const peer = await resolveInputPeer(accountId, listener.client, chatId);
-    const result: any = await listener.client.invoke(new Api.messages.Search({
-      peer, q: '', filter: new Api.InputMessagesFilterPinned(), minDate: 0, maxDate: 0,
-      offsetId: 0, addOffset: 0, limit: 100, maxId: 0, minId: 0, hash: BigInt(0) as any,
-    }));
     const db = DatabaseService.getInstance();
     const entities = new Map<string, any>();
-    for (const entity of [...(result?.users || []), ...(result?.chats || [])]) {
-      const entityId = getCanonicalChatId(entity);
-      if (!entityId) continue;
-      entities.set(entityId, entity);
-      cacheTelegramPeer(accountId, entityId, entity);
+    const pinnedMessages: any[] = [];
+    const seenMessageIds = new Set<string>();
+    let offsetId = 0;
+
+    // messages.search pages at 100 messages, but Telegram supports multiple
+    // pinned messages and does not impose Zalo's three-message rule. Retrieve
+    // every page so the local snapshot never truncates pins after the first 100.
+    while (true) {
+      const result: any = await listener.client.invoke(new Api.messages.Search({
+        peer, q: '', filter: new Api.InputMessagesFilterPinned(), minDate: 0, maxDate: 0,
+        offsetId, addOffset: 0, limit: 100, maxId: 0, minId: 0, hash: BigInt(0) as any,
+      }));
+      for (const entity of [...(result?.users || []), ...(result?.chats || [])]) {
+        const entityId = getCanonicalChatId(entity);
+        if (!entityId) continue;
+        entities.set(entityId, entity);
+        cacheTelegramPeer(accountId, entityId, entity);
+      }
+
+      const page = (result?.messages || []).filter((item: any) => item?.className === 'Message');
+      if (page.length === 0) break;
+      for (const message of page) {
+        const messageId = String(message.id || '');
+        if (messageId && !seenMessageIds.has(messageId)) {
+          seenMessageIds.add(messageId);
+          pinnedMessages.push(message);
+        }
+      }
+      if (page.length < 100) break;
+      const nextOffsetId = Number(page[page.length - 1]?.id || 0);
+      if (!nextOffsetId || nextOffsetId === offsetId) break;
+      offsetId = nextOffsetId;
     }
     const peerType = db?.getTelegramPeer(accountId, chatId)?.peer_type as TelegramPeerType | undefined;
     const chatEntity = entities.get(chatId);
@@ -4188,7 +4468,7 @@ export async function syncPinnedMessages(
       )?.display_name
       || 'Kênh/Nhóm Telegram';
     const pins: any[] = [];
-    for (const message of (result?.messages || []).filter((item: any) => item?.className === 'Message')) {
+    for (const message of pinnedMessages) {
         const normalized = normalizeTelegramMessageMedia(message, peerType);
         const senderId = getCanonicalChatId(message.fromId)
           || String(message.senderId?.valueOf?.() || '');
@@ -4385,13 +4665,23 @@ export async function getMessages(
 
   try {
     const peer = await resolveInputPeer(accountId, listener.client, chatId);
-    const limit = Math.min(opts?.limit || 50, 100);
+    // getMessages() is a single-page convenience call (100 items here before).
+    // The header accepts up to 5,000, so use GramJS's paginator to honor the
+    // requested amount rather than silently reporting a partial download.
+    const requestedLimit = Number(opts?.limit);
+    const limit = Math.min(
+      Math.max(Number.isFinite(requestedLimit) ? Math.floor(requestedLimit) : 50, 1),
+      MAX_MANUAL_MESSAGE_DOWNLOAD,
+    );
     const fetchOpts: any = { limit };
     if (opts?.offsetId) fetchOpts.offsetId = opts.offsetId;
     // For forum topics, use replyToMsgId filter
     if (opts?.topicRootMessageId) fetchOpts.replyTo = Number(opts.topicRootMessageId);
 
-    const rawMessages = await listener.client.getMessages(peer, fetchOpts);
+    const rawMessages: any[] = [];
+    for await (const message of listener.client.iterMessages(peer, fetchOpts)) {
+      rawMessages.push(message);
+    }
     const db = DatabaseService.getInstance();
     const messages: any[] = [];
     let scheduledMediaDownloads = 0;
@@ -6720,12 +7010,9 @@ export async function isForum(accountId: string, chatId: string, forceApi = fals
         5000
       );
       isForumResult = isForumResult || !!((full?.fullChat as any)?.forum);
-      // Save channel pts for getChannelDifference recovery
-      const channelPts = (full?.fullChat as any)?.pts;
-      if (channelPts) {
-        const dbInst = DatabaseService.getInstance();
-        if (dbInst) dbInst.saveTelegramChannelPts(accountId, chatId, channelPts);
-      }
+      // ChannelFull.pts is a snapshot of *now*, not a recovery cursor. Never
+      // write it here: opening the forum details during an offline gap would
+      // otherwise advance PTS past messages that getChannelDifference must read.
     }
 
     // 4. Save to DB + memory cache

@@ -43,6 +43,7 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
   const { activeAccountId, getActiveAccount } = useAccountStore();
   const { showNotification, labels: allLabelsMap } = useAppStore();
   const accountId = overrideZaloId || activeAccountId || '';
+  const isZaloAccount = getActiveAccount()?.channel === CHANNEL.ZALO;
 
   // ── Input mode state ─────────────────────────────────────────────────────
   const inputMode: InputMode = contacts && contacts.length > 0 ? 'list' : 'phones';
@@ -411,10 +412,12 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
                   <button onClick={() => setTagTab('local')}
                     className={`flex-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${tagTab === 'local' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}><HardDriveIcon className="w-4 h-4 inline" /> Nhãn Local
                   </button>
-                  <button onClick={() => setTagTab('zalo')}
-                    className={`flex-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${tagTab === CHANNEL.ZALO ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}>
-                    <CloudIcon className="w-4 h-4 inline" /> Nhãn Zalo
-                  </button>
+                  {isZaloAccount && (
+                    <button onClick={() => setTagTab('zalo')}
+                      className={`flex-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${tagTab === CHANNEL.ZALO ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}>
+                      <CloudIcon className="w-4 h-4 inline" /> Nhãn Zalo
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -544,4 +547,3 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
     </div>
   );
 }
-

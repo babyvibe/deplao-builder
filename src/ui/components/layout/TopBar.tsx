@@ -249,6 +249,55 @@ export default function TopBar() {
     return () => document.removeEventListener('mousedown', handler);
   }, [reconnectOpen]);
 
+  // Telegram topbar sync is intentionally background work. Refresh the
+  // currently visible DB state once the main process signals completion, while
+  // never blocking the topbar button for a long channel/history pass.
+  useEffect(() => {
+    if (!ipc.on) return;
+    return ipc.on('event:telegramSync', (data: any) => {
+      if (!data?.zaloId || data.zaloId !== activeAccountId) return;
+      if (data.status === 'failed') {
+        showNotification(data.error || 'Không thể đồng bộ tin nhắn Telegram', 'error');
+        return;
+      }
+      if (data.status !== 'completed') return;
+
+      void (async () => {
+        const conversationsRes = await DataAccessor.getConversations(data.zaloId, 500, 0);
+        const contacts = conversationsRes?.items ?? [];
+        useChatStore.getState().setContacts(data.zaloId, contacts);
+
+        const chatState = useChatStore.getState();
+        const threadId = chatState.activeThreadId;
+        const topicId = chatState.activeTopicId;
+        if (threadId) {
+          const messagesRes = await DataAccessor.getMessages({
+            zaloId: data.zaloId,
+            threadId,
+            topicId: topicId || undefined,
+            limit: topicId ? 50 : 20,
+            offset: 0,
+          });
+          const dbMessages = messagesRes?.messages ?? messagesRes?.items ?? [];
+          const latestState = useChatStore.getState();
+          if (
+            useAccountStore.getState().activeAccountId === data.zaloId &&
+            latestState.activeThreadId === threadId &&
+            latestState.activeTopicId === topicId
+          ) {
+            latestState.setMessages(data.zaloId, threadId, [...dbMessages].reverse(), topicId);
+          }
+        }
+
+        const insertedText = data.inserted ? `, thêm ${data.inserted} tin nhắn` : '';
+        const pendingText = data.pending ? '. Phần còn lại đang tiếp tục tải nền' : '';
+        showNotification(`Đã đồng bộ ${contacts.length} hội thoại${insertedText}${pendingText}`, 'success');
+      })().catch(() => {
+        showNotification('Đã tải dữ liệu Telegram, nhưng không thể làm mới giao diện.', 'warning');
+      });
+    });
+  }, [activeAccountId, showNotification]);
+
   // ── Tải tin nhắn cũ / đồng bộ lại hội thoại ────────────────────────────────
   const handleRequestOldMessages = useCallback(async () => {
     if (!activeAccountId || loadingOldMsgs) return;
@@ -292,45 +341,19 @@ export default function TopBar() {
           showNotification(res?.error || 'Không thể đồng bộ hội thoại Facebook', 'error');
         }
       } else if (isTelegram(activeAccount?.channel)) {
-        // Telegram: drain update cursors and explicitly check each dialog's
-        // durable history checkpoint, then refresh the visible DB-backed state.
-        showNotification('Đang tải tin nhắn Telegram...', 'success');
+        // Acknowledge immediately. Full account history runs in the main
+        // process and completion refreshes the visible state via telegramSync.
         const syncRes = await ipc.telegramUser?.refreshMessages({ accountId: activeAccountId });
         if (!syncRes?.success) {
           showNotification(syncRes?.error || 'Không thể đồng bộ tin nhắn Telegram', 'error');
           return;
         }
-
-        const conversationsRes = await DataAccessor.getConversations(activeAccountId, 500, 0);
-        const contacts = conversationsRes?.items ?? [];
-        useChatStore.getState().setContacts(activeAccountId, contacts);
-
-        const chatState = useChatStore.getState();
-        const threadId = chatState.activeThreadId;
-        const topicId = chatState.activeTopicId;
-        if (threadId) {
-          const messagesRes = await DataAccessor.getMessages({
-            zaloId: activeAccountId,
-            threadId,
-            topicId: topicId || undefined,
-            limit: topicId ? 50 : 20,
-            offset: 0,
-          });
-          const dbMessages = messagesRes?.messages ?? messagesRes?.items ?? [];
-          const latestState = useChatStore.getState();
-          const latestAccountId = useAccountStore.getState().activeAccountId;
-          if (
-            latestAccountId === activeAccountId &&
-            latestState.activeThreadId === threadId &&
-            latestState.activeTopicId === topicId
-          ) {
-            latestState.setMessages(activeAccountId, threadId, [...dbMessages].reverse(), topicId);
-          }
-        }
-
-        const insertedText = syncRes.inserted ? `, thêm ${syncRes.inserted} tin nhắn` : '';
-        const pendingText = syncRes.pending ? '. Phần còn lại đang tiếp tục tải nền' : '';
-        showNotification(`Đã đồng bộ ${contacts.length} hội thoại${insertedText}${pendingText}`, 'success');
+        showNotification(
+          syncRes.started === false
+            ? 'Telegram đang tải tin nhắn ở nền. Hội thoại sẽ tự cập nhật.'
+            : 'Đang tải tin nhắn Telegram ở nền. Hội thoại sẽ tự cập nhật.',
+          'info',
+        );
       } else {
         // Zalo: request old messages as before
         const res = await ipc.login?.requestOldMessages(activeAccountId);

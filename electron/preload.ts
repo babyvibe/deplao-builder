@@ -726,6 +726,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'event:disconnected',
       'event:reaction',
       'event:telegramReaction',
+      'event:telegramSync',
       'event:messageEdited',
       'event:messagesDeleted',
       'event:userPresence',

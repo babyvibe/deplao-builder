@@ -25,15 +25,55 @@ export function parseTxt(content: string): string {
   } catch { return convertZaloEmojis(content); }
 }
 
+/** A native Telegram mention range, stored with the message attachments. */
+export interface TelegramMentionRange {
+  offset: number;
+  length: number;
+  userId?: string;
+}
+
+/** Read native Telegram mention entities without requiring a DB migration. */
+export function getTelegramMentionRanges(attachments: unknown): TelegramMentionRange[] {
+  let parsed = attachments;
+  if (typeof parsed === 'string') {
+    try { parsed = JSON.parse(parsed); } catch { return []; }
+  }
+  if (!Array.isArray(parsed)) return [];
+
+  return parsed
+    .filter((attachment: any) => attachment?.type === 'telegram_mention')
+    .map((attachment: any) => ({
+      offset: Number(attachment.offset),
+      length: Number(attachment.length),
+      userId: attachment.user_id ? String(attachment.user_id) : undefined,
+    }))
+    .filter((mention: TelegramMentionRange) =>
+      Number.isInteger(mention.offset) && mention.offset >= 0
+      && Number.isInteger(mention.length) && mention.length > 0
+    )
+    .sort((a: TelegramMentionRange, b: TelegramMentionRange) => a.offset - b.offset);
+}
+
 /**
- * Detect URL trong text và trả về React nodes với link clickable.
- * Hỗ trợ: http://, https://, www., t.me/, các domain phổ biến.
+ * Detect URL và @mentions trong text → trả về React nodes.
+ * - URLs: link clickable
+ * - @name: highlight xanh (mention trong group chat)
+ * - @@, @@@: KHÔNG bắt (chỉ bắt @ + ít nhất 1 chữ cái/số)
  */
-export function linkifyText(text: string): React.ReactNode[] {
+export function linkifyText(text: string, options: { detectMentions?: boolean } = {}): React.ReactNode[] {
   if (!text) return [text];
-  // Combined regex: URL hoặc @username
-  // @username: '@' + word chars (letters, digits, underscore) — đơn giản, bắt đến cuối từ
-  const combinedRegex = /(https?:\/\/[^\s<>"')\]]+|www\.[^\s<>"')\]]+|[a-zA-Z0-9._-]+\.(com|vn|net|org|io|dev|app|me|co|xyz|info|tv|gg|link|page|site|online|tech|store|fun|icu|top|cc|pw|tk|ml|ga|cf|gq)(?:\/[^\s<>"')\]]*)?|@\w+)/g;
+  const detectMentions = options.detectMentions !== false;
+  // URL regex (giữ nguyên)
+  const urlRegex = /(https?:\/\/[^\s<>"')\]]+|www\.[^\s<>"')\]]+|[a-zA-Z0-9._-]+\.(com|vn|net|org|io|dev|app|me|co|xyz|info|tv|gg|link|page|site|online|tech|store|fun|icu|top|cc|pw|tk|ml|ga|cf|gq)(?:\/[^\s<>"')\]]*)?)/g;
+  // @mention regex: @ + ít nhất 1 chữ cái/số/underscore. The boundary is
+  // validated below because this pattern is combined with the URL pattern.
+  const mentionRegex = /@([a-zA-Z0-9_][a-zA-Z0-9_]*)/g;
+  // Combined: URL trước, mention sau (URL ưu tiên)
+  const combinedRegex = new RegExp(
+    detectMentions ? `(${urlRegex.source})|(${mentionRegex.source})` : `(${urlRegex.source})`,
+    'g'
+  );
+
   const parts: React.ReactNode[] = [];
   let lastIndex = 0;
   let match: RegExpExecArray | null;
@@ -45,25 +85,26 @@ export function linkifyText(text: string): React.ReactNode[] {
     }
     const raw = match[0];
 
-    if (raw.startsWith('@')) {
-      // @username mention — link đến Telegram profile
-      const username = raw.slice(1);
-      const profileUrl = `https://t.me/${username}`;
+    // Do not turn the second @ in @@name (or an @ embedded in a word) into a
+    // mention. Telegram only treats a standalone @username token as a link.
+    const before = match.index > 0 ? text[match.index - 1] : '';
+    const isMention = detectMentions
+      && raw.startsWith('@')
+      && before !== '@'
+      && !/[a-zA-Z0-9_]/.test(before);
+
+    if (isMention) {
+      // @mention — highlight xanh, KHÔNG tạo link
       parts.push(
-        React.createElement('a', {
+        React.createElement('span', {
           key: `mention-${match.index}`,
-          href: profileUrl,
-          target: '_blank',
-          rel: 'noopener noreferrer',
-          className: 'text-blue-400 hover:text-blue-300 cursor-pointer font-medium',
-          onClick: (e: React.MouseEvent) => {
-            e.preventDefault();
-            e.stopPropagation();
-            try { window.electronAPI?.shell?.openExternal?.(profileUrl); } catch {}
-          },
-          title: `@${username}`,
+          className: 'text-blue-400 font-medium cursor-default',
+          title: raw,
         }, raw)
       );
+    } else if (raw.startsWith('@')) {
+      // This was a regex hit inside @@name / a word. Keep it as plain text.
+      parts.push(raw);
     } else {
       // URL link
       const href = raw.startsWith('http') ? raw : `https://${raw}`;
