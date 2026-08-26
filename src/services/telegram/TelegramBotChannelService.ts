@@ -19,6 +19,7 @@ import FileStorageService from '../file/FileStorageService';
 import { shouldFetchAvatar, markAvatarFetched, markAvatarSuccess, resetAvatarCache } from '../../utils/avatarFetchCache';
 import * as BotIngress from './TelegramBotIngressService';
 import type { BotAccount, NormalizedUpdate, BotUpdateConsumer } from './TelegramBotIngressService';
+import { getTelegramMessagePreview } from './TelegramMessagePreview';
 
 const TELEGRAM_API = 'https://api.telegram.org';
 const REQUEST_TIMEOUT = 30000;
@@ -61,6 +62,7 @@ async function handleInboundMessage(account: BotAccount, message: any): Promise<
   const fromId = String(message.from?.id || '');
   const fromName = [message.from?.first_name, message.from?.last_name].filter(Boolean).join(' ') || fromId;
   const isGroup = message.chat?.type === 'group' || message.chat?.type === 'supergroup';
+  const isChannel = message.chat?.type === 'channel';
   const threadType = isGroup ? 1 : 0;
   const timestamp = (message.date || Math.floor(Date.now() / 1000)) * 1000;
   const messageId = String(message.message_id || Date.now());
@@ -244,7 +246,9 @@ async function handleInboundMessage(account: BotAccount, message: any): Promise<
   // Broadcast event to UI
   EventBroadcaster.emit('event:message', {
     zaloId: account.accountId,
+    channel: 'telegram_bot',
     message: {
+      channel: 'telegram_bot',
       type: threadType,
       threadId: chatId,
       isSelf: false,
@@ -253,7 +257,10 @@ async function handleInboundMessage(account: BotAccount, message: any): Promise<
         idTo: chatId,
         msgId: messageId,
         content,
+        preview: getTelegramMessagePreview(msgType, content),
         msgType,
+        channel: 'telegram_bot',
+        isChannel,
         ts: String(timestamp),
         dName: fromName,
         attachments,
@@ -321,6 +328,10 @@ async function saveMessage(msg: TelegramMessage, botToken?: string): Promise<voi
       quoteData || null,
     ]);
 
+    // Store the original caption in messages; use a stable media label for the
+    // conversation row so a phone number caption cannot masquerade as text.
+    const preview = getTelegramMessagePreview(msg.msgType, msg.content);
+
     // Update contacts
     db.run(`
       INSERT INTO contacts (owner_zalo_id, contact_id, display_name, avatar_url, is_friend, contact_type, unread_count, last_message, last_message_time, channel)
@@ -334,7 +345,7 @@ async function saveMessage(msg: TelegramMessage, botToken?: string): Promise<voi
     `, [
       msg.accountId, msg.threadId, msg.senderName,
       msg.threadType === 1 ? 'group' : 'user',
-      msg.isSelf ? 0 : 1, displayContent, msg.timestamp,
+      msg.isSelf ? 0 : 1, preview, msg.timestamp,
       msg.isSelf ? 0 : 1, // for the ON CONFLICT update
     ]);
 
@@ -632,7 +643,9 @@ export async function sendMessage(accountId: string, chatId: string, text: strin
     // Emit event so UI updates (self-sent messages won't come via polling)
     EventBroadcaster.emit('event:message', {
       zaloId: accountId,
+      channel: 'telegram_bot',
       message: {
+        channel: 'telegram_bot',
         type: threadType,
         threadId: chatId,
         isSelf: true,
@@ -641,7 +654,9 @@ export async function sendMessage(accountId: string, chatId: string, text: strin
           idTo: chatId,
           msgId,
           content: text,
+          preview: text,
           msgType: 'text',
+          channel: 'telegram_bot',
           ts: String(Date.now()),
           dName: bot.botFirstName,
         },
@@ -688,7 +703,9 @@ async function saveSentBotMessage(
   try {
     EventBroadcaster.emit('event:message', {
       zaloId: accountId,
+      channel: 'telegram_bot',
       message: {
+        channel: 'telegram_bot',
         type: threadType,
         threadId: chatId,
         isSelf: true,
@@ -697,7 +714,9 @@ async function saveSentBotMessage(
           idTo: chatId,
           msgId,
           content: content || '',
+          preview: getTelegramMessagePreview(msgType, content || ''),
           msgType,
+          channel: 'telegram_bot',
           ts: String(Date.now()),
           dName: botName,
           attachments,
@@ -777,7 +796,9 @@ export async function sendPhoto(accountId: string, chatId: string, photoPath: st
         const { EventBroadcaster } = require('../event/EventBroadcaster');
         EventBroadcaster.emit('event:message', {
           zaloId: accountId,
+          channel: 'telegram_bot',
           message: {
+            channel: 'telegram_bot',
             type: threadType,
             threadId: chatId,
             isSelf: true,
@@ -786,7 +807,9 @@ export async function sendPhoto(accountId: string, chatId: string, photoPath: st
               idTo: chatId,
               msgId,
               content: caption || '',
+              preview: getTelegramMessagePreview('photo', caption || ''),
               msgType: 'photo',
+              channel: 'telegram_bot',
               ts: String(Date.now()),
               dName: bot.botFirstName,
               attachments: photoAttachments,
@@ -1299,6 +1322,7 @@ type ActionResult = { success: boolean; messageId?: string; error?: string };
 export function startBot(account: TelegramBotAccount): void {
   if (registeredAccounts.has(account.accountId)) return;
   registeredAccounts.set(account.accountId, account);
+  DatabaseService.getInstance()?.repairTelegramLastMessagePreviews(account.accountId, 'telegram_bot');
 
   // Create the inbox consumer for this account
   const consumer: BotUpdateConsumer = async (acc, update) => {

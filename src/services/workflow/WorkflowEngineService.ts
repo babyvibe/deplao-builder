@@ -337,7 +337,7 @@ class WorkflowEngineService {
   private registerTelegramEventListeners(): void {
     // Telegram messages come through the unified 'event:message' channel
     EventBroadcaster.onBeforeSend('event:message', (data: any) => {
-      const ch = data?.channel || data?.message?.channel;
+      const ch = data?.channel || data?.message?.channel || data?.message?.data?.channel || data?.data?.channel;
       if (ch === 'telegram_user' || ch === 'telegram_bot') {
         this.triggerWorkflows('tg.trigger.message', data);
       }
@@ -420,8 +420,9 @@ class WorkflowEngineService {
       // ─── Debounce for message triggers: gom tin nhắn liên tiếp ────────
       const debounceSeconds = Number(triggerNode.config.debounceSeconds || 0);
       if ((triggerType === 'trigger.message' || triggerType === 'fb.trigger.message' || triggerType === 'tg.trigger.message') && debounceSeconds > 0) {
-        const msg = eventData.data || eventData.message || {};
-        const threadId = (msg as any).threadId || eventData.threadId || '';
+        const envelope = eventData.message || eventData;
+        const msg = envelope.data || eventData.data || envelope;
+        const threadId = (msg as any).threadId || envelope.threadId || eventData.threadId || '';
         const debounceKey = `${wf.id}:${threadId}`;
 
         // Buffer the event
@@ -760,35 +761,37 @@ class WorkflowEngineService {
 
     // ── Telegram message trigger ──────────────────────────────────────────
     if (triggerNode.type === 'tg.trigger.message') {
+      const envelope = data.message || data;
+      const msg = envelope.data || data.data || envelope;
       // Filter by chatId (empty = any)
       if (cfg.chatId) {
-        const msgChatId = data.threadId || data.chatId || '';
+        const msgChatId = data.threadId || envelope.threadId || msg.threadId || msg.chatId || '';
         if (msgChatId !== cfg.chatId) return false;
       }
       // Filter by chatType (user/group/channel/topic)
       if (cfg.chatType && cfg.chatType !== 'all') {
-        const chatId = String(data.threadId || data.chatId || '');
+        const chatId = String(data.threadId || envelope.threadId || msg.threadId || msg.chatId || '');
         const isGroup = chatId.startsWith('-') && !chatId.startsWith('-100');
         const isSupergroup = chatId.startsWith('-100');
-        const isChannel = !!(data.message?.channel || data.data?.channel) || !!(data.isChannel);
-        const hasTopic = !!(data.message?.topicId || data.data?.topicId);
+        const isChannel = !!msg.isChannel || !!data.isChannel;
+        const hasTopic = !!msg.topicId;
         if (cfg.chatType === 'user' && (isGroup || isSupergroup || isChannel)) return false;
-        if (cfg.chatType === 'group' && !isGroup && !isSupergroup) return false;
+        if (cfg.chatType === 'group' && ((!isGroup && !isSupergroup) || isChannel)) return false;
         if (cfg.chatType === 'channel' && !isChannel) return false;
         if (cfg.chatType === 'topic' && !hasTopic) return false;
       }
       // Filter by sender (fromId)
       if (cfg.fromId) {
-        const senderId = String(data.fromId || data.message?.fromId || data.data?.senderId || '');
+        const senderId = String(data.fromId || msg.fromId || msg.senderId || msg.uidFrom || '');
         if (senderId !== cfg.fromId) return false;
       }
       // Ignore own messages (default true)
       if (cfg.ignoreOwn !== false) {
-        if (data.isSelf || (data.message || {}).isSelf) return false;
+        if (data.isSelf || envelope.isSelf || msg.isSelf) return false;
       }
       // Keyword filter
       if (cfg.keyword) {
-        const content = String(data.content || data.message?.content || data.message?.text || '').toLowerCase();
+        const content = String(data.content || msg.content || msg.text || '').toLowerCase();
         const kws: string[] = String(cfg.keyword).split(',').map((s: string) => s.trim().toLowerCase()).filter(Boolean);
         const mode = cfg.keywordMode || 'contains_any';
         if (mode === 'contains_any' && !kws.some(k => content.includes(k))) return false;
@@ -1128,21 +1131,26 @@ class WorkflowEngineService {
     }
     // ── Telegram trigger flattening ─────────────────────────────────────────
     if (triggerType === 'tg.trigger.message' || triggerType.startsWith('tg.trigger.')) {
-      const msg = data.message || data.data || {};
-      const ch = data.channel || msg.channel || '';
+      const envelope = data.message || data;
+      const msg = envelope.data || data.data || envelope;
+      const ch = data.channel || envelope.channel || msg.channel || '';
+      const content = msg.preview || msg.content || msg.text || data.content || '';
       return {
         accountId:  data.zaloId || data.accountId || '',
-        chatId:     data.threadId || msg.threadId || msg.chatId || '',
-        fromId:     msg.fromId || msg.senderId || data.fromId || '',
-        fromName:   msg.fromName || msg.senderName || data.fromName || '',
-        content:    msg.content || msg.text || data.content || '',
-        body:       msg.content || msg.text || '',
+        chatId:     data.threadId || envelope.threadId || msg.threadId || msg.chatId || '',
+        fromId:     msg.fromId || msg.senderId || msg.uidFrom || data.fromId || '',
+        fromName:   msg.fromName || msg.senderName || msg.dName || data.fromName || '',
+        content,
+        body:       content,
+        caption:    msg.content || msg.text || data.content || '',
+        preview:    msg.preview || content,
+        msgType:    msg.msgType || msg.type || 'text',
         messageId:  msg.msgId || msg.messageId || data.msgId || '',
-        threadId:   data.threadId || msg.threadId || '',
-        isGroup:    !!(msg.isGroup || data.isGroup),
-        isSelf:     !!(msg.isSelf || data.isSelf),
+        threadId:   data.threadId || envelope.threadId || msg.threadId || '',
+        isGroup:    !!(msg.isGroup || envelope.type === 1 || data.isGroup),
+        isSelf:     !!(msg.isSelf || envelope.isSelf || data.isSelf),
         channel:    ch,
-        timestamp:  Number(msg.timestamp || data.timestamp || Date.now()),
+        timestamp:  Number(msg.timestamp || msg.ts || data.timestamp || Date.now()),
         attachments: msg.attachments || null,
       };
     }

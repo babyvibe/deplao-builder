@@ -6,6 +6,7 @@ import BetterSqlite3 from 'better-sqlite3';
 import type { Account, Message, Contact, CRMNote, CRMCampaign, CRMCampaignContact, CRMSendLog, CRMCampaignStatus, CRMContactStatus } from '../../models';
 import type { TelegramPeer } from '../../models/telegram';
 import { CHANNEL } from '../../ui/lib/channelHelper';
+import { getTelegramMessagePreview } from '../telegram/TelegramMessagePreview';
 
 // better-sqlite3: native SQLite - no WASM heap, memory-mapped I/O
 let db: BetterSqlite3.Database | null = null;
@@ -3635,6 +3636,63 @@ class DatabaseService {
             if (typeof p === 'string') return p.length > 100 ? p.substring(0, 100) + '...' : p;
         } catch {}
         return content.length > 100 ? content.substring(0, 100) + '...' : content;
+    }
+
+    /**
+     * Old Telegram records used a media caption as the conversation preview.
+     * Rebuild only rows whose latest message is media, while keeping any group
+     * sender prefix already present in the row.
+     */
+    public repairTelegramLastMessagePreviews(ownerZaloId: string, channel?: 'telegram_user' | 'telegram_bot'): number {
+        if (!this.initialized || !ownerZaloId) return 0;
+        const channels = channel ? [channel] : ['telegram_user', 'telegram_bot'];
+        const mediaTypes = [
+            'photo', 'video', 'video_note', 'audio', 'voice', 'sticker', 'file', 'document',
+            'telegram.contact', 'telegram.location', 'telegram.venue', 'telegram.poll',
+            'telegram.dice', 'telegram.game', 'telegram.invoice', 'telegram.story',
+            'telegram.giveaway', 'telegram.webpage',
+        ];
+        let repaired = 0;
+        try {
+            for (const currentChannel of channels) {
+                const rows = this.query<any>(`
+                    SELECT c.contact_id, c.last_message, m.content, m.msg_type
+                    FROM contacts c
+                    JOIN messages m ON m.rowid = (
+                        SELECT m2.rowid
+                        FROM messages m2
+                        WHERE m2.owner_zalo_id = c.owner_zalo_id
+                          AND m2.thread_id = c.contact_id
+                          AND m2.channel = c.channel
+                        ORDER BY m2.timestamp DESC, m2.rowid DESC
+                        LIMIT 1
+                    )
+                    WHERE c.owner_zalo_id = ? AND c.channel = ?
+                      AND m.msg_type IN (${mediaTypes.map(() => '?').join(', ')})
+                `, [ownerZaloId, currentChannel, ...mediaTypes]);
+
+                for (const row of rows) {
+                    const caption = String(row.content || '');
+                    const marker = getTelegramMessagePreview(row.msg_type, caption);
+                    const previous = String(row.last_message || '');
+                    // Group previews can start with "Sender: "; preserve it.
+                    const prefix = caption && previous.endsWith(caption)
+                        ? previous.slice(0, previous.length - caption.length)
+                        : '';
+                    const preview = `${prefix}${marker}`;
+                    if (preview !== previous) {
+                        this.run(
+                            `UPDATE contacts SET last_message = ? WHERE owner_zalo_id = ? AND contact_id = ? AND channel = ?`,
+                            [preview, ownerZaloId, row.contact_id, currentChannel]
+                        );
+                        repaired++;
+                    }
+                }
+            }
+        } catch (err: any) {
+            Logger.warn(`[DatabaseService] repairTelegramLastMessagePreviews error: ${err.message}`);
+        }
+        return repaired;
     }
 
     /**

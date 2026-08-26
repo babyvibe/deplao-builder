@@ -20,6 +20,7 @@ import EventBroadcaster from '../event/EventBroadcaster';
 import FileStorageService from '../file/FileStorageService';
 import { shouldFetchAvatar, markAvatarFetched, markAvatarSuccess, resetAvatarCache } from '../../utils/avatarFetchCache';
 import type { TelegramPeerType } from '../../models/telegram';
+import { getTelegramMessagePreview } from './TelegramMessagePreview';
 
 // Telegram API credentials - đăng ký tại my.telegram.org
 import { API_ID, API_HASH } from '../../configs/telegram.config';
@@ -2618,9 +2619,10 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
     const isGroup = rawIdentity.peerKind !== 'user';
     const chatTitle = (chat && 'title' in chat ? chat.title : '') || senderName || chatId;
     // Group chat: prepend sender name to last_message preview
+    const preview = getTelegramMessagePreview(msgType, content);
     const lastMessagePreview = (isGroup && !isSelf && senderName)
-      ? `${senderName}: ${displayContent}`
-      : displayContent;
+      ? `${senderName}: ${preview}`
+      : preview;
 
     // Check membership state for "Others" folder auto-placement
     // For groups/channels: if not a member → put in Others
@@ -2683,7 +2685,9 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
     // Broadcast to UI — only for new messages
     EventBroadcaster.emit('event:message', {
       zaloId: accountId,
+      channel: 'telegram_user',
       message: {
+        channel: 'telegram_user',
         type: threadType,
         threadId: chatId,
         isSelf,
@@ -2693,7 +2697,10 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
           idTo: chatId,
           msgId: messageId,
           content,
+          preview,
           msgType,
+          channel: 'telegram_user',
+          isChannel: rawIdentity.peerKind === 'channel',
           ts: String(timestamp),
           dName: senderName,
           topicId,
@@ -2713,7 +2720,9 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
     // Attachments were merged into existing message — emit event so UI picks it up
     EventBroadcaster.emit('event:message', {
       zaloId: accountId,
+      channel: 'telegram_user',
       message: {
+        channel: 'telegram_user',
         type: threadType,
         threadId: chatId,
         isSelf,
@@ -2723,7 +2732,10 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
           idTo: chatId,
           msgId: messageId,
           content,
+          preview: getTelegramMessagePreview(msgType, content),
           msgType,
+          channel: 'telegram_user',
+          isChannel: rawIdentity.peerKind === 'channel',
           ts: String(timestamp),
           dName: senderName,
           attachments,
@@ -2742,7 +2754,9 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
     if (isSelf && attachments && attachments.length > 0) {
       EventBroadcaster.emit('event:message', {
         zaloId: accountId,
+        channel: 'telegram_user',
         message: {
+          channel: 'telegram_user',
           type: threadType,
           threadId: chatId,
           isSelf,
@@ -2752,7 +2766,10 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
             idTo: chatId,
             msgId: messageId,
             content,
+            preview: getTelegramMessagePreview(msgType, content),
             msgType,
+            channel: 'telegram_user',
+            isChannel: rawIdentity.peerKind === 'channel',
             ts: String(timestamp),
             dName: senderName,
             attachments,
@@ -3360,6 +3377,7 @@ async function synchronizeTelegramAccount(
     // can insert first, causing the realtime path to dedup without a UI event)
     // and creates the FLOOD_WAIT storm observed during forum navigation.
     if (differenceResult === 'complete' && !options.includeHistory) {
+      DatabaseService.getInstance()?.repairTelegramLastMessagePreviews(accountId, 'telegram_user');
       return { success: true, historyComplete: true, inserted: 0 };
     }
 
@@ -3369,6 +3387,7 @@ async function synchronizeTelegramAccount(
     if (historyResult.success && historyResult.complete && differenceResult === 'no_state') {
       await saveCurrentTelegramUpdateState(accountId, client);
     }
+    DatabaseService.getInstance()?.repairTelegramLastMessagePreviews(accountId, 'telegram_user');
     return {
       success: historyResult.success && differenceResult !== 'failed',
       historyComplete: historyResult.complete,
@@ -3707,7 +3726,7 @@ async function fetchMissedMessages(accountId: string, client: TelegramClient): P
               last_message = CASE WHEN excluded.last_message_time >= COALESCE(contacts.last_message_time, 0) THEN excluded.last_message ELSE contacts.last_message END,
               last_message_time = CASE WHEN excluded.last_message_time >= COALESCE(contacts.last_message_time, 0) THEN excluded.last_message_time ELSE contacts.last_message_time END,
               channel = 'telegram_user'
-          `, [accountId, chatId, chatTitle, isGroup ? 'group' : 'user', displayContent, msgTimestamp]);
+          `, [accountId, chatId, chatTitle, isGroup ? 'group' : 'user', getTelegramMessagePreview(msgType, content), msgTimestamp]);
 
           totalSynced++;
         }
@@ -4367,7 +4386,9 @@ export async function sendMessage(accountId: string, chatId: string, text: strin
     // Emit event cho renderer — socket echo sẽ skip do persistTelegramMessage trả 'existing'
     EventBroadcaster.emit('event:message', {
       zaloId: accountId,
+      channel: 'telegram_user',
       message: {
+        channel: 'telegram_user',
         type: threadType,
         threadId: chatId,
         isSelf: true,
@@ -4377,7 +4398,9 @@ export async function sendMessage(accountId: string, chatId: string, text: strin
           idTo: chatId,
           msgId,
           content: text,
+          preview: text,
           msgType: 'text',
+          channel: 'telegram_user',
           ts: String(now),
           replyToId: replyToMsgId || undefined,
           quoteData: quoteData || undefined,
@@ -5420,7 +5443,9 @@ export async function sendFile(accountId: string, chatId: string, filePath: stri
     Logger.log(`[TG:sendFile] EMITTING event: msgId=${msgId} msgType=${msgType} chatId=${chatId}`);
     EventBroadcaster.emit('event:message', {
       zaloId: accountId,
+      channel: 'telegram_user',
       message: {
+        channel: 'telegram_user',
         type: threadType,
         threadId: chatId,
         isSelf: true,
@@ -5430,7 +5455,9 @@ export async function sendFile(accountId: string, chatId: string, filePath: stri
           idTo: chatId,
           msgId,
           content: caption || '',
+          preview: getTelegramMessagePreview(msgType, caption || ''),
           msgType,
+          channel: 'telegram_user',
           ts: String(now),
           attachments,
           replyToId: replyToMsgId || undefined,
@@ -5682,8 +5709,9 @@ export async function sendTopicFile(accountId: string, chatId: string, topicRoot
     Logger.log(`[TG:sendTopicFile] EMITTING event: msgId=${msgId} msgType=${msgType} chatId=${chatId}`);
     EventBroadcaster.emit('event:message', {
       zaloId: accountId,
-      message: { type: threadType, threadId: chatId, isSelf: true, _silentNotification: true,
-        data: { uidFrom: accountId, idTo: chatId, msgId, content: caption || '', msgType, ts: String(now), attachments, topicId: topicRootMessageId } },
+      channel: 'telegram_user',
+      message: { channel: 'telegram_user', type: threadType, threadId: chatId, isSelf: true, _silentNotification: true,
+        data: { uidFrom: accountId, idTo: chatId, msgId, content: caption || '', preview: getTelegramMessagePreview(msgType, caption || ''), msgType, channel: 'telegram_user', ts: String(now), attachments, topicId: topicRootMessageId } },
     });
     Logger.log(`[TG:sendTopicFile] EVENT_EMITTED msgId=${msgId} msgType=${msgType} attachments=${attachments.length}`);
 
@@ -7390,7 +7418,9 @@ export async function sendTopicMessage(accountId: string, chatId: string, rootMe
     // Emit event cho renderer
     EventBroadcaster.emit('event:message', {
       zaloId: accountId,
+      channel: 'telegram_user',
       message: {
+        channel: 'telegram_user',
         type: 1,
         threadId: chatId,
         isSelf: true,
@@ -7400,7 +7430,9 @@ export async function sendTopicMessage(accountId: string, chatId: string, rootMe
           idTo: chatId,
           msgId,
           content: text,
+          preview: text,
           msgType: 'text',
+          channel: 'telegram_user',
           ts: String(now),
           topicId: rootMessageId,
         },
