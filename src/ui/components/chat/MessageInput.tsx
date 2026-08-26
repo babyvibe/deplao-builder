@@ -96,7 +96,7 @@ export default function MessageInput() {
   const [showMentionDropdown, setShowMentionDropdown] = useState(false);
   const [mentionTriggerPos, setMentionTriggerPos] = useState(-1);
   const [mentionSelectedIdx, setMentionSelectedIdx] = useState(0);
-  const [mentions, setMentions] = useState<Array<{ uid: string; pos: number; len: number }>>([]);
+  const [mentions, setMentions] = useState<Array<{ uid: string; pos: number; len: number; text: string }>>([]);
   // Clipboard images state: {id, dataUrl, blob}[]
   const [clipboardImages, setClipboardImages] = useState<Array<{ id: string; dataUrl: string; blob: Blob }>>([]);
   // Drag-and-drop state
@@ -1667,11 +1667,14 @@ export default function MessageInput() {
   const handleSelectMention = (member: { userId: string; displayName: string; avatar: string; username?: string }) => {
     const el = textareaRef.current;
     if (!el || mentionTriggerPos < 0) return;
-    const cursorPos = getCaretOffset(el).start;
     const curText = getPlainText(el);
+    // Clicking an item moves browser selection into the dropdown before
+    // onClick runs. Use the trigger + typed query captured while editing,
+    // never the now-invalid DOM caret.
+    const mentionEnd = mentionTriggerPos + 1 + mentionSearch.length;
     // mentionTriggerPos là vị trí của '@' đã gõ → bỏ qua nó khi splice
     const beforeAt = curText.slice(0, mentionTriggerPos);
-    const afterCursor = curText.slice(cursorPos);
+    const afterCursor = curText.slice(mentionEnd);
     // Telegram: dùng @username nếu có, ngược lại dùng displayName
     // Zalo: dùng displayName
     const isTelegram = isTelegramUser(activeContact?.channel) || isTelegramBot(activeContact?.channel);
@@ -1683,9 +1686,10 @@ export default function MessageInput() {
     const mentionText = `${mentionLabel} `;
     const newText = beforeAt + mentionText + afterCursor;
     // pos = vị trí '@' trong text mới, len = độ dài mention label (không tính trailing space)
-    const newMention = { uid: member.userId, pos: mentionTriggerPos, len: mentionLabel.length };
+    const newMention = { uid: member.userId, pos: mentionTriggerPos, len: mentionLabel.length, text: mentionLabel };
     setText(newText);
     setMentions(prev => [...prev, newMention]);
+    prevTextRef.current = newText;
     setShowMentionDropdown(false);
     setMentionSearch('');
     setMentionTriggerPos(-1);
@@ -2594,6 +2598,36 @@ export default function MessageInput() {
     prevTextRef.current = newText;
     setText(newText);
 
+    // Keep native mention entity offsets in sync with edits. If a user edits
+    // inside a selected mention, discard that entity rather than sending a
+    // stale Telegram/Zalo tag against unrelated text.
+    if (mentions.length > 0) {
+      let prefixLength = 0;
+      const commonLength = Math.min(prevText.length, newText.length);
+      while (prefixLength < commonLength && prevText[prefixLength] === newText[prefixLength]) prefixLength++;
+      let suffixLength = 0;
+      while (
+        suffixLength < prevText.length - prefixLength
+        && suffixLength < newText.length - prefixLength
+        && prevText[prevText.length - 1 - suffixLength] === newText[newText.length - 1 - suffixLength]
+      ) suffixLength++;
+      const oldEditEnd = prevText.length - suffixLength;
+      const offsetDelta = newText.length - prevText.length;
+      const adjustedMentions = mentions
+        .map((mention) => {
+          const mentionEnd = mention.pos + mention.len;
+          if (oldEditEnd <= mention.pos) return { ...mention, pos: mention.pos + offsetDelta };
+          if (prefixLength >= mentionEnd) return mention;
+          return null;
+        })
+        .filter((mention): mention is { uid: string; pos: number; len: number; text: string } =>
+          !!mention && newText.slice(mention.pos, mention.pos + mention.len) === mention.text
+        );
+      if (JSON.stringify(adjustedMentions) !== JSON.stringify(mentions)) {
+        setMentions(adjustedMentions);
+      }
+    }
+
     // ── Debounced draft save (~1s) ────────────────────────────────────
     if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
     draftSaveTimerRef.current = setTimeout(() => {
@@ -2669,13 +2703,14 @@ export default function MessageInput() {
     let isValidMention = false;
     let mentionSearchText = '';
     let mentionTriggerIdx = -1;
-    // Find last @ that has a non-@ char before it (or is at position 0)
-    // and has a non-space non-newline char after it
+    // Find the last standalone @. An empty query after @ intentionally shows
+    // the full member list; @@ and email-like text do not trigger it.
     for (let i = textBeforeCursor.length - 1; i >= 0; i--) {
       if (textBeforeCursor[i] !== '@') continue;
       const charBefore = i > 0 ? textBeforeCursor[i - 1] : '';
       const afterAt = textBeforeCursor.slice(i + 1);
-      if (charBefore !== '@' && afterAt.length > 0 && !afterAt.startsWith(' ') && !afterAt.startsWith('@') && !afterAt.includes('\n')) {
+      const hasMentionBoundary = !charBefore || /[\s([{"'“‘.,!?;:]/.test(charBefore);
+      if (hasMentionBoundary && !afterAt.startsWith(' ') && !afterAt.startsWith('@') && !afterAt.includes('\n')) {
         isValidMention = true;
         mentionSearchText = afterAt;
         mentionTriggerIdx = i;
@@ -3932,6 +3967,7 @@ export default function MessageInput() {
             {filteredMentions.map((member, idx) => (
               <button
                 key={member.userId}
+                onMouseDown={(e) => e.preventDefault()}
                 onClick={() => handleSelectMention(member)}
                 className={`w-full flex items-center gap-3 px-3 py-2 text-left transition-colors ${idx === mentionSelectedIdx ? 'bg-gray-700' : 'hover:bg-gray-700'}`}
               >
