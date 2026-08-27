@@ -28,7 +28,7 @@ import { ChatIcon } from '@/components/common/icons';
 import { handleAvatarError } from '@/lib/avatarRetry';
 import { EMOJI_TO_REACTION } from '@/lib/chat/emojiUtils';
 import { parseContent, parseQuoteMsg, extractQuoteImage, extractMediaUrl, formatMsgTime, extractMsgText, getTelegramMentionRanges } from '@/lib/chat/messageParser';
-import { isCardType, isEcardType, isFileType, isStickerType, isRtfMsg, isMediaType, isVideoType, isBankCardType } from '@/lib/chat/messageTypeUtils';
+import { isCardType, isEcardType, isFileType, isStickerType, isRtfMsg, isMediaType, isVideoType, isVoiceType, isBankCardType } from '@/lib/chat/messageTypeUtils';
 import { NoteViewModal } from './NoteViewModal';
 import ForwardMessageModal from './ForwardMessageModal';
 import PollBubble from './PollBubble';
@@ -42,7 +42,7 @@ import {
 
 export default function ChatWindow() {
   const { messages, activeThreadId, prependMessages, setMessages, contacts, setReplyTo, editingMsg, setEditingMsg, removeMessage, typingUsers, seenInfo, updateContact, messagesLoading, activeTopicId, activeForumTopicId, activeTopicTitle } = useChatStore();
-  const { activeAccountId, getActiveAccount } = useAccountStore();
+  const { activeAccountId, getActiveAccount, accounts: allAccounts } = useAccountStore();
   const { showNotification, groupInfoCache, searchHighlightQuery } = useAppStore();
 
   const activeContact = React.useMemo(() => {
@@ -3703,38 +3703,72 @@ export default function ChatWindow() {
       {channelCap.supportsForward && forwardMsgs && (
         <ForwardMessageModal
           messages={forwardMsgs}
-          contacts={contactList}
           onClose={() => setForwardMsgs(null)}
           onForward={(messages, targets, composeText) => {
-            const auth = getAuth();
-            if (!auth) return;
             setForwardMsgs(null);
-            // Detect channel from forwarded message
-            const forwardContact = contacts[activeAccountId || '']?.find((c: any) =>
-              messages[0] ? c.contact_id === messages[0].thread_id : false);
-            const forwardChannel = messages[0]?.channel || forwardContact?.channel || CHANNEL.ZALO;
             // Chạy lần lượt ở background, không block UI
             (async () => {
               const total = messages.length * targets.length;
               let counter = 0;
               let failCount = 0;
-              for (const msg of messages) {
-                for (const target of targets) {
+              let firstFailure = '';
+              const companionText = composeText.trim();
+              for (const target of targets) {
+                let forwardedAny = false;
+                // Get auth + channel from target account once per recipient.
+                const targetAccount = allAccounts.find(a => a.zalo_id === target.accountId);
+                if (!targetAccount) {
+                  failCount += messages.length;
+                  firstFailure ||= 'Không tìm thấy tài khoản gửi';
+                  continue;
+                }
+                const targetChannel = targetAccount.channel || CHANNEL.ZALO;
+                const targetAuth = isNonZalo(targetChannel)
+                  ? { cookies: '', imei: '', userAgent: '' }
+                  : { cookies: targetAccount.cookies, imei: targetAccount.imei, userAgent: targetAccount.user_agent };
+
+                for (const msg of messages) {
                   counter++;
                   try {
-                    await sendOneForward(auth, msg, target, composeText, forwardChannel, activeAccountId);
+                    await sendOneForward(
+                      targetAuth,
+                      msg,
+                      { threadId: target.threadId, threadType: target.threadType },
+                      targetChannel,
+                      target.accountId,
+                      activeAccountId || undefined,
+                    );
+                    forwardedAny = true;
                   } catch (e: any) {
                     failCount++;
+                    firstFailure ||= e?.message || 'Không rõ lỗi';
+                    console.warn(`[Forward] Failed msg=${msg.msg_id} target=${target.threadId}:`, e.message);
                   }
                   if (total > 1) {
                     showNotification(`Đang chuyển tiếp ${counter}/${total}...`, 'info');
+                  }
+                }
+
+                // Nội dung người dùng soạn trong popup luôn là một tin mới, sau
+                // toàn bộ các tin được forward tới người nhận này. Nó không được
+                // phép thay thế text/caption của tin nguồn.
+                if (forwardedAny && companionText) {
+                  try {
+                    await sendForwardText(targetAuth, targetChannel, target.accountId, {
+                      threadId: target.threadId,
+                      threadType: target.threadType,
+                    }, companionText);
+                  } catch (e: any) {
+                    failCount++;
+                    firstFailure ||= e?.message || 'Không rõ lỗi';
+                    console.warn(`[Forward] Failed companion target=${target.threadId}:`, e.message);
                   }
                 }
               }
               if (failCount === 0) {
                 showNotification('Đã chuyển tiếp xong', 'success');
               } else {
-                showNotification(`Đã chuyển tiếp xong (${failCount} lỗi)`, 'error');
+                showNotification(`Đã chuyển tiếp xong (${failCount} lỗi): ${firstFailure}`, 'error');
               }
             })();
           }}
@@ -3854,89 +3888,141 @@ export default function ChatWindow() {
 
 // extractMsgText: imported from @/lib/chat/messageParser
 
-/** Gửi 1 tin nhắn đến 1 target - dùng trong forward loop */
-async function sendOneForward(
-  auth: any, msg: any, target: { threadId: string; threadType: number }, composeText: string,
-  channel?: string, accountId?: string,
-) {
-  const msgType = msg.msg_type || '';
-  const content = msg.content || '';
-  const isVideo = msgType === 'chat.video.msg';
-  const isFile = !isVideo && isFileType(msgType, content, msg.attachments);
-  const isImage = !isVideo && !isFile && isMediaType(msgType, content, msg.attachments);
-  let localPath = '';
+type ForwardTarget = { threadId: string; threadType: number };
+
+function getForwardLocalPath(msg: any): string {
+  const resolved = getLocalMediaPath(msg);
+  if (resolved) return resolved;
   try {
     const raw = typeof msg.local_paths === 'string' ? JSON.parse(msg.local_paths || '{}') : (msg.local_paths || {});
     if (raw && typeof raw === 'object') {
-      localPath = raw.file || raw.video || raw.main || raw.hd || Object.values(raw).find(v => typeof v === 'string' && v) as string || '';
+      return raw.file || raw.video || raw.voice || raw.main || raw.hd
+        || Object.values(raw).find(v => typeof v === 'string' && v) as string || '';
     }
   } catch {}
+  return '';
+}
+
+/** Không tạo placeholder như "[Tin nhắn]" khi chuyển tiếp media không có caption. */
+function getForwardText(msg: any): string {
+  const content = msg?.content;
+  if (!content || content === 'null') return '';
+  const text = extractMsgText(msg).trim();
+  return text === '[Tin nhắn]' ? '' : text;
+}
+
+function ensureForwardSuccess(result: { success?: boolean; error?: string } | undefined, fallback: string): void {
+  if (!result?.success) throw new Error(result?.error || fallback);
+}
+
+async function sendForwardText(
+  auth: any,
+  channel: string | undefined,
+  accountId: string | undefined,
+  target: ForwardTarget,
+  text: string,
+): Promise<void> {
+  if (!text) return;
+
+  if (isFacebook(channel) || isTelegramCh(channel)) {
+    if (!accountId) throw new Error('Không tìm thấy tài khoản gửi');
+    const result = await getAdapter(channel as Channel).sendMessage({
+      accountId,
+      threadId: target.threadId,
+      body: text,
+      threadType: target.threadType,
+    });
+    ensureForwardSuccess(result, 'Không gửi được tin nhắn');
+    return;
+  }
+
+  const result = await ipc.zalo?.sendMessage({
+    auth,
+    message: text,
+    threadId: target.threadId,
+    type: target.threadType,
+  });
+  ensureForwardSuccess(result, 'Không gửi được tin nhắn Zalo');
+}
+
+/** Gửi một tin nguồn. Caption nguồn được gửi thành một tin độc lập khi phải resend media. */
+async function sendOneForward(
+  auth: any, msg: any, target: ForwardTarget,
+  channel?: string, accountId?: string, sourceAccountId?: string,
+): Promise<void> {
+  const msgType = msg.msg_type || '';
+  const content = msg.content || '';
+  const isVideo = isVideoType(msgType);
+  const isVoice = isVoiceType(msgType);
+  const isSticker = isStickerType(msgType);
+  const isAnimation = msgType === 'animation' || msgType === 'gif' || msgType === 'animated_image';
+  const isFile = !isVideo && !isVoice && !isSticker && isFileType(msgType, content, msg.attachments);
+  const isImage = !isVideo && !isVoice && !isSticker && !isAnimation && !isFile && isMediaType(msgType, content, msg.attachments);
+  const isMedia = isFile || isVideo || isVoice || isSticker || isAnimation || isImage;
+  const localPath = isMedia ? getForwardLocalPath(msg) : '';
+  const sourceText = getForwardText(msg);
+  const canUseNativeForward = !sourceAccountId || sourceAccountId === accountId;
+
+  if (!isMedia) {
+    if (!sourceText) throw new Error('Loại tin nhắn này chưa có nội dung để chuyển tiếp');
+    await sendForwardText(auth, channel, accountId, target, sourceText);
+    return;
+  }
+
+  // Khi media đã tải về, gửi lại tệp để vẫn chuyển được giữa các tài khoản/kênh.
+  if (localPath) {
+    if (isFacebook(channel) || isTelegramCh(channel)) {
+      if (!accountId) throw new Error('Không tìm thấy tài khoản gửi');
+      const result = await getAdapter(channel as Channel).sendAttachment({
+        accountId,
+        threadId: target.threadId,
+        filePath: localPath,
+        threadType: target.threadType,
+        fileType: isImage ? 'image' : isVideo ? (msgType === 'video_note' ? 'video_note' : 'video') : isVoice ? 'voice' : isSticker ? 'sticker' : isAnimation ? 'animation' : 'file',
+      });
+      ensureForwardSuccess(result, 'Không gửi được tệp đính kèm');
+    } else {
+      const result = isImage
+        ? await ipc.zalo?.sendImage({ auth, filePath: localPath, threadId: target.threadId, type: target.threadType, message: '' })
+        : await ipc.zalo?.sendFile({ auth, filePath: localPath, threadId: target.threadId, type: target.threadType });
+      ensureForwardSuccess(result, 'Không gửi được tệp đính kèm Zalo');
+    }
+
+    // Không nhét caption vào attachment: gửi riêng để giữ đúng thứ tự/behaviour
+    // chung giữa các kênh, và không làm mất text khi chuyển nhiều message.
+    if (sourceText) await sendForwardText(auth, channel, accountId, target, sourceText);
+    return;
+  }
+
+  // Không có file local thì chỉ native forward trên đúng tài khoản nguồn.
+  if (!canUseNativeForward) {
+    throw new Error('Tệp chưa được tải về; không thể chuyển tiếp sang tài khoản khác');
+  }
+  if (!msg.msg_id) throw new Error('Tin nhắn không có ID để chuyển tiếp');
 
   if (isFacebook(channel) && accountId) {
-    if ((isFile || isVideo || isImage) && localPath) {
-      await channelIpc.sendAttachment(channel as Channel, { accountId, threadId: target.threadId, filePath: localPath, threadType: target.threadType });
-    } else if ((isFile || isVideo || isImage) && !localPath && msg.msg_id) {
-      // Media không có file local → gửi native forward
-      await ipc.fb?.forwardMessage({ accountId, messageId: String(msg.msg_id), targetThreadId: target.threadId, isGroup: target.threadType === 1 });
-    } else {
-      const text = composeText || extractMsgText(msg);
-      await channelIpc.sendMessage(channel as Channel, { accountId, threadId: target.threadId, body: text, threadType: target.threadType });
-    }
-    if (composeText && (isFile || isVideo || isImage) && localPath) {
-      await channelIpc.sendMessage(channel as Channel, { accountId, threadId: target.threadId, body: composeText, threadType: target.threadType });
-    }
+    const result = await getAdapter(channel as Channel).forwardMessage({
+      accountId, messageId: String(msg.msg_id), targetThreadId: target.threadId, threadType: target.threadType,
+    });
+    ensureForwardSuccess(result, 'Không chuyển tiếp được tin nhắn Facebook');
     return;
   }
 
   if (isTelegramCh(channel) && accountId) {
-    // Telegram forward: use native forwardMessages for media without local file,
-    // otherwise re-send content through adapter.
-    const adapter = getAdapter(channel as Channel);
-    const sourceThreadId = msg.thread_id; // source conversation for native forward
-    if ((isFile || isVideo || isImage) && localPath) {
-      await adapter.sendAttachment({ accountId, threadId: target.threadId, filePath: localPath, threadType: target.threadType });
-    } else if ((isFile || isVideo || isImage) && !localPath && msg.msg_id && sourceThreadId) {
-      // Media without local file → native Telegram forward
-      await adapter.forwardMessage({ accountId, messageId: String(msg.msg_id), targetThreadId: target.threadId, sourceThreadId, threadType: target.threadType });
-    } else {
-      const text = composeText || extractMsgText(msg);
-      await adapter.sendMessage({ accountId, threadId: target.threadId, body: text, threadType: target.threadType });
-    }
-    if (composeText && (isFile || isVideo || isImage) && localPath) {
-      await adapter.sendMessage({ accountId, threadId: target.threadId, body: composeText, threadType: target.threadType });
-    }
+    const sourceThreadId = msg.thread_id || msg.chat_id;
+    if (!sourceThreadId) throw new Error('Tin nhắn Telegram không có hội thoại nguồn');
+    const result = await getAdapter(channel as Channel).forwardMessage({
+      accountId, messageId: String(msg.msg_id), targetThreadId: target.threadId, sourceThreadId: String(sourceThreadId), threadType: target.threadType,
+    });
+    ensureForwardSuccess(result, 'Không chuyển tiếp được tin nhắn Telegram');
     return;
   }
 
-  // Zalo path (existing)
-  if ((isFile || isVideo || isImage) && localPath) {
-    // Có file local → gửi lại như tin mới
-    if (isFile || isVideo) {
-      await ipc.zalo?.sendFile({ auth, filePath: localPath, threadId: target.threadId, type: target.threadType });
-    } else {
-      await ipc.zalo?.sendImage({ auth, filePath: localPath, threadId: target.threadId, type: target.threadType, message: '' });
-    }
-  } else if ((isFile || isVideo || isImage) && !localPath && msg.msg_id) {
-    // Media nhưng không có file local → dùng native forward API (Zalo tự chuyển tiếp nội dung)
-    await ipc.zalo?.forwardMessage({
-      auth,
-      payload: {
-        message: composeText || '',
-        reference: {
-          id: String(msg.msg_id),
-          ts: msg.timestamp || Date.now(),
-          logSrcType: 0,
-          fwLvl: 0,
-        },
-      },
-      threadIds: [target.threadId],
-      type: target.threadType,
-    });
-  } else {
-    const text = composeText || extractMsgText(msg);
-    await ipc.zalo?.sendMessage({ auth, message: text, threadId: target.threadId, type: target.threadType });
-  }
-  if (composeText && (isFile || isVideo || isImage) && localPath) {
-    await ipc.zalo?.sendMessage({ auth, message: composeText, threadId: target.threadId, type: target.threadType });
-  }
+  const result = await ipc.zalo?.forwardMessage({
+    auth,
+    payload: { message: '', reference: { id: String(msg.msg_id), ts: msg.timestamp || Date.now(), logSrcType: 0, fwLvl: 0 } },
+    threadIds: [target.threadId],
+    type: target.threadType,
+  });
+  ensureForwardSuccess(result, 'Không chuyển tiếp được tin nhắn Zalo');
 }
