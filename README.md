@@ -9,7 +9,7 @@ Tích hợp CRM · MARKETING · ERP · POS · Workflow · Trợ lý AI - vận h
 
 [🌐 Website](https://deplaoapp.com/) · [🇬🇧 English](./README.en.md)
 
-![Version](https://img.shields.io/badge/version-26.8.4-22c55e)
+![Version](https://img.shields.io/badge/version-26.8.5-22c55e)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Ubuntu-3b82f6)
 ![Electron](https://img.shields.io/badge/Electron-41-47848f?logo=electron&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61dafb?logo=react&logoColor=white)
@@ -39,41 +39,41 @@ Tích hợp CRM · MARKETING · ERP · POS · Workflow · Trợ lý AI - vận h
 <tr>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-Setup-26.8.4.exe">
-<img src="https://img.shields.io/badge/🪟_Windows_10/11-v26.8.4-0078d4?style=for-the-badge&logo=windows&logoColor=white" alt="Download Windows" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-Setup-26.8.5.exe">
+<img src="https://img.shields.io/badge/🪟_Windows_10/11-v26.8.5-0078d4?style=for-the-badge&logo=windows&logoColor=white" alt="Download Windows" />
 </a>
 
-<big><strong>Deplao-Setup-26.8.4.exe</strong></big>
+<big><strong>Deplao-Setup-26.8.5.exe</strong></big>
 
 </td>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.8.4-arm64.dmg">
-<img src="https://img.shields.io/badge/🍎_macOS_M1+-v26.8.4-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Apple Silicon" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.8.5-arm64.dmg">
+<img src="https://img.shields.io/badge/🍎_macOS_M1+-v26.8.5-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Apple Silicon" />
 </a>
 
-<big><strong>Deplao-26.8.4-arm64.dmg</strong></big>
+<big><strong>Deplao-26.8.5-arm64.dmg</strong></big>
 
 </td>
 </tr>
 <tr>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.8.4.AppImage">
-<img src="https://img.shields.io/badge/🐧_Ubuntu_Linux-v26.8.4-e95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Download Ubuntu" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.8.5.AppImage">
+<img src="https://img.shields.io/badge/🐧_Ubuntu_Linux-v26.8.5-e95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Download Ubuntu" />
 </a>
 
-<big><strong>Deplao-26.8.4.AppImage</strong></big><br>
+<big><strong>Deplao-26.8.5.AppImage</strong></big><br>
 <big>chạy mọi distro - <code>chmod +x</code> là dùng được</big>
 
 </td>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.8.4.dmg">
-<img src="https://img.shields.io/badge/🍎_macOS_Intel-v26.8.4-555555?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Intel" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.8.5.dmg">
+<img src="https://img.shields.io/badge/🍎_macOS_Intel-v26.8.5-555555?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Intel" />
 </a>
 
-<big><strong>Deplao-26.8.4.dmg</strong></big>
+<big><strong>Deplao-26.8.5.dmg</strong></big>
 
 </td>
 </tr>
@@ -322,7 +322,7 @@ flowchart TB
     EA --> MC
 ```
 
-> **Kiến trúc mới từ v26.8.4:** Employee gọi dữ liệu qua **REST API** (HTTP fetch → Boss) thay vì sync toàn bộ DB như trước. DataAccessor tự động routing: standalone/boss → IPC trực tiếp, employee → RestQueryService → Boss. Socket.IO thay SSE cho realtime event ổn định hơn. Media được cache local với cascade workspace → Boss → CDN. Employee vẫn có workspace riêng, nhưng không cần sync hàng GB khi vào app.
+> **Kiến trúc mới từ v26.8.5:** Employee gọi dữ liệu qua **REST API** (HTTP fetch → Boss) thay vì sync toàn bộ DB như trước. DataAccessor tự động routing: standalone/boss → IPC trực tiếp, employee → RestQueryService → Boss. Socket.IO thay SSE cho realtime event ổn định hơn. Media được cache local với cascade workspace → Boss → CDN. Employee vẫn có workspace riêng, nhưng không cần sync hàng GB khi vào app.
 
 ---
 
