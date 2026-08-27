@@ -236,11 +236,11 @@ declare global {
         getContacts: (params: { zaloId: string; opts?: any }) => Promise<{ success: boolean; contacts: any[]; total: number }>;
         getContactStats: (params: { zaloId: string }) => Promise<{ success: boolean; total: number; friendCount: number; noteCount: number }>;
         getCampaigns: (params: { zaloId: string }) => Promise<{ success: boolean; campaigns: any[] }>;
-        saveCampaign: (params: { zaloId: string; campaign: any }) => Promise<{ success: boolean; id: number }>;
+        saveCampaign: (params: { zaloId: string; campaign: any }) => Promise<{ success: boolean; id: number; error?: string }>;
         deleteCampaign: (params: { zaloId: string; campaignId: number }) => Promise<{ success: boolean }>;
         cloneCampaign: (params: { zaloId: string; campaignId: number; includeContacts: boolean; newName?: string }) => Promise<{ success: boolean; id: number; error?: string }>;
         updateCampaignStatus: (params: { campaignId: number; status: string }) => Promise<{ success: boolean }>;
-        addCampaignContacts: (params: { zaloId: string; campaignId: number; contacts: any[] }) => Promise<{ success: boolean }>;
+        addCampaignContacts: (params: { zaloId: string; campaignId: number; contacts: any[] }) => Promise<{ success: boolean; error?: string }>;
         getCampaignContacts: (params: { campaignId: number }) => Promise<{ success: boolean; contacts: any[] }>;
         deleteCampaignContacts: (params: { campaignId: number; contactIds: string[] }) => Promise<{ success: boolean }>;
         deleteAllCampaignContacts: (params: { campaignId: number }) => Promise<{ success: boolean }>;
@@ -552,6 +552,10 @@ declare global {
         sendVideo:      (params: { accountId: string; chatId: string; videoPath: string; caption?: string }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
         sendDocument:   (params: { accountId: string; chatId: string; filePath: string; caption?: string }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
         sendAudio:      (params: { accountId: string; chatId: string; audioPath: string; caption?: string }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
+        sendSticker:    (params: { accountId: string; chatId: string; stickerPath: string }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
+        sendVoice:      (params: { accountId: string; chatId: string; voicePath: string; caption?: string }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
+        sendAnimation:  (params: { accountId: string; chatId: string; animPath: string; caption?: string }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
+        sendVideoNote:  (params: { accountId: string; chatId: string; videoPath: string }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
         forwardMessage: (params: { accountId: string; chatId: string; fromChatId: string; messageId: string }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
         deleteMessage:  (params: { accountId: string; chatId: string; messageId: string }) => Promise<{ success: boolean; error?: string }>;
         addReaction:    (params: { accountId: string; chatId: string; messageId: string; emoji: string }) => Promise<{ success: boolean; error?: string }>;

@@ -950,7 +950,7 @@ app.whenReady().then(async () => {
         '.mkv': 'video/x-matroska', '.avi': 'video/x-msvideo',
         '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4',
         '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
-        '.gif': 'image/gif', '.webp': 'image/webp',
+        '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
       };
       const contentType = mimeTypes[ext] || 'application/octet-stream';
 

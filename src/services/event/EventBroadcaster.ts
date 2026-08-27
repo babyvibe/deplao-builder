@@ -565,6 +565,12 @@ class EventBroadcaster {
             const contentRaw = message.data?.content;
             const rawMsgType = String(message.data?.msgType || '');
             const msgId = message.data?.msgId || '';
+            // Zalo CDN can require the account's authenticated session even
+            // when the copied CDN URL remains valid in a browser tab.
+            const mediaAccount = DatabaseService.getInstance().getAccounts()
+                .find(account => account.zalo_id === zaloId);
+            const mediaCookies = mediaAccount?.cookies;
+            const mediaUserAgent = mediaAccount?.user_agent;
 
             // Skip file/image downloads only for non-media message types
             // Do NOT skip when fromRelay: Boss needs to download media files
@@ -593,7 +599,7 @@ class EventBroadcaster {
             if (!shouldSkipDownload && isVoiceMsg && contentRaw && typeof contentRaw === 'object' && msgId) {
                 const voiceHref = String(contentRaw.href || '');
                 if (voiceHref) {
-                    FileStorageService.downloadFile(zaloId, voiceHref, `voice_${msgId}.m4a`).then((localPath) => {
+                    FileStorageService.downloadFile(zaloId, voiceHref, `voice_${msgId}.m4a`, mediaCookies, mediaUserAgent).then((localPath) => {
                         DatabaseService.getInstance().updateLocalPaths(zaloId, String(msgId), { file: localPath });
                         EventBroadcaster.send('event:localPath', {
                             zaloId, msgId: String(msgId), threadId: message.threadId,
@@ -613,7 +619,7 @@ class EventBroadcaster {
                 // Download thumbnail (ảnh đại diện) trước → hiển thị ngay
                 if (thumbUrl) {
                     downloads.push(
-                        FileStorageService.downloadImage(zaloId, thumbUrl, `thumb_${msgId}.jpg`).then((thumbPath) => {
+                        FileStorageService.downloadImage(zaloId, thumbUrl, `thumb_${msgId}.jpg`, mediaCookies, mediaUserAgent).then((thumbPath) => {
                             if (thumbPath) {
                                 DatabaseService.getInstance().updateLocalPaths(zaloId, String(msgId), { thumb: thumbPath });
                                 EventBroadcaster.send('event:localPath', {
@@ -628,7 +634,7 @@ class EventBroadcaster {
                 // Download video file (background, không block)
                 if (videoUrl) {
                     downloads.push(
-                        FileStorageService.downloadVideo(zaloId, videoUrl, `vid_${msgId}.mp4`).then((videoPath) => {
+                        FileStorageService.downloadVideo(zaloId, videoUrl, `vid_${msgId}.mp4`, mediaCookies, mediaUserAgent).then((videoPath) => {
                             if (videoPath) {
                                 DatabaseService.getInstance().updateLocalPaths(zaloId, String(msgId), { file: videoPath });
                                 EventBroadcaster.send('event:localPath', {
@@ -672,7 +678,7 @@ class EventBroadcaster {
             if (!shouldSkipDownload && isPhoto && contentRaw && typeof contentRaw === 'object' && msgId) {
                 const imgUrl = DatabaseService.extractImageUrlFromContent(contentRaw);
                 if (imgUrl) {
-                    FileStorageService.downloadImage(zaloId, imgUrl).then((localPath) => {
+                    FileStorageService.downloadImage(zaloId, imgUrl, undefined, mediaCookies, mediaUserAgent).then((localPath) => {
                         DatabaseService.getInstance().updateLocalPaths(zaloId, String(msgId), { main: localPath });
                         EventBroadcaster.send('event:localPath', { zaloId, msgId: String(msgId), threadId: message.threadId, localPaths: { main: localPath } });
                         Logger.log(`[EventBroadcaster] Downloaded image for msg ${msgId}: ${localPath}`);
@@ -721,7 +727,7 @@ class EventBroadcaster {
                     // Sanitize: remove illegal chars, then trailing dots/spaces (Windows rejects "file.")
                     const safeFilename = (fileTitle.includes('.') ? fileTitle : `${fileTitle}${finalExt}`)
                         .replace(/[/\\?%*:|"<>]/g, '_').replace(/[. ]+$/, '').trim() || `file_${Date.now()}${finalExt}`;
-                    FileStorageService.downloadFile(zaloId, fileHref, safeFilename).then((localPath) => {
+                    FileStorageService.downloadFile(zaloId, fileHref, safeFilename, mediaCookies, mediaUserAgent).then((localPath) => {
                         DatabaseService.getInstance().updateLocalPaths(zaloId, String(msgId), { file: localPath, fileName: safeFilename });
                         EventBroadcaster.send('event:localPath', { zaloId, msgId: String(msgId), threadId: message.threadId, localPaths: { file: localPath, fileName: safeFilename } });
                         Logger.log(`[EventBroadcaster] Downloaded file for msg ${msgId}: ${localPath}`);

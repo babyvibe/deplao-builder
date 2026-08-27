@@ -50,7 +50,11 @@ export class FacebookAdapter extends BaseChannelAdapter {
       filePath: params.filePath,
       body: params.body,
       typeChat: this.typeChat(params.threadType),
-      fileType: params.fileType,
+      // Facebook only accepts these four MIME routes; Telegram-specific
+      // media types are sent as a normal file when crossing channels.
+      fileType: ['image', 'video', 'audio', 'file'].includes(params.fileType || '')
+        ? params.fileType as 'image' | 'video' | 'audio' | 'file'
+        : 'file',
       ...(replyToMessageId ? { replyToMessageId } : {}),
     }) ?? { success: false, error: 'FB IPC not available' };
   }

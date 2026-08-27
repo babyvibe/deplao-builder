@@ -24,6 +24,27 @@ import { getTelegramMessagePreview } from './TelegramMessagePreview';
 const TELEGRAM_API = 'https://api.telegram.org';
 const REQUEST_TIMEOUT = 30000;
 
+/** Renderer may pass Electron's local-media:// URL. The Bot API needs a real file path. */
+function resolveBotUploadPath(filePath: string): string {
+  let candidate = filePath;
+  if (candidate.startsWith('local-media:///')) candidate = candidate.replace('local-media:///', '');
+  else if (candidate.startsWith('local-media://')) candidate = candidate.replace('local-media://', '');
+  // DB local_paths may be relative to the configured storage folder.
+  return FileStorageService.resolveAbsolutePath(candidate);
+}
+
+function appendBotUpload(form: any, field: string, filePath: string): void {
+  if (filePath.startsWith('http://') || filePath.startsWith('https://')) {
+    form.append(field, filePath);
+    return;
+  }
+  const resolvedPath = resolveBotUploadPath(filePath);
+  if (!fs.existsSync(resolvedPath)) {
+    throw new Error(`File không tồn tại: ${path.basename(resolvedPath)}`);
+  }
+  form.append(field, fs.createReadStream(resolvedPath));
+}
+
 // Re-export BotAccount from ingress for backward compatibility
 export type TelegramBotAccount = BotAccount;
 
@@ -472,8 +493,33 @@ async function downloadBotMedia(
   messageId: string,
   threadId: string,
 ): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await downloadBotMediaOnce(botToken, fileId, filename, msgType, accountId, messageId, threadId);
+      return;
+    } catch (error: any) {
+      lastError = error;
+      if (attempt < 3) {
+        Logger.warn(`[TelegramBotChannel] Media download retry ${attempt}/3 msg=${messageId}: ${error?.message || String(error)}`);
+        await new Promise(resolve => setTimeout(resolve, 1_000 * attempt));
+      }
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError || 'Media download failed'));
+}
+
+async function downloadBotMediaOnce(
+  botToken: string,
+  fileId: string,
+  filename: string,
+  msgType: string,
+  accountId: string,
+  messageId: string,
+  threadId: string,
+): Promise<void> {
   const db = DatabaseService.getInstance();
-  if (!db) return;
+  if (!db) throw new Error('Database unavailable');
 
   try {
     // Step 1: Get file path from Telegram
@@ -483,8 +529,7 @@ async function downloadBotMedia(
     });
 
     if (!fileRes.data?.ok || !fileRes.data?.result?.file_path) {
-      Logger.warn(`[TelegramBotChannel] getFile failed for ${fileId}`);
-      return;
+      throw new Error(`getFile failed for ${fileId}`);
     }
 
     const filePath = fileRes.data.result.file_path;
@@ -497,13 +542,13 @@ async function downloadBotMedia(
     });
 
     const buffer = Buffer.from(response.data);
-    if (buffer.length === 0) return;
+    if (buffer.length === 0) throw new Error('Downloaded Telegram media is empty');
 
     // Step 3: Save to disk
     const ext = getMediaExtension(msgType, filePath || filename);
     const safeFilename = `${accountId}_${threadId}_${messageId}${ext}`;
     const localPath = await saveMediaToDisk(buffer, safeFilename, msgType);
-    if (!localPath) return;
+    if (!localPath) throw new Error('Could not save Telegram media');
 
     // Step 4: Update local_paths trong DB
     const localPaths: Record<string, string> = {};
@@ -528,6 +573,7 @@ async function downloadBotMedia(
     Logger.log(`[TelegramBotChannel] Downloaded ${msgType} for msg ${messageId}: ${localPath}`);
   } catch (err: any) {
     Logger.warn(`[TelegramBotChannel] downloadBotMedia error: ${err.message}`);
+    throw err;
   }
 }
 
@@ -739,12 +785,7 @@ export async function sendPhoto(accountId: string, chatId: string, photoPath: st
     const FormDataNode = require('form-data');
     const form = new FormDataNode();
     form.append('chat_id', chatId);
-    // URL → pass as string; local file → use createReadStream
-    if (photoPath.startsWith('http://') || photoPath.startsWith('https://')) {
-      form.append('photo', photoPath);
-    } else {
-      form.append('photo', fs.createReadStream(photoPath));
-    }
+    appendBotUpload(form, 'photo', photoPath);
     if (caption) form.append('caption', caption);
 
     const res = await axios.post(`${TELEGRAM_API}/bot${bot.botToken}/sendPhoto`, form, {
@@ -843,11 +884,7 @@ export async function sendVideo(accountId: string, chatId: string, videoPath: st
     const FormDataNode = require('form-data');
     const form = new FormDataNode();
     form.append('chat_id', chatId);
-    if (videoPath.startsWith('http://') || videoPath.startsWith('https://')) {
-      form.append('video', videoPath);
-    } else {
-      form.append('video', fs.createReadStream(videoPath));
-    }
+    appendBotUpload(form, 'video', videoPath);
     if (caption) form.append('caption', caption);
     const res = await axios.post(`${TELEGRAM_API}/bot${bot.botToken}/sendVideo`, form, {
       headers: form.getHeaders(),
@@ -882,11 +919,7 @@ export async function sendDocument(accountId: string, chatId: string, filePath: 
     const FormDataNode = require('form-data');
     const form = new FormDataNode();
     form.append('chat_id', chatId);
-    if (filePath.startsWith('http://') || filePath.startsWith('https://')) {
-      form.append('document', filePath);
-    } else {
-      form.append('document', fs.createReadStream(filePath));
-    }
+    appendBotUpload(form, 'document', filePath);
     if (caption) form.append('caption', caption);
     const res = await axios.post(`${TELEGRAM_API}/bot${bot.botToken}/sendDocument`, form, {
       headers: form.getHeaders(),
@@ -922,11 +955,7 @@ export async function sendAudio(accountId: string, chatId: string, audioPath: st
     const FormDataNode = require('form-data');
     const form = new FormDataNode();
     form.append('chat_id', chatId);
-    if (audioPath.startsWith('http://') || audioPath.startsWith('https://')) {
-      form.append('audio', audioPath);
-    } else {
-      form.append('audio', fs.createReadStream(audioPath));
-    }
+    appendBotUpload(form, 'audio', audioPath);
     if (caption) form.append('caption', caption);
     const res = await axios.post(`${TELEGRAM_API}/bot${bot.botToken}/sendAudio`, form, {
       headers: form.getHeaders(),
@@ -1067,7 +1096,7 @@ export async function sendSticker(accountId: string, chatId: string, stickerPath
     const FormData = require('form-data');
     const form = new FormData();
     form.append('chat_id', chatId);
-    form.append('sticker', fs.createReadStream(stickerPath));
+    appendBotUpload(form, 'sticker', stickerPath);
     const res = await axios.post(`${TELEGRAM_API}/bot${bot.botToken}/sendSticker`, form, {
       headers: form.getHeaders(), timeout: 30000,
     });
@@ -1101,7 +1130,7 @@ export async function sendVoice(accountId: string, chatId: string, voicePath: st
     const FormData = require('form-data');
     const form = new FormData();
     form.append('chat_id', chatId);
-    form.append('voice', fs.createReadStream(voicePath));
+    appendBotUpload(form, 'voice', voicePath);
     if (caption) form.append('caption', caption);
     const res = await axios.post(`${TELEGRAM_API}/bot${bot.botToken}/sendVoice`, form, {
       headers: form.getHeaders(), timeout: 30000,
@@ -1133,7 +1162,7 @@ export async function sendAnimation(accountId: string, chatId: string, animPath:
     const FormData = require('form-data');
     const form = new FormData();
     form.append('chat_id', chatId);
-    form.append('animation', fs.createReadStream(animPath));
+    appendBotUpload(form, 'animation', animPath);
     if (caption) form.append('caption', caption);
     const res = await axios.post(`${TELEGRAM_API}/bot${bot.botToken}/sendAnimation`, form, {
       headers: form.getHeaders(), timeout: 30000,
@@ -1169,7 +1198,7 @@ export async function sendVideoNote(accountId: string, chatId: string, videoPath
     const FormData = require('form-data');
     const form = new FormData();
     form.append('chat_id', chatId);
-    form.append('video_note', fs.createReadStream(videoPath));
+    appendBotUpload(form, 'video_note', videoPath);
     const res = await axios.post(`${TELEGRAM_API}/bot${bot.botToken}/sendVideoNote`, form, {
       headers: form.getHeaders(), timeout: 30000,
     });
@@ -1579,7 +1608,7 @@ export async function setChatPhoto(accountId: string, chatId: string, photoPath:
     const FormData = require('form-data');
     const form = new FormData();
     form.append('chat_id', chatId);
-    form.append('photo', fs.createReadStream(photoPath));
+    appendBotUpload(form, 'photo', photoPath);
 
     const res = await axios.post(`${TELEGRAM_API}/bot${bot.botToken}/setChatPhoto`, form, {
       headers: form.getHeaders(),

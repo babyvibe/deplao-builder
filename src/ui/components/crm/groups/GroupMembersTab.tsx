@@ -2037,7 +2037,10 @@ function TelegramGroupMembersTab({ channel }: { channel: 'telegram_user' | 'tele
   const [addingToCampaign, setAddingToCampaign] = useState(false);
   const [showAddToContacts, setShowAddToContacts] = useState(false);
 
-  const normaliseMember = useCallback((member: any) => ({
+  const normaliseMember = useCallback((member: any): {
+    id: string; firstName: string; lastName: string; username: string;
+    phone: string; avatar: string; role: number;
+  } => ({
     id: String(member.id || member.memberId || member.member_id || ''),
     firstName: member.firstName || member.displayName || member.display_name || '',
     lastName: member.lastName || '',
@@ -2120,7 +2123,9 @@ function TelegramGroupMembersTab({ channel }: { channel: 'telegram_user' | 'tele
       // Show the persistent cache first. Avatar hydration is intentionally
       // backgrounded by the Telegram service to keep its MTProto connection stable.
       const cachedRes = await DataAccessor.getGroupMembers({ zaloId: activeAccountId, groupId });
-      const cached = (cachedRes?.members || []).map(normaliseMember).filter((m: any) => m.id);
+      const cached = ((cachedRes?.members || []) as any[])
+        .map(normaliseMember)
+        .filter(member => member.id);
       if (cached.length) setMembers(cached);
 
       const [groupInfo, memberRes] = await Promise.all([
@@ -2145,8 +2150,10 @@ function TelegramGroupMembersTab({ channel }: { channel: 'telegram_user' | 'tele
       }
       if (memberRes?.success) {
         const cachedById = new Map(cached.map((member: any) => [member.id, member]));
-        const fresh = (memberRes.members || []).map(normaliseMember).filter((m: any) => m.id)
-          .map((member: any) => ({ ...cachedById.get(member.id), ...member, avatar: member.avatar || cachedById.get(member.id)?.avatar || '' }));
+        const fresh = ((memberRes.members || []) as any[])
+          .map(normaliseMember)
+          .filter(member => member.id)
+          .map(member => ({ ...cachedById.get(member.id), ...member, avatar: member.avatar || cachedById.get(member.id)?.avatar || '' }));
         // Telegram chỉ trả về một phần participant list, trong khi những người
         // từng nhắn tin đã được lưu theo group_id ở DB. Giữ cả hai nguồn để
         // CRM không làm mất các thành viên đã thu thập từ lịch sử tin nhắn.

@@ -349,9 +349,7 @@ export default function TopBar() {
           return;
         }
         showNotification(
-          syncRes.started === false
-            ? 'Telegram đang tải tin nhắn ở nền. Hội thoại sẽ tự cập nhật.'
-            : 'Đang tải tin nhắn Telegram ở nền. Hội thoại sẽ tự cập nhật.',
+          'Đang tải tin nhắn Telegram ở nền. Hội thoại sẽ tự cập nhật.',
           'info',
         );
       } else {

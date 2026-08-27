@@ -375,7 +375,7 @@ export class DataAccessor {
   static async saveCRMCampaign(params: { zaloId: string; campaign: any }) {
     if (isEmployee()) {
       const res = await rest().post('/api/command/crm/campaigns', params);
-      return { success: true, id: res.data?.id };
+      return { success: res.success, id: res.data?.id, error: res.error };
     }
     return window.electronAPI.crm.saveCampaign(params);
   }
@@ -861,7 +861,8 @@ export class DataAccessor {
 
   static async addCampaignContacts(params: { zaloId: string; campaignId: number; contacts: any[] }) {
     if (isEmployee()) {
-      return rest().post('/api/command/crm/campaigns/contacts', params);
+      const res = await rest().post('/api/command/crm/campaigns/contacts', params);
+      return { success: res.success, error: res.error };
     }
     return window.electronAPI.crm.addCampaignContacts(params);
   }

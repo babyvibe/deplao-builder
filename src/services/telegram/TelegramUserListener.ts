@@ -73,6 +73,17 @@ const quoteRepairQueues = new Map<string, Promise<unknown>>();
 const entityHydrationQueues = new Map<string, Promise<any | null>>();
 const LOGIN_SESSION_TTL_MS = 10 * 60 * 1000;
 
+/** GramJS can upload only absolute paths; media DB rows may be storage-relative. */
+function resolveTelegramUploadPath(filePath: string): string {
+  let candidate = String(filePath || '');
+  if (candidate.startsWith('local-media:///')) {
+    candidate = candidate.replace('local-media:///', '');
+  } else if (candidate.startsWith('local-media://')) {
+    candidate = candidate.replace('local-media://', '');
+  }
+  return FileStorageService.resolveAbsolutePath(candidate);
+}
+
 // ─── Phase A: Diagnostic types and structured logging ────────────────────────
 
 type TelegramIngressSource = 'socket' | 'global_difference' | 'channel_difference' | 'history' | 'poll' | 'topic_api';
@@ -5316,13 +5327,8 @@ export async function sendFile(accountId: string, chatId: string, filePath: stri
     const pathMod = require('path');
     const fs = require('fs');
 
-    // Resolve path: handle both absolute paths and local-media:// URLs
-    let resolvedPath = filePath;
-    if (filePath.startsWith('local-media:///')) {
-      resolvedPath = filePath.replace('local-media:///', '');
-    } else if (filePath.startsWith('local-media://')) {
-      resolvedPath = filePath.replace('local-media://', '');
-    }
+    // Resolve local-media URLs and storage-relative DB paths before upload.
+    let resolvedPath = resolveTelegramUploadPath(filePath);
     resolvedPath = resolvedPath.replace(/\//g, pathMod.sep);
     if (!fs.existsSync(resolvedPath)) {
       Logger.error(`[TG:sendFile] File not found: ${resolvedPath} (original: ${filePath})`);
@@ -5635,13 +5641,8 @@ export async function sendTopicFile(accountId: string, chatId: string, topicRoot
     const pathMod = require('path');
     const fs = require('fs');
 
-    // Resolve path
-    let resolvedPath = filePath;
-    if (filePath.startsWith('local-media:///')) {
-      resolvedPath = filePath.replace('local-media:///', '');
-    } else if (filePath.startsWith('local-media://')) {
-      resolvedPath = filePath.replace('local-media://', '');
-    }
+    // Resolve local-media URLs and storage-relative DB paths before upload.
+    let resolvedPath = resolveTelegramUploadPath(filePath);
     resolvedPath = resolvedPath.replace(/\//g, pathMod.sep);
     if (!fs.existsSync(resolvedPath)) {
       Logger.error(`[TG:sendTopicFile] File not found: ${resolvedPath} (original: ${filePath})`);

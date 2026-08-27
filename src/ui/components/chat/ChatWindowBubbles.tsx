@@ -394,10 +394,15 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
     const [useLocal, setUseLocal] = React.useState(false);
     const [loadFailed, setLoadFailed] = React.useState(false);
     const [saving, setSaving] = React.useState(false);
+    const [zaloRepairing, setZaloRepairing] = React.useState(false);
+    const zaloRepairCountRef = React.useRef(0);
+    const zaloRepairingRef = React.useRef(false);
 
     const localPathsStr = typeof msg.local_paths === 'string' ? msg.local_paths : JSON.stringify(msg.local_paths ?? '');
     React.useEffect(() => {
         setLoadFailed(false);
+        zaloRepairCountRef.current = 0;
+        zaloRepairingRef.current = false;
         // Chỉ dùng local khi local_paths thực sự có path (file đã tải về máy)
         try {
             const lp: Record<string, string> = JSON.parse(localPathsStr || '{}');
@@ -406,7 +411,7 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
         } catch {
             setUseLocal(false);
         }
-    }, [localPathsStr]);
+    }, [localPathsStr, msg?.msg_id]);
 
     // Parse local URL
     let localUrl = '';
@@ -466,6 +471,47 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
         }
     }
 
+    const requestZaloRepair = React.useCallback(async (force = false) => {
+        if (!isZalo(msg?.channel) || !msg?.msg_id || !msg?.owner_zalo_id) return;
+        if (force) {
+            zaloRepairCountRef.current = 0;
+            setLoadFailed(false);
+        }
+        if (zaloRepairingRef.current || zaloRepairCountRef.current >= 3) return;
+
+        zaloRepairCountRef.current++;
+        zaloRepairingRef.current = true;
+        setZaloRepairing(true);
+        try {
+            const result = await ipc.file?.repairImage({
+                zaloId: String(msg.owner_zalo_id),
+                msgId: String(msg.msg_id),
+                threadId: msg.thread_id,
+                localPath: localFilePath,
+                remoteUrl,
+            });
+            if (result?.success) {
+                setUseLocal(true);
+                setLoadFailed(false);
+                return;
+            }
+            if (zaloRepairCountRef.current < 3) {
+                window.setTimeout(() => void requestZaloRepair(false), 1500 * zaloRepairCountRef.current);
+            } else {
+                setLoadFailed(true);
+            }
+        } catch {
+            if (zaloRepairCountRef.current < 3) {
+                window.setTimeout(() => void requestZaloRepair(false), 1500 * zaloRepairCountRef.current);
+            } else {
+                setLoadFailed(true);
+            }
+        } finally {
+            zaloRepairingRef.current = false;
+            setZaloRepairing(false);
+        }
+    }, [localFilePath, msg?.channel, msg?.msg_id, msg?.owner_zalo_id, msg?.thread_id, remoteUrl]);
+
     // Remote-first: CDN hiển thị ngay; chuyển local khi file đã tải xong
     // Nếu local lỗi (race condition file chưa kịp ghi) → tự fallback về CDN
     const displayUrl = useLocal ? (localUrl || remoteUrl) : (remoteUrl || localUrl);
@@ -476,6 +522,9 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
     const handleImgError = () => {
         if (useLocal && remoteUrl) {
             setUseLocal(false); // local lỗi → fallback CDN ngay, không flash
+            if (isZalo(msg.channel)) void requestZaloRepair(false);
+        } else if (isZalo(msg.channel)) {
+            void requestZaloRepair(false);
         } else {
             // Auto-retry repair nếu lần đầu fail (tối đa 3 lần, delay 2s)
             if (retryCountRef.current < 3) {
@@ -525,6 +574,12 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
                     <line x1="2" y1="2" x2="22" y2="22" strokeWidth="1.5"/>
                 </svg>
                 <span className="text-xs opacity-60">Không tải được ảnh</span>
+                {isZalo(msg.channel) && (
+                    <button onClick={() => void requestZaloRepair(true)} disabled={zaloRepairing}
+                            className="text-[11px] text-blue-400 hover:text-blue-300 hover:underline transition-colors disabled:opacity-50">
+                        {zaloRepairing ? 'Đang tải lại...' : 'Thử tải lại'}
+                    </button>
+                )}
                 {remoteUrl && (
                     <button onClick={() => ipc.shell?.openExternal(remoteUrl)}
                             className="text-[11px] text-blue-400 hover:text-blue-300 hover:underline transition-colors">
@@ -554,9 +609,12 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
         return (
             <button
                 type="button"
-                onClick={() => void telegramRepair.requestRepair('manual_retry', true)}
-                disabled={!isTelegramUser(msg.channel) || telegramRepair.repairing}
-                title={isTelegramUser(msg.channel) ? 'Tải lại ảnh Telegram này' : undefined}
+                onClick={() => {
+                    if (isTelegramUser(msg.channel)) void telegramRepair.requestRepair('manual_retry', true);
+                    else if (isZalo(msg.channel)) void requestZaloRepair(true);
+                }}
+                disabled={(!isTelegramUser(msg.channel) && !isZalo(msg.channel)) || telegramRepair.repairing || zaloRepairing}
+                title={isTelegramUser(msg.channel) ? 'Tải lại ảnh Telegram này' : isZalo(msg.channel) ? 'Tải lại ảnh Zalo này' : undefined}
                 className="flex flex-col gap-1 items-center justify-center max-w-xs w-full h-32 rounded-xl bg-gray-700/40 text-gray-400 select-none disabled:cursor-default">
                 <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"
                      className="opacity-30">
@@ -564,7 +622,7 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
                     <circle cx="8.5" cy="8.5" r="1.5"/>
                     <polyline points="21 15 16 10 5 21"/>
                 </svg>
-                {telegramRepair.repairing && <span className="text-[10px] opacity-60">Đang tải lại...</span>}
+                {(telegramRepair.repairing || zaloRepairing) && <span className="text-[10px] opacity-60">Đang tải lại...</span>}
             </button>
         );
     }

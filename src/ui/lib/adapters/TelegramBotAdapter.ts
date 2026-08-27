@@ -30,11 +30,31 @@ export class TelegramBotAdapter extends BaseChannelAdapter {
   async sendAttachment(params: SendAttachmentParams): Promise<ActionResult> {
     try {
       const ext = (params.filePath || '').split('.').pop()?.toLowerCase() || '';
-      const isVideo = ['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(ext);
-      const isAudio = ['mp3', 'wav', 'ogg', 'flac', 'm4a'].includes(ext);
+      // A caller that supplied fileType has already classified the source
+      // message; infer from extension only for direct, unclassified uploads.
+      const isVideo = params.fileType === 'video'
+        || (!params.fileType && ['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(ext));
+      const isAudio = params.fileType === 'audio'
+        || (!params.fileType && ['mp3', 'wav', 'ogg', 'flac', 'm4a'].includes(ext));
 
       let res: any;
-      if (isVideo) {
+      if (params.fileType === 'sticker') {
+        res = await (ipc.telegram as any)?.sendSticker({
+          accountId: params.accountId, chatId: params.threadId, stickerPath: params.filePath,
+        });
+      } else if (params.fileType === 'voice') {
+        res = await (ipc.telegram as any)?.sendVoice({
+          accountId: params.accountId, chatId: params.threadId, voicePath: params.filePath,
+        });
+      } else if (params.fileType === 'animation') {
+        res = await (ipc.telegram as any)?.sendAnimation({
+          accountId: params.accountId, chatId: params.threadId, animPath: params.filePath,
+        });
+      } else if (params.fileType === 'video_note') {
+        res = await (ipc.telegram as any)?.sendVideoNote({
+          accountId: params.accountId, chatId: params.threadId, videoPath: params.filePath,
+        });
+      } else if (isVideo) {
         res = await ipc.telegram?.sendVideo({
           accountId: params.accountId, chatId: params.threadId,
           videoPath: params.filePath, caption: params.body,
@@ -46,7 +66,10 @@ export class TelegramBotAdapter extends BaseChannelAdapter {
         });
       } else {
         // Default: send as photo (image) or document (other files)
-        const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg'].includes(ext);
+        // Respect an explicit document classification (e.g. SVG attachment).
+        // Only infer an image from the extension when the caller did not state a type.
+        const isImage = params.fileType === 'image'
+          || (!params.fileType && ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'].includes(ext));
         if (isImage) {
           res = await ipc.telegram?.sendPhoto({
             accountId: params.accountId, chatId: params.threadId,
@@ -107,13 +130,14 @@ export class TelegramBotAdapter extends BaseChannelAdapter {
   }
 
   async forwardMessage(params: ForwardParams): Promise<ActionResult> {
+    if (!params.sourceThreadId) {
+      return { success: false, error: 'Telegram forward requires sourceThreadId.' };
+    }
     try {
-      // ForwardParams: accountId, messageId, targetThreadId, threadType
-      // Need fromChatId - use accountId as source chat
       const res = await ipc.telegram?.forwardMessage({
         accountId: params.accountId,
         chatId: params.targetThreadId,
-        fromChatId: params.accountId, // source chat
+        fromChatId: params.sourceThreadId,
         messageId: params.messageId,
       });
       return { success: res?.success ?? false, msgId: res?.messageId, messageId: res?.messageId, error: res?.error };
@@ -313,4 +337,3 @@ export class TelegramBotAdapter extends BaseChannelAdapter {
     }
   }
 }
-

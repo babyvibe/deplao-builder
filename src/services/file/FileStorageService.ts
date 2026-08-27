@@ -139,12 +139,16 @@ class FileStorageService {
             const isBmp = headBuf[0] === 0x42 && headBuf[1] === 0x4D;
             const isTiff = (headBuf[0] === 0x49 && headBuf[1] === 0x49 && headBuf[2] === 0x2A && headBuf[3] === 0x00)
                         || (headBuf[0] === 0x4D && headBuf[1] === 0x4D && headBuf[2] === 0x00 && headBuf[3] === 0x2A);
+            // SVG is text, so it has no binary magic bytes. SVG media is
+            // common in Zalo attachments and must not be deleted as corrupt.
+            const isSvg = path.extname(filePath).toLowerCase() === '.svg'
+                        && headBuf.slice(0, bytesRead).toString('utf8').toLowerCase().includes('<svg');
             // AVIF/HEIF: ftyp box at offset 4
             const isAvif = bytesRead >= 8
                         && headBuf[4] === 0x66 && headBuf[5] === 0x74
                         && headBuf[6] === 0x79 && headBuf[7] === 0x70;
 
-            if (!isJpeg && !isPng && !isGif && !isWebP && !isBmp && !isTiff && !isAvif) {
+            if (!isJpeg && !isPng && !isGif && !isWebP && !isBmp && !isTiff && !isAvif && !isSvg) {
                 return { valid: false, reason: 'not_image_content' };
             }
 

@@ -385,8 +385,18 @@ export function registerFileIpc() {
 
                 if (!imgUrl) return { success: false, error: 'No image URL available' };
 
-                // 3. Tải lại ảnh
-                const newLocalPath = await FileStorageService.downloadImage(zaloId, imgUrl);
+                // 3. Tải lại bằng session của đúng tài khoản. CDN Zalo có thể
+                // trả 403 cho request không mang Cookie/User-Agent dù URL vẫn mở
+                // được trong trình duyệt.
+                const account = DatabaseService.getInstance().getAccounts()
+                    .find(item => item.zalo_id === zaloId);
+                const newLocalPath = await FileStorageService.downloadImage(
+                    zaloId,
+                    imgUrl,
+                    undefined,
+                    account?.cookies,
+                    account?.user_agent,
+                );
                 if (!newLocalPath) return { success: false, error: 'Download returned empty (CDN expired?)' };
 
                 // 4. Cập nhật DB
@@ -666,4 +676,3 @@ export function registerFileIpc() {
     });
 
 }
-

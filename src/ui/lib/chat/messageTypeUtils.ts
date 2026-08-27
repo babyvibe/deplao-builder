@@ -59,15 +59,20 @@ export function isMediaType(msgType: string, content: string, attachmentsStr?: s
   if (msgType === 'chat.voice' || msgType === 'audio' || msgType === 'voice') return false; // voice được xử lý riêng
   if (msgType === 'photo' || msgType === 'image' || msgType === 'chat.photo') return true;
 
-  // Telegram/Facebook: file with image MIME type or image extension → treat as media
+  // Telegram/Facebook: file with image MIME type or image extension → treat as media.
+  // SVG documents are intentionally kept as files. Telegram and Zalo commonly send
+  // them as attachments (icons/documents), even though their MIME is image/svg+xml;
+  // rendering those through an <img> creates a broken image bubble instead of a
+  // downloadable attachment.
   if (msgType === 'file' && attachmentsStr) {
     try {
       const atts = JSON.parse(attachmentsStr || '[]');
       if (Array.isArray(atts) && atts.length > 0) {
         const mime = (atts[0].mime_type || '').toLowerCase();
         const fileName = (atts[0].file_name || '').toLowerCase();
-        const imageMimes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp', 'image/svg', 'image/tiff'];
-        const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg', '.tiff', '.ico'];
+        if (fileName.endsWith('.svg') || mime === 'image/svg+xml' || mime === 'image/svg') return false;
+        const imageMimes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp', 'image/tiff'];
+        const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff', '.ico'];
         if (imageMimes.some(m => mime.startsWith(m))) return true;
         if (imageExts.some(ext => fileName.endsWith(ext))) return true;
       }

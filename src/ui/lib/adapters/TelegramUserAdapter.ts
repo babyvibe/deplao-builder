@@ -183,7 +183,7 @@ export class TelegramUserAdapter extends BaseChannelAdapter {
 
       // Detect file type for proper routing
       const ext = (filePath.split('.').pop() || '').toLowerCase();
-      const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg'].includes(ext);
+      const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'].includes(ext);
       const isVideo = ['mp4', 'avi', 'mov', 'mkv', 'webm', 'flv'].includes(ext);
       const isAudio = ['mp3', 'ogg', 'wav', 'm4a', 'aac', 'flac'].includes(ext);
 

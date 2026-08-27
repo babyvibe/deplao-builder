@@ -55,7 +55,7 @@ export interface SendAttachmentParams {
   filePath: string;
   threadType?: number;
   body?: string;
-  fileType?: 'image' | 'video' | 'audio' | 'file';
+  fileType?: 'image' | 'video' | 'audio' | 'voice' | 'sticker' | 'animation' | 'video_note' | 'file';
   quote?: string | null;
   /** Reply-to message ID for Telegram */
   replyToMsgId?: string;
