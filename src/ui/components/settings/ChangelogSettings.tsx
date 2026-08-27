@@ -15,6 +15,70 @@ interface VersionEntry {
 // ─── Changelog data - thêm entry mới vào ĐẦU mảng khi có bản cập nhật ────────
 const CHANGELOG: VersionEntry[] = [
   {
+    version: '26.8.5',
+    date: '08/2026',
+    type: 'minor',
+    highlights: [
+      '👥 Telegram CRM nâng cấp chiến dịch gửi tin hàng loạt — Chi tiết liên hệ chỉnh sửa, thành viên nhóm, quản lý chiến dịch',
+      '📨 Chuyển tiếp tin nhắn — Đa tài khoản, đa nền tảng (Zalo ↔ Telegram ↔ Facebook)',
+      '🏷️ Zalo gợi ý danh thiếp — Tự động gợi ý khi gõ SĐT, copy SĐT',
+      '💬 @mention chính xác hơn — Bắt @mention trong tin nhắn ảnh kèm text và bỏ false trigger sai dạng @@',
+    ],
+    changes: [
+      {
+        category: 'new',
+        items: [
+          'Chuyển tiếp đa tài khoản — Dropdown chọn tài khoản gửi, avatar + ChannelBadge đồng bộ sidebar',
+          'Chuyển tiếp đa nền tảng — Zalo→Telegram, Telegram→Zalo, Facebook→Zalo, v.v.',
+          'Phân trang chuyển tiếp — Load 50/trang từ DB, infinite scroll + "Xem thêm"',
+          'Tìm kiếm DB chuyển tiếp — Debounce 300ms, query tên/SĐT/ID qua getContactsFiltered',
+          'Target selector "Theo thành viên nhóm" — Chọn nhóm, xem số thành viên, import khi xác nhận',
+          'Copy SĐT từ gợi ý danh thiếp — Icon copy bên cạnh SĐT trong suggestion bar',
+          'CRM Contact Detail — Chỉnh sửa chi tiết liên hệ (SĐT, giới tính, sinh nhật), hiển thị channel',
+          'Group Members Tab — Avatar dùng toLocalMediaUrl, cải thiện UI thành viên nhóm',
+          'Telegram Bot Commands — Menu lệnh khi chat với bot, Mini App WebView',
+          'Telegram Media Preview Workflow — Normalize media previews cho workflow engine',
+          'Workflow Contact Picker — Nút xóa liên hệ trong chế độ đơn',
+        ],
+      },
+      {
+        category: 'improved',
+        items: [
+          'Phone regex SĐT — Fix từ 11 xuống 10 chữ số (0 + 9 digits)',
+          'getUserInfo response — Đọc changed_profiles[uid] thay vì response trực tiếp',
+          'linkifyText @mention — Highlight xanh, regex require ≥1 chữ/số sau @',
+          'Phân trang Nhóm chung — API page/limit thay vì load all',
+          'Lọc danh mục Nhóm chung — API categoryId thay vì client-side',
+          'sendOneForward — Đơn giản hóa, gửi đúng loại tin nhắn, không await phức tạp',
+          'Forward auth — Lấy auth + channel từ target account',
+          'TelegramUserListener — Nâng cấp lớn (469 lines), cải thiện message handling',
+          'ChatWindowBubbles — Cải thiện render media',
+          'TopBar — Cải thiện UI',
+          'AI assistant error logging — Chi tiết hơn khi LLM call thất bại',
+          'Database service — Thêm query methods mới',
+          'Adapters — Cải thiện Facebook, Telegram Bot, Telegram User adapters',
+        ],
+      },
+      {
+        category: 'fixed',
+        items: [
+          'Sửa @mention false trigger — indexOf-based detection, loại bỏ @, @@, @@@',
+          'Sửa regex phone — /0\\d{10}/ → /0\\d{9}/ (10 chữ số)',
+          'Sửa getUserInfo — changed_profiles[uid] thay vì response.displayName',
+          'Sửa Nhóm chung load — DB thay vì props',
+          'Sửa phân trang Nhóm chung — API total thay vì client length',
+          'Sửa linkifyText — /@\\w+/ match @@ → require ≥1 char',
+          'Sửa chuyển tiếp text/images — fire-and-forget, không await block',
+          'Sửa mention selection — Giữ caret, thay @query khi chọn, reopen suggestions',
+          'Sửa workflow contact picker — Nút xóa trong chế độ đơn',
+          'Sửa Telegram media preview — Normalize cho workflow engine',
+          'Sửa Title bar hiển thị sai trên macOS',
+          'Sửa nếu số điện thoại cuối danh sách bị "failed", chiến dịch sẽ không thông báo hoàn thành.'
+        ],
+      },
+    ],
+  },
+  {
     version: '26.8.4',
     date: '08/2026',
     type: 'minor',
