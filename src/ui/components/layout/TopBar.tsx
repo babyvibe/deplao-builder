@@ -18,7 +18,7 @@ import { useCurrentEmployeeId, useErpPermissions } from '@/hooks/erp/useErpConte
 import NotificationCenter from '@/features/erp/notifications/NotificationCenter';
 import { Spinner } from '@/components/common/PageLoading';
 import { AlertIcon, KeyIcon, MonitorIcon, PluginIcon, RefreshIcon, StarIcon } from '@/components/common/icons';
-import { isFacebook, isTelegram } from '@/lib/channelHelper';
+import { isFacebook, isTelegram, isTelegramBot, isTelegramUser } from '@/lib/channelHelper';
 
 
 const APP_VERSION: string = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '?';
@@ -340,7 +340,7 @@ export default function TopBar() {
         } else {
           showNotification(res?.error || 'Không thể đồng bộ hội thoại Facebook', 'error');
         }
-      } else if (isTelegram(activeAccount?.channel)) {
+      } else if (isTelegramUser(activeAccount?.channel)) {
         // Acknowledge immediately. Full account history runs in the main
         // process and completion refreshes the visible state via telegramSync.
         const syncRes = await ipc.telegramUser?.refreshMessages({ accountId: activeAccountId });
@@ -350,6 +350,13 @@ export default function TopBar() {
         }
         showNotification(
           'Đang tải tin nhắn Telegram ở nền. Hội thoại sẽ tự cập nhật.',
+          'info',
+        );
+      } else if (isTelegramBot(activeAccount?.channel)) {
+        // Bot API only exposes queued getUpdates; it cannot request arbitrary
+        // chat history like a Telegram User/MTProto account can.
+        showNotification(
+          'Bot Telegram sẽ tự nhận các update còn trong hàng đợi. Telegram không hỗ trợ tải lại lịch sử tùy ý cho Bot.',
           'info',
         );
       } else {

@@ -63,17 +63,22 @@ function resolveZaloId(auth: any): string {
 }
 
 /**
- * Nếu auth không có cookies nhưng đã resolve được zaloId từ connection
- * đang active → dùng auth của connection để tránh tạo instance ZaloService
- * mới với cookies rỗng (dẫn đến lỗi "Cookies tài khoản không hợp lệ").
+ * Khi IPC đã resolve được một connection Zalo đang active, connection đó là
+ * nguồn auth đáng tin cậy nhất. Cookie lưu trong renderer/DB có thể đã được
+ * mã hóa theo phiên cũ hoặc đã stale, dù listener hiện tại vẫn đang sống.
+ * Không thay auth trong trường hợp cookie thực sự trùng khớp để giữ nguyên
+ * luồng thông thường; còn thiếu hoặc lệch cookie thì tái sử dụng auth của
+ * connection, tránh tạo một ZaloService mới với dữ liệu không hợp lệ.
  */
 function resolveAuthFromConnection(auth: any, zaloId: string): any {
     if (!zaloId) return auth;
     const authObj = typeof auth === 'string' ? JSON.parse(auth) : auth;
-    if (authObj?.cookies) return auth;
     const conn = ConnectionManager.getConnection(zaloId);
-    if (conn?.auth?.cookies) {
-        Logger.log(`[zaloIpc] resolveAuthFromConnection: using connection auth for ${zaloId} (no cookies in request auth)`);
+    const connectionCookies = conn?.auth?.cookies;
+    const requestCookies = authObj?.cookies;
+    if (connectionCookies && requestCookies !== connectionCookies) {
+        const reason = requestCookies ? 'cookies mismatch' : 'no cookies in request auth';
+        Logger.log(`[zaloIpc] resolveAuthFromConnection: using connection auth for ${zaloId} (${reason})`);
         return conn.auth;
     }
     return auth;

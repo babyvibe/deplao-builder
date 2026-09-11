@@ -54,6 +54,9 @@ const RECENT_DIALOG_LIMIT = 200;
 const INITIAL_MESSAGES_PER_DIALOG = 100;
 const RECOVERY_MESSAGES_PER_DIALOG = 1000;
 const MAX_MANUAL_MESSAGE_DOWNLOAD = 5000;
+// Telegram message IDs are positive signed 32-bit integers. Never use a
+// timestamp-based/local temporary ID as an MTProto minId checkpoint.
+const MAX_TELEGRAM_MESSAGE_ID = 2_147_483_647;
 
 /** Map accountId → ActiveListener */
 const activeListeners = new Map<string, ActiveListener>();
@@ -534,6 +537,25 @@ function getTelegramCustomEmojiAttachments(message: any): Record<string, any>[] 
       length: Math.max(0, Number(entity.length || 0)),
     }))
     .filter((entity: any) => entity.document_id && entity.length > 0);
+}
+
+/** Read the last server-issued Telegram message ID for a dialog. Some legacy
+ * optimistic rows used Date.now() as msg_id; they remain valid local rows but
+ * are not legal MTProto message IDs and must be excluded from history cursors. */
+function getTelegramHistoryCheckpoint(db: DatabaseService, accountId: string, chatId: string): number {
+  const checkpoint = db.queryOne<{ lastMessageId?: number }>(
+    `SELECT MAX(CASE
+       WHEN CAST(msg_id AS INTEGER) BETWEEN 1 AND ${MAX_TELEGRAM_MESSAGE_ID}
+       THEN CAST(msg_id AS INTEGER)
+     END) AS lastMessageId
+     FROM messages
+     WHERE owner_zalo_id = ? AND thread_id = ? AND channel = 'telegram_user'`,
+    [accountId, chatId],
+  );
+  const messageId = Number(checkpoint?.lastMessageId || 0);
+  return Number.isSafeInteger(messageId) && messageId > 0 && messageId <= MAX_TELEGRAM_MESSAGE_ID
+    ? messageId
+    : 0;
 }
 
 /** Keep native mention ranges so the renderer never has to guess from a raw @. */
@@ -1133,7 +1155,14 @@ function scheduleReconnectCatchUp(listener: ActiveListener, client: TelegramClie
       return;
     }
     if (listener.client !== client || listener.stopped || !client.connected) return;
-    const result = await synchronizeTelegramAccount(accountId, client);
+    const result = await synchronizeTelegramAccount(accountId, client, {
+      includeHistory: true,
+      recoverRecentChannels: true,
+    });
+    EventBroadcaster.emit('event:telegramSync', result.success
+      ? { zaloId: accountId, status: 'completed', inserted: result.inserted, pending: !result.historyComplete }
+      : { zaloId: accountId, status: 'failed', error: 'Không thể hoàn tất đồng bộ tin nhắn Telegram' },
+    );
     if (!result.success) {
       retryNeeded = true;
       Logger.warn(`[TelegramUserListener] Reconnect catch-up was deferred for ${accountId}`);
@@ -1167,6 +1196,9 @@ function scheduleReconnectCatchUp(listener: ActiveListener, client: TelegramClie
 const CHANNEL_POLL_INTERVAL_MS = 15_000;
 const ACTIVE_CHANNEL_LEASE_MS = 10 * 60_000;
 const MAX_ACTIVE_CHANNELS_PER_ACCOUNT = 10;
+// Reconnect/manual sync can inspect recent dialogs, but must never fan out to
+// every historical channel a long-lived account has ever seen.
+const MAX_RECONNECT_CHANNEL_RECOVERY = 200;
 
 /** Per-account channel poll serialization. Key: accountId */
 const channelPollQueues = new Map<string, Promise<void>>();
@@ -1367,13 +1399,7 @@ async function backfillChannelTooLongHistory(
   const db = DatabaseService.getInstance();
   if (!db) return { complete: false, failed: true };
 
-  const checkpoint = db.queryOne<{ lastMessageId?: number }>(
-    `SELECT MAX(CAST(msg_id AS INTEGER)) AS lastMessageId
-     FROM messages
-     WHERE owner_zalo_id = ? AND thread_id = ? AND channel = 'telegram_user'`,
-    [accountId, channelId],
-  );
-  const minId = Number(checkpoint?.lastMessageId || 0);
+  const minId = getTelegramHistoryCheckpoint(db, accountId, channelId);
   try {
     const messages: any[] = [];
     if (minId <= 0) {
@@ -1800,15 +1826,22 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
     client.addEventHandler(async (event: NewMessageEvent) => {
       try {
         const message = event?.message as any;
+        const builderChatId = deriveChatIdFromRawMessage(message);
         tgLog('info', account.accountId, 'socket', 'BUILDER_RECEIVED NewMessage', {
           msgClass: message?.className || '-',
           mediaClass: message?.media?.className || '-',
-          chatId: deriveChatIdFromRawMessage(message) || '-',
+          chatId: builderChatId || '-',
           msgId: message?.id != null ? String(message.id) : '-',
           replyToMsgId: message?.replyTo?.replyToMsgId,
           replyToTopId: message?.replyTo?.replyToTopId,
           forumTopic: message?.replyTo?.forumTopic === true,
         });
+        // The raw channel handler detects PTS gaps before writing the newest
+        // message. Do not let this generic builder advance the message-ID
+        // checkpoint while that channel is waiting for GetChannelDifference.
+        if (builderChatId?.startsWith('-100') && pendingChannelRecoveries.get(account.accountId)?.has(builderChatId)) {
+          return;
+        }
         await handleNewMessage(account.accountId, event, client, 'socket');
       } catch (err: any) {
         tgLog('error', account.accountId, 'socket', `Error handling message: ${err.message}`);
@@ -2222,8 +2255,21 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
 
     // Recover MTProto updates before recording the next global cursor. This
     // remains background work so a slow history backfill never blocks UI login.
-    synchronizeTelegramAccount(account.accountId, client).catch(err => {
+    synchronizeTelegramAccount(account.accountId, client, {
+      includeHistory: true,
+      recoverRecentChannels: true,
+    }).then(result => {
+      EventBroadcaster.emit('event:telegramSync', result.success
+        ? { zaloId: account.accountId, status: 'completed', inserted: result.inserted, pending: !result.historyComplete }
+        : { zaloId: account.accountId, status: 'failed', error: 'Không thể hoàn tất đồng bộ tin nhắn Telegram' },
+      );
+    }).catch(err => {
       Logger.warn(`[TelegramUserListener] Telegram update synchronization failed: ${err.message}`);
+      EventBroadcaster.emit('event:telegramSync', {
+        zaloId: account.accountId,
+        status: 'failed',
+        error: 'Không thể hoàn tất đồng bộ tin nhắn Telegram',
+      });
     });
 
     // Check isForum for unchecked groups (background, non-blocking)
@@ -2246,6 +2292,51 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
 // ─── Service Message Handling ─────────────────────────────────────────────────
 // GramJS delivers service messages (join/leave/title/photo/pin) as MessageService
 // inside NewMessageEvent. They are NOT a separate UpdateServiceMessage type.
+
+type TelegramServiceMember = { id: string; dName: string; avatar: string };
+
+/** Resolve the actor of a Telegram service message before persisting it. Service
+ * actions carry only peer IDs, and a newly joined person is usually not in the
+ * group-member cache yet. Keeping the member ID with the system message lets
+ * the renderer display their name and open the same profile popup as a mention. */
+async function resolveTelegramServiceMember(
+  accountId: string,
+  chatId: string,
+  userId: string,
+  db: DatabaseService,
+  client?: TelegramClient,
+  entityHint?: any,
+): Promise<TelegramServiceMember | null> {
+  if (!userId) return null;
+
+  // MessageActionChatAddUser.users is normally a vector of bare user IDs;
+  // only a real Telegram entity is safe to pass through as a hydration hint.
+  let entity = entityHint?.className ? entityHint : undefined;
+  if (!entity && client) {
+    try {
+      entity = await hydrateTelegramIdentity(accountId, client, userId, chatId);
+    } catch {
+      // A deleted/private account can be unavailable to getEntity. Preserve its
+      // ID so the message is still attributable and clickable in the UI.
+    }
+  } else if (entity && client) {
+    try {
+      await hydrateTelegramIdentity(accountId, client, userId, chatId, entity);
+    } catch {}
+  }
+
+  const cached = db.queryOne<any>(
+    `SELECT display_name, avatar FROM page_group_member
+     WHERE owner_zalo_id = ? AND group_id = ? AND member_id = ?`,
+    [accountId, chatId, userId],
+  );
+  const peer = db.getTelegramPeer(accountId, userId);
+  const entityName = entity
+    ? ([entity.firstName, entity.lastName].filter(Boolean).join(' ') || entity.title || entity.username || '')
+    : '';
+  const displayName = entityName || cached?.display_name || peer?.display_name || peer?.username || userId;
+  return { id: userId, dName: displayName, avatar: cached?.avatar || '' };
+}
 
 async function handleServiceMessage(accountId: string, message: any, client?: TelegramClient): Promise<ProcessResult> {
   const action = message.action;
@@ -2287,21 +2378,16 @@ async function handleServiceMessage(accountId: string, message: any, client?: Te
 
   let systemText = '';
   let groupEventType = '';
+  let systemMembers: TelegramServiceMember[] = [];
 
   if (className === 'MessageActionChatAddUser') {
     const addedUsers = action.users || [];
     if (addedUsers.length > 0) {
-      const names = addedUsers.map((u: any) => {
-        const uid = String(u?.id || u?.userId || '');
-        const name = u?.firstName ? [u.firstName, u.lastName].filter(Boolean).join(' ') : '';
-        if (name) return name;
-        // Try to resolve from group members cache
-        const cached = db?.queryOne<any>(
-          `SELECT display_name FROM page_group_member WHERE owner_zalo_id = ? AND group_id = ? AND member_id = ?`,
-          [accountId, serviceChatId, uid]
-        );
-        return cached?.display_name || uid;
-      }).filter(Boolean);
+      systemMembers = (await Promise.all(addedUsers.map((user: any) => {
+        const userId = String(user?.id || user?.userId || user?.valueOf?.() || '');
+        return resolveTelegramServiceMember(accountId, serviceChatId, userId, db, client, user);
+      }))).filter((member): member is TelegramServiceMember => !!member);
+      const names = systemMembers.map(member => member.dName).filter(Boolean);
       systemText = names.length > 0
         ? `${names.join(', ')} đã được thêm vào nhóm`
         : 'Thành viên đã được thêm vào nhóm';
@@ -2310,18 +2396,19 @@ async function handleServiceMessage(accountId: string, message: any, client?: Te
     }
     groupEventType = 'member_join';
   } else if (className === 'MessageActionChatJoinedByLink') {
-    // Try to get the user who joined from the message sender
-    const senderId = String(message?.senderId?.valueOf?.() || '');
-    let senderName = '';
-    if (senderId) {
-      const cached = db?.queryOne<any>(
-        `SELECT display_name FROM page_group_member WHERE owner_zalo_id = ? AND group_id = ? AND member_id = ?`,
-        [accountId, serviceChatId, senderId]
-      );
-      senderName = cached?.display_name || '';
-    }
-    systemText = senderName
-      ? `${senderName} tham gia nhóm qua link mời`
+    // The action itself contains no user. Telegram identifies the joiner as
+    // MessageService.fromId/senderId, so hydrate that peer rather than relying
+    // on the older group-member cache.
+    const senderId = getCanonicalChatId(message?.fromId)
+      || String(message?.senderId?.valueOf?.() || '');
+    let senderEntity: any;
+    try { senderEntity = await message.getSender?.(); } catch {}
+    const sender = await resolveTelegramServiceMember(
+      accountId, serviceChatId, senderId, db, client, senderEntity,
+    );
+    if (sender) systemMembers = [sender];
+    systemText = sender?.dName
+      ? `${sender.dName} tham gia nhóm qua link mời`
       : 'Thành viên tham gia qua link mời';
     groupEventType = 'member_join';
   } else if (className === 'MessageActionChatDeleteUser') {
@@ -2414,9 +2501,9 @@ async function handleServiceMessage(accountId: string, message: any, client?: Te
       if (!existing) {
         db.run(`
           INSERT INTO messages
-            (msg_id, owner_zalo_id, thread_id, thread_type, sender_id, content, msg_type, timestamp, is_sent, status, channel, topic_id)
-          VALUES (?, ?, ?, 1, 'system', ?, 'system', ?, 0, 'received', 'telegram_user', ?)
-        `, [serviceMsgId, accountId, serviceChatId, systemText, serviceTimestamp, getForumTopicId(message)]);
+            (msg_id, owner_zalo_id, thread_id, thread_type, sender_id, content, msg_type, timestamp, is_sent, status, channel, attachments, topic_id)
+          VALUES (?, ?, ?, 1, 'system', ?, 'system', ?, 0, 'received', 'telegram_user', ?, ?)
+        `, [serviceMsgId, accountId, serviceChatId, systemText, serviceTimestamp, JSON.stringify(systemMembers), getForumTopicId(message)]);
 
         // Emit group event only for new service messages
         if (groupEventType && (groupEventType === 'member_join' || groupEventType === 'member_leave')) {
@@ -2424,7 +2511,7 @@ async function handleServiceMessage(accountId: string, message: any, client?: Te
             zaloId: accountId,
             groupId: serviceChatId,
             eventType: groupEventType,
-            data: { action: className },
+            data: { action: className, updateMembers: systemMembers },
             systemText,
             msgId: serviceMsgId,
             timestamp: serviceTimestamp,
@@ -3371,7 +3458,7 @@ type TelegramAccountSyncResult = {
 async function synchronizeTelegramAccount(
   accountId: string,
   client: TelegramClient,
-  options: { includeHistory?: boolean } = {}
+  options: { includeHistory?: boolean; recoverRecentChannels?: boolean } = {}
 ): Promise<TelegramAccountSyncResult> {
   if (recoveringUpdateAccounts.has(accountId)) {
     return { success: false, historyComplete: false, inserted: 0 };
@@ -3381,7 +3468,9 @@ async function synchronizeTelegramAccount(
     const differenceResult = await recoverTelegramUpdateDifference(accountId, client);
     // Channel cursors are the realtime catch-up path. Run them before the broad
     // dialog history backfill, which may hit messages.GetHistory FLOOD_WAIT.
-    await recoverChannelUpdates(accountId, client);
+    await recoverChannelUpdates(accountId, client, {
+      includeRecentDialogs: !!options.includeHistory || !!options.recoverRecentChannels,
+    });
 
     // A complete global difference plus per-channel recovery is authoritative.
     // Running a broad GetHistory pass anyway races channel difference (history
@@ -3520,15 +3609,18 @@ export function startAccountMessageRefresh(accountId: string): {
  * Uses drainChannelDifference for proper state machine handling.
  * Each channel has its own PTS independent of the global PTS.
  */
-async function recoverChannelUpdates(accountId: string, client: TelegramClient): Promise<void> {
+async function recoverChannelUpdates(
+  accountId: string,
+  client: TelegramClient,
+  options: { includeRecentDialogs?: boolean } = {},
+): Promise<void> {
   const db = DatabaseService.getInstance();
   if (!db) return;
 
   try {
-    // Channel PTS is independent from the global update state. Only recover a
-    // channel Telegram explicitly marked as needing a difference, plus a small
-    // set the user is actively viewing. Scanning every cached peer causes
-    // CHANNEL_PRIVATE retry loops and is not Telegram's update protocol.
+    // Channel PTS is independent from the global update state. Live polling
+    // handles only pending/active channels; reconnect/manual sync additionally
+    // includes recent dialogs, never every cached peer.
     const now = Date.now();
     const leases = activeChannelLeases.get(accountId);
     if (leases) {
@@ -3536,10 +3628,43 @@ async function recoverChannelUpdates(accountId: string, client: TelegramClient):
         if (expiresAt <= now) leases.delete(channelId);
       }
     }
-    const channelIds = [...new Set([
+    const channelIds = new Set<string>([
       ...(pendingChannelRecoveries.get(accountId)?.keys() || []),
       ...(leases?.keys() || []),
-    ])];
+    ]);
+
+    if (options.includeRecentDialogs) {
+      const collectRecentChannels = async (folder?: number) => {
+        const dialogs = await client.getDialogs({
+          limit: RECENT_DIALOG_LIMIT,
+          ...(folder === undefined ? {} : { folder }),
+        });
+        for (const dialog of dialogs) {
+          if (channelIds.size >= MAX_RECONNECT_CHANNEL_RECOVERY) break;
+          const channelId = getCanonicalChatId(dialog.id);
+          if (!channelId?.startsWith('-100')) continue;
+          if (dialog.entity) cacheTelegramPeer(accountId, channelId, dialog.entity);
+
+          const hasCursor = db.getTelegramChannelPts(accountId, channelId) > 0;
+          const hasMessages = !!db.queryOne(
+            `SELECT 1 FROM messages
+             WHERE owner_zalo_id = ? AND thread_id = ? AND channel = 'telegram_user'
+             LIMIT 1`,
+            [accountId, channelId],
+          );
+          if (!hasCursor && !hasMessages) continue;
+          channelIds.add(channelId);
+          if (!hasCursor) markChannelRecoveryPending(accountId, channelId);
+        }
+      };
+
+      try {
+        await collectRecentChannels();
+        if (channelIds.size < MAX_RECONNECT_CHANNEL_RECOVERY) await collectRecentChannels(1);
+      } catch (err: any) {
+        tgLog('warn', accountId, 'channel_difference', `Unable to list recent dialogs: ${err.message}`);
+      }
+    }
 
     for (const channelId of channelIds) {
       const peer = db.getTelegramPeer(accountId, channelId);
@@ -3634,13 +3759,7 @@ async function fetchMissedMessages(accountId: string, client: TelegramClient): P
       if (isFirstSync) {
         messages = await client.getMessages(dialog.id, { limit: INITIAL_MESSAGES_PER_DIALOG });
       } else {
-        const checkpoint = db.queryOne<{ lastMessageId?: number }>(
-          `SELECT MAX(CAST(msg_id AS INTEGER)) AS lastMessageId
-           FROM messages
-           WHERE owner_zalo_id = ? AND thread_id = ? AND channel = 'telegram_user'`,
-          [accountId, chatId]
-        );
-        const minId = Number(checkpoint?.lastMessageId || 0);
+        const minId = getTelegramHistoryCheckpoint(db, accountId, chatId);
         if (!minId) {
           // A newly discovered dialog has no local checkpoint yet. Treat it
           // as a bounded first-load rather than unexpectedly downloading its
@@ -3761,7 +3880,15 @@ async function fetchMissedMessages(accountId: string, client: TelegramClient): P
     syncingAccounts.delete(accountId);
     if (needsFollowUpSync && activeListeners.get(accountId)?.client === client) {
       setTimeout(() => {
-        synchronizeTelegramAccount(accountId, client, { includeHistory: true }).catch(err => {
+        synchronizeTelegramAccount(accountId, client, {
+          includeHistory: true,
+          recoverRecentChannels: true,
+        }).then(result => {
+          EventBroadcaster.emit('event:telegramSync', result.success
+            ? { zaloId: accountId, status: 'completed', inserted: result.inserted, pending: !result.historyComplete }
+            : { zaloId: accountId, status: 'failed', error: 'Không thể hoàn tất đồng bộ tin nhắn Telegram' },
+          );
+        }).catch(err => {
           Logger.warn(`[TelegramUserListener] Follow-up recovery failed: ${err.message}`);
         });
       }, 1000);
