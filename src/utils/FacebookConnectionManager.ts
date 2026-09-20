@@ -39,7 +39,7 @@ class FacebookConnectionManager {
     const service = this.connections.get(accountId);
     if (service) {
       await service.disconnect();
-      FacebookService.removeInstance(accountId);
+      await FacebookService.removeInstance(accountId);
       this.connections.delete(accountId);
       Logger.log(`[FacebookConnectionManager] Disconnected: ${accountId}`);
     }

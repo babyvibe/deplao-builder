@@ -282,6 +282,7 @@ async function handleInboundMessage(account: BotAccount, message: any): Promise<
         msgType,
         channel: 'telegram_bot',
         isChannel,
+        chatType: String(message.chat?.type || ''),
         ts: String(timestamp),
         dName: fromName,
         attachments,
@@ -641,7 +642,29 @@ async function saveMediaToDisk(buffer: Buffer, filename: string, msgType: string
 /**
  * Gửi tin nhắn qua Telegram Bot
  */
-export async function sendMessage(accountId: string, chatId: string, text: string, parseMode?: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
+export interface TelegramBotSendMessageParams {
+  accountId: string;
+  chatId: string;
+  text: string;
+  parseMode?: string;
+  /** Native Telegram reply_markup payload (ReplyKeyboardMarkup/InlineKeyboardMarkup). */
+  replyMarkup?: Record<string, any>;
+}
+
+/**
+ * Sends a Bot API message.  Keep the positional overload for existing IPC
+ * callers while also accepting the object form used by the workflow engine.
+ */
+export async function sendMessage(
+  accountOrParams: string | TelegramBotSendMessageParams,
+  legacyChatId?: string,
+  legacyText?: string,
+  legacyParseMode?: string,
+): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  const params: TelegramBotSendMessageParams = typeof accountOrParams === 'string'
+    ? { accountId: accountOrParams, chatId: legacyChatId || '', text: legacyText || '', parseMode: legacyParseMode }
+    : accountOrParams;
+  const { accountId, chatId, text, parseMode, replyMarkup } = params;
   const bot = registeredAccounts.get(accountId);
   if (!bot) return { success: false, error: 'Bot not active' };
   if (!bot.botToken) return { success: false, error: 'Bot token missing' };
@@ -649,6 +672,7 @@ export async function sendMessage(accountId: string, chatId: string, text: strin
   try {
     const payload: Record<string, any> = { chat_id: chatId, text };
     if (parseMode) payload.parse_mode = parseMode;
+    if (replyMarkup) payload.reply_markup = replyMarkup;
 
     const res = await axios.post(`${TELEGRAM_API}/bot${bot.botToken}/sendMessage`, payload, {
       timeout: REQUEST_TIMEOUT,
@@ -990,6 +1014,7 @@ export async function forwardMessage(accountId: string, chatId: string, fromChat
       from_chat_id: fromChatId,
       message_id: messageId,
     }, { timeout: REQUEST_TIMEOUT });
+    if (!res.data?.ok) return { success: false, error: res.data?.description || 'Telegram API error' };
     return { success: true, messageId: String(res.data.result?.message_id || '') };
   } catch (err: any) {
     return { success: false, error: err.message };
@@ -1003,11 +1028,11 @@ export async function deleteMessage(accountId: string, chatId: string, messageId
   const bot = registeredAccounts.get(accountId);
   if (!bot) return { success: false, error: 'Bot not active' };
   try {
-    await axios.post(`${TELEGRAM_API}/bot${bot.botToken}/deleteMessage`, {
+    const res = await axios.post(`${TELEGRAM_API}/bot${bot.botToken}/deleteMessage`, {
       chat_id: chatId,
       message_id: messageId,
     }, { timeout: REQUEST_TIMEOUT });
-    return { success: true };
+    return { success: !!res.data?.ok, error: res.data?.ok ? undefined : res.data?.description || 'Telegram API error' };
   } catch (err: any) {
     return { success: false, error: err.message };
   }
@@ -1020,12 +1045,12 @@ export async function addReaction(accountId: string, chatId: string, messageId: 
   const bot = registeredAccounts.get(accountId);
   if (!bot) return { success: false, error: 'Bot not active' };
   try {
-    await axios.post(`${TELEGRAM_API}/bot${bot.botToken}/setMessageReaction`, {
+    const res = await axios.post(`${TELEGRAM_API}/bot${bot.botToken}/setMessageReaction`, {
       chat_id: chatId,
       message_id: messageId,
       reaction: JSON.stringify([{ type: 'emoji', emoji }]),
     }, { timeout: REQUEST_TIMEOUT });
-    return { success: true };
+    return { success: !!res.data?.ok, error: res.data?.ok ? undefined : res.data?.description || 'Telegram API error' };
   } catch (err: any) {
     return { success: false, error: err.message };
   }
@@ -1038,11 +1063,11 @@ export async function pinMessage(accountId: string, chatId: string, messageId: s
   const bot = registeredAccounts.get(accountId);
   if (!bot) return { success: false, error: 'Bot not active' };
   try {
-    await axios.post(`${TELEGRAM_API}/bot${bot.botToken}/pinChatMessage`, {
+    const res = await axios.post(`${TELEGRAM_API}/bot${bot.botToken}/pinChatMessage`, {
       chat_id: chatId,
       message_id: messageId,
     }, { timeout: REQUEST_TIMEOUT });
-    return { success: true };
+    return { success: !!res.data?.ok, error: res.data?.ok ? undefined : res.data?.description || 'Telegram API error' };
   } catch (err: any) {
     return { success: false, error: err.message };
   }
@@ -1061,6 +1086,7 @@ export async function sendPoll(accountId: string, chatId: string, question: stri
       options: JSON.stringify(options),
       is_anonymous: false,
     }, { timeout: REQUEST_TIMEOUT });
+    if (!res.data?.ok) return { success: false, error: res.data?.description || 'Telegram API error' };
     return { success: true, messageId: String(res.data.result?.message_id || '') };
   } catch (err: any) {
     return { success: false, error: err.message };
@@ -1074,12 +1100,12 @@ export async function editMessage(accountId: string, chatId: string, messageId: 
   const bot = registeredAccounts.get(accountId);
   if (!bot) return { success: false, error: 'Bot not active' };
   try {
-    await axios.post(`${TELEGRAM_API}/bot${bot.botToken}/editMessageText`, {
+    const res = await axios.post(`${TELEGRAM_API}/bot${bot.botToken}/editMessageText`, {
       chat_id: chatId,
       message_id: messageId,
       text,
     }, { timeout: REQUEST_TIMEOUT });
-    return { success: true };
+    return { success: !!res.data?.ok, error: res.data?.ok ? undefined : res.data?.description || 'Telegram API error' };
   } catch (err: any) {
     return { success: false, error: err.message };
   }
@@ -1260,10 +1286,25 @@ export async function sendChatAction(accountId: string, chatId: string, action: 
   const bot = registeredAccounts.get(accountId);
   if (!bot) return { success: false, error: 'Bot not active' };
   try {
-    await axios.post(`${TELEGRAM_API}/bot${bot.botToken}/sendChatAction`, {
+    const res = await axios.post(`${TELEGRAM_API}/bot${bot.botToken}/sendChatAction`, {
       chat_id: chatId, action: action || 'typing',
     }, { timeout: 5000 });
-    return { success: true };
+    return { success: !!res.data?.ok, error: res.data?.ok ? undefined : res.data?.description || 'Telegram API error' };
+  } catch (err: any) {
+    return { success: false, error: err.response?.data?.description || err.message };
+  }
+}
+
+/** Acknowledge an inline keyboard callback, optionally with a toast or alert. */
+export async function answerCallbackQuery(accountId: string, callbackQueryId: string, text?: string, showAlert = false): Promise<ActionResult> {
+  const bot = registeredAccounts.get(accountId);
+  if (!bot) return { success: false, error: 'Bot not active' };
+  try {
+    const payload: Record<string, any> = { callback_query_id: callbackQueryId };
+    if (text) payload.text = text;
+    if (showAlert) payload.show_alert = true;
+    const res = await axios.post(`${TELEGRAM_API}/bot${bot.botToken}/answerCallbackQuery`, payload, { timeout: REQUEST_TIMEOUT });
+    return { success: !!res.data?.ok, error: res.data?.ok ? undefined : res.data?.description };
   } catch (err: any) {
     return { success: false, error: err.response?.data?.description || err.message };
   }
@@ -1361,9 +1402,117 @@ export function startBot(account: TelegramBotAccount): void {
       Logger.log(`[TelegramBot] Processing message from ${update.message.fromName}: ${(update.message.text || '').slice(0, 50)}`);
       await handleInboundMessage(acc, update.message.raw);
     }
+    if ((update.kind === 'edited_message' || update.kind === 'edited_channel_post') && update.editedMessage) {
+      const message = update.editedMessage;
+      EventBroadcaster.emit('event:telegramBotEditedMessage', {
+        zaloId: acc.accountId,
+        accountId: acc.accountId,
+        channel: 'telegram_bot',
+        chatId: message.chatId,
+        threadId: message.chatId,
+        fromId: message.fromId,
+        fromName: message.fromName,
+        messageId: message.messageId,
+        content: message.text,
+        chatType: message.chatType,
+        timestamp: message.date || Date.now(),
+        message: {
+          channel: 'telegram_bot',
+          threadId: message.chatId,
+          data: {
+            uidFrom: message.fromId,
+            idTo: message.chatId,
+            msgId: message.messageId,
+            content: message.text,
+            msgType: 'text',
+            chatType: message.chatType,
+          },
+        },
+        rawUpdate: update.raw,
+      });
+    }
+    if (update.kind === 'chat_join_request' && update.chatJoinRequest) {
+      const request = update.chatJoinRequest;
+      const chat = request.chat || {};
+      const from = request.from || {};
+      EventBroadcaster.emit('event:telegramBotJoinRequest', {
+        zaloId: acc.accountId,
+        accountId: acc.accountId,
+        channel: 'telegram_bot',
+        chatId: String(chat.id || ''),
+        threadId: String(chat.id || ''),
+        chatTitle: chat.title || '',
+        chatType: chat.type || '',
+        fromId: String(from.id || ''),
+        fromName: [from.first_name, from.last_name].filter(Boolean).join(' ') || String(from.username || from.id || ''),
+        bio: request.bio || '',
+        timestamp: Number(request.date || Math.floor(Date.now() / 1000)) * 1000,
+        rawUpdate: update.raw,
+      });
+    }
+    if (update.kind === 'callback_query' && update.callbackQuery) {
+      const query = update.callbackQuery;
+      const chatId = String(query.message?.chat?.id || '');
+      const from = query.from || {};
+      const callbackData = String(query.data || '');
+
+      // Acknowledge immediately so Telegram does not leave the button spinning
+      // while a workflow is being queued/executed.
+      void axios.post(`${TELEGRAM_API}/bot${acc.botToken}/answerCallbackQuery`, {
+        callback_query_id: query.id,
+      }, { timeout: REQUEST_TIMEOUT }).catch((err: any) => {
+        Logger.warn(`[TelegramBot] answerCallbackQuery failed: ${err.message}`);
+      });
+
+      EventBroadcaster.emit('event:telegramBotCallback', {
+        zaloId: acc.accountId,
+        accountId: acc.accountId,
+        channel: 'telegram_bot',
+        chatId,
+        threadId: chatId,
+        fromId: String(from.id || ''),
+        fromName: [from.first_name, from.last_name].filter(Boolean).join(' ') || String(from.username || from.id || ''),
+        callbackQueryId: String(query.id || ''),
+        callbackData,
+        messageId: String(query.message?.message_id || ''),
+        rawUpdate: update.raw,
+      });
+    }
+    if (update.kind === 'my_chat_member' && update.chatMember) {
+      const member = update.chatMember;
+      const chat = member.chat || {};
+      const previousStatus = String(member.old_chat_member?.status || '');
+      const currentStatus = String(member.new_chat_member?.status || '');
+      const wasInChat = !['left', 'kicked'].includes(previousStatus);
+      const isInChat = !['left', 'kicked'].includes(currentStatus);
+      const eventType = !wasInChat && isInChat ? 'added'
+        : wasInChat && !isInChat ? 'removed'
+        : 'permissions_changed';
+      const actor = member.from || {};
+      EventBroadcaster.emit('event:telegramBotMembership', {
+        zaloId: acc.accountId,
+        accountId: acc.accountId,
+        channel: 'telegram_bot',
+        chatId: String(chat.id || ''),
+        threadId: String(chat.id || ''),
+        chatTitle: chat.title || [chat.first_name, chat.last_name].filter(Boolean).join(' ') || '',
+        chatType: chat.type || '',
+        eventType,
+        previousStatus,
+        currentStatus,
+        actorId: String(actor.id || ''),
+        actorName: [actor.first_name, actor.last_name].filter(Boolean).join(' ') || String(actor.username || actor.id || ''),
+        timestamp: Number(member.date || Math.floor(Date.now() / 1000)) * 1000,
+        rawUpdate: update.raw,
+      });
+    }
   };
 
-  BotIngress.startBot(account);
+  const pollingStarted = BotIngress.startBot(account);
+  if (!pollingStarted) {
+    Logger.warn(`[TelegramBotChannel] Bot ${account.accountId} is configured but polling is paused because this token is in use elsewhere.`);
+    return;
+  }
   BotIngress.registerConsumer(account.accountId, consumer);
 
   // Store consumer reference for cleanup
@@ -1432,6 +1581,11 @@ export function isBotPolling(accountId: string): boolean {
   return registeredAccounts.has(accountId) && BotIngress.isPollerRunning(accountId);
 }
 
+/** Prevent the periodic health check from fighting an external getUpdates consumer. */
+export function isBotPollingConflict(accountId: string): boolean {
+  return registeredAccounts.has(accountId) && BotIngress.hasPollingConflict(accountId);
+}
+
 /**
  * Attempt to reconnect a bot if it's registered but not polling.
  * Returns true if reconnection was attempted.
@@ -1442,10 +1596,11 @@ export function tryReconnectBot(accountId: string): boolean {
 
   // Check if already polling
   if (BotIngress.isPollerRunning(accountId)) return false;
+  if (BotIngress.hasPollingConflict(accountId)) return false;
 
   // Re-register with ingress
   try {
-    BotIngress.startBot(account);
+    if (!BotIngress.startBot(account)) return false;
     Logger.log(`[TelegramBotChannel] Reconnected bot ${accountId}`);
     return true;
   } catch (err: any) {

@@ -6,35 +6,97 @@
 // Protocol
 // --------
 // Request  (Python -> bridge): one JSON object per line:
-//     {"id": <int>, "method": "<name>", "params": {...}}
+//
+//	{"id": <int>, "method": "<name>", "params": {...}}
 //
 // Response (bridge -> Python): one JSON object per line:
-//     {"id": <int>, "ok": true,  "data": {...}}
-//     {"id": <int>, "ok": false, "error": "..."}
+//
+//	{"id": <int>, "ok": true,  "data": {...}}
+//	{"id": <int>, "ok": false, "error": "..."}
 //
 // Async event (bridge -> Python): one JSON object per line, no id:
-//     {"event": {"type": "<name>", "data": {...}, "timestamp": <ms>}}
 //
-// Methods: newClient, connect, connectE2EE, isConnected, disconnect,
+//	{"event": {"type": "<name>", "data": {...}, "timestamp": <ms>}}
+//
+// Methods: hello, newClient, connect, connectE2EE, isConnected, disconnect,
 // sendMessage, sendReaction, sendE2EEMessage, sendE2EEReaction,
 // sendImage, sendFile, sendE2EESticker, sendE2EEAudio, sendE2EEVideo, sendE2EEDocument.
 //
 // Build:
-//     go mod tidy
-//     go build -ldflags="-s -w" -o ../build/fbchat-bridge-e2ee.exe .
+//
+//	go mod tidy
+//	go build -ldflags="-s -w" -o ../build/fbchat-bridge-e2ee.exe .
 package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
 	"fbchat-bridge-e2ee/bridge"
+	"github.com/rs/zerolog"
+	"go.mau.fi/mautrix-meta/pkg/messagix"
+	"go.mau.fi/mautrix-meta/pkg/messagix/cookies"
+	"go.mau.fi/mautrix-meta/pkg/messagix/types"
+	"maunium.net/go/mautrix/bridgev2"
 )
+
+var (
+	// bridgeVersion is set via -ldflags "-X main.bridgeVersion=..."
+	// Default fallback for local builds without build script.
+	bridgeVersion = "2.3.1-dev"
+)
+
+const (
+	protocolVersion      = 2
+	maxDecodedMediaBytes = 25 * 1024 * 1024 // 25 MiB
+)
+
+// DEPLAO_ADAPTER: localPath media transport — Electron-only adapter.
+// Upstream expects base64 `data` in JSON-RPC. Electron passes `localPath`
+// (filesystem path) to avoid copying large buffers across IPC.
+// This adapter reads the file, validates it, then passes bytes to bridge/.
+// See: docs/fbchat-v2.3.1-vendor-manifest.json
+func readAndValidateLocalPath(localPath string, label string) ([]byte, error) {
+	if localPath == "" {
+		return nil, fmt.Errorf("%s: localPath is empty", label)
+	}
+
+	// Reject directory, FIFO, symlink-to-directory, etc.
+	info, err := os.Stat(localPath)
+	if err != nil {
+		return nil, fmt.Errorf("%s: cannot stat file: %w", label, err)
+	}
+	if info.IsDir() {
+		return nil, fmt.Errorf("%s: path is a directory, not a file", label)
+	}
+	if info.Mode()&os.ModeNamedPipe != 0 || info.Mode()&os.ModeSocket != 0 {
+		return nil, fmt.Errorf("%s: path is not a regular file (pipe/socket)", label)
+	}
+
+	// Reject files exceeding media limit
+	if info.Size() > int64(maxDecodedMediaBytes) {
+		return nil, fmt.Errorf("%s: file too large (%d bytes > %d limit)", label, info.Size(), maxDecodedMediaBytes)
+	}
+
+	// Reject paths with null bytes or obviously malicious patterns
+	cleaned := filepath.Clean(localPath)
+	if strings.ContainsAny(cleaned, "\x00") {
+		return nil, fmt.Errorf("%s: invalid path (null byte)", label)
+	}
+
+	data, err := os.ReadFile(cleaned)
+	if err != nil {
+		return nil, fmt.Errorf("%s: read failed: %w", label, err)
+	}
+	return data, nil
+}
 
 type request struct {
 	ID     uint64          `json:"id"`
@@ -54,9 +116,57 @@ type eventEnvelope struct {
 }
 
 var (
-	client   *bridge.Client
-	stdoutMu sync.Mutex
+	client *bridge.Client
+	// nativeLoginClient is deliberately separate from the connected chat client.
+	// It only exists while the Messenger Lite login wizard is active, so an
+	// experimental credential login can never replace a live account session.
+	nativeLoginClient *messagix.Client
+	stdoutMu          sync.Mutex
 )
+
+type nativeLoginStartParams struct {
+	ProxyURL string `json:"proxyUrl,omitempty"`
+}
+
+type nativeLoginSubmitParams struct {
+	Input map[string]string `json:"input"`
+}
+
+type nativeLoginResult struct {
+	Complete bool                `json:"complete"`
+	Step     *bridgev2.LoginStep `json:"step,omitempty"`
+	Cookies  map[string]string   `json:"cookies,omitempty"`
+}
+
+// advanceNativeLogin delegates the complete state machine (password encryption,
+// captcha, TOTP, SMS, email and checkpoint choices) to fbchat-v2's Messenger
+// Lite implementation. Do not log input values: they may contain credentials.
+func advanceNativeLogin(input map[string]string) (*nativeLoginResult, error) {
+	if nativeLoginClient == nil || nativeLoginClient.MessengerLite == nil {
+		return nil, fmt.Errorf("native login is not initialised")
+	}
+
+	step, loginCookies, err := nativeLoginClient.MessengerLite.DoLoginSteps(context.Background(), input)
+	if err != nil {
+		return nil, err
+	}
+	if step != nil {
+		return &nativeLoginResult{Step: step}, nil
+	}
+	if loginCookies == nil {
+		return nil, fmt.Errorf("native login completed without session cookies")
+	}
+
+	values := loginCookies.GetAll()
+	resultCookies := make(map[string]string, len(values))
+	for key, value := range values {
+		resultCookies[string(key)] = value
+	}
+	// Cookies are returned exactly once to Electron. The client is discarded so
+	// another call cannot accidentally continue an already-completed login.
+	nativeLoginClient = nil
+	return &nativeLoginResult{Complete: true, Cookies: resultCookies}, nil
+}
 
 func writeJSON(v interface{}) {
 	stdoutMu.Lock()
@@ -86,7 +196,25 @@ func pumpEvents(c *bridge.Client) {
 
 func handle(req *request) {
 	switch req.Method {
+	case "hello":
+		ok(req.ID, map[string]interface{}{
+			"protocolVersion": protocolVersion,
+			"bridgeVersion":   bridgeVersion,
+			"capabilities": []string{
+				"connectE2EE", "sendMessage", "sendE2EEMessage", "sendE2EEImage",
+				"sendE2EEVideo", "sendE2EEAudio", "sendE2EEDocument", "mediaLocalPath",
+				"sendTypingIndicator", "sendE2EETyping", "markRead",
+				"editMessage", "unsendMessage", "editE2EEMessage", "unsendE2EEMessage",
+				"nativeLogin",
+			},
+			"maxDecodedMediaBytes": maxDecodedMediaBytes,
+		})
+
 	case "newClient":
+		// DEPLAO_ADAPTER: deviceData transport — Electron passes device state
+		// as a JSON string via secureStorage instead of file I/O.
+		// Upstream uses DevicePath (file); Electron uses DeviceData (string).
+		// See: docs/fbchat-v2.3.1-vendor-manifest.json
 		if client != nil {
 			fail(req.ID, fmt.Errorf("client already created"))
 			return
@@ -103,7 +231,73 @@ func handle(req *request) {
 		}
 		client = c
 		go pumpEvents(client)
-		ok(req.ID, map[string]interface{}{"ready": true})
+		initialDeviceData := ""
+		if !cfg.E2EEMemoryOnly && cfg.DeviceData == "" && cfg.DevicePath == "" {
+			initialDeviceData, err = client.DeviceStore.GetDeviceData()
+			if err != nil {
+				client.Disconnect()
+				client = nil
+				fail(req.ID, fmt.Errorf("serialize initial device state: %w", err))
+				return
+			}
+		}
+		ok(req.ID, map[string]interface{}{"ready": true, "deviceData": initialDeviceData})
+
+	case "startNativeLogin":
+		if nativeLoginClient != nil {
+			fail(req.ID, fmt.Errorf("native login is already active"))
+			return
+		}
+		var params nativeLoginStartParams
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			fail(req.ID, err)
+			return
+		}
+		loginCookies := &cookies.Cookies{Platform: types.MessengerLite}
+		loginCookies.UpdateValues(map[cookies.MetaCookieName]string{})
+		loginLogger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).With().Timestamp().Logger()
+		nativeLoginClient = messagix.NewClient(loginCookies, loginLogger, &messagix.Config{})
+		if params.ProxyURL != "" {
+			if err := nativeLoginClient.SetProxy(params.ProxyURL); err != nil {
+				nativeLoginClient = nil
+				fail(req.ID, fmt.Errorf("invalid login proxy: %w", err))
+				return
+			}
+		}
+		result, err := advanceNativeLogin(nil)
+		if err != nil {
+			nativeLoginClient = nil
+			fail(req.ID, err)
+			return
+		}
+		ok(req.ID, result)
+
+	case "submitNativeLogin":
+		var params nativeLoginSubmitParams
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			fail(req.ID, err)
+			return
+		}
+		if len(params.Input) > 8 {
+			fail(req.ID, fmt.Errorf("too many native login inputs"))
+			return
+		}
+		for key, value := range params.Input {
+			if len(key) > 128 || len(value) > 4096 {
+				fail(req.ID, fmt.Errorf("native login input exceeds size limit"))
+				return
+			}
+		}
+		result, err := advanceNativeLogin(params.Input)
+		if err != nil {
+			fail(req.ID, err)
+			return
+		}
+		ok(req.ID, result)
+
+	case "cancelNativeLogin":
+		nativeLoginClient = nil
+		ok(req.ID, map[string]interface{}{})
 
 	case "connect":
 		if client == nil {
@@ -178,6 +372,7 @@ func handle(req *request) {
 		ok(req.ID, map[string]interface{}{})
 
 	case "sendImage":
+		// DEPLAO_ADAPTER: localPath media transport (see readAndValidateLocalPath)
 		if client == nil {
 			fail(req.ID, fmt.Errorf("client not initialised"))
 			return
@@ -191,9 +386,9 @@ func handle(req *request) {
 			fail(req.ID, err)
 			return
 		}
-		imgData, err := os.ReadFile(imgP.ImagePath)
+		imgData, err := readAndValidateLocalPath(imgP.ImagePath, "sendImage")
 		if err != nil {
-			fail(req.ID, fmt.Errorf("failed to read image file: %w", err))
+			fail(req.ID, err)
 			return
 		}
 		res, err := client.SendImage(&bridge.SendImageOptions{
@@ -209,6 +404,7 @@ func handle(req *request) {
 		ok(req.ID, res)
 
 	case "sendFile":
+		// DEPLAO_ADAPTER: localPath media transport (see readAndValidateLocalPath)
 		if client == nil {
 			fail(req.ID, fmt.Errorf("client not initialised"))
 			return
@@ -222,9 +418,9 @@ func handle(req *request) {
 			fail(req.ID, err)
 			return
 		}
-		fileData, err := os.ReadFile(fileP.FilePath)
+		fileData, err := readAndValidateLocalPath(fileP.FilePath, "sendFile")
 		if err != nil {
-			fail(req.ID, fmt.Errorf("failed to read file: %w", err))
+			fail(req.ID, err)
 			return
 		}
 		res, err := client.SendFile(&bridge.SendFileOptions{
@@ -305,6 +501,7 @@ func handle(req *request) {
 		ok(req.ID, res)
 
 	case "sendE2EEAudio":
+		// DEPLAO_ADAPTER: localPath media transport (see readAndValidateLocalPath)
 		if client == nil {
 			fail(req.ID, fmt.Errorf("client not initialised"))
 			return
@@ -318,9 +515,9 @@ func handle(req *request) {
 			fail(req.ID, err)
 			return
 		}
-		aData, err := os.ReadFile(ap.AudioPath)
+		aData, err := readAndValidateLocalPath(ap.AudioPath, "sendE2EEAudio")
 		if err != nil {
-			fail(req.ID, fmt.Errorf("failed to read audio file: %w", err))
+			fail(req.ID, err)
 			return
 		}
 		mimeType := ap.MimeType
@@ -340,6 +537,7 @@ func handle(req *request) {
 		ok(req.ID, res)
 
 	case "sendE2EEVideo":
+		// DEPLAO_ADAPTER: localPath media transport (see readAndValidateLocalPath)
 		if client == nil {
 			fail(req.ID, fmt.Errorf("client not initialised"))
 			return
@@ -353,9 +551,9 @@ func handle(req *request) {
 			fail(req.ID, err)
 			return
 		}
-		vData, err := os.ReadFile(vp.VideoPath)
+		vData, err := readAndValidateLocalPath(vp.VideoPath, "sendE2EEVideo")
 		if err != nil {
-			fail(req.ID, fmt.Errorf("failed to read video file: %w", err))
+			fail(req.ID, err)
 			return
 		}
 		res, err := client.SendE2EEVideo(&bridge.SendE2EEVideoOptions{
@@ -371,6 +569,7 @@ func handle(req *request) {
 		ok(req.ID, res)
 
 	case "sendE2EEImage":
+		// DEPLAO_ADAPTER: localPath media transport (see readAndValidateLocalPath)
 		if client == nil {
 			fail(req.ID, fmt.Errorf("client not initialised"))
 			return
@@ -384,9 +583,9 @@ func handle(req *request) {
 			fail(req.ID, err)
 			return
 		}
-		data, err := os.ReadFile(p.ImagePath)
+		data, err := readAndValidateLocalPath(p.ImagePath, "sendE2EEImage")
 		if err != nil {
-			fail(req.ID, fmt.Errorf("failed to read image file: %w", err))
+			fail(req.ID, err)
 			return
 		}
 		mimeType := "image/jpeg"
@@ -410,6 +609,7 @@ func handle(req *request) {
 		ok(req.ID, res)
 
 	case "sendE2EEDocument":
+		// DEPLAO_ADAPTER: localPath media transport (see readAndValidateLocalPath)
 		if client == nil {
 			fail(req.ID, fmt.Errorf("client not initialised"))
 			return
@@ -423,9 +623,9 @@ func handle(req *request) {
 			fail(req.ID, err)
 			return
 		}
-		docData, err := os.ReadFile(docP.FilePath)
+		docData, err := readAndValidateLocalPath(docP.FilePath, "sendE2EEDocument")
 		if err != nil {
-			fail(req.ID, fmt.Errorf("failed to read file: %w", err))
+			fail(req.ID, err)
 			return
 		}
 		res, err := client.SendE2EEDocument(&bridge.SendE2EEDocumentOptions{
@@ -438,6 +638,141 @@ func handle(req *request) {
 			return
 		}
 		ok(req.ID, res)
+
+	case "sendTypingIndicator":
+		if client == nil {
+			fail(req.ID, fmt.Errorf("client not initialised"))
+			return
+		}
+		var tp struct {
+			ThreadID   int64 `json:"threadId"`
+			IsTyping   bool  `json:"isTyping"`
+			IsGroup    bool  `json:"isGroup"`
+			ThreadType int64 `json:"threadType"`
+		}
+		if err := json.Unmarshal(req.Params, &tp); err != nil {
+			fail(req.ID, err)
+			return
+		}
+		if err := client.SendTypingIndicator(tp.ThreadID, tp.IsTyping, tp.IsGroup, tp.ThreadType); err != nil {
+			fail(req.ID, err)
+			return
+		}
+		ok(req.ID, map[string]interface{}{})
+
+	case "sendE2EETyping":
+		if client == nil {
+			fail(req.ID, fmt.Errorf("client not initialised"))
+			return
+		}
+		var etp struct {
+			ChatJID  string `json:"chatJid"`
+			IsTyping bool   `json:"isTyping"`
+		}
+		if err := json.Unmarshal(req.Params, &etp); err != nil {
+			fail(req.ID, err)
+			return
+		}
+		if err := client.SendE2EETyping(etp.ChatJID, etp.IsTyping); err != nil {
+			fail(req.ID, err)
+			return
+		}
+		ok(req.ID, map[string]interface{}{})
+
+	case "markRead":
+		if client == nil {
+			fail(req.ID, fmt.Errorf("client not initialised"))
+			return
+		}
+		var mrp struct {
+			ThreadID    int64 `json:"threadId"`
+			WatermarkTs int64 `json:"watermarkTs"`
+		}
+		if err := json.Unmarshal(req.Params, &mrp); err != nil {
+			fail(req.ID, err)
+			return
+		}
+		if err := client.MarkRead(mrp.ThreadID, mrp.WatermarkTs); err != nil {
+			fail(req.ID, err)
+			return
+		}
+		ok(req.ID, map[string]interface{}{})
+
+	case "editMessage":
+		if client == nil {
+			fail(req.ID, fmt.Errorf("client not initialised"))
+			return
+		}
+		var p struct {
+			MessageID string `json:"messageId"`
+			NewText   string `json:"newText"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			fail(req.ID, err)
+			return
+		}
+		if err := client.EditMessage(p.MessageID, p.NewText); err != nil {
+			fail(req.ID, err)
+			return
+		}
+		ok(req.ID, map[string]interface{}{})
+
+	case "unsendMessage":
+		if client == nil {
+			fail(req.ID, fmt.Errorf("client not initialised"))
+			return
+		}
+		var p struct {
+			MessageID string `json:"messageId"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			fail(req.ID, err)
+			return
+		}
+		if err := client.UnsendMessage(p.MessageID); err != nil {
+			fail(req.ID, err)
+			return
+		}
+		ok(req.ID, map[string]interface{}{})
+
+	case "editE2EEMessage":
+		if client == nil {
+			fail(req.ID, fmt.Errorf("client not initialised"))
+			return
+		}
+		var emp struct {
+			ChatJID   string `json:"chatJid"`
+			MessageID string `json:"messageId"`
+			NewText   string `json:"newText"`
+		}
+		if err := json.Unmarshal(req.Params, &emp); err != nil {
+			fail(req.ID, err)
+			return
+		}
+		if err := client.EditE2EEMessage(emp.ChatJID, emp.MessageID, emp.NewText); err != nil {
+			fail(req.ID, err)
+			return
+		}
+		ok(req.ID, map[string]interface{}{})
+
+	case "unsendE2EEMessage":
+		if client == nil {
+			fail(req.ID, fmt.Errorf("client not initialised"))
+			return
+		}
+		var ump struct {
+			ChatJID   string `json:"chatJid"`
+			MessageID string `json:"messageId"`
+		}
+		if err := json.Unmarshal(req.Params, &ump); err != nil {
+			fail(req.ID, err)
+			return
+		}
+		if err := client.UnsendE2EEMessage(ump.ChatJID, ump.MessageID); err != nil {
+			fail(req.ID, err)
+			return
+		}
+		ok(req.ID, map[string]interface{}{})
 
 	case "downloadE2EEAttachment":
 		if client == nil {
@@ -461,6 +796,7 @@ func handle(req *request) {
 			client.Disconnect()
 			client = nil
 		}
+		nativeLoginClient = nil
 		ok(req.ID, map[string]interface{}{})
 
 	default:
@@ -486,6 +822,7 @@ func main() {
 				if client != nil {
 					client.Disconnect()
 				}
+				nativeLoginClient = nil
 				return
 			}
 			fmt.Fprintln(os.Stderr, "stdin error:", err)

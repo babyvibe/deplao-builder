@@ -2057,7 +2057,12 @@ export default function ChatWindow() {
           messageId: msgId,
         });
         if (!ensured?.success) {
-          showNotification(ensured?.error || 'Không tải được tin nhắn đã ghim', 'error');
+          const err = ensured?.error || '';
+          if (err.includes('CHANNEL_PRIVATE') || err.includes('USER_BANNED_IN_CHANNEL')) {
+            showNotification('Kênh này không cho phép tải tin nhắn', 'info');
+          } else {
+            showNotification(err || 'Không tải được tin nhắn đã ghim', 'error');
+          }
           return;
         }
         targetMsg = ensured.message;
@@ -2066,6 +2071,10 @@ export default function ChatWindow() {
         showNotification('Không tìm thấy tin nhắn trong hội thoại này', 'error');
         return;
       }
+      // A Zalo quote can identify a media message by globalMsgId while the
+      // persisted/DOM record uses a different cli_msg_id.  After resolving
+      // the row, always use its canonical msg_id for the element we render.
+      const targetDomMessageId = String((targetMsg as any).msg_id || msgId);
 
       const aroundRes = await DataAccessor.getMessagesAround({
         zaloId: activeAccountId,
@@ -2133,7 +2142,7 @@ export default function ChatWindow() {
         });
       });
 
-      const el2 = document.getElementById(`msg-${msgId}`);
+      const el2 = document.getElementById(`msg-${targetDomMessageId}`);
       if (el2) {
         scrollAndHighlight(el2);
       }

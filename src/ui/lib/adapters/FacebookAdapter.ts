@@ -24,19 +24,28 @@ export class FacebookAdapter extends BaseChannelAdapter {
     } catch { return undefined; }
   }
 
-  private typeChat(threadType?: number): 'user' | undefined {
-    return threadType === 0 ? 'user' : undefined;
+  /**
+   * Preserve the Facebook routing tri-state across renderer → IPC:
+   * user = 1:1, null = group, undefined = genuinely unknown. Facebook group
+   * IDs can also be numeric, so a group must not be collapsed to undefined.
+   */
+  private typeChat(threadType?: number): 'user' | null | undefined {
+    if (threadType === 0) return 'user';
+    if (threadType === 1) return null;
+    return undefined;
   }
 
   async sendMessage(params: SendMessageParams): Promise<ActionResult> {
     const replyToMessageId = this.extractReplyTo(params.quote);
+    const inferredTypeChat = this.typeChat(params.threadType);
+    const hasCallerTypeChat = Object.prototype.hasOwnProperty.call(params.options || {}, 'typeChat');
     return ipc.fb?.sendMessage({
       accountId: params.accountId,
       threadId: params.threadId,
       body: params.body,
       options: {
         ...params.options,
-        typeChat: this.typeChat(params.threadType),
+        ...(!hasCallerTypeChat && inferredTypeChat !== undefined ? { typeChat: inferredTypeChat } : {}),
         ...(replyToMessageId ? { replyToMessageId } : {}),
       },
     }) ?? { success: false, error: 'FB IPC not available' };
@@ -44,12 +53,13 @@ export class FacebookAdapter extends BaseChannelAdapter {
 
   async sendAttachment(params: SendAttachmentParams): Promise<ActionResult> {
     const replyToMessageId = this.extractReplyTo(params.quote);
+    const typeChat = this.typeChat(params.threadType);
     return ipc.fb?.sendAttachment({
       accountId: params.accountId,
       threadId: params.threadId,
       filePath: params.filePath,
       body: params.body,
-      typeChat: this.typeChat(params.threadType),
+      ...(typeChat !== undefined ? { typeChat } : {}),
       // Facebook only accepts these four MIME routes; Telegram-specific
       // media types are sent as a normal file when crossing channels.
       fileType: ['image', 'video', 'audio', 'file'].includes(params.fileType || '')
@@ -61,12 +71,13 @@ export class FacebookAdapter extends BaseChannelAdapter {
 
   async sendVideo(params: SendVideoParams): Promise<ActionResult> {
     const replyToMessageId = this.extractReplyTo(params.quote);
+    const typeChat = this.typeChat(params.threadType);
     return ipc.fb?.sendAttachment({
       accountId: params.accountId,
       threadId: params.threadId,
       filePath: params.filePath,
       body: params.body,
-      typeChat: this.typeChat(params.threadType),
+      ...(typeChat !== undefined ? { typeChat } : {}),
       fileType: 'video',
       ...(replyToMessageId ? { replyToMessageId } : {}),
     }) ?? { success: false, error: 'FB IPC not available' };
@@ -162,7 +173,9 @@ export class FacebookAdapter extends BaseChannelAdapter {
       accountId: params.accountId,
       messageId: params.messageId,
       targetThreadId: params.targetThreadId,
-      isGroup: params.threadType === 1,
+      ...(params.threadType === 0 || params.threadType === 1
+        ? { isGroup: params.threadType === 1 }
+        : {}),
     }) ?? { success: false, error: 'FB IPC not available' };
   }
 

@@ -173,6 +173,56 @@ export default function App() {
   const isMobile = useIsMobile();
   const { mobileShowChat, setMobileShowChat } = useAppStore();
 
+  // ─── Resizable sidebar width ────────────────────────────────────────────
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    try { return Number(localStorage.getItem('deplao:sidebar-width') || '0') || 288; }
+    catch { return 288; }
+  });
+  const [sidebarResizing, setSidebarResizing] = useState(false);
+  const sidebarResizingRef = useRef(false);
+  const MIN_SIDEBAR_WIDTH = 240;
+  const MAX_SIDEBAR_WIDTH = 480;
+
+  // Load from DB on mount (async override of localStorage default)
+  useEffect(() => {
+    DataAccessor.getSetting('sidebar_width').then(val => {
+      const n = Number(val);
+      if (n >= MIN_SIDEBAR_WIDTH && n <= MAX_SIDEBAR_WIDTH) setSidebarWidth(n);
+    }).catch(() => {});
+  }, []);
+
+  const handleSidebarResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    sidebarResizingRef.current = true;
+    setSidebarResizing(true);
+    const startX = e.clientX;
+    const startWidth = sidebarWidth;
+    let lastX = startX;
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!sidebarResizingRef.current) return;
+      lastX = ev.clientX;
+      const delta = ev.clientX - startX;
+      const newWidth = Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, startWidth + delta));
+      setSidebarWidth(newWidth);
+    };
+    const onMouseUp = () => {
+      sidebarResizingRef.current = false;
+      setSidebarResizing(false);
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      // Persist final width to DB + localStorage
+      const finalWidth = Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, startWidth + (lastX - startX)));
+      try { localStorage.setItem('deplao:sidebar-width', String(Math.round(finalWidth))); } catch {}
+      DataAccessor.setSetting('sidebar_width', String(Math.round(finalWidth))).catch(() => {});
+    };
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, [sidebarWidth]);
+
   // ─── Sync theme to <html> element ────────────────────────────────────────
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -1429,7 +1479,19 @@ export default function App() {
             <>
               {/* Responsive: On small screens, show either list OR chat (Telegram-style) */}
               {(!isMobile || !mobileShowChat) && (
-                <ConversationList />
+                <>
+                  <div data-sidebar data-sidebar-width={sidebarWidth} style={{ width: sidebarWidth, flexShrink: 0 }} className="relative">
+                    <ConversationList />
+                  </div>
+                  {/* Resizable divider */}
+                  {!isMobile && (
+                    <div
+                      onMouseDown={handleSidebarResizeStart}
+                      className={`w-1 flex-shrink-0 cursor-col-resize hover:bg-blue-500/50 transition-colors z-10 ${sidebarResizing ? 'bg-blue-500/50' : 'bg-gray-700/50'}`}
+                      title="Kéo để thay đổi chiều rộng"
+                    />
+                  )}
+                </>
               )}
               {(!isMobile || mobileShowChat) && (
                 <div className="flex flex-col flex-1 overflow-hidden">

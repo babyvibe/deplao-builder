@@ -1103,10 +1103,11 @@ export class DataAccessor {
 
   static async getLibraryItems(params: {
     zaloId: string; type?: string; search?: string;
-    folderId?: number | null; page?: number; limit?: number;
+    folderId?: number | null; page?: number; limit?: number; ownerZaloIds?: string[];
   }) {
     if (isEmployee()) {
-      const cacheKey = 'items:' + params.zaloId + ':' + (params.type || '') + ':' + (params.folderId ?? '') + ':' + (params.search || '') + ':' + (params.page || 1);
+      const ownersKey = (params.ownerZaloIds || []).slice().sort().join(',');
+      const cacheKey = 'items:' + params.zaloId + ':' + ownersKey + ':' + (params.type || '') + ':' + (params.folderId ?? '') + ':' + (params.search || '') + ':' + (params.page || 1);
       const cached = getCachedLibrary(cacheKey);
       if (cached) return cached;
       const res = await rest().get('/api/library/items', params);
@@ -1118,9 +1119,9 @@ export class DataAccessor {
     catch { return { success: false, items: [], total: 0 }; }
   }
 
-  static async getLibraryFolders(params: { zaloId: string; type?: string }) {
+  static async getLibraryFolders(params: { zaloId: string; type?: string; ownerZaloIds?: string[] }) {
     if (isEmployee()) {
-      const cacheKey = 'folders:' + params.zaloId + ':' + (params.type || '');
+      const cacheKey = 'folders:' + params.zaloId + ':' + (params.ownerZaloIds || []).slice().sort().join(',') + ':' + (params.type || '');
       const cached = getCachedLibrary(cacheKey);
       if (cached) return cached;
       const res = await rest().get('/api/library/folders', params);
@@ -1133,7 +1134,7 @@ export class DataAccessor {
   }
 
   static async uploadToLibrary(params: {
-    zaloId: string; fileName: string; mimeType: string; base64: string;
+    zaloId: string; fileName: string; mimeType: string; base64: string; folderId?: number | null;
   }) {
     invalidateLibraryCache();
     if (isEmployee()) { return rest().post('/api/library/upload/json', params); }

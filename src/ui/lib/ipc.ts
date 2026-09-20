@@ -4,6 +4,40 @@
 import { useAppStore } from '../store/appStore';
 import type { TelegramForumTopicContext } from '../../models/telegram';
 
+export interface NativeLoginIpcField {
+  id: string;
+  name: string;
+  description?: string;
+  type: string;
+  default_value?: string;
+  pattern?: string;
+  min_length?: number;
+  max_length?: number;
+  options?: string[];
+}
+
+export interface NativeLoginIpcStep {
+  type: string;
+  step_id: string;
+  instructions: string;
+  user_input?: {
+    fields: NativeLoginIpcField[];
+    attachments?: Array<{ content?: string; info?: { mimetype?: string } }>;
+  };
+  display_and_wait?: { can_cancel?: boolean };
+}
+
+export interface NativeLoginIpcResult {
+  success: boolean;
+  sessionId?: string;
+  step?: NativeLoginIpcStep;
+  account?: any;
+  facebookId?: string;
+  name?: string;
+  expired?: boolean;
+  error?: string;
+}
+
 
 declare global {
   interface Window {
@@ -347,7 +381,7 @@ declare global {
         getItems:    (params: any) => Promise<any>;
         upload:      (params: any) => Promise<any>;
         deleteItem:  (uuid: string) => Promise<any>;
-        getFolders:  (params: { zaloId: string; type?: string }) => Promise<any>;
+        getFolders:  (params: { zaloId: string; ownerZaloIds?: string[]; type?: string }) => Promise<any>;
         createFolder:(params: any) => Promise<any>;
         renameFolder:(id: number, name: string) => Promise<any>;
         deleteFolder:(id: number) => Promise<any>;
@@ -486,6 +520,9 @@ declare global {
       fb: {
         addAccount:           (params: { cookie: string; proxyId?: number | null }) => Promise<{ success: boolean; account?: any; facebookId?: string; name?: string; error?: string }>;
         addAccountWithCredentials: (params: { username: string; password: string; twoFASecret?: string; proxyId?: number | null }) => Promise<{ success: boolean; need2FA?: boolean; account?: any; facebookId?: string; name?: string; error?: string; errorTitle?: string }>;
+        startMessengerLiteLogin: (params: { proxyId?: number | null }) => Promise<NativeLoginIpcResult>;
+        submitMessengerLiteLogin: (params: { sessionId: string; input: Record<string, string>; proxyId?: number | null }) => Promise<NativeLoginIpcResult>;
+        cancelMessengerLiteLogin: (params: { sessionId: string }) => Promise<{ success: boolean }>;
         removeAccount:        (params: { accountId: string }) => Promise<{ success: boolean; error?: string }>;
         updateCookie:         (params: { accountId: string; cookie: string }) => Promise<{ success: boolean; error?: string }>;
         refreshProfile:       (params: { accountId: string }) => Promise<{ success: boolean; name?: string; avatarUrl?: string; error?: string, facebookId?: string }>;
@@ -547,7 +584,7 @@ declare global {
         startBot:       (account: { accountId: string; botToken: string; botUsername: string; botFirstName: string }) => Promise<{ success: boolean; error?: string }>;
         stopBot:        (accountId: string) => Promise<{ success: boolean; error?: string }>;
         isBotPolling:   (params: { accountId: string }) => Promise<{ success: boolean; polling: boolean }>;
-        sendMessage:    (params: { accountId: string; chatId: string; text: string; parseMode?: string }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
+        sendMessage:    (params: { accountId: string; chatId: string; text: string; parseMode?: string; replyMarkup?: Record<string, any> }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
         sendPhoto:      (params: { accountId: string; chatId: string; photoPath: string; caption?: string }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
         sendVideo:      (params: { accountId: string; chatId: string; videoPath: string; caption?: string }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
         sendDocument:   (params: { accountId: string; chatId: string; filePath: string; caption?: string }) => Promise<{ success: boolean; messageId?: string; error?: string }>;

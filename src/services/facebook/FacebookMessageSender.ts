@@ -9,6 +9,7 @@ import {
   FBSessionData, FBSendOptions, FBSendResult, FBReactionAction
 } from './FacebookTypes';
 import { buildFormData, buildPostConfig, parseFBResponse, genThreadingId, rateLimitDelay } from './FacebookUtils';
+import { parseFacebookResponse, assertFacebookMutationSuccess } from './FacebookGraphQLResult';
 import Logger from '../../utils/Logger';
 
 const SEND_URL = 'https://www.facebook.com/messaging/send/';
@@ -167,8 +168,11 @@ export async function unsendMessage(
     });
     const result = parseFBResponse(response.data as string);
 
-    if (result?.error) {
-      return { success: false, error: String(result.error) };
+    // Phase 7: Validate mutation response
+    try {
+      assertFacebookMutationSuccess('unsendMessage', result);
+    } catch (err: any) {
+      return { success: false, error: err.message };
     }
     return { success: true };
   } catch (err: any) {
@@ -223,7 +227,13 @@ export async function addReaction(
       ...(httpsAgent ? { httpsAgent } : {}),
     });
 
-    // Reaction call thường không trả lỗi rõ ràng
+    // Phase 7: Validate GraphQL response
+    const result = parseFacebookResponse(response.data as string);
+    try {
+      assertFacebookMutationSuccess('addReaction', result);
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
     return { success: true };
   } catch (err: any) {
     Logger.error(`[FacebookMessageSender] addReaction error: ${err.message}`);
@@ -275,7 +285,14 @@ export async function editMessage(
       ...(httpsAgent ? { httpsAgent } : {}),
     });
 
-    // Edit mutation typically returns success without explicit error
+    // Phase 7: Validate GraphQL response — detect HTTP 200 + error payload
+    const result = parseFacebookResponse(response.data as string);
+    try {
+      assertFacebookMutationSuccess('editMessage', result);
+    } catch (err: any) {
+      Logger.warn(`[FacebookMessageSender] editMessage mutation failed: ${err.message}`);
+      return { success: false, error: err.message };
+    }
     return { success: true };
   } catch (err: any) {
     Logger.error(`[FacebookMessageSender] editMessage error: ${err.message}`);
@@ -329,6 +346,13 @@ export async function forwardMessage(
       ...(httpsAgent ? { httpsAgent } : {}),
     });
 
+    // Phase 7: Validate GraphQL response
+    const result = parseFacebookResponse(response.data as string);
+    try {
+      assertFacebookMutationSuccess('forwardMessage', result);
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
     return { success: true };
   } catch (err: any) {
     Logger.error(`[FacebookMessageSender] forwardMessage error: ${err.message}`);
@@ -380,6 +404,13 @@ export async function pinMessage(
       ...(httpsAgent ? { httpsAgent } : {}),
     });
 
+    // Phase 7: Validate GraphQL response
+    const result = parseFacebookResponse(response.data as string);
+    try {
+      assertFacebookMutationSuccess('pinMessage', result);
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
     return { success: true };
   } catch (err: any) {
     Logger.error(`[FacebookMessageSender] pinMessage error: ${err.message}`);
@@ -430,6 +461,13 @@ export async function unpinMessage(
       ...(httpsAgent ? { httpsAgent } : {}),
     });
 
+    // Phase 7: Validate GraphQL response
+    const result = parseFacebookResponse(response.data as string);
+    try {
+      assertFacebookMutationSuccess('unpinMessage', result);
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
     return { success: true };
   } catch (err: any) {
     Logger.error(`[FacebookMessageSender] unpinMessage error: ${err.message}`);
@@ -483,6 +521,12 @@ export async function createPoll(
     });
 
     const result = parseFBResponse(response.data as string);
+    // Phase 7: Validate GraphQL response
+    try {
+      assertFacebookMutationSuccess('createPoll', result, (p) => !!(p?.data?.poll_create || p?.data?.poll));
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
     const pollId = result?.data?.poll_create?.poll?.id || result?.data?.poll?.id;
     return { success: true, pollId: pollId ? String(pollId) : undefined };
   } catch (err: any) {
@@ -534,6 +578,13 @@ export async function votePoll(
       ...(httpsAgent ? { httpsAgent } : {}),
     });
 
+    // Phase 7: Validate GraphQL response
+    const result = parseFacebookResponse(response.data as string);
+    try {
+      assertFacebookMutationSuccess('votePoll', result);
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
     return { success: true };
   } catch (err: any) {
     Logger.error(`[FacebookMessageSender] votePoll error: ${err.message}`);

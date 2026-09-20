@@ -8,14 +8,12 @@ import PhoneDisplay from '@/components/common/PhoneDisplay';
 import GroupAvatar from '@/components/common/GroupAvatar';
 import CampaignCreateModal from '@/components/crm/campaigns/CampaignCreateModal';
 import AddToContactsModal from '@/components/crm/contacts/AddToContactsModal';
-import PaymentQrSection from '@/components/crm/groups/PaymentQrSection';
 import ShareGroupModal from '@/components/crm/groups/ShareGroupModal';
 import SharedGroupsCategoryPopup from '@/components/crm/groups/SharedGroupsCategoryPopup';
 import BulkImportGroupsModal from '@/components/crm/groups/BulkImportGroupsModal';
-import AffiliateIntroPopup from '@/components/crm/groups/AffiliateIntroPopup';
 import { syncZaloGroups, MemberPlaceholder, SyncGroupsProgress } from '@/lib/zaloGroupUtils';
 import { AlertIcon, CheckIcon, SearchIcon } from '@/components/common/icons';
-import { usePremiumMemberSync } from '@/hooks/usePremiumMemberSync';
+import { useGroupMemberSync } from '@/hooks/useGroupMemberSync';
 import { toLocalMediaUrl } from '@/lib/localMedia';
 
 interface ZaloGroup {
@@ -116,9 +114,6 @@ function ZaloGroupMembersTab() {
     | { phase: 'groups'; current: number; total: number }
     | { phase: 'members'; groupCurrent: number; groupTotal: number; memberCurrent: number; memberTotal: number; currentGroupName: string };
   const [groupFetchProgress, setGroupFetchProgress] = useState<GroupFetchProgress | null>(null);
-  /** Progress bar shown while auto-fetching member details via getUserInfo (single group) */
-  const [manualLoadProgress, setManualLoadProgress] = useState<{ current: number; total: number } | null>(null);
-  const manualLoadStopRef = useRef(false);
   /** Stop ref for Phase 2 bulk member enrichment inside fetchGroupsFromAPI */
   const bulkEnrichStopRef = useRef(false);
 
@@ -144,14 +139,9 @@ function ZaloGroupMembersTab() {
     groupId: string; groupName: string; groupAvatar: string; memberCount: number;
   } | null>(null);
 
-  // ── Payment popup state ──────────────────────────────────────────────────
-  const [showPaymentPopup, setShowPaymentPopup] = useState(false);
-
   // ── Shared groups popup state ────────────────────────────────────────────
   const [showSharedGroupsPopup, setShowSharedGroupsPopup] = useState(false);
   const [showBulkImport, setShowBulkImport] = useState(false);
-  const [showAffiliateIntro, setShowAffiliateIntro] = useState(false);
-
   // ── Scan tab state ────────────────────────────────────────────────────
   const [scanLinkInput, setScanLinkInput] = useState('');
   const [scanTabLoading, setScanTabLoading] = useState(false);
@@ -164,12 +154,6 @@ function ZaloGroupMembersTab() {
 
   // ── Export notification state ──────────────────────────────────────────
   const [exportNotif, setExportNotif] = useState<{ message: string; folderPath?: string } | null>(null);
-
-  // ── Premium state ────────────────────────────────────────────────────
-  const [premiumLoaded, setPremiumLoaded] = useState(false);
-  const [premiumLoading, setPremiumLoading] = useState(false);
-  const [isPremium, setIsPremium] = useState(false);
-  const [premiumExpiresAt, setPremiumExpiresAt] = useState<string | null>(null);
 
   // ── Red dot: "mới" badge cho tab Quét thành viên ─────────────────────
   const [scanTabSeen, setScanTabSeen] = useState(() => {
@@ -205,8 +189,8 @@ function ZaloGroupMembersTab() {
 
   const selectedGroup = groups.find(g => g.contact_id === selectedGroupId) ?? null;
 
-  // ── Premium member sync hook ──────────────────────────────────────────
-  const { syncMembers } = usePremiumMemberSync({
+  // ── Group member scan (available to every Zalo account) ───────────────
+  const { syncMembers } = useGroupMemberSync({
     accountId: activeAccountId || '',
     groupId: selectedGroupId || '',
     onMembersSynced: async () => {
@@ -302,28 +286,15 @@ function ZaloGroupMembersTab() {
     }
   }, [activeAccountId, loadGroupsFromDB]);
 
-  // ── Fetch members - uses premium hook for scan API fallback ───────────
+  // ── Fetch members from the shared scan API ─────────────────────────────
   const fetchMembersFromAPI = useCallback(async () => {
     if (!activeAccountId || !selectedGroupId) return;
 
     setMembersLoading(true);
-    manualLoadStopRef.current = false;
-    setManualLoadProgress(null);
-
     try {
-      await syncMembers({
-        onProgress: (p: SyncGroupsProgress) => {
-          if (p.phase === 'members') {
-            setMembersLoading(false); // transition: spinner → progress bar
-            setManualLoadProgress({ current: p.current, total: p.total });
-          }
-        },
-        stopRef: manualLoadStopRef,
-      });
+      await syncMembers();
     } finally {
       setMembersLoading(false);
-      setManualLoadProgress(null);
-      manualLoadStopRef.current = false;
     }
   }, [activeAccountId, selectedGroupId, syncMembers]);
 
@@ -539,12 +510,6 @@ function ZaloGroupMembersTab() {
   const handleScanTab = useCallback(async () => {
     if (!activeAccountId || !scanLinkInput.trim()) return;
 
-    // Kiểm tra premium trước khi quét
-    if (!isPremium) {
-      setScanTabError('Cần nâng cấp gói Premium để sử dụng tính năng này.');
-      return;
-    }
-
     const acc = useAccountStore.getState().getActiveAccount();
     if (!acc) { setScanTabError('Không tìm thấy tài khoản'); return; }
     const auth = buildZaloAuth(acc, activeAccountId);
@@ -640,7 +605,7 @@ function ZaloGroupMembersTab() {
     } finally {
       setScanTabLoading(false);
     }
-  }, [activeAccountId, scanLinkInput, isPremium, loadMembersFromDB, resolveAndSaveGroupInfo, resolvedGroupInfo]);
+  }, [activeAccountId, scanLinkInput, loadMembersFromDB, resolveAndSaveGroupInfo, resolvedGroupInfo]);
 
   // ── Join group from scan tab ──────────────────────────────────────────
   const handleJoinFromScanTab = useCallback(async () => {
@@ -683,64 +648,6 @@ function ZaloGroupMembersTab() {
       setScanJoinLoading(false);
     }
   }, [activeAccountId, scanLinkInput, loadGroupsFromDB, resolveAndSaveGroupInfo]);
-
-  // ── Load premium status ───────────────────────────────────────────────
-  // Lần đầu (không có localStorage): gọi backend → lưu localStorage
-  // Các lần sau: đọc localStorage, chỉ gọi backend khi user ấn nút cấp nhật
-  const loadPremiumStatus = useCallback(async (fromBackend = false) => {
-    if (!activeAccountId) return;
-
-    const storageKey = `premium_${activeAccountId}`;
-
-    // Nếu không phải manual reload → đọc cache trước
-    if (!fromBackend) {
-      let cached = false;
-      try {
-        const raw = localStorage.getItem(storageKey);
-        if (raw) {
-          const data = JSON.parse(raw);
-          const expiresDate = new Date(data.expiresAt);
-          setIsPremium(expiresDate > new Date());
-          setPremiumExpiresAt(data.expiresAt);
-          cached = true;
-        }
-      } catch {}
-      if (!cached) {
-        setIsPremium(false);
-        setPremiumExpiresAt(null);
-      }
-      setPremiumLoaded(true);
-      return;
-    }
-
-    // Gọi backend (lần đầu hoặc manual reload)
-    setPremiumLoading(true);
-    try {
-      const { getPremiumStatus } = await import('@/lib/backendService');
-      const status = await getPremiumStatus(activeAccountId);
-
-      setIsPremium(status.isPremium);
-      setPremiumExpiresAt(status.expiresAt);
-
-      // Lưu vào localStorage
-      localStorage.setItem(storageKey, JSON.stringify({
-        expiresAt: status.expiresAt,
-        updatedAt: new Date().toISOString(),
-      }));
-    } catch (err) {
-      console.error('[GroupMembersTab] loadPremiumStatus error:', err);
-      // Lỗi → lưu ngày hôm qua để không gọi spam lại
-      const yesterday = new Date(Date.now() - 86400000).toISOString();
-      setIsPremium(false);
-      setPremiumExpiresAt(yesterday);
-      localStorage.setItem(storageKey, JSON.stringify({
-        expiresAt: yesterday,
-        updatedAt: new Date().toISOString(),
-      }));
-    } finally {
-      setPremiumLoading(false);
-    }
-  }, [activeAccountId]);
 
   const toggleMember = (id: string) => {
     setSelectedMemberIds(prev => {
@@ -804,24 +711,13 @@ function ZaloGroupMembersTab() {
   useEffect(() => {
     setGroups([]); setMembers([]); setSelectedGroupId(null);
     setMembersLastFetched(0); setSelectedMemberIds(new Set());
-    setManualLoadProgress(null);
-    manualLoadStopRef.current = true;
     if (activeAccountId) loadGroupsFromDB();
   }, [activeAccountId]);
 
   useEffect(() => {
     setMembers([]); setMembersLastFetched(0); setSelectedMemberIds(new Set());
-    setManualLoadProgress(null);
-    manualLoadStopRef.current = true;
     if (selectedGroupId) loadMembersFromDB(selectedGroupId);
   }, [selectedGroupId]);
-
-  // Load premium status when scan tab is opened (once per account)
-  useEffect(() => {
-    if (activeTab === 'scan' && activeAccountId && !premiumLoaded) {
-      loadPremiumStatus();
-    }
-  }, [activeTab, activeAccountId, premiumLoaded, loadPremiumStatus]);
 
   // ── Listen for external navigation to scan tab (from TopBar "Kiếm tiền") ──
   useEffect(() => {
@@ -895,7 +791,6 @@ function ZaloGroupMembersTab() {
             <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
           </svg>
           Quét thành viên
-          <span className="ml-1 px-1.5 py-0.5 text-[10px] font-bold bg-gradient-to-r from-yellow-600 to-orange-600 text-white-important rounded-full leading-none">Premium</span>
           {!scanTabSeen && (
             <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500 animate-pulse" />
           )}
@@ -904,42 +799,12 @@ function ZaloGroupMembersTab() {
 
       {/* ── Tab content ──────────────────────────────────────────────────── */}
       {activeTab === 'scan' ? (
-        /* ── Tab: Quét thành viên (Premium) ──────────────────────────────── */
+        /* ── Tab: Quét thành viên (Miễn phí) ──────────────────────────────── */
         <div className="flex-1 overflow-y-auto">
           <div className="mx-auto px-6 py-6 space-y-5 relative">
 
             {/* Header */}
             <div className="text-center pb-2 relative">
-              {/* ── Nút Kiếm tiền + Hỗ trợ ────────────────────────────── */}
-              <div className="absolute top-0 right-0 flex items-center gap-2 z-10">
-                <button
-                  onClick={() => ipc.shell?.openExternal('https://fb.com/deplaoapp')}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full
-                    bg-gray-700 border border-gray-600
-                    text-gray-300 text-xs font-medium
-                    hover:bg-gray-600 hover:text-white
-                    transition-all duration-200"
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
-                  </svg>
-                  Hỗ trợ
-                </button>
-                <button
-                  onClick={() => setShowAffiliateIntro(true)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full
-                    bg-gradient-to-r from-amber-600 via-orange-600 to-red-600
-                    text-white-important text-xs font-bold shadow-lg shadow-orange-500/30
-                    hover:shadow-orange-500/50 hover:scale-105
-                    animate-pulse transition-all duration-200"
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
-                  </svg>
-                  Kiếm tiền
-                </button>
-              </div>
-
               <h2 className="text-lg font-bold text-white">Quét thành viên nhóm ẩn</h2>
               <p className="text-sm text-gray-400 mt-1">Tiếp cận hàng nghìn khách hàng tiềm năng từ các nhóm Zalo chất lượng</p>
             </div>
@@ -1171,68 +1036,6 @@ function ZaloGroupMembersTab() {
               </button>
             </div>
 
-            {/* Premium status */}
-            <div className="bg-gray-800 border border-gray-700 rounded-xl p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className={`w-2 h-2 rounded-full ${isPremium ? 'bg-green-400' : 'bg-gray-500'}`} />
-                  <span className="text-sm text-white font-medium">Premium</span>
-                  <button
-                    onClick={() => loadPremiumStatus(true)}
-                    disabled={premiumLoading}
-                    className={`px-2 py-0.5 rounded-md text-[11px] font-medium transition-colors flex items-center gap-1 ${
-                      premiumLoading
-                        ? 'bg-green-700 text-white'
-                        : 'bg-green-600 hover:bg-green-700 text-white'
-                    }`}>
-                    {premiumLoading ? <>{SpinIcon} Đang cập nhật...</> : <>{RefreshIcon} Cập nhật</>}
-                  </button>
-                  {isPremium && premiumExpiresAt && (
-                    <span className="text-xs text-gray-600">· Hết hạn: {new Date(premiumExpiresAt).toLocaleDateString('vi-VN')}</span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  {isPremium ? (
-                    <span className="px-2 py-0.5 bg-green-500/15 text-green-400 text-[11px] font-medium rounded-full">Đang hoạt động</span>
-                  ) : (
-                    <span className="px-2 py-0.5 bg-gray-600/50 text-gray-400 text-[11px] font-medium rounded-full">Chưa kích hoạt</span>
-                  )}
-                </div>
-              </div>
-              {!isPremium && (
-                <>
-                  <div className="flex items-baseline gap-1.5">
-                    <span className="font-bold text-white">Từ ~833đ</span>
-                    <span className="text-sm text-gray-400">/ ngày / tài khoản</span>
-                  </div>
-                  <p className="text-xs text-gray-400 leading-relaxed">
-                    Tiếp cận hàng chục nghìn khách hàng tiềm năng từ các nhóm chất lượng trên Zalo
-                  </p>
-                  <button
-                    onClick={() => setShowPaymentPopup(true)}
-                    className="w-full py-2.5 bg-blue-500 hover:bg-blue-600 text-white text-sm font-semibold rounded-lg transition-colors flex items-center justify-center gap-2">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/>
-                    </svg>
-                    Nâng cấp gói
-                  </button>
-                </>
-              )}
-              {isPremium && (
-                <div className="flex items-center justify-between">
-                  <p className="text-xs text-gray-400">Quét không giới hạn thành viên nhóm</p>
-                  <button
-                    onClick={() => setShowPaymentPopup(true)}
-                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                      <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-                    </svg>
-                    Gia hạn thêm
-                  </button>
-                </div>
-              )}
-            </div>
-
             {/* How it works */}
             <div className="bg-gray-800 border border-gray-700 rounded-xl p-4">
               <p className="text-xs font-medium text-gray-300 mb-3">Cách sử dụng</p>
@@ -1362,8 +1165,8 @@ function ZaloGroupMembersTab() {
                     : 'Chưa có dữ liệu thành viên'}
                 </p>
               </div>
-              {/* Tải thành viên (getGroupMembersInfo, auto-fallback getUserInfo) */}
-              <button onClick={fetchMembersFromAPI} disabled={membersLoading || manualLoadProgress !== null}
+              {/* Tải thành viên từ API quét nhóm dùng chung */}
+              <button onClick={fetchMembersFromAPI} disabled={membersLoading}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-medium transition-colors flex-shrink-0">
                 {membersLoading ? SpinIcon : RefreshIcon}
                 {membersLoading ? 'Đang tải...' : 'Tải thông tin thành viên'}
@@ -1405,34 +1208,7 @@ function ZaloGroupMembersTab() {
                   Xuất danh sách
                 </button>
               )}
-              {/* Stop button shown only during getUserInfo fallback */}
-              {manualLoadProgress !== null && (
-                <button onClick={() => { manualLoadStopRef.current = true; }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-medium transition-colors flex-shrink-0">
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
-                  Dừng
-                </button>
-              )}
             </div>
-
-            {/* getUserInfo fallback progress bar */}
-            {manualLoadProgress !== null && (
-              <div className="mx-4 mt-2 mb-1 flex-shrink-0">
-                <div className="flex items-center justify-between text-xs text-gray-400 mb-1">
-                  <span className="flex items-center gap-1.5">
-                    {SpinIcon}
-                    <span>Đang tải thông tin thành viên: <span className="text-white font-medium">{manualLoadProgress.current}</span>/{manualLoadProgress.total}</span>
-                  </span>
-                  <span className="text-blue-400 font-medium">
-                    {Math.round((manualLoadProgress.current / manualLoadProgress.total) * 100)}%
-                  </span>
-                </div>
-                <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
-                  <div className="h-full bg-blue-500 rounded-full transition-all duration-200"
-                    style={{ width: `${(manualLoadProgress.current / manualLoadProgress.total) * 100}%` }} />
-                </div>
-              </div>
-            )}
 
             {/* Search + select-all row */}
             <div className="px-4 py-2 border-b border-gray-700/50 flex items-center gap-2 flex-shrink-0">
@@ -1919,29 +1695,6 @@ function ZaloGroupMembersTab() {
         );
       })()}
 
-      {/* ── Payment QR Popup ──────────────────────────────────────────── */}
-      {showPaymentPopup && (() => {
-        const allAccounts = useAccountStore.getState().accounts;
-        const zaloAccounts = allAccounts.filter(acc => (acc.channel || 'zalo') === 'zalo');
-        return (
-          <PaymentQrSection
-            accounts={zaloAccounts.map(acc => ({
-              pageId: acc.zalo_id,
-              displayName: acc.display_name || acc.full_name || acc.zalo_id,
-              expiresAt: null,
-              avatar: acc.avatar_url || '',
-            }))}
-            onClose={() => setShowPaymentPopup(false)}
-            onPaymentSuccess={() => {
-              setShowPaymentPopup(false);
-              // Xóa localStorage cache để force load từ BE
-              try { localStorage.removeItem(`premium_${activeAccountId}`); } catch {}
-              loadPremiumStatus(true);
-            }}
-          />
-        );
-      })()}
-
       {/* ── Shared Groups Category Popup ──────────────────────────────── */}
       {showSharedGroupsPopup && (
         <SharedGroupsCategoryPopup
@@ -1977,11 +1730,6 @@ function ZaloGroupMembersTab() {
         />
       )}
 
-      {/* ── Affiliate Intro Popup ─────────────────────────────────────── */}
-      {showAffiliateIntro && (
-        <AffiliateIntroPopup onClose={() => setShowAffiliateIntro(false)} />
-      )}
-
       {/* ── Export success notification ──────────────────────────────── */}
       {exportNotif && (
         <div className="fixed bottom-4 right-4 z-50 bg-gray-800 border border-green-500/30 rounded-xl shadow-2xl px-4 py-3 flex items-center gap-3 max-w-sm"
@@ -2014,9 +1762,8 @@ function ZaloGroupMembersTab() {
   );
 }
 
-/** Telegram deliberately gets a compact CRM group view.  The Zalo component
- * above contains scan, payment and affiliate flows that have no Telegram API
- * equivalent, so none of those controls leak into this branch. */
+/** Telegram deliberately gets a compact CRM group view. The Zalo-only hidden
+ * member scan has no Telegram API equivalent, so it does not leak here. */
 function TelegramGroupMembersTab({ channel }: { channel: 'telegram_user' | 'telegram_bot' }) {
   const { activeAccountId } = useAccountStore();
   const { setGroupCount } = useCRMStore();

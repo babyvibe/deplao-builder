@@ -1435,17 +1435,39 @@ export default class ZaloService {
     public async sendImage(filePath: string, threadId: string, type: ThreadType = ThreadType.User, caption?: string, quote: any = null): Promise<any> {
         if (!this.api) throw new Error("API not initialized");
         try {
+            if (!filePath || !fs.existsSync(filePath)) {
+                throw new Error('Không tìm thấy tệp ảnh để gửi');
+            }
+            const threadType = convertThreadType(type);
+            const normalizedThreadId = String(threadId || '');
+            if (!normalizedThreadId) throw new Error('Thiếu hội thoại nhận ảnh');
+
             const buffer = fs.readFileSync(filePath);
             const baseName = path.basename(filePath);
+            const extension = path.extname(baseName).toLowerCase();
+            if (!['.jpg', '.jpeg', '.png', '.webp', '.gif'].includes(extension)) {
+                throw new Error(`Định dạng ${extension || 'không có phần mở rộng'} không được Zalo gửi dưới dạng ảnh`);
+            }
+
+            // zca-js treats GIF separately. Supplying it as an image Buffer
+            // makes the upload endpoint receive an invalid image payload.
+            if (extension === '.gif') {
+                const content: MessageContent = { msg: caption || '', attachments: [filePath] };
+                return await this.sendMessage(content as any, normalizedThreadId, threadType, null, quote);
+            }
+
             let width = 0, height = 0;
             try { const dim = imageSize(buffer); width = dim.width ?? 0; height = dim.height ?? 0; } catch {}
+            if (!width || !height) {
+                throw new Error('Không đọc được kích thước ảnh. Vui lòng dùng JPG, PNG hoặc WebP hợp lệ');
+            }
             const attachment: any = {
                 data: buffer,
                 filename: baseName,
                 metadata: { totalSize: buffer.length, width, height },
             };
             const content: MessageContent = { msg: caption || '', attachments: [attachment] };
-            return await this.sendMessage(content as any, threadId, type, null, quote);
+            return await this.sendMessage(content as any, normalizedThreadId, threadType, null, quote);
         } catch (error: any) {
             throw new Error('sendImage error: ' + error.message);
         }
@@ -1491,17 +1513,25 @@ export default class ZaloService {
     public async sendImages(filePaths: string[], threadId: string, type: ThreadType = ThreadType.User, quote: any = null): Promise<any> {
         if (!this.api) throw new Error("API not initialized");
         if (!filePaths.length) return [];
+        const threadType = convertThreadType(type);
+        const normalizedThreadId = String(threadId || '');
+        if (!normalizedThreadId) throw new Error('Thiếu hội thoại nhận ảnh');
         // Nếu chỉ 1 ảnh, dùng sendImage thông thường
-        if (filePaths.length === 1) return this.sendImage(filePaths[0], threadId, type, undefined, quote);
+        if (filePaths.length === 1) return this.sendImage(filePaths[0], normalizedThreadId, threadType, undefined, quote);
         try {
             const attachments = filePaths.map(filePath => {
+                if (!filePath || !fs.existsSync(filePath)) throw new Error('Không tìm thấy một trong các tệp ảnh để gửi');
                 const buffer = fs.readFileSync(filePath);
                 const baseName = path.basename(filePath);
                 // zca-js requires filename to contain an extension (`${string}.${string}`)
                 const ext = path.extname(baseName) || '.jpg';
                 const safeFilename = (path.extname(baseName) ? baseName : `${baseName}${ext}`) as `${string}.${string}`;
+                if (!['.jpg', '.jpeg', '.png', '.webp'].includes(ext.toLowerCase())) {
+                    throw new Error(`Tệp ${baseName} không phải ảnh JPG, PNG hoặc WebP hợp lệ`);
+                }
                 let width = 0, height = 0;
                 try { const dim = imageSize(buffer); width = dim.width ?? 0; height = dim.height ?? 0; } catch {}
+                if (!width || !height) throw new Error(`Không đọc được kích thước ảnh ${baseName}`);
                 return {
                     data: buffer,
                     filename: safeFilename,
@@ -1509,7 +1539,7 @@ export default class ZaloService {
                 };
             });
             const content: MessageContent = { msg: '', attachments };
-            return await this.sendMessage(content as any, threadId, type, null, quote);
+            return await this.sendMessage(content as any, normalizedThreadId, threadType, null, quote);
         } catch (error: any) {
             throw new Error('sendImages error: ' + error.message);
         }

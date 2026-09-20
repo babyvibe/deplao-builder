@@ -178,16 +178,20 @@ class LibraryService {
 
   public getItems(params: {
     zaloId: string;
+    /** Một hoặc nhiều thư viện được phép xem. Rỗng = zaloId hiện tại. */
+    ownerZaloIds?: string[];
     type?: string;
     search?: string;
     folderId?: number | null;
     page?: number;
     limit?: number;
   }): { items: LibraryItem[]; total: number } {
-    const { zaloId, type, search, folderId, page = 1, limit = 50 } = params;
+    const { zaloId, ownerZaloIds, type, search, folderId, page = 1, limit = 50 } = params;
     const db = DatabaseService.getInstance();
-    const conditions: string[] = ['owner_zalo_id = ?'];
-    const values: any[] = [zaloId];
+    const owners = Array.from(new Set((ownerZaloIds || []).filter(id => typeof id === 'string' && id.trim())));
+    const effectiveOwners = owners.length > 0 ? owners : [zaloId];
+    const conditions: string[] = [`owner_zalo_id IN (${effectiveOwners.map(() => '?').join(',')})`];
+    const values: any[] = [...effectiveOwners];
 
     if (type && type !== 'all') {
       conditions.push('type = ?');
@@ -279,20 +283,25 @@ class LibraryService {
     return id;
   }
 
-  public getFolders(zaloId: string, type?: string): LibraryFolder[] {
+  public getFolders(zaloId: string, type?: string, ownerZaloIds?: string[]): LibraryFolder[] {
     const db = DatabaseService.getInstance();
-    const conditions = ['f.owner_zalo_id = ?'];
-    const values: any[] = [zaloId];
+    const owners = Array.from(new Set((ownerZaloIds || []).filter(id => typeof id === 'string' && id.trim())));
+    const effectiveOwners = owners.length > 0 ? owners : [zaloId];
+    const conditions = [`f.owner_zalo_id IN (${effectiveOwners.map(() => '?').join(',')})`];
+    const values: any[] = [...effectiveOwners];
     if (type && type !== 'all') {
       // Chỉ load folder đúng type, bỏ qua folder cũ ko có type
       conditions.push('f.type = ?');
       values.push(type);
     }
+    const countTypeSql = type && type !== 'all' ? 'AND i.type = ?' : '';
+    const queryValues = type && type !== 'all' ? [type, ...values] : values;
     const folders = db.query<any>(
       `SELECT f.*,
-        (SELECT COUNT(*) FROM media_library_items i WHERE i.folder_id = f.id ${type ? `AND i.type = '${type}'` : ''}) as item_count
+        (SELECT COUNT(*) FROM media_library_items i
+          WHERE i.folder_id = f.id AND i.owner_zalo_id = f.owner_zalo_id ${countTypeSql}) as item_count
        FROM media_library_folders f WHERE ${conditions.join(' AND ')} ORDER BY f.sort_order ASC`,
-      values
+      queryValues
     ) || [];
     return folders;
   }

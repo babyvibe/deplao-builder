@@ -1,5 +1,5 @@
 ﻿import React, { useState } from 'react';
-import { BellIcon, BookIcon, BotIcon, BugIcon, ChartIcon, ChatIcon, ClipboardListIcon, CloseIcon, FolderIcon, GlobeIcon, ImageIcon, LightningIcon, LinkIcon, LockIcon, PackageIcon, PluginIcon, RefreshIcon, RepeatIcon, RocketIcon, SendIcon, SparklesIcon, TagIcon, TrashIcon, UserIcon, UsersIcon, WifiIcon, WrenchIcon } from '@/components/common/icons';
+import { BugIcon, ClipboardListIcon, LightningIcon, LockIcon, SparklesIcon, TrashIcon} from '@/components/common/icons';
 
 interface VersionEntry {
   version: string;
@@ -14,6 +14,94 @@ interface VersionEntry {
 
 // ─── Changelog data - thêm entry mới vào ĐẦU mảng khi có bản cập nhật ────────
 const CHANGELOG: VersionEntry[] = [
+  {
+    version: '26.9.0',
+    date: '09/2026',
+    type: 'major',
+    highlights: [
+      '👥 Quét thành viên nhóm ẩn Zalo public API cho tất cả mọi người sử dụng miễn phí - chi tiết API đọc ở readme dự án.',
+      '💬 Facebook cá nhân nâng cấp thư viện fbchat-v2 lên bản mới nhất — thay đổi đăng nhập tài khoản có 2FA, chat riêng tư E2EE và trạng thái thiết bị ổn định hơn sau khi mở lại ứng dụng.',
+      '✈️ Đồng bộ Telegram User đáng tin cậy hơn — phục hồi tin nhắn của channel, supergroup và topic sau khi mất mạng; tiến trình tiếp tục được sau khi khởi động lại app.',
+      '🤖 Workflow Telegram Bot hoàn thiện — thêm đầy đủ trigger, hành động quản trị nhóm, gửi media, reaction, poll và Reply Keyboard hoặc Inline Button trực quan.',
+      '🔄 Workflow Chuyển tiếp tin nhắn đa kênh — chọn rõ tài khoản gửi và đích, gửi linh hoạt giữa Zalo, Facebook, Telegram User và Telegram Bot, kể cả ảnh và file.',
+      '🗂️ Thư viện ảnh và file dùng chung giữa các trang — lọc theo một trang hoặc tất cả trang, nhớ phạm vi đã chọn và gửi đúng kênh đang sử dụng.',
+      '💻 Giao diện tự phục hồi sau khi gập/mở laptop — đồng bộ nền tiếp tục chạy và renderer sẽ kết nối lại an toàn nếu Windows tạm dừng kết nối cục bộ.',
+    ],
+    changes: [
+      {
+        category: 'new',
+        items: [
+          'Đăng nhập Facebook cá nhân bằng Messenger Lite — hỗ trợ email hoặc số điện thoại, mật khẩu, mã 2FA TOTP hoặc SMS, captcha và xác nhận thiết bị theo từng bước.',
+          'Lưu trạng thái thiết bị Facebook E2EE an toàn — phiên chat riêng tư không phải khởi tạo lại hoàn toàn khi đóng và mở ứng dụng.',
+          'Đăng nhập Facebook kiểm tra tương thích bridge trước khi sử dụng — phát hiện sớm phiên bản hoặc khả năng bridge không phù hợp, thay vì lỗi mơ hồ khi chat.',
+          'Gửi file Facebook theo một luồng thống nhất — kiểm tra file tồn tại, kích thước tối đa 25 MB và định dạng được hỗ trợ trước khi gửi.',
+          'Các thao tác Facebook trong chat riêng tư E2EE — thu hồi, sửa tin, đang nhập và xác nhận đã đọc được gửi lên Messenger thực tế.',
+          'Điều chỉnh chiều rộng danh sách hội thoại — kéo divider giữa sidebar và khung chat, phạm vi 240–480 px và tự lưu cho lần sau.',
+          'Bộ chọn phạm vi thư viện — chọn một tài khoản cụ thể hoặc Tất cả trang; hiển thị avatar, tên và kênh của từng tài khoản.',
+          'Thư viện media gửi đa kênh — ảnh/file đã lưu có thể gửi sang Facebook, Telegram User, Telegram Bot hoặc Zalo theo đúng hội thoại đích.',
+          'Telegram Bot có thêm 6 trigger workflow: nhận tin nhắn, nhận lệnh, nhấn Inline Button, bot vào/rời nhóm, tin nhắn bị sửa và yêu cầu vào nhóm.',
+          'Telegram Bot có bộ lọc trigger — giới hạn theo chat, nội dung, từ khóa, alias lệnh, tham số và danh sách người được phép.',
+          'Telegram Bot gửi tin nhắn với Reply Keyboard hoặc Inline Button — hỗ trợ nhiều hàng nút, callback và nối callback đến node tiếp theo trong cùng workflow.',
+          'Telegram Bot có thêm hành động gửi ảnh/video/file, chuyển tiếp, sửa/xóa/ghim tin, reaction, poll, typing, cấm và hạn chế thành viên.',
+          'Workflow chọn tài khoản rõ ràng theo từng node — hành động chỉ hiện các tài khoản phù hợp với kênh đang chọn.',
+          'Chuyển tiếp workflow đa kênh — gửi văn bản, ảnh và file giữa Zalo, Facebook, Telegram User và Telegram Bot.',
+          'Telegram User có queue phục hồi channel lưu trong database — không mất tiến trình nếu ứng dụng bị tắt hoặc khởi động lại giữa lúc đồng bộ.',
+          'Telegram User tự sửa access hash thiếu khi có thể, quét thêm hội thoại Archived và phát tiến trình đồng bộ cho giao diện.',
+          'Quét thành viên nhóm Zalo dùng hook mới, không còn yêu cầu kiểm tra premium.',
+          'Zalo kiểm tra file ảnh trước khi gửi; GIF được gửi theo luồng đính kèm riêng để tương thích thư viện Zalo.',
+        ],
+      },
+      {
+        category: 'improved',
+        items: [
+          'Facebook tự xác định loại hội thoại từ dữ liệu đã lưu thay vì đoán theo ID số; chat riêng đi E2EE, group đi REST và hội thoại chưa xác định báo lỗi rõ ràng.',
+          'Facebook bỏ toàn bộ fallback E2EE sang REST — không còn nguy cơ một tin nhắn riêng tư bị gửi trùng khi bridge timeout hoặc trả lỗi.',
+          'Facebook serialize các request bridge, loại bỏ event/response từ process cũ và giới hạn queue/buffer để bridge ổn định khi gửi đồng thời nhiều thao tác.',
+          'Facebook phân biệt lỗi mạng tạm thời với cookie hết hạn — lỗi DNS hoặc kết nối không còn làm ngừng reconnect MQTT nhầm.',
+          'Facebook giảm log nhạy cảm và log quá dài; bổ sung số liệu nội bộ cho restart bridge, event cũ, lỗi gửi và lỗi lưu state.',
+          'Telegram User backfill phân trang, giới hạn nhịp request và tăng số lát channel difference để theo kịp channel/supergroup lớn mà ít FLOOD_WAIT hơn.',
+          'Telegram User xử lý FLOOD_WAIT bằng thời điểm retry lưu trong database thay vì đánh fail; lỗi typing/reaction không còn làm hỏng toàn bộ vòng GetDifference.',
+          'Telegram User tải media sau khi đã phát event tin nhắn — sticker/ảnh mới có thể hiện ngay, không cần chọn lại hội thoại.',
+          'Telegram User cập nhật preview, thời gian last message và avatar channel ngay khi đồng bộ; lỗi CHANNEL_PRIVATE có thông báo dễ hiểu.',
+          'Tên người trong Telegram service message lấy từ peer đã đồng bộ, hiển thị đúng người tham gia/rời nhóm thay vì tên rỗng hoặc ghép sai.',
+          'Telegram Bot kiểm tra kết quả thực tế của mọi action API: gửi, chuyển tiếp, sửa, xóa, ghim, reaction, poll và typing không còn báo thành công giả.',
+          'Telegram Bot phát hiện lỗi 409 khi token bị process khác polling; dừng vòng retry vô tận và báo tài khoản bot cần xử lý.',
+          'Node Telegram Bot được gộp vào nhóm Hành động và Kích hoạt chung với các kênh khác; danh sách chỉ hiện action phù hợp với kênh Bot.',
+          'Thư viện tải folder và media theo nhiều chủ sở hữu, lưu lại phạm vi người dùng chọn; panel topic forum tận dụng toàn bộ chiều rộng danh sách hội thoại.',
+          'Bảo mật state E2EE bắt buộc dùng safeStorage; cơ sở dữ liệu log câu SQL và số lượng tham số khi lỗi nhưng không ghi giá trị nhạy cảm.',
+          'Migration dữ liệu giữ cả bản ghi nguồn/đích khi có hội thoại trùng; giảm spam log upsert thành viên lúc Telegram catch-up.',
+          'Avatar nhóm composite ưu tiên người có ảnh và fallback về chữ cái khi ảnh lỗi; @mention trong caption video và sticker realtime được render chính xác hơn.',
+        ],
+      },
+      {
+        category: 'fixed',
+        items: [
+          'Sửa tạo mã 2FA Facebook TOTP với otplib mới và kiểm tra định dạng Base32 trước khi đăng nhập.',
+          'Sửa Facebook bridge cũ phát event đóng hoặc response muộn làm reconnect nhầm; response E2EE thiếu message ID giờ trả lỗi thay vì gửi lặp qua REST.',
+          'Sửa xác nhận đã đọc Facebook dùng watermark thời gian tin mới nhất thực tế; IPC trả đúng kết quả thất bại thay vì luôn thành công.',
+          'Sửa chuyển tiếp Facebook xác định loại hội thoại đích, không còn dùng loại group của tin nguồn để quyết định cách gửi.',
+          'Sửa reaction Facebook chỉ ghi local sau khi Messenger nhận thành công.',
+          'Sửa parse phản hồi GraphQL Facebook gồm anti-JSON prefix và các dạng lỗi khác nhau, tránh coi mutation thất bại là thành công.',
+          'Sửa login/lưu file Facebook: từ chối file thiếu, rỗng, là thư mục, vượt 25 MB hoặc sai định dạng ngay từ đầu.',
+          'Sửa hiển thị và đồng bộ Telegram: avatar channel mới tự tải, danh sách hội thoại có last message đúng sau tải tay, queue recovery không mất sau restart.',
+          'Sửa Telegram service message để hiển thị tên thành viên tham gia qua link mời; callback join request có schema config đầy đủ.',
+          'Sửa Telegram Bot polling conflict và tất cả action Bot kiểm tra `ok` từ Telegram trước khi phản hồi kết quả vào workflow.',
+          'Sửa Zalo gửi ảnh: kiểm tra file, định dạng và kích thước ảnh trước khi tạo payload; GIF không còn gửi nhầm endpoint ảnh.',
+          'Sửa chọn media Facebook từ thư viện bằng cả Facebook ID của tài khoản; event sticker không còn áp local path nhầm giữa các account.',
+          'Sửa màn hình trống sau khi Windows resume ở môi trường phát triển: khi Vite localhost báo `ERR_NETWORK_IO_SUSPENDED`, Electron chờ network hồi phục rồi tải lại renderer có giới hạn thay vì lặp vô hạn.',
+        ],
+      },
+      {
+        category: 'removed',
+        items: [
+          'Bỏ toàn bộ premium gating, cache, badge, thông báo và luồng thanh toán cũ của tính năng quét thành viên nhóm Zalo.',
+          'Bỏ các component giới thiệu affiliate và thanh toán QR không còn dùng.',
+          'Bỏ retry E2EE sang REST và fallback group qua bridge của Facebook để ngăn gửi tin nhắn trùng.',
+          'Bỏ section Telegram riêng trong workflow; node Telegram Bot nằm trong nhóm Kích hoạt và Hành động chung.',
+        ],
+      },
+    ],
+  },
   {
     version: '26.8.5',
     date: '08/2026',
@@ -139,7 +227,7 @@ const CHANGELOG: VersionEntry[] = [
           'Nút "Xuất danh sách" thành viên nhóm — Export CSV với STT, Tên, UID, SĐT, Vai trò',
           'Nút "Xuất danh sách" liên hệ chiến dịch — Export CSV với STT, Tên, UID, SĐT, Trạng thái, Thời gian gửi',
           'Nút xóa liên hệ khỏi chiến dịch — Xóa từng liên hệ hoặc xóa tất cả (chỉ khi draft/tạm dừng)',
-          'Hook usePremiumMemberSync — Tự động dùng scan API khi tài khoản Premium, fallback syncZaloGroups khi không Premium',
+          'Quét thành viên nhóm Zalo dùng API scan chung, không còn kiểm tra Premium hoặc ngày hết hạn',
           'Event crm-contacts-changed — Tự động làm mới danh sách liên hệ sau khi thêm từ nhóm',
         ],
       },

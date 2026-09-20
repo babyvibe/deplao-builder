@@ -103,7 +103,7 @@ import { AlertIcon, ArrowDownIcon, BellIcon, BellOffIcon, BookIcon, BotIcon, Cal
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type FieldType = 'text' | 'textarea' | 'select' | 'number' | 'boolean' | 'json' | 'multiline' | 'cron' | 'html' | 'info' | 'label-picker' | 'assistant-picker' | 'integration-picker' | 'contact-picker' | 'file-picker';
+type FieldType = 'text' | 'textarea' | 'select' | 'number' | 'boolean' | 'json' | 'multiline' | 'cron' | 'html' | 'info' | 'label-picker' | 'assistant-picker' | 'integration-picker' | 'contact-picker' | 'account-picker' | 'file-picker';
 
 interface SelectOption { value: string; label: string }
 
@@ -153,6 +153,9 @@ interface Field {
    * Lọc tài khoản theo kênh (vd: 'telegram_user' → chỉ hiện tài khoản Telegram)
    */
   channel?: string;
+  /** Read channel/account from another config field for cross-channel actions. */
+  channelFromKey?: string;
+  accountIdFromKey?: string;
   /**
    * Dùng khi type === 'file-picker':
    * - 'image' = chỉ chọn ảnh
@@ -209,6 +212,23 @@ function cronToHuman(expr: string): string {
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
 const CONFIG_SCHEMA: Record<string, Field[]> = {
+  'action.forwardCrossChannel': [
+    { key: 'sourceChannel', label: 'Kênh tài khoản nguồn', type: 'select', options: [
+      { value: '', label: 'Tự lấy từ trigger workflow' },
+      { value: 'zalo', label: 'Zalo' }, { value: 'facebook', label: 'Facebook' }, { value: 'telegram_user', label: 'Telegram User' }, { value: 'telegram_bot', label: 'Telegram Bot' },
+    ], clearsKeyOnChange: ['sourceAccountId'] },
+    { key: 'sourceAccountId', label: 'Tài khoản nguồn', type: 'account-picker', channelFromKey: 'sourceChannel', placeholder: 'Để trống = tài khoản kích hoạt workflow' },
+    { key: 'sourceChatId', label: 'Chat nguồn', type: 'text', placeholder: '{{ $trigger.chatId }}', templateVars: ['$trigger.chatId'] },
+    { key: 'messageId', label: 'Tin nhắn cần chuyển tiếp', type: 'text', placeholder: '{{ $trigger.messageId }}', desc: 'Dùng ID từ trigger để chuyển tiếp đúng tin vừa nhận.', templateVars: ['$trigger.messageId'] },
+    { key: 'targetChannel', label: 'Kênh đích', type: 'select', options: [
+      { value: 'zalo', label: 'Zalo' }, { value: 'facebook', label: 'Facebook' }, { value: 'telegram_user', label: 'Telegram User' }, { value: 'telegram_bot', label: 'Telegram Bot' },
+    ], clearsKeyOnChange: ['targetAccountId', 'targetChatId'] },
+    { key: 'targetAccountId', label: 'Tài khoản gửi ở kênh đích', type: 'account-picker', channelFromKey: 'targetChannel', placeholder: 'Chọn tài khoản đích' },
+    { key: 'targetChatId', label: 'Chat nhận', type: 'contact-picker', contactType: 'all', channelFromKey: 'targetChannel', accountIdFromKey: 'targetAccountId', placeholder: 'Chọn chat thuộc tài khoản đích' },
+    { key: 'targetThreadType', label: 'Loại chat đích', type: 'select', options: [{ value: '0', label: 'Cá nhân / chat thường' }, { value: '1', label: 'Nhóm (Zalo)' }], desc: 'Chỉ dùng cho Zalo; Telegram và Facebook tự nhận diện chat.', advanced: true },
+    { key: 'companionText', label: 'Tin nhắn gửi kèm', type: 'textarea', placeholder: 'Không bắt buộc — được gửi thành tin riêng sau tin gốc', desc: 'Giữ nguyên tin gốc; nội dung này luôn được gửi thành tin nhắn riêng.', advanced: true, templateVars: ['$trigger.content'] },
+    { key: 'info', label: 'Quy tắc chuyển tiếp', type: 'info', desc: 'Text, ảnh, video và file đã tải về được gửi lại giữa mọi kênh. Nếu media chưa có file local thì chỉ có thể native-forward trong cùng tài khoản và cùng kênh.' },
+  ],
   'trigger.message': [
     {
       key: 'threadType', label: 'Nguồn tin nhắn', type: 'select',
@@ -436,8 +456,7 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
   'zalo.sendImage': [
     {
       key: 'filePath', label: 'Ảnh cần gửi', type: 'file-picker', fileType: 'image',
-      placeholder: 'C:\\Images\\banner.jpg  hoặc  https://example.com/img.png',
-      desc: 'Chọn ảnh từ máy tính hoặc nhập link URL ảnh trực tiếp (https://...).',
+      desc: 'Chọn ảnh từ máy tính để gửi.',
     },
     {
       key: 'message', label: 'Chú thích ảnh (tuỳ chọn)', type: 'text',
@@ -481,7 +500,6 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
   'zalo.sendFile': [
     {
       key: 'filePath', label: 'File cần gửi', type: 'file-picker', fileType: 'file',
-      placeholder: 'C:\\Documents\\BangGia.pdf',
       desc: 'Chọn file từ máy tính để gửi.',
     },
     {
@@ -1926,9 +1944,8 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
   ],
   'fb.action.sendImage': [
     {
-      key: 'filePath', label: 'Ảnh/file cần gửi', type: 'file-picker', fileType: 'image',
-      placeholder: 'https://example.com/image.png',
-      desc: 'Chọn ảnh từ máy tính hoặc nhập URL ảnh trực tiếp.',
+      key: 'filePath', label: 'Tệp đính kèm cần gửi', type: 'file-picker', fileType: 'file',
+      desc: 'Chọn ảnh, video, audio hoặc file từ máy tính để gửi.',
     },
     {
       key: 'body', label: 'Chú thích (tuỳ chọn)', type: 'text',
@@ -1939,12 +1956,12 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       key: 'threadIds', label: 'Gửi đến hội thoại', type: 'contact-picker', contactType: 'all',
       contactMode: 'multi',
       placeholder: '{{ $trigger.threadId }}',
-      desc: 'Chọn một hoặc nhiều hội thoại Facebook để gửi ảnh.',
+      desc: 'Chọn một hoặc nhiều hội thoại Facebook để gửi tệp.',
       templateVars: ['$trigger.threadId'],
     },
     {
       key: 'continueOnError', label: 'Tiếp tục workflow dù gửi thất bại', type: 'boolean',
-      desc: 'Bật nếu muốn các bước sau vẫn chạy ngay cả khi gửi ảnh lỗi.',
+      desc: 'Bật nếu muốn các bước sau vẫn chạy ngay cả khi gửi tệp lỗi.',
       advanced: true,
     },
   ],
@@ -1992,15 +2009,15 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
   ],
   'fb.action.forward': [
     {
-      key: 'message', label: 'Nội dung chuyển tiếp', type: 'textarea',
+      key: 'message', label: 'Nội dung gửi lại', type: 'textarea',
       placeholder: '{{ $trigger.content }}',
-      desc: 'Nội dung tin nhắn sẽ gửi đi. Dùng {{ $trigger.content }} để lấy nội dung từ tin nhắn trigger.',
+      desc: 'Node này chỉ gửi lại văn bản. Dùng “Chuyển tiếp đa kênh” khi cần chuyển cả tin gốc, ảnh, video hoặc file.',
       templateVars: ['$trigger.content'],
     },
     {
-      key: 'messageId', label: 'ID tin nhắn gốc (tham khảo)', type: 'text',
+      key: 'messageId', label: 'ID tin nhắn gốc (không dùng)', type: 'text',
       placeholder: '{{ $trigger.messageId }}',
-      desc: 'ID tin nhắn Facebook gốc - chỉ để tham khảo, không dùng cho forward API riêng.',
+      desc: 'Được giữ để tương thích workflow cũ. Node này không có API forward gốc; hãy dùng “Chuyển tiếp đa kênh”.',
       templateVars: ['$trigger.messageId'],
       advanced: true,
     },
@@ -2025,9 +2042,9 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       templateVars: ['$trigger.messageId'],
     },
     {
-      key: 'threadId', label: 'Trong hội thoại', type: 'contact-picker', contactType: 'all',
+      key: 'threadId', label: 'Trong nhóm', type: 'contact-picker', contactType: 'group',
       placeholder: '{{ $trigger.threadId }}',
-      desc: 'ID hội thoại chứa tin nhắn cần ghim.',
+      desc: 'ID nhóm Facebook chứa tin nhắn cần ghim.',
       templateVars: ['$trigger.threadId'],
       advanced: true,
     },
@@ -2040,9 +2057,9 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       templateVars: ['$trigger.messageId'],
     },
     {
-      key: 'threadId', label: 'Trong hội thoại', type: 'contact-picker', contactType: 'all',
+      key: 'threadId', label: 'Trong nhóm', type: 'contact-picker', contactType: 'group',
       placeholder: '{{ $trigger.threadId }}',
-      desc: 'ID hội thoại chứa tin nhắn cần bỏ ghim.',
+      desc: 'ID nhóm Facebook chứa tin nhắn cần bỏ ghim.',
       templateVars: ['$trigger.threadId'],
       advanced: true,
     },
@@ -2059,9 +2076,9 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       desc: 'Mỗi dòng là một lựa chọn. Nhập ít nhất 2 lựa chọn.',
     },
     {
-      key: 'threadId', label: 'Tạo trong hội thoại/nhóm', type: 'contact-picker', contactType: 'all',
-      placeholder: 'ID hội thoại hoặc nhóm Facebook',
-      desc: 'ID hội thoại/nhóm nơi poll sẽ được tạo.',
+      key: 'threadId', label: 'Tạo trong nhóm', type: 'contact-picker', contactType: 'group',
+      placeholder: 'ID nhóm Facebook',
+      desc: 'ID nhóm Facebook nơi poll sẽ được tạo.',
     },
   ],
   'fb.action.sendTyping': [
@@ -2204,6 +2221,141 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
     ]},
   ],
 
+  // ─── Telegram Bot triggers ───────────────────────────────────────────────
+  'tgbot.trigger.message': [
+    { key: 'chatScope', label: 'Nguồn chat', type: 'select', options: [
+      { value: 'all', label: 'Tất cả chat Bot nhận được' },
+      { value: 'private', label: 'Chat riêng' },
+      { value: 'group', label: 'Nhóm và supergroup' },
+      { value: 'channel', label: 'Channel post' },
+    ], desc: 'Trong nhóm, Bot có thể không nhận toàn bộ tin nếu Privacy Mode đang bật.' },
+    { key: 'chatId', label: 'Chat cụ thể', type: 'contact-picker', contactType: 'all', channel: 'telegram_bot', placeholder: 'Để trống = tất cả chat', templateVars: ['$trigger.chatId'] },
+    { key: 'messageTypes', label: 'Loại nội dung', type: 'select', options: [
+      { value: 'all', label: 'Mọi loại nội dung' },
+      { value: 'text', label: 'Văn bản' },
+      { value: 'photo', label: 'Ảnh' },
+      { value: 'video', label: 'Video' },
+      { value: 'file', label: 'File / tài liệu' },
+      { value: 'voice', label: 'Voice' },
+      { value: 'sticker', label: 'Sticker' },
+      { value: 'location', label: 'Vị trí' },
+      { value: 'contact', label: 'Liên hệ' },
+      { value: 'poll', label: 'Bình chọn' },
+    ] },
+    { key: 'keyword', label: 'Từ khóa', type: 'text', placeholder: 'VD: báo giá, hỗ trợ', desc: 'Nhiều từ khóa cách nhau bằng dấu phẩy. Để trống = không lọc.', templateVars: ['$trigger.content'] },
+    { key: 'keywordMode', label: 'Cách khớp từ khóa', type: 'select', options: [
+      { value: 'contains_any', label: 'Chứa một trong các từ khóa' },
+      { value: 'contains_all', label: 'Chứa tất cả từ khóa' },
+      { value: 'exact', label: 'Khớp đúng toàn bộ nội dung' },
+      { value: 'starts_with', label: 'Bắt đầu bằng từ khóa' },
+    ], advanced: true },
+    { key: 'fromId', label: 'Chỉ nhận từ Telegram user ID', type: 'text', placeholder: 'Để trống = tất cả user', advanced: true },
+    { key: 'ignoreOwn', label: 'Bỏ qua tin do Bot gửi', type: 'boolean', desc: 'Tránh workflow tự kích hoạt bởi tin nhắn Bot vừa gửi.' },
+  ],
+  'tgbot.trigger.command': [
+    { key: 'chatScope', label: 'Nguồn chat', type: 'select', options: [
+      { value: 'all', label: 'Mọi chat' }, { value: 'private', label: 'Chat riêng' }, { value: 'group', label: 'Nhóm và supergroup' },
+    ] },
+    { key: 'chatId', label: 'Chat cụ thể', type: 'contact-picker', contactType: 'all', channel: 'telegram_bot', placeholder: 'Để trống = tất cả chat', templateVars: ['$trigger.chatId'] },
+    { key: 'command', label: 'Lệnh chính', type: 'text', placeholder: '/start', desc: 'Để trống = nhận mọi lệnh. Có thể nhập /start hoặc start.' },
+    { key: 'aliases', label: 'Lệnh thay thế', type: 'text', placeholder: '/begin, /menu', desc: 'Các lệnh tương đương, cách nhau bằng dấu phẩy.', advanced: true },
+    { key: 'argumentContains', label: 'Tham số phải chứa', type: 'text', placeholder: 'VD: premium', desc: 'Chỉ kích hoạt nếu phần sau lệnh có cụm này.', advanced: true },
+    { key: 'authorizedUsers', label: 'Chỉ Telegram user ID', type: 'text', placeholder: '123456, 987654', desc: 'Để trống = mọi người. Nhiều ID cách nhau bằng dấu phẩy.', advanced: true },
+    { key: 'ignoreOwn', label: 'Bỏ qua lệnh do Bot gửi', type: 'boolean' },
+  ],
+  'tgbot.trigger.callback': [
+    { key: 'chatId', label: 'Chat cụ thể', type: 'contact-picker', contactType: 'all', channel: 'telegram_bot', placeholder: 'Để trống = tất cả chat', templateVars: ['$trigger.chatId'] },
+    { key: 'callbackData', label: 'Callback data cần khớp', type: 'text', placeholder: 'Để trống = nhận mọi inline button', desc: 'Chỉ dùng cho callback tùy chỉnh. Nút “Đi đến node” tự chạy nhánh node đã chọn trên canvas.' },
+  ],
+  'tgbot.trigger.editedMessage': [
+    { key: 'chatScope', label: 'Nguồn chat', type: 'select', options: [
+      { value: 'all', label: 'Mọi chat' }, { value: 'private', label: 'Chat riêng' }, { value: 'group', label: 'Nhóm và supergroup' }, { value: 'channel', label: 'Channel' },
+    ] },
+    { key: 'chatId', label: 'Chat cụ thể', type: 'contact-picker', contactType: 'all', channel: 'telegram_bot', placeholder: 'Để trống = tất cả chat' },
+    { key: 'keyword', label: 'Nội dung mới chứa', type: 'text', placeholder: 'Để trống = mọi tin được sửa', advanced: true },
+    { key: 'keywordMode', label: 'Cách khớp', type: 'select', options: [
+      { value: 'contains_any', label: 'Chứa một từ khóa' }, { value: 'contains_all', label: 'Chứa tất cả' }, { value: 'exact', label: 'Khớp chính xác' }, { value: 'starts_with', label: 'Bắt đầu bằng' },
+    ], advanced: true },
+  ],
+  'tgbot.trigger.joinRequest': [
+    { key: 'chatId', label: 'Nhóm cụ thể', type: 'contact-picker', contactType: 'group', channel: 'telegram_bot', placeholder: 'Để trống = mọi nhóm' },
+    { key: 'info', label: 'Yêu cầu quyền', type: 'info', desc: 'Bot phải là admin trong nhóm và có quyền mời user. Node này hiện chỉ nhận sự kiện; duyệt/từ chối sẽ được bổ sung cùng action quản trị nhóm.' },
+  ],
+  'tgbot.trigger.join': [
+    { key: 'chatId', label: 'Nhóm cụ thể', type: 'contact-picker', contactType: 'group', channel: 'telegram_bot', placeholder: 'Để trống = mọi nhóm' },
+    { key: 'eventType', label: 'Sự kiện Bot trong nhóm', type: 'select', options: [
+      { value: 'all', label: 'Tất cả thay đổi thành viên của Bot' },
+      { value: 'added', label: 'Bot được thêm vào nhóm' },
+      { value: 'removed', label: 'Bot bị gỡ khỏi nhóm' },
+      { value: 'permissions_changed', label: 'Quyền của Bot thay đổi' },
+    ], desc: 'Telegram chỉ gửi sự kiện này cho chính Bot. Admin phải thêm Bot bằng @username hoặc link mời; Bot không thể tự thêm mình vào nhóm.' },
+  ],
+
+  // ─── Telegram Bot actions ────────────────────────────────────────────────
+  'tgbot.action.sendPhoto': [
+    { key: 'chatId', label: 'Gửi đến chat', type: 'contact-picker', contactType: 'all', channel: 'telegram_bot', placeholder: '{{ $trigger.chatId }}', templateVars: ['$trigger.chatId'] },
+    { key: 'photoPath', label: 'Ảnh cần gửi', type: 'file-picker', fileType: 'image', desc: 'Chọn ảnh từ máy tính để gửi.' },
+    { key: 'caption', label: 'Chú thích', type: 'textarea', placeholder: 'Không bắt buộc', advanced: true, templateVars: ['$trigger.content'] },
+  ],
+  'tgbot.action.sendVideo': [
+    { key: 'chatId', label: 'Gửi đến chat', type: 'contact-picker', contactType: 'all', channel: 'telegram_bot', placeholder: '{{ $trigger.chatId }}', templateVars: ['$trigger.chatId'] },
+    { key: 'videoPath', label: 'Video cần gửi', type: 'file-picker', fileType: 'file', desc: 'Chọn video từ máy tính để gửi.' },
+    { key: 'caption', label: 'Chú thích', type: 'textarea', placeholder: 'Không bắt buộc', advanced: true },
+  ],
+  'tgbot.action.sendFile': [
+    { key: 'chatId', label: 'Gửi đến chat', type: 'contact-picker', contactType: 'all', channel: 'telegram_bot', placeholder: '{{ $trigger.chatId }}', templateVars: ['$trigger.chatId'] },
+    { key: 'filePath', label: 'File cần gửi', type: 'file-picker', fileType: 'file' },
+    { key: 'caption', label: 'Chú thích', type: 'textarea', placeholder: 'Không bắt buộc', advanced: true },
+  ],
+  'tgbot.action.forward': [
+    { key: 'fromChatId', label: 'Chat nguồn', type: 'contact-picker', contactType: 'all', channel: 'telegram_bot', placeholder: '{{ $trigger.chatId }}', templateVars: ['$trigger.chatId'] },
+    { key: 'targetChatId', label: 'Chat nhận', type: 'contact-picker', contactType: 'all', channel: 'telegram_bot' },
+    { key: 'messageId', label: 'ID tin nhắn', type: 'text', placeholder: '{{ $trigger.messageId }}', templateVars: ['$trigger.messageId'] },
+  ],
+  'tgbot.action.editMessage': [
+    { key: 'chatId', label: 'Chat chứa tin', type: 'contact-picker', contactType: 'all', channel: 'telegram_bot', placeholder: '{{ $trigger.chatId }}', templateVars: ['$trigger.chatId'] },
+    { key: 'messageId', label: 'ID tin nhắn', type: 'text', placeholder: '{{ $trigger.messageId }}', templateVars: ['$trigger.messageId'] },
+    { key: 'text', label: 'Nội dung mới', type: 'textarea', placeholder: 'Nội dung thay thế' },
+  ],
+  'tgbot.action.deleteMessage': [
+    { key: 'chatId', label: 'Chat chứa tin', type: 'contact-picker', contactType: 'all', channel: 'telegram_bot', placeholder: '{{ $trigger.chatId }}', templateVars: ['$trigger.chatId'] },
+    { key: 'messageId', label: 'ID tin nhắn cần xóa', type: 'text', placeholder: '{{ $trigger.messageId }}', templateVars: ['$trigger.messageId'] },
+  ],
+  'tgbot.action.pinMessage': [
+    { key: 'chatId', label: 'Nhóm / channel', type: 'contact-picker', contactType: 'group', channel: 'telegram_bot', placeholder: '{{ $trigger.chatId }}', templateVars: ['$trigger.chatId'] },
+    { key: 'messageId', label: 'ID tin cần ghim', type: 'text', placeholder: '{{ $trigger.messageId }}', templateVars: ['$trigger.messageId'] },
+  ],
+  'tgbot.action.unpinMessage': [
+    { key: 'chatId', label: 'Nhóm / channel', type: 'contact-picker', contactType: 'group', channel: 'telegram_bot', placeholder: '{{ $trigger.chatId }}', templateVars: ['$trigger.chatId'] },
+    { key: 'messageId', label: 'ID tin cần bỏ ghim', type: 'text', placeholder: 'Để trống = bỏ ghim tin đang ghim', templateVars: ['$trigger.messageId'] },
+  ],
+  'tgbot.action.addReaction': [
+    { key: 'chatId', label: 'Chat chứa tin', type: 'contact-picker', contactType: 'all', channel: 'telegram_bot', placeholder: '{{ $trigger.chatId }}', templateVars: ['$trigger.chatId'] },
+    { key: 'messageId', label: 'ID tin nhắn', type: 'text', placeholder: '{{ $trigger.messageId }}', templateVars: ['$trigger.messageId'] },
+    { key: 'emoji', label: 'Emoji reaction', type: 'text', placeholder: '👍' },
+  ],
+  'tgbot.action.sendPoll': [
+    { key: 'chatId', label: 'Gửi đến chat', type: 'contact-picker', contactType: 'all', channel: 'telegram_bot', placeholder: '{{ $trigger.chatId }}', templateVars: ['$trigger.chatId'] },
+    { key: 'question', label: 'Câu hỏi', type: 'text', placeholder: 'Bạn chọn phương án nào?' },
+    { key: 'options', label: 'Các lựa chọn', type: 'multiline', placeholder: 'Lựa chọn 1\nLựa chọn 2', desc: 'Mỗi lựa chọn một dòng.' },
+  ],
+  'tgbot.action.sendChatAction': [
+    { key: 'chatId', label: 'Chat hiển thị trạng thái', type: 'contact-picker', contactType: 'all', channel: 'telegram_bot', placeholder: '{{ $trigger.chatId }}', templateVars: ['$trigger.chatId'] },
+    { key: 'action', label: 'Trạng thái', type: 'select', options: [
+      { value: 'typing', label: 'Đang gõ' }, { value: 'upload_photo', label: 'Đang tải ảnh' }, { value: 'upload_document', label: 'Đang tải file' }, { value: 'record_voice', label: 'Đang thu voice' },
+    ] },
+  ],
+  'tgbot.action.banMember': [
+    { key: 'chatId', label: 'Nhóm', type: 'contact-picker', contactType: 'group', channel: 'telegram_bot', placeholder: '{{ $trigger.chatId }}', templateVars: ['$trigger.chatId'] },
+    { key: 'userId', label: 'Telegram user ID', type: 'text', placeholder: '{{ $trigger.fromId }}', templateVars: ['$trigger.fromId'] },
+    { key: 'durationMinutes', label: 'Thời gian cấm (phút)', type: 'number', placeholder: '0', desc: '0 = cấm không thời hạn.', advanced: true },
+  ],
+  'tgbot.action.restrictMember': [
+    { key: 'chatId', label: 'Nhóm', type: 'contact-picker', contactType: 'group', channel: 'telegram_bot', placeholder: '{{ $trigger.chatId }}', templateVars: ['$trigger.chatId'] },
+    { key: 'userId', label: 'Telegram user ID', type: 'text', placeholder: '{{ $trigger.fromId }}', templateVars: ['$trigger.fromId'] },
+    { key: 'durationMinutes', label: 'Mute trong (phút)', type: 'number', placeholder: '10', min: 1, desc: 'Trong thời gian này user không thể gửi tin.' },
+  ],
+
   // ─── Telegram Actions ───────────────────────────────────────────────────────
   'tg.sendMessage': [
     {
@@ -2235,8 +2387,7 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
     },
     {
       key: 'filePath', label: 'Ảnh cần gửi', type: 'file-picker', fileType: 'image',
-      placeholder: 'https://example.com/image.png',
-      desc: 'Chọn ảnh từ máy tính hoặc nhập URL ảnh trực tiếp.',
+      desc: 'Chọn ảnh từ máy tính để gửi.',
     },
     {
       key: 'caption', label: 'Chú thích ảnh', type: 'text',
@@ -2348,6 +2499,7 @@ interface Props {
   edges?: any[];          // All edges in the workflow (to compute upstream nodes)
   onConfigChange: (config: Record<string, any>) => void;
   onLabelChange: (label: string) => void;
+  onInlineRoutesChange?: (targetNodeIds: string[]) => void;
   onClose: () => void;
   workflowId?: string;
 }
@@ -3132,6 +3284,7 @@ function ContactPickerModal({
   contactType,
   contactMode = 'single',
   channel,
+  accountId,
   value,
   onChange,
   accounts,
@@ -3141,6 +3294,7 @@ function ContactPickerModal({
   contactType: 'user' | 'group' | 'all';
   contactMode?: 'single' | 'multi';
   channel?: string;
+  accountId?: string;
   value: string[];
   onChange: (v: string[]) => void;
   accounts: { zalo_id: string; full_name: string; display_name?: string; phone?: string; avatar_url: string; cookies: string; imei: string; user_agent: string; channel?: string }[];
@@ -3156,11 +3310,16 @@ function ContactPickerModal({
 
   // Filter accounts by channel if specified
   const filteredAccounts = React.useMemo(() => {
-    if (!channel) return accounts;
-    return accounts.filter(a => a.channel === channel);
-  }, [accounts, channel]);
+    const byChannel = channel ? accounts.filter(a => a.channel === channel) : accounts;
+    return accountId ? byChannel.filter(a => a.zalo_id === accountId) : byChannel;
+  }, [accounts, channel, accountId]);
 
   const [selectedAccountId, setSelectedAccountId] = React.useState<string>(filteredAccounts[0]?.zalo_id || '');
+
+  React.useEffect(() => {
+    if (accountId && accountId !== selectedAccountId) setSelectedAccountId(accountId);
+    else if (!filteredAccounts.some(account => account.zalo_id === selectedAccountId)) setSelectedAccountId(filteredAccounts[0]?.zalo_id || '');
+  }, [accountId, filteredAccounts, selectedAccountId]);
 
   // Load contacts when account changes
   React.useEffect(() => {
@@ -3210,7 +3369,10 @@ function ContactPickerModal({
       }
 
       // Load groups from API - requires active connection (as backup if not in DB)
-      if (contactType === 'group' || contactType === 'all') {
+      // Zalo is the only channel with this legacy getGroups IPC fallback.
+      // Telegram/Facebook targets must stay on their own DB-backed contacts and
+      // must never initialize a Zalo connection merely by opening this picker.
+      if ((contactType === 'group' || contactType === 'all') && acc.channel === CHANNEL.ZALO) {
         try {
           const auth = buildZaloAuth(acc);
           const groupsRes = await ipc.zalo?.getGroups(auth);
@@ -3697,7 +3859,24 @@ function ContactPickerModal({
   );
 }
 
-// ─── Contact Picker Field ─────────────────────────────────────────────────────
+// ─── Account + Contact Picker Fields ──────────────────────────────────────────
+
+function AccountPickerField({ value, onChange, channel, placeholder }: {
+  value: string;
+  onChange: (v: string) => void;
+  channel?: string;
+  placeholder?: string;
+}) {
+  const { accounts } = useAccountStore();
+  const available = channel ? accounts.filter(account => account.channel === channel) : accounts;
+  return (
+    <select value={value || ''} onChange={event => onChange(event.target.value)} className={selectCls}>
+      <option value="">{placeholder || 'Chọn tài khoản'}</option>
+      {available.map(account => <option key={account.zalo_id} value={account.zalo_id}>{account.full_name || account.display_name || account.username || account.zalo_id}</option>)}
+      {value && !available.some(account => account.zalo_id === value) && <option value={value}>{value}</option>}
+    </select>
+  );
+}
 
 function ContactPickerField({
   value,
@@ -3705,6 +3884,7 @@ function ContactPickerField({
   contactType,
   contactMode = 'single',
   channel,
+  accountId,
   placeholder,
   templateVars,
 }: {
@@ -3713,6 +3893,7 @@ function ContactPickerField({
   contactType: 'user' | 'group' | 'all';
   contactMode?: 'single' | 'multi';
   channel?: string;
+  accountId?: string;
   placeholder?: string;
   templateVars?: string[];
 }) {
@@ -3809,6 +3990,7 @@ function ContactPickerField({
         contactType={contactType}
         contactMode={contactMode}
         channel={channel}
+        accountId={accountId}
         value={selectedIds}
         onChange={handleChange}
         accounts={accounts}
@@ -3823,7 +4005,6 @@ function FilePickerField({
   value,
   onChange,
   fileType,
-  placeholder,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -3852,7 +4033,7 @@ function FilePickerField({
   };
 
   const isUrl = value?.startsWith('http://') || value?.startsWith('https://');
-  const isLocalFile = value && !isUrl && value.includes('\\');
+  const isLocalFile = value && !isUrl;
   const showPreview = fileType === 'image' && value && !previewError;
 
   return (
@@ -3871,26 +4052,14 @@ function FilePickerField({
         </div>
       )}
 
-      {/* Input and buttons */}
+      {/* Local file selection is the primary workflow. Legacy URL values still
+          render below so existing workflows remain readable, but new media
+          actions never require the user to type a path or URL. */}
       <div className="flex items-center gap-2 p-2">
-        <input
-          type="text"
-          value={value || ''}
-          onChange={e => {
-            onChange(e.target.value);
-            setPreviewError(false);
-          }}
-          placeholder={placeholder || (fileType === 'image' ? 'Chọn ảnh hoặc nhập URL' : 'Chọn file từ máy tính')}
-          className={`flex-1 px-2 py-1.5 text-xs rounded-lg border focus:outline-none focus:ring-2 ${
-            isLight
-              ? 'bg-gray-50 border-gray-200 text-gray-900 placeholder-gray-400 focus:ring-blue-500/30'
-              : 'bg-gray-900/50 border-gray-600 text-white placeholder-gray-500 focus:ring-blue-500/30'
-          }`}
-        />
         <button
           type="button"
           onClick={handleSelectFile}
-          className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all flex items-center gap-1.5 ${
+          className={`w-full px-3 py-2 text-xs font-medium rounded-lg transition-all flex items-center justify-center gap-1.5 ${
             isLight
               ? 'bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200'
               : 'bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 border border-blue-500/30'
@@ -3910,7 +4079,7 @@ function FilePickerField({
               </>
             )}
           </svg>
-          Chọn {fileType === 'image' ? 'ảnh' : 'file'}
+          {value ? `Đổi ${fileType === 'image' ? 'ảnh' : 'tệp'}` : `Chọn ${fileType === 'image' ? 'ảnh' : 'tệp'} từ máy tính`}
         </button>
       </div>
 
@@ -3924,7 +4093,7 @@ function FilePickerField({
                 <polyline points="22 4 12 14.01 9 11.01"/>
               </svg>
               <span className={`text-[10px] truncate ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
-                File: {value.split('\\').pop()}
+                Đã chọn: {value.split(/[\\/]/).pop()}
               </span>
             </>
           ) : isUrl ? (
@@ -3934,7 +4103,7 @@ function FilePickerField({
                 <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
               </svg>
               <span className={`text-[10px] truncate ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
-                URL: {value}
+                URL cũ: {value}
               </span>
             </>
           ) : null}
@@ -4107,7 +4276,176 @@ function NodePickerModal({
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, onLabelChange, onClose, workflowId }: Props) {
+type BotKeyboardButton = {
+  id: string;
+  text: string;
+  action?: 'node' | 'callback' | 'url';
+  targetNodeId?: string;
+  callbackData?: string;
+  url?: string;
+};
+
+function newBotKeyboardButton(): BotKeyboardButton {
+  return { id: `button_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, text: 'Nút mới', action: 'node' };
+}
+
+/** Extract only valid in-workflow inline-button targets from persisted config. */
+function getInlineTargetNodeIds(keyboard: unknown): string[] {
+  if (!keyboard || typeof keyboard !== 'object') return [];
+  const value = keyboard as { type?: unknown; rows?: unknown };
+  if (value.type !== 'inline' || !Array.isArray(value.rows)) return [];
+
+  const ids = value.rows.flatMap((row: unknown) =>
+    (Array.isArray(row) ? row : [row]).flatMap((button: unknown) => {
+      if (!button || typeof button !== 'object') return [];
+      const candidate = button as { action?: unknown; targetNodeId?: unknown };
+      return candidate.action === 'node' && candidate.targetNodeId
+        ? [String(candidate.targetNodeId)]
+        : [];
+    }),
+  );
+  return [...new Set(ids)];
+}
+
+function TelegramBotMessageEditor({
+  config, updateConfig, accounts, nodes, currentNodeId, onInlineRoutesChange,
+}: {
+  config: Record<string, any>;
+  updateConfig: (next: Record<string, any>) => void;
+  accounts: any[];
+  nodes: any[];
+  currentNodeId: string;
+  onInlineRoutesChange?: (targetNodeIds: string[]) => void;
+}) {
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<string>('');
+  const isLight = useAppStore(s => s.theme) === 'light';
+  const keyboard = {
+    enabled: false,
+    type: 'reply' as 'reply' | 'inline',
+    rows: [] as BotKeyboardButton[][],
+    resize: true,
+    oneTime: false,
+    persistent: false,
+    ...(config.keyboard || {}),
+  };
+  const rows: BotKeyboardButton[][] = Array.isArray(keyboard.rows) ? keyboard.rows : [];
+  const bots = accounts.filter((account: any) => account.channel === 'telegram_bot');
+  const targetNodes = nodes
+    .filter((item: any) => item.id !== currentNodeId)
+    .map((item: any) => ({ id: item.id, label: item.data?.label || item.label || getNodeLabel(item.data?.type || item.type) }));
+  useEffect(() => {
+    onInlineRoutesChange?.(getInlineTargetNodeIds(keyboard));
+  // The serialized rows are the stable configuration boundary for this effect.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keyboard.type, keyboard.enabled, JSON.stringify(rows)]);
+  const applyConfig = (next: Record<string, any>) => {
+    updateConfig(next);
+    onInlineRoutesChange?.(getInlineTargetNodeIds(next.keyboard));
+  };
+  const setKeyboard = (next: Record<string, any>) => applyConfig({ ...config, keyboard: { ...keyboard, ...next } });
+  const mutateRows = (mutator: (current: BotKeyboardButton[][]) => BotKeyboardButton[][]) => setKeyboard({ rows: mutator(rows) });
+  const previewMarkup = (() => {
+    if (!keyboard.enabled || !rows.length) return undefined;
+    if (keyboard.type === 'reply') {
+      return { keyboard: rows.map(row => row.map(btn => btn.text).filter(Boolean)).filter(row => row.length), resize_keyboard: keyboard.resize !== false, one_time_keyboard: !!keyboard.oneTime, is_persistent: !!keyboard.persistent };
+    }
+    return {
+      inline_keyboard: rows.map(row => row.map(btn => {
+        if (btn.action === 'url') return { text: btn.text, url: btn.url || '' };
+        return { text: btn.text, callback_data: btn.action === 'node' ? `dlw:n:${btn.id || ''}` : (btn.callbackData || '') };
+      }).filter(btn => btn.text && (btn.url || btn.callback_data))).filter(row => row.length),
+    };
+  })();
+  const testSend = async () => {
+    if (!config.accountId || !config.testChatId || !config.message) {
+      setTestResult('Chọn Bot, Chat thử và nhập nội dung trước khi gửi thử.');
+      return;
+    }
+    setTesting(true); setTestResult('');
+    try {
+      const result = await ipc.telegram?.sendMessage({
+        accountId: config.accountId,
+        chatId: config.testChatId,
+        text: config.message,
+        replyMarkup: previewMarkup,
+      });
+      setTestResult(result?.success ? 'Đã gửi vào chat thử.' : (result?.error || 'Không thể gửi thử.'));
+    } catch (err: any) {
+      setTestResult(err?.message || 'Không thể gửi thử.');
+    } finally { setTesting(false); }
+  };
+
+  return (
+    <div className={`space-y-4 border-t pt-4 ${isLight ? 'border-gray-200 text-gray-900 [&_input]:!bg-white [&_input]:!text-gray-900 [&_input]:!border-gray-300 [&_textarea]:!bg-white [&_textarea]:!text-gray-900 [&_textarea]:!border-gray-300 [&_select]:!bg-white [&_select]:!text-gray-900 [&_select]:!border-gray-300' : 'border-gray-700/50'}`}>
+      <div>
+        <p className={`text-sm font-semibold ${isLight ? 'text-gray-900' : 'text-white'}`}>Tin nhắn Telegram Bot</p>
+        <p className={`text-[11px] mt-1 ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>Để trống phần nút bấm nếu chỉ muốn gửi tin nhắn như workflow hiện tại.</p>
+      </div>
+      <div>
+        <label className={`block text-xs font-medium mb-1.5 ${isLight ? 'text-gray-700' : 'text-gray-300'}`}>Bot gửi tin</label>
+        <select value={config.accountId || ''} onChange={e => applyConfig({ ...config, accountId: e.target.value })}
+          className="w-full rounded-lg border border-gray-600 bg-gray-800 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none">
+          <option value="">Chọn Telegram Bot</option>
+          {bots.map((bot: any) => <option key={bot.zalo_id} value={bot.zalo_id}>{bot.full_name || bot.username || bot.zalo_id}</option>)}
+        </select>
+      </div>
+      <div>
+        <label className={`block text-xs font-medium mb-1.5 ${isLight ? 'text-gray-700' : 'text-gray-300'}`}>Hội thoại nhận</label>
+        <input value={config.chatId ?? ''} onChange={e => applyConfig({ ...config, chatId: e.target.value })}
+          placeholder="{{ $trigger.chatId }}" className="w-full rounded-lg border border-gray-600 bg-gray-800 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none" />
+        <p className={`text-[10px] mt-1 ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>Giữ <code className="text-cyan-500">{'{{ $trigger.chatId }}'}</code> để trả lời đúng chat vừa kích hoạt workflow.</p>
+      </div>
+      <div>
+        <label className={`block text-xs font-medium mb-1.5 ${isLight ? 'text-gray-700' : 'text-gray-300'}`}>Nội dung tin nhắn</label>
+        <textarea value={config.message ?? ''} onChange={e => applyConfig({ ...config, message: e.target.value })}
+          rows={4} placeholder="Xin chào! Mình có thể giúp gì?" className="w-full resize-none rounded-lg border border-gray-600 bg-gray-800 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none" />
+      </div>
+
+      <div className={`rounded-xl border p-3 space-y-3 ${isLight ? 'border-gray-200 bg-white shadow-sm' : 'border-gray-700 bg-gray-800/50'}`}>
+        <div className="flex items-start justify-between gap-3">
+          <div><p className={`text-xs font-semibold ${isLight ? 'text-gray-900' : 'text-white'}`}>Thêm nút tương tác</p><p className={`text-[10px] mt-0.5 ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>Bật khi cần menu hoặc chuyển người dùng đến một nhánh node trong canvas.</p></div>
+          <button type="button" role="switch" aria-checked={keyboard.enabled} onClick={() => setKeyboard({ enabled: !keyboard.enabled })}
+            className={`relative h-6 w-11 rounded-full transition-colors ${keyboard.enabled ? 'bg-blue-600' : 'bg-gray-600'}`}><span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${keyboard.enabled ? 'translate-x-5' : 'translate-x-0.5'}`} /></button>
+        </div>
+        {keyboard.enabled && <>
+          <div className="grid grid-cols-2 gap-2">
+            <button type="button" onClick={() => setKeyboard({ type: 'reply' })} className={`rounded-lg border px-2 py-2 text-xs font-medium ${keyboard.type === 'reply' ? 'border-blue-500 bg-blue-500/15 text-blue-300' : 'border-gray-600 text-gray-400 hover:bg-gray-700'}`}>Reply Keyboard</button>
+            <button type="button" onClick={() => setKeyboard({ type: 'inline' })} className={`rounded-lg border px-2 py-2 text-xs font-medium ${keyboard.type === 'inline' ? 'border-blue-500 bg-blue-500/15 text-blue-300' : 'border-gray-600 text-gray-400 hover:bg-gray-700'}`}>Inline Button</button>
+          </div>
+          <p className={`text-[10px] ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>{keyboard.type === 'reply' ? 'Reply Keyboard gửi chính text của nút như một tin nhắn mới. Hãy dùng trigger tin nhắn để xử lý.' : 'Inline Button nhận callback. Nút “Đi đến node” chỉ chạy node đích và các node nối sau nó khi người dùng bấm.'}</p>
+          <div className="space-y-2">
+            {rows.map((row, rowIndex) => <div key={rowIndex} className={`rounded-lg border p-2 space-y-2 ${isLight ? 'border-gray-200 bg-gray-50' : 'border-gray-700'}`}>
+              <div className="flex items-center justify-between"><span className={`text-[10px] ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>Hàng {rowIndex + 1}</span><button type="button" onClick={() => mutateRows(current => current.filter((_, i) => i !== rowIndex))} className="text-[10px] text-red-500 hover:text-red-400">Xóa hàng</button></div>
+              {row.map((button, buttonIndex) => <div key={button.id} className={`rounded-md p-2 space-y-1.5 ${isLight ? 'bg-white border border-gray-100' : 'bg-gray-900/60'}`}>
+                <div className="flex gap-1.5"><input value={button.text} onChange={e => mutateRows(current => current.map((r, ri) => ri === rowIndex ? r.map((b, bi) => bi === buttonIndex ? { ...b, text: e.target.value } : b) : r))} placeholder="Tên nút" className="min-w-0 flex-1 rounded border border-gray-600 bg-gray-800 px-2 py-1.5 text-xs text-white" />
+                  <button type="button" onClick={() => mutateRows(current => current.map((r, ri) => ri === rowIndex ? r.filter((_, bi) => bi !== buttonIndex) : r))} className="px-2 text-xs text-red-400 hover:bg-red-500/10 rounded">×</button></div>
+                {keyboard.type === 'inline' && <>
+                  <select value={button.action || 'node'} onChange={e => mutateRows(current => current.map((r, ri) => ri === rowIndex ? r.map((b, bi) => bi === buttonIndex ? { ...b, action: e.target.value as BotKeyboardButton['action'] } : b) : r))} className="w-full rounded border border-gray-600 bg-gray-800 px-2 py-1.5 text-xs text-white"><option value="node">Đi đến node</option><option value="callback">Callback tùy chỉnh</option><option value="url">Mở liên kết</option></select>
+                  {(button.action || 'node') === 'node' && <select value={button.targetNodeId || ''} onChange={e => mutateRows(current => current.map((r, ri) => ri === rowIndex ? r.map((b, bi) => bi === buttonIndex ? { ...b, targetNodeId: e.target.value } : b) : r))} className="w-full rounded border border-gray-600 bg-gray-800 px-2 py-1.5 text-xs text-white"><option value="">Chọn node đích</option>{targetNodes.map((target: any) => <option key={target.id} value={target.id}>{target.label}</option>)}</select>}
+                  {(button.action || 'node') === 'callback' && <input value={button.callbackData || ''} onChange={e => mutateRows(current => current.map((r, ri) => ri === rowIndex ? r.map((b, bi) => bi === buttonIndex ? { ...b, callbackData: e.target.value } : b) : r))} maxLength={64} placeholder="callback_data (tối đa 64 bytes)" className="w-full rounded border border-gray-600 bg-gray-800 px-2 py-1.5 text-xs text-white" />}
+                  {(button.action || 'node') === 'url' && <input value={button.url || ''} onChange={e => mutateRows(current => current.map((r, ri) => ri === rowIndex ? r.map((b, bi) => bi === buttonIndex ? { ...b, url: e.target.value } : b) : r))} placeholder="https://..." className="w-full rounded border border-gray-600 bg-gray-800 px-2 py-1.5 text-xs text-white" />}
+                </>}
+              </div>)}
+              <button type="button" onClick={() => mutateRows(current => current.map((r, i) => i === rowIndex ? [...r, newBotKeyboardButton()] : r))} className="text-[11px] text-blue-400 hover:text-blue-300">+ Thêm nút cùng hàng</button>
+            </div>)}
+            <button type="button" onClick={() => mutateRows(current => [...current, [newBotKeyboardButton()]])} className={`w-full rounded-lg border border-dashed py-2 text-xs hover:border-blue-500 hover:text-blue-500 ${isLight ? 'border-gray-300 text-gray-600' : 'border-gray-600 text-gray-300 hover:text-blue-300'}`}>+ Thêm hàng nút</button>
+          </div>
+          {keyboard.type === 'reply' && <div className="flex flex-wrap gap-3 text-[11px] text-gray-300"><label className="flex items-center gap-1.5"><input type="checkbox" checked={keyboard.resize !== false} onChange={e => setKeyboard({ resize: e.target.checked })} /> Tự co chiều cao</label><label className="flex items-center gap-1.5"><input type="checkbox" checked={!!keyboard.oneTime} onChange={e => setKeyboard({ oneTime: e.target.checked })} /> Ẩn sau một lần bấm</label><label className="flex items-center gap-1.5"><input type="checkbox" checked={!!keyboard.persistent} onChange={e => setKeyboard({ persistent: e.target.checked })} /> Luôn hiển thị</label></div>}
+        </>}
+      </div>
+
+      <div className={`rounded-xl border p-3 ${isLight ? 'border-blue-200 bg-blue-50' : 'border-blue-500/30 bg-blue-500/5'}`}>
+        <p className={`text-xs font-semibold mb-2 ${isLight ? 'text-blue-700' : 'text-blue-200'}`}>Xem trước</p>
+        <div className={`rounded-lg p-3 ${isLight ? 'bg-[#eef3f8]' : 'bg-[#17212b]'}`}><div className={`ml-auto max-w-[88%] whitespace-pre-wrap rounded-2xl rounded-br-sm px-3 py-2 text-xs ${isLight ? 'bg-[#d8ecff] text-[#1f2937]' : 'bg-[#2b5278] text-white'}`}>{config.message || 'Nội dung tin nhắn'}</div>
+          {keyboard.enabled && rows.length > 0 && <div className={`mt-2 gap-1 ${keyboard.type === 'reply' ? (isLight ? 'rounded-lg bg-white p-2 shadow-sm' : 'rounded-lg bg-[#22303d] p-2') : 'flex flex-col'}`}>{rows.map((row, index) => <div key={index} className="flex gap-1">{row.map(button => <span key={button.id} className={`flex-1 rounded px-2 py-1.5 text-center text-[10px] ${isLight ? 'bg-white text-blue-700 border border-blue-200' : 'bg-[#315b82] text-[#8fc7ff]'}`}>{button.text || 'Nút'}</span>)}</div>)}</div>}</div>
+      </div>
+      <div className={`rounded-xl border p-3 ${isLight ? 'border-gray-200 bg-white shadow-sm' : 'border-gray-700'}`}><p className={`text-xs font-semibold ${isLight ? 'text-gray-900' : 'text-white'}`}>Gửi thử an toàn</p><p className={`text-[10px] mt-0.5 ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>Chỉ gửi vào Chat thử bên dưới, không dùng hội thoại đang kích hoạt workflow.</p><div className="mt-2 flex gap-2"><input value={config.testChatId || ''} onChange={e => applyConfig({ ...config, testChatId: e.target.value })} placeholder="Chat ID thử" className="min-w-0 flex-1 rounded-lg border border-gray-600 bg-gray-800 px-2.5 py-2 text-xs text-white" /><button type="button" disabled={testing} onClick={testSend} className="rounded-lg bg-green-600 px-3 py-2 text-xs font-medium text-white disabled:opacity-60">{testing ? 'Đang gửi…' : 'Gửi thử'}</button></div>{testResult && <p className={`mt-2 text-[11px] ${testResult.startsWith('Đã') ? 'text-green-400' : 'text-amber-300'}`}>{testResult}</p>}</div>
+    </div>
+  );
+}
+
+export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, onLabelChange, onInlineRoutesChange, onClose, workflowId }: Props) {
   const { accounts } = useAccountStore();
   const [config, setConfig]             = useState<Record<string, any>>(node.config || {});
   const [label, setLabel]               = useState(node.label || '');
@@ -4461,6 +4799,11 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
           <CronField value={config[field.key] ?? ''} onChange={v => update(field.key, v)} placeholder={field.placeholder} />
         )}
         {field.type === 'info' && field.isWebhookUrl && <WebhookUrlField field={field} config={config} workflowId={workflowId} update={update} />}
+        {field.type === 'info' && !field.isWebhookUrl && (
+          <div className="rounded-lg border border-blue-500/25 bg-blue-500/10 px-3 py-2 text-xs leading-5 text-blue-300">
+            {field.desc}
+          </div>
+        )}
 
         {field.type === 'html' && (
           <HtmlEditorField value={config[field.key] ?? ''} onChange={v => update(field.key, v)} placeholder={field.placeholder} />
@@ -4491,9 +4834,19 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
             value={config[field.key] ?? ''}
             onChange={v => update(field.key, v)}
             contactType={field.contactType || 'all'}
-            channel={field.channel}
+            channel={field.channelFromKey ? config[field.channelFromKey] : field.channel}
+            accountId={field.accountIdFromKey ? config[field.accountIdFromKey] : undefined}
             placeholder={field.placeholder}
             templateVars={field.templateVars}
+          />
+        )}
+
+        {field.type === 'account-picker' && (
+          <AccountPickerField
+            value={config[field.key] ?? ''}
+            onChange={v => update(field.key, v)}
+            channel={field.channelFromKey ? config[field.channelFromKey] : field.channel}
+            placeholder={field.placeholder}
           />
         )}
 
@@ -4646,14 +4999,25 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
         <p className={descCls}>Tên gợi nhớ hiển thị trên node trong sơ đồ workflow.</p>
       </div>
 
-      {allFields.length > 0 && <div className="border-t border-gray-700/50" />}
+      {(allFields.length > 0 || node.type === 'tgbot.action.sendMessage') && <div className="border-t border-gray-700/50" />}
 
-      {allFields.length === 0 && (
+      {allFields.length === 0 && node.type !== 'tgbot.action.sendMessage' && (
         <div className="bg-gray-800/60 border border-gray-700/50 rounded-xl px-4 py-5 text-center">
           <div className="text-2xl mb-2">✅</div>
           <p className="text-gray-300 text-xs font-medium">Node này không cần cấu hình thêm</p>
           <p className="text-gray-400 text-[11px] mt-1">Chỉ cần kết nối với các node khác là đủ.</p>
         </div>
+      )}
+
+      {node.type === 'tgbot.action.sendMessage' && (
+        <TelegramBotMessageEditor
+          config={config}
+          updateConfig={next => { setConfig(next); onConfigChange(next); }}
+          accounts={accounts}
+          nodes={nodes || []}
+          currentNodeId={node.id}
+          onInlineRoutesChange={onInlineRoutesChange}
+        />
       )}
 
       {basicFields.map(renderField)}

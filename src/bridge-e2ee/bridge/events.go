@@ -28,6 +28,10 @@ const (
 	facebookThumbsUpSmallStickerID  int64 = 369239263222822
 	facebookThumbsUpMediumStickerID int64 = 369239343222814
 	facebookThumbsUpLargeStickerID  int64 = 369239383222810
+	standaloneUpsertGraceMs               = int64((2 * time.Minute) / time.Millisecond)
+	standaloneUpsertFutureSkewMs          = int64((5 * time.Minute) / time.Millisecond)
+	recentMessageTTLms                    = int64((10 * time.Minute) / time.Millisecond)
+	recentMessageSweepIntervalMs          = int64(time.Minute / time.Millisecond)
 )
 
 // EventType represents the type of event
@@ -229,25 +233,38 @@ func (c *Client) handleEvent(ctx context.Context, evt any) {
 	})
 
 	switch e := evt.(type) {
-	case *messagix.ConnectedEvent:
-		c.emitEvent(EventTypeReady, nil)
-
-	case *messagix.ReconnectedEvent:
-		c.emitEvent(EventTypeReconnected, nil)
-
-	case *messagix.TransientDisconnectEvent:
-		c.emitEvent(EventTypeError, &ErrorEvent{
-			Message: e.Err.Error(),
+	case *messagix.Event_Ready:
+		c.emitEvent(EventTypeReady, map[string]any{
+			"isNewSession": e.IsNewSession,
 		})
 
-	case *messagix.PermanentErrorEvent:
+	case *messagix.Event_Reconnected:
+		c.openRealtimeMessageWindow(standaloneUpsertGraceMs)
+		c.emitEvent(EventTypeReconnected, nil)
+
+	case *messagix.Event_SocketError:
+		message := "Messenger socket disconnected"
+		if e.Err != nil {
+			message = e.Err.Error()
+		}
 		c.emitEvent(EventTypeError, &ErrorEvent{
-			Message: e.Err.Error(),
+			Message: message,
+		})
+
+	case *messagix.Event_PermanentError:
+		message := "Messenger connection failed permanently"
+		if e.Err != nil {
+			message = e.Err.Error()
+		}
+		c.emitEvent(EventTypeError, &ErrorEvent{
+			Message: message,
 			Code:    1,
 		})
 
-	case *table.LSTable:
-		c.handleTable(e)
+	case *messagix.Event_PublishResponse:
+		if e.Table != nil {
+			c.handleTable(e.Table)
+		}
 	}
 }
 
@@ -260,7 +277,7 @@ func (c *Client) handleTable(tbl *table.LSTable) {
 	// Process wrapped messages (includes attachments info)
 	// upsert = sync/backfill messages (should NOT emit events)
 	// insert = new real-time messages (should emit events)
-	_, insert := tbl.WrapMessages()
+	upsert, insert := tbl.WrapMessages()
 
 	// Track handled message IDs to avoid duplicates
 	handledMsgIds := make(map[string]bool)
@@ -276,6 +293,9 @@ func (c *Client) handleTable(tbl *table.LSTable) {
 				continue
 			}
 			handledMsgIds[msg.MessageId] = true
+			if !c.claimMessageID(msg.MessageId) {
+				continue
+			}
 		}
 		c.emitEvent(EventTypeMessage, c.convertWrappedMessage(msg))
 	}
@@ -283,6 +303,14 @@ func (c *Client) handleTable(tbl *table.LSTable) {
 	// Handle simple inserted messages (fallback) - skip if already handled
 	for _, msg := range tbl.LSInsertMessage {
 		if handledMsgIds[msg.MessageId] {
+			continue
+		}
+		if msg.MessageId == "" {
+			// WrapMessages already emitted this entry once. Without an ID there is
+			// no stable key for the raw fallback to distinguish it.
+			continue
+		}
+		if msg.MessageId != "" && !c.claimMessageID(msg.MessageId) {
 			continue
 		}
 		threadName, threadType := c.threadMeta(msg.ThreadKey)
@@ -295,6 +323,23 @@ func (c *Client) handleTable(tbl *table.LSTable) {
 			Text:        msg.Text,
 			TimestampMs: msg.TimestampMs,
 		})
+	}
+
+	// Meta normally pairs LSUpsertMessage with LSInsertNewMessageRange for
+	// history/backfill. Recent standalone upserts are also used for live traffic
+	// by newer payloads, so emit only validated candidates inside the live
+	// connection window. This avoids both message loss and replaying old bot
+	// commands after startup.
+	rangeThreads := make(map[int64]struct{}, len(upsert))
+	for threadID := range upsert {
+		rangeThreads[threadID] = struct{}{}
+	}
+	for _, msg := range wrapStandaloneUpsertMessages(tbl, rangeThreads) {
+		if handledMsgIds[msg.MessageId] || !c.claimStandaloneUpsert(msg) {
+			continue
+		}
+		handledMsgIds[msg.MessageId] = true
+		c.emitEvent(EventTypeMessage, c.convertWrappedMessage(msg))
 	}
 
 	// Handle message edits
@@ -403,6 +448,141 @@ func (c *Client) handleTable(tbl *table.LSTable) {
 	}
 }
 
+func (c *Client) openRealtimeMessageWindow(graceMs int64) {
+	cutoff := timeNowMs() - graceMs
+	c.recentMessagesMu.Lock()
+	if cutoff > c.liveMessageCutoffMs {
+		c.liveMessageCutoffMs = cutoff
+	}
+	c.recentMessagesMu.Unlock()
+}
+
+func (c *Client) claimMessageID(messageID string) bool {
+	if messageID == "" {
+		return true
+	}
+	now := timeNowMs()
+	c.recentMessagesMu.Lock()
+	defer c.recentMessagesMu.Unlock()
+	return c.claimMessageIDLocked(messageID, now, messageEventSourceInsert)
+}
+
+func (c *Client) claimStandaloneUpsert(msg *table.WrappedMessage) bool {
+	if msg == nil || msg.LSInsertMessage == nil || msg.MessageId == "" ||
+		msg.ThreadKey == 0 || msg.SenderId == 0 || msg.IsUnsent {
+		return false
+	}
+
+	now := timeNowMs()
+	c.recentMessagesMu.Lock()
+	defer c.recentMessagesMu.Unlock()
+	if c.liveMessageCutoffMs == 0 {
+		return false
+	}
+	cutoff := c.liveMessageCutoffMs
+	if rollingCutoff := now - standaloneUpsertGraceMs; rollingCutoff > cutoff {
+		cutoff = rollingCutoff
+	}
+	if msg.TimestampMs < cutoff ||
+		msg.TimestampMs > now+standaloneUpsertFutureSkewMs {
+		return false
+	}
+	return c.claimMessageIDLocked(
+		msg.MessageId,
+		now,
+		messageEventSourceStandaloneUpsert,
+	)
+}
+
+func (c *Client) claimMessageIDLocked(
+	messageID string,
+	now int64,
+	source messageEventSource,
+) bool {
+	if c.recentMessages == nil {
+		c.recentMessages = make(map[string]recentMessageEvent)
+	}
+	if now >= c.recentMessageSweep {
+		for existingID, existing := range c.recentMessages {
+			if now-existing.emittedAt > recentMessageTTLms {
+				delete(c.recentMessages, existingID)
+			}
+		}
+		c.recentMessageSweep = now + recentMessageSweepIntervalMs
+	}
+	if existing, exists := c.recentMessages[messageID]; exists {
+		if source != messageEventSourceInsert ||
+			existing.source != messageEventSourceStandaloneUpsert {
+			return false
+		}
+	}
+	c.recentMessages[messageID] = recentMessageEvent{emittedAt: now, source: source}
+	return true
+}
+
+func wrapStandaloneUpsertMessages(
+	tbl *table.LSTable,
+	rangeThreads map[int64]struct{},
+) []*table.WrappedMessage {
+	standalone := &table.LSTable{}
+	messageIDs := make(map[string]struct{})
+	for _, msg := range tbl.LSUpsertMessage {
+		if msg == nil {
+			continue
+		}
+		if _, isBackfill := rangeThreads[msg.ThreadKey]; isBackfill {
+			continue
+		}
+		standalone.LSInsertMessage = append(standalone.LSInsertMessage, msg.ToInsert())
+		messageIDs[msg.MessageId] = struct{}{}
+	}
+	for _, attachment := range tbl.LSInsertBlobAttachment {
+		if attachment != nil {
+			if _, exists := messageIDs[attachment.MessageId]; exists {
+				standalone.LSInsertBlobAttachment = append(standalone.LSInsertBlobAttachment, attachment)
+			}
+		}
+	}
+	for _, attachment := range tbl.LSInsertAttachment {
+		if attachment != nil {
+			if _, exists := messageIDs[attachment.MessageId]; exists {
+				standalone.LSInsertAttachment = append(standalone.LSInsertAttachment, attachment)
+			}
+		}
+	}
+	xmaIDs := make(map[string]struct{})
+	for _, attachment := range tbl.LSInsertXmaAttachment {
+		if attachment != nil {
+			if _, exists := messageIDs[attachment.MessageId]; exists {
+				standalone.LSInsertXmaAttachment = append(standalone.LSInsertXmaAttachment, attachment)
+				xmaIDs[attachment.AttachmentFbid] = struct{}{}
+			}
+		}
+	}
+	for _, cta := range tbl.LSInsertAttachmentCta {
+		if cta != nil {
+			_, belongsToMessage := messageIDs[cta.MessageId]
+			_, belongsToXMA := xmaIDs[cta.AttachmentFbid]
+			if belongsToMessage || belongsToXMA {
+				standalone.LSInsertAttachmentCta = append(standalone.LSInsertAttachmentCta, cta)
+			}
+		}
+	}
+	for _, attachment := range tbl.LSInsertStickerAttachment {
+		if attachment != nil {
+			if _, exists := messageIDs[attachment.MessageId]; exists {
+				standalone.LSInsertStickerAttachment = append(standalone.LSInsertStickerAttachment, attachment)
+			}
+		}
+	}
+
+	_, wrapped := standalone.WrapMessages()
+	for _, msg := range wrapped {
+		msg.IsUpsert = true
+	}
+	return wrapped
+}
+
 // parseMentions parses comma-separated mention strings into Mention structs
 // Note: offsets and lengths are in UTF-16 code units (Facebook's format)
 func parseMentions(offsets, lengths, ids string) []*Mention {
@@ -463,14 +643,16 @@ func parseMentionsWithTypes(offsets, lengths, ids, types string) []*Mention {
 
 // convertWrappedMessage converts a wrapped message with attachments
 func (c *Client) convertWrappedMessage(msg *table.WrappedMessage) *Message {
+	text := msg.Text
+	stickers := msg.Stickers
 	// Handle thumbs-up sticker as emoji (same as Messenger web client)
-	if len(msg.Stickers) == 1 {
-		stickerID := msg.Stickers[0].TargetId
+	if len(stickers) == 1 {
+		stickerID := stickers[0].TargetId
 		if stickerID == facebookThumbsUpLargeStickerID ||
 			stickerID == facebookThumbsUpMediumStickerID ||
 			stickerID == facebookThumbsUpSmallStickerID {
-			msg.Text = "👍"
-			msg.Stickers = nil
+			text = "👍"
+			stickers = nil
 		}
 	}
 
@@ -481,7 +663,7 @@ func (c *Client) convertWrappedMessage(msg *table.WrappedMessage) *Message {
 		ThreadName:  threadName,
 		ThreadType:  threadType,
 		SenderID:    msg.SenderId,
-		Text:        msg.Text,
+		Text:        text,
 		TimestampMs: msg.TimestampMs,
 		IsAdminMsg:  msg.IsAdminMessage,
 		Attachments: []*Attachment{},
@@ -520,7 +702,7 @@ func (c *Client) convertWrappedMessage(msg *table.WrappedMessage) *Message {
 	}
 
 	// Handle stickers
-	for _, sticker := range msg.Stickers {
+	for _, sticker := range stickers {
 		// Try AttachmentFbid first (this is the actual sticker ID for sending)
 		// Fall back to TargetId if AttachmentFbid is not available
 		var stickerID int64
@@ -760,19 +942,33 @@ func (c *Client) handleE2EEEvent(evt interface{}) {
 			"sender":     e.Sender.String(),
 			"messageIds": e.MessageIDs,
 		})
+
+	case *events.UndecryptableMessage:
+		c.emitEvent(EventTypeError, &ErrorEvent{
+			Message: "E2EE message could not be decrypted or was unavailable",
+			Code:    2,
+		})
 	}
 }
 
 // emitEvent emits an event to the channel
 func (c *Client) emitEvent(eventType EventType, data interface{}) {
-	select {
-	case c.eventChan <- &Event{
+	event := &Event{
 		Type:      eventType,
 		Data:      data,
 		Timestamp: timeNowMs(),
-	}:
-	default:
-		c.Logger.Warn().Str("type", string(eventType)).Msg("Event channel full, dropping event")
+	}
+
+	c.eventMu.RLock()
+	defer c.eventMu.RUnlock()
+	if c.eventsClosed {
+		return
+	}
+
+	select {
+	case c.eventChan <- event:
+	case <-c.ctx.Done():
+		c.Logger.Debug().Str("type", string(eventType)).Msg("Client closed before event could be emitted")
 	}
 }
 
@@ -1356,11 +1552,6 @@ func (c *Client) extractE2EEVideoAttachment(vid *waConsumerApplication.ConsumerA
 	transport, err := vid.Decode()
 	if err == nil && transport != nil {
 		if ancillary := transport.GetAncillary(); ancillary != nil {
-				// Facebook sends GIFs as VideoMessage with GifPlayback=true
-				// (confirmed by mautrix-meta msgconv/from-whatsapp.go)
-				if ancillary.GetGifPlayback() {
-					att.Type = "gif"
-				}
 			att.Width = int(ancillary.GetWidth())
 			att.Height = int(ancillary.GetHeight())
 			att.Duration = int(ancillary.GetSeconds())
@@ -1370,10 +1561,6 @@ func (c *Client) extractE2EEVideoAttachment(vid *waConsumerApplication.ConsumerA
 				if ancillary := waTransport.GetAncillary(); ancillary != nil {
 					att.MimeType = ancillary.GetMimetype()
 					att.FileSize = int64(ancillary.GetFileLength())
-					// Handle images sent in video containers (mimeType starts with "image/")
-					if att.Type == "video" && strings.HasPrefix(ancillary.GetMimetype(), "image/") {
-						att.Type = "image"
-					}
 				}
 				if integral := waTransport.GetIntegral(); integral != nil {
 					att.MediaKey = integral.GetMediaKey()

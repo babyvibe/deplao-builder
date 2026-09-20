@@ -42,6 +42,10 @@ interface ActiveListener {
   healthCheckClient: TelegramClient | null;
   transportDownSince: number | null;
   retryCount: number;
+  /** Timestamp of the last GramJS transport diagnostic written to our log.
+   * GramJS retries an idle ping several times, so logging each raw stack is
+   * noisy and hides the account that is actually affected. */
+  lastTransportErrorAt: number;
   stopped: boolean;
 }
 
@@ -51,6 +55,10 @@ const PRIMARY_RECONNECT_GRACE_MS = 70_000;
 const HEALTH_CHECK_INTERVAL_MS = 45_000;
 const INITIAL_DIALOG_LIMIT = 300;
 const RECENT_DIALOG_LIMIT = 200;
+// Metadata-only sweep: this is deliberately independent from history sync.
+// It establishes a trusted membership cache for every dialog on accounts with
+// thousands of channels without downloading thousands of message histories.
+const MEMBERSHIP_RECONCILE_DIALOG_LIMIT = 2_500;
 const INITIAL_MESSAGES_PER_DIALOG = 100;
 const RECOVERY_MESSAGES_PER_DIALOG = 1000;
 const MAX_MANUAL_MESSAGE_DOWNLOAD = 5000;
@@ -65,6 +73,8 @@ const reconnectCatchUps = new Map<string, Promise<void>>();
 const manualRefreshTasks = new Map<string, Promise<void>>();
 const syncingAccounts = new Set<string>();
 const recoveringUpdateAccounts = new Set<string>();
+const membershipReconciliations = new Map<string, Promise<void>>();
+const membershipReconciledAccounts = new Set<string>();
 const rawUpdateHandlers = new Map<string, (update: any) => Promise<void>>();
 /** All direct-download operations share one account queue. GramJS borrows an
  * exported sender per DC; allowing avatar and media paths to run independently
@@ -118,6 +128,22 @@ function tgLog(level: 'info' | 'warn' | 'error', accountId: string, source: Tele
   if (level === 'error') Logger.error(line);
   else if (level === 'warn') Logger.warn(line);
   else tgDebugLog(line);
+}
+
+/**
+ * Always-on, privacy-safe trace for the MTProto channel/supergroup ingress
+ * path. Unlike tgLog(info), this intentionally remains visible without
+ * TELEGRAM_VERBOSE_LOGGING while we diagnose live updates that otherwise only
+ * fail on high-traffic `-100…` peers. Keep this to IDs/state only: terminal
+ * logs are routinely copied for support and must not contain message bodies,
+ * session strings, or access hashes.
+ */
+function tgChannelRealtimeTrace(stage: string, accountId: string, extra: Record<string, unknown>): void {
+  const fields = [`account=${accountId}`];
+  for (const [key, value] of Object.entries(extra)) {
+    if (value !== undefined && value !== null && value !== '') fields.push(`${key}=${value}`);
+  }
+  // Logger.log(`[TG:channel-realtime] ${stage} | ${fields.join(' ')}`);
 }
 
 /** Short-lived login state is separate from persistent account listeners. */
@@ -232,7 +258,14 @@ function getTelegramSendCapability(entity: any): { canSend: boolean; reason: str
   return { canSend: true, reason: '' };
 }
 
-function persistTelegramDialogState(accountId: string, chatId: string, dialog: any, entity: any, fullChat?: any): void {
+function persistTelegramDialogState(
+  accountId: string,
+  chatId: string,
+  dialog: any,
+  entity: any,
+  fullChat?: any,
+  emitRefresh = true,
+): void {
   const db = DatabaseService.getInstance();
   if (!db || !chatId) return;
   const existing = db.queryOne<any>(
@@ -300,13 +333,85 @@ function persistTelegramDialogState(accountId: string, chatId: string, dialog: a
     );
   }
   // Emit event to trigger renderer cache refresh (othersConversations, mutedThreads)
-  try {
-    const { EventBroadcaster } = require('../event/EventBroadcaster');
-    EventBroadcaster.emit('db:unreadChanged', {
-      zaloId: accountId,
-      source: 'telegram_dialog_state',
-    });
-  } catch {}
+  if (emitRefresh) {
+    try {
+      const { EventBroadcaster } = require('../event/EventBroadcaster');
+      EventBroadcaster.emit('db:unreadChanged', {
+        zaloId: accountId,
+        source: 'telegram_dialog_state',
+      });
+    } catch {}
+  }
+}
+
+/**
+ * Rebuild the membership cache from Telegram's dialog list without fetching
+ * any message history. Socket Channel entities can be minimal/stale, whereas
+ * a dialog entity carries the account's actual `left` state. The final pass
+ * moves old `-100…` peers not present in either main or Archived dialogs out
+ * of the normal inbox, which also repairs rows admitted by older builds.
+ */
+async function reconcileTelegramDialogMembership(
+  accountId: string,
+  client: TelegramClient,
+): Promise<void> {
+  if (membershipReconciledAccounts.has(accountId)) return;
+  const existingTask = membershipReconciliations.get(accountId);
+  if (existingTask) return existingTask;
+  const task = (async () => {
+    const db = DatabaseService.getInstance();
+    if (!db) return;
+
+    Logger.log(`[TelegramUserListener] Starting membership reconciliation for ${accountId}`);
+
+    const mainDialogs = await client.getDialogs({ limit: MEMBERSHIP_RECONCILE_DIALOG_LIMIT });
+    const archivedDialogs = await client.getDialogs({ limit: MEMBERSHIP_RECONCILE_DIALOG_LIMIT, folder: 1 });
+    const seen = new Set<string>();
+    for (const dialog of [...mainDialogs, ...archivedDialogs]) {
+      const chatId = getCanonicalChatId(dialog.id);
+      if (!chatId || !chatId.startsWith('-100') || seen.has(chatId)) continue;
+      seen.add(chatId);
+      if (dialog.entity) cacheTelegramPeer(accountId, chatId, dialog.entity);
+      persistTelegramDialogState(accountId, chatId, dialog, dialog.entity, undefined, false);
+    }
+
+    // `getDialogs` contains every peer the account currently belongs to,
+    // including archived peers. A normal-inbox channel absent from that
+    // snapshot is an old/unjoined row and must not remain eligible for live
+    // ingest or occupy the All tab.
+    const memberRows = db.query<{ contact_id: string }>(
+      `SELECT contact_id FROM contacts
+       WHERE owner_zalo_id = ? AND channel = 'telegram_user'
+         AND contact_id LIKE '-100%' AND telegram_membership_state = 'member'`,
+      [accountId],
+    );
+    const staleIds = memberRows
+      .map(row => String(row.contact_id || ''))
+      .filter(chatId => !!chatId && !seen.has(chatId));
+    const now = Date.now();
+    for (let index = 0; index < staleIds.length; index += 400) {
+      const chunk = staleIds.slice(index, index + 400);
+      const placeholders = chunk.map(() => '?').join(',');
+      db.run(
+        `UPDATE contacts
+         SET telegram_membership_state = 'left', telegram_join_action = 'none',
+             telegram_can_send = 0, telegram_send_reason = ?, is_in_others = 1,
+             telegram_state_updated_at = ?
+         WHERE owner_zalo_id = ? AND channel = 'telegram_user' AND contact_id IN (${placeholders})`,
+        ['Bạn chưa tham gia cuộc trò chuyện này', now, accountId, ...chunk],
+      );
+    }
+    membershipReconciledAccounts.add(accountId);
+    Logger.log(`[TelegramUserListener] Membership reconciled: ${seen.size} dialogs, ${staleIds.length} stale channels for ${accountId}`);
+    EventBroadcaster.emit('db:unreadChanged', { zaloId: accountId, source: 'telegram_membership_reconcile' });
+  })().catch((err: any) => {
+    Logger.warn(`[TelegramUserListener] Membership reconciliation failed for ${accountId}: ${err.message}`);
+    throw err;
+  }).finally(() => {
+    membershipReconciliations.delete(accountId);
+  });
+  membershipReconciliations.set(accountId, task);
+  return task;
 }
 
 function getTelegramUserStatus(user: any): { status: string; statusText: string; lastSeenAt?: number; onlineUntil?: number } {
@@ -543,6 +648,12 @@ function getTelegramCustomEmojiAttachments(message: any): Record<string, any>[] 
  * optimistic rows used Date.now() as msg_id; they remain valid local rows but
  * are not legal MTProto message IDs and must be excluded from history cursors. */
 function getTelegramHistoryCheckpoint(db: DatabaseService, accountId: string, chatId: string): number {
+  const recovery = db.queryOne<{ history_start_msg_id: number | null }>(
+    `SELECT history_start_msg_id FROM telegram_channel_recovery_queue
+     WHERE owner_zalo_id = ? AND channel_id = ? AND status IN ('pending', 'draining')`,
+    [accountId, chatId],
+  );
+  if (recovery?.history_start_msg_id != null) return Number(recovery.history_start_msg_id);
   const checkpoint = db.queryOne<{ lastMessageId?: number }>(
     `SELECT MAX(CASE
        WHEN CAST(msg_id AS INTEGER) BETWEEN 1 AND ${MAX_TELEGRAM_MESSAGE_ID}
@@ -932,9 +1043,14 @@ function persistTelegramMessage(
 /** Initialize a raw Api.Message from channel-difference results so it can go
  *  through the standard handleNewMessage pipeline. Without this, getChat() and
  *  getSender() return undefined and the message is silently dropped (P0.1). */
-function initializeRecoveredMessage(message: any, client: TelegramClient, entities: Map<any, any>): NewMessageEvent {
+function initializeRecoveredMessage(message: any, client: TelegramClient, entities: Map<any, any>, resolvedChat?: any): NewMessageEvent {
   const event = new NewMessageEvent(message, { _entities: entities } as any);
   (event as any)._setClient(client);
+  // `message.chat` is commonly unset on raw socket updates even when the
+  // update carries the authoritative Channel entity in `_entities`.  Preserve
+  // it on our wrapper instead of forcing GramJS getChat(), which can make an
+  // unnecessary RPC in the realtime hot path.
+  if (resolvedChat) (event as any).__deplaoResolvedChat = resolvedChat;
   return event;
 }
 
@@ -994,6 +1110,7 @@ export async function startListener(account: TelegramUserAccount): Promise<{ suc
       healthCheckClient: null,
       transportDownSince: null,
       retryCount: 0,
+      lastTransportErrorAt: 0,
       stopped: false,
   };
   activeListeners.set(account.accountId, listener);
@@ -1030,6 +1147,51 @@ function isFatalTelegramSessionError(err?: unknown): boolean {
   ].some(code => message.includes(code));
 }
 
+/**
+ * A raw UpdateNewChannelMessage can arrive before the high-level event has
+ * resolved its chat.  Persist the embedded Channel entity first when GramJS
+ * provides it, so a PTS-gap recovery has the access_hash it needs instead of
+ * turning the channel into a terminal `missing_access_hash` failure.
+ */
+function cacheRawChannelEntity(accountId: string, update: any, chatId: string): any | null {
+  const entities = update?._entities;
+  if (!(entities instanceof Map)) return null;
+  for (const entity of entities.values()) {
+    try {
+      if (getCanonicalChatId(entity) === chatId) {
+        cacheTelegramPeer(accountId, chatId, entity);
+        return entity;
+      }
+    } catch {
+      // A malformed unrelated entity must never reject the incoming update.
+    }
+  }
+  return null;
+}
+
+/**
+ * GramJS can report a broken primary update loop through `onError` before (or
+ * without) delivering UpdateConnectionState.disconnected.  Treat only socket
+ * and network failures as an outage here; RPC errors such as FLOOD_WAIT must
+ * not tear down a healthy listener.
+ */
+function isTelegramTransportError(err?: unknown): boolean {
+  const value = err as any;
+  const message = String(value?.errorMessage || value?.message || value || '').toUpperCase();
+  return [
+    'TIMEOUT',
+    'CONNECTION',
+    'SOCKET',
+    'DISCONNECTED',
+    'ECONNRESET',
+    'ECONNREFUSED',
+    'ETIMEDOUT',
+    'EHOSTUNREACH',
+    'ENETUNREACH',
+    'NETWORK',
+  ].some(code => message.includes(code));
+}
+
 function markPrimaryConnectionRestored(
   listener: ActiveListener,
   client: TelegramClient,
@@ -1041,6 +1203,12 @@ function markPrimaryConnectionRestored(
     listener.reconnectTimer = null;
   }
   const wasConnected = listener.connected;
+  // GramJS can emit UpdateConnectionState.connected for the initial socket
+  // handshake (and occasionally duplicate it while the socket is already
+  // healthy). A history/channel catch-up is only warranted after this
+  // listener observed a transport outage; otherwise every startup would
+  // re-enqueue all previously completed channel recoveries.
+  const hadTransportOutage = listener.transportDownSince !== null;
   listener.connected = true;
   listener.transportDownSince = null;
   listener.retryCount = 0;
@@ -1053,7 +1221,10 @@ function markPrimaryConnectionRestored(
     });
   }
   tgLog('info', listener.account.accountId, 'socket', 'PRIMARY_CONNECTION_RESTORED', { result: source });
-  scheduleReconnectCatchUp(listener, client);
+  if (hadTransportOutage) {
+    Logger.log(`[TelegramUserListener] Starting reconnect catch-up for ${listener.account.accountId} (${source})`);
+    scheduleReconnectCatchUp(listener, client);
+  }
 }
 
 function scheduleReconnect(listener: ActiveListener, reason: string, err?: unknown): void {
@@ -1196,6 +1367,15 @@ function scheduleReconnectCatchUp(listener: ActiveListener, client: TelegramClie
 const CHANNEL_POLL_INTERVAL_MS = 15_000;
 const ACTIVE_CHANNEL_LEASE_MS = 10 * 60_000;
 const MAX_ACTIVE_CHANNELS_PER_ACCOUNT = 10;
+const URGENT_CHANNEL_RECOVERY_PRIORITY = 1000;
+// The MTProto socket remains the primary realtime transport.  This dialog
+// watch is a small, low-rate safety net for accounts where Telegram delivers
+// typing but delays/omits UpdateNewChannelMessage after a reconnect.  A new
+// channel post moves that dialog to the top of its folder, so looking at the
+// recent page is vastly cheaper (and safer) than polling every channel.
+const CHANNEL_DIALOG_WATCH_LIMIT = 100;
+const CHANNEL_DIALOG_WATCH_MAIN_INTERVAL_MS = 45_000;
+const CHANNEL_DIALOG_WATCH_ARCHIVED_INTERVAL_MS = 90_000;
 // Reconnect/manual sync can inspect recent dialogs, but must never fan out to
 // every historical channel a long-lived account has ever seen.
 const MAX_RECONNECT_CHANNEL_RECOVERY = 200;
@@ -1203,6 +1383,39 @@ const MAX_RECONNECT_CHANNEL_RECOVERY = 200;
 /** Per-account channel poll serialization. Key: accountId */
 const channelPollQueues = new Map<string, Promise<void>>();
 type ChannelDifferenceResult = 'complete' | 'retry' | 'unavailable';
+type ChannelRecoveryQueueItem = {
+  channel_id: string;
+  access_hash: string;
+  pts: number;
+  priority: number;
+  attempts: number;
+  /** Active UI leases are polled without creating/reopening a DB queue row. */
+  queued?: boolean;
+};
+type ChannelRecoveryOutcome = 'complete' | 'retry' | 'flood';
+type ChannelRecoveryThrottle = {
+  concurrency: number;
+  successfulRequests: number;
+  cooldownUntil: number;
+};
+
+// Start conservatively, scale only after a sustained healthy run, then back
+// off all the way to one request after Telegram asks us to wait.  This keeps
+// one account/session below the usual MTProto flood threshold while still
+// allowing independent channels to make progress in parallel.
+const CHANNEL_RECOVERY_INITIAL_WORKERS = 2;
+const CHANNEL_RECOVERY_MIN_WORKERS = 1;
+const CHANNEL_RECOVERY_MAX_WORKERS = 4;
+const CHANNEL_RECOVERY_RAMP_AFTER_SUCCESSES = 30;
+const CHANNEL_RECOVERY_CONTINUE_DELAY_MS = 250;
+const channelRecoveryThrottles = new Map<string, ChannelRecoveryThrottle>();
+const channelRecoveryDrainTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const typingChannelRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const channelDialogWatchStates = new Map<string, {
+  nextMainAt: number;
+  nextArchivedAt: number;
+}>();
+const channelDialogWatchTasks = new Map<string, Promise<void>>();
 
 const channelDifferenceQueues = new Map<string, Promise<ChannelDifferenceResult>>();
 /** Channels explicitly marked by a live PTS gap/server hint or a failed
@@ -1211,8 +1424,94 @@ const channelDifferenceQueues = new Map<string, Promise<ChannelDifferenceResult>
 // provides it specifically for a channel whose durable cursor is unavailable;
 // keeping it is essential — querying GetFullChannel first would jump to the
 // current cursor and silently discard the offline interval.
-const pendingChannelRecoveries = new Map<string, Map<string, number>>();
+// NOTE: pendingChannelRecoveries was migrated to persistent DB queue
+// (telegram_channel_recovery_queue). The RAM Map is kept only for active
+// channel leases (UI-navigated channels).
 const activeChannelLeases = new Map<string, Map<string, number>>();
+
+function getChannelRecoveryThrottle(accountId: string): ChannelRecoveryThrottle {
+  let throttle = channelRecoveryThrottles.get(accountId);
+  if (!throttle) {
+    throttle = {
+      concurrency: CHANNEL_RECOVERY_INITIAL_WORKERS,
+      successfulRequests: 0,
+      cooldownUntil: 0,
+    };
+    channelRecoveryThrottles.set(accountId, throttle);
+  }
+  return throttle;
+}
+
+function getFloodWaitMs(error: unknown): number {
+  const message = String((error as any)?.errorMessage || (error as any)?.message || error || '');
+  const match = message.match(/FLOOD_WAIT_?(\d+)/i) || message.match(/FLOOD_WAIT\D+(\d+)/i);
+  return Math.max(1_000, (match ? Number(match[1]) : 30) * 1_000);
+}
+
+function recordChannelRecoverySuccess(accountId: string): void {
+  const throttle = getChannelRecoveryThrottle(accountId);
+  if (throttle.cooldownUntil > Date.now()) return;
+  throttle.successfulRequests++;
+  if (
+    throttle.successfulRequests >= CHANNEL_RECOVERY_RAMP_AFTER_SUCCESSES
+    && throttle.concurrency < CHANNEL_RECOVERY_MAX_WORKERS
+  ) {
+    throttle.concurrency++;
+    throttle.successfulRequests = 0;
+    Logger.log(`[TelegramUserListener] Channel recovery concurrency increased to ${throttle.concurrency} for ${accountId}`);
+  }
+}
+
+function applyChannelRecoveryFloodWait(accountId: string, error: unknown): number {
+  const throttle = getChannelRecoveryThrottle(accountId);
+  const waitMs = getFloodWaitMs(error);
+  throttle.cooldownUntil = Math.max(throttle.cooldownUntil, Date.now() + waitMs);
+  throttle.successfulRequests = 0;
+  throttle.concurrency = Math.max(CHANNEL_RECOVERY_MIN_WORKERS, Math.floor(throttle.concurrency / 2));
+  Logger.warn(`[TelegramUserListener] Channel recovery paused ${Math.ceil(waitMs / 1000)}s for ${accountId}; concurrency=${throttle.concurrency}`);
+  return waitMs;
+}
+
+function schedulePendingChannelRecovery(listener: ActiveListener): void {
+  const accountId = listener.account.accountId;
+  if (listener.stopped || !listener.client?.connected) return;
+  const db = DatabaseService.getInstance();
+  if (!db) return;
+  // A full reconnect catch-up can take minutes for accounts with many old
+  // channels. During that period continue only the live PTS-gap lane; the
+  // ordinary pending queue remains owned by the reconnect worker.
+  if (recoveringUpdateAccounts.has(accountId)) {
+    if (!db.hasPendingUrgentChannelRecovery(accountId)) return;
+  } else if (db.getChannelRecoveryStats(accountId).pending <= 0) {
+    return;
+  }
+  if (channelRecoveryDrainTimers.has(accountId)) return;
+  const throttle = getChannelRecoveryThrottle(accountId);
+  const delay = Math.max(
+    CHANNEL_RECOVERY_CONTINUE_DELAY_MS,
+    throttle.cooldownUntil > Date.now() ? throttle.cooldownUntil - Date.now() + CHANNEL_RECOVERY_CONTINUE_DELAY_MS : 0,
+  );
+  const timer = setTimeout(() => {
+    channelRecoveryDrainTimers.delete(accountId);
+    pollChannelUpdates(listener).catch(() => {});
+  }, delay);
+  channelRecoveryDrainTimers.set(accountId, timer);
+}
+
+/**
+ * Active conversations bypass the normal folder queue, newest active first.
+ * They are a small bounded set and must not let an open topic wait behind a
+ * long reconnect backlog.
+ */
+function getActiveChannelRecoveryOrder(accountId: string): string[] {
+  const leases = activeChannelLeases.get(accountId);
+  if (!leases) return [];
+  const now = Date.now();
+  for (const [channelId, expiresAt] of leases) {
+    if (expiresAt <= now) leases.delete(channelId);
+  }
+  return [...leases.keys()].reverse();
+}
 
 function touchActiveChannel(accountId: string, channelId: string): void {
   if (!channelId.startsWith('-100')) return;
@@ -1232,36 +1531,183 @@ function touchActiveChannel(accountId: string, channelId: string): void {
   }
 }
 
-function markChannelRecoveryPending(accountId: string, channelId: string, suggestedPts = 0): void {
-  const pending = pendingChannelRecoveries.get(accountId) || new Map<string, number>();
-  const existingPts = pending.get(channelId) || 0;
-  // When several hints arrive while offline, start from the earliest known
-  // cursor. A later PTS can only skip a larger part of the missed interval.
-  const nextPts = suggestedPts > 0 && existingPts > 0
-    ? Math.min(existingPts, suggestedPts)
-    : (suggestedPts || existingPts);
-  pending.set(channelId, nextPts);
-  pendingChannelRecoveries.set(accountId, pending);
+/** A `member` default on a newly-created contact is not trustworthy. Only a
+ * state written from a dialog/entity reconciliation can authorize background
+ * channel recovery when a raw update does not carry a full Channel entity. */
+function hasVerifiedTelegramChannelMembership(accountId: string, channelId: string): boolean {
+  const db = DatabaseService.getInstance();
+  const row = db?.queryOne<any>(
+    `SELECT telegram_membership_state, telegram_state_updated_at FROM contacts
+     WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'telegram_user'`,
+    [accountId, channelId],
+  );
+  return row?.telegram_membership_state === 'member'
+    && Number(row?.telegram_state_updated_at || 0) > 0;
+}
+
+/**
+ * Inspect only the leading dialogs in a folder and queue a difference only
+ * when Telegram's dialog cursor proves that the local channel cursor/message
+ * checkpoint is behind.  This deliberately does not call getMessages: the
+ * per-channel difference drain remains the single persistence path.
+ *
+ * Main is examined before Archived/"Khác" and more often.  That mirrors the
+ * UI/reconnect priority without leaving Archived dialogs permanently reliant
+ * on the user opening them to obtain an active lease.
+ */
+function refreshRecentChannelDialogWatch(listener: ActiveListener): void {
+  const accountId = listener.account.accountId;
+  if (listener.stopped || listener.client?.connected !== true) return;
+  if (channelDialogWatchTasks.has(accountId)) return;
+
+  const state = channelDialogWatchStates.get(accountId) || { nextMainAt: 0, nextArchivedAt: 0 };
+  const now = Date.now();
+  const inspectMain = now >= state.nextMainAt;
+  const inspectArchived = now >= state.nextArchivedAt;
+  if (!inspectMain && !inspectArchived) return;
+  if (inspectMain) state.nextMainAt = now + CHANNEL_DIALOG_WATCH_MAIN_INTERVAL_MS;
+  if (inspectArchived) state.nextArchivedAt = now + CHANNEL_DIALOG_WATCH_ARCHIVED_INTERVAL_MS;
+  channelDialogWatchStates.set(accountId, state);
+
+  const task = (async () => {
+    const db = DatabaseService.getInstance();
+    const client = listener.client;
+    if (!db || !client || listener.stopped || listener.client !== client || !client.connected) return;
+
+    let inspected = 0;
+    let queuedMain = 0;
+    let queuedArchived = 0;
+    let stateChanged = false;
+    const inspectFolder = async (folder: 0 | 1): Promise<void> => {
+      const dialogs = folder === 1
+        ? await client.getDialogs({ limit: CHANNEL_DIALOG_WATCH_LIMIT, folder: 1 })
+        : await client.getDialogs({ limit: CHANNEL_DIALOG_WATCH_LIMIT });
+      for (const dialog of dialogs) {
+        if (listener.stopped || listener.client !== client || !client.connected) return;
+        const channelId = getCanonicalChatId(dialog.id);
+        if (!channelId.startsWith('-100')) continue;
+        inspected++;
+        if (dialog.entity) cacheTelegramPeer(accountId, channelId, dialog.entity);
+        // Keep dialog membership/folder metadata fresh but avoid a renderer
+        // refresh for every row. One refresh below is enough for this pass.
+        persistTelegramDialogState(accountId, channelId, dialog, dialog.entity, undefined, false);
+        stateChanged = true;
+        if (!hasVerifiedTelegramChannelMembership(accountId, channelId)) continue;
+
+        const localPts = Math.max(0, Number(db.getTelegramChannelPts(accountId, channelId) || 0));
+        const serverPts = Math.max(0, Number((dialog as any)?.dialog?.pts ?? (dialog as any)?.pts ?? 0));
+        const localMessageId = getTelegramHistoryCheckpoint(db, accountId, channelId);
+        const topMessageId = Math.max(0, Number((dialog as any)?.dialog?.topMessage ?? (dialog as any)?.topMessage ?? 0));
+        // A dialog may not expose PTS in every GramJS shape.  Its top message
+        // is still an authoritative, cheap indication that a difference must
+        // be drained. Do not queue an unchanged dialog merely because one of
+        // the optional fields is absent.
+        const needsDifference = (serverPts > 0 && serverPts > localPts)
+          || (topMessageId > 0 && topMessageId > localMessageId);
+        if (!needsDifference) continue;
+        // This is a current-server cursor/top-message signal, not a broad
+        // historical scan. Put it in the live lane so reconnect catch-up
+        // cannot make a recently active Archived dialog wait behind thousands
+        // of old rows. Main still wins over Khác when both are pending.
+        markChannelRecoveryPending(
+          accountId,
+          channelId,
+          URGENT_CHANNEL_RECOVERY_PRIORITY + (folder === 0 ? 10 : 0),
+        );
+        if (folder === 0) queuedMain++;
+        else queuedArchived++;
+      }
+    };
+
+    // Preserve the product priority: exhaust the recent All page before
+    // touching Khác. The DB queue applies the same folder ordering while
+    // draining the resulting difference requests.
+    if (inspectMain) await inspectFolder(0);
+    if (inspectArchived) await inspectFolder(1);
+    if (stateChanged) {
+      EventBroadcaster.emit('db:unreadChanged', { zaloId: accountId, source: 'telegram_dialog_watch' });
+    }
+    Logger.log(`[TelegramUserListener] Dialog watch inspected ${inspected} channels; queued ${queuedMain} All and ${queuedArchived} Khác for ${accountId}`);
+    if (queuedMain || queuedArchived) {
+      schedulePendingChannelRecovery(listener);
+    }
+  })().catch((err: any) => {
+    Logger.warn(`[TelegramUserListener] Dialog watch failed for ${accountId}: ${err.message}`);
+  }).finally(() => {
+    if (channelDialogWatchTasks.get(accountId) === task) channelDialogWatchTasks.delete(accountId);
+  });
+  channelDialogWatchTasks.set(accountId, task);
+}
+
+function markChannelRecoveryPending(accountId: string, channelId: string, priority = 0): void {
+  const db = DatabaseService.getInstance();
+  if (!db || !hasVerifiedTelegramChannelMembership(accountId, channelId)) return;
+  // Try to get access_hash from peer cache for the queue
+  const peer = db.getTelegramPeer(accountId, channelId);
+  const accessHash = peer?.access_hash || '';
+  // Queue only the last cursor that we durably committed after processing
+  // messages.  The PTS on UpdateChannelTooLong is Telegram's current cursor,
+  // not a safe recovery start; persisting it here would skip missed updates.
+  const durablePts = Math.max(0, Number(db.getTelegramChannelPts(accountId, channelId) || 0));
+  db.enqueueChannelRecovery(accountId, channelId, accessHash, durablePts, priority);
 }
 
 function clearChannelRecoveryPending(accountId: string, channelId: string): void {
-  const pending = pendingChannelRecoveries.get(accountId);
-  if (!pending) return;
-  pending.delete(channelId);
-  if (pending.size === 0) pendingChannelRecoveries.delete(accountId);
+  const db = DatabaseService.getInstance();
+  if (!db) return;
+  // Live priority is a one-shot scheduling hint. Retaining it after a
+  // successful recovery would turn every historic channel into “urgent” on
+  // the next reconnect and recreate the starvation this queue is meant to
+  // prevent.
+  db.completeChannelRecovery(accountId, channelId);
 }
 
-function requestChannelRecovery(listener: ActiveListener, channelId: string, reason: string, suggestedPts = 0): void {
-  markChannelRecoveryPending(listener.account.accountId, channelId, suggestedPts);
-  // tgLog('warn', listener.account.accountId, 'channel_difference', `Recovery requested for ${channelId}`, { reason });
-  if (recoveringUpdateAccounts.has(listener.account.accountId)) return;
+function requestChannelRecovery(listener: ActiveListener, channelId: string, reason: string): void {
+  if (!hasVerifiedTelegramChannelMembership(listener.account.accountId, channelId)) {
+    tgChannelRealtimeTrace('RECOVERY_SKIPPED_NON_MEMBER', listener.account.accountId, { chatId: channelId, reason });
+    return;
+  }
+  // A live PTS gap or Telegram's explicit TooLong hint must not wait for the
+  // normal folder backlog: it represents a known missing interval.
+  markChannelRecoveryPending(listener.account.accountId, channelId, URGENT_CHANNEL_RECOVERY_PRIORITY);
+  // This is intentionally a normal log (rather than verbose ingress output):
+  // it is emitted only for a real cursor gap/TooLong signal and makes it
+  // possible to distinguish a Telegram delivery issue from a stuck recovery
+  // queue in field logs.
+  Logger.log(`[TelegramUserListener] Live channel recovery queued for ${channelId} (${reason})`);
+  // Do not defer a live PTS gap behind the reconnect/history backlog. The
+  // poller selects only urgent rows while that backlog owns the normal queue.
   pollChannelUpdates(listener).catch((err: any) => {
     // tgLog('warn', listener.account.accountId, 'channel_difference', `Recovery queue failed: ${err.message}`, { chatId: channelId });
   });
 }
 
+/**
+ * A channel typing update proves that the primary MTProto socket is live for
+ * that peer. Telegram may still omit/delay its companion NewChannelMessage
+ * after a reconnect. Debounce a single difference probe so supergroups and
+ * forum topics catch up without waiting for the user to open the chat.
+ */
+function scheduleTypingChannelRecovery(listener: ActiveListener, channelId: string): void {
+  if (!hasVerifiedTelegramChannelMembership(listener.account.accountId, channelId)) return;
+  touchActiveChannel(listener.account.accountId, channelId);
+  const key = `${listener.account.accountId}:${channelId}`;
+  const previous = typingChannelRecoveryTimers.get(key);
+  if (previous) clearTimeout(previous);
+  const timer = setTimeout(() => {
+    typingChannelRecoveryTimers.delete(key);
+    if (listener.stopped || listener.client?.connected !== true) return;
+    requestChannelRecovery(listener, channelId, 'channel_typing_followup');
+  }, 1_500);
+  typingChannelRecoveryTimers.set(key, timer);
+  tgChannelRealtimeTrace('TYPING_CATCHUP_SCHEDULED', listener.account.accountId, { chatId: channelId });
+}
+
 function startChannelPoller(listener: ActiveListener): void {
   if (listener.channelPollTimer) clearInterval(listener.channelPollTimer);
+  // Do not make a freshly connected Archived dialog wait for the first
+  // 15-second interval before its fallback watch begins.
+  refreshRecentChannelDialogWatch(listener);
   listener.channelPollTimer = setInterval(() => {
     if (listener.stopped || !listener.client?.connected) return;
     pollChannelUpdates(listener).catch(() => {});
@@ -1290,7 +1736,128 @@ async function pollChannelUpdates(listener: ActiveListener): Promise<void> {
     await task;
   } finally {
     if (channelPollQueues.get(accountId) === task) channelPollQueues.delete(accountId);
+    // An urgent row can have arrived while this account's previous poll was
+    // draining. Re-check after releasing the serialization lock so it is not
+    // stranded until the next 15-second timer (or until manual refresh).
+    schedulePendingChannelRecovery(listener);
   }
+}
+
+/**
+ * Recover one independent channel. PTS is serialized inside
+ * drainChannelDifference per channel, while callers may process different
+ * channels concurrently through the bounded account worker pool below.
+ */
+async function recoverQueuedChannel(
+  accountId: string,
+  client: TelegramClient,
+  queued: ChannelRecoveryQueueItem,
+  source: TelegramIngressSource,
+): Promise<ChannelRecoveryOutcome> {
+  const db = DatabaseService.getInstance();
+  if (!db) return 'retry';
+  const channelId = queued.channel_id;
+  // Even an active-view poll needs a durable history boundary while its RPC
+  // is in flight: realtime can arrive before a TooLong response comes back.
+  if (queued.queued === false) markChannelRecoveryPending(accountId, channelId);
+  db.preserveChannelRecoveryHistoryStart(accountId, channelId);
+  const peer = db.getTelegramPeer(accountId, channelId);
+  let accessHash = peer?.access_hash || queued.access_hash;
+
+  if (!accessHash) {
+    const resolved = await repairAccessHash(accountId, client, channelId, peer);
+    accessHash = db.getTelegramPeer(accountId, channelId)?.access_hash || '';
+    if (!resolved || !accessHash) {
+      tgLog('warn', accountId, source, `No access_hash for ${channelId}, skipping`);
+      db.updateChannelRecoveryStatus(accountId, channelId, 'failed', { lastError: 'missing_access_hash' });
+      return 'complete';
+    }
+  }
+
+  // `telegram_channel_pts` is the sole durable cursor.  A value carried by
+  // UpdateChannelTooLong describes Telegram's *current* state, not our last
+  // successfully persisted state; using it as a fallback can silently skip
+  // the very interval the recovery was queued for.  Bootstrap an unseeded
+  // channel from pts=0 instead.  GetChannelDifference will return either an
+  // authoritative empty cursor, normal differences, or TooLong together with
+  // dialog.pts after the history snapshot has been persisted.
+  const currentPts = Math.max(0, Number(db.getTelegramChannelPts(accountId, channelId) || 0));
+
+  try {
+    db.updateChannelRecoveryStatus(accountId, channelId, 'draining');
+    const recovered = await drainChannelDifference(accountId, client, channelId, accessHash, currentPts, source);
+    if (recovered === 'complete' || recovered === 'unavailable') {
+      clearChannelRecoveryPending(accountId, channelId);
+      if (queued.priority >= URGENT_CHANNEL_RECOVERY_PRIORITY) {
+        Logger.log(`[TelegramUserListener] Live channel recovery completed for ${channelId}`);
+      }
+      return 'complete';
+    }
+    // drainChannelDifference handles FLOOD_WAIT internally and persists its
+    // retry_at. Read it back so this worker pool pauses globally instead of
+    // continuing other channel history/difference requests during the wait.
+    const retry = db.queryOne<{ retry_at: number }>(
+      `SELECT retry_at FROM telegram_channel_recovery_queue
+       WHERE owner_zalo_id = ? AND channel_id = ?`,
+      [accountId, channelId],
+    );
+    if (Number(retry?.retry_at || 0) > Date.now()) {
+      const waitMs = Math.max(1_000, Number(retry!.retry_at) - Date.now());
+      applyChannelRecoveryFloodWait(accountId, new Error(`FLOOD_WAIT_${Math.ceil(waitMs / 1000)}`));
+      return 'flood';
+    }
+    // A recoverable, non-flood incomplete result must return the durable row
+    // to pending. enqueueChannelRecovery intentionally preserves `draining`
+    // rows, so using it here would leave this channel stuck forever.
+    db.updateChannelRecoveryStatus(accountId, channelId, 'pending', {
+      pts: currentPts,
+      lastError: 'channel_difference_incomplete',
+    });
+    return 'retry';
+  } catch (err: any) {
+    if (String(err?.message || '').includes('FLOOD_WAIT')) {
+      const waitMs = applyChannelRecoveryFloodWait(accountId, err);
+      db.updateChannelRecoveryStatus(accountId, channelId, 'pending', {
+        retryAt: Date.now() + waitMs,
+        lastError: err.message,
+      });
+      tgLog('warn', accountId, source, `FLOOD_WAIT ${Math.ceil(waitMs / 1000)}s for ${channelId}`);
+      return 'flood';
+    }
+    tgLog('warn', accountId, source, `Channel ${channelId} error: ${err.message}`);
+    db.updateChannelRecoveryStatus(accountId, channelId, 'pending', { lastError: err.message });
+    return 'retry';
+  }
+}
+
+async function runChannelRecoveryWorkers(
+  listener: ActiveListener,
+  client: TelegramClient,
+  items: ChannelRecoveryQueueItem[],
+  source: TelegramIngressSource,
+): Promise<void> {
+  if (!items.length) return;
+  const accountId = listener.account.accountId;
+  const throttle = getChannelRecoveryThrottle(accountId);
+  if (throttle.cooldownUntil > Date.now()) return;
+
+  let nextIndex = 0;
+  let stopForFlood = false;
+  const worker = async () => {
+    while (!stopForFlood && !listener_stopped(accountId)) {
+      const item = items[nextIndex++];
+      if (!item) return;
+      const outcome = await recoverQueuedChannel(accountId, client, item, source);
+      if (outcome === 'flood') {
+        stopForFlood = true;
+        return;
+      }
+      if (outcome === 'complete') recordChannelRecoverySuccess(accountId);
+    }
+  };
+
+  const workerCount = Math.min(throttle.concurrency, items.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
 }
 
 async function pollChannelUpdatesNow(listener: ActiveListener): Promise<void> {
@@ -1300,58 +1867,54 @@ async function pollChannelUpdatesNow(listener: ActiveListener): Promise<void> {
 
   const db = DatabaseService.getInstance();
   if (!db) return;
-  const { Api } = require('telegram');
+  const reconnectRecoveryActive = recoveringUpdateAccounts.has(accountId);
 
   try {
-    const now = Date.now();
-    const leases = activeChannelLeases.get(accountId);
-    if (leases) {
-      for (const [channelId, expiresAt] of leases) {
-        if (expiresAt <= now) leases.delete(channelId);
-      }
+    // Socket updates are still authoritative realtime. This lightweight
+    // folder-aware dialog observation only supplies a recovery hint when a
+    // channel update was not delivered by the socket (most visibly Archived /
+    // "Khác" dialogs after reconnect). It runs independently so it never
+    // blocks a live PTS-gap worker.
+    refreshRecentChannelDialogWatch(listener);
+    const throttle = getChannelRecoveryThrottle(accountId);
+    if (throttle.cooldownUntil > Date.now()) {
+      schedulePendingChannelRecovery(listener);
+      return;
     }
-    const channelIds = [...new Set([
-      ...(pendingChannelRecoveries.get(accountId)?.keys() || []),
-      ...(leases?.keys() || []),
-    ])];
-    if (channelIds.length === 0) return;
 
-    for (const channelId of channelIds) {
-      if (listener.stopped || !listener.client?.connected) break;
-      const peer = db.getTelegramPeer(accountId, channelId);
-      const accessHash = peer?.access_hash;
-      if (!accessHash) continue;
-      const pts = db.getTelegramChannelPts(accountId, channelId)
-        || pendingChannelRecoveries.get(accountId)?.get(channelId)
-        || 0;
-      if (pts <= 0) {
-        // Older installations may have message rows but no per-channel PTS.
-        // A bare UpdateChannelTooLong has no safe PTS seed, so use a bounded
-        // history replay instead of writing ChannelFull.pts and losing it.
-        if (pendingChannelRecoveries.get(accountId)?.has(channelId)) {
-          const history = await backfillUnseededChannelHistory(accountId, client, channelId, peer.access_hash);
-          if (!history.failed && history.complete) clearChannelRecoveryPending(accountId, channelId);
-        }
-        continue;
-      }
+    // While the reconnect pass owns the normal queue, this poller runs a
+    // separate urgent lane for live PTS gaps/TooLong updates. This keeps
+    // supergroups, channels and forum topics realtime even with a very large
+    // historical recovery backlog.
+    const queuedChannels = (reconnectRecoveryActive
+      ? db.dequeueUrgentChannelRecovery(accountId, 20)
+      : db.dequeueChannelRecovery(accountId, 50)) as ChannelRecoveryQueueItem[];
+    if (reconnectRecoveryActive && queuedChannels.length === 0) return;
 
-      try {
-        const recovered = await drainChannelDifference(accountId, client, channelId, accessHash, pts, 'channel_difference');
-        if (recovered === 'complete' || recovered === 'unavailable') {
-          clearChannelRecoveryPending(accountId, channelId);
-        } else {
-          markChannelRecoveryPending(accountId, channelId, pts);
-        }
-      } catch (err: any) {
-        if (err.message?.includes('FLOOD_WAIT')) {
-          const waitMatch = err.message.match(/(\d+)/);
-          const waitSec = waitMatch ? parseInt(waitMatch[1]) : 30;
-          tgLog('warn', accountId, 'poll', `FLOOD_WAIT ${waitSec}s for channel ${channelId}`);
-          break; // Stop polling remaining channels
-        }
-        tgLog('warn', accountId, 'poll', `Channel ${channelId} error: ${err.message}`);
-      }
+    // Active-channel leases are useful for normal backlog ordering, but must
+    // not let an open conversation steal a non-urgent row while reconnect
+    // recovery is processing the durable queue.
+    const activeChannelIds = reconnectRecoveryActive ? [] : getActiveChannelRecoveryOrder(accountId);
+    const activeChannelSet = new Set(activeChannelIds);
+    const queuedById = new Map<string, ChannelRecoveryQueueItem>();
+    for (const c of queuedChannels) {
+      queuedById.set(c.channel_id, c);
     }
+    const workItems: ChannelRecoveryQueueItem[] = [
+      ...activeChannelIds.map(channelId => queuedById.get(channelId) || {
+        channel_id: channelId,
+        access_hash: '',
+        pts: db.getTelegramChannelPts(accountId, channelId),
+        priority: URGENT_CHANNEL_RECOVERY_PRIORITY,
+        attempts: 0,
+        queued: false,
+      }),
+      ...queuedChannels.filter(channel => !activeChannelSet.has(channel.channel_id)),
+    ];
+    await runChannelRecoveryWorkers(listener, client, workItems, 'poll');
+    // Drain the next batch immediately while there is a reconnect backlog;
+    // the 15-second poll interval remains the idle/realtime safety net.
+    schedulePendingChannelRecovery(listener);
   } catch (err: any) {
     tgLog('warn', accountId, 'poll', `pollChannelUpdates error: ${err.message}`);
   }
@@ -1387,6 +1950,9 @@ async function drainChannelDifference(
  * as normal updates. Before accepting its newest snapshot, replay the bounded
  * message-ID range after our durable checkpoint. Otherwise committing
  * dialog.pts would turn every older missed message into a permanent gap.
+ *
+ * Fetch history oldest first in bounded pages; commit each page's boundary
+ * only after persistence succeeds so retries cannot skip a partial backlog.
  */
 async function backfillChannelTooLongHistory(
   accountId: string,
@@ -1399,67 +1965,168 @@ async function backfillChannelTooLongHistory(
   const db = DatabaseService.getInstance();
   if (!db) return { complete: false, failed: true };
 
+  db.preserveChannelRecoveryHistoryStart(accountId, channelId);
   const minId = getTelegramHistoryCheckpoint(db, accountId, channelId);
+  // Keep individual history requests small. GramJS's iterator applies its own
+  // wait policy only for very large limits, which currently produces a
+  // negative timeout on the first chunk and causes bursty requests/flood waits.
+  // We still recover up to 5,000 messages, but do it as paced 100-message pages.
+  const BACKFILL_LIMIT = 5000;
+  const BACKFILL_PAGE_SIZE = 100;
+  const BACKFILL_PAGE_DELAY_MS = 1000;
+
   try {
-    const messages: any[] = [];
+    const allMessages: any[] = [];
+    let historyCursor = minId;
+    let reachedHistoryEnd = false;
+
     if (minId <= 0) {
       // The only safe option without a checkpoint is a bounded first load.
       // `channelDifferenceTooLong` already supplies such a snapshot, whereas
       // a bare UpdateChannelTooLong needs us to request one explicitly.
       if (!includeInitialSnapshot) return { complete: true, failed: false };
-      messages.push(...await client.getMessages(inputChannel, { limit: INITIAL_MESSAGES_PER_DIALOG }));
-      messages.sort((a: any, b: any) => Number(a?.id || 0) - Number(b?.id || 0));
+      allMessages.push(...await client.getMessages(inputChannel, { limit: INITIAL_MESSAGES_PER_DIALOG }));
+      allMessages.sort((a: any, b: any) => Number(a?.id || 0) - Number(b?.id || 0));
     } else {
-      for await (const message of client.iterMessages(inputChannel, {
-        minId,
-        limit: RECOVERY_MESSAGES_PER_DIALOG,
-        // Advance the durable checkpoint in order; if capped, the next pass
-        // continues from the oldest unprocessed message rather than skipping it.
-        reverse: true,
-      })) {
-        messages.push(message);
+      // Paginate explicitly instead of asking GramJS for 5,000 items at once.
+      // `getMessages` delegates to its iterator, so a large limit here would
+      // recreate the negative-timer issue seen during ChannelDifferenceTooLong.
+      while (allMessages.length < BACKFILL_LIMIT) {
+        const pageLimit = Math.min(BACKFILL_PAGE_SIZE, BACKFILL_LIMIT - allMessages.length);
+        const opts: any = {
+          limit: pageLimit,
+          reverse: true,
+          minId: historyCursor,
+        };
+
+        const batch: any[] = await client.getMessages(inputChannel, opts);
+        if (batch.length === 0) { reachedHistoryEnd = true; break; }
+        const page = batch.filter(message => Number(message.id) > historyCursor)
+          .sort((a, b) => Number(a.id) - Number(b.id));
+        if (!page.length) return { complete: false, failed: true };
+        // Persist oldest first and only advance the recovery boundary after
+        // the entire page succeeds. A retry resumes beyond this page, never
+        // beyond an unrelated high-ID message delivered by the live socket.
+        await processDifferenceMessages(accountId, client, page, entities, 'history');
+        historyCursor = Number(page[page.length - 1].id);
+        db.run(`UPDATE telegram_channel_recovery_queue SET history_start_msg_id = ?
+                WHERE owner_zalo_id = ? AND channel_id = ? AND status IN ('pending', 'draining')`,
+          [historyCursor, accountId, channelId]);
+        allMessages.push(...page);
+
+        // If we got fewer than requested, we're done
+        if (batch.length < pageLimit) {
+          reachedHistoryEnd = true;
+          break;
+        }
+
+        // Match the safe pacing GramJS intended for very large collections,
+        // without relying on its broken first-iteration timeout calculation.
+        if (allMessages.length < BACKFILL_LIMIT) {
+          await new Promise(resolve => setTimeout(resolve, BACKFILL_PAGE_DELAY_MS));
+        }
       }
+
     }
-    if (messages.length > 0) {
-      await processDifferenceMessages(accountId, client, messages, entities, 'history');
+
+    if (minId <= 0 && allMessages.length > 0) {
+      // Sort by ID to ensure chronological order
+      allMessages.sort((a: any, b: any) => Number(a?.id || 0) - Number(b?.id || 0));
+      await processDifferenceMessages(accountId, client, allMessages, entities, 'history');
     }
+
+    // Update the last message ID checkpoint for future recovery
+    if (allMessages.length > 0) {
+      const maxMsgId = Math.max(...allMessages.map((m: any) => Number(m?.id || 0)));
+      db.updateChannelRecoveryStatus(accountId, channelId, 'pending', { lastMsgId: maxMsgId });
+    }
+
     return {
-      complete: minId <= 0 || messages.length < RECOVERY_MESSAGES_PER_DIALOG,
+      complete: minId <= 0 || reachedHistoryEnd,
       failed: false,
     };
   } catch (err: any) {
+    // Handle flood wait gracefully
+    if (err.message?.includes('FLOOD_WAIT')) {
+      const waitMatch = err.message.match(/(\d+)/);
+      const waitSec = waitMatch ? parseInt(waitMatch[1]) : 30;
+      tgLog('warn', accountId, 'channel_difference', `TooLong backfill FLOOD_WAIT ${waitSec}s for ${channelId}`);
+      db.updateChannelRecoveryStatus(accountId, channelId, 'pending', {
+        retryAt: Date.now() + waitSec * 1000,
+        lastError: err.message,
+      });
+      return { complete: false, failed: false }; // Not failed, just throttled
+    }
     tgLog('warn', accountId, 'channel_difference', `TooLong history backfill failed for ${channelId}: ${err.message}`);
     return { complete: false, failed: true };
   }
 }
 
-async function backfillUnseededChannelHistory(
+/**
+ * Telegram rejects GetChannelDifference with PERSISTENT_TIMESTAMP_EMPTY for
+ * some channels that have no usable server-side persistent cursor (commonly
+ * a newly discovered/legacy channel with local PTS=0). Retrying the exact
+ * same RPC can never repair that state and used to occupy a live worker every
+ * 250ms. Establish a snapshot PTS first, backfill history up to that
+ * checkpoint, then commit it. A message arriving after the snapshot remains
+ * visible to the next normal difference, so this does not discard realtime.
+ */
+async function bootstrapPersistentTimestampEmptyChannel(
   accountId: string,
   client: TelegramClient,
+  inputChannel: any,
   channelId: string,
-  accessHash: string,
-): Promise<{ complete: boolean; failed: boolean }> {
+  source: TelegramIngressSource,
+): Promise<ChannelDifferenceResult> {
   const { Api } = require('telegram');
-  const inputChannel = new Api.InputChannel({
-    channelId: BigInt(String(channelId).replace(/^-100/, '')),
-    accessHash: BigInt(accessHash),
-  });
-  const entities = new Map<any, any>();
+  const db = DatabaseService.getInstance();
+  if (!db) return 'retry';
   try {
-    const entity = await resolvePeerEntity(accountId, client, channelId);
-    if (entity) {
-      entities.set(getPeerId(entity), entity);
-      cacheTelegramPeer(accountId, channelId, entity);
+    const full = await client.invoke(new Api.channels.GetFullChannel({ channel: inputChannel }));
+    const snapshotPts = Math.max(0, Number((full as any)?.fullChat?.pts || 0));
+    if (snapshotPts <= 0) {
+      // There is no cursor to establish. Treat this peer as unavailable for
+      // the current pass rather than spinning the same rejected RPC forever;
+      // a future socket update may enqueue it again with a real PTS.
+      tgLog('warn', accountId, source, `PERSISTENT_TIMESTAMP_EMPTY without ChannelFull.pts for ${channelId}; stopping this recovery pass`);
+      return 'unavailable';
     }
-  } catch {}
-  return backfillChannelTooLongHistory(
-    accountId,
-    client,
-    inputChannel,
-    channelId,
-    entities,
-    true,
-  );
+
+    const entities = cacheDifferenceEntities(accountId, (full as any)?.users || [], (full as any)?.chats || []);
+    const history = await backfillChannelTooLongHistory(
+      accountId,
+      client,
+      inputChannel,
+      channelId,
+      entities,
+      true,
+    );
+    if (history.complete && !history.failed) {
+      db.saveTelegramChannelPts(accountId, channelId, snapshotPts);
+      Logger.log(`[TelegramUserListener] Bootstrapped PTS=${snapshotPts} after PERSISTENT_TIMESTAMP_EMPTY for ${channelId}`);
+      return 'complete';
+    }
+
+    // A backfill FLOOD_WAIT has already installed a server-authorized retry
+    // time and must keep the normal global throttle behavior. Any other
+    // failure is local to this peer: finishing this pass is safer than adding
+    // a retry_at which recoverQueuedChannel would interpret as a global flood
+    // and use to block every unrelated channel.
+    const pending = db.queryOne<{ retry_at: number }>(
+      `SELECT retry_at FROM telegram_channel_recovery_queue
+       WHERE owner_zalo_id = ? AND channel_id = ?`,
+      [accountId, channelId],
+    );
+    if (Number(pending?.retry_at || 0) > Date.now()) return 'retry';
+    tgLog('warn', accountId, source, `PERSISTENT_TIMESTAMP history incomplete for ${channelId}; stopping this recovery pass`);
+    return 'unavailable';
+  } catch (err: any) {
+    const message = String(err?.message || err || 'unknown error');
+    const unavailable = /CHANNEL_(?:PRIVATE|INVALID)|USER_BANNED_IN_CHANNEL/.test(message);
+    if (unavailable) return 'unavailable';
+    tgLog('warn', accountId, source, `PERSISTENT_TIMESTAMP bootstrap failed for ${channelId}: ${message}`);
+    return 'unavailable';
+  }
 }
 
 async function drainChannelDifferenceNow(
@@ -1481,7 +2148,7 @@ async function drainChannelDifferenceNow(
   });
 
   let currentPts = startingPts;
-  const MAX_SLICES = 10; // Safety limit to prevent infinite drain loops
+  const MAX_SLICES = 50; // Increased from 10 — large channels need more drain iterations
 
   for (let slice = 0; slice < MAX_SLICES; slice++) {
     let diff: any;
@@ -1494,6 +2161,26 @@ async function drainChannelDifferenceNow(
         force: false,
       }));
     } catch (err: any) {
+      // Flood wait: schedule retry at the exact time Telegram allows
+      if (err.message?.includes('FLOOD_WAIT')) {
+        const waitMatch = err.message.match(/(\d+)/);
+        const waitSec = waitMatch ? parseInt(waitMatch[1]) : 30;
+        tgLog('warn', accountId, source, `FLOOD_WAIT ${waitSec}s for ${channelId}`);
+        db.updateChannelRecoveryStatus(accountId, channelId, 'pending', {
+          retryAt: Date.now() + waitSec * 1000,
+          lastError: err.message,
+        });
+        return 'retry';
+      }
+      if (String(err?.message || '').includes('PERSISTENT_TIMESTAMP_EMPTY')) {
+        return bootstrapPersistentTimestampEmptyChannel(
+          accountId,
+          client,
+          inputChannel,
+          channelId,
+          source,
+        );
+      }
       // These errors are terminal for this peer. Keeping them in the pending
       // queue makes reconnect/poll spam forever after the user leaves a group.
       const unavailable = /CHANNEL_(?:PRIVATE|INVALID)|USER_BANNED_IN_CHANNEL/.test(err.message || '');
@@ -1654,6 +2341,43 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
     connectionRetries: 5,
   });
 
+  // GramJS's update loop prints a raw `Error: TIMEOUT` stack after its own
+  // ping retries. The error is expected during a temporary network outage and
+  // GramJS immediately reconnects the sender. Keep diagnostics useful without
+  // leaking a stack or generating several identical lines per outage.
+  (client as any).setLogLevel?.('none');
+  (client as any).onError = async (err: unknown) => {
+    if (listener.stopped || listener.client !== client || intentionallyDisconnectedClients.has(client)) return;
+    const message = String((err as any)?.errorMessage || (err as any)?.message || err || 'unknown error');
+    const transportError = isTelegramTransportError(err);
+
+    // Do this before rate-limiting diagnostics. A later TIMEOUT in the same
+    // outage must still leave the listener marked offline if an earlier state
+    // event was missed by GramJS.
+    if (transportError) {
+      scheduleReconnect(listener, 'gramjs_transport_error', err);
+    }
+
+    const now = Date.now();
+    if (now - listener.lastTransportErrorAt < 30_000) return;
+    listener.lastTransportErrorAt = now;
+    tgLog(
+      'warn',
+      account.accountId,
+      'socket',
+      transportError
+        ? (/^TIMEOUT$/i.test(message) ? 'PING_TIMEOUT' : 'GRAMJS_TRANSPORT_ERROR')
+        : 'GRAMJS_RPC_ERROR',
+      {
+        // CHANNEL_INVALID/FLOOD_WAIT and similar RPC failures are emitted by
+        // GramJS through the same callback, but must not be presented as a
+        // socket reconnect: the active listener stays healthy in that case.
+        result: transportError ? 'gramjs_auto_reconnect' : 'listener_kept_alive',
+        error: message.slice(0, 160),
+      },
+    );
+  };
+
   listener.client = client;
 
   try {
@@ -1719,7 +2443,13 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
     // builder so we can distinguish "Telegram did not send the update" from
     // "the builder/handler stalled or rejected it". This handler is read-only
     // and intentionally logs no message content or access hash.
+    let lastChannelReceivedLogAt = 0;
+    let lastChannelProcessedLogAt = 0;
     client.addEventHandler(async (update: any) => {
+      // A reconnect replaces listener.client, but GramJS can still flush
+      // updates from the old client while it is closing. Ignore those stale
+      // callbacks so one old socket cannot duplicate recovery work.
+      if (listener.stopped || listener.client !== client || !client.connected) return;
       try {
         const message = update?.message;
         let chatId = message ? deriveChatIdFromRawMessage(message) : undefined;
@@ -1729,6 +2459,10 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
         const localPts = chatId?.startsWith('-100')
           ? DatabaseService.getInstance()?.getTelegramChannelPts(account.accountId, chatId)
           : undefined;
+        if (update instanceof Api.UpdateNewChannelMessage && Date.now() - lastChannelReceivedLogAt >= 30_000) {
+          lastChannelReceivedLogAt = Date.now();
+          Logger.log(`[TG:socket] CHANNEL_RECEIVED account=${account.accountId} chatId=${chatId} msgId=${message?.id} pts=${update.pts} localPts=${localPts}`);
+        }
         tgLog('info', account.accountId, 'socket', `RAW_RECEIVED ${update?.className || update?.constructor?.name || 'unknown'}`, {
           msgClass: message?.className || '-',
           mediaClass: message?.media?.className || '-',
@@ -1755,17 +2489,20 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
       ].filter(Boolean),
     }));
 
-    // Listen for new messages (socket — primary realtime source)
-    // Authoritative live channel ingress. The high-level NewMessage builder
-    // remains an idempotent fallback for normal messages.
+    // Listen for new messages (socket — primary realtime source).
+    // The raw handler owns the channel PTS cursor. The high-level NewMessage
+    // builder below remains an idempotent delivery fallback: it must continue
+    // to persist a live message even while a historical PTS recovery is
+    // draining, otherwise a large recovery queue turns every supergroup and
+    // channel into a silent conversation until the queue eventually finishes.
     client.addEventHandler(async (update: any) => {
+      if (listener.stopped || listener.client !== client || !client.connected) return;
       if (update instanceof Api.UpdateChannelTooLong) {
         if (update.channelId != null) {
           requestChannelRecovery(
             listener,
             `-100${String(update.channelId)}`,
             'UpdateChannelTooLong',
-            Number((update as any).pts || 0),
           );
         }
         return;
@@ -1778,8 +2515,28 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
         throw new Error('UpdateNewChannelMessage has no canonical channel identity');
       }
 
+      // Do this before PTS validation: a live channel update is often the
+      // first place an old/archived dialog exposes its current access hash.
+      const rawChannelEntity = cacheRawChannelEntity(account.accountId, update, chatId);
+
       const db = DatabaseService.getInstance();
       if (!db) throw new Error('Database is unavailable for live channel update');
+      const rawMembership = getTelegramMembership(rawChannelEntity);
+      const isVerifiedMember = hasVerifiedTelegramChannelMembership(account.accountId, chatId);
+      // Telegram can deliver channel updates for old joinable/request peers.
+      // Drop them before PTS handling: scheduling a Difference for each of
+      // those peers was flooding the queue and delaying real conversations.
+      if (rawMembership.state !== 'member' && !isVerifiedMember) {
+        tgChannelRealtimeTrace('RAW_DROPPED_NON_MEMBER', account.accountId, {
+          chatId,
+          msgId: message?.id != null ? String(message.id) : '-',
+          membership: rawMembership.state,
+          rawEntityClass: rawChannelEntity?.className || '-',
+          rawEntityLeft: rawChannelEntity?.left === true,
+        });
+        return;
+      }
+      db.preserveChannelRecoveryHistoryStart(account.accountId, chatId);
       const previousPts = db.getTelegramChannelPts(account.accountId, chatId);
       const nextPts = Number(update.pts || 0);
       const ptsCount = Math.max(1, Number(update.ptsCount || 1));
@@ -1790,10 +2547,41 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
         [account.accountId, chatId],
       );
       const hasPtsGap = previousPts > 0 && previousPts + ptsCount < nextPts;
-      // Detect recovery before persisting this high-ID message. In particular,
-      // if Telegram later answers ChannelDifferenceTooLong, a persisted newest
-      // message would make history recovery start after the missing interval.
-      if (hasDurableMessageWithoutCursor || hasPtsGap) {
+      // A gap means the durable PTS cursor cannot be advanced from this
+      // update; doing so would skip the missing range during recovery.  It
+      // does *not* make the current message unsafe to deliver, though.  In
+      // particular, large channels can keep a recovery job queued for a long
+      // time. Returning here made those chats look offline until that queue
+      // completed because NewMessage is not guaranteed to be emitted for all
+      // UpdateNewChannelMessage variants.
+      const recoveryQueued = hasDurableMessageWithoutCursor || hasPtsGap;
+      const entities = update._entities instanceof Map
+        ? update._entities
+        : new Map<any, any>();
+      tgChannelRealtimeTrace('RAW_ACCEPTED', account.accountId, {
+        chatId,
+        msgId: message?.id != null ? String(message.id) : '-',
+        messageClass: message?.className || message?.constructor?.name || '-',
+        mediaClass: message?.media?.className || '-',
+        hasResolvedChat: !!message?.chat,
+        rawEntityClass: rawChannelEntity?.className || '-',
+        rawEntityLeft: rawChannelEntity?.left === true,
+        entityCount: entities.size,
+        pts: nextPts,
+        ptsCount,
+        previousPts,
+        hasPtsGap,
+        missingCursorWithHistory: hasDurableMessageWithoutCursor,
+        recoveryQueued,
+      });
+      // Freeze the history lower bound before delivering this high-ID message
+      // so DifferenceTooLong can still recover from before the gap.
+      if (recoveryQueued) {
+        tgChannelRealtimeTrace('RECOVERY_QUEUED_LIVE_CONTINUES', account.accountId, {
+          chatId,
+          msgId: message?.id != null ? String(message.id) : '-',
+          reason: hasPtsGap ? 'pts_gap' : 'missing_channel_pts_with_history',
+        });
         requestChannelRecovery(
           listener,
           chatId,
@@ -1801,29 +2589,56 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
             ? `pts_gap:${previousPts}->${nextPts}/${ptsCount}`
             : 'missing_channel_pts_with_history',
         );
-        return;
       }
-      const entities = (message as any)._entities instanceof Map
-        ? (message as any)._entities
-        : new Map<any, any>();
-      const event = initializeRecoveredMessage(message, client, entities);
+      const event = initializeRecoveredMessage(message, client, entities, rawChannelEntity);
       const result = await handleNewMessage(account.accountId, event, client, 'socket');
+
+      tgChannelRealtimeTrace('HANDLE_COMPLETE', account.accountId, {
+        chatId,
+        msgId: message?.id != null ? String(message.id) : '-',
+        persistStatus: result.status,
+        recoveryQueued,
+      });
 
       if (result.status === 'failed') {
         throw new Error(`Live channel message ${String(message.id)} failed persistence`);
       }
-      if (nextPts > previousPts) {
+      // Only a contiguous update may move the cursor. Recovery owns the
+      // cursor while a gap/missing legacy cursor is being reconciled.
+      if (nextPts > previousPts && !recoveryQueued) {
         db.saveTelegramChannelPts(account.accountId, chatId, nextPts);
+        tgChannelRealtimeTrace('PTS_COMMITTED', account.accountId, {
+          chatId,
+          msgId: message?.id != null ? String(message.id) : '-',
+          previousPts,
+          pts: nextPts,
+        });
         tgLog('info', account.accountId, 'socket', `CURSOR_COMMITTED ${chatId}`, {
           previousPts,
           pts: nextPts,
           ptsCount,
           result: result.status,
         });
+      } else if (recoveryQueued) {
+        tgChannelRealtimeTrace('PTS_DEFERRED', account.accountId, {
+          chatId,
+          msgId: message?.id != null ? String(message.id) : '-',
+          previousPts,
+          pts: nextPts,
+          reason: hasPtsGap ? 'pts_gap' : 'missing_channel_pts_with_history',
+        });
+        tgLog('info', account.accountId, 'socket', `LIVE_DELIVERED_CURSOR_DEFERRED ${chatId}`, {
+          previousPts,
+          pts: nextPts,
+          ptsCount,
+          result: result.status,
+          reason: hasPtsGap ? 'pts_gap' : 'missing_channel_pts_with_history',
+        });
       }
     }, new Raw({ types: [Api.UpdateNewChannelMessage, Api.UpdateChannelTooLong] }));
 
     client.addEventHandler(async (event: NewMessageEvent) => {
+      if (listener.stopped || listener.client !== client || !client.connected) return;
       try {
         const message = event?.message as any;
         const builderChatId = deriveChatIdFromRawMessage(message);
@@ -1836,13 +2651,21 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
           replyToTopId: message?.replyTo?.replyToTopId,
           forumTopic: message?.replyTo?.forumTopic === true,
         });
-        // The raw channel handler detects PTS gaps before writing the newest
-        // message. Do not let this generic builder advance the message-ID
-        // checkpoint while that channel is waiting for GetChannelDifference.
-        if (builderChatId?.startsWith('-100') && pendingChannelRecoveries.get(account.accountId)?.has(builderChatId)) {
-          return;
+        // Do not gate a live supergroup/channel event on the historical PTS
+        // recovery queue. That queue can legitimately stay pending for a long
+        // time on accounts with thousands of channels. `handleNewMessage` is
+        // idempotent, while the raw handler/difference drain remains the only
+        // writer of the PTS cursor, so processing this fallback cannot advance
+        // the channel cursor. Freeze the separate history boundary for legacy
+        // pending rows before writing the newest message as well.
+        if (builderChatId?.startsWith('-100')) {
+          DatabaseService.getInstance()?.preserveChannelRecoveryHistoryStart(account.accountId, builderChatId);
         }
-        await handleNewMessage(account.accountId, event, client, 'socket');
+        const result = await handleNewMessage(account.accountId, event, client, 'socket');
+        if (builderChatId?.startsWith('-100') && Date.now() - lastChannelProcessedLogAt >= 30_000) {
+          lastChannelProcessedLogAt = Date.now();
+          Logger.log(`[TG:socket] CHANNEL_PROCESSED account=${account.accountId} chatId=${builderChatId} msgId=${message?.id} result=${result.status}`);
+        }
       } catch (err: any) {
         tgLog('error', account.accountId, 'socket', `Error handling message: ${err.message}`);
       }
@@ -1850,6 +2673,7 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
 
     // Listen for edited messages via Raw event (UpdateEditMessage)
     const rawUpdateHandler = async (update: any) => {
+      if (listener.stopped || listener.client !== client || !client.connected) return;
       try {
         const db = DatabaseService.getInstance();
         if (!db) return;
@@ -1863,7 +2687,6 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
               listener,
               `-100${String(update.channelId)}`,
               'difference_UpdateChannelTooLong',
-              Number((update as any).pts || 0),
             );
           }
           return;
@@ -1934,6 +2757,7 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
         if (update instanceof Api.UpdateChannelUserTyping) {
           const userId = getCanonicalChatId(update.fromId);
           const typingChatId = `-100${String(update.channelId)}`;
+          scheduleTypingChannelRecovery(listener, typingChatId);
           await hydrateTelegramTypingIdentity(account.accountId, client, userId, typingChatId);
           EventBroadcaster.emit('event:typing', {
             zaloId: account.accountId,
@@ -2192,8 +3016,13 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
           return;
         }
       } catch (err: any) {
-        Logger.warn(`[TelegramUserListener] Raw event error: ${err.message}`);
-        throw err;
+        // `otherUpdates` contains side-effect updates (typing, read state,
+        // reactions, edits...), not the message stream itself. One malformed
+        // local DB update must not abort GetDifference and force a broad,
+        // rate-limited messages.GetHistory replay on every reconnect.
+        const updateType = String(update?.className || update?.constructor?.name || 'unknown');
+        Logger.warn(`[TelegramUserListener] Raw event ${updateType} error: ${err.message}`);
+        return;
       }
     };
     rawUpdateHandlers.set(account.accountId, rawUpdateHandler);
@@ -2231,6 +3060,7 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
     // MessageService that the NewMessage high-level event builder skips.
     // Normal messages are de-duplicated by idempotent persistence.
     client.addEventHandler(async (update: any) => {
+      if (listener.stopped || listener.client !== client || !client.connected) return;
       try {
         const msg = update?.message;
         if (!msg) return;
@@ -2271,6 +3101,14 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
         error: 'Không thể hoàn tất đồng bộ tin nhắn Telegram',
       });
     });
+
+    // Establish membership separately from the bounded history sync. This is
+    // required before a socket update from a minimally-described channel can
+    // be trusted, and cleans old unjoined rows out of the normal inbox.
+    setTimeout(() => {
+      if (listener.stopped || listener.client !== client || !client.connected) return;
+      reconcileTelegramDialogMembership(account.accountId, client).catch(() => {});
+    }, 1_000);
 
     // Check isForum for unchecked groups (background, non-blocking)
     checkForumForNewGroups(account.accountId).catch(err => {
@@ -2423,10 +3261,10 @@ async function handleServiceMessage(accountId: string, message: any, client?: Te
       deletedUserName = cached?.display_name || '';
       if (!deletedUserName) {
         const peer = db?.queryOne<any>(
-          `SELECT first_name, last_name FROM telegram_peers WHERE owner_zalo_id = ? AND peer_id = ?`,
+          `SELECT display_name FROM telegram_peers WHERE owner_zalo_id = ? AND peer_id = ?`,
           [accountId, deletedUserId]
         );
-        if (peer) deletedUserName = [peer.first_name, peer.last_name].filter(Boolean).join(' ');
+        deletedUserName = peer?.display_name || '';
       }
     }
     // Check if self-leave or kicked by admin
@@ -2541,7 +3379,18 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
   // GramJS delivers these as NewMessageEvent where message is a MessageService.
   // Handle them separately from normal messages.
   if ((message as any).className === 'MessageService') {
-    return handleServiceMessage(accountId, message, client);
+    const result = await handleServiceMessage(accountId, message, client);
+    const serviceChatId = result.chatId || deriveChatIdFromRawMessage(message) || '';
+    if (serviceChatId.startsWith('-100')) {
+      tgChannelRealtimeTrace('SERVICE_MESSAGE_HANDLED', accountId, {
+        source,
+        chatId: serviceChatId,
+        msgId: String(message.id || '-'),
+        action: (message as any).action?.className || '-',
+        persistStatus: result.status,
+      });
+    }
+    return result;
   }
 
   const messageId = String(message.id);
@@ -2552,11 +3401,14 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
   // (e.g. cold entity cache after restart), we still persist the message.
   const rawIdentity = deriveMessageIdentity(message);
 
-  // Try to get richer entity data from getChat() — non-blocking for identity
-  let chat: any = null;
-  try {
-    chat = await message.getChat();
-  } catch {}
+  // GramJS getChat() may issue channels.GetChannels even when _chat exists
+  // (it checks whether the entity HAS a `min` field). Do not put that RPC,
+  // its retries, or FLOOD_WAIT in front of persistence of a socket message.
+  const suppliedChat = (event as any).__deplaoResolvedChat || null;
+  let chat: any = suppliedChat || message.chat || null;
+  if (!chat && source !== 'socket') {
+    try { chat = await message.getChat(); } catch {}
+  }
 
   // Use resolved chat entity for metadata, but rawIdentity.chatId is authoritative
   const chatId = rawIdentity.chatId;
@@ -2569,9 +3421,33 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
   // This prevents unjoined channels from appearing in the inbox.
   if (rawIdentity.peerKind !== 'user' && !message.out) {
     let isMember = true; // default: allow if we can't determine
+    let membershipState = 'unknown';
+    let membershipSource = 'db_cache';
+    let cachedMembershipState = '';
     if (chat) {
       const membership = getTelegramMembership(chat);
       isMember = membership.state === 'member';
+      membershipState = membership.state;
+      membershipSource = suppliedChat ? 'raw_update_entity' : 'message_chat';
+      // A Channel entity embedded in a socket update is often minimal and
+      // may carry a stale `left` flag. The dialog snapshot is our durable
+      // membership authority: it was written from messages.GetDialogs, not
+      // inferred from a message. Let a known member state override only that
+      // stale negative entity state; it can never admit a known joinable peer.
+      if (!isMember) {
+        const dbContact = DatabaseService.getInstance()?.queryOne<any>(
+          `SELECT telegram_membership_state, telegram_state_updated_at FROM contacts
+           WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'telegram_user'`,
+          [accountId, chatId],
+        );
+        cachedMembershipState = String(dbContact?.telegram_membership_state || '');
+        const hasVerifiedDialogState = Number(dbContact?.telegram_state_updated_at || 0) > 0;
+        if (cachedMembershipState === 'member' && hasVerifiedDialogState) {
+          isMember = true;
+          membershipState = 'member';
+          membershipSource = `dialog_cache_override:${membershipSource}`;
+        }
+      }
     } else {
       // Fallback: check DB membership state
       const dbInst = DatabaseService.getInstance();
@@ -2582,11 +3458,49 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
       if (dbContact && dbContact.telegram_membership_state && dbContact.telegram_membership_state !== 'member') {
         isMember = false;
       }
+      membershipState = String(dbContact?.telegram_membership_state || 'unknown');
     }
     if (!isMember) {
-      // Expected for channels/groups the account no longer belongs to. Do not
-      // emit one terminal line per incoming message from that peer.
+      // Expected for channels/groups the account no longer belongs to. A
+      // history backfill can contain thousands of them, so keep that path
+      // quiet; live/difference records remain visible for diagnostics.
+      if (chatId.startsWith('-100') && (source === 'socket' || source === 'channel_difference')) {
+        tgChannelRealtimeTrace('MEMBERSHIP_GATE_IGNORED', accountId, {
+          chatId,
+          msgId: messageId,
+          source,
+          membership: membershipState,
+          membershipSource,
+          cachedMembership: cachedMembershipState || '-',
+          peerKind: rawIdentity.peerKind,
+        });
+      }
       return { status: 'ignored', chatId, messageId };
+    }
+    if (chatId.startsWith('-100')) {
+      // Heal only the membership cache when the authoritative raw Channel
+      // entity says this account is a member. Do not change is_in_others here:
+      // that field also represents the user's archive/folder choice.
+      if (source === 'socket' && membershipSource === 'raw_update_entity') {
+        try {
+          DatabaseService.getInstance()?.run(
+            `UPDATE contacts
+             SET telegram_membership_state = 'member', telegram_join_action = 'none', telegram_state_updated_at = ?
+             WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'telegram_user'`,
+            [Date.now(), accountId, chatId],
+          );
+        } catch {
+          // The live message must remain deliverable even if cache healing fails.
+        }
+      }
+      tgChannelRealtimeTrace('MEMBERSHIP_ACCEPTED', accountId, {
+        chatId,
+        msgId: messageId,
+        source,
+        membership: membershipState,
+        membershipSource,
+        peerKind: rawIdentity.peerKind,
+      });
     }
   }
 
@@ -2605,8 +3519,9 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
   // Get sender name — best-effort, not blocking identity
   let senderName = '';
   try {
-    let sender = await message.getSender();
-    if (!sender && senderId && client) {
+    let sender = message.sender;
+    if (!sender && source !== 'socket') sender = await message.getSender();
+    if (!sender && senderId && client && source !== 'socket') {
       sender = await hydrateTelegramIdentity(accountId, client, senderId, threadType === 1 ? chatId : undefined);
     }
     if (sender) {
@@ -2619,7 +3534,7 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
       if (!senderName && 'username' in sender) {
         senderName = '@' + (sender as any).username;
       }
-      if (senderId && client) await hydrateTelegramIdentity(
+      if (senderId && client && source !== 'socket') await hydrateTelegramIdentity(
         accountId, client, senderId, threadType === 1 ? chatId : undefined, sender,
       );
     }
@@ -2627,6 +3542,10 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
     tgLog('warn', accountId, source, `Sender hydration failed for msg ${messageId}`, {
       chatId, senderId, error: err?.message,
     });
+  }
+
+  if (!senderName && senderId) {
+    senderName = DatabaseService.getInstance()?.getTelegramPeer(accountId, senderId)?.display_name || '';
   }
 
   // ── Determine content + msgType + attachments ──────────────────────────
@@ -2657,10 +3576,10 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
             senderName = member?.display_name || '';
             if (!senderName) {
               const peer = db.queryOne<any>(
-                `SELECT first_name, last_name FROM telegram_peers WHERE owner_zalo_id = ? AND peer_id = ?`,
+                `SELECT display_name FROM telegram_peers WHERE owner_zalo_id = ? AND peer_id = ?`,
                 [accountId, orig.sender_id]
               );
-              if (peer) senderName = [peer.first_name, peer.last_name].filter(Boolean).join(' ');
+              senderName = peer?.display_name || '';
             }
           }
           quoteData = buildTelegramQuoteData({
@@ -2695,6 +3614,19 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
     isSelf, attachments, replyToId, quoteData, topicId, reactions,
     inlineButtons,
   });
+
+  if (chatId.startsWith('-100')) {
+    tgChannelRealtimeTrace('DB_PERSISTED', accountId, {
+      source,
+      chatId,
+      msgId: messageId,
+      persistStatus: result.status,
+      peerKind: rawIdentity.peerKind,
+      msgType,
+      isSelf,
+      topicId: topicId || '-',
+    });
+  }
 
   tgLog('info', accountId, source, `msg ${messageId}`, {
     chatId,
@@ -2766,21 +3698,25 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
       resolveNewGroupInfo(accountId, client, chatId).catch(() => {});
     }
 
-    // Download media (background, non-blocking)
-    const hasMedia = !!(message as any).media;
-    tgDebugLog(`[TG:handleNew] STEP6 msgId=${messageId} hasMedia=${hasMedia} isSelf=${isSelf} source=${source} msgType=${msgType} result=${result.status}`);
-    if (hasMedia && client) {
-      downloadMediaForMessage(accountId, client, message, messageId, msgType, chatId).catch(err => {
-        Logger.error(`[TG:download] QUEUE_FAILED msgId=${messageId} error=${err.message}`);
-      });
-    }
-
     // Fetch avatar cho contact mới (background, non-blocking)
     if (client && !isSelf && chat) {
       fetchNewContactAvatar(accountId, client, chatId, chat).catch(() => {});
     }
 
-    // Broadcast to UI — only for new messages
+    // Emit is synchronous: WorkflowEngine's before-send hook receives this
+    // exact payload before the renderer does. Trace both sides so a copied log
+    // establishes whether a missing automation is ingress, DB, or workflow.
+    if (chatId.startsWith('-100')) {
+      tgChannelRealtimeTrace('EVENT_MESSAGE_EMIT_START', accountId, {
+        source,
+        chatId,
+        msgId: messageId,
+        peerKind: rawIdentity.peerKind,
+        msgType,
+        isChannel: rawIdentity.peerKind === 'channel',
+      });
+    }
+    // Broadcast to UI/workflow — only for new messages
     EventBroadcaster.emit('event:message', {
       zaloId: accountId,
       channel: 'telegram_user',
@@ -2809,6 +3745,13 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
         },
       },
     });
+    if (chatId.startsWith('-100')) {
+      tgChannelRealtimeTrace('EVENT_MESSAGE_EMIT_DONE', accountId, {
+        source,
+        chatId,
+        msgId: messageId,
+      });
+    }
     tgLog('info', accountId, source, `UI_EMITTED msg ${messageId}`, {
       chatId,
       topicId: topicId || '-',
@@ -2816,6 +3759,17 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
     });
   } else if (result.status === 'updated') {
     // Attachments were merged into existing message — emit event so UI picks it up
+    if (chatId.startsWith('-100')) {
+      tgChannelRealtimeTrace('EVENT_MESSAGE_EMIT_START', accountId, {
+        source,
+        chatId,
+        msgId: messageId,
+        persistStatus: 'updated',
+        peerKind: rawIdentity.peerKind,
+        msgType,
+        isChannel: rawIdentity.peerKind === 'channel',
+      });
+    }
     EventBroadcaster.emit('event:message', {
       zaloId: accountId,
       channel: 'telegram_user',
@@ -2840,6 +3794,14 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
         },
       },
     });
+    if (chatId.startsWith('-100')) {
+      tgChannelRealtimeTrace('EVENT_MESSAGE_EMIT_DONE', accountId, {
+        source,
+        chatId,
+        msgId: messageId,
+        persistStatus: 'updated',
+      });
+    }
     tgLog('info', accountId, source, `UI_EMITTED (updated) msg ${messageId}`, { chatId, msgType });
   } else if (result.status === 'duplicate') {
     // Duplicate — KHÔNG emit UI event.
@@ -2876,6 +3838,22 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
       });
       tgLog('info', accountId, source, `UI_EMITTED (self-dedup with attachments) msg ${messageId}`, { chatId, msgType });
     }
+  }
+
+  // Emit the message before queuing its media. A small sticker can finish
+  // downloading before the renderer has inserted the message into its cache;
+  // in that ordering event:localPath is dropped from the live timeline and the
+  // sticker only appears after reopening the conversation from the DB.
+  if (result.status === 'inserted' && source === 'socket' && senderId && client) {
+    // Name/avatar enrichment has its own event and may finish after the bubble.
+    hydrateTelegramIdentity(accountId, client, senderId, threadType === 1 ? chatId : undefined, message.sender)
+      .catch(() => {});
+  }
+  if (result.status === 'inserted' && (message as any).media && client) {
+    tgDebugLog(`[TG:handleNew] STEP6 msgId=${messageId} hasMedia=true isSelf=${isSelf} source=${source} msgType=${msgType} result=${result.status}`);
+    downloadMediaForMessage(accountId, client, message, messageId, msgType, chatId).catch(err => {
+      Logger.error(`[TG:download] QUEUE_FAILED msgId=${messageId} error=${err.message}`);
+    });
   }
   return result;
 }
@@ -3465,6 +4443,23 @@ async function synchronizeTelegramAccount(
   }
   recoveringUpdateAccounts.add(accountId);
   try {
+    // Emit initial syncing status with recovery queue stats
+    const db = DatabaseService.getInstance();
+    // A previous Electron process may have been closed while a channel RPC
+    // was in flight. Such rows otherwise remain `draining` forever and will
+    // never be considered by either the backlog or the live recovery lane.
+    db?.requeueStaleChannelRecoveries(accountId);
+    const stats = db?.getChannelRecoveryStats(accountId);
+    if (stats && (stats.pending + stats.draining) > 0) {
+      EventBroadcaster.emit('event:telegramSync', {
+        zaloId: accountId,
+        status: 'syncing',
+        pending: stats.pending + stats.draining,
+        total: stats.pending + stats.draining + stats.complete,
+        inserted: 0,
+      });
+    }
+
     const differenceResult = await recoverTelegramUpdateDifference(accountId, client);
     // Channel cursors are the realtime catch-up path. Run them before the broad
     // dialog history backfill, which may hit messages.GetHistory FLOOD_WAIT.
@@ -3608,6 +4603,11 @@ export function startAccountMessageRefresh(accountId: string): {
  * Phase D: Recover updates for channels/supergroups using per-channel PTS.
  * Uses drainChannelDifference for proper state machine handling.
  * Each channel has its own PTS independent of the global PTS.
+ *
+ * Discovery strategy (DB-first):
+ * 1. Enqueue all channels known in DB (messages + channel_pts) with priority
+ * 2. Paginate API dialogs to discover new/missing channels
+ * 3. Dequeue from persistent recovery queue for processing
  */
 async function recoverChannelUpdates(
   accountId: string,
@@ -3618,33 +4618,71 @@ async function recoverChannelUpdates(
   if (!db) return;
 
   try {
-    // Channel PTS is independent from the global update state. Live polling
-    // handles only pending/active channels; reconnect/manual sync additionally
-    // includes recent dialogs, never every cached peer.
-    const now = Date.now();
-    const leases = activeChannelLeases.get(accountId);
-    if (leases) {
-      for (const [channelId, expiresAt] of leases) {
-        if (expiresAt <= now) leases.delete(channelId);
-      }
-    }
-    const channelIds = new Set<string>([
-      ...(pendingChannelRecoveries.get(accountId)?.keys() || []),
-      ...(leases?.keys() || []),
-    ]);
-
+    // Phase 1: Enqueue all channels known in DB with appropriate priority
     if (options.includeRecentDialogs) {
-      const collectRecentChannels = async (folder?: number) => {
-        const dialogs = await client.getDialogs({
-          limit: RECENT_DIALOG_LIMIT,
-          ...(folder === undefined ? {} : { folder }),
-        });
-        for (const dialog of dialogs) {
-          if (channelIds.size >= MAX_RECONNECT_CHANNEL_RECOVERY) break;
-          const channelId = getCanonicalChatId(dialog.id);
-          if (!channelId?.startsWith('-100')) continue;
-          if (dialog.entity) cacheTelegramPeer(accountId, channelId, dialog.entity);
+      const knownChannelIds = db.getTelegramChannelIdsWithMessages(accountId);
+      for (const channelId of knownChannelIds) {
+        const pts = db.getTelegramChannelPts(accountId, channelId);
+        const peer = db.getTelegramPeer(accountId, channelId);
+        const priority = pts > 0 ? 30 : 10; // Has PTS = higher priority
+        db.enqueueChannelRecovery(accountId, channelId, peer?.access_hash || '', pts, priority);
+      }
+      tgLog('info', accountId, 'channel_difference', `Enqueued ${knownChannelIds.length} DB-known channels for recovery`);
 
+      // Phase 2: Discover recent dialogs. Let GramJS own the pagination cursor
+      // (date + message ID + peer); passing its Date object back as offsetDate
+      // caused an int32/millisecond mismatch and stopped at page two.
+      const discoveredChannelIds = new Set<string>();
+      const MAX_DIALOG_PAGES = 5; // Safety: max 5 pages × ~100 dialogs = 500 max
+      const DIALOG_PAGE_SIZE = 100;
+      const dialogs = await client.getDialogs({ limit: MAX_DIALOG_PAGES * DIALOG_PAGE_SIZE });
+
+      for (let page = 0; page < MAX_DIALOG_PAGES; page++) {
+        if (listener_stopped(accountId)) break;
+        try {
+          const pageDialogs = dialogs.slice(page * DIALOG_PAGE_SIZE, (page + 1) * DIALOG_PAGE_SIZE);
+          if (pageDialogs.length === 0) break;
+
+          let foundNew = false;
+          for (const dialog of pageDialogs) {
+            const channelId = getCanonicalChatId(dialog.id);
+            if (!channelId?.startsWith('-100')) continue;
+            if (discoveredChannelIds.has(channelId)) continue;
+            discoveredChannelIds.add(channelId);
+
+            if (dialog.entity) cacheTelegramPeer(accountId, channelId, dialog.entity);
+
+            const hasCursor = db.getTelegramChannelPts(accountId, channelId) > 0;
+            const hasMessages = !!db.queryOne(
+              `SELECT 1 FROM messages
+               WHERE owner_zalo_id = ? AND thread_id = ? AND channel = 'telegram_user'
+               LIMIT 1`,
+              [accountId, channelId],
+            );
+            // Only enqueue if channel has some local data (cursor or messages)
+            if (hasCursor || hasMessages) {
+              const priority = hasCursor ? 30 : 10;
+              const entityAny = dialog.entity as any;
+              db.enqueueChannelRecovery(accountId, channelId, entityAny?.accessHash || '', db.getTelegramChannelPts(accountId, channelId), priority);
+              foundNew = true;
+            }
+          }
+
+          if (!foundNew && page > 0) break; // No new channels found, stop pagination
+        } catch (err: any) {
+          tgLog('warn', accountId, 'channel_difference', `Dialog page ${page} failed: ${err.message}`);
+          break;
+        }
+      }
+
+      // Also scan archived dialogs
+      try {
+        const archivedDialogs = await client.getDialogs({ limit: DIALOG_PAGE_SIZE, folder: 1 });
+        for (const dialog of archivedDialogs) {
+          const channelId = getCanonicalChatId(dialog.id);
+          if (!channelId?.startsWith('-100') || discoveredChannelIds.has(channelId)) continue;
+          discoveredChannelIds.add(channelId);
+          if (dialog.entity) cacheTelegramPeer(accountId, channelId, dialog.entity);
           const hasCursor = db.getTelegramChannelPts(accountId, channelId) > 0;
           const hasMessages = !!db.queryOne(
             `SELECT 1 FROM messages
@@ -3652,53 +4690,95 @@ async function recoverChannelUpdates(
              LIMIT 1`,
             [accountId, channelId],
           );
-          if (!hasCursor && !hasMessages) continue;
-          channelIds.add(channelId);
-          if (!hasCursor) markChannelRecoveryPending(accountId, channelId);
+          if (hasCursor || hasMessages) {
+            const entityAny = dialog.entity as any;
+            db.enqueueChannelRecovery(accountId, channelId, entityAny?.accessHash || '', db.getTelegramChannelPts(accountId, channelId), hasCursor ? 30 : 10);
+          }
         }
-      };
-
-      try {
-        await collectRecentChannels();
-        if (channelIds.size < MAX_RECONNECT_CHANNEL_RECOVERY) await collectRecentChannels(1);
       } catch (err: any) {
-        tgLog('warn', accountId, 'channel_difference', `Unable to list recent dialogs: ${err.message}`);
+        tgLog('warn', accountId, 'channel_difference', `Archived dialog scan failed: ${err.message}`);
       }
     }
 
-    for (const channelId of channelIds) {
-      const peer = db.getTelegramPeer(accountId, channelId);
-      if (!peer?.access_hash) continue;
-      const currentPts = db.getTelegramChannelPts(accountId, channelId)
-        || pendingChannelRecoveries.get(accountId)?.get(channelId)
-        || 0;
-      // No durable cursor and no PTS from UpdateChannelTooLong: GetFullChannel
-      // is deliberately not used as a seed because it represents *now*, not
-      // the point before the offline gap. Use the bounded message-history
-      // fallback below until Telegram gives us a channel cursor.
-      if (currentPts <= 0) {
-        if (pendingChannelRecoveries.get(accountId)?.has(channelId)) {
-          const history = await backfillUnseededChannelHistory(accountId, client, channelId, peer.access_hash);
-          if (!history.failed && history.complete) clearChannelRecoveryPending(accountId, channelId);
-        }
-        continue;
-      }
-
-      try {
-        const recovered = await drainChannelDifference(accountId, client, channelId, peer.access_hash, currentPts, 'channel_difference');
-        if (recovered === 'complete' || recovered === 'unavailable') {
-          clearChannelRecoveryPending(accountId, channelId);
-        } else {
-          markChannelRecoveryPending(accountId, channelId, currentPts);
-        }
-      } catch (err: any) {
-        markChannelRecoveryPending(accountId, channelId, currentPts);
-        // tgLog('warn', accountId, 'channel_difference', `Recovery failed for ${channelId}: ${err.message}`);
+    // Phase 3: Dequeue and process from persistent recovery queue
+    const queuedChannels = db.dequeueChannelRecovery(accountId, 200) as ChannelRecoveryQueueItem[];
+    // Also include active channel leases from RAM. These bypass the folder
+    // order because the user is looking at them now; every other queued item
+    // keeps the DB order: Tất cả → unread/recent → Archived/Khác.
+    const activeChannelIds = getActiveChannelRecoveryOrder(accountId);
+    const activeIndex = new Map(activeChannelIds.map((channelId, index) => [channelId, index]));
+    for (const channelId of activeChannelIds) {
+      if (!queuedChannels.find(channel => channel.channel_id === channelId)) {
+        const pts = db.getTelegramChannelPts(accountId, channelId);
+        queuedChannels.push({
+          channel_id: channelId,
+          access_hash: '',
+          pts,
+          priority: URGENT_CHANNEL_RECOVERY_PRIORITY,
+          attempts: 0,
+          queued: false,
+        });
       }
     }
+    queuedChannels.sort((a, b) => {
+      const aActiveIndex = activeIndex.get(a.channel_id);
+      const bActiveIndex = activeIndex.get(b.channel_id);
+      if (aActiveIndex !== undefined || bActiveIndex !== undefined) {
+        return (aActiveIndex ?? Number.MAX_SAFE_INTEGER) - (bActiveIndex ?? Number.MAX_SAFE_INTEGER);
+      }
+      return 0;
+    });
+
+    tgLog('info', accountId, 'channel_difference', `Processing ${queuedChannels.length} channels from recovery queue`);
+
+    const listener = activeListeners.get(accountId);
+    if (listener) {
+      await runChannelRecoveryWorkers(listener, client, queuedChannels, 'channel_difference');
+    }
+
+    // Cleanup old completed entries periodically
+    db.cleanupChannelRecoveryQueue(accountId);
   } catch (err: any) {
     tgLog('warn', accountId, 'channel_difference', `recoverChannelUpdates error: ${err.message}`);
   }
+}
+
+/** Check if the listener for this account has been stopped. */
+function listener_stopped(accountId: string): boolean {
+  const listener = activeListeners.get(accountId);
+  return !listener || listener.stopped || !listener.client?.connected;
+}
+
+/**
+ * Try to repair a missing access_hash by resolving the channel entity.
+ * Returns true if repair succeeded.
+ */
+async function repairAccessHash(
+  accountId: string,
+  client: TelegramClient,
+  channelId: string,
+  peer: any,
+): Promise<boolean> {
+  try {
+    // If peer has a username, try resolving via @username
+    if (peer?.username) {
+      const { Api } = require('telegram');
+      const result = await client.invoke(new Api.contacts.ResolveUsername({ username: peer.username }));
+      if (result?.channel) {
+        cacheTelegramPeer(accountId, channelId, result.channel);
+        return true;
+      }
+    }
+    // Try resolvePeer with the channel ID
+    const entity = await resolvePeerEntity(accountId, client, channelId);
+    if (entity) {
+      cacheTelegramPeer(accountId, channelId, entity);
+      return true;
+    }
+  } catch (err: any) {
+    tgLog('warn', accountId, 'channel_difference', `Access hash repair failed for ${channelId}: ${err.message}`);
+  }
+  return false;
 }
 
 async function fetchMissedMessages(accountId: string, client: TelegramClient): Promise<TelegramHistorySyncResult> {
@@ -4669,6 +5749,10 @@ export async function syncPinnedMessages(
           msgId: String(message.id), msgType: normalized.msgType,
           content: normalized.content, previewText: normalized.content, previewImage,
           senderId, senderName, timestamp: Number(message.date || 0) * 1000,
+          // Telegram's pinned search returns messages in an API-dependent
+          // order and does not expose the moment they were pinned. Persist the
+          // message time so the UI consistently shows newest message first.
+          pinnedAt: Number(message.date || 0) * 1000,
         });
     }
     db?.replaceRemotePinnedMessages(accountId, chatId, pins);
@@ -4826,22 +5910,34 @@ export async function getMessages(
 
   try {
     const peer = await resolveInputPeer(accountId, listener.client, chatId);
-    // getMessages() is a single-page convenience call (100 items here before).
-    // The header accepts up to 5,000, so use GramJS's paginator to honor the
-    // requested amount rather than silently reporting a partial download.
+    // The header accepts up to 5,000. Do not pass that large limit through
+    // GramJS's iterator: it has a first-page negative timeout bug and bursts
+    // requests into Telegram. Fetch bounded pages ourselves instead.
     const requestedLimit = Number(opts?.limit);
     const limit = Math.min(
       Math.max(Number.isFinite(requestedLimit) ? Math.floor(requestedLimit) : 50, 1),
       MAX_MANUAL_MESSAGE_DOWNLOAD,
     );
-    const fetchOpts: any = { limit };
-    if (opts?.offsetId) fetchOpts.offsetId = opts.offsetId;
-    // For forum topics, use replyToMsgId filter
-    if (opts?.topicRootMessageId) fetchOpts.replyTo = Number(opts.topicRootMessageId);
-
     const rawMessages: any[] = [];
-    for await (const message of listener.client.iterMessages(peer, fetchOpts)) {
-      rawMessages.push(message);
+    const PAGE_SIZE = 100;
+    const PAGE_DELAY_MS = 1000;
+    let offsetId = Number(opts?.offsetId || 0);
+    while (rawMessages.length < limit) {
+      const pageLimit = Math.min(PAGE_SIZE, limit - rawMessages.length);
+      const fetchOpts: any = { limit: pageLimit, offsetId };
+      // For forum topics, use replyToMsgId filter.
+      if (opts?.topicRootMessageId) fetchOpts.replyTo = Number(opts.topicRootMessageId);
+      const page: any[] = await listener.client.getMessages(peer, fetchOpts);
+      if (!page.length) break;
+      rawMessages.push(...page);
+
+      const oldestId = Math.min(...page.map((message: any) => Number(message?.id || 0)).filter(Boolean));
+      if (!Number.isFinite(oldestId) || (offsetId > 0 && oldestId >= offsetId) || page.length < pageLimit) break;
+      offsetId = oldestId;
+
+      if (rawMessages.length < limit) {
+        await new Promise(resolve => setTimeout(resolve, PAGE_DELAY_MS));
+      }
     }
     const db = DatabaseService.getInstance();
     const messages: any[] = [];
@@ -4981,6 +6077,10 @@ export async function getMessages(
       }
     }
 
+    // Notify UI to refresh contacts from DB (updates last_message/time in conversation list)
+    if (messages.length > 0) {
+      EventBroadcaster.emit('db:unreadChanged', { zaloId: accountId, source: 'telegram_get_messages' });
+    }
     return { success: true, messages };
   } catch (err: any) {
     return { success: false, error: err.message };
@@ -5927,9 +7027,19 @@ export function stopListener(accountId: string): void {
   activeListeners.delete(accountId);
   rawUpdateHandlers.delete(accountId);
   channelPollQueues.delete(accountId);
-  pendingChannelRecoveries.delete(accountId);
   activeChannelLeases.delete(accountId);
+  channelDialogWatchStates.delete(accountId);
+  channelDialogWatchTasks.delete(accountId);
   reconnectCatchUps.delete(accountId);
+  const drainTimer = channelRecoveryDrainTimers.get(accountId);
+  if (drainTimer) clearTimeout(drainTimer);
+  channelRecoveryDrainTimers.delete(accountId);
+  for (const [key, timer] of typingChannelRecoveryTimers) {
+    if (!key.startsWith(`${accountId}:`)) continue;
+    clearTimeout(timer);
+    typingChannelRecoveryTimers.delete(key);
+  }
+  channelRecoveryThrottles.delete(accountId);
   for (const key of channelDifferenceQueues.keys()) {
     if (key.startsWith(`${accountId}:`)) channelDifferenceQueues.delete(key);
   }

@@ -18,7 +18,7 @@ import { CHANNEL, isZalo as isZaloCh, isTelegram as isTelegramCh, isFacebook as 
 import { Spinner } from '@/components/common/PageLoading';
 import * as channelIpc from '@/lib/channelIpc';
 import { getAdapter } from '@/lib/adapters/registry';
-import { usePremiumMemberSync } from '@/hooks/usePremiumMemberSync';
+import { useGroupMemberSync } from '@/hooks/useGroupMemberSync';
 import { ArrowDownIcon, ArrowUpIcon, BellIcon, BellOffIcon, CloseIcon, MapPinIcon, PinIcon, SettingsIcon, TrashIcon, UserIcon, UsersIcon } from '@/components/common/icons';
 
 
@@ -947,8 +947,8 @@ function GrpActionBtn({ icon, label, onClick, active }: { icon: React.ReactNode;
   return (
     <button onClick={onClick}
       className={`flex flex-col items-center gap-1 py-2 px-1 rounded-xl hover:bg-gray-700 transition-colors text-center`}>
-      <div className={`w-9 h-9 rounded-full flex items-center justify-center text-lg ${active ? 'bg-blue-600' : 'bg-gray-700'}`}>{icon}</div>
-      <span className={`text-[9px] leading-tight ${active ? 'text-blue-400' : 'text-gray-400'}`}>{label}</span>
+      <div className={`w-9 h-9 rounded-full flex items-center justify-center text-lg ${active ? 'bg-blue-500' : 'bg-gray-600'}`}>{icon}</div>
+      <span className={`text-[9px] leading-tight ${active ? 'text-blue-500' : 'text-gray-500'}`}>{label}</span>
     </button>
   );
 }
@@ -964,8 +964,8 @@ function MembersPanel({ groupInfo, groupId, onBack, onRefresh, myAccountId, chan
   channelCap?: ChannelCapability;
   onShowProfile?: (userId: string, x: number, y: number) => void;
 }) {
-  // ── Premium member sync hook ──────────────────────────────────────────
-  const { syncMembers } = usePremiumMemberSync({
+  // ── Hidden-member scan is a Zalo-only capability ──────────────────────
+  const { syncMembers } = useGroupMemberSync({
     accountId: myAccountId,
     groupId,
     onMembersSynced: () => onRefresh(),
@@ -987,8 +987,7 @@ function MembersPanel({ groupInfo, groupId, onBack, onRefresh, myAccountId, chan
     if (reloading) return;
     setReloading(true);
     try {
-      // Use premium hook for scan API fallback
-      await syncMembers();
+      if ((channelCap?.id || CHANNEL.ZALO) === CHANNEL.ZALO) await syncMembers();
       // Always call onRefresh to update the UI
       await onRefresh();
     } finally {
@@ -2047,5 +2046,3 @@ export function ManagePanel({ groupInfo, groupId, onBack, myAccountId, asModal, 
     showNotification('Chức năng xem danh sách bị chặn', 'info');
   }
 }
-
-

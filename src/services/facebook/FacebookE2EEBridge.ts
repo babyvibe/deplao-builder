@@ -39,13 +39,29 @@
 import { ChildProcess, spawn } from 'child_process';
 import { EventEmitter } from 'events';
 import { FBJsonRpcEvent } from './FacebookTypes';
+import { metricInc } from './FacebookMetrics';
 import Logger from '../../utils/Logger';
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+/** Bridge protocol version we support */
+const REQUIRED_PROTOCOL_VERSION = 2;
+
+/** Allowed bridge versions (semver prefix match) */
+const ALLOWED_BRIDGE_VERSIONS = ['2.3.1'];
+
+/** Max single JSON frame size (encoded) — 40 MiB */
+const MAX_JSON_FRAME_BYTES = 40 * 1024 * 1024;
+
+/** Max decoded media bytes we accept from bridge */
+const MAX_DECODED_MEDIA_BYTES = 25 * 1024 * 1024;
 
 /**
  * Các bridge methods được hỗ trợ.
  * Tham chiếu: bridge-e2ee/main.go `handle()` switch statement.
  */
 export const BRIDGE_METHODS = [
+  'hello',
   'newClient',
   'connect',
   'connectE2EE',
@@ -63,9 +79,57 @@ export const BRIDGE_METHODS = [
   'sendReaction',
   'sendImage',
   'sendFile',
+  'sendTypingIndicator',
+  'sendE2EETyping',
+  'markRead',
+  'editMessage',
+  'unsendMessage',
+  'editE2EEMessage',
+  'unsendE2EEMessage',
+  'startNativeLogin',
+  'submitNativeLogin',
+  'cancelNativeLogin',
 ] as const;
 
 export type BridgeMethod = (typeof BRIDGE_METHODS)[number];
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+export interface BridgeHello {
+  protocolVersion: number;
+  bridgeVersion: string;
+  capabilities: string[];
+  maxDecodedMediaBytes: number;
+}
+
+export interface NativeLoginField {
+  id: string;
+  name: string;
+  description?: string;
+  type: 'username' | 'password' | 'phone_number' | 'email' | '2fa_code' | 'token' | 'url' | 'domain' | 'select' | 'captcha_code' | string;
+  default_value?: string;
+  pattern?: string;
+  min_length?: number;
+  max_length?: number;
+  options?: string[];
+}
+
+export interface NativeLoginStep {
+  type: 'user_input' | 'display_and_wait' | string;
+  step_id: string;
+  instructions: string;
+  user_input?: {
+    fields: NativeLoginField[];
+    attachments?: Array<{ content?: string; info?: { mimetype?: string } }>;
+  };
+  display_and_wait?: { can_cancel?: boolean };
+}
+
+export interface NativeLoginResult {
+  complete: boolean;
+  step?: NativeLoginStep;
+  cookies?: Record<string, string>;
+}
 
 // ─── Errors ───────────────────────────────────────────────────────────────────
 
@@ -83,6 +147,13 @@ export class BridgeNotReadyError extends BridgeError {
   }
 }
 
+export class BridgeHandshakeError extends BridgeError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'BridgeHandshakeError';
+  }
+}
+
 // ─── Main Class ───────────────────────────────────────────────────────────────
 
 export interface BridgeEvents {
@@ -97,7 +168,16 @@ export class FacebookE2EEBridge extends EventEmitter {
   private pending = new Map<number, { resolve: (data: any) => void; reject: (err: Error) => void }>();
   private idCounter = 1;
   private closed = false;
+  /** Close is in progress: reject new work but still permit the final disconnect RPC. */
+  private closing = false;
   private buffer = '';
+  /** Generation counter — incremented on each spawn. Stale responses from old generation are discarded. */
+  private generation = 0;
+  /** Serial write queue — ensures stdin.write() calls are serialized */
+  private writeQueue: Array<(done: () => void) => void> = [];
+  private writing = false;
+  /** Validated hello response from bridge */
+  private helloData: BridgeHello | null = null;
 
   // ─── Static helpers ────────────────────────────────────────────────────────
   // Bridge Go struct expects threadId as int64, not string.
@@ -137,7 +217,15 @@ export class FacebookE2EEBridge extends EventEmitter {
       this.process = null;
     }
 
-    Logger.log(`[FBE2EEBridge] Spawning: ${this.binaryPath}`);
+    // Increment generation — stale responses/events from old gen are discarded
+    this.generation++;
+    this.helloData = null;
+    this.idCounter = 1;
+    this.pending.clear();
+    this.buffer = '';
+    this.closing = false;
+
+    Logger.log(`[FBE2EEBridge] Spawning: ${this.binaryPath} (gen=${this.generation})`);
 
     this.process = spawn(this.binaryPath, [], {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -145,6 +233,8 @@ export class FacebookE2EEBridge extends EventEmitter {
     });
 
     this.closed = false;
+    const spawnedProcess = this.process;
+    const spawnedGeneration = this.generation;
 
     // ─── Stdout reader (brace-counting JSON parser) ─────────────────────
     //
@@ -156,13 +246,19 @@ export class FacebookE2EEBridge extends EventEmitter {
     // các JSON objects hoàn chỉnh, bất kể chunk boundary ở đâu.
     //
     this.process.stdout?.on('data', (chunk: Buffer) => {
+      if (this.process !== spawnedProcess || this.generation !== spawnedGeneration) return;
       this.buffer += chunk.toString('utf8');
-      // Cap buffer at 50MB - đủ cho E2EE media download (FB limit ~25MB/file,
-      // base64 ~33MB + JSON overhead). Không để unlimited vì bridge lỗi có thể
-      // sinh output vô tận gây OOM.
-      if (this.buffer.length > 1024 * 1024 * 50) {
-        Logger.warn('[FBE2EEBridge] Buffer exceeded 50MB - resetting');
+      // Cap buffer at 40MB — MAX_JSON_FRAME_BYTES is the hard limit per frame.
+      // Bridge errors could produce unbounded output → OOM.
+      if (this.buffer.length > MAX_JSON_FRAME_BYTES) {
+        Logger.warn(`[FBE2EEBridge] Buffer exceeded ${MAX_JSON_FRAME_BYTES} bytes; closing bridge`);
         this.buffer = '';
+        // Reject all pending. The service receives `closed` and owns restart/backoff.
+        for (const [, p] of this.pending) {
+          p.reject(new BridgeError('Buffer overflow'));
+        }
+        this.pending.clear();
+        void this.close();
         return;
       }
 
@@ -200,7 +296,7 @@ export class FacebookE2EEBridge extends EventEmitter {
             const jsonStr = this.buffer.slice(start, i + 1);
             try {
               const msg = JSON.parse(jsonStr);
-              this.processMessage(msg);
+              this.processMessage(msg, spawnedGeneration);
               // Remove processed content - keep remaining buffer
               this.buffer = this.buffer.slice(i + 1);
               // Reset loop state for the rest of the buffer
@@ -213,8 +309,7 @@ export class FacebookE2EEBridge extends EventEmitter {
             } catch {
               // False positive: } xuat hien ngoai string context
               // KHONG discard buffer - keep for next chunk
-              const preview = this.buffer.slice(0, 300);
-              Logger.warn(`[FBE2EEBridge] False depth=0 (offset=${i}, buffer=${this.buffer.length}b) - waiting. Start: ${preview}`);
+              Logger.warn(`[FBE2EEBridge] Invalid/incomplete JSON frame (offset=${i}, buffer=${this.buffer.length}b)`);
               break;
             }
           }
@@ -232,48 +327,54 @@ export class FacebookE2EEBridge extends EventEmitter {
 
     // ─── Stdout end → bridge exited ─────────────────────────────────────
     this.process.stdout?.on('end', () => {
+      if (this.process !== spawnedProcess || this.generation !== spawnedGeneration) return;
       Logger.log('[FBE2EEBridge] stdout ended');
       // Drain any remaining data in buffer
       if (this.buffer.trim()) {
         try {
           const msg = JSON.parse(this.buffer.trim());
-          this.processMessage(msg);
+          this.processMessage(msg, spawnedGeneration);
         } catch { /* ignore - incomplete */ }
         this.buffer = '';
       }
-      this.onProcessExited(this.process?.exitCode ?? null);
+      this.onProcessExited(spawnedProcess?.exitCode ?? null, spawnedGeneration, spawnedProcess);
     });
 
     // ─── Stderr forward (debug + file) ────────────────────────────────
     this.process.stderr?.on('data', (chunk: Buffer) => {
+      if (this.process !== spawnedProcess || this.generation !== spawnedGeneration) return;
       const text = chunk.toString('utf8').trim();
       if (text) {
-        Logger.log(`[FBE2EEBridge:stderr] ${text}`);
+        Logger.log(`[FBE2EEBridge:stderr] ${text.length} bytes`);
       }
     });
 
     // ─── Process exit ──────────────────────────────────────────────────
     this.process.on('exit', (code) => {
+      if (this.process !== spawnedProcess || this.generation !== spawnedGeneration) return;
       Logger.log(`[FBE2EEBridge] Process exited with code ${code}`);
-      this.onProcessExited(code);
+      this.onProcessExited(code, spawnedGeneration, spawnedProcess);
     });
 
     this.process.on('error', (err) => {
+      if (this.process !== spawnedProcess || this.generation !== spawnedGeneration) return;
       Logger.error(`[FBE2EEBridge] Process error: ${err.message}`);
       this.emit('error', err);
-      this.onProcessExited(null);
+      this.onProcessExited(null, spawnedGeneration, spawnedProcess);
     });
   }
 
   /**
    * Đọc từng message từ stdout → phân loại response vs event
    */
-  private processMessage(msg: any): void {
+  private processMessage(msg: any, generation: number): void {
+    if (generation !== this.generation) {
+      metricInc('fb_bridge_generation_stale_event');
+      return;
+    }
     // Async event (has `event` key, no `id`)
     if (msg.event) {
       const evt = msg as FBJsonRpcEvent;
-      const eventType = evt.event?.type || '?';
-      const dataPreview = evt.event?.data != null ? JSON.stringify(evt.event.data).slice(0, 200) : 'undefined';
       this.emit('event', evt.event);
       return;
     }
@@ -289,7 +390,6 @@ export class FacebookE2EEBridge extends EventEmitter {
       this.pending.delete(id);
 
       if (msg.ok === true) {
-        const dataPreview = msg.data != null ? JSON.stringify(msg.data).slice(0, 200) : 'undefined';
         pending.resolve(msg.data ?? {});
       } else {
         pending.reject(new BridgeError(msg.error || 'Unknown bridge error'));
@@ -297,13 +397,17 @@ export class FacebookE2EEBridge extends EventEmitter {
       return;
     }
 
-    Logger.warn(`[FBE2EEBridge] Unknown message format: ${JSON.stringify(msg).slice(0, 200)}`);
+    Logger.warn(`[FBE2EEBridge] Unknown message format (keys=${Object.keys(msg || {}).slice(0, 8).join(',')})`);
   }
 
-  private onProcessExited(code: number | null): void {
+  private onProcessExited(code: number | null, generation: number, process: ChildProcess | null): void {
+    if (generation !== this.generation || process !== this.process) return;
     if (this.closed) return;
     this.closed = true;
-    this.process = null; // Cleanup process reference on unexpected exit
+    this.closing = false;
+    this.process = null;
+    this.writeQueue = [];
+    this.writing = false;
 
     // Drain tất cả pending requests - bridge đã chết
     for (const [, pending] of this.pending) {
@@ -331,19 +435,14 @@ export class FacebookE2EEBridge extends EventEmitter {
     params?: any,
     timeout: number = 120000,
   ): Promise<any> {
-    // DEBUG: log state trước khi check để biết tại sao connect() fail sớm
-    const preCheck = `method=${method} closed=${this.closed} hasProcess=${!!this.process} killed=${this.process?.killed} idCounter=${this.idCounter}`;
-    if (this.closed || !this.process || this.process.killed) {
+    if (this.closed || (this.closing && method !== 'disconnect') || !this.process || this.process.killed) {
       throw new BridgeNotReadyError();
     }
 
     const id = this.idCounter++;
+    const gen = this.generation;
+    const processAtCall = this.process;
     const request = { id, method, ...(params !== undefined ? { params } : {}) };
-
-    // Mask sensitive params (cookies) để không leak vào log
-    const safeParams = params ? { ...params } : undefined;
-    if (safeParams?.cookies) safeParams.cookies = { ...safeParams.cookies, xs: '***', fr: '***' };
-    const safeMethodName = String(method);
 
     return new Promise<any>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -353,25 +452,48 @@ export class FacebookE2EEBridge extends EventEmitter {
 
       this.pending.set(id, {
         resolve: (data: any) => {
+          // Generation check: discard response from old generation
+          if (gen !== this.generation) {
+            metricInc('fb_bridge_generation_stale_event');
+            Logger.warn(`[FBE2EEBridge] Stale response gen=${gen} current=${this.generation} method=${method} - discarding`);
+            return;
+          }
           clearTimeout(timer);
-          const dataPreview = data != null ? JSON.stringify(data).slice(0, 300) : 'undefined';
           resolve(data);
         },
         reject: (err: Error) => {
+          if (gen !== this.generation) return;
           clearTimeout(timer);
           reject(err);
         },
       });
 
       try {
-        // Line-delimited JSON (giống Python: separators=(",",":"), compact)
-        const line = JSON.stringify(request) + '\n';
-        this.process!.stdin?.write(line, 'utf8', (err) => {
-          if (err) {
+        // Serial write queue — serialize stdin.write to prevent interleaving
+        this.enqueueWrite((done) => {
+          if (this.closed || this.process !== processAtCall || !processAtCall || processAtCall.killed) {
             clearTimeout(timer);
             this.pending.delete(id);
-            reject(new BridgeError(`Bridge stdin write error: ${err.message}`));
+            reject(new BridgeNotReadyError());
+            done();
+            return;
           }
+          if (!processAtCall.stdin) {
+            clearTimeout(timer);
+            this.pending.delete(id);
+            reject(new BridgeNotReadyError());
+            done();
+            return;
+          }
+          const line = JSON.stringify(request) + '\n';
+          processAtCall.stdin.write(line, 'utf8', (err) => {
+            if (err) {
+              clearTimeout(timer);
+              this.pending.delete(id);
+              reject(new BridgeError(`Bridge stdin write error: ${err.message}`));
+            }
+            done();
+          });
         });
       } catch (err: any) {
         clearTimeout(timer);
@@ -379,6 +501,102 @@ export class FacebookE2EEBridge extends EventEmitter {
         reject(new BridgeError(`Bridge call serialization error: ${err.message}`));
       }
     });
+  }
+
+  /**
+   * Serialize stdin.write() calls through a queue.
+   * Prevents interleaving when multiple call() happen concurrently.
+   */
+  private enqueueWrite(fn: (done: () => void) => void): void {
+    this.writeQueue.push(fn);
+    if (!this.writing) {
+      this.drainWriteQueue();
+    }
+  }
+
+  private drainWriteQueue(): void {
+    if (this.writeQueue.length === 0) {
+      this.writing = false;
+      return;
+    }
+    this.writing = true;
+    const next = this.writeQueue.shift()!;
+    let finished = false;
+    const done = () => {
+      if (finished) return;
+      finished = true;
+      this.drainWriteQueue();
+    };
+    try {
+      next(done);
+    } catch {
+      done();
+    }
+  }
+
+  // ─── Hello Handshake ────────────────────────────────────────────────────────
+
+  /**
+   * Phase 2: Hello handshake — call BEFORE newClient.
+   * Validates protocol version, bridge version, capabilities, and limits.
+   * Must be called after spawn() and before newClient().
+   * @throws BridgeHandshakeError if hello fails or bridge is incompatible
+   */
+  public async hello(timeout: number = 10000): Promise<BridgeHello> {
+    const data = await this.call('hello', undefined, timeout);
+
+    // Validate required fields
+    if (!data || typeof data !== 'object') {
+      throw new BridgeHandshakeError('Hello returned invalid data');
+    }
+
+    const hello: BridgeHello = {
+      protocolVersion: data.protocolVersion ?? 0,
+      bridgeVersion: data.bridgeVersion ?? 'unknown',
+      capabilities: data.capabilities ?? [],
+      maxDecodedMediaBytes: data.maxDecodedMediaBytes ?? 0,
+    };
+
+    // Validate protocol version
+    if (hello.protocolVersion !== REQUIRED_PROTOCOL_VERSION) {
+      throw new BridgeHandshakeError(
+        `Incompatible protocol version: bridge=${hello.protocolVersion} required=${REQUIRED_PROTOCOL_VERSION}`
+      );
+    }
+
+    // Validate bridge version
+    if (!ALLOWED_BRIDGE_VERSIONS.some(v => hello.bridgeVersion.startsWith(v))) {
+      throw new BridgeHandshakeError(
+        `Unknown bridge version: ${hello.bridgeVersion} (allowed: ${ALLOWED_BRIDGE_VERSIONS.join(', ')})`
+      );
+    }
+
+    // Validate capabilities
+    const requiredCaps = [
+      'connectE2EE', 'sendMessage', 'sendE2EEMessage', 'mediaLocalPath',
+      'sendTypingIndicator', 'sendE2EETyping', 'markRead',
+      'editMessage', 'unsendMessage', 'editE2EEMessage', 'unsendE2EEMessage',
+    ];
+    const missing = requiredCaps.filter(c => !hello.capabilities.includes(c));
+    if (missing.length > 0) {
+      throw new BridgeHandshakeError(
+        `Missing required capabilities: ${missing.join(', ')}`
+      );
+    }
+
+    // Validate media limit
+    if (hello.maxDecodedMediaBytes > 0 && hello.maxDecodedMediaBytes !== MAX_DECODED_MEDIA_BYTES) {
+      Logger.warn(`[FBE2EEBridge] Bridge maxDecodedMediaBytes=${hello.maxDecodedMediaBytes} != expected=${MAX_DECODED_MEDIA_BYTES}`);
+    }
+
+    this.helloData = hello;
+    Logger.log(`[FBE2EEBridge] Hello OK: protocol=${hello.protocolVersion} version=${hello.bridgeVersion} caps=${hello.capabilities.join(',')}`);
+    return hello;
+  }
+
+  /** Get validated hello data (null if hello not yet called) */
+  public getHello(): BridgeHello | null {
+    return this.helloData;
   }
 
   // ─── Connection Sequence ──────────────────────────────────────────────────
@@ -392,14 +610,30 @@ export class FacebookE2EEBridge extends EventEmitter {
     logLevel?: string;
     e2eeMemoryOnly?: boolean;
     devicePath?: string;
-  }): Promise<void> {
-    await this.call('newClient', {
+    deviceData?: string;
+  }, timeout: number = 30000): Promise<{ deviceData?: string }> {
+    return this.call('newClient', {
       cookies: config.cookies,
       platform: config.platform || 'facebook',
       logLevel: config.logLevel || 'none',
       e2eeMemoryOnly: config.e2eeMemoryOnly ?? true,
       ...(config.devicePath ? { devicePath: config.devicePath } : {}),
-    });
+      ...(config.deviceData ? { deviceData: config.deviceData } : {}),
+    }, timeout);
+  }
+
+  /** Start fbchat-v2's interactive Messenger Lite credential login flow. */
+  public async startNativeLogin(proxyUrl?: string): Promise<NativeLoginResult> {
+    return this.call('startNativeLogin', proxyUrl ? { proxyUrl } : {}, 120000);
+  }
+
+  /** Submit only the fields requested by the last native login step. */
+  public async submitNativeLogin(input: Record<string, string>): Promise<NativeLoginResult> {
+    return this.call('submitNativeLogin', { input }, 120000);
+  }
+
+  public async cancelNativeLogin(): Promise<void> {
+    await this.call('cancelNativeLogin', {}, 5000);
   }
 
   /**
@@ -607,27 +841,114 @@ export class FacebookE2EEBridge extends EventEmitter {
     });
   }
 
+  // ─── Phase 6: Typing & Mark Read ──────────────────────────────────────────
+
+  /**
+   * Gửi typing indicator (normal group)
+   */
+  public async sendTypingIndicator(params: {
+    threadId: string;
+    isTyping: boolean;
+    isGroup?: boolean;
+    threadType?: number;
+  }): Promise<void> {
+    await this.call('sendTypingIndicator', {
+      threadId: FacebookE2EEBridge.toIntThreadId(params.threadId),
+      isTyping: params.isTyping,
+      isGroup: params.isGroup ?? false,
+      threadType: params.threadType ?? 0,
+    });
+  }
+
+  /**
+   * Gửi typing indicator cho E2EE 1:1
+   */
+  public async sendE2EETyping(params: {
+    chatJid: string;
+    isTyping: boolean;
+  }): Promise<void> {
+    await this.call('sendE2EETyping', {
+      chatJid: params.chatJid,
+      isTyping: params.isTyping,
+    });
+  }
+
+  /**
+   * Đánh dấu thread đã đọc trên Facebook server
+   */
+  public async markRead(params: {
+    threadId: string;
+    watermarkTs?: number;
+  }): Promise<void> {
+    await this.call('markRead', {
+      threadId: FacebookE2EEBridge.toIntThreadId(params.threadId),
+      watermarkTs: params.watermarkTs || Date.now(),
+    });
+  }
+
+  /** Edit a normal (non-E2EE) message. */
+  public async editMessage(params: { messageId: string; newText: string }): Promise<void> {
+    await this.call('editMessage', params);
+  }
+
+  /** Unsend a normal (non-E2EE) message. */
+  public async unsendMessage(params: { messageId: string }): Promise<void> {
+    await this.call('unsendMessage', params);
+  }
+
+  /**
+   * Chỉnh sửa tin nhắn E2EE
+   */
+  public async editE2EEMessage(params: {
+    chatJid: string;
+    messageId: string;
+    newText: string;
+  }): Promise<void> {
+    await this.call('editE2EEMessage', {
+      chatJid: params.chatJid,
+      messageId: params.messageId,
+      newText: params.newText,
+    });
+  }
+
+  /**
+   * Thu hồi tin nhắn E2EE
+   */
+  public async unsendE2EEMessage(params: {
+    chatJid: string;
+    messageId: string;
+  }): Promise<void> {
+    await this.call('unsendE2EEMessage', {
+      chatJid: params.chatJid,
+      messageId: params.messageId,
+    });
+  }
+
   // ─── Shutdown ─────────────────────────────────────────────────────────────
 
   /**
    * Graceful shutdown: gửi disconnect → đóng stdin → kill sau 5s
    */
   public async close(): Promise<void> {
-    if (this.closed || !this.process) return;
+    if (this.closed || this.closing || !this.process) return;
+    this.closing = true;
 
+    // Stop accepting new writes
+    this.writeQueue = [];
+    this.writing = false;
+
+    // Reject existing work before issuing the one permitted final RPC.
+    for (const [, pending] of this.pending) {
+      pending.reject(new BridgeError('Bridge closed'));
+    }
+    this.pending.clear();
+
+    // Try graceful disconnect
     try {
       await this.call('disconnect', undefined, 5000);
     } catch {
       // ignore - bridge may already be dead
     }
-
-    this.closed = true;
-
-    // Drain pending
-    for (const [, pending] of this.pending) {
-      pending.reject(new BridgeError('Bridge closed'));
-    }
-    this.pending.clear();
 
     // Close stdin, give process 5s to exit gracefully
     try { this.process.stdin?.end(); } catch {}
@@ -640,7 +961,6 @@ export class FacebookE2EEBridge extends EventEmitter {
       }
     }, 5000);
 
-    // Đợi process exit rồi mới null reference - tránh race với spawn()
     proc.on('exit', () => {
       clearTimeout(forceKill);
       if (this.process === proc) {
@@ -649,7 +969,6 @@ export class FacebookE2EEBridge extends EventEmitter {
       Logger.log('[FBE2EEBridge] Process exited after close');
     });
 
-    // KHÔNG set this.process = null ở đây - đợi 'exit' event
     Logger.log('[FBE2EEBridge] Close requested - waiting for process exit');
   }
 

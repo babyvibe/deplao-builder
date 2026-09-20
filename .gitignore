@@ -10,7 +10,10 @@ agents/
 .env.local
 .env.production
 *.log
+data/*
 .DS_Store
 tmp/
-docs/
+docs/*
 .vscode/
+src/__tests__/*
+.gitmodules

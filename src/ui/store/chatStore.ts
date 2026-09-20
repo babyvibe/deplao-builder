@@ -47,7 +47,7 @@ export function getMessageCacheKey(accountId: string, threadId: string, topicRoo
   return topicRootMessageId ? `${base}${MESSAGE_TOPIC_KEY_SEPARATOR}${topicRootMessageId}` : base;
 }
 
-function getMessageCacheKeysForThread(messages: Record<string, MessageItem[]>, accountId: string, threadId: string): string[] {
+export function getMessageCacheKeysForThread(messages: Record<string, MessageItem[]>, accountId: string, threadId: string): string[] {
   const base = `${accountId}_${threadId}`;
   return Object.keys(messages).filter(key => key === base || key.startsWith(`${base}${MESSAGE_TOPIC_KEY_SEPARATOR}`));
 }

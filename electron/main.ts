@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, Tray, Menu, nativeImage, protocol, net, Notification, safeStorage } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, Tray, Menu, nativeImage, protocol, net, Notification, safeStorage, powerMonitor } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import { autoUpdater } from 'electron-updater';
@@ -200,6 +200,35 @@ let mainWindow: BrowserWindow | null = null;
 let inAppBrowserWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 
+// In development the renderer is served by Vite. Windows can suspend the
+// localhost socket while the laptop is asleep, leaving the main process alive
+// but the renderer with a blank page and ERR_NETWORK_IO_SUSPENDED. Keep this
+// recovery isolated to dev: packaged builds load local files and must retain
+// their current UI state on resume.
+let devRendererReloadTimer: ReturnType<typeof setTimeout> | null = null;
+let devRendererReloadAttempts = 0;
+let devRendererSuspended = false;
+let devRendererSystemSuspended = false;
+const DEV_RENDERER_MAX_RELOAD_ATTEMPTS = 4;
+
+function loadDevRenderer(reason: string, delayMs = 0): void {
+  if (!isDev || devRendererReloadTimer || !mainWindow || mainWindow.isDestroyed()) return;
+  if (devRendererReloadAttempts >= DEV_RENDERER_MAX_RELOAD_ATTEMPTS) {
+    console.error(`[main] Dev renderer recovery stopped after ${devRendererReloadAttempts} attempts (${reason})`);
+    return;
+  }
+
+  devRendererReloadTimer = setTimeout(() => {
+    devRendererReloadTimer = null;
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    devRendererReloadAttempts++;
+    console.warn(`[main] Reloading Vite renderer after ${reason} (attempt ${devRendererReloadAttempts}/${DEV_RENDERER_MAX_RELOAD_ATTEMPTS})`);
+    void mainWindow.loadURL('http://localhost:27799').catch((err: any) => {
+      console.warn(`[main] Vite renderer reload failed: ${err?.message || err}`);
+    });
+  }, delayMs);
+}
+
 function createWindow() {
   const isMac = process.platform === 'darwin';
 
@@ -260,6 +289,14 @@ function createWindow() {
     mainWindow?.show();
   });
 
+  // A successful full page load means Vite is reachable again. Reset the
+  // bounded retry budget so a later laptop suspend can recover independently.
+  mainWindow.webContents.on('did-finish-load', () => {
+    if (!isDev) return;
+    devRendererReloadAttempts = 0;
+    devRendererSuspended = false;
+  });
+
   // ── Renderer crash recovery ────────────────────────────────────────────
   // Khi renderer process bị crash hoặc bị kill bởi OS (OOM) → màn trắng,
   // nút X bị chặn bởi close handler → user phải mở Task Manager.
@@ -298,14 +335,24 @@ function createWindow() {
   // → window tồn tại nhưng trắng, ready-to-show vẫn fire → user thấy trắng
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
     console.error(`[main] did-fail-load: ${errorCode} ${errorDescription} - ${validatedURL}`);
-    // Retry sau 2s (Vite dev server có thể chưa sẵn sàng)
-    if (isDev) {
-      setTimeout(() => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.loadURL('http://localhost:27799');
-        }
-      }, 2000);
+    if (!isDev) return;
+
+    if (String(errorDescription).includes('ERR_NETWORK_IO_SUSPENDED')) {
+      // Do not keep issuing localhost requests while Windows has suspended the
+      // network stack. powerMonitor.resume will reload once Node/Vite can run.
+      devRendererSuspended = true;
+      console.warn('[main] Vite renderer request suspended; waiting for system resume');
+      // The failed request may be reported just after the OS has emitted
+      // `resume`; in that ordering there will be no second resume event.
+      if (!devRendererSystemSuspended) {
+        loadDevRenderer('late suspended Vite request', 1500);
+      }
+      return;
     }
+
+    // Vite may still be starting (or has just resumed). Debounced, bounded
+    // retries avoid the previous unbounded loadURL loop and blank window.
+    loadDevRenderer(`load failure ${errorDescription}`, 1500);
   });
 
   // CSP: chặn inline scripts bên ngoài trong production
@@ -745,10 +792,11 @@ async function reconnectAllTelegramAccounts(): Promise<void> {
 function startTelegramBotHealthCheck(): void {
   setInterval(() => {
     try {
-      const { isBotPolling, tryReconnectBot, getActiveBots } = require('../src/services/telegram/TelegramBotChannelService');
+      const { isBotPolling, isBotPollingConflict, tryReconnectBot, getActiveBots } = require('../src/services/telegram/TelegramBotChannelService');
       const activeBots = getActiveBots();
       for (const bot of activeBots) {
         if (!isBotPolling(bot.accountId)) {
+          if (isBotPollingConflict(bot.accountId)) continue;
           console.log(`[main] Telegram Bot ${bot.accountId} not polling — attempting reconnect`);
           tryReconnectBot(bot.accountId);
         }
@@ -805,11 +853,15 @@ async function startupAllWorkspaces(): Promise<void> {
         try {
           const decryptedCookies = decryptCookiesForStartup(acc.cookies || '');
           console.log(`[startupAllWorkspaces] ${acc.zalo_id}: raw prefix="${(acc.cookies || '').substring(0, 20)}" → decrypted prefix="${decryptedCookies.substring(0, 40)}" len=${decryptedCookies.length}`);
-          await loginService.connectUser({
+          const connected = await loginService.connectUser({
             cookies: decryptedCookies,
             imei: acc.imei || '',
             userAgent: acc.user_agent || acc.userAgent || '',
           });
+          if (!connected) {
+            console.warn(`[startupAllWorkspaces] Zalo ${acc.zalo_id} did not connect from workspace "${ws.name}"; its saved session may need to be signed in again.`);
+            continue;
+          }
           connectedZaloIds.add(acc.zalo_id);
           console.log(`[startupAllWorkspaces] Connected Zalo ${acc.zalo_id} from workspace "${ws.name}"`);
         } catch (err: any) {
@@ -830,6 +882,28 @@ async function startupAllWorkspaces(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+  // A resume wakes the Electron main process and background sync services, but
+  // Chromium's requests to Vite can remain suspended. The blank screen in dev
+  // is therefore a renderer recovery problem, not a stopped message listener.
+  powerMonitor.on('suspend', () => {
+    if (isDev) {
+      devRendererSystemSuspended = true;
+      console.log('[main] System suspend detected; monitoring Vite renderer on resume');
+    }
+  });
+  powerMonitor.on('resume', () => {
+    if (!isDev) return;
+    devRendererSystemSuspended = false;
+    if (!devRendererSuspended) {
+      console.log('[main] System resume detected; Vite renderer was healthy, no reload needed');
+      return;
+    }
+    devRendererReloadAttempts = 0;
+    // Let Vite's Node process and Windows loopback socket resume first.
+    console.log('[main] System resume detected; checking Vite renderer in 1500ms');
+    loadDevRenderer(devRendererSuspended ? 'system resume after suspended request' : 'system resume', 1500);
+  });
+
   // ── Register local-media:// protocol handler ───────────────────────────
   // Supports Range requests for video/audio streaming (seeking, partial load)
   protocol.handle('local-media', (request) => {
@@ -883,7 +957,10 @@ app.whenReady().then(async () => {
       }
 
       if (!fs.existsSync(filePath)) {
-        console.warn(`[local-media] NOT FOUND: ${filePath} (original request: ${request.url})`);
+        // A stale DB reference is expected after media cleanup or moving the
+        // storage folder. Return 404 for the renderer fallback without flooding
+        // the Electron log once per visible avatar/message.
+        // console.warn(`[local-media] NOT FOUND: ${filePath} (original request: ${request.url})`);
         return new Response('Not Found', { status: 404 });
       }
 

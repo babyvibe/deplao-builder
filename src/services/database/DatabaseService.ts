@@ -418,7 +418,18 @@ class DatabaseService {
     }
 
     public run(sql: string, params: any[] = []): void {
-        db!.prepare(sql).run(...params);
+        try {
+            db!.prepare(sql).run(...params);
+        } catch (err: any) {
+            // Do not log parameter values: they can contain message text,
+            // tokens, or contact data. Counts still identify missing binds.
+            const placeholderCount = (sql.match(/\?/g) || []).length;
+            Logger.error(
+                `[DatabaseService] Run error: ${err.message} | ` +
+                `placeholders=${placeholderCount} params=${params.length} | SQL: ${sql}`,
+            );
+            throw err;
+        }
     }
 
     /** Execute SQL without flushing to disk - same as run() now (WAL auto-writes) */
@@ -585,7 +596,35 @@ class DatabaseService {
             );
         `);
 
+        // Persistent channel recovery queue. Survives app restart so channels
+        // that were mid-recovery continue draining after relaunch.
+        this.exec(`
+            CREATE TABLE IF NOT EXISTS telegram_channel_recovery_queue (
+                owner_zalo_id TEXT NOT NULL,
+                channel_id TEXT NOT NULL,
+                access_hash TEXT DEFAULT '',
+                pts INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'pending',
+                last_msg_id INTEGER DEFAULT 0,
+                history_start_msg_id INTEGER DEFAULT NULL,
+                retry_at INTEGER DEFAULT 0,
+                attempts INTEGER DEFAULT 0,
+                last_error TEXT DEFAULT '',
+                priority INTEGER DEFAULT 0,
+                created_at INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (owner_zalo_id, channel_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_recovery_queue_status
+                ON telegram_channel_recovery_queue(owner_zalo_id, status, priority DESC, retry_at);
+        `);
+
         // Bot API durable cursor: one row per bot token (hashed).
+        const recoveryColumns = this.query<any>('PRAGMA table_info(telegram_channel_recovery_queue)');
+        if (!recoveryColumns.some(column => column.name === 'history_start_msg_id')) {
+            this.exec('ALTER TABLE telegram_channel_recovery_queue ADD COLUMN history_start_msg_id INTEGER DEFAULT NULL');
+        }
+
         // Prevents replay on restart and ensures exactly one consumer per token.
         this.exec(`
             CREATE TABLE IF NOT EXISTS telegram_bot_cursor (
@@ -1658,21 +1697,34 @@ class DatabaseService {
         // Migration B3 incorrectly used account_id (UUID) as owner_zalo_id.
         // This rewrites them to the real facebook_id so UI queries match.
         try {
+            const migrateFacebookOwner = (fromOwnerId: string, toOwnerId: string) => {
+                // A target owner can already contain the same contact/message.
+                // Preserve both rows when that happens: the target is already
+                // usable and automatic deduplication could discard user data.
+                const contactsFixed = db!.prepare(
+                    `UPDATE OR IGNORE contacts
+                     SET owner_zalo_id = ?
+                     WHERE owner_zalo_id = ? AND channel = 'facebook'`,
+                ).run(toOwnerId, fromOwnerId);
+                const messagesFixed = db!.prepare(
+                    `UPDATE OR IGNORE messages
+                     SET owner_zalo_id = ?
+                     WHERE owner_zalo_id = ? AND channel = 'facebook'`,
+                ).run(toOwnerId, fromOwnerId);
+                return {
+                    contactsFixed: Number(contactsFixed.changes || 0),
+                    messagesFixed: Number(messagesFixed.changes || 0),
+                };
+            };
+
             const fbAccs = this.query<any>(
                 `SELECT id, facebook_id FROM fb_accounts WHERE facebook_id IS NOT NULL AND facebook_id != ''`
             );
             for (const acc of fbAccs) {
                 if (acc.id === acc.facebook_id) continue; // already correct
-                // Fix contacts
-                const contactsFixed = db!.prepare(
-                    `UPDATE contacts SET owner_zalo_id = ? WHERE owner_zalo_id = ? AND channel = 'facebook'`
-                ).run(acc.facebook_id, acc.id);
-                // Fix messages
-                const messagesFixed = db!.prepare(
-                    `UPDATE messages SET owner_zalo_id = ? WHERE owner_zalo_id = ? AND channel = 'facebook'`
-                ).run(acc.facebook_id, acc.id);
-                if ((contactsFixed.changes || 0) > 0 || (messagesFixed.changes || 0) > 0) {
-                    Logger.log(`[DatabaseService] ✅ Migration B5: Rewrote owner_zalo_id ${acc.id} → ${acc.facebook_id} (contacts: ${contactsFixed.changes}, messages: ${messagesFixed.changes})`);
+                const migrated = migrateFacebookOwner(acc.id, acc.facebook_id);
+                if (migrated.contactsFixed > 0 || migrated.messagesFixed > 0) {
+                    Logger.log(`[DatabaseService] ✅ Migration B5: Rewrote owner_zalo_id ${acc.id} → ${acc.facebook_id} (contacts: ${migrated.contactsFixed}, messages: ${migrated.messagesFixed})`);
                 }
             }
             // Also fix any stale UUIDs from previously deleted accounts
@@ -1693,8 +1745,7 @@ class DatabaseService {
                 if (sample?.account_id) {
                     const fbAcc = this.queryOne<any>(`SELECT facebook_id FROM fb_accounts WHERE id = ?`, [sample.account_id]);
                     if (fbAcc?.facebook_id) {
-                        db!.prepare(`UPDATE contacts SET owner_zalo_id = ? WHERE owner_zalo_id = ? AND channel = 'facebook'`).run(fbAcc.facebook_id, sc.owner_zalo_id);
-                        db!.prepare(`UPDATE messages SET owner_zalo_id = ? WHERE owner_zalo_id = ? AND channel = 'facebook'`).run(fbAcc.facebook_id, sc.owner_zalo_id);
+                        migrateFacebookOwner(sc.owner_zalo_id, fbAcc.facebook_id);
                         Logger.log(`[DatabaseService] ✅ Migration B5: Fixed stale UUID ${sc.owner_zalo_id} → ${fbAcc.facebook_id}`);
                     }
                 }
@@ -2702,6 +2753,287 @@ class DatabaseService {
         );
     }
 
+    // ─── Telegram Channel Recovery Queue (persistent) ───────────────────────
+
+    /** Enqueue a channel for post-reconnect recovery. PTS takes the lower of
+     *  existing and new values to avoid missing messages in the gap. */
+    public enqueueChannelRecovery(
+        ownerZaloId: string,
+        channelId: string,
+        accessHash: string,
+        pts: number,
+        priority = 0,
+    ): void {
+        if (!this.initialized || !ownerZaloId || !channelId) return;
+        const now = Date.now();
+        // GramJS exposes `accessHash` as a Long/BigInteger object. SQLite only
+        // accepts primitive bind values, so normalize every queue value at the
+        // persistence boundary rather than trusting each caller to do it.
+        const normalizedAccessHash = accessHash == null ? '' : String(accessHash);
+        const toFiniteNumber = (value: unknown, fallback: number): number => {
+            try {
+                const numeric = Number((value as any)?.valueOf?.() ?? value);
+                return Number.isFinite(numeric) ? numeric : fallback;
+            } catch {
+                return fallback;
+            }
+        };
+        const normalizedPts = Math.max(0, Math.floor(toFiniteNumber(pts, 0)));
+        const normalizedPriority = Math.max(0, Math.floor(toFiniteNumber(priority, 0)));
+        // The final value binds `updated_at = ?` in the conflict-update
+        // branch, in addition to created_at/updated_at used on INSERT.
+        this.run(`
+            INSERT INTO telegram_channel_recovery_queue
+                (owner_zalo_id, channel_id, access_hash, pts, status, priority, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)
+            ON CONFLICT(owner_zalo_id, channel_id) DO UPDATE SET
+                access_hash = CASE WHEN excluded.access_hash != '' THEN excluded.access_hash ELSE telegram_channel_recovery_queue.access_hash END,
+                pts = CASE WHEN excluded.pts > 0 AND (telegram_channel_recovery_queue.pts = 0 OR excluded.pts < telegram_channel_recovery_queue.pts)
+                    THEN excluded.pts ELSE telegram_channel_recovery_queue.pts END,
+                -- A fresh socket PTS gap is authoritative evidence that a
+                -- previously failed recovery must be tried again. Keeping a
+                -- failed row terminal made a supergroup/channel permanently
+                -- ignore every subsequent realtime update.
+                status = CASE WHEN telegram_channel_recovery_queue.status IN ('complete', 'unavailable', 'failed')
+                    THEN 'pending' ELSE telegram_channel_recovery_queue.status END,
+                history_start_msg_id = CASE WHEN telegram_channel_recovery_queue.status IN ('complete', 'unavailable', 'failed')
+                    THEN NULL ELSE telegram_channel_recovery_queue.history_start_msg_id END,
+                priority = CASE WHEN excluded.priority > telegram_channel_recovery_queue.priority
+                    THEN excluded.priority ELSE telegram_channel_recovery_queue.priority END,
+                retry_at = CASE WHEN telegram_channel_recovery_queue.status IN ('complete', 'unavailable', 'failed')
+                    THEN 0 ELSE telegram_channel_recovery_queue.retry_at END,
+                updated_at = ?
+        `, [String(ownerZaloId), String(channelId), normalizedAccessHash, normalizedPts, normalizedPriority, now, now, now]);
+        this.preserveChannelRecoveryHistoryStart(String(ownerZaloId), String(channelId));
+    }
+
+    /** Freeze the history lower bound BEFORE a live message raises MAX(msg_id).
+     * PTS recovery may fall back to history; newest live delivery must not hide
+     * the older missing interval. Zero is a valid frozen first-load boundary. */
+    public preserveChannelRecoveryHistoryStart(ownerZaloId: string, channelId: string): void {
+        if (!this.initialized) return;
+        this.run(`UPDATE telegram_channel_recovery_queue
+            SET history_start_msg_id = (
+                SELECT COALESCE(MAX(CAST(msg_id AS INTEGER)), 0) FROM messages
+                WHERE owner_zalo_id = ? AND thread_id = ? AND channel = 'telegram_user'
+                  AND CAST(msg_id AS INTEGER) BETWEEN 1 AND 2147483647
+            )
+            WHERE owner_zalo_id = ? AND channel_id = ?
+              AND status IN ('pending', 'draining') AND history_start_msg_id IS NULL`,
+            [ownerZaloId, channelId, ownerZaloId, channelId]);
+    }
+
+    /** Dequeue up to `limit` channels ready for recovery (pending + not throttled). */
+    public dequeueChannelRecovery(
+        ownerZaloId: string,
+        limit = 20,
+    ): Array<{ channel_id: string; access_hash: string; pts: number; priority: number; attempts: number }> {
+        if (!this.initialized || !ownerZaloId) return [];
+        const now = Date.now();
+        return this.query<any>(
+            `SELECT queue.channel_id, queue.access_hash, queue.pts, queue.priority, queue.attempts
+             FROM telegram_channel_recovery_queue AS queue
+             LEFT JOIN contacts AS contact
+               ON contact.owner_zalo_id = queue.owner_zalo_id
+              AND contact.contact_id = queue.channel_id
+              AND contact.channel = 'telegram_user'
+             WHERE queue.owner_zalo_id = ?
+               AND queue.status = 'pending'
+               AND (queue.retry_at = 0 OR queue.retry_at <= ?)
+               AND contact.telegram_membership_state = 'member'
+               AND COALESCE(contact.telegram_state_updated_at, 0) > 0
+             ORDER BY
+               -- A live PTS gap is urgent regardless of the folder. Normal
+               -- reconnect work always drains the visible "Tất cả" folder
+               -- before Archived/Khác.
+               CASE WHEN queue.priority >= 1000 THEN 1 ELSE 0 END DESC,
+               CASE WHEN COALESCE(contact.telegram_folder_id, 0) = 0
+                          AND COALESCE(contact.is_in_others, 0) = 0
+                    THEN 1 ELSE 0 END DESC,
+               CASE WHEN COALESCE(contact.unread_count, 0) > 0 THEN 1 ELSE 0 END DESC,
+               COALESCE(contact.last_message_time, 0) DESC,
+               queue.retry_at ASC,
+               queue.created_at ASC
+             LIMIT ?`,
+            [ownerZaloId, now, limit],
+        );
+    }
+
+    /**
+     * Dequeue only recovery work caused by a live channel PTS gap or
+     * UpdateChannelTooLong. Reconnect can have thousands of historical
+     * channels queued; those must never delay a message that arrived while
+     * the application is already online.
+     */
+    public dequeueUrgentChannelRecovery(
+        ownerZaloId: string,
+        limit = 20,
+    ): Array<{ channel_id: string; access_hash: string; pts: number; priority: number; attempts: number }> {
+        if (!this.initialized || !ownerZaloId) return [];
+        const now = Date.now();
+        return this.query<any>(
+            `SELECT queue.channel_id, queue.access_hash, queue.pts, queue.priority, queue.attempts
+             FROM telegram_channel_recovery_queue AS queue
+             INNER JOIN contacts AS contact
+               ON contact.owner_zalo_id = queue.owner_zalo_id
+              AND contact.contact_id = queue.channel_id
+              AND contact.channel = 'telegram_user'
+             WHERE queue.owner_zalo_id = ?
+               AND queue.status = 'pending'
+               AND queue.priority >= 1000
+               AND (queue.retry_at = 0 OR queue.retry_at <= ?)
+               AND contact.telegram_membership_state = 'member'
+               AND COALESCE(contact.telegram_state_updated_at, 0) > 0
+             ORDER BY priority DESC, updated_at ASC, created_at ASC
+             LIMIT ?`,
+            [ownerZaloId, now, limit],
+        );
+    }
+
+    /** Whether a live channel recovery is ready to run. */
+    public hasPendingUrgentChannelRecovery(ownerZaloId: string): boolean {
+        if (!this.initialized || !ownerZaloId) return false;
+        const now = Date.now();
+        return !!this.queryOne<{ pending: number }>(
+            `SELECT 1 AS pending
+             FROM telegram_channel_recovery_queue AS queue
+             INNER JOIN contacts AS contact
+               ON contact.owner_zalo_id = queue.owner_zalo_id
+              AND contact.contact_id = queue.channel_id
+              AND contact.channel = 'telegram_user'
+             WHERE queue.owner_zalo_id = ?
+               AND queue.status = 'pending'
+               AND queue.priority >= 1000
+               AND (queue.retry_at = 0 OR queue.retry_at <= ?)
+               AND contact.telegram_membership_state = 'member'
+               AND COALESCE(contact.telegram_state_updated_at, 0) > 0
+             LIMIT 1`,
+            [ownerZaloId, now],
+        )?.pending;
+    }
+
+    /** Complete a recovery and clear its transient live-priority marker. */
+    public completeChannelRecovery(ownerZaloId: string, channelId: string): void {
+        if (!this.initialized || !ownerZaloId || !channelId) return;
+        this.run(
+            `UPDATE telegram_channel_recovery_queue
+             SET status = 'complete', priority = 0, retry_at = 0,
+                 history_start_msg_id = NULL, last_error = NULL, updated_at = ?
+             WHERE owner_zalo_id = ? AND channel_id = ?`,
+            [Date.now(), ownerZaloId, channelId],
+        );
+    }
+
+    /**
+     * A process crash can leave a leased channel marked draining forever.
+     * Requeue only leases old enough that no in-process worker can still own
+     * them; active workers update the row on every terminal outcome.
+     */
+    public requeueStaleChannelRecoveries(ownerZaloId: string, staleAfterMs = 5 * 60 * 1000): void {
+        if (!this.initialized || !ownerZaloId) return;
+        const now = Date.now();
+        this.run(
+            `UPDATE telegram_channel_recovery_queue
+             SET status = 'pending',
+                 last_error = 'stale_draining_requeued',
+                 updated_at = ?
+             WHERE owner_zalo_id = ?
+               AND status = 'draining'
+               AND updated_at < ?`,
+            [now, ownerZaloId, now - Math.max(1, staleAfterMs)],
+        );
+    }
+
+    /** Update recovery status. Pass retryAt to schedule a delayed retry (flood wait). */
+    public updateChannelRecoveryStatus(
+        ownerZaloId: string,
+        channelId: string,
+        status: 'pending' | 'draining' | 'complete' | 'failed' | 'unavailable',
+        opts?: { retryAt?: number; lastError?: string; lastMsgId?: number; pts?: number },
+    ): void {
+        if (!this.initialized || !ownerZaloId || !channelId) return;
+        const now = Date.now();
+        this.run(`
+            UPDATE telegram_channel_recovery_queue
+            SET status = ?,
+                retry_at = COALESCE(?, retry_at),
+                last_error = COALESCE(?, last_error),
+                last_msg_id = COALESCE(?, last_msg_id),
+                pts = CASE WHEN ? > 0 AND ? > pts THEN ? ELSE pts END,
+                attempts = attempts + 1,
+                updated_at = ?
+            WHERE owner_zalo_id = ? AND channel_id = ?
+        `, [
+            status,
+            opts?.retryAt ?? null,
+            opts?.lastError ?? null,
+            opts?.lastMsgId ?? null,
+            opts?.pts ?? 0, opts?.pts ?? 0, opts?.pts ?? 0,
+            now, ownerZaloId, channelId,
+        ]);
+    }
+
+    /** Get recovery stats for UI progress display. */
+    public getChannelRecoveryStats(ownerZaloId: string): {
+        pending: number; draining: number; complete: number; failed: number; unavailable: number;
+    } {
+        if (!this.initialized || !ownerZaloId) return { pending: 0, draining: 0, complete: 0, failed: 0, unavailable: 0 };
+        const rows = this.query<any>(
+            `SELECT status, COUNT(*) as count FROM telegram_channel_recovery_queue
+             WHERE owner_zalo_id = ? GROUP BY status`,
+            [ownerZaloId],
+        );
+        const stats = { pending: 0, draining: 0, complete: 0, failed: 0, unavailable: 0 };
+        for (const row of rows) {
+            if (row.status in stats) (stats as any)[row.status] = row.count;
+        }
+        return stats;
+    }
+
+    /** Remove completed/unavailable entries older than threshold to prevent unbounded growth. */
+    public cleanupChannelRecoveryQueue(ownerZaloId: string, olderThanMs = 24 * 60 * 60 * 1000): void {
+        if (!this.initialized || !ownerZaloId) return;
+        const cutoff = Date.now() - olderThanMs;
+        this.run(
+            `DELETE FROM telegram_channel_recovery_queue
+             WHERE owner_zalo_id = ?
+               AND status IN ('complete', 'unavailable')
+               AND updated_at < ?`,
+            [ownerZaloId, cutoff],
+        );
+    }
+
+    /** Get channel IDs eligible for background recovery. Old/unjoined channel
+     * history must never repopulate the recovery queue: it creates a flood of
+     * ChannelDifference requests and starves channels the account still uses. */
+    public getTelegramChannelIdsWithMessages(ownerZaloId: string): string[] {
+        if (!this.initialized || !ownerZaloId) return [];
+        return this.query<{ thread_id: string }>(
+            `SELECT DISTINCT message.thread_id
+             FROM messages AS message
+             INNER JOIN contacts AS contact
+               ON contact.owner_zalo_id = message.owner_zalo_id
+              AND contact.contact_id = message.thread_id
+              AND contact.channel = 'telegram_user'
+             WHERE message.owner_zalo_id = ? AND message.channel = 'telegram_user'
+               AND message.thread_id LIKE '-100%'
+               AND contact.telegram_membership_state = 'member'
+               AND COALESCE(contact.telegram_state_updated_at, 0) > 0
+             UNION
+             SELECT cursor.channel_id AS thread_id
+             FROM telegram_channel_pts AS cursor
+             INNER JOIN contacts AS contact
+               ON contact.owner_zalo_id = cursor.owner_zalo_id
+              AND contact.contact_id = cursor.channel_id
+              AND contact.channel = 'telegram_user'
+             WHERE cursor.owner_zalo_id = ?
+               AND contact.telegram_membership_state = 'member'
+               AND COALESCE(contact.telegram_state_updated_at, 0) > 0`,
+            [ownerZaloId, ownerZaloId],
+        ).map(r => r.thread_id);
+    }
+
+
     // ─── Telegram Bot durable cursor ────────────────────────────────────────
 
     public getBotCursor(tokenHash: string): number {
@@ -2807,6 +3139,7 @@ class DatabaseService {
         this.run('DELETE FROM telegram_peers WHERE owner_zalo_id = ?', [zaloId]);
         this.run('DELETE FROM telegram_update_state WHERE owner_zalo_id = ?', [zaloId]);
         this.run('DELETE FROM telegram_channel_pts WHERE owner_zalo_id = ?', [zaloId]);
+        this.run('DELETE FROM telegram_channel_recovery_queue WHERE owner_zalo_id = ?', [zaloId]);
         this.run('DELETE FROM links WHERE owner_zalo_id = ?', [zaloId]);
         this.run('DELETE FROM friend_requests WHERE owner_zalo_id = ?', [zaloId]);
         this.run('DELETE FROM pinned_messages WHERE owner_zalo_id = ?', [zaloId]);
@@ -4409,15 +4742,26 @@ class DatabaseService {
 
     public getMessageById(ownerZaloId: string, msgId: string, threadId?: string): Message | undefined {
         if (!this.initialized || !msgId) return undefined;
+        // Zalo TQuote points at globalMsgId.  Media events may have been
+        // persisted with a distinct cli_msg_id, while ordinary text commonly
+        // has both IDs equal.  Match both identifiers, always preferring the
+        // canonical msg_id and keeping the lookup thread-scoped where known.
         if (threadId) {
             return this.queryOne<Message>(
-                'SELECT * FROM messages WHERE owner_zalo_id = ? AND thread_id = ? AND msg_id = ?',
-                [ownerZaloId, threadId, String(msgId)]
+                `SELECT * FROM messages
+                 WHERE owner_zalo_id = ? AND thread_id = ?
+                   AND (msg_id = ? OR cli_msg_id = ?)
+                 ORDER BY CASE WHEN msg_id = ? THEN 0 ELSE 1 END
+                 LIMIT 1`,
+                [ownerZaloId, threadId, String(msgId), String(msgId), String(msgId)]
             );
         }
         return this.queryOne<Message>(
-            'SELECT * FROM messages WHERE owner_zalo_id = ? AND msg_id = ?',
-            [ownerZaloId, String(msgId)]
+            `SELECT * FROM messages
+             WHERE owner_zalo_id = ? AND (msg_id = ? OR cli_msg_id = ?)
+             ORDER BY CASE WHEN msg_id = ? THEN 0 ELSE 1 END
+             LIMIT 1`,
+            [ownerZaloId, String(msgId), String(msgId), String(msgId)]
         );
     }
 
@@ -4675,7 +5019,9 @@ class DatabaseService {
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
         ).run(ownerZaloId, groupId, member.memberId, member.displayName || '', member.avatar || '', member.role || 0, member.username || '', Date.now());
         this.save();
-        Logger.log(`[DB] Upserted member ${member.memberId} role=${member.role} in group ${groupId}`);
+        // Individual member hydration is expected during Telegram catch-up;
+        // emitting one line per member makes the Electron log unusable.
+        // Logger.log(`[DB] Upserted member ${member.memberId} role=${member.role} in group ${groupId}`);
     }
 
     /** Remove a SINGLE group member from DB */
@@ -4960,6 +5306,9 @@ class DatabaseService {
         msgId: string; msgType: string; content: string;
         previewText: string; previewImage: string;
         senderId: string; senderName: string; timestamp: number;
+        /** Remote channels can provide the message time, which is the only
+         * stable ordering field when their API does not expose pin time. */
+        pinnedAt?: number;
     }): void {
         if (!this.initialized) return;
         this.run(
@@ -4968,7 +5317,7 @@ class DatabaseService {
              VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
             [ownerZaloId, threadId, pin.msgId, pin.msgType, pin.content,
              pin.previewText, pin.previewImage, pin.senderId, pin.senderName,
-             pin.timestamp, Date.now()]
+             pin.timestamp, pin.pinnedAt || Date.now()]
         );
     }
 
@@ -4976,7 +5325,7 @@ class DatabaseService {
     public replaceRemotePinnedMessages(ownerZaloId: string, threadId: string, pins: Array<{
         msgId: string; msgType: string; content: string;
         previewText: string; previewImage: string;
-        senderId: string; senderName: string; timestamp: number;
+        senderId: string; senderName: string; timestamp: number; pinnedAt?: number;
     }>): void {
         if (!this.initialized) return;
         this.transaction(() => {

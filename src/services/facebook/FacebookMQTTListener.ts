@@ -276,7 +276,8 @@ export class FacebookMQTTListener extends EventEmitter {
         }
 
         const text = payload.toString('utf8');
-        Logger.log(`[FBMqtt:${this.accountId}] msg on ${topic}: ${text.slice(0, 200)}`);
+        // Phase 8: Log topic only — payload may contain message content
+        Logger.log(`[FBMqtt:${this.accountId}] msg on ${topic} (${text.length} bytes)`);
         const j = JSON.parse(text);
         this.handleMQTTMessage(j);
       } catch {
@@ -524,7 +525,8 @@ export class FacebookMQTTListener extends EventEmitter {
 
     // ─── 4. Deltas requiring messageMetadata ─────────────────────────────────
     if (!delta?.messageMetadata) {
-      Logger.log(`[FBMqtt:${this.accountId}] Unhandled delta: ${JSON.stringify(delta).slice(0, 200)}`);
+      // Phase 8: Log delta type only — may contain message content
+      Logger.log(`[FBMqtt:${this.accountId}] Unhandled delta: ${delta?.operation || delta?.type || 'unknown'}`);
       return;
     }
 
@@ -631,7 +633,7 @@ export class FacebookMQTTListener extends EventEmitter {
         if (typename === 'Sticker') {
           attachmentType = 'sticker';
           url = sticker?.url || sticker?.preview_image?.uri || sticker?.image?.uri || att?.url || null;
-          Logger.log(`[FBMqtt:${this.accountId}] [STICKER] parsed sticker: attId=${att.id || att.fbid} stickerId=${stickerId} url=${url?.slice(0,100)}`);
+          Logger.log(`[FBMqtt:${this.accountId}] [STICKER] parsed sticker: attId=${att.id || att.fbid} stickerId=${stickerId}`);
         } else if (typename === 'MessagePhoto' || typename === 'MessageAnimatedImage' || typename === 'MessageImage') {
           attachmentType = 'image';
           // MessageAnimatedImage (GIF) typically has animated_image.uri or original_image.uri
@@ -692,7 +694,7 @@ export class FacebookMQTTListener extends EventEmitter {
     };
 
     if ('attachmentType' in primaryAtt && (primaryAtt as any).attachmentType === 'sticker') {
-      Logger.log(`[FBMqtt:${this.accountId}] [STICKER] emitting message: msgId=${msg.messageID} threadId=${replyToID} userId=${msg.userID} url=${((primaryAtt as any).url || '').slice(0,100)}`);
+      Logger.log(`[FBMqtt:${this.accountId}] [STICKER] emitting message: msgId=${msg.messageID} threadId=${replyToID} userId=${msg.userID}`);
     }
 
     this.emit('message', msg);

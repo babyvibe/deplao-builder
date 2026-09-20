@@ -297,7 +297,9 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
       setEdges(wf.edges.map((e: any) => ({
         ...e, type: 'custom',
         markerEnd: { type: MarkerType.ArrowClosed },
-        style: { stroke: '#4b5563' },
+        style: e.data?.telegramInline
+          ? { stroke: '#8b5cf6', strokeWidth: 2, strokeDasharray: '6 4' }
+          : { stroke: '#4b5563' },
       })));
       setLoadingEditor(false);
     }).catch(() => setLoadingEditor(false));
@@ -336,6 +338,30 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
     if (selectedNode?.id === nodeId) setSelectedNode((p: any) => ({ ...p, config }));
   };
 
+  /**
+   * Inline Telegram Bot buttons are callback-only routes. Keep a dashed edge on
+   * the canvas for documentation, but mark it so ordinary workflow execution
+   * never follows it before a user actually presses the button.
+   */
+  const updateTelegramInlineRoutes = (sourceId: string, targetNodeIds: string[]) => {
+    const uniqueTargets = Array.from(new Set(targetNodeIds)).filter(Boolean);
+    setEdges(current => {
+      const retained = current.filter(edge => !(edge.source === sourceId && edge.data?.telegramInline));
+      const routes = uniqueTargets.map(target => ({
+        id: `telegram-inline:${sourceId}:${target}`,
+        source: sourceId,
+        target,
+        sourceHandle: 'default',
+        targetHandle: 'default',
+        data: { telegramInline: true },
+        type: 'custom',
+        markerEnd: { type: MarkerType.ArrowClosed },
+        style: { stroke: '#8b5cf6', strokeWidth: 2, strokeDasharray: '6 4' },
+      }));
+      return [...retained, ...routes];
+    });
+  };
+
   const updateNodeLabel = (nodeId: string, label: string) => {
     setNodes(ns => ns.map(n => n.id === nodeId ? { ...n, data: { ...n.data, label } } : n));
     if (selectedNode?.id === nodeId) setSelectedNode((p: any) => ({ ...p, label }));
@@ -351,7 +377,7 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
     nodes: nodes.map(n => ({
       id: n.id, type: n.data.type, label: n.data.label, position: n.position, config: n.data.config,
     })),
-    edges: edges.map(e => ({ id: e.id, source: e.source, sourceHandle: e.sourceHandle, target: e.target })),
+    edges: edges.map(e => ({ id: e.id, source: e.source, sourceHandle: e.sourceHandle, target: e.target, data: e.data })),
   });
 
   const handleSave = async () => {
@@ -724,6 +750,7 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
             workflowId={workflowId}
             onConfigChange={cfg => updateNodeConfig(selectedNode.id, cfg)}
             onLabelChange={label => updateNodeLabel(selectedNode.id, label)}
+            onInlineRoutesChange={targets => updateTelegramInlineRoutes(selectedNode.id, targets)}
             onClose={() => setSelectedNode(null)}
           />
         )}
@@ -753,4 +780,3 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
     </div>
   );
 }
-

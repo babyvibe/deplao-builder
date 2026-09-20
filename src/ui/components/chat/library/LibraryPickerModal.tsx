@@ -18,7 +18,7 @@
  * - Folder sidebar bên trái, file name editing khi hover
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import ipc from '../../../lib/ipc';
 import * as channelIpc from '../../../lib/channelIpc';
 import DataAccessor, { refreshLibraryCache } from '../../../lib/data/DataAccessor';
@@ -26,7 +26,8 @@ import { useChatStore } from '@/store/chatStore';
 import { useAccountStore } from '@/store/accountStore';
 import { messageQueue, generateTempId, extractMsgIdFromResponse } from '@/lib/MessageQueue';
 import { toLocalMediaUrl } from '@/lib/localMedia';
-import { isNonZalo, isTelegramUser, isTelegramBot, CHANNEL } from '@/lib/channelHelper';
+import { isNonZalo, CHANNEL, isZalo, isTelegram, isFacebook } from '@/lib/channelHelper';
+import ChannelBadge from '@/components/common/ChannelBadge';
 import { CloseIcon, EditIcon, FolderIcon, ImageIcon, MonitorIcon, RefreshIcon, SendIcon, StarIcon, TrashIcon } from '@/components/common/icons';
 
 interface LibraryItem {
@@ -52,6 +53,7 @@ interface LibraryFolder {
   name: string;
   parent_id: number | null;
   color: string;
+  owner_zalo_id: string;
   item_count?: number;
 }
 
@@ -75,6 +77,14 @@ const TYPE_LABELS: Record<MediaType, string> = {
 export default function LibraryPickerModal({
   zaloId, threadId, threadType, initialType = 'all', onClose,
 }: Props) {
+  const accounts = useAccountStore(state => state.accounts);
+  const libraryAccounts = useMemo(() => Array.from(new Map(
+    accounts.filter(account => !!account.zalo_id).map(account => [account.zalo_id, account]),
+  ).values()), [accounts]);
+  const [libraryScope, setLibraryScope] = useState<string>(() => {
+    try { return window.localStorage.getItem('deplao:library-scope:v1') || zaloId; }
+    catch { return zaloId; }
+  });
   const [items, setItems] = useState<LibraryItem[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
@@ -94,7 +104,7 @@ export default function LibraryPickerModal({
   const [editingValue, setEditingValue] = useState('');
 
   // Folder creation / rename inline
-  const [folderInput, setFolderInput] = useState<{ mode: 'create' | 'rename'; id?: number; value: string } | null>(null);
+  const [folderInput, setFolderInput] = useState<{ mode: 'create' | 'rename'; id?: number; ownerId?: string; value: string } | null>(null);
 
   // Context menu (⋯) cho item actions — dùng fixed position để tránh overflow clipping
   const [menuTarget, setMenuTarget] = useState<string | null>(null);
@@ -106,6 +116,7 @@ export default function LibraryPickerModal({
   const closeMenus = useCallback(() => {
     setMenuTarget(null); setMenuPos(null);
     setMoveFolderTarget(null); setFolderPos(null);
+    setScopeDropdownOpen(false);
   }, []);
 
   const handleMenuClick = useCallback((e: React.MouseEvent, uuid: string) => {
@@ -119,22 +130,75 @@ export default function LibraryPickerModal({
 
   // Drag & drop upload
   const [isDragOver, setIsDragOver] = useState(false);
+  // Library scope dropdown
+  const [scopeDropdownOpen, setScopeDropdownOpen] = useState(false);
+  const scopeDropdownRef = useRef<HTMLDivElement>(null);
 
   const gridRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const directInputRef = useRef<HTMLInputElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
 
+  // `owner_zalo_id` là tên cột cũ nhưng dùng làm ID thư viện cho mọi kênh.
+  // Tất cả chỉ hợp nhất kết quả đọc; mỗi media/folder vẫn thuộc một account cụ thể.
+  const scopedOwnerIds = useMemo(() => (
+    libraryScope === 'all'
+      ? libraryAccounts.map(account => account.zalo_id)
+      : [libraryScope]
+  ), [libraryAccounts, libraryScope]);
+  const uploadOwnerId = libraryScope === 'all' ? zaloId : libraryScope;
+  const uploadOwnerLabel = libraryAccounts.find(account => account.zalo_id === uploadOwnerId)?.display_name
+    || libraryAccounts.find(account => account.zalo_id === uploadOwnerId)?.full_name
+    || 'trang đang mở';
+  const uploadFolderId = useMemo(() => {
+    if (!activeFolderId || activeFolderId < 0) return null;
+    return folders.find(folder => folder.id === activeFolderId && folder.owner_zalo_id === uploadOwnerId)
+      ? activeFolderId
+      : null;
+  }, [activeFolderId, folders, uploadOwnerId]);
+
+  const changeLibraryScope = useCallback((nextScope: string) => {
+    setLibraryScope(nextScope);
+    setActiveFolderId(undefined as any);
+    setSelected(new Set());
+    setPage(1);
+    try { window.localStorage.setItem('deplao:library-scope:v1', nextScope); } catch {}
+  }, []);
+
+  // Lựa chọn cache có thể trỏ tới trang đã bị xoá / workspace khác.
+  useEffect(() => {
+    if (!libraryAccounts.length || libraryScope === 'all') return;
+    if (!libraryAccounts.some(account => account.zalo_id === libraryScope)) {
+      changeLibraryScope(zaloId);
+    }
+  }, [changeLibraryScope, libraryAccounts, libraryScope, zaloId]);
+
+  // Close scope dropdown on outside click
+  useEffect(() => {
+    if (!scopeDropdownOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (scopeDropdownRef.current && !scopeDropdownRef.current.contains(e.target as Node)) {
+        setScopeDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [scopeDropdownOpen]);
+
   // ── Load folders (lọc theo type) ───────────────────────────
 
   const loadFolders = useCallback(async () => {
     try {
-      const result = await DataAccessor.getLibraryFolders({ zaloId, type: initialType === 'all' ? undefined : initialType });
+      const result = await DataAccessor.getLibraryFolders({
+        zaloId,
+        ownerZaloIds: scopedOwnerIds,
+        type: initialType === 'all' ? undefined : initialType,
+      });
       if (result.success) {
         setFolders(result.items || []);
       }
     } catch {}
-  }, [zaloId, initialType]);
+  }, [zaloId, initialType, scopedOwnerIds]);
 
   useEffect(() => { loadFolders(); }, [loadFolders]);
 
@@ -145,6 +209,7 @@ export default function LibraryPickerModal({
     try {
       const result = await DataAccessor.getLibraryItems({
         zaloId,
+        ownerZaloIds: scopedOwnerIds,
         type: initialType === 'all' ? '' : initialType,
         page: pageNum,
         limit: 50,
@@ -170,12 +235,12 @@ export default function LibraryPickerModal({
       }
     } catch {}
     setLoading(false);
-  }, [zaloId, initialType, search, activeFolderId]);
+  }, [zaloId, scopedOwnerIds, initialType, search, activeFolderId]);
 
   useEffect(() => {
     setPage(1);
     loadItems(1);
-  }, [search, activeFolderId]);
+  }, [search, activeFolderId, loadItems]);
 
   const handleLoadMore = () => {
     const next = page + 1;
@@ -229,11 +294,13 @@ export default function LibraryPickerModal({
   // ── Folder CRUD ─────────────────────────────────────────────
 
   const handleCreateFolder = (parentId?: number) => {
-    setFolderInput({ mode: 'create', value: '', id: parentId });
+    const parent = parentId ? folders.find(folder => folder.id === parentId) : undefined;
+    setFolderInput({ mode: 'create', value: '', id: parentId, ownerId: parent?.owner_zalo_id || uploadOwnerId });
   };
 
   const handleAddChildFolder = (parentId: number) => {
-    setFolderInput({ mode: 'create', value: '', id: parentId });
+    const parent = folders.find(folder => folder.id === parentId);
+    setFolderInput({ mode: 'create', value: '', id: parentId, ownerId: parent?.owner_zalo_id || uploadOwnerId });
     setShowFolderMenu(null);
   };
 
@@ -249,9 +316,11 @@ export default function LibraryPickerModal({
     try {
       let res;
       if (folderInput.mode === 'create') {
-        const parentId = folderInput.id ?? activeFolderId ?? null;
+        const activeFolder = folders.find(folder => folder.id === activeFolderId);
+        const folderOwnerId = folderInput.ownerId || activeFolder?.owner_zalo_id || uploadOwnerId;
+        const parentId = folderInput.id ?? (activeFolder?.owner_zalo_id === folderOwnerId ? activeFolderId : null);
         const folderType = initialType === 'all' ? undefined : initialType;
-        res = await DataAccessor.createLibraryFolder({ zaloId, name, parentId, color: '#6366f1', type: folderType });
+        res = await DataAccessor.createLibraryFolder({ zaloId: folderOwnerId, name, parentId, color: '#6366f1', type: folderType });
       } else if (folderInput.mode === 'rename' && folderInput.id) {
         res = await DataAccessor.renameLibraryFolder(folderInput.id, name);
       }
@@ -289,6 +358,13 @@ export default function LibraryPickerModal({
   // ── Move item to folder ─────────────────────────────────────
 
   const handleMoveToFolder = async (itemUuid: string, newFolderId: number | null) => {
+    const item = items.find(value => value.uuid === itemUuid);
+    const targetFolder = newFolderId === null ? null : folders.find(folder => folder.id === newFolderId);
+    if (!item || (targetFolder && targetFolder.owner_zalo_id !== item.owner_zalo_id)) {
+      console.warn('[Library] Cannot move media between page libraries');
+      closeMenus();
+      return;
+    }
     const res = await DataAccessor.updateLibraryItem(itemUuid, { folderId: newFolderId });
     if (res.success) {
       setItems(prev => {
@@ -347,7 +423,7 @@ export default function LibraryPickerModal({
     try {
       const base64 = await fileToBase64(file);
       const result = await DataAccessor.uploadToLibrary({
-        zaloId, fileName: file.name, mimeType: file.type, base64,
+        zaloId: uploadOwnerId, fileName: file.name, mimeType: file.type, base64, folderId: uploadFolderId,
       });
       if (result.success && result.data) {
         setSelected(prev => new Set(prev).add(result.data.uuid));
@@ -359,16 +435,26 @@ export default function LibraryPickerModal({
       console.warn('[Library] drop upload error:', err);
     }
     setUploading(false);
-  }, [zaloId, loadItems, loadFolders]);
+  }, [uploadOwnerId, uploadFolderId, loadItems, loadFolders]);
 
   // ── Send ────────────────────────────────────────────────────
+
+  // `activeAccountId` is `zalo_id` for some accounts and `facebook_id` for
+  // others. Looking up only zalo_id makes a Facebook target appear missing and
+  // silently falls back to CHANNEL.ZALO, so media from the library is sent to
+  // the Zalo IPC with a Facebook conversation ID.
+  const getTargetAccount = () => useAccountStore.getState().accounts.find(
+    account => account.zalo_id === zaloId || account.facebook_id === zaloId,
+  );
+  const getTargetChannel = () => (getTargetAccount()?.channel || CHANNEL.ZALO) as
+    'zalo' | 'facebook' | 'telegram_bot' | 'telegram_user';
 
   /** Lấy auth object từ account hiện tại */
   const getAuthForZaloId = async (): Promise<any> => {
     try {
       const res = await ipc.login?.getAccounts();
       if (res?.success && res.accounts) {
-        const acc = res.accounts.find((a: any) => a.zalo_id === zaloId);
+        const acc = res.accounts.find((a: any) => a.zalo_id === zaloId || a.facebook_id === zaloId);
         if (acc?.cookies) return { cookies: acc.cookies, imei: acc.imei || '', userAgent: acc.user_agent || '' };
       }
     } catch {}
@@ -383,11 +469,9 @@ export default function LibraryPickerModal({
 
   const sendItem = async (item: any) => {
     console.log('[Library] sendItem:', { uuid: item.uuid, type: item.type, hasLocalPath: !!item._localPath, localPath: item._localPath, fileUrl: item.fileUrl, zaloId, threadId });
-    const auth = await getAuthForZaloId();
-    const account = useAccountStore.getState().accounts.find(a => a.zalo_id === zaloId);
-    const channel = (account as any)?.channel || CHANNEL.ZALO;
-    const isTg = isTelegramUser(channel) || isTelegramBot(channel);
-    console.log('[Library] sendItem auth:', auth ? 'found' : 'null', 'channel:', channel);
+    const channel = getTargetChannel();
+    const isNonZaloChannel = isNonZalo(channel);
+    console.log('[Library] sendItem channel:', channel);
 
     try {
       const filePath = item._localPath || '';
@@ -396,17 +480,21 @@ export default function LibraryPickerModal({
         return;
       }
 
-      // Telegram channels: use channelIpc
-      if (isTg) {
+      // Every non-Zalo channel (Facebook included) must go through its adapter.
+      if (isNonZaloChannel) {
         if (item.type === 'video') {
           await channelIpc.sendVideo(channel, { accountId: zaloId, threadId, threadType, filePath });
         } else {
-          await channelIpc.sendAttachment(channel, { accountId: zaloId, threadId, threadType, filePath, body: '' });
+          await channelIpc.sendAttachment(channel, {
+            accountId: zaloId, threadId, threadType, filePath, body: '',
+            fileType: item.type === 'image' ? 'image' : 'file',
+          });
         }
         return;
       }
 
       // Zalo: existing flow
+      const auth = await getAuthForZaloId();
       if (item.type === "video") {
         // Video: cần 3-step upload (uploadVideoThumb → uploadVideoFile → sendVideo)
         const metaRes: any = await ipc.file?.getVideoMeta?.({ filePath }).catch(() => ({})) || {};
@@ -448,9 +536,8 @@ export default function LibraryPickerModal({
     if (imageItems.length > 0) {
       const batchTempId = generateTempId();
       const previewPaths = imageItems.map(i => i._localPath || i.fileUrl || '').filter(Boolean);
-      const account = useAccountStore.getState().accounts.find(a => a.zalo_id === zaloId);
-      const channel = ((account as any)?.channel || CHANNEL.ZALO) as 'zalo' | 'facebook' | 'telegram_bot' | 'telegram_user';
-      const isTg = isTelegramUser(channel) || isTelegramBot(channel);
+      const channel = getTargetChannel();
+      const isNonZaloChannel = isNonZalo(channel);
 
       addMessage(zaloId, threadId, {
         msg_id: batchTempId, owner_zalo_id: zaloId, thread_id: threadId,
@@ -460,19 +547,21 @@ export default function LibraryPickerModal({
         attachments: JSON.stringify(previewPaths.map(fp => ({ type: 'image', localPath: fp }))),
         local_paths: JSON.stringify(previewPaths.reduce((acc, fp, i) => ({ ...acc, [`img${i}`]: fp }), {})),
       });
-      const auth = await getAuthForZaloId();
+      const auth = isNonZaloChannel ? null : await getAuthForZaloId();
       const hasLocalPath = imageItems.every(i => i._localPath);
       messageQueue.enqueue({
         tempId: batchTempId, zaloId, threadId, threadType, channel,
         sendFn: async () => {
           try {
-            // Telegram: send each image via channelIpc
-            if (isTg) {
+            // Every non-Zalo channel sends each image through its adapter.
+            if (isNonZaloChannel) {
               let lastMsgId = '';
               for (const item of imageItems) {
                 const fp = item._localPath || '';
                 if (!fp) continue;
-                const res = await channelIpc.sendAttachment(channel, { accountId: zaloId, threadId, threadType, filePath: fp, body: '' });
+                const res = await channelIpc.sendAttachment(channel, {
+                  accountId: zaloId, threadId, threadType, filePath: fp, body: '', fileType: 'image',
+                });
                 if (res?.messageId) lastMsgId = res.messageId;
               }
               return { success: true, msgId: lastMsgId };
@@ -509,9 +598,8 @@ export default function LibraryPickerModal({
     for (const item of [...videoItems, ...fileItems]) {
       const tempId = generateTempId();
       const previewPath = item._localPath || item.fileUrl || '';
-      const itemAccount = useAccountStore.getState().accounts.find(a => a.zalo_id === zaloId);
-      const itemChannel = ((itemAccount as any)?.channel || CHANNEL.ZALO) as 'zalo' | 'facebook' | 'telegram_bot' | 'telegram_user';
-      const itemIsTg = isTelegramUser(itemChannel) || isTelegramBot(itemChannel);
+      const itemChannel = getTargetChannel();
+      const itemIsNonZalo = isNonZalo(itemChannel);
 
       addMessage(zaloId, threadId, {
         msg_id: tempId, owner_zalo_id: zaloId, thread_id: threadId,
@@ -524,15 +612,17 @@ export default function LibraryPickerModal({
         tempId, zaloId, threadId, threadType, channel: itemChannel,
         sendFn: async () => {
           try {
-            // Telegram: use channelIpc
-            if (itemIsTg) {
+            // Every non-Zalo channel uses its adapter, including Facebook.
+            if (itemIsNonZalo) {
               const fp = item._localPath || '';
               if (!fp) return { success: false, error: 'No local file path' };
               if (item.type === 'video') {
                 const res = await channelIpc.sendVideo(itemChannel, { accountId: zaloId, threadId, threadType, filePath: fp });
                 return { success: true, ...(res as any) };
               } else {
-                const res = await channelIpc.sendAttachment(itemChannel, { accountId: zaloId, threadId, threadType, filePath: fp, body: '' });
+                const res = await channelIpc.sendAttachment(itemChannel, {
+                  accountId: zaloId, threadId, threadType, filePath: fp, body: '', fileType: 'file',
+                });
                 return { success: true, ...(res as any) };
               }
             }
@@ -581,7 +671,7 @@ export default function LibraryPickerModal({
         const file = files[i];
         const base64 = await fileToBase64(file);
         const result = await DataAccessor.uploadToLibrary({
-          zaloId, fileName: file.name, mimeType: file.type, base64,
+          zaloId: uploadOwnerId, fileName: file.name, mimeType: file.type, base64, folderId: uploadFolderId,
         });
         if (result.success && result.data) {
           setSelected(prev => new Set(prev).add(result.data.uuid));
@@ -600,10 +690,9 @@ export default function LibraryPickerModal({
     if (!files || files.length === 0) return;
     setUploading(true);
     try {
-      const auth = await getAuthForZaloId();
-      const account = useAccountStore.getState().accounts.find(a => a.zalo_id === zaloId);
-      const channel = ((account as any)?.channel || CHANNEL.ZALO) as any;
-      const isTg = isTelegramUser(channel) || isTelegramBot(channel);
+      const channel = getTargetChannel();
+      const isNonZaloChannel = isNonZalo(channel);
+      const auth = isNonZaloChannel ? null : await getAuthForZaloId();
 
       const imagePaths: string[] = [];
       const videoPromises: Promise<void>[] = [];
@@ -621,12 +710,15 @@ export default function LibraryPickerModal({
         }
         const filePath = saveRes.filePath;
 
-        if (isTg) {
-          // Telegram: send all files via channelIpc
+        if (isNonZaloChannel) {
+          // Facebook and Telegram: send all files via their adapter
           if (file.type.startsWith('video/')) {
             videoPromises.push(channelIpc.sendVideo(channel, { accountId: zaloId, threadId, threadType, filePath }).then(() => {}));
           } else {
-            filePromises.push(channelIpc.sendAttachment(channel, { accountId: zaloId, threadId, threadType, filePath, body: '' }).then(() => {}));
+            filePromises.push(channelIpc.sendAttachment(channel, {
+              accountId: zaloId, threadId, threadType, filePath, body: '',
+              fileType: file.type.startsWith('image/') ? 'image' : 'file',
+            }).then(() => {}));
           }
         } else {
           // Zalo: existing flow
@@ -651,20 +743,13 @@ export default function LibraryPickerModal({
       }
 
       // Phase 2: send images in batch (Zalo only)
-      if (!isTg && imagePaths.length > 0) {
+      if (!isNonZaloChannel && imagePaths.length > 0) {
         if (imagePaths.length === 1) {
           await ipc.zalo.sendImage({ auth: auth || {}, zaloId, threadId, threadType, filePath: imagePaths[0] });
         } else {
           await ipc.zalo.sendImages({ auth: auth || {}, zaloId, threadId, type: threadType, filePaths: imagePaths });
         }
       }
-      // Telegram: send images one by one
-      if (isTg && imagePaths.length > 0) {
-        for (const fp of imagePaths) {
-          await channelIpc.sendAttachment(channel, { accountId: zaloId, threadId, threadType, filePath: fp, body: '' });
-        }
-      }
-
       // Phase 3: send videos and files concurrently (each is independent)
       await Promise.all([...videoPromises, ...filePromises]);
     } catch (err) {
@@ -712,6 +797,13 @@ export default function LibraryPickerModal({
         <span onClick={() => setActiveFolderId(activeFolderId === folder.id ? undefined as any : folder.id)} className="flex items-center gap-2 flex-1 min-w-0">
           <span><FolderIcon className="w-4 h-4" /></span>
           <span className="truncate">{folder.name}</span>
+          {libraryScope === 'all' && (
+            <span className="text-[9px] text-gray-500 truncate max-w-20">
+              {libraryAccounts.find(account => account.zalo_id === folder.owner_zalo_id)?.display_name
+                || libraryAccounts.find(account => account.zalo_id === folder.owner_zalo_id)?.full_name
+                || 'Trang'}
+            </span>
+          )}
           <span className="text-[10px] mb-2">{folder.item_count || 0}</span>
         </span>
 
@@ -741,6 +833,8 @@ export default function LibraryPickerModal({
 
   /** Render item in folder picker dropdown (flat tree) */
   const renderFolderPickerItem = (folder: LibraryFolder, itemUuid: string, depth = 0): React.ReactNode => {
+    const item = items.find(value => value.uuid === itemUuid);
+    if (item && folder.owner_zalo_id !== item.owner_zalo_id) return null;
     const children = childFolders(folder.id);
     return (
       <React.Fragment key={folder.id}>
@@ -814,10 +908,104 @@ export default function LibraryPickerModal({
 
           {/* ─── Right content (70%) ─── */}
           <div className="w-3/4 flex flex-col">
-            <div className="px-4 py-2 border-b border-gray-700/50">
+            <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-700/50">
+              {/* Library scope dropdown */}
+              <div className="relative shrink-0" ref={scopeDropdownRef}>
+                <button
+                  onClick={() => setScopeDropdownOpen(p => !p)}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-gray-700 border border-gray-600 rounded-lg text-sm text-left hover:border-gray-500 transition-colors min-w-[160px] max-w-[200px]"
+                  title="Chọn phạm vi thư viện"
+                >
+                  {libraryScope === 'all' ? (
+                    <>
+                      <span className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0 text-white-important">★</span>
+                      <span className="text-gray-200 truncate">Tất cả trang</span>
+                    </>
+                  ) : (() => {
+                    const acc = libraryAccounts.find(a => a.zalo_id === libraryScope);
+                    return acc ? (
+                      <>
+                        <div className="relative flex-shrink-0">
+                          <div className="w-6 h-6 rounded-full overflow-hidden ring-1 ring-white/10">
+                            {acc.avatar_url ? (
+                              <img src={acc.avatar_url} alt="" className="w-full h-full object-cover"
+                                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                            ) : (
+                              <div className="w-full h-6 bg-blue-600 flex items-center justify-center text-white font-bold text-[10px]">
+                                {(acc.display_name || acc.full_name || '?').charAt(0).toUpperCase()}
+                              </div>
+                            )}
+                          </div>
+                          <div className="absolute -top-0.5 -left-0.5 z-10 pointer-events-none scale-[0.6]">
+                            <ChannelBadge channel={(acc.channel as any) || CHANNEL.ZALO} size="sm" />
+                          </div>
+                        </div>
+                        <span className="text-gray-200 truncate">{acc.display_name || acc.full_name || acc.zalo_id}</span>
+                      </>
+                    ) : (
+                      <span className="text-gray-500">Chọn trang...</span>
+                    );
+                  })()}
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`ml-auto flex-shrink-0 text-gray-400 transition-transform ${scopeDropdownOpen ? 'rotate-180' : ''}`}>
+                    <polyline points="6 9 12 15 18 9"/>
+                  </svg>
+                </button>
+                {scopeDropdownOpen && (
+                  <div className="absolute left-0 top-full mt-1 bg-gray-700 border border-gray-600 rounded-xl shadow-2xl z-50 overflow-hidden min-w-[200px] max-h-[280px] overflow-y-auto">
+                    {/* Tất cả trang */}
+                    <button
+                      onClick={() => { changeLibraryScope('all'); setScopeDropdownOpen(false); }}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 transition-colors ${libraryScope === 'all' ? 'bg-blue-500/10' : 'hover:bg-gray-600'}`}
+                    >
+                      <span className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0 text-white-important">★</span>
+                      <div className="flex-1 min-w-0 text-left">
+                        <span className="text-sm text-gray-200 block">Tất cả trang</span>
+                        <span className="text-[10px] text-gray-400 block">{libraryAccounts.length} trang</span>
+                      </div>
+                      {libraryScope === 'all' && (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2.5" className="flex-shrink-0"><polyline points="20 6 9 17 4 12"/></svg>
+                      )}
+                    </button>
+                    <div className="border-t border-gray-600/50" />
+                    {/* Individual accounts */}
+                    {libraryAccounts.map(acc => {
+                      const isChecked = libraryScope === acc.zalo_id;
+                      return (
+                        <button key={acc.zalo_id}
+                          onClick={() => { changeLibraryScope(acc.zalo_id); setScopeDropdownOpen(false); }}
+                          className={`w-full flex items-center gap-3 px-3 py-2.5 transition-colors ${isChecked ? 'bg-blue-500/10' : 'hover:bg-gray-600'}`}
+                        >
+                          <div className="relative flex-shrink-0">
+                            <div className="w-8 h-8 rounded-full overflow-hidden ring-1 ring-white/10">
+                              {acc.avatar_url ? (
+                                <img src={acc.avatar_url} alt="" className="w-full h-full object-cover"
+                                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                              ) : (
+                                <div className="w-full h-8 bg-blue-600 flex items-center justify-center text-white font-bold text-xs">
+                                  {(acc.display_name || acc.full_name || '?').charAt(0).toUpperCase()}
+                                </div>
+                              )}
+                            </div>
+                            <div className="absolute -top-0.5 -left-0.5 z-10 pointer-events-none scale-[0.6]">
+                              <ChannelBadge channel={(acc.channel as any) || CHANNEL.ZALO} size="sm" />
+                            </div>
+                          </div>
+                          <div className="flex-1 min-w-0 text-left">
+                            <span className="text-sm text-gray-200 truncate block">{acc.display_name || acc.full_name || acc.zalo_id}</span>
+                            <span className="text-[10px] text-gray-400 truncate block">{acc.phone || acc.zalo_id}</span>
+                          </div>
+                          {isChecked && (
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2.5" className="flex-shrink-0"><polyline points="20 6 9 17 4 12"/></svg>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
               <input value={search} onChange={e => setSearch(e.target.value)}
                 placeholder="Tìm trong thư viện..."
-                className="w-full px-3 py-1.5 bg-gray-700 border border-gray-600 rounded-lg text-sm text-gray-200 placeholder-gray-500"
+                className="min-w-0 flex-1 px-3 py-1.5 bg-gray-700 border border-gray-600 rounded-lg text-sm text-gray-200 placeholder-gray-500"
               />
             </div>
 
@@ -1009,7 +1197,8 @@ export default function LibraryPickerModal({
           <input ref={fileInputRef} type="file" multiple accept={getAcceptType(initialType)} onChange={handleUploadAndSend} className="hidden" />
           <input ref={directInputRef} type="file" multiple accept={getAcceptType(initialType)} onChange={handleDirectFile} className="hidden" />
           <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-700/80 hover:bg-indigo-600 text-white-important text-xs rounded-lg transition-colors disabled:opacity-50"><SendIcon className="w-4 h-4 inline" /> {uploading ? 'Đang tải...' : 'Upload vào thư viện'}
+            title={`Lưu vào thư viện của ${uploadOwnerLabel}`}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-700/80 hover:bg-indigo-600 text-white-important text-xs rounded-lg transition-colors disabled:opacity-50"><SendIcon className="w-4 h-4 inline" /> {uploading ? 'Đang tải...' : `Upload vào ${uploadOwnerLabel}`}
           </button>
           <button onClick={() => directInputRef.current?.click()}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-200 text-xs rounded-lg transition-colors"><MonitorIcon className="w-4 h-4 inline" /> Chọn từ Máy tính

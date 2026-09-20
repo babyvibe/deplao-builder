@@ -43,7 +43,10 @@ type SendMessageResult struct {
 
 // SendMessage sends a text message
 func (c *Client) SendMessage(opts *SendMessageOptions) (*SendMessageResult, error) {
-	if opts.IsE2EE && c.E2EE != nil && c.E2EE.IsConnected() {
+	if opts.IsE2EE {
+		if !c.IsE2EEConnected() {
+			return nil, ErrE2EENotConnected
+		}
 		return c.sendE2EEMessage(opts)
 	}
 	return c.sendRegularMessage(opts)
@@ -116,6 +119,11 @@ func (c *Client) sendRegularMessage(opts *SendMessageOptions) (*SendMessageResul
 }
 
 func (c *Client) sendE2EEMessage(opts *SendMessageOptions) (*SendMessageResult, error) {
+	e2eeClient := c.snapshotE2EEClient()
+	if e2eeClient == nil || !e2eeClient.IsConnected() {
+		return nil, ErrE2EENotConnected
+	}
+
 	chatJID, err := parseJID(opts.E2EEChatJID)
 	if err != nil {
 		return nil, err
@@ -150,7 +158,7 @@ func (c *Client) sendE2EEMessage(opts *SendMessageOptions) (*SendMessageResult, 
 	}
 
 	msgID := strconv.FormatInt(time.Now().UnixNano(), 10)
-	resp, err := c.E2EE.SendFBMessage(c.ctx, chatJID, waMsg, metadata, whatsmeow.SendRequestExtra{ID: msgID})
+	resp, err := e2eeClient.SendFBMessage(c.ctx, chatJID, waMsg, metadata, whatsmeow.SendRequestExtra{ID: msgID})
 	if err != nil {
 		if isE2EESendResponseTimeout(err) {
 			return &SendMessageResult{
@@ -222,7 +230,8 @@ func (c *Client) SendReaction(threadID int64, messageID, emoji string) error {
 
 // SendE2EEReaction sends an E2EE reaction
 func (c *Client) SendE2EEReaction(chatJIDStr, messageID, senderJIDStr, emoji string) error {
-	if c.E2EE == nil || !c.E2EE.IsConnected() {
+	e2eeClient := c.snapshotE2EEClient()
+	if e2eeClient == nil || !e2eeClient.IsConnected() {
 		return ErrE2EENotConnected
 	}
 
@@ -235,7 +244,7 @@ func (c *Client) SendE2EEReaction(chatJIDStr, messageID, senderJIDStr, emoji str
 		return err
 	}
 
-	msgKey := c.E2EE.BuildMessageKey(chatJID, senderJID, messageID)
+	msgKey := e2eeClient.BuildMessageKey(chatJID, senderJID, messageID)
 	reactionMsg := &waConsumerApplication.ConsumerApplication{
 		Payload: &waConsumerApplication.ConsumerApplication_Payload{
 			Payload: &waConsumerApplication.ConsumerApplication_Payload_Content{
@@ -252,7 +261,7 @@ func (c *Client) SendE2EEReaction(chatJIDStr, messageID, senderJIDStr, emoji str
 	}
 
 	reactionID := strconv.FormatInt(time.Now().UnixNano(), 10)
-	_, err = c.E2EE.SendFBMessage(c.ctx, chatJID, reactionMsg, nil, whatsmeow.SendRequestExtra{ID: reactionID})
+	_, err = e2eeClient.SendFBMessage(c.ctx, chatJID, reactionMsg, nil, whatsmeow.SendRequestExtra{ID: reactionID})
 	return err
 }
 
@@ -355,7 +364,8 @@ func parseJID(jidStr string) (waTypes.JID, error) {
 
 // E2EE send typing
 func (c *Client) SendE2EETyping(chatJIDStr string, isTyping bool) error {
-	if c.E2EE == nil || !c.E2EE.IsConnected() {
+	e2eeClient := c.snapshotE2EEClient()
+	if e2eeClient == nil || !e2eeClient.IsConnected() {
 		return ErrE2EENotConnected
 	}
 
@@ -368,12 +378,13 @@ func (c *Client) SendE2EETyping(chatJIDStr string, isTyping bool) error {
 	if isTyping {
 		presence = waTypes.ChatPresenceComposing
 	}
-	return c.E2EE.SendChatPresence(context.Background(), chatJID, presence, waTypes.ChatPresenceMediaText)
+	return e2eeClient.SendChatPresence(context.Background(), chatJID, presence, waTypes.ChatPresenceMediaText)
 }
 
 // EditE2EEMessage edits an E2EE message
 func (c *Client) EditE2EEMessage(chatJIDStr, messageID, newText string) error {
-	if c.E2EE == nil || !c.E2EE.IsConnected() {
+	e2eeClient := c.snapshotE2EEClient()
+	if e2eeClient == nil || !e2eeClient.IsConnected() {
 		return ErrE2EENotConnected
 	}
 
@@ -382,7 +393,7 @@ func (c *Client) EditE2EEMessage(chatJIDStr, messageID, newText string) error {
 		return err
 	}
 
-	msgKey := c.E2EE.BuildMessageKey(chatJID, waTypes.EmptyJID, messageID)
+	msgKey := e2eeClient.BuildMessageKey(chatJID, waTypes.EmptyJID, messageID)
 	ts := time.Now().UnixMilli()
 	editMsg := &waConsumerApplication.ConsumerApplication{
 		Payload: &waConsumerApplication.ConsumerApplication_Payload{
@@ -401,13 +412,14 @@ func (c *Client) EditE2EEMessage(chatJIDStr, messageID, newText string) error {
 	}
 
 	editID := strconv.FormatInt(time.Now().UnixNano(), 10)
-	_, err = c.E2EE.SendFBMessage(c.ctx, chatJID, editMsg, nil, whatsmeow.SendRequestExtra{ID: editID})
+	_, err = e2eeClient.SendFBMessage(c.ctx, chatJID, editMsg, nil, whatsmeow.SendRequestExtra{ID: editID})
 	return err
 }
 
 // UnsendE2EEMessage unsends/deletes an E2EE message
 func (c *Client) UnsendE2EEMessage(chatJIDStr, messageID string) error {
-	if c.E2EE == nil || !c.E2EE.IsConnected() {
+	e2eeClient := c.snapshotE2EEClient()
+	if e2eeClient == nil || !e2eeClient.IsConnected() {
 		return ErrE2EENotConnected
 	}
 
@@ -416,7 +428,7 @@ func (c *Client) UnsendE2EEMessage(chatJIDStr, messageID string) error {
 		return err
 	}
 
-	msgKey := c.E2EE.BuildMessageKey(chatJID, waTypes.EmptyJID, messageID)
+	msgKey := e2eeClient.BuildMessageKey(chatJID, waTypes.EmptyJID, messageID)
 	revokeMsg := &waConsumerApplication.ConsumerApplication{
 		Payload: &waConsumerApplication.ConsumerApplication_Payload{
 			Payload: &waConsumerApplication.ConsumerApplication_Payload_ApplicationData{
@@ -430,6 +442,6 @@ func (c *Client) UnsendE2EEMessage(chatJIDStr, messageID string) error {
 	}
 
 	revokeID := strconv.FormatInt(time.Now().UnixNano(), 10)
-	_, err = c.E2EE.SendFBMessage(c.ctx, chatJID, revokeMsg, nil, whatsmeow.SendRequestExtra{ID: revokeID})
+	_, err = e2eeClient.SendFBMessage(c.ctx, chatJID, revokeMsg, nil, whatsmeow.SendRequestExtra{ID: revokeID})
 	return err
 }

@@ -9,7 +9,7 @@ import { CHANNEL } from '@/lib/channelHelper';
 // ─── Custom deletable edge ────────────────────────────────────────────────────
 
 export const CustomDeletableEdge = memo((props: EdgeProps) => {
-  const { id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, selected } = props;
+  const { id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, selected, style: edgeStyle } = props;
   const { setEdges } = useReactFlow();
   const theme = useAppStore(s => s.theme);
   const isLight = theme === 'light';
@@ -22,9 +22,10 @@ export const CustomDeletableEdge = memo((props: EdgeProps) => {
         path={edgePath}
         markerEnd={markerEnd}
         style={{
-          stroke: selected ? '#3b82f6' : (isLight ? '#9ca3af' : '#4b5563'),
-          strokeWidth: selected ? 2 : 1.5,
-          transition: 'stroke 0.15s'
+          ...edgeStyle,
+          stroke: selected ? '#3b82f6' : (edgeStyle?.stroke || (isLight ? '#9ca3af' : '#4b5563')),
+          strokeWidth: selected ? 2 : (edgeStyle?.strokeWidth || 1.5),
+          transition: 'stroke 0.15s',
         }}
         interactionWidth={12}
       />

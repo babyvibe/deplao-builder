@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { useAccountStore } from '@/store/accountStore';
-import { getMessageCacheKey, MessageItem, useChatStore } from '@/store/chatStore';
+import { getMessageCacheKey, getMessageCacheKeysForThread, MessageItem, useChatStore } from '@/store/chatStore';
 import { useAppStore, CachedGroupInfo } from '@/store/appStore';
 import { useCRMStore } from '@/store/crmStore';
 import { useEmployeeStore } from '@/store/employeeStore';
@@ -79,7 +79,7 @@ async function loadAliases(zaloId: string) {
     try {
       const account = useAccountStore.getState().accounts.find((a) => a.zalo_id === zaloId);
       if (!account) return;
-      const auth = { cookies: account.cookies, imei: account.imei, userAgent: account.user_agent };
+      const auth = { cookies: account.cookies, imei: account.imei, userAgent: account.user_agent, accountId: zaloId };
       const aliasItems = await fetchAllAliases(auth);
       for (const item of aliasItems) {
         if (item.alias && item.userId) {
@@ -389,7 +389,7 @@ export async function fetchContactInfo(zaloId: string, contactId: string): Promi
     if (!account) return;
     // Guard: chỉ Zalo mới dùng ipc.zalo.getUserInfo. FB dùng getUserInfoFacebookHtml, Telegram dùng adapter.
     if (!isZalo(account.channel)) return;
-    const auth = { cookies: account.cookies, imei: account.imei, userAgent: account.user_agent };
+    const auth = { cookies: account.cookies, imei: account.imei, userAgent: account.user_agent, accountId: zaloId };
     const res = await ipc.zalo?.getUserInfo({ auth, userId: contactId });
 
     const rawProfile = res?.response?.changed_profiles?.[contactId]
@@ -441,7 +441,7 @@ export async function refreshContactAlias(zaloId: string, contactId: string): Pr
     if (!account) return;
     // Guard: chỉ Zalo mới dùng ipc.zalo.getUserInfo
     if (!isZalo(account.channel)) return;
-    const auth = { cookies: account.cookies, imei: account.imei, userAgent: account.user_agent };
+    const auth = { cookies: account.cookies, imei: account.imei, userAgent: account.user_agent, accountId: zaloId };
     const res = await ipc.zalo?.getUserInfo({ auth, userId: contactId });
     const rawProfile = res?.response?.changed_profiles?.[contactId]
       || res?.response?.data?.[contactId];
@@ -489,7 +489,7 @@ async function fetchGroupMemberInfo(zaloId: string, memberId: string, groupId: s
     const account = useAccountStore.getState().accounts.find(a => a.zalo_id === zaloId);
     if (!account || !channelSupports((account.channel || CHANNEL.ZALO) as Channel, 'supportsGroupManage')) return;
 
-    const auth = { cookies: account.cookies, imei: account.imei, userAgent: account.user_agent };
+    const auth = { cookies: account.cookies, imei: account.imei, userAgent: account.user_agent, accountId: zaloId };
     const res = await ipc.zalo?.getUserInfo({ auth, userId: memberId });
     if (!res?.success || !res.response) return;
 
@@ -978,6 +978,47 @@ export function useZaloEvents() {
     // ─── Pending employee sender map (must be before event:message handler) ───
     const pendingEmployeeSenders = new Map<string, { employee_id: string; employee_name: string; employee_avatar: string }>();
     const contactRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    // Electron delivers the IPC notifications independently. A tiny Telegram
+    // sticker can finish downloading and emit event:localPath before the
+    // preceding event:message has reached this renderer. Keep that path until
+    // its message enters the store instead of showing a permanent [Sticker]
+    // placeholder until the user reopens the conversation from the DB.
+    const pendingLocalPaths = new Map<string, { zaloId: string; threadId: string; msgId: string; localPaths: Record<string, string>; retries: number }>();
+    const pendingLocalPathTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    const localPathKey = (zaloId: string, threadId: string, msgId: string) => `${zaloId}\u0000${threadId}\u0000${msgId}`;
+    const messageExistsInStore = (zaloId: string, threadId: string, msgId: string) => {
+      const store = useChatStore.getState();
+      return getMessageCacheKeysForThread(store.messages, zaloId, threadId)
+        .some(key => (store.messages[key] || []).some(message => String(message.msg_id) === String(msgId)));
+    };
+    const clearPendingLocalPath = (key: string) => {
+      const timer = pendingLocalPathTimers.get(key);
+      if (timer) clearTimeout(timer);
+      pendingLocalPathTimers.delete(key);
+      pendingLocalPaths.delete(key);
+    };
+    const flushPendingLocalPath = (key: string) => {
+      const pending = pendingLocalPaths.get(key);
+      if (!pending) return;
+      if (messageExistsInStore(pending.zaloId, pending.threadId, pending.msgId)) {
+        updateMessageLocalPath(pending.zaloId, pending.threadId, pending.msgId, pending.localPaths);
+        clearPendingLocalPath(key);
+        return;
+      }
+      // Keep a bounded buffer for a temporarily busy renderer. The normal
+      // path flushes synchronously from event:message; retries are only a
+      // safety net for IPC delivery order.
+      if (pending.retries >= 12) {
+        clearPendingLocalPath(key);
+        return;
+      }
+      pending.retries += 1;
+      const timer = setTimeout(() => {
+        pendingLocalPathTimers.delete(key);
+        flushPendingLocalPath(key);
+      }, 100 * pending.retries);
+      pendingLocalPathTimers.set(key, timer);
+    };
 
     const applyPendingEmployeeSender = (zaloId: string, threadId: string, msgId: string) => {
       if (!msgId) return;
@@ -1007,6 +1048,14 @@ export function useZaloEvents() {
       const isSilent: boolean = message._silent === true; // Old messages - no sound/notification
       const suppressNotification: boolean = message._silentNotification === true; // Telegram difference/reconnect recovery
       const threadId: string = message.threadId || '';
+      // Realtime payloads carry the channel on the envelope, while DB-loaded
+      // rows already include it. Persist it into the live store as well: media
+      // renderers (notably Telegram .tgs/.webp stickers) use msg.channel to
+      // choose their decoder. Without this the freshly received sticker is
+      // parsed as a Zalo sticker until the conversation is reloaded from DB.
+      const accountChannel = useAccountStore.getState().accounts
+        .find(account => account.zalo_id === zaloId)?.channel;
+      const messageChannel = (message.channel || data.channel || accountChannel || CHANNEL.ZALO) as Channel;
       if (!threadId || threadId === 'undefined' || threadId === 'null') return;
       const incomingTopicId = message.data?.topicId ? String(message.data.topicId) : '';
       const chatState = useChatStore.getState();
@@ -1126,6 +1175,7 @@ export function useZaloEvents() {
         owner_zalo_id: zaloId,
         thread_id: threadId,
         thread_type: isGroup ? 1 : 0,
+        channel: messageChannel,
         ...(incomingTopicId ? { topic_id: incomingTopicId } : {}),
         ...(message.data?.replyToId ? { reply_to_id: String(message.data.replyToId) } : {}),
         sender_id: uidFrom,
@@ -1139,6 +1189,9 @@ export function useZaloEvents() {
         ...(quote_data ? { quote_data } : {}),
         ...(empInfo?.employee_id ? { handled_by_employee: empInfo.employee_id } : {}),
       } as any, cacheTopicId || undefined);
+
+      // Resolve a media download that won the IPC race with event:message.
+      flushPendingLocalPath(localPathKey(zaloId, threadId, String(message.data?.msgId || '')));
 
       // Nếu là self-image → báo cho MessageQueue để đếm batch
       if (isSelf && (msgType === 'image' || msgType === 'photo')) {
@@ -1592,6 +1645,7 @@ export function useZaloEvents() {
         'telegram_sync', 'telegram_dialog_state', 'telegram_folder_update', 'telegram_notify_update',
         'telegram_read_outbox', 'telegram_read_inbox',
         'telegram_avatar', 'bot_avatar_user', 'bot_avatar_group',
+        'telegram_get_messages', 'telegram_new_group_resolved',
       ]);
       if (!zaloId || !telegramRefreshSources.has(data?.source) || !isTelegram(account?.channel)) return;
 
@@ -1614,8 +1668,17 @@ export function useZaloEvents() {
       const { zaloId, msgId, threadId, localPaths } = data;
       console.log(`[useZaloEvents] event:localPath msgId=${msgId} threadId=${threadId} localPaths=${JSON.stringify(localPaths)}`);
       if (zaloId && msgId && threadId && localPaths) {
-        updateMessageLocalPath(zaloId, threadId, msgId, localPaths);
-        console.log(`[useZaloEvents] event:localPath APPLIED msgId=${msgId}`);
+        const key = localPathKey(String(zaloId), String(threadId), String(msgId));
+        const previous = pendingLocalPaths.get(key);
+        pendingLocalPaths.set(key, {
+          zaloId: String(zaloId),
+          threadId: String(threadId),
+          msgId: String(msgId),
+          localPaths: { ...(previous?.localPaths || {}), ...localPaths },
+          retries: previous?.retries || 0,
+        });
+        flushPendingLocalPath(key);
+        console.log(`[useZaloEvents] event:localPath ${messageExistsInStore(String(zaloId), String(threadId), String(msgId)) ? 'APPLIED' : 'BUFFERED'} msgId=${msgId}`);
       } else {
         console.log(`[useZaloEvents] event:localPath SKIPPED (missing data)`);
       }
@@ -1944,6 +2007,9 @@ export function useZaloEvents() {
     });
 
     return () => {
+      for (const timer of pendingLocalPathTimers.values()) clearTimeout(timer);
+      pendingLocalPathTimers.clear();
+      pendingLocalPaths.clear();
       for (const timer of contactRefreshTimers.values()) clearTimeout(timer);
       unsubMessage();
       unsubReaction();

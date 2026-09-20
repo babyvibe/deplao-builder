@@ -310,6 +310,9 @@ function PinnedListModal({ pins, notes, zaloId, threadId, onClose, onScrollToMsg
                   {pin.sender_name ? <span className="text-gray-400">{pin.sender_name}: </span> : null}
                   {renderPreviewLabel(pin)}
                 </p>
+                <p className="text-[11px] text-gray-500 mt-1">
+                  Gửi lúc {formatPinnedMessageTime(pin.timestamp)}
+                </p>
               </button>
               <PinItemMenu
                 pin={pin}
@@ -451,6 +454,16 @@ function renderPreviewLabel(pin: PinnedMsg): string {
     if (p?.title) return String(p.title);
   } catch {}
   return pin.content?.slice(0, 100) || '[Tin nhắn]';
+}
+
+/** Timestamp is persisted in milliseconds for every pinned message. */
+function formatPinnedMessageTime(timestamp: number): string {
+  const value = Number(timestamp || 0);
+  if (!Number.isFinite(value) || value <= 0) return 'không rõ thời gian';
+  return new Intl.DateTimeFormat('vi-VN', {
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(new Date(value));
 }
 
 function copyPinText(pin: PinnedMsg) {

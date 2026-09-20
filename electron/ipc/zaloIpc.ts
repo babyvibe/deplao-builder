@@ -22,7 +22,7 @@ async function getService(auth: any, isReconnection = false): Promise<ZaloServic
 }
 
 /** Lấy zaloId từ auth.cookies qua ConnectionManager */
-function resolveZaloId(auth: any): string {
+function resolveZaloId(auth: any, allowSingleConnectionFallback = true): string {
     try {
         const authObj = typeof auth === 'string' ? JSON.parse(auth) : auth;
         const cookies = authObj?.cookies || '';
@@ -48,12 +48,14 @@ function resolveZaloId(auth: any): string {
             } catch {}
         }
 
-        // Last resort: if only 1 connection exists, use it
+        // Last resort: if only 1 connection exists, use it.
+        // Sensitive profile lookups can opt out: a stale renderer auth must
+        // never be silently redirected to whichever Zalo account is online.
         // (handles both: cookies mismatch AND cookies missing from auth object)
         // Trường hợp auth không có cookies (VD: gửi tin nhắn nhanh), vẫn gửi được
         // nếu chỉ có 1 tài khoản Zalo đang kết nối.
         const allConns = ConnectionManager.getAllConnections();
-        if (allConns.size === 1) {
+        if (allowSingleConnectionFallback && allConns.size === 1) {
             const [onlyId] = allConns.keys();
             Logger.log(`[zaloIpc] resolveZaloId: using only connection: ${onlyId}${cookies ? ' (cookies mismatch)' : ' (no cookies in auth)'}`);
             return onlyId;
@@ -82,6 +84,15 @@ function resolveAuthFromConnection(auth: any, zaloId: string): any {
         return conn.auth;
     }
     return auth;
+}
+
+function getExplicitAccountId(auth: any): string {
+    try {
+        const authObj = typeof auth === 'string' ? JSON.parse(auth) : auth;
+        return String(authObj?.zaloId || authObj?.zalo_id || authObj?.accountId || '');
+    } catch {
+        return '';
+    }
 }
 
 /**
@@ -136,7 +147,30 @@ function wrap(channel: string, fn: (service: ZaloService, params: any) => Promis
             let { auth, isReconnection = false, _fromRelay, ...rest } = params;
             if (!auth) return { error: 'Missing auth' };
 
-            let zaloId = resolveZaloId(auth);
+            // getUserInfo is often triggered by passive UI hydration. Do not
+            // let stale credentials from that UI work be redirected to the
+            // only active Zalo connection; it is both misleading and can call
+            // the wrong account while a non-Zalo channel is syncing.
+            const requiresStrictAccount = channel === 'zalo:getUserInfo';
+            const explicitAccountId = getExplicitAccountId(auth);
+            let zaloId = resolveZaloId(auth, !requiresStrictAccount);
+
+            if (requiresStrictAccount) {
+                if (explicitAccountId) {
+                    if (!ConnectionManager.isConnected(explicitAccountId)) {
+                        Logger.warn(`[zaloIpc] Blocked ${channel}: explicit account ${explicitAccountId} is not an active Zalo connection`);
+                        return { success: false, error: 'Tài khoản Zalo không còn kết nối.' };
+                    }
+                    if (zaloId && zaloId !== explicitAccountId) {
+                        Logger.warn(`[zaloIpc] Blocked ${channel}: auth resolves to ${zaloId}, not explicit account ${explicitAccountId}`);
+                        return { success: false, error: 'Thông tin xác thực không khớp tài khoản Zalo.' };
+                    }
+                    zaloId = explicitAccountId;
+                } else if (!zaloId) {
+                    Logger.warn(`[zaloIpc] Blocked ${channel}: no exact active account match; refusing single-connection fallback`);
+                    return { success: false, error: 'Không xác định được tài khoản Zalo hợp lệ.' };
+                }
+            }
 
             // ─── Fallback: suy luận zaloId từ cookies-less auth + activeAccountId ──
             // Khi có nhiều connection và cookies rỗng, resolveZaloId không match được.
@@ -190,16 +224,19 @@ export function registerZaloIpc() {
         s.sendSticker(p.stickerId, p.threadId, p.type)
     );
 
+    // Newer UI callers use `threadType`, while older chat/forward flows use
+    // `type`. Always resolve both here so group media is never sent to the
+    // individual-chat endpoint by accident.
     wrap('zalo:sendImage', (s, p) =>
-        s.sendImage(FileStorageService.resolveAbsolutePath(p.filePath), p.threadId, p.type, p.message, p.quote)
+        s.sendImage(FileStorageService.resolveAbsolutePath(p.filePath), p.threadId, p.type ?? p.threadType, p.message, p.quote)
     );
 
     wrap('zalo:sendImages', (s, p) =>
-        s.sendImages((p.filePaths || []).map((fp: string) => FileStorageService.resolveAbsolutePath(fp)), p.threadId, p.type, p.quote)
+        s.sendImages((p.filePaths || []).map((fp: string) => FileStorageService.resolveAbsolutePath(fp)), p.threadId, p.type ?? p.threadType, p.quote)
     );
 
     wrap('zalo:sendFile', (s, p) =>
-        s.sendFile(FileStorageService.resolveAbsolutePath(p.filePath), p.threadId, p.type, p.quote)
+        s.sendFile(FileStorageService.resolveAbsolutePath(p.filePath), p.threadId, p.type ?? p.threadType, p.quote)
     );
 
     wrap('zalo:sendVoice', (s, p) =>

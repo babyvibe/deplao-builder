@@ -45,10 +45,6 @@ export default function NodePalette({ channel }: Props) {
     if (!channel) return true;
     if (!item.channel || item.channel === 'both') return true;
     if (item.channel === channel) return true;
-    // Telegram: both telegram_user and telegram_bot see each other's nodes
-    const isTelegramWorkflow = channel === 'telegram_user' || channel === 'telegram_bot';
-    const isTelegramNode = item.channel === 'telegram_user' || item.channel === 'telegram_bot';
-    if (isTelegramWorkflow && isTelegramNode) return true;
     return false;
   };
 

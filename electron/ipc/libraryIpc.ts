@@ -23,13 +23,14 @@ function isEmployeeMode(): boolean {
 export function registerLibraryIpc(): void {
   // ── Get items ──────────────────────────────────────────────
   ipcMain.handle('library:getItems', async (_event, params: {
-    zaloId: string; type?: string; search?: string; folderId?: number; page?: number; limit?: number;
+    zaloId: string; ownerZaloIds?: string[]; type?: string; search?: string; folderId?: number; page?: number; limit?: number;
   }) => {
     try {
 
             if (isEmployeeMode()) return { success: true };
                   const result = lib().getItems({
         zaloId: params.zaloId,
+        ownerZaloIds: params.ownerZaloIds,
         type: params.type,
         search: params.search,
         folderId: params.folderId !== undefined ? params.folderId : undefined,
@@ -57,7 +58,7 @@ export function registerLibraryIpc(): void {
   // ── Upload ─────────────────────────────────────────────────
   ipcMain.handle('library:upload', async (_event, params: {
     zaloId: string; fileName: string; mimeType: string; base64: string;
-    employeeId?: string; tags?: string;
+    employeeId?: string; tags?: string; folderId?: number | null;
   }) => {
     try {
 
@@ -70,6 +71,7 @@ export function registerLibraryIpc(): void {
         mimeType: params.mimeType,
         employeeId: params.employeeId || '',
         tags: params.tags || '',
+        folderId: params.folderId ?? null,
       });
       return {
         success: true,
@@ -101,11 +103,11 @@ export function registerLibraryIpc(): void {
   });
 
   // ── Get folders ────────────────────────────────────────────
-  ipcMain.handle('library:getFolders', async (_event, params: { zaloId: string; type?: string }) => {
+  ipcMain.handle('library:getFolders', async (_event, params: { zaloId: string; ownerZaloIds?: string[]; type?: string }) => {
     try {
 
             if (isEmployeeMode()) return { success: true };
-                  const folders = lib().getFolders(params.zaloId, params.type);
+                  const folders = lib().getFolders(params.zaloId, params.type, params.ownerZaloIds);
       return { success: true, items: folders };
     } catch (err: any) {
       return { success: false, error: err.message, items: [] };

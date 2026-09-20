@@ -11,6 +11,9 @@ import FacebookConnectionManager from '../../src/utils/FacebookConnectionManager
 import { initSession, fetchBasicProfileFromHome, fetchFBHomepage, getUserInfoFacebookHtml } from '../../src/services/facebook/FacebookSession';
 import { loginWithCredentials } from '../../src/services/facebook/FacebookLoginHelper';
 import { secureGet, secureSet, secureDelete } from '../../src/services/secure/SecureSettingsService';
+import FacebookE2EEBridge, { NativeLoginResult } from '../../src/services/facebook/FacebookE2EEBridge';
+import { buildProxyUrl } from '../../src/utils/ProxyHelper';
+import { resolveE2EEBinaryPath } from '../../src/services/facebook/FacebookUtils';
 import FileStorageService from '../../src/services/file/FileStorageService';
 import EventBroadcaster from '../../src/services/event/EventBroadcaster';
 import Logger from '../../src/utils/Logger';
@@ -20,6 +23,46 @@ import FacebookService from "../../src/services/facebook/FacebookService";
 
 function fbCookieKey(accountId: string): string {
   return `fb_cookie_${accountId}`;
+}
+
+type NativeLoginSession = {
+  bridge: FacebookE2EEBridge;
+  expiryTimer: ReturnType<typeof setTimeout>;
+};
+
+// A login wizard owns a short-lived, separate bridge process. It is never
+// shared with a connected Facebook account and is destroyed on completion,
+// cancel, or expiry.
+const nativeLoginSessions = new Map<string, NativeLoginSession>();
+const NATIVE_LOGIN_SESSION_TTL_MS = 10 * 60 * 1000;
+
+async function disposeNativeLoginSession(sessionId: string): Promise<void> {
+  const session = nativeLoginSessions.get(sessionId);
+  if (!session) return;
+  nativeLoginSessions.delete(sessionId);
+  clearTimeout(session.expiryTimer);
+  try { await session.bridge.cancelNativeLogin(); } catch {}
+  await session.bridge.close().catch(() => {});
+}
+
+function serializeNativeCookies(cookies: Record<string, string> | undefined): string {
+  if (!cookies) return '';
+  return Object.entries(cookies)
+    .filter(([name, value]) => name && typeof value === 'string' && value.length > 0)
+    .map(([name, value]) => `${name}=${value}`)
+    .join('; ');
+}
+
+function validateNativeLoginInput(input: unknown): Record<string, string> | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const entries = Object.entries(input as Record<string, unknown>);
+  if (entries.length > 8) return null;
+  const result: Record<string, string> = {};
+  for (const [key, value] of entries) {
+    if (!/^[a-zA-Z0-9_.-]{1,128}$/.test(key) || typeof value !== 'string' || value.length > 4096) return null;
+    result[key] = value;
+  }
+  return result;
 }
 
 /**
@@ -234,6 +277,77 @@ export function registerFacebookIpc(): void {
       Logger.error(`[facebookIpc] fb:addAccountWithCredentials error: ${err.message}`);
       return { success: false, error: err.message };
     }
+  });
+
+  /**
+   * Experimental fbchat-v2 Messenger Lite login. Unlike the legacy FB4A
+   * endpoint, this returns an explicit step-by-step challenge from upstream.
+   * Secrets are passed through IPC but deliberately never written to logs.
+   */
+  ipcMain.handle('fb:startMessengerLiteLogin', async (_event, { proxyId }: { proxyId?: number | null }) => {
+    let bridge: FacebookE2EEBridge | null = null;
+    try {
+      const binaryPath = resolveE2EEBinaryPath();
+      bridge = FacebookE2EEBridge.create(binaryPath);
+      bridge.spawn();
+      await bridge.hello(10000);
+
+      let proxyUrl: string | undefined;
+      if (proxyId) {
+        const proxy = DatabaseService.getInstance().getProxyById(proxyId);
+        if (!proxy) return { success: false, error: 'Proxy đã chọn không tồn tại.' };
+        proxyUrl = buildProxyUrl(proxy);
+      }
+
+      const result = await bridge.startNativeLogin(proxyUrl);
+      if (result.complete) {
+        const cookie = serializeNativeCookies(result.cookies);
+        await bridge.close();
+        bridge = null;
+        if (!cookie) return { success: false, error: 'Đăng nhập hoàn tất nhưng không nhận được cookie phiên.' };
+        return await _addFBAccountCommon(cookie, proxyId);
+      }
+
+      const sessionId = uuid();
+      const expiryTimer = setTimeout(() => { void disposeNativeLoginSession(sessionId); }, NATIVE_LOGIN_SESSION_TTL_MS);
+      expiryTimer.unref?.();
+      nativeLoginSessions.set(sessionId, { bridge, expiryTimer });
+      bridge = null;
+      return { success: true, sessionId, step: result.step };
+    } catch (err: any) {
+      Logger.warn(`[facebookIpc] Messenger Lite login could not start: ${err.message}`);
+      return { success: false, error: err.message || 'Không thể khởi tạo đăng nhập Messenger Lite.' };
+    } finally {
+      if (bridge) await bridge.close().catch(() => {});
+    }
+  });
+
+  ipcMain.handle('fb:submitMessengerLiteLogin', async (_event, params: { sessionId?: string; input?: Record<string, string>; proxyId?: number | null }) => {
+    const sessionId = String(params?.sessionId || '');
+    const session = nativeLoginSessions.get(sessionId);
+    const input = validateNativeLoginInput(params?.input);
+    if (!session) return { success: false, expired: true, error: 'Phiên đăng nhập đã hết hạn. Vui lòng bắt đầu lại.' };
+    if (!input) return { success: false, error: 'Dữ liệu xác thực không hợp lệ.' };
+
+    try {
+      const result: NativeLoginResult = await session.bridge.submitNativeLogin(input);
+      if (!result.complete) return { success: true, sessionId, step: result.step };
+
+      const cookie = serializeNativeCookies(result.cookies);
+      await disposeNativeLoginSession(sessionId);
+      if (!cookie) return { success: false, error: 'Đăng nhập hoàn tất nhưng không nhận được cookie phiên.' };
+      return await _addFBAccountCommon(cookie, params.proxyId);
+    } catch (err: any) {
+      // The upstream state machine keeps its state after a rejected code so the
+      // user can retry; do not dispose the session merely because a step failed.
+      Logger.warn(`[facebookIpc] Messenger Lite login step failed: ${err.message}`);
+      return { success: false, error: err.message || 'Xác thực Messenger Lite thất bại.' };
+    }
+  });
+
+  ipcMain.handle('fb:cancelMessengerLiteLogin', async (_event, { sessionId }: { sessionId?: string }) => {
+    await disposeNativeLoginSession(String(sessionId || ''));
+    return { success: true };
   });
 
   /**
@@ -498,6 +612,7 @@ export function registerFacebookIpc(): void {
    ipcMain.handle('fb:sendMessage', async (_event, params: {
     accountId: string; threadId: string; body: string; options?: any;
   }) => {
+    const startedAt = Date.now();
     try {
       const internalId = resolveInternalId(params.accountId);
       Logger.log(`[facebookIpc] fb:sendMessage accountId=${params.accountId} → internalId=${internalId} threadId=${params.threadId} body="${params.body?.slice(0,50)}"`);
@@ -510,13 +625,20 @@ export function registerFacebookIpc(): void {
 
       const { FacebookSendService } = require('../../src/services/facebook/FacebookSendService');
 
+      // Phase 4: Preserve typeChat tri-state (undefined vs null have different meanings)
+      // undefined = not specified → resolve from DB
+      // null = explicitly group
+      // 'user' = explicitly 1:1
+      const hasTypeChat = params.options && Object.prototype.hasOwnProperty.call(params.options, 'typeChat');
+      const typeChat = hasTypeChat ? params.options.typeChat : undefined;
+
       const TIMEOUT_MS = 60000;
       const result = (await Promise.race([
         FacebookSendService.sendTextMessage({
           accountId: internalId,
           threadId: params.threadId,
           body: params.body,
-          typeChat: params.options?.typeChat ?? null, // ← pass typeChat từ UI
+          typeChat,
           replyToMessageId: params.options?.replyToMessageId,
         }),
         new Promise<any>((_, reject) =>
@@ -524,15 +646,24 @@ export function registerFacebookIpc(): void {
         ),
       ])) as any;
 
+      const elapsedMs = Date.now() - startedAt;
+      if (result?.success) {
+        Logger.log(`[facebookIpc] fb:sendMessage completed accountId=${internalId} threadId=${params.threadId} success=true elapsedMs=${elapsedMs}`);
+      } else {
+        Logger.warn(`[facebookIpc] fb:sendMessage completed accountId=${internalId} threadId=${params.threadId} success=false elapsedMs=${elapsedMs} error=${result?.error || 'unknown'}`);
+      }
+
       return result;
     } catch (err: any) {
-      Logger.error(`[facebookIpc] fb:sendMessage error: ${err.message}`);
+      Logger.error(`[facebookIpc] fb:sendMessage error after ${Date.now() - startedAt}ms: ${err.message}`);
       return { success: false, error: err.message };
     }
   });
 
   /**
    * Gửi attachment (C2: auto-route 1:1 qua E2EE)
+   * DEPLAO_ADAPTER: Delegates to FacebookSendService.sendAttachment() for
+   * consolidated route matrix. No fallback between E2EE and REST routes.
    */
   ipcMain.handle('fb:sendAttachment', async (_event, params: {
     accountId: string; threadId: string; filePath: string; body?: string; typeChat?: 'user' | null; fileType?: 'image' | 'video' | 'audio' | 'file';
@@ -543,195 +674,16 @@ export function registerFacebookIpc(): void {
       const service = await getFBServiceOrReconnect(internalId);
       if (!service) return { success: false, error: 'Tài khoản chưa kết nối. Vui lòng kết nối lại Facebook.' };
 
-      // C2: 1:1 → gửi qua E2EE bridge
-      const isUserMessage = params.typeChat === 'user';
-      if (isUserMessage) {
-        if (!service.isE2EEConnected()) {
-          try {
-            await service.retryE2EE();
-          } catch {}
-        }
-        if (!service.isE2EEConnected()) {
-          return {
-            success: false,
-            error: 'Không thể gửi file 1:1 trên Facebook: E2EE bridge chưa kết nối. ' +
-              'Build binary: clone mautrix/meta vào bridge-e2ee/, chạy go build, ' +
-              'hoặc set biến môi trường FBCHAT_E2EE_BIN',
-          };
-        }
-
-        const { normalizeChatJid } = require('../../src/services/facebook/FacebookUtils');
-        const chatJid = normalizeChatJid(params.threadId);
-        const fileName = require('path').basename(params.filePath);
-        // Ưu tiên fileType hint từ renderer (voice recording gửi fileType='audio' để tránh nhầm .webm là video)
-        const isImage = params.fileType === 'image' || (!params.fileType && /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(fileName));
-        const isVideo = params.fileType === 'video' || (!params.fileType && /\.(mp4|webm|mov|avi)$/i.test(fileName));
-        const isAudio = params.fileType === 'audio' || (!params.fileType && /\.(mp3|wav|ogg|m4a|aac|flac|wma)$/i.test(fileName));
-
-        let result: any;
-        if (isImage) {
-          result = await service.sendE2EEImage(chatJid, params.filePath, params.body);
-        } else if (isVideo) {
-          result = await service.sendE2EEVideo(chatJid, params.filePath, params.body);
-        } else if (isAudio) {
-          result = await service.sendE2EEAudio(chatJid, params.filePath);
-        } else {
-          result = await service.sendE2EEFile(chatJid, params.filePath, fileName);
-        }
-
-        Logger.log(`[facebookIpc] fb:sendAttachment E2EE 1:1 FULL response: ${JSON.stringify(result)}`);
-
-        // Bridge does NOT echo self-sent messages → save message directly
-        // with localPath to the original file so UI can display immediately
-        if (result.success && result.messageId) {
-          try {
-            const attachType = isImage ? 'image' : isVideo ? 'video' : isAudio ? 'audio' : 'file';
-            const fbId = resolveRealFacebookId(internalId, service);
-
-            // Copy sent file to media storage
-            let localRelPath: string | undefined;
-            try {
-              const fs = require('fs');
-              const buffer = fs.readFileSync(params.filePath);
-              const ext = require('path').extname(fileName) || '.bin';
-              const savedName = `sent_${result.messageId.slice(-8)}_${Date.now()}${ext}`;
-              const absPath = await FileStorageService.saveBuffer(fbId, buffer, savedName);
-              localRelPath = FileStorageService.toRelativePath(absPath);
-              Logger.log(`[facebookIpc] E2EE sent media saved: ${localRelPath}`);
-            } catch (fsErr: any) {
-              Logger.warn(`[facebookIpc] E2EE sent media copy failed: ${fsErr.message}`);
-            }
-
-            // Save message to DB with localPath in attachments
-            // body = null for media messages - DB's saveFBMessage auto-generates displayContent
-            DatabaseService.getInstance().saveFBMessage({
-              id: result.messageId,
-              account_id: internalId,
-              thread_id: params.threadId,
-              sender_id: fbId,
-              body: params.body || null,
-              timestamp: result.timestamp || Date.now(),
-              type: attachType,
-              attachments: JSON.stringify([{
-                type: attachType,
-                name: fileName,
-                ...(localRelPath ? { localPath: localRelPath } : {}),
-              }]),
-              is_self: 1,
-              is_unsent: 0,
-              ...(params.replyToMessageId ? { reply_to_id: params.replyToMessageId } : {}),
-            });
-
-            // Update local_paths in unified messages table
-            if (localRelPath) {
-              DatabaseService.getInstance().updateLocalPaths(fbId, result.messageId, { main: localRelPath });
-            }
-
-            // Notify UI: add message to chat store + set localPath for image render
-            EventBroadcaster.emit('fb:onMessage', {
-              fbAccountId: fbId,
-              message: {
-                messageID: result.messageId,
-                replyToID: params.threadId,
-                body: null,
-                userID: fbId,
-                timestamp: String(result.timestamp || Date.now()),
-                type: 'user',
-                attachments: {
-                  id: 1,
-                  url: null,
-                  attachmentType: attachType,
-                  name: fileName,
-                  ...(localRelPath ? { localPath: localRelPath } : {}),
-                },
-                isSelf: true,
-                ...(params.replyToMessageId ? { replyToMessageId: params.replyToMessageId } : {}),
-              },
-            });
-            if (localRelPath) {
-              EventBroadcaster.emit('event:localPath', {
-                zaloId: fbId,
-                msgId: result.messageId,
-                threadId: params.threadId,
-                localPaths: { main: localRelPath },
-              });
-            }
-          } catch (dbErr: any) {
-            Logger.warn(`[facebookIpc] E2EE self-save error: ${dbErr.message}`);
-          }
-        }
-        return { ...result, fileName };
-      }
-
-      // Group: upload + send via REST (existing logic)
-      const uploaded = await service.uploadAttachment(params.filePath);
-      if (!uploaded) return { success: false, error: 'Upload thất bại' };
-
-      const attachType = uploaded.attachmentType.startsWith('image') ? 'image'
-        : uploaded.attachmentType.startsWith('video') ? 'video'
-        : uploaded.attachmentType.startsWith('audio') ? 'audio'
-        : 'file';
-
-      let result = await service.sendMessage(params.threadId, params.body || '', {
-        typeAttachment: attachType as any,
-        attachmentId: uploaded.attachmentId,
+      const { FacebookSendService } = require('../../src/services/facebook/FacebookSendService');
+      const result = await FacebookSendService.sendAttachment({
+        accountId: internalId,
+        threadId: params.threadId,
+        filePath: params.filePath,
+        body: params.body,
         typeChat: params.typeChat,
-        ...(params.replyToMessageId ? { replyToMessageId: params.replyToMessageId } : {}),
+        fileType: params.fileType,
+        replyToMessageId: params.replyToMessageId,
       });
-
-      // E2EE error detection → retry via bridge. Handles case where typeChat was not set
-      // but conversation is actually E2EE-encrypted 1:1.
-      if (!result.success && /disabled|vô hiệu hoá|encrypted/i.test(result.error || '')) {
-        Logger.warn(`[facebookIpc] fb:sendAttachment E2EE error detected, retrying via bridge for thread=${params.threadId}`);
-        if (!service.isE2EEConnected()) {
-          try { await service.retryE2EE(); } catch {}
-        }
-        if (service.isE2EEConnected()) {
-          const { normalizeChatJid } = require('../../src/services/facebook/FacebookUtils');
-          const chatJid = normalizeChatJid(params.threadId);
-          const isImage = params.fileType === 'image' || /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(require('path').basename(params.filePath));
-          const isVideo = params.fileType === 'video' || /\.(mp4|webm|mov|avi)$/i.test(require('path').basename(params.filePath));
-          const isAudio = params.fileType === 'audio' || /\.(mp3|wav|ogg|m4a|aac|flac|wma)$/i.test(require('path').basename(params.filePath));
-          result = isImage
-            ? await service.sendE2EEImage(chatJid, params.filePath, params.body)
-            : isVideo
-              ? await service.sendE2EEVideo(chatJid, params.filePath, params.body)
-              : isAudio
-                ? await service.sendE2EEAudio(chatJid, params.filePath)
-                : await service.sendE2EEFile(chatJid, params.filePath, require('path').basename(params.filePath));
-        }
-      }
-
-      // Save sent attachment message to DB immediately
-      if (result.success && result.messageId) {
-        try {
-          const fileName = require('path').basename(params.filePath);
-          const bodyPreview = attachType === 'image' ? '🖼️ Hình ảnh'
-            : attachType === 'video' ? '🎬 Video'
-            : attachType === 'audio' ? '🎵 Audio'
-            : `📎 ${fileName}`;
-          DatabaseService.getInstance().saveFBMessage({
-            id: result.messageId,
-            account_id: internalId,
-            thread_id: params.threadId,
-            sender_id: resolveRealFacebookId(internalId, service),
-            body: params.body || bodyPreview,
-            timestamp: result.timestamp || Date.now(),
-            type: attachType,
-            attachments: JSON.stringify([{
-              type: attachType,
-              id: uploaded.attachmentId,
-              name: fileName,
-              url: uploaded.attachmentUrl || null,
-            }]),
-            is_self: 1,
-            is_unsent: 0,
-            ...(params.replyToMessageId ? { reply_to_id: params.replyToMessageId } : {}),
-          });
-        } catch (dbErr: any) {
-          Logger.warn(`[facebookIpc] fb:sendAttachment DB save error: ${dbErr.message}`);
-        }
-      }
 
       return { ...result, fileName: require('path').basename(params.filePath) };
     } catch (err: any) {
@@ -741,6 +693,7 @@ export function registerFacebookIpc(): void {
 
   /**
    * Gửi nhiều ảnh/file cùng 1 request (batch attachments)
+   * DEPLAO_ADAPTER: Delegates to FacebookSendService.sendAttachment() per file.
    */
   ipcMain.handle('fb:sendAttachments', async (_event, params: {
     accountId: string; threadId: string; filePaths: string[]; body?: string; typeChat?: 'user' | null;
@@ -751,190 +704,26 @@ export function registerFacebookIpc(): void {
       const service = await getFBServiceOrReconnect(internalId);
       if (!service) return { success: false, error: 'Tài khoản chưa kết nối. Vui lòng kết nối lại Facebook.' };
 
-      // C2: 1:1 → gửi qua E2EE bridge
-      const isUserMessage = params.typeChat === 'user';
-      if (isUserMessage) {
-        if (!service.isE2EEConnected()) {
-          try { await service.retryE2EE(); } catch {}
-        }
-        if (!service.isE2EEConnected()) {
-          return {
-            success: false, uploadedCount: 0, totalCount: params.filePaths.length,
-            error: 'Không thể gửi file 1:1: E2EE bridge chưa kết nối.',
-          };
-        }
+      const { FacebookSendService } = require('../../src/services/facebook/FacebookSendService');
+      let failCount = 0;
 
-        const { normalizeChatJid } = require('../../src/services/facebook/FacebookUtils');
-        const chatJid = normalizeChatJid(params.threadId);
-        const path = require('path');
-        const results: Array<{ success: boolean; messageId?: string; timestamp?: number; filePath: string; fileName: string; isImage: boolean; isVideo: boolean; isAudio: boolean }> = [];
-        let failCount = 0;
-
-        // Gửi từng file qua E2EE bridge, collect all results
-        for (const fp of params.filePaths) {
-          const fileName = path.basename(fp);
-          const isImage = /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(fileName);
-          const isVideo = /\.(mp4|webm|mov|avi)$/i.test(fileName);
-          const isAudio = /\.(mp3|wav|ogg|m4a|aac|flac|wma)$/i.test(fileName);
-          let r: any;
-          if (isImage) {
-            r = await service.sendE2EEImage(chatJid, fp, params.body);
-          } else if (isVideo) {
-            r = await service.sendE2EEVideo(chatJid, fp, params.body);
-          } else if (isAudio) {
-            r = await service.sendE2EEAudio(chatJid, fp);
-          } else {
-            r = await service.sendE2EEFile(chatJid, fp, fileName);
-          }
-          if (!r.success) { failCount++; }
-          results.push({ ...r, filePath: fp, fileName, isImage, isVideo, isAudio });
-        }
-
-        const fbId = resolveRealFacebookId(internalId, service);
-
-        // Save each successfully sent image as its own message (bridge echoes separately)
-        for (const r of results) {
-          if (!r.success || !r.messageId) continue;
-          Logger.log(`[facebookIpc] fb:sendAttachments E2EE saving msgId=${r.messageId} file=${r.fileName}`);
-          try {
-            const attachType = r.isImage ? 'image' : r.isVideo ? 'video' : r.isAudio ? 'audio' : 'file';
-
-            // Copy sent file to media storage
-            let localRelPath: string | undefined;
-            try {
-              const buffer = require('fs').readFileSync(r.filePath);
-              const ext = path.extname(r.fileName) || '.bin';
-              const savedName = `sent_${r.messageId.slice(-8)}_${Date.now()}${ext}`;
-              const absPath = await FileStorageService.saveBuffer(fbId, buffer, savedName);
-              localRelPath = FileStorageService.toRelativePath(absPath);
-              Logger.log(`[facebookIpc] E2EE batch sent media saved: ${localRelPath}`);
-            } catch (fsErr: any) {
-              Logger.warn(`[facebookIpc] E2EE batch media copy failed for ${r.fileName}: ${fsErr.message}`);
-            }
-
-            DatabaseService.getInstance().saveFBMessage({
-              id: r.messageId,
-              account_id: internalId,
-              thread_id: params.threadId,
-              sender_id: fbId,
-              body: params.body || null,
-              timestamp: r.timestamp || Date.now(),
-              type: attachType,
-              attachments: JSON.stringify([{
-                type: attachType,
-                name: r.fileName,
-                ...(localRelPath ? { localPath: localRelPath } : {}),
-              }]),
-              is_self: 1,
-              is_unsent: 0,
-              ...(params.replyToMessageId ? { reply_to_id: params.replyToMessageId } : {}),
-            });
-
-            if (localRelPath) {
-              DatabaseService.getInstance().updateLocalPaths(fbId, r.messageId, { main: localRelPath });
-            }
-
-            EventBroadcaster.emit('fb:onMessage', {
-              fbAccountId: fbId,
-              message: {
-                messageID: r.messageId,
-                replyToID: params.threadId,
-                body: null,
-                userID: fbId,
-                timestamp: String(r.timestamp || Date.now()),
-                type: 'user',
-                attachments: {
-                  id: 1,
-                  url: null,
-                  attachmentType: attachType,
-                  name: r.fileName,
-                  ...(localRelPath ? { localPath: localRelPath } : {}),
-                },
-                isSelf: true,
-                ...(params.replyToMessageId ? { replyToMessageId: params.replyToMessageId } : {}),
-              },
-            });
-            if (localRelPath) {
-              EventBroadcaster.emit('event:localPath', {
-                zaloId: fbId,
-                msgId: r.messageId,
-                threadId: params.threadId,
-                localPaths: { main: localRelPath },
-              });
-            }
-          } catch (dbErr: any) {
-            Logger.warn(`[facebookIpc] fb:sendAttachments E2EE save error for ${r.fileName}: ${dbErr.message}`);
-          }
-        }
-
-        return {
-          success: failCount < params.filePaths.length,
-          uploadedCount: params.filePaths.length - failCount,
-          totalCount: params.filePaths.length,
-        };
+      for (const fp of params.filePaths) {
+        const result = await FacebookSendService.sendAttachment({
+          accountId: internalId,
+          threadId: params.threadId,
+          filePath: fp,
+          body: params.body,
+          typeChat: params.typeChat,
+          replyToMessageId: params.replyToMessageId,
+        });
+        if (!result.success) failCount++;
       }
 
-      // Group: upload + send via REST (existing logic)
-      // 1. Upload all files in parallel
-      const uploadResults = await Promise.all(
-        params.filePaths.map(fp => service.uploadAttachment(fp))
-      );
-      const successful = uploadResults
-        .map((u, i) => u ? { uploaded: u, filePath: params.filePaths[i] } : null)
-        .filter(Boolean) as Array<{ uploaded: any; filePath: string }>;
-
-      if (successful.length === 0) return { success: false, error: 'Tất cả upload thất bại' };
-
-      // 2. Send ONE message with all attachment IDs
-      const attachmentIds = successful.map(({ uploaded }) => {
-        const t = uploaded.attachmentType?.startsWith('image') ? 'image'
-          : uploaded.attachmentType?.startsWith('video') ? 'video'
-          : uploaded.attachmentType?.startsWith('audio') ? 'audio'
-          : 'file';
-        return { id: uploaded.attachmentId, type: t as any };
-      });
-
-      const result = await service.sendMessage(params.threadId, params.body || '', {
-        attachmentIds,
-        typeChat: params.typeChat,
-        ...(params.replyToMessageId ? { replyToMessageId: params.replyToMessageId } : {}),
-      });
-
-      // 3. Save to DB - MQTT echo may have already inserted with partial attachments (race),
-      //    so save first then force-UPDATE attachments to ensure all images are stored.
-      if (result.success && result.messageId) {
-        try {
-          const path = require('path');
-          const allAttachmentsJson = JSON.stringify(successful.map(({ uploaded, filePath }) => ({
-            type: attachmentIds.find(a => a.id === uploaded.attachmentId)?.type || 'image',
-            id: uploaded.attachmentId,
-            name: path.basename(filePath),
-            url: uploaded.attachmentUrl || null,
-          })));
-          const db = DatabaseService.getInstance();
-          db.saveFBMessage({
-            id: result.messageId,
-            account_id: internalId,
-            thread_id: params.threadId,
-            sender_id: resolveRealFacebookId(internalId, service),
-            body: params.body || '🖼️ Hình ảnh',
-            timestamp: result.timestamp || Date.now(),
-            type: 'image',
-            attachments: allAttachmentsJson,
-            is_self: 1,
-            is_unsent: 0,
-            ...(params.replyToMessageId ? { reply_to_id: params.replyToMessageId } : {}),
-          });
-          // Force-update attachments in case MQTT echo already inserted with partial data
-          db.run?.(`UPDATE messages SET attachments = ? WHERE msg_id = ?`, [allAttachmentsJson, result.messageId]);
-          db.run?.(`UPDATE fb_messages SET attachments = ? WHERE id = ?`, [allAttachmentsJson, result.messageId]);
-          Logger.log(`[facebookIpc] fb:sendAttachments saved ${successful.length} attachments for ${result.messageId}`);
-        } catch (dbErr: any) {
-          Logger.warn(`[facebookIpc] fb:sendAttachments DB save error: ${dbErr.message}`);
-        }
-      }
-
-      return { ...result, uploadedCount: successful.length, totalCount: params.filePaths.length };
+      return {
+        success: failCount < params.filePaths.length,
+        uploadedCount: params.filePaths.length - failCount,
+        totalCount: params.filePaths.length,
+      };
     } catch (err: any) {
       return { success: false, error: err.message };
     }
@@ -961,7 +750,11 @@ export function registerFacebookIpc(): void {
   });
 
   /**
-   * Reaction (C3: auto-route 1:1 E2EE reactions qua bridge)
+   * Reaction (C3: auto-route via service)
+   * DEPLAO_ADAPTER: Delegate entirely to FacebookService.addReaction().
+   * Service handles: resolveMessageThreadKind → E2EE/REST routing,
+   * correct sender JID from DB, idempotent remove via empty emoji.
+   * No local DB write on failure — only on success through the service.
    */
   ipcMain.handle('fb:addReaction', async (_event, params: {
     accountId: string; messageId: string; emoji: string; action: 'add' | 'remove';
@@ -971,51 +764,7 @@ export function registerFacebookIpc(): void {
       const service = await getFBServiceOrReconnect(internalId);
       if (!service) return { success: false, error: 'Tài khoản chưa kết nối. Vui lòng kết nối lại Facebook.' };
 
-      let success = false;
-
-      // Try bridge reaction first (works for group via sendReaction)
-      if (service.isE2EEConnected()) {
-        // Look up thread_id from message DB for context
-        const db = DatabaseService.getInstance();
-        const msg = db.queryOne?.('SELECT thread_id, sender_id FROM fb_messages WHERE id = ? AND account_id = ?',
-          [params.messageId, internalId]) as any;
-
-        if (msg?.thread_id) {
-          // Thread ID is numeric (all digits) = 1:1 E2EE chat → route via E2EE reaction
-          if (/^\d+$/.test(msg.thread_id)) {
-            const { normalizeChatJid } = require('../../src/services/facebook/FacebookUtils');
-            const chatJid = normalizeChatJid(msg.thread_id);
-            const senderJid = normalizeChatJid(resolveRealFacebookId(internalId, service));
-            try {
-              const result = await service.sendE2EEReaction(chatJid, params.messageId, senderJid, params.emoji);
-              if (result.success) success = true;
-            } catch {}
-          } else {
-            // Group message (non-numeric thread ID) - try bridge sendReaction
-            try {
-              const result = await service.sendBridgeReaction(msg.thread_id, params.messageId, params.emoji);
-              if (result.success) success = true;
-            } catch {}
-          }
-        }
-      }
-
-      // Fallback to GraphQL mutation if bridge didn't succeed
-      if (!success) {
-        const result = await service.addReaction(params.messageId, params.emoji, params.action);
-        if (result.success) success = true;
-      }
-
-      // Save to local DB for persistence (even if Facebook API fails, keep local state)
-      if (params.emoji) {
-        // Build reactions payload in old format { userId: emoji }
-        const fbId = resolveRealFacebookId(internalId, service);
-        const reactionsPayload: Record<string, string> = {};
-        reactionsPayload[fbId || internalId] = params.emoji;
-        DatabaseService.getInstance().updateFBMessageReaction(params.messageId, JSON.stringify(reactionsPayload));
-      }
-
-      return { success };
+      return await service.addReaction(params.messageId, params.emoji, params.action);
     } catch (err: any) {
       return { success: false, error: err.message };
     }
@@ -1185,13 +934,12 @@ export function registerFacebookIpc(): void {
       const service = await getFBServiceOrReconnect(internalId);
       if (!service) return { success: false, error: 'Tài khoản chưa kết nối. Vui lòng kết nối lại Facebook.' };
 
-      const sender = service.getE2EESender();
-      if (!sender) return { success: false, error: 'E2EE bridge not connected' };
-
-      const result = await sender.send(
+      // Keep this endpoint on the same guarded route as fb:sendMessage. It
+      // retries only a deterministic pre-flight "not connected" failure.
+      const result = await service.sendE2EEMessage(
         params.chatJid,
         params.text,
-        params.replyToId || '',
+        { replyToMessageId: params.replyToId || '' },
         params.replyToSenderJid || '',
       );
 
@@ -1278,7 +1026,7 @@ export function registerFacebookIpc(): void {
       const service = await getFBServiceOrReconnect(internalId);
       if (!service) return { success: false, error: 'Tài khoản chưa kết nối. Vui lòng kết nối lại Facebook.' };
 
-      await service.sendTyping(params.threadId, params.isTyping, params.isGroup || false);
+      await service.sendTyping(params.threadId, params.isTyping);
       return { success: true };
     } catch (err: any) {
       // Typing is best-effort - no error returned
@@ -1297,10 +1045,9 @@ export function registerFacebookIpc(): void {
       const service = await getFBServiceOrReconnect(internalId);
       if (!service) return { success: false, error: 'Tài khoản chưa kết nối. Vui lòng kết nối lại Facebook.' };
 
-      await service.markReadOnServer(params.threadId);
-      return { success: true };
+      return await service.markReadOnServer(params.threadId);
     } catch (err: any) {
-      return { success: true };
+      return { success: false, error: err.message };
     }
   });
 
@@ -1314,7 +1061,11 @@ export function registerFacebookIpc(): void {
       const internalId = resolveInternalId(params.accountId);
       const service = await getFBServiceOrReconnect(internalId);
       if (!service) return { success: false, error: 'Tài khoản chưa kết nối. Vui lòng kết nối lại Facebook.' };
-      return await service.forwardMessage(params.messageId, params.targetThreadId, params.isGroup || false);
+      // Keep `undefined` distinct from false: an omitted target kind must be
+      // resolved from fb_threads, never silently treated as a 1:1 conversation.
+      const hasIsGroup = Object.prototype.hasOwnProperty.call(params, 'isGroup');
+      const typeChat = hasIsGroup ? (params.isGroup ? null : 'user') : undefined;
+      return await service.forwardMessage(params.messageId, params.targetThreadId, typeChat);
     } catch (err: any) {
       return { success: false, error: err.message };
     }
@@ -2043,4 +1794,3 @@ export async function reconnectAllFBAccounts(): Promise<void> {
     Logger.warn(`[facebookIpc] reconnectAllFBAccounts error: ${err.message}`);
   }
 }
-

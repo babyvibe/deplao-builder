@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -18,10 +19,38 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"go.mau.fi/mautrix-meta/pkg/messagix"
-	"go.mau.fi/mautrix-meta/pkg/messagix/httpclient"
 	"go.mau.fi/mautrix-meta/pkg/messagix/socket"
 	"go.mau.fi/mautrix-meta/pkg/messagix/table"
 )
+
+const maxDownloadedMediaSize int64 = 100 * 1024 * 1024
+
+var allowedMediaHosts = []string{
+	"facebook.com",
+	"fbcdn.net",
+	"fbsbx.com",
+	"messenger.com",
+}
+
+func validateMediaURL(rawURL string) (*url.URL, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid media URL: %w", err)
+	}
+	if parsed.Scheme != "https" || parsed.User != nil || parsed.Hostname() == "" {
+		return nil, fmt.Errorf("media URL must be an HTTPS URL without user info")
+	}
+	if parsed.Port() != "" && parsed.Port() != "443" {
+		return nil, fmt.Errorf("media URL uses a disallowed port")
+	}
+	host := strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
+	for _, allowed := range allowedMediaHosts {
+		if host == allowed || strings.HasSuffix(host, "."+allowed) {
+			return parsed, nil
+		}
+	}
+	return nil, fmt.Errorf("media host is not trusted: %s", host)
+}
 
 // UploadMediaOptions for uploading media
 type UploadMediaOptions struct {
@@ -40,14 +69,14 @@ type UploadMediaResult struct {
 
 // UploadMedia uploads media to Messenger
 func (c *Client) UploadMedia(opts *UploadMediaOptions) (*UploadMediaResult, error) {
-	media := &httpclient.MercuryUploadMedia{
+	media := &messagix.MercuryUploadMedia{
 		Filename:    opts.Filename,
 		MimeType:    opts.MimeType,
 		MediaData:   opts.Data,
 		IsVoiceClip: opts.IsVoice,
 	}
 
-	resp, err := c.Messagix.GetHTTP().SendMercuryUploadRequest(c.ctx, opts.ThreadID, media)
+	resp, err := c.Messagix.SendMercuryUploadRequest(c.ctx, opts.ThreadID, media)
 	if err != nil {
 		return nil, err
 	}
@@ -226,13 +255,40 @@ func (c *Client) SendFile(opts *SendFileOptions) (*SendMessageResult, error) {
 }
 
 // DownloadMedia downloads media from a URL
-func (c *Client) DownloadMedia(url string) ([]byte, error) {
-	resp, err := http.Get(url)
+func (c *Client) DownloadMedia(rawURL string) ([]byte, error) {
+	parsed, err := validateMediaURL(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return fmt.Errorf("too many media redirects")
+			}
+			_, redirectErr := validateMediaURL(req.URL.String())
+			return redirectErr
+		},
+	}
+	resp, err := client.Get(parsed.String())
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	return io.ReadAll(resp.Body)
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("media download returned HTTP %d", resp.StatusCode)
+	}
+	if resp.ContentLength > maxDownloadedMediaSize {
+		return nil, fmt.Errorf("media exceeds the 100 MiB limit")
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxDownloadedMediaSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxDownloadedMediaSize {
+		return nil, fmt.Errorf("media exceeds the 100 MiB limit")
+	}
+	return data, nil
 }
 
 // ForwardMessageOptions for forwarding messages
@@ -314,13 +370,13 @@ type SetGroupPhotoOptions struct {
 // SetGroupPhoto sets the group photo/avatar
 func (c *Client) SetGroupPhoto(opts *SetGroupPhotoOptions) error {
 	// Upload the image first
-	media := &httpclient.MercuryUploadMedia{
+	media := &messagix.MercuryUploadMedia{
 		Filename:  "group_photo.jpg",
 		MimeType:  opts.MimeType,
 		MediaData: opts.Data,
 	}
 
-	resp, err := c.Messagix.GetHTTP().SendMercuryUploadRequest(c.ctx, opts.ThreadID, media)
+	resp, err := c.Messagix.SendMercuryUploadRequest(c.ctx, opts.ThreadID, media)
 	if err != nil {
 		return fmt.Errorf("failed to upload group photo: %w", err)
 	}
@@ -513,7 +569,8 @@ type SendE2EEImageOptions struct {
 
 // SendE2EEImage sends an E2EE image
 func (c *Client) SendE2EEImage(opts *SendE2EEImageOptions) (*SendMessageResult, error) {
-	if c.E2EE == nil || !c.E2EE.IsConnected() {
+	e2eeClient := c.snapshotE2EEClient()
+	if e2eeClient == nil || !e2eeClient.IsConnected() {
 		return nil, ErrE2EENotConnected
 	}
 
@@ -538,7 +595,7 @@ func (c *Client) SendE2EEImage(opts *SendE2EEImageOptions) (*SendMessageResult, 
 	}
 
 	// Upload media
-	uploaded, err := c.E2EE.Upload(c.ctx, opts.Data, whatsmeow.MediaImage)
+	uploaded, err := e2eeClient.Upload(c.ctx, opts.Data, whatsmeow.MediaImage)
 	if err != nil {
 		return nil, err
 	}
@@ -609,7 +666,7 @@ func (c *Client) SendE2EEImage(opts *SendE2EEImageOptions) (*SendMessageResult, 
 	}
 
 	msgID := strconv.FormatInt(time.Now().UnixNano(), 10)
-	resp, err := c.E2EE.SendFBMessage(c.ctx, chatJID, waMsg, metadata, whatsmeow.SendRequestExtra{
+	resp, err := e2eeClient.SendFBMessage(c.ctx, chatJID, waMsg, metadata, whatsmeow.SendRequestExtra{
 		ID:          msgID,
 		MediaHandle: uploaded.Handle,
 	})
@@ -638,7 +695,8 @@ type SendE2EEVideoOptions struct {
 
 // SendE2EEVideo sends an E2EE video
 func (c *Client) SendE2EEVideo(opts *SendE2EEVideoOptions) (*SendMessageResult, error) {
-	if c.E2EE == nil || !c.E2EE.IsConnected() {
+	e2eeClient := c.snapshotE2EEClient()
+	if e2eeClient == nil || !e2eeClient.IsConnected() {
 		return nil, ErrE2EENotConnected
 	}
 
@@ -662,7 +720,7 @@ func (c *Client) SendE2EEVideo(opts *SendE2EEVideoOptions) (*SendMessageResult, 
 	}
 
 	// Upload media
-	uploaded, err := c.E2EE.Upload(c.ctx, opts.Data, whatsmeow.MediaVideo)
+	uploaded, err := e2eeClient.Upload(c.ctx, opts.Data, whatsmeow.MediaVideo)
 	if err != nil {
 		return nil, err
 	}
@@ -735,7 +793,7 @@ func (c *Client) SendE2EEVideo(opts *SendE2EEVideoOptions) (*SendMessageResult, 
 	}
 
 	msgID := strconv.FormatInt(time.Now().UnixNano(), 10)
-	resp, err := c.E2EE.SendFBMessage(c.ctx, chatJID, waMsg, metadata, whatsmeow.SendRequestExtra{
+	resp, err := e2eeClient.SendFBMessage(c.ctx, chatJID, waMsg, metadata, whatsmeow.SendRequestExtra{
 		ID:          msgID,
 		MediaHandle: uploaded.Handle,
 	})
@@ -762,7 +820,8 @@ type SendE2EEAudioOptions struct {
 
 // SendE2EEAudio sends an E2EE audio/voice message
 func (c *Client) SendE2EEAudio(opts *SendE2EEAudioOptions) (*SendMessageResult, error) {
-	if c.E2EE == nil || !c.E2EE.IsConnected() {
+	e2eeClient := c.snapshotE2EEClient()
+	if e2eeClient == nil || !e2eeClient.IsConnected() {
 		return nil, ErrE2EENotConnected
 	}
 
@@ -777,7 +836,7 @@ func (c *Client) SendE2EEAudio(opts *SendE2EEAudioOptions) (*SendMessageResult, 
 	}
 
 	// Upload media
-	uploaded, err := c.E2EE.Upload(c.ctx, opts.Data, whatsmeow.MediaAudio)
+	uploaded, err := e2eeClient.Upload(c.ctx, opts.Data, whatsmeow.MediaAudio)
 	if err != nil {
 		return nil, err
 	}
@@ -840,7 +899,7 @@ func (c *Client) SendE2EEAudio(opts *SendE2EEAudioOptions) (*SendMessageResult, 
 	}
 
 	msgID := strconv.FormatInt(time.Now().UnixNano(), 10)
-	resp, err := c.E2EE.SendFBMessage(c.ctx, chatJID, waMsg, metadata, whatsmeow.SendRequestExtra{
+	resp, err := e2eeClient.SendFBMessage(c.ctx, chatJID, waMsg, metadata, whatsmeow.SendRequestExtra{
 		ID:          msgID,
 		MediaHandle: uploaded.Handle,
 	})
@@ -866,7 +925,8 @@ type SendE2EEDocumentOptions struct {
 
 // SendE2EEDocument sends an E2EE document/file
 func (c *Client) SendE2EEDocument(opts *SendE2EEDocumentOptions) (*SendMessageResult, error) {
-	if c.E2EE == nil || !c.E2EE.IsConnected() {
+	e2eeClient := c.snapshotE2EEClient()
+	if e2eeClient == nil || !e2eeClient.IsConnected() {
 		return nil, ErrE2EENotConnected
 	}
 
@@ -881,7 +941,7 @@ func (c *Client) SendE2EEDocument(opts *SendE2EEDocumentOptions) (*SendMessageRe
 	}
 
 	// Upload media
-	uploaded, err := c.E2EE.Upload(c.ctx, opts.Data, whatsmeow.MediaDocument)
+	uploaded, err := e2eeClient.Upload(c.ctx, opts.Data, whatsmeow.MediaDocument)
 	if err != nil {
 		return nil, err
 	}
@@ -942,7 +1002,7 @@ func (c *Client) SendE2EEDocument(opts *SendE2EEDocumentOptions) (*SendMessageRe
 	}
 
 	msgID := strconv.FormatInt(time.Now().UnixNano(), 10)
-	resp, err := c.E2EE.SendFBMessage(c.ctx, chatJID, waMsg, metadata, whatsmeow.SendRequestExtra{
+	resp, err := e2eeClient.SendFBMessage(c.ctx, chatJID, waMsg, metadata, whatsmeow.SendRequestExtra{
 		ID:          msgID,
 		MediaHandle: uploaded.Handle,
 	})
@@ -969,7 +1029,8 @@ type SendE2EEStickerOptions struct {
 
 // SendE2EESticker sends an E2EE sticker
 func (c *Client) SendE2EESticker(opts *SendE2EEStickerOptions) (*SendMessageResult, error) {
-	if c.E2EE == nil || !c.E2EE.IsConnected() {
+	e2eeClient := c.snapshotE2EEClient()
+	if e2eeClient == nil || !e2eeClient.IsConnected() {
 		return nil, ErrE2EENotConnected
 	}
 
@@ -993,7 +1054,7 @@ func (c *Client) SendE2EESticker(opts *SendE2EEStickerOptions) (*SendMessageResu
 	}
 
 	// Upload media (stickers are typically image/webp)
-	uploaded, err := c.E2EE.Upload(c.ctx, opts.Data, whatsmeow.MediaImage)
+	uploaded, err := e2eeClient.Upload(c.ctx, opts.Data, whatsmeow.MediaImage)
 	if err != nil {
 		return nil, err
 	}
@@ -1059,7 +1120,7 @@ func (c *Client) SendE2EESticker(opts *SendE2EEStickerOptions) (*SendMessageResu
 	}
 
 	msgID := strconv.FormatInt(time.Now().UnixNano(), 10)
-	resp, err := c.E2EE.SendFBMessage(c.ctx, chatJID, waMsg, metadata, whatsmeow.SendRequestExtra{
+	resp, err := e2eeClient.SendFBMessage(c.ctx, chatJID, waMsg, metadata, whatsmeow.SendRequestExtra{
 		ID:          msgID,
 		MediaHandle: uploaded.Handle,
 	})
@@ -1093,7 +1154,8 @@ type DownloadE2EEMediaResult struct {
 
 // DownloadE2EEMedia downloads and decrypts E2EE media
 func (c *Client) DownloadE2EEMedia(opts *DownloadE2EEMediaOptions) (*DownloadE2EEMediaResult, error) {
-	if c.E2EE == nil || !c.E2EE.IsConnected() {
+	e2eeClient := c.snapshotE2EEClient()
+	if e2eeClient == nil || !e2eeClient.IsConnected() {
 		return nil, ErrE2EENotConnected
 	}
 
@@ -1141,7 +1203,7 @@ func (c *Client) DownloadE2EEMedia(opts *DownloadE2EEMediaOptions) (*DownloadE2E
 	}
 
 	// Download and decrypt
-	data, err := c.E2EE.DownloadFB(c.ctx, integral, waMediaType)
+	data, err := e2eeClient.DownloadFB(c.ctx, integral, waMediaType)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download E2EE media: %w", err)
 	}

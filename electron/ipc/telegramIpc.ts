@@ -63,9 +63,10 @@ export function registerTelegramIpc(): void {
     chatId: string;
     text: string;
     parseMode?: string;
+    replyMarkup?: Record<string, any>;
   }) => {
     try {
-      return await TelegramBotChannel.sendMessage(params.accountId, params.chatId, params.text, params.parseMode);
+      return await TelegramBotChannel.sendMessage(params);
     } catch (err: any) {
       Logger.error(`[telegram:sendMessage] ${err.message}`);
       return { success: false, error: err.message };

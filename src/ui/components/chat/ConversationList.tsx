@@ -24,7 +24,8 @@ import { getCapability, channelSupports, getChannelLabel, type Channel } from '@
 import { extractUserProfile } from '../../../utils/profileUtils';
 import { refreshContactAlias } from '../../hooks/useZaloEvents';
 import PageLoading from '@/components/common/PageLoading';
-import { CHANNEL, isZalo, isNonZalo, isTelegramUser } from '@/lib/channelHelper';
+import { CHANNEL, isZalo, isNonZalo, isTelegram, isTelegramUser } from '@/lib/channelHelper';
+import { getAdapter } from '@/lib/adapters/registry';
 import ForumTopicsPanel from './ForumTopicsPanel';
 
 interface LabelData { id: number; text: string; color: string; emoji: string; conversations: string[]; textKey?: string; offset?: number; createTime?: number; }
@@ -130,6 +131,7 @@ export default function ConversationList() {
   const [createGroupOpen, setCreateGroupOpen] = useState(false);
   const [inviteContactId, setInviteContactId] = useState<string | null>(null);
   const [loadingGroupAvatars, setLoadingGroupAvatars] = useState(false);
+  const tgAvatarLoadingRef = useRef(false); // Guard against re-entry during Telegram avatar fetch
   const [editLabelsOpen, setEditLabelsOpen] = useState(false);
   const [editLabelsZaloId, setEditLabelsZaloId] = useState<string | null>(null);
   const [editLabelsPickerOpen, setEditLabelsPickerOpen] = useState(false);
@@ -221,6 +223,21 @@ export default function ConversationList() {
 
     return () => { cancelled = true; };
   }, [activeAccountId, mergedInboxMode, mergedInboxAccounts.join(','), channelFilter, search, filter]);
+
+  // A filtered DB query is a snapshot. Selection immediately clears unread in
+  // the Zustand store, so overlay the live item before rendering; otherwise a
+  // conversation in "Khác" keeps its 99+ badge until a tab change re-runs the
+  // database query.
+  const dbFilteredContactsWithLiveState = useMemo(() => {
+    if (!dbFilteredContacts) return null;
+    return dbFilteredContacts.map((contact) => {
+      const ownerId = contact.owner_zalo_id || activeAccountId;
+      const live = ownerId
+        ? (contacts[ownerId] || []).find(item => item.contact_id === contact.contact_id)
+        : undefined;
+      return live ? { ...contact, ...live } : contact;
+    });
+  }, [dbFilteredContacts, contacts, activeAccountId]);
   const [conversationNextOffset, setConversationNextOffset] = useState(PAGE_SIZE);
   const [conversationExhausted, setConversationExhausted] = useState(false);
   const listContainerRef = useRef<HTMLDivElement>(null);
@@ -492,6 +509,8 @@ export default function ConversationList() {
     if (!activeAccountId) return;
 
     const loadGroupAvatars = async () => {
+      // Guard: skip if Telegram avatar fetch is still running (avoid duplicate API calls)
+      if (tgAvatarLoadingRef.current) return;
       // Không set loading state để tránh hiển thị loading indicator
       // setLoadingGroupAvatars(true);
 
@@ -527,9 +546,7 @@ export default function ConversationList() {
             const validMembers = rows.filter(r => r.member_id && /^\d+$/.test(r.member_id));
 
             if (validMembers.length >= 1) {
-              // DB có member data → update cache
-              const hasAvatar = validMembers.some(r => r.avatar);
-
+              // DB có member data → update cache (cho composite avatar)
               setGroupInfo(activeAccountId, group.contact_id, {
                 groupId: group.contact_id,
                 name: group.display_name || group.contact_id,
@@ -546,30 +563,14 @@ export default function ConversationList() {
                 settings: undefined,
                 fetchedAt: Date.now(),
               });
-              console.log(`[ConversationList] Group ${group.contact_id}: loaded ${validMembers.length} members from DB (avatar=${hasAvatar})`);
-
-              // Nếu có ít nhất 1 member có avatar → không cần API nữa
-              if (hasAvatar) return true;
-
-              // Employee mode: không thể gọi Zalo API, dùng DB data làm fallback
-              // GroupAvatar sẽ hiển thị chữ cho members không có avatar
-              if (useEmployeeStore.getState().mode === 'employee') {
-                console.log(`[ConversationList] Group ${group.contact_id}: employee mode, using DB members (no avatars)`);
-                return true;
-              }
-
-              // Nếu group chỉ có 1 member và member đó có avatar → dùng luôn
-              if (!group.avatar_url && validMembers.length === 1 && validMembers[0]?.avatar) {
-                DataAccessor.updateContactProfile({
-                  zaloId: activeAccountId, contactId: group.contact_id,
-                  displayName: group.display_name || group.contact_id,
-                  avatarUrl: validMembers[0].avatar, phone: '', contactType: 'group',
-                }).catch(() => {});
-                group.avatar_url = validMembers[0].avatar;
-                return true;
-              }
+              console.log(`[ConversationList] Group ${group.contact_id}: loaded ${validMembers.length} members from DB`);
             }
-            return false; // Need API
+
+            // Luôn cần API để fetch group avatar (channel logo cho Telegram, group avatar cho Zalo)
+            // Trừ employee mode (không có API) hoặc group đã có avatar
+            if (group.avatar_url) return true; // Đã có avatar, bỏ qua
+            if (useEmployeeStore.getState().mode === 'employee') return true;
+            return false; // Cần API để lấy group avatar
           } catch (err) {
             console.warn(`[ConversationList] DB error for group ${group.contact_id}:`, err);
             return false; // Need API
@@ -642,9 +643,61 @@ export default function ConversationList() {
     const loadGroupsFromAPI = async (groupIds: string[], accountId: string) => {
       const acc = useAccountStore.getState().getActiveAccount();
       if (!acc) return;
-      // Chỉ dùng Zalo API cho Zalo accounts — Telegram dùng adapter
-      if ((acc.channel || CHANNEL.ZALO) !== CHANNEL.ZALO) return;
+      const accChannel = (acc.channel || CHANNEL.ZALO) as string;
 
+      // ── Telegram: use adapter (no batch API, throttle 1 req/500ms) ──
+      if (isTelegram(accChannel)) {
+        tgAvatarLoadingRef.current = true;
+        const TG_THROTTLE_MS = 500;
+        console.log(`[ConversationList] Telegram: fetching avatars for ${groupIds.length} groups`);
+        try {
+          for (let i = 0; i < groupIds.length; i++) {
+            const groupId = groupIds[i];
+            try {
+              const adapter = getAdapter(accChannel as Channel);
+              const res = await (adapter as any).getGroupInfo({ accountId, threadId: groupId });
+              if (res?.success && res.info) {
+                const info = res.info.entity || res.info.full || res.info || {};
+                const name = info.title || info.username || '';
+                const avatarUrl = res.info.avatarUrl || '';
+
+                // Persist to DB
+                if (name || avatarUrl) {
+                  await DataAccessor.updateContactProfile({
+                    zaloId: accountId, contactId: groupId,
+                    displayName: name || groupId, avatarUrl: avatarUrl || '',
+                    phone: '', contactType: 'group',
+                  }).catch(() => {});
+                }
+                // Update in-memory contact
+                if (name || avatarUrl) {
+                  useChatStore.getState().updateContact(accountId, {
+                    contact_id: groupId,
+                    ...(name ? { display_name: name } : {}),
+                    ...(avatarUrl ? { avatar_url: avatarUrl } : {}),
+                    contact_type: 'group',
+                  });
+                }
+                console.log(`[ConversationList] Telegram group ${i+1}/${groupIds.length} ${groupId}: avatar=${!!avatarUrl} name="${name}"`);
+              } else {
+                console.warn(`[ConversationList] Telegram group ${groupId}: getGroupInfo failed`, res?.error);
+              }
+            } catch (err) {
+              console.warn(`[ConversationList] Telegram getGroupInfo failed for ${groupId}:`, err);
+            }
+            // Throttle to avoid Telegram rate limits
+            if (i < groupIds.length - 1) {
+              await new Promise(r => setTimeout(r, TG_THROTTLE_MS));
+            }
+          }
+        } finally {
+          tgAvatarLoadingRef.current = false;
+          console.log(`[ConversationList] Telegram: avatar fetch complete`);
+        }
+        return;
+      }
+
+      // ── Zalo: batch getGroupInfo (max 10/request) ──
       const auth = buildZaloAuth(acc, accountId);
 
       // Batch getGroupInfo (max 10/request)
@@ -962,7 +1015,7 @@ export default function ConversationList() {
   // ── Filtered list: dùng DB result khi có filter, fallback memory filter ──
   const filtered = useMemo(() => {
     // Ưu tiên DB-filtered result (nhanh, đã filter channel/search/unread/others ở DB level)
-    const rawSource = dbFilteredContacts ?? accountContacts;
+    const rawSource = dbFilteredContactsWithLiveState ?? accountContacts;
     // Safety: luôn loại bỏ hội thoại "Khác" khi không ở tab "Khác"
     const source = filter === 'others'
       ? rawSource.filter(c => othersConversations.has(c.contact_id))
@@ -999,7 +1052,14 @@ export default function ConversationList() {
         })
       : source;
 
-    return preFiltered.sort((a, b) => {
+    // The DB snapshot can be stale after opening a conversation. Reapply the
+    // unread predicate against live store state so both standard and Others
+    // views react in the same render as clearUnread().
+    const liveFiltered = filter === 'unread'
+      ? preFiltered.filter(c => c.unread_count > 0)
+      : preFiltered;
+
+    return liveFiltered.sort((a, b) => {
       const aLP = localPinnedThreads.has(a.contact_id) ? 1 : 0, bLP = localPinnedThreads.has(b.contact_id) ? 1 : 0;
       if (aLP !== bLP) return bLP - aLP;
       const aP = pinnedThreads.has(a.contact_id) ? 1 : 0, bP = pinnedThreads.has(b.contact_id) ? 1 : 0;
@@ -1014,7 +1074,7 @@ export default function ConversationList() {
       }
       return (b.last_message_time || 0) - (a.last_message_time || 0);
     });
-  }, [dbFilteredContacts, accountContacts, filter, othersConversations, filterLabelIds, effectiveFilterLabelSource, filterLabelMode, labels, localLabelThreadMapByAccount, activeAccountId, localPinnedThreads, pinnedThreads, activeThreadId, drafts, draftTimestamps]);
+  }, [dbFilteredContactsWithLiveState, accountContacts, filter, othersConversations, filterLabelIds, effectiveFilterLabelSource, filterLabelMode, labels, localLabelThreadMapByAccount, activeAccountId, localPinnedThreads, pinnedThreads, activeThreadId, drafts, draftTimestamps]);
 
   // ── Chế độ Gộp trang: gộp contacts từ tất cả tài khoản được chọn ──────────
   const mergedContacts = useMemo(() => {
@@ -1059,7 +1119,7 @@ export default function ConversationList() {
     if (!mergedContacts) return null;
     // Ưu tiên DB-filtered result khi có filter
     const hasFilter = channelFilter !== 'all' || !!search || filter === 'unread' || filter === 'others';
-    const rawSource = (hasFilter && dbFilteredContacts) ? dbFilteredContacts : mergedContacts;
+    const rawSource = (hasFilter && dbFilteredContactsWithLiveState) ? dbFilteredContactsWithLiveState : mergedContacts;
 
     // Account filter (from sidebar)
     const accountFiltered = mergedInboxFilterAccount
@@ -1077,9 +1137,13 @@ export default function ConversationList() {
           return !ownerOthers.has(c.contact_id);
         });
 
+    const unreadFiltered = filter === 'unread'
+      ? source.filter(c => c.unread_count > 0)
+      : source;
+
     // Label filter (memory, vì DB chưa hỗ trợ cross-account label)
     if (filter === 'label') {
-      return source.filter(c => {
+      return unreadFiltered.filter(c => {
         if (effectiveFilterLabelSource === 'local') {
           const threadMap = localLabelThreadMapByAccount[c.owner_zalo_id!] || {};
           const threadLabelIds = threadMap[c.contact_id] || [];
@@ -1112,11 +1176,11 @@ export default function ConversationList() {
 
     // Unreplied filter
     if (filter === 'unreplied') {
-      return source.filter(c => c.unread_count > 0 && c.is_replied !== 1);
+      return unreadFiltered.filter(c => c.unread_count > 0 && c.is_replied !== 1);
     }
 
-    return source;
-  }, [mergedContacts, dbFilteredContacts, mergedInboxFilterAccount, channelFilter, search, filter, filterLabelIds, allOthers, allLabels, mergedLabels, effectiveFilterLabelSource, filterLabelMode, localLabelThreadMapByAccount]);
+    return unreadFiltered;
+  }, [mergedContacts, dbFilteredContactsWithLiveState, mergedInboxFilterAccount, channelFilter, search, filter, filterLabelIds, allOthers, allLabels, mergedLabels, effectiveFilterLabelSource, filterLabelMode, localLabelThreadMapByAccount]);
 
   const mergedUnreadCount = mergedContacts
     ? mergedContacts.reduce((s, c) => {
@@ -1402,6 +1466,17 @@ export default function ConversationList() {
                 const tgRes = await ipc.telegramUser?.getMessages({ accountId: zaloId!, chatId: contactId, limit: MESSAGE_LOAD_LIMIT });
                 if (tgRes?.success && tgRes.messages?.length) {
                   setMessages(zaloId!, contactId, [...tgRes.messages].reverse());
+                  // Update contact last_message/last_message_time from newest message
+                  const newest = tgRes.messages[0];
+                  if (newest) {
+                    const content = newest.content || '';
+                    const preview = content.length > 80 ? content.substring(0, 80) + '...' : content;
+                    useChatStore.getState().updateContact(zaloId!, {
+                      contact_id: contactId,
+                      last_message: preview,
+                      last_message_time: newest.timestamp || Date.now(),
+                    });
+                  }
                 }
               } catch (tgErr) {
                 console.warn(`[ConversationList] Telegram getMessages fallback error:`, tgErr);
@@ -1909,7 +1984,7 @@ export default function ConversationList() {
   // open; collapsing it into an icon rail loses titles and selection context.
   if (forumChatId && forumAccountId && (!isMobile || !activeTopicId)) {
     return (
-      <div className={`${isMobile ? 'w-full' : 'w-72'} border-r border-gray-700 flex-shrink-0`}>
+      <div className={`${isMobile ? 'w-full' : 'w-full'} border-r border-gray-700 flex-shrink-0`}>
         <ForumTopicsPanel
           accountId={forumAccountId}
           chatId={forumChatId}
@@ -1944,7 +2019,7 @@ export default function ConversationList() {
   }
 
   return (
-    <div className={`flex flex-col h-full border-r border-gray-700 bg-gray-850 relative ${isMobile ? 'w-full' : 'w-72'}`}>
+    <div className={`flex flex-col h-full border-r border-gray-700 bg-gray-850 relative w-full`}>
       {/* Search row - Zalo style */}
       <div className="px-2 pt-2 pb-1 border-b border-gray-700 flex items-center gap-1.5">
         {/* Search input wrapper */}

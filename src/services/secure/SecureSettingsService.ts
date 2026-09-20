@@ -63,4 +63,25 @@ export function secureDelete(key: string): void {
     DatabaseService.getInstance().setSetting(key, '');
 }
 
+/**
+ * Lưu value với encryption bắt buộc. KHÔNG fallback plaintext.
+ * Dùng cho E2EE device state — nếu safeStorage unavailable → throw error.
+ * Caller phải xử lý và degrade service (không lưu state).
+ */
+export function secureSetRequired(key: string, value: string): void {
+    if (!value && value !== '') {
+        DatabaseService.getInstance().setSetting(key, '');
+        return;
+    }
+    if (!safeStorage.isEncryptionAvailable()) {
+        throw new Error(`[SecureSettings] safeStorage unavailable — cannot encrypt ${key} (E2EE state requires encryption)`);
+    }
+    try {
+        const encrypted = safeStorage.encryptString(value).toString('base64');
+        DatabaseService.getInstance().setSetting(key, `${ENC_PREFIX}${encrypted}`);
+    } catch (err: any) {
+        throw new Error(`[SecureSettings] Encrypt failed for ${key}: ${err.message}`);
+    }
+}
+
 

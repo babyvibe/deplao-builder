@@ -167,6 +167,7 @@ export function EmployeeAvatar({name, avatarUrl}: { name: string; avatarUrl?: st
 /** FileBubble - hiển thị tin nhắn file đính kèm (share.file) */
 export function FileBubble({msg, isSent}: { msg: any; isSent: boolean }) {
     const [opening, setOpening] = React.useState(false);
+    const [previewFailed, setPreviewFailed] = React.useState(false);
     const repairAttemptedRef = React.useRef(false);
 
     // Auto-repair: tải file từ Telegram nếu chưa có local_paths
@@ -193,6 +194,8 @@ export function FileBubble({msg, isSent}: { msg: any; isSent: boolean }) {
     let fileHref = '';
     let fileSize = '';
     let fileExt = '';
+    let fileMimeType = '';
+    let telegramFileAttachment: any = null;
     try {
         const parsed = JSON.parse(msg.content || '{}');
         const params = typeof parsed.params === 'string' ? JSON.parse(parsed.params || '{}') : (parsed.params || {});
@@ -216,12 +219,13 @@ export function FileBubble({msg, isSent}: { msg: any; isSent: boolean }) {
     if (isTelegramUser(msg.channel) && (!fileTitle || fileTitle === 'File')) {
         try {
             const atts = typeof msg.attachments === 'string' ? JSON.parse(msg.attachments || '[]') : (msg.attachments || []);
-            const fileAtt = Array.isArray(atts) ? atts.find((a: any) => a?.type === 'file') : null;
-            if (fileAtt) {
-                if (fileAtt.file_name || fileAtt.name) fileTitle = fileAtt.file_name || fileAtt.name;
-                if (fileAtt.file_size || fileAtt.fileSize) fileSize = String(fileAtt.file_size || fileAtt.fileSize);
-                if (fileAtt.mime_type) {
-                    const ext = fileAtt.mime_type.split('/').pop();
+            telegramFileAttachment = Array.isArray(atts) ? atts.find((a: any) => a?.type === 'file') : null;
+            if (telegramFileAttachment) {
+                if (telegramFileAttachment.file_name || telegramFileAttachment.name) fileTitle = telegramFileAttachment.file_name || telegramFileAttachment.name;
+                if (telegramFileAttachment.file_size || telegramFileAttachment.fileSize) fileSize = String(telegramFileAttachment.file_size || telegramFileAttachment.fileSize);
+                if (telegramFileAttachment.mime_type) {
+                    fileMimeType = String(telegramFileAttachment.mime_type).toLowerCase();
+                    const ext = fileMimeType.split('/').pop();
                     if (ext && !fileExt) fileExt = ext;
                 }
             }
@@ -239,6 +243,10 @@ export function FileBubble({msg, isSent}: { msg: any; isSent: boolean }) {
     if (isFacebook(msg.channel) && !localFilePath) {
         localFilePath = getLocalMediaPath(msg, 'file');
     }
+
+    React.useEffect(() => {
+        setPreviewFailed(false);
+    }, [localFilePath, fileHref, msg?.msg_id]);
 
     const handleOpen = async () => {
         if (opening) return;
@@ -304,20 +312,51 @@ export function FileBubble({msg, isSent}: { msg: any; isSent: boolean }) {
     const hasLocal = !!localFilePath;
     const canOpen = hasLocal || !!fileHref;
     const {icon, bg, text} = getFileIconAndColor(fileExt);
+    // Telegram cho phép gửi ảnh dưới dạng document. Đây vẫn là file (có tên,
+    // dung lượng và nút mở file), nhưng client Telegram hiển thị thumbnail và
+    // caption thay vì biến nó thành một MessageMediaPhoto thông thường.
+    const isImageDocument = fileMimeType.startsWith('image/')
+        || ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'avif'].includes(fileExt);
+    const previewUrl = !previewFailed && isImageDocument
+        ? (localFilePath ? toLocalMediaUrl(localFilePath) : fileHref)
+        : '';
+    // Với Telegram, `message.message` là caption của document và được lưu ở
+    // content. Đừng parse JSON của các kênh khác thành caption file.
+    const rawCaption = isTelegramUser(msg.channel) ? String(msg.content || '').trim() : '';
+    const caption = rawCaption && !rawCaption.startsWith('{') && rawCaption !== fileTitle
+        ? rawCaption
+        : '';
 
-    return (
+    const fileCard = (
         <div className={`flex items-center gap-3 px-3 py-2.5 rounded-2xl min-w-[200px] max-w-xs ${
             isSent ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-200'
         }`}>
-            {/* Colored file type icon box */}
-            <button
-                onClick={handleOpen}
-                disabled={opening || !canOpen}
-                className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 font-bold text-[11px] ${bg} ${text} ${canOpen ? 'hover:opacity-80 cursor-pointer' : 'cursor-default opacity-60'} transition-opacity`}
-                title={canOpen ? 'Nhấn để mở' : ''}
-            >
-                {icon}
-            </button>
+            {/* Image documents retain the file card, but use the downloaded image as Telegram does. */}
+            {previewUrl ? (
+                <button
+                    onClick={handleOpen}
+                    disabled={opening || !canOpen}
+                    className="w-16 h-16 overflow-hidden rounded-lg flex-shrink-0 bg-gray-800/40 disabled:cursor-default"
+                    title={canOpen ? 'Nhấn để mở ảnh' : ''}
+                >
+                    <img
+                        src={previewUrl}
+                        alt={fileTitle}
+                        className="w-full h-full object-cover"
+                        onError={() => setPreviewFailed(true)}
+                    />
+                </button>
+            ) : (
+                /* Colored file type icon box */
+                <button
+                    onClick={handleOpen}
+                    disabled={opening || !canOpen}
+                    className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 font-bold text-[11px] ${bg} ${text} ${canOpen ? 'hover:opacity-80 cursor-pointer' : 'cursor-default opacity-60'} transition-opacity`}
+                    title={canOpen ? 'Nhấn để mở' : ''}
+                >
+                    {icon}
+                </button>
+            )}
 
             {/* File info */}
             <button
@@ -375,6 +414,19 @@ export function FileBubble({msg, isSent}: { msg: any; isSent: boolean }) {
                         </svg>
                     }
                 </button>
+            </div>
+        </div>
+    );
+
+    if (!caption) return fileCard;
+
+    return (
+        <div className="flex max-w-xs flex-col gap-1.5">
+            {fileCard}
+            <div className={`rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap break-words ${
+                isSent ? 'bg-blue-400/40 text-white rounded-br-sm' : 'bg-gray-700 text-gray-200 rounded-bl-sm'
+            }`}>
+                {linkifyText(caption)}
             </div>
         </div>
     );
@@ -1211,7 +1263,10 @@ export function MediaGroupBubble({
                             <SingleImageInGroup key={m.msg_id} msg={m} onView={onView} isSent={isSent} isSelecting={isSelectingProp}
                                                 isSelected={selectedMsgIdsProp?.has(m.msg_id)}
                                                 onToggleSelect={onToggleSelect}
-                                                onVideoPlay={onVideoPlay}/>
+                                                onVideoPlay={onVideoPlay}
+                                                allContacts={allContacts}
+                                                groupMembersList={groupMembersList}
+                                                onMentionClick={onMentionClick}/>
                         ))}
                     </div>
                 ))}
@@ -1234,11 +1289,13 @@ export function MediaGroupBubble({
 }
 
 /** Ảnh đơn bên trong MediaGroupBubble - chiều cao cố định h-40 */
-export function SingleImageInGroup({msg, onView, isSent, isSelecting: isSelectingProp, isSelected, onToggleSelect, onVideoPlay}: {
+export function SingleImageInGroup({msg, onView, isSent, isSelecting: isSelectingProp, isSelected, onToggleSelect, onVideoPlay, allContacts, groupMembersList, onMentionClick}: {
     msg: any; onView: (src: string) => void; isSent?: boolean;
     isSelecting?: boolean; isSelected?: boolean; onToggleSelect?: (msgId: string) => void;
     /** Called when user clicks play on a video tile. If provided, opens inline player. */
     onVideoPlay?: (msg: any) => void;
+    allContacts?: any[]; groupMembersList?: any[];
+    onMentionClick?: (userId: string, e: React.MouseEvent) => void;
 }) {
     // Remote-first: hiển thị CDN ngay; chuyển local khi file đã tải xong
     const [useLocal, setUseLocal] = React.useState(false);
@@ -1409,7 +1466,14 @@ export function SingleImageInGroup({msg, onView, isSent, isSelecting: isSelectin
                 <div className="flex flex-col max-w-xs">
                     {videoNode}
                     <div className={`px-3 py-2 text-sm break-words rounded-b-2xl ${isSent ? 'bg-blue-400/40 text-white' : 'bg-gray-700 text-gray-200'}`}>
-                        {videoCaption}
+                        <TextWithMentions
+                            text={videoCaption}
+                            channel={msg.channel}
+                            allContacts={allContacts}
+                            groupMembersList={groupMembersList}
+                            mentionRanges={getTelegramMentionRanges(msg.attachments)}
+                            onMentionClick={onMentionClick}
+                        />
                     </div>
                 </div>
             );
@@ -1477,20 +1541,25 @@ export function StickerBubble({msg}: { msg: any }) {
     const [stickerUrl, setStickerUrl] = React.useState<string | null>(null);
     const [failed, setFailed] = React.useState(false);
     const [unsupported, setUnsupported] = React.useState(false);
-    // Force re-render counter when event:localPath updates this message
-    const [localPathVersion, setLocalPathVersion] = React.useState(0);
+    // Keep the realtime update as a local fallback. The global chat cache is
+    // normally updated by useZaloEvents, but a newly mounted topic bubble must
+    // not lose a fast download that races with that cache update.
+    const [realtimeLocalPaths, setRealtimeLocalPaths] = React.useState<Record<string, string> | null>(null);
 
     // Listen for event:localPath to re-render when sticker is downloaded
     React.useEffect(() => {
         if (!isTelegram(msg.channel)) return;
         const handleLocalPath = (data: any) => {
-            if (data?.msgId === msg.msg_id || String(data?.msgId) === String(msg.msg_id)) {
-                setLocalPathVersion(v => v + 1);
+            const isSameMessage = String(data?.msgId || '') === String(msg.msg_id || '');
+            const isSameThread = !msg.thread_id || String(data?.threadId || '') === String(msg.thread_id);
+            const isSameAccount = !msg.owner_zalo_id || String(data?.zaloId || '') === String(msg.owner_zalo_id);
+            if (isSameMessage && isSameThread && isSameAccount && data?.localPaths) {
+                setRealtimeLocalPaths(data.localPaths);
             }
         };
         const unsub = ipc.on?.('event:localPath', handleLocalPath);
         return () => { unsub?.(); };
-    }, [msg.channel, msg.msg_id]);
+    }, [msg.channel, msg.msg_id, msg.owner_zalo_id, msg.thread_id]);
 
     React.useEffect(() => {
         let cancelled = false;
@@ -1502,12 +1571,15 @@ export function StickerBubble({msg}: { msg: any }) {
         // Never fall through to Zalo's numeric sticker-id parser.
         if (isTelegram(msg.channel)) {
             const media = getTelegramStickerMedia(msg);
-            if (media?.localPath) {
-                if (media.format === 'tgs') {
-                    if (!cancelled) setStickerUrl(`tgs:${media.localPath}`);
+            const realtimeLocalPath = realtimeLocalPaths?.sticker || realtimeLocalPaths?.file || realtimeLocalPaths?.main || realtimeLocalPaths?.video || '';
+            const localPath = media?.localPath || realtimeLocalPath;
+            const format = media?.format || (localPath.toLowerCase().endsWith('.tgs') ? 'tgs' : 'webp');
+            if (localPath) {
+                if (format === 'tgs') {
+                    if (!cancelled) setStickerUrl(`tgs:${localPath}`);
                     return;
                 }
-                const localUrl = toLocalMediaUrl(media.localPath);
+                const localUrl = toLocalMediaUrl(localPath);
                 if (localUrl) {
                     if (!cancelled) setStickerUrl(localUrl);
                     return;
@@ -1637,7 +1709,7 @@ export function StickerBubble({msg}: { msg: any }) {
         return () => {
             cancelled = true;
         };
-    }, [msg.content, msg.local_paths, msg.attachments, localPathVersion]);
+    }, [msg.content, msg.local_paths, msg.attachments, realtimeLocalPaths]);
 
     if (unsupported) {
         return (

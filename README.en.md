@@ -9,7 +9,7 @@ CRM · Marketing · ERP · POS · Workflow · AI Assistant — all in one unifie
 
 [🌐 Website](https://deplaoapp.com/) · [🇻🇳 Tiếng Việt](./README.md)
 
-![Version](https://img.shields.io/badge/version-26.8.5-22c55e)
+![Version](https://img.shields.io/badge/version-26.9.0-22c55e)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Ubuntu-3b82f6)
 ![Electron](https://img.shields.io/badge/Electron-41-47848f?logo=electron&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61dafb?logo=react&logoColor=white)
@@ -25,6 +25,7 @@ CRM · Marketing · ERP · POS · Workflow · AI Assistant — all in one unifie
   <a href="#-download">📥 Download</a> &nbsp;|&nbsp;
   <a href="#-tech-stack">🛠️ Tech Stack</a> &nbsp;|&nbsp;
   <a href="#installation">📦 Install</a> &nbsp;|&nbsp;
+  <a href="#public-api-scan-group">🌐 Public API</a> &nbsp;|&nbsp;
   <a href="#-core-feature-groups">✨ Features</a> &nbsp;|&nbsp;
   <a href="#-security-data">🔒 Security</a> &nbsp;|&nbsp;
   <a href="#-license">📝 MIT</a> &nbsp;|&nbsp;
@@ -39,41 +40,41 @@ CRM · Marketing · ERP · POS · Workflow · AI Assistant — all in one unifie
 <tr>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-Setup-26.8.5.exe">
-<img src="https://img.shields.io/badge/🪟_Windows_10/11-v26.8.5-0078d4?style=for-the-badge&logo=windows&logoColor=white" alt="Download Windows" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-Setup-26.9.0.exe">
+<img src="https://img.shields.io/badge/🪟_Windows_10/11-v26.9.0-0078d4?style=for-the-badge&logo=windows&logoColor=white" alt="Download Windows" />
 </a>
 
-<big><strong>Deplao-Setup-26.8.5.exe</strong></big>
+<big><strong>Deplao-Setup-26.9.0.exe</strong></big>
 
 </td>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.8.5-arm64.dmg">
-<img src="https://img.shields.io/badge/🍎_macOS_M1+-v26.8.5-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Apple Silicon" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.9.0-arm64.dmg">
+<img src="https://img.shields.io/badge/🍎_macOS_M1+-v26.9.0-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Apple Silicon" />
 </a>
 
-<big><strong>Deplao-26.8.5-arm64.dmg</strong></big>
+<big><strong>Deplao-26.9.0-arm64.dmg</strong></big>
 
 </td>
 </tr>
 <tr>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.8.5.AppImage">
-<img src="https://img.shields.io/badge/🐧_Ubuntu_Linux-v26.8.5-e95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Download Ubuntu" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.9.0.AppImage">
+<img src="https://img.shields.io/badge/🐧_Ubuntu_Linux-v26.9.0-e95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Download Ubuntu" />
 </a>
 
-<big><strong>Deplao-26.8.5.AppImage</strong></big><br>
+<big><strong>Deplao-26.9.0.AppImage</strong></big><br>
 <big>works on any distro - <code>chmod +x</code> & run</big>
 
 </td>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.8.5.dmg">
-<img src="https://img.shields.io/badge/🍎_macOS_Intel-v26.8.5-555555?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Intel" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.9.0.dmg">
+<img src="https://img.shields.io/badge/🍎_macOS_Intel-v26.9.0-555555?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Intel" />
 </a>
 
-<big><strong>Deplao-26.8.5.dmg</strong></big>
+<big><strong>Deplao-26.9.0.dmg</strong></big>
 
 </td>
 </tr>
@@ -285,7 +286,7 @@ flowchart TB
     EA --> MC
 ```
 
-> **New architecture since v26.8.5:** Employees fetch data via **REST API** (HTTP fetch → Boss) instead of syncing the entire database as before. DataAccessor auto-routes: standalone/boss → direct IPC, employee → RestQueryService → Boss. Socket.IO replaces SSE for more reliable real-time events. Media is cached locally with a workspace → Boss → CDN cascade. Employees still have their own workspace, but no longer need to sync gigabytes of data when launching the app.
+> **New architecture since v26.9.0:** Employees fetch data via **REST API** (HTTP fetch → Boss) instead of syncing the entire database as before. DataAccessor auto-routes: standalone/boss → direct IPC, employee → RestQueryService → Boss. Socket.IO replaces SSE for more reliable real-time events. Media is cached locally with a workspace → Boss → CDN cascade. Employees still have their own workspace, but no longer need to sync gigabytes of data when launching the app.
 
 ---
 
@@ -359,6 +360,126 @@ npm run production
 - Storage directory can be changed in `Settings`
 
 </details>
+
+<a id="public-api-scan-group"></a>
+
+## 🌐 Public API - Scan Zalo Group Members
+
+Deplao provides an API that scans the member list of a Zalo group. This API is **free to use** and does not check a subscription expiry date, but every request must use a valid Zalo session belonging to you. Only scan data your account is allowed to access, and comply with Zalo's terms and applicable personal-data rules.
+
+### Endpoint
+
+```http
+POST https://deplaoapp.com/api/scan/group
+Content-Type: application/json
+x-api-key: fb7457b7a39bdc9e742f08b657a8059a5e6a8fda6e32bfe0bfecf37eadf519eb
+```
+
+`x-api-key` is a public key, also present in `src/ui/lib/backendService.ts`, so Deplao clients and external integrations use the same contract. Deplao uses its own API plus an AES envelope to make trivial direct calls or forged payloads harder; it is not a replacement for protecting your cookie. Cookie and IMEI are still sensitive session data: never commit them to Git, place them in public logs, or expose them to an untrusted frontend.
+
+### Parameters
+
+The request is an envelope with `page_id` and `body`. `body` is a Base64 string encrypted with AES-128-CBC (an IV of sixteen `0x00` bytes), using the first 16 bytes of the hex API key as the encryption key. The decrypted payload contains:
+
+| Field | Type | Required | Description |
+| --- | --- | :---: | --- |
+| `page_id` | `string` | Yes | ID of the Zalo account/page that performs the scan. It is present in both the outer envelope and encrypted payload. |
+| `cookie` | `string` | Yes | A valid Zalo session cookie for the account that performs the scan. |
+| `imei` | `string` | Yes | Device/IMEI ID paired with that Zalo session. |
+| `groupId` | `string` | Yes | Numeric Zalo group ID. Resolve invitation or group links to a Group ID before calling the API. |
+
+### Node.js example
+
+```js
+import crypto from 'node:crypto';
+
+const endpoint = 'https://deplaoapp.com/api/scan/group';
+const apiKey = 'fb7457b7a39bdc9e742f08b657a8059a5e6a8fda6e32bfe0bfecf37eadf519eb';
+
+function encryptBody(payload) {
+  const key = Buffer.from(apiKey, 'hex').subarray(0, 16);
+  const iv = Buffer.alloc(16, 0);
+  const cipher = crypto.createCipheriv('aes-128-cbc', key, iv);
+  return Buffer.concat([
+    cipher.update(JSON.stringify(payload), 'utf8'),
+    cipher.final(),
+  ]).toString('base64');
+}
+
+const pageId = process.env.ZALO_PAGE_ID;
+const body = {
+  page_id: pageId,
+  cookie: process.env.ZALO_COOKIE,
+  imei: process.env.ZALO_IMEI,
+  groupId: '1234567890123456789',
+};
+
+const response = await fetch(endpoint, {
+  method: 'POST',
+  headers: {
+    'content-type': 'application/json',
+    'x-api-key': apiKey,
+  },
+  body: JSON.stringify({ page_id: pageId, body: encryptBody(body) }),
+});
+
+const result = await response.json();
+if (!result.success) throw new Error(result.error || 'Group scan failed');
+console.log(`Received ${result.totalMembers} members`);
+```
+
+### Successful response
+
+```json
+{
+  "success": true,
+  "groupId": "1234567890123456789",
+  "totalMembers": 2,
+  "members": [
+    {
+      "userId": "987654321",
+      "id": "987654321",
+      "globalId": "987654321_0",
+      "displayName": "Nguyen An",
+      "zaloName": "Nguyen An",
+      "avatar": "https://zalo-ava.example/avatar.jpg",
+      "accountStatus": 1,
+      "type": 0,
+      "lastUpdateTime": 1726824000000
+    }
+  ]
+}
+```
+
+| Response field | Description |
+| --- | --- |
+| `success` | `true` when the backend completed the scan. |
+| `groupId` | The scanned Group ID. |
+| `totalMembers` | Total members returned by this scan. |
+| `members` | Member list. `userId`/`id` identify the user; `globalId` is Zalo's complete identifier. Names, avatar and status may be empty depending on Zalo data access. |
+| `accountStatus`, `type`, `lastUpdateTime` | Metadata returned by Zalo. Preserve it if your calling application needs to interpret it. |
+
+### Error response
+
+```json
+{
+  "success": false,
+  "groupId": "1234567890123456789",
+  "totalMembers": 0,
+  "members": [],
+  "error": "The Zalo cookie has expired or the account cannot access this group"
+}
+```
+
+Common causes are an invalid API key, missing parameters, cookie/IMEI no longer matching the Zalo session, an invalid Group ID, no permission to view the group, or a temporary Zalo limit. Check `success` before using `members`; do not retry aggressively when the upstream rejects a request.
+
+### Privacy, terms and responsibility
+
+- The scan feature in Deplao and this Public API are currently **free** and have no expiry check.
+- Your cookie is sent only in the encrypted request needed for the scan; **Deplao does not store that cookie on its server** after the request is processed.
+- By using the feature in Deplao or calling this Public API, you confirm that you have read and accepted Deplao's policies and terms of use. You remain responsible for the account, group and data you scan.
+- Results depend on the Zalo session, group permissions and Zalo's response. Deplao is not responsible for account restrictions, incorrect data, platform changes, or any issues arising from use of this feature or API.
+- Consider the use carefully, scan only necessary data, and do not use the result for spam, privacy violations, or any breach of Zalo's terms.
 
 ## 🚀 What is Deplao?
 

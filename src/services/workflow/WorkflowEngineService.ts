@@ -4,6 +4,7 @@ import ConnectionManager from '../../utils/ConnectionManager';
 import AccountSendQueue from './AccountSendQueue';
 import { FacebookService } from '../facebook/FacebookService';
 import { FacebookSendService } from '../facebook/FacebookSendService';
+import { resolveThreadKind } from '../facebook/FacebookThreadKind';
 import Logger from '../../utils/Logger';
 import IntegrationRegistry from '../integrations/IntegrationRegistry';
 import * as TelegramUser from '../telegram/TelegramUserListener';
@@ -35,6 +36,7 @@ export type NodeType =
   | 'zalo.changeAliasName'
   | 'logic.if' | 'logic.switch' | 'logic.wait' | 'logic.forEach'
   | 'logic.setVariable' | 'logic.stopIf'
+  | 'action.forwardCrossChannel'
   | 'data.textFormat' | 'data.jsonParse' | 'data.dateFormat' | 'data.randomPick'
   | 'sheets.appendRow' | 'sheets.readValues' | 'sheets.updateCell'
   | 'ai.generateText' | 'ai.classify'
@@ -67,7 +69,16 @@ export type NodeType =
   | 'tg.banMember' | 'tg.promoteMember' | 'tg.addMember' | 'tg.removeMember'
   | 'tg.markAsRead' | 'tg.markTopicAsRead'
   | 'tg.blockUser' | 'tg.unblockUser'
-  | 'tg.changeGroupName' | 'tg.leaveGroup' | 'tg.exportInviteLink' | 'tg.createForumTopic';
+  | 'tg.changeGroupName' | 'tg.leaveGroup' | 'tg.exportInviteLink' | 'tg.createForumTopic'
+  // Telegram Bot
+  | 'tgbot.trigger.message' | 'tgbot.trigger.command' | 'tgbot.trigger.join' | 'tgbot.trigger.callback'
+  | 'tgbot.trigger.editedMessage' | 'tgbot.trigger.joinRequest'
+  | 'tgbot.action.sendMessage' | 'tgbot.action.sendPhoto' | 'tgbot.action.sendVideo' | 'tgbot.action.sendFile'
+  | 'tgbot.action.sendMenu' | 'tgbot.action.sendForm' | 'tgbot.action.forward'
+  | 'tgbot.action.editMessage' | 'tgbot.action.deleteMessage' | 'tgbot.action.pinMessage'
+  | 'tgbot.action.unpinMessage' | 'tgbot.action.addReaction' | 'tgbot.action.sendPoll'
+  | 'tgbot.action.sendChatAction' | 'tgbot.action.banMember' | 'tgbot.action.restrictMember'
+  | 'tgbot.action.answerCallback';
 
 export type WorkflowChannel = 'zalo' | 'facebook' | 'telegram_user' | 'telegram_bot';
 
@@ -84,6 +95,8 @@ export interface WorkflowEdge {
   source: string;
   sourceHandle?: string;
   target: string;
+  /** Visual-only interaction route; it executes only after a Bot callback. */
+  data?: { telegramInline?: boolean; [key: string]: any };
 }
 
 export interface Workflow {
@@ -135,6 +148,45 @@ interface ExecutionContext {
   /** Full node list - used by renderTemplate to match $node.Label.field by label name */
   _wfNodes: WorkflowNode[];
   _wfName: string;
+}
+
+/**
+ * Extract only correlation metadata for the Telegram User supergroup/channel
+ * ingress trace.  Never put the message body in this diagnostic: these lines
+ * are deliberately easy for a user to copy from the Electron terminal.
+ */
+function getTelegramChannelTrace(data: any): {
+  accountId: string;
+  chatId: string;
+  msgId: string;
+  peerKind: string;
+  msgType: string;
+  topicId: string;
+  isSelf: boolean;
+} | null {
+  const envelope = data?.message || data || {};
+  const msg = envelope?.data || data?.data || envelope || {};
+  const channel = data?.channel || envelope?.channel || msg?.channel || '';
+  const chatId = String(envelope?.threadId || data?.threadId || msg?.threadId || msg?.idTo || '');
+  if (channel !== 'telegram_user' || !chatId.startsWith('-100')) return null;
+  return {
+    accountId: String(data?.zaloId || data?.accountId || ''),
+    chatId,
+    msgId: String(msg?.msgId || data?.msgId || ''),
+    peerKind: msg?.isChannel ? 'channel' : 'supergroup_or_topic',
+    msgType: String(msg?.msgType || ''),
+    topicId: String(msg?.topicId || ''),
+    isSelf: !!(envelope?.isSelf || data?.isSelf || msg?.isSelf),
+  };
+}
+
+function logTelegramChannelTrace(stage: string, trace: ReturnType<typeof getTelegramChannelTrace>, extra: Record<string, unknown> = {}): void {
+  if (!trace) return;
+  const fields: Record<string, unknown> = { ...trace, ...extra };
+  const printable = Object.entries(fields)
+    .filter(([, value]) => value !== undefined && value !== null && value !== '')
+    .map(([key, value]) => `${key}=${value}`);
+  // Logger.log(`[TG:channel-workflow] ${stage} | ${printable.join(' ')}`);
 }
 
 // ─── Service ─────────────────────────────────────────────────────────────────
@@ -338,8 +390,16 @@ class WorkflowEngineService {
     // Telegram messages come through the unified 'event:message' channel
     EventBroadcaster.onBeforeSend('event:message', (data: any) => {
       const ch = data?.channel || data?.message?.channel || data?.message?.data?.channel || data?.data?.channel;
-      if (ch === 'telegram_user' || ch === 'telegram_bot') {
+      if (ch === 'telegram_user') {
+        logTelegramChannelTrace('HOOK_RECEIVED', getTelegramChannelTrace(data));
         this.triggerWorkflows('tg.trigger.message', data);
+      }
+      if (ch === 'telegram_bot') {
+        this.triggerWorkflows('tgbot.trigger.message', data);
+        const msg = data?.message?.data || data?.data || {};
+        if (/^\/[A-Za-z][\w-]*/.test(String(msg.content || data?.content || ''))) {
+          this.triggerWorkflows('tgbot.trigger.command', data);
+        }
       }
     });
     // Telegram message deletes (unsend)
@@ -351,6 +411,48 @@ class WorkflowEngineService {
       if (data.channel === 'telegram_user') {
         this.triggerWorkflows('tg.trigger.groupEvent', data);
       }
+    });
+    // Bot inline keyboards are delivered as callback_query updates, not normal
+    // messages. Route buttons intentionally resume a node in the *same*
+    // workflow; they never start an unrelated workflow.
+    EventBroadcaster.onBeforeSend('event:telegramBotCallback', (data: any) => {
+      const callbackData = String(data?.callbackData || '');
+      const route = callbackData.match(/^dlw:n:([a-zA-Z0-9_-]+)$/);
+      if (route) {
+        const routeId = route[1];
+        for (const wf of this.workflows.values()) {
+          if (!wf.enabled || !this.isRunnableWorkflow(wf)) continue;
+          if (wf.pageIds.length && !wf.pageIds.includes(String(data.accountId || data.zaloId || ''))) continue;
+          const sender = wf.nodes.find(node => node.type === 'tgbot.action.sendMessage' &&
+            (node.config?.keyboard?.rows || []).some((row: any) =>
+              (Array.isArray(row) ? row : [row]).some((button: any) =>
+                button?.id === routeId && button?.action === 'node' && button?.targetNodeId,
+              ),
+            ),
+          );
+          if (!sender) continue;
+          const button = (sender.config.keyboard.rows as any[][])
+            .flat().find((item: any) => item?.id === routeId && item?.action === 'node');
+          if (button?.targetNodeId && wf.nodes.some(node => node.id === button.targetNodeId)) {
+            this.executeWorkflow(wf, data, 'tgbot.trigger.callback', button.targetNodeId).catch(err =>
+              Logger.error(`[WorkflowEngine] Telegram Bot inline route failed: ${err.message}`),
+            );
+            return;
+          }
+        }
+        Logger.warn(`[WorkflowEngine] Telegram Bot inline route not found: ${routeId}`);
+        return;
+      }
+      this.triggerWorkflows('tgbot.trigger.callback', data);
+    });
+    EventBroadcaster.onBeforeSend('event:telegramBotMembership', (data: any) => {
+      this.triggerWorkflows('tgbot.trigger.join', data);
+    });
+    EventBroadcaster.onBeforeSend('event:telegramBotEditedMessage', (data: any) => {
+      this.triggerWorkflows('tgbot.trigger.editedMessage', data);
+    });
+    EventBroadcaster.onBeforeSend('event:telegramBotJoinRequest', (data: any) => {
+      this.triggerWorkflows('tgbot.trigger.joinRequest', data);
     });
   }
 
@@ -404,18 +506,47 @@ class WorkflowEngineService {
 
   // ─── Trigger matching ─────────────────────────────────────────────────────
 
-  private triggerWorkflows(triggerType: string, eventData: any): void {
+  private triggerWorkflows(triggerType: string, eventData: any, targetWorkflowId?: string): void {
+    const telegramChannelTrace = triggerType === 'tg.trigger.message'
+      ? getTelegramChannelTrace(eventData)
+      : null;
+    logTelegramChannelTrace('TRIGGER_DISPATCH', telegramChannelTrace, {
+      triggerType,
+      loadedWorkflows: this.workflows.size,
+    });
     for (const wf of this.workflows.values()) {
-      if (!wf.enabled) continue;
-      if (!this.isRunnableWorkflow(wf)) continue;
+      if (targetWorkflowId && wf.id !== targetWorkflowId) continue;
+      if (!wf.enabled) {
+        logTelegramChannelTrace('WORKFLOW_SKIPPED', telegramChannelTrace, { workflowId: wf.id, reason: 'disabled' });
+        continue;
+      }
+      if (!this.isRunnableWorkflow(wf)) {
+        logTelegramChannelTrace('WORKFLOW_SKIPPED', telegramChannelTrace, { workflowId: wf.id, reason: 'unsupported_channel', workflowChannel: wf.channel || '-' });
+        continue;
+      }
       const triggerNode = wf.nodes.find(n => n.type === triggerType);
-      if (!triggerNode) continue;
+      if (!triggerNode) {
+        logTelegramChannelTrace('WORKFLOW_SKIPPED', telegramChannelTrace, { workflowId: wf.id, reason: 'trigger_not_present' });
+        continue;
+      }
       // pageIds: rỗng = áp dụng cho tất cả; có giá trị = chỉ chạy cho page khớp
       if (wf.pageIds.length > 0) {
-        const accountId = eventData.zaloId || eventData.fbAccountId || '';
-        if (accountId && !wf.pageIds.includes(accountId)) continue;
+        const accountId = eventData.zaloId || eventData.fbAccountId || eventData.accountId || '';
+        if (accountId && !wf.pageIds.includes(accountId)) {
+          logTelegramChannelTrace('WORKFLOW_SKIPPED', telegramChannelTrace, { workflowId: wf.id, reason: 'account_filter', configuredAccounts: wf.pageIds.join(',') });
+          continue;
+        }
       }
-      if (!this.matchesTriggerFilter(triggerNode, eventData)) continue;
+      if (!this.matchesTriggerFilter(triggerNode, eventData)) {
+        logTelegramChannelTrace('WORKFLOW_SKIPPED', telegramChannelTrace, { workflowId: wf.id, reason: 'trigger_filter', triggerNodeId: triggerNode.id });
+        continue;
+      }
+
+      logTelegramChannelTrace('WORKFLOW_MATCHED', telegramChannelTrace, {
+        workflowId: wf.id,
+        triggerNodeId: triggerNode.id,
+        debounceSeconds: Number(triggerNode.config.debounceSeconds || 0),
+      });
 
       // ─── Debounce for message triggers: gom tin nhắn liên tiếp ────────
       const debounceSeconds = Number(triggerNode.config.debounceSeconds || 0);
@@ -689,13 +820,97 @@ class WorkflowEngineService {
       if (cfg.chatIdFilter && cfg.chatIdFilter !== data.chatId) return false;
     }
 
+    // Telegram Bot callback filter.  A workflow selected directly by an inline
+    // button is already narrowed by id; this filter is for generic callbacks.
+    if (triggerNode.type === 'tgbot.trigger.callback') {
+      if (cfg.accountId && String(cfg.accountId) !== String(data.accountId || data.zaloId || '')) return false;
+      if (cfg.chatId && String(cfg.chatId) !== String(data.chatId || data.threadId || '')) return false;
+      if (cfg.callbackData && String(cfg.callbackData) !== String(data.callbackData || '')) return false;
+    }
+
+    if (triggerNode.type === 'tgbot.trigger.message' || triggerNode.type === 'tgbot.trigger.command') {
+      const envelope = data.message || data;
+      const msg = envelope.data || data.data || envelope;
+      const content = String(msg.content || data.content || '');
+      if (cfg.accountId && String(cfg.accountId) !== String(data.zaloId || data.accountId || '')) return false;
+      if (cfg.chatId && String(cfg.chatId) !== String(envelope.threadId || data.threadId || msg.idTo || '')) return false;
+      if (cfg.ignoreOwn !== false && (data.isSelf || envelope.isSelf || msg.isSelf)) return false;
+      const chatType = String(msg.chatType || data.chatType || (msg.isChannel ? 'channel' : '')).toLowerCase();
+      if (cfg.chatScope === 'private' && chatType !== 'private') return false;
+      if (cfg.chatScope === 'group' && !['group', 'supergroup'].includes(chatType)) return false;
+      if (cfg.chatScope === 'channel' && chatType !== 'channel') return false;
+      if (triggerNode.type === 'tgbot.trigger.command') {
+        const command = content.trim().split(/\s+/)[0].replace(/@[^\s]+$/, '').replace(/^\//, '').toLowerCase();
+        const commands = [cfg.command, ...String(cfg.aliases || '').split(',')]
+          .map((item: string) => item.trim().replace(/^\//, '').toLowerCase()).filter(Boolean);
+        if (commands.length && !commands.includes(command)) return false;
+        if (cfg.argumentContains && !content.trim().split(/\s+/).slice(1).join(' ').toLowerCase().includes(String(cfg.argumentContains).toLowerCase())) return false;
+        const allowed = String(cfg.authorizedUsers || '').split(',').map((item: string) => item.trim()).filter(Boolean);
+        if (allowed.length && !allowed.includes(String(msg.uidFrom || data.fromId || ''))) return false;
+      }
+      if (triggerNode.type === 'tgbot.trigger.message') {
+        if (cfg.fromId && String(cfg.fromId) !== String(msg.uidFrom || data.fromId || '')) return false;
+        if (cfg.messageTypes && cfg.messageTypes !== 'all' && String(msg.msgType || data.msgType || 'text') !== cfg.messageTypes) return false;
+        const keywords = String(cfg.keyword).split(',').map((item: string) => item.trim().toLowerCase()).filter(Boolean);
+        if (keywords.length) {
+          const normalized = content.toLowerCase();
+          const mode = cfg.keywordMode || 'contains_any';
+          const matched = mode === 'contains_all' ? keywords.every((item: string) => normalized.includes(item))
+            : mode === 'exact' ? keywords.some((item: string) => normalized === item)
+            : mode === 'starts_with' ? keywords.some((item: string) => normalized.startsWith(item))
+            : keywords.some((item: string) => normalized.includes(item));
+          if (!matched) return false;
+        }
+      }
+    }
+
+    if (triggerNode.type === 'tgbot.trigger.join') {
+      if (cfg.accountId && String(cfg.accountId) !== String(data.accountId || data.zaloId || '')) return false;
+      if (cfg.chatId && String(cfg.chatId) !== String(data.chatId || data.threadId || '')) return false;
+      if (cfg.eventType && cfg.eventType !== 'all' && cfg.eventType !== data.eventType) return false;
+    }
+
+    if (triggerNode.type === 'tgbot.trigger.joinRequest') {
+      if (cfg.accountId && String(cfg.accountId) !== String(data.accountId || data.zaloId || '')) return false;
+      if (cfg.chatId && String(cfg.chatId) !== String(data.chatId || data.threadId || '')) return false;
+    }
+
+    if (triggerNode.type === 'tgbot.trigger.editedMessage') {
+      const envelope = data.message || data;
+      const msg = envelope.data || data.data || envelope;
+      const content = String(msg.content || data.content || '');
+      if (cfg.accountId && String(cfg.accountId) !== String(data.accountId || data.zaloId || '')) return false;
+      if (cfg.chatId && String(cfg.chatId) !== String(data.chatId || data.threadId || msg.idTo || '')) return false;
+      const chatType = String(msg.chatType || data.chatType || '').toLowerCase();
+      if (cfg.chatScope === 'private' && chatType !== 'private') return false;
+      if (cfg.chatScope === 'group' && !['group', 'supergroup'].includes(chatType)) return false;
+      if (cfg.chatScope === 'channel' && chatType !== 'channel') return false;
+      if (cfg.keyword) {
+        const keywords = String(cfg.keyword).split(',').map((item: string) => item.trim().toLowerCase()).filter(Boolean);
+        const normalized = content.toLowerCase();
+        const mode = cfg.keywordMode || 'contains_any';
+        const matched = mode === 'contains_all' ? keywords.every((item: string) => normalized.includes(item))
+          : mode === 'exact' ? keywords.some((item: string) => normalized === item)
+          : mode === 'starts_with' ? keywords.some((item: string) => normalized.startsWith(item))
+          : keywords.some((item: string) => normalized.includes(item));
+        if (!matched) return false;
+      }
+    }
+
     // ── Facebook trigger matching ───────────────────────────────────────────
     if (triggerNode.type === 'fb.trigger.message') {
       // Filter by threadId
       if (cfg.threadId && data.threadId !== cfg.threadId) return false;
-      // Filter by threadType (DM vs Group) - Facebook group threads often have '_' in ID
+      // Filter by threadType using the source's explicit discriminator. Both
+      // Facebook users and groups may have a numeric ID, so ID shape is never
+      // a safe routing signal here.
       if (cfg.threadType !== undefined && cfg.threadType !== 'all') {
-        const isGroup = !!(data.threadId && data.threadId.includes('_'));
+        const sourceType = data.typeChat ?? data.message?.type;
+        const isGroup = sourceType === null || sourceType === 'group';
+        const isUser = sourceType === 'user';
+        // Do not guess when a legacy event has no discriminator. This is
+        // preferable to firing a "group only" workflow for a personal chat.
+        if (!isGroup && !isUser) return false;
         if (String(cfg.threadType) === '0' && isGroup) return false;
         if (String(cfg.threadType) === '1' && !isGroup) return false;
       }
@@ -722,6 +937,14 @@ class WorkflowEngineService {
         if (mode === 'contains_all' && !kws.every(k => content.includes(k))) return false;
         if (mode === 'equals' && !kws.includes(content)) return false;
         if (mode === 'starts_with' && !kws.some(k => content.startsWith(k))) return false;
+        if (mode === 'regex') {
+          try {
+            if (!(new RegExp(String(cfg.keyword), 'i')).test(content)) return false;
+          } catch {
+            // An invalid user pattern must not turn the filter into match-all.
+            return false;
+          }
+        }
       }
     }
 
@@ -829,7 +1052,8 @@ class WorkflowEngineService {
   public async executeWorkflow(
     wf: Workflow,
     triggerData: any,
-    triggeredBy: string = 'manual'
+    triggeredBy: string = 'manual',
+    startNodeId?: string,
   ): Promise<WorkflowRunLog> {
     if (!this.isRunnableWorkflow(wf)) {
       throw new Error('Workflow không hỗ trợ chạy (channel unknown)');
@@ -838,6 +1062,15 @@ class WorkflowEngineService {
     const runId = uuidv4();
     const startedAt = Date.now();
     const nodeResults: NodeResult[] = [];
+
+    const telegramChannelTrace = triggeredBy === 'tg.trigger.message'
+      ? getTelegramChannelTrace(triggerData)
+      : null;
+    logTelegramChannelTrace('WORKFLOW_EXECUTION_STARTED', telegramChannelTrace, {
+      workflowId: wf.id,
+      runId,
+      startNodeId: startNodeId || '-',
+    });
 
     // Flatten trigger data for template access
     const flatTrigger = this.flattenTriggerData(triggerData, triggeredBy);
@@ -852,7 +1085,9 @@ class WorkflowEngineService {
       _wfName: wf.name,
     };
 
-    const order = this.topologicalSort(wf);
+    const sortedOrder = this.topologicalSort(wf);
+    const routeNodes = startNodeId ? this.getReachableWorkflowNodes(wf, startNodeId) : null;
+    const order = routeNodes ? sortedOrder.filter(nodeId => routeNodes.has(nodeId)) : sortedOrder;
     let status: 'success' | 'error' | 'partial' = 'success';
     let errorMessage: string | undefined;
 
@@ -948,11 +1183,19 @@ class WorkflowEngineService {
 
     DatabaseService.getInstance().saveWorkflowRunLog(log);
     EventBroadcaster.emit('workflow:executed', { workflowId: wf.id, runId, status });
+    logTelegramChannelTrace('WORKFLOW_EXECUTION_FINISHED', telegramChannelTrace, {
+      workflowId: wf.id,
+      runId,
+      status,
+      nodeCount: nodeResults.length,
+      durationMs: log.finishedAt - startedAt,
+      error: errorMessage || '-',
+    });
     return log;
   }
 
   private markDownstreamSkipped(nodeId: string, wf: Workflow, skipped: Set<string>): void {
-    for (const edge of wf.edges.filter(e => e.source === nodeId)) {
+    for (const edge of wf.edges.filter(e => e.source === nodeId && !e.data?.telegramInline)) {
       if (!skipped.has(edge.target)) {
         skipped.add(edge.target);
         this.markDownstreamSkipped(edge.target, wf, skipped);
@@ -1125,8 +1368,37 @@ class WorkflowEngineService {
         attachments: msg.attachments || null,
         isSelf: !!(msg.isSelf || data.isSelf),
         emoji: data.emoji || '',
+        msgType: msg.type || msg.attachments?.attachmentType || '',
         timestamp: Number(msg.timestamp || data.timestamp || msg.timestamp_precise || Date.now()),
-        typeChat: msg.type === 'user' ? 'user' : undefined,
+        // Numeric Facebook group IDs cannot be detected from their shape.
+        // Retain the tri-state discriminator for downstream send actions.
+        typeChat: msg.type === 'user' ? 'user' : msg.type === 'group' ? null : undefined,
+      };
+    }
+    // ── Telegram Bot trigger flattening ────────────────────────────────────
+    if (triggerType.startsWith('tgbot.trigger.')) {
+      const envelope = data.message || data;
+      const msg = envelope.data || data.data || envelope;
+      const content = String(msg.content || data.content || '');
+      return {
+        accountId: data.accountId || data.zaloId || '',
+        chatId: data.chatId || envelope.threadId || data.threadId || msg.idTo || '',
+        threadId: data.chatId || envelope.threadId || data.threadId || msg.idTo || '',
+        fromId: data.fromId || msg.uidFrom || '',
+        fromName: data.fromName || msg.dName || '',
+        content,
+        body: content,
+        messageId: data.messageId || msg.msgId || '',
+        callbackQueryId: data.callbackQueryId || '',
+        callbackData: data.callbackData || '',
+        isSelf: !!(data.isSelf || envelope.isSelf || msg.isSelf),
+        channel: 'telegram_bot',
+        timestamp: Number(msg.ts || data.timestamp || Date.now()),
+        eventType: data.eventType || '',
+        chatTitle: data.chatTitle || '',
+        chatType: data.chatType || '',
+        actorId: data.actorId || '',
+        actorName: data.actorName || '',
       };
     }
     // ── Telegram trigger flattening ─────────────────────────────────────────
@@ -1177,7 +1449,65 @@ class WorkflowEngineService {
       case 'trigger.manual':
       case 'trigger.labelAssigned':
       case 'trigger.webhook':
+      case 'tgbot.trigger.message':
+      case 'tgbot.trigger.command':
+      case 'tgbot.trigger.join':
+      case 'tgbot.trigger.callback':
+      case 'tgbot.trigger.editedMessage':
+      case 'tgbot.trigger.joinRequest':
         return { ...ctx.trigger };
+
+      case 'action.forwardCrossChannel': {
+        const sourceAccountId = String(cfg.sourceAccountId || ctx.trigger?.accountId || ctx.trigger?.zaloId || ctx.trigger?.fbAccountId || ctx.pageId || '');
+        const sourceChannel = String(cfg.sourceChannel || this.getAccountChannel(sourceAccountId) || ctx.trigger?.channel || '');
+        const targetAccountId = String(cfg.targetAccountId || '');
+        const targetChannel = String(cfg.targetChannel || '');
+        const targetChatId = String(cfg.targetChatId || '');
+        const messageId = String(cfg.messageId || ctx.trigger?.messageId || ctx.trigger?.msgId || '');
+        if (!sourceAccountId || !sourceChannel) throw new Error('[action.forwardCrossChannel] source account/channel required');
+        if (!targetAccountId || !targetChannel || !targetChatId) throw new Error('[action.forwardCrossChannel] target channel, account and chat required');
+
+        let sourceMessage: any = null;
+        if (messageId) {
+          try { sourceMessage = DatabaseService.getInstance().getMessageById(sourceAccountId, messageId); } catch {}
+        }
+        // Media is persisted first, but its local download completes asynchronously.
+        // Do not silently downgrade a just-arrived image/video/file to its caption.
+        if (messageId && !this.getForwardMediaPath(sourceMessage) && this.isForwardMedia(sourceMessage, ctx.trigger)) {
+          sourceMessage = await this.waitForForwardMedia(sourceAccountId, messageId, sourceMessage);
+        }
+
+        const text = this.getForwardText(sourceMessage?.content ?? ctx.trigger?.content ?? '');
+        const mediaPath = this.getForwardMediaPath(sourceMessage);
+        const mediaType = String(sourceMessage?.msg_type || sourceMessage?.type || ctx.trigger?.msgType || '');
+        const targetThreadType = this.resolveForwardTargetThreadType(targetChannel, cfg);
+        const sourceIsMedia = this.isForwardMedia(sourceMessage, ctx.trigger);
+        let nativeForwarded = false;
+
+        if (mediaPath) {
+          const mediaResult = await this.sendForwardMedia(targetChannel, targetAccountId, targetChatId, mediaPath, mediaType, targetThreadType);
+          if (!mediaResult.success) throw new Error(mediaResult.error || 'Không gửi được media chuyển tiếp');
+        } else if (messageId && sourceChannel === targetChannel && sourceAccountId === targetAccountId && (sourceIsMedia || !text)) {
+          const sourceChatId = String(cfg.sourceChatId || ctx.trigger?.chatId || ctx.trigger?.threadId || sourceMessage?.thread_id || '');
+          if (!sourceChatId) throw new Error('[action.forwardCrossChannel] sourceChatId required for native forward');
+          const nativeResult = await this.forwardNativeMessage(sourceChannel, sourceAccountId, sourceChatId, targetChatId, messageId, sourceMessage);
+          if (!nativeResult.success) throw new Error(nativeResult.error || 'Không thể chuyển tiếp tin gốc');
+          nativeForwarded = true;
+        } else if (sourceIsMedia) {
+          throw new Error('Tệp nguồn chưa tải xong trong 30 giây; không thể chuyển sang kênh hoặc tài khoản khác');
+        } else if (!text) {
+          throw new Error('Tin nguồn không có nội dung để chuyển tiếp');
+        }
+
+        // Captions and the optional compose text deliberately travel as separate
+        // messages, matching the chat forward modal and never replacing media.
+        const texts = [nativeForwarded ? '' : text, String(cfg.companionText || '')].map(value => value.trim()).filter(Boolean);
+        for (const item of texts) {
+          const result = await this.sendForwardText(targetChannel, targetAccountId, targetChatId, item, targetThreadType);
+          if (!result.success) throw new Error(result.error || 'Không gửi được nội dung chuyển tiếp');
+        }
+        return { success: true, sourceAccountId, targetAccountId, targetChannel, mediaSent: !!mediaPath || nativeForwarded, textMessagesSent: texts.length };
+      }
 
       // ── Zalo Actions ─────────────────────────────────────────────────────
       case 'zalo.sendMessage': return this.enqueueSend(cfg, ctx, async () => {
@@ -2388,11 +2718,16 @@ class WorkflowEngineService {
               accountId,
               threadId: tid,
               body: finalMessage || String(cfg.message || ''),
-              typeChat: cfg.typeChat || ctx.trigger?.typeChat,
+              typeChat: Object.prototype.hasOwnProperty.call(cfg, 'typeChat')
+                ? cfg.typeChat
+                : ctx.trigger?.typeChat,
               replyToMessageId: cfg.replyToMessageId,
             });
             lastResult = result;
             Logger.log(`[WorkflowEngine] fb.action.sendMessage to ${tid}: success=${result.success}, msgId=${result.messageId}`);
+            if (!result.success && !continueOnError) {
+              throw new Error(result.error || `Không gửi được tin nhắn đến ${tid}`);
+            }
           } catch (err: any) {
             Logger.warn(`[WorkflowEngine] fb.action.sendMessage to ${tid} failed: ${err.message}`);
             lastResult = { success: false, error: err.message };
@@ -2414,125 +2749,76 @@ class WorkflowEngineService {
         const service = await FacebookService.getInstance(accountId);
         const messageId = cfg.messageId || ctx.trigger?.messageId;
         if (!messageId) throw new Error('[fb.action.addReaction] messageId required');
-        // E2EE 1:1 → cần gửi qua bridge (reaction có mã hoá)
-        if (cfg.typeChat === 'user' && service.isE2EEConnected()) {
-          const { normalizeChatJid } = require('../facebook/FacebookUtils');
-          const chatJid = normalizeChatJid(String(cfg.threadId || ctx.trigger?.threadId || ''));
-          const senderJid = normalizeChatJid(accountId);
-          const e2eeResult = await service.sendE2EEReaction(chatJid, String(messageId), senderJid, cfg.emoji || '👍');
-          return { success: e2eeResult.success };
-        }
-        await service.addReaction(String(messageId), cfg.emoji || '👍', 'add');
-        return { success: true };
+        // FacebookService resolves the message's actual thread and original
+        // sender from DB, then chooses encrypted or group reaction safely.
+        const result = await service.addReaction(String(messageId), cfg.emoji || '👍', cfg.action || 'add');
+        this.assertFacebookActionSucceeded('thả reaction', result);
+        return { success: result.success, ...(result.error ? { error: result.error } : {}) };
       }
 
       case 'fb.action.sendImage': {
-
+        // DEPLAO_ADAPTER: Delegate to FacebookSendService.sendAttachment() —
+        // single entry point for all Facebook attachment sends.
         const rawAccountId = cfg.accountId || ctx.trigger?.fbAccountId || ctx.pageId;
         if (!rawAccountId) throw new Error('[fb.action.sendImage] accountId required');
         const accountId = this.resolveFBAccountId(rawAccountId);
-        const service = await FacebookService.getInstance(accountId);
         const targetThreadIds = this.resolveTargetThreadIds(cfg, ctx.trigger?.threadId);
         if (!targetThreadIds.length) throw new Error('[fb.action.sendImage] threadId/threadIds required');
-        const filePath = String(cfg.filePath);
+        const requestedFilePath = String(cfg.filePath || '').trim();
+        if (!requestedFilePath) throw new Error('[fb.action.sendImage] filePath required');
         const caption = cfg.body || cfg.message || '';
         const continueOnError = cfg.continueOnError === true;
 
-        let lastResult: any = { success: false, error: 'Không gửi được đến hội thoại nào' };
-        for (const threadId of targetThreadIds) {
-          try {
-            const isUser = /^\d+$/.test(String(threadId));
+        // Resolve typeChat once from workflow config or trigger context
+        const suppliedTypeChat = Object.prototype.hasOwnProperty.call(cfg, 'typeChat')
+          ? cfg.typeChat
+          : ctx.trigger?.typeChat;
 
-            // E2EE 1:1: try bridge first (handles upload internally)
-            if (isUser && service.isE2EEConnected()) {
-              const { normalizeChatJid } = require('../facebook/FacebookUtils');
-              const chatJid = normalizeChatJid(String(threadId));
-              const e2eeResult = await service.sendE2EEImage(chatJid, filePath, caption);
-              if (e2eeResult.success && e2eeResult.messageId) {
-                const fbSenderId = service.getRealFacebookId() || accountId;
-                const fileName = require('path').basename(filePath);
-                await FacebookSendService.persistSentMessage({
-                  accountId, threadId: String(threadId),
-                  messageId: e2eeResult.messageId,
-                  body: caption || null,
-                  fbSenderId,
-                  timestamp: e2eeResult.timestamp || Date.now(),
-                  type: 'image',
-                  isUserMessage: true,
-                  attachments: JSON.stringify([{ type: 'image', name: fileName }]),
-                });
-                lastResult = { success: true, messageId: e2eeResult.messageId };
-                Logger.log(`[WorkflowEngine] fb.action.sendImage to ${threadId}: success via E2EE, msgId=${e2eeResult.messageId}`);
-                continue;
-              }
-            }
-
-            // REST fallback: upload + send with attachment
-            const att = await service.uploadAttachment(filePath);
-            if (!att) throw new Error('[fb.action.sendImage] Upload failed');
-            let result = await service.sendMessage(String(threadId), caption, { attachmentId: att.attachmentId });
-
-            // E2EE error detection → retry via bridge for 1:1
-            if (!result.success && isUser && /disabled|vô hiệu hoá|encrypted/i.test(result.error || '')) {
-              Logger.warn(`[Workflow:fb.action.sendImage] E2EE error, retrying via bridge for thread=${threadId}`);
-          if (!service.isE2EEConnected()) {
-            try { await service.retryE2EE(); } catch {}
+        // The picker also accepts a URL. Download it once to a local temporary
+        // file because FacebookSendService correctly validates local files
+        // before selecting the E2EE or REST attachment route.
+        let filePath = requestedFilePath;
+        let temporaryPath = '';
+        try {
+          if (/^https?:\/\//i.test(requestedFilePath)) {
+            temporaryPath = await this.downloadUrlToTempFile(requestedFilePath);
+            filePath = temporaryPath;
           }
-          if (service.isE2EEConnected()) {
-            const { normalizeChatJid } = require('../facebook/FacebookUtils');
-            const chatJid = normalizeChatJid(String(threadId));
-            const e2eeResult = await service.sendE2EEImage(chatJid, filePath, caption);
-            if (e2eeResult.success && e2eeResult.messageId) {
-              const fbSenderId = service.getRealFacebookId() || accountId;
-              const fileName = require('path').basename(filePath);
-              await FacebookSendService.persistSentMessage({
-                accountId, threadId: String(threadId),
-                messageId: e2eeResult.messageId,
-                body: caption || null,
-                fbSenderId,
-                timestamp: e2eeResult.timestamp || Date.now(),
-                type: 'image',
-                isUserMessage: true,
-                attachments: JSON.stringify([{ type: 'image', name: fileName }]),
+
+          let lastResult: any = { success: false, error: 'Không gửi được đến hội thoại nào' };
+          for (const threadId of targetThreadIds) {
+            try {
+              const result = await FacebookSendService.sendAttachment({
+                accountId,
+                threadId: String(threadId),
+                filePath,
+                body: caption || undefined,
+                typeChat: suppliedTypeChat,
               });
-              lastResult = { success: true, messageId: e2eeResult.messageId };
-              continue;
+              lastResult = result;
+              if (result.success) {
+                Logger.log(`[WorkflowEngine] fb.action.sendImage to ${threadId}: success, msgId=${result.messageId}`);
+              } else {
+                Logger.warn(`[WorkflowEngine] fb.action.sendImage to ${threadId} failed: ${result.error}`);
+                if (!continueOnError) throw new Error(result.error || 'Không gửi được tệp đính kèm');
+              }
+            } catch (err: any) {
+              Logger.warn(`[WorkflowEngine] fb.action.sendImage to ${threadId} failed: ${err.message}`);
+              lastResult = { success: false, error: err.message };
+              if (!continueOnError) throw err;
             }
           }
+          return {
+            success: lastResult.success,
+            messageId: lastResult.messageId,
+            ...(lastResult.error ? { error: lastResult.error } : {}),
+            _targetCount: targetThreadIds.length,
+          };
+        } finally {
+          if (temporaryPath) {
+            try { fs.unlinkSync(temporaryPath); } catch {}
+          }
         }
-
-        // ── Save DB + emit cho REST path ──
-        if (result.success && result.messageId) {
-          const fbSenderId = service.getRealFacebookId() || accountId;
-          await FacebookSendService.persistSentMessage({
-            accountId, threadId: String(threadId),
-            messageId: result.messageId,
-            body: caption || null,
-            fbSenderId,
-            timestamp: result.timestamp || Date.now(),
-            type: 'image',
-            isUserMessage: false,
-            attachments: JSON.stringify([{ type: 'image', name: require('path').basename(filePath), id: String(att.attachmentId) }]),
-          });
-          lastResult = { success: true, messageId: result.messageId };
-        } else {
-          lastResult = { success: false, error: result.error || 'Send failed' };
-          if (!continueOnError) throw new Error(lastResult.error);
-        }
-        Logger.log(`[WorkflowEngine] fb.action.sendImage to ${threadId}: success=${lastResult.success}`);
-
-        } catch (err: any) {
-          Logger.warn(`[WorkflowEngine] fb.action.sendImage to ${threadId} failed: ${err.message}`);
-          lastResult = { success: false, error: err.message };
-          if (!continueOnError) throw err;
-        }
-      }
-      return {
-        success: lastResult.success,
-        messageId: lastResult.messageId,
-        ...(lastResult.error ? { error: lastResult.error } : {}),
-        _targetCount: targetThreadIds.length,
-      };
       }
 
       case 'fb.action.sendTyping': {
@@ -2553,8 +2839,9 @@ class WorkflowEngineService {
         const s2 = await FacebookService.getInstance(a2);
         const t2 = cfg.threadId || ctx.trigger?.threadId;
         if (!t2) throw new Error('[fb.action.markAsRead] threadId required');
-        await s2.markReadOnServer(String(t2));
-        return { success: true };
+        const result = await s2.markReadOnServer(String(t2));
+        this.assertFacebookActionSucceeded('đánh dấu đã đọc', result);
+        return { success: result.success, ...(result.error ? { error: result.error } : {}) };
       }
 
       case 'fb.action.forward': {
@@ -2571,6 +2858,7 @@ class WorkflowEngineService {
           threadId: String(threadId),
           body: String(message),
         });
+        this.assertFacebookActionSucceeded('gửi lại nội dung', result);
         return {
           success: result.success,
           messageId: result.messageId,
@@ -2588,6 +2876,7 @@ class WorkflowEngineService {
         const t3 = cfg.threadId || ctx.trigger?.threadId;
         if (!t3) throw new Error('[fb.action.pin] threadId required');
         const r2 = await s4.pinMessage(String(m2), String(t3));
+        this.assertFacebookActionSucceeded('ghim tin nhắn', r2);
         return { success: r2.success };
       }
 
@@ -2601,6 +2890,7 @@ class WorkflowEngineService {
         const t4 = cfg.threadId || ctx.trigger?.threadId;
         if (!t4) throw new Error('[fb.action.unpin] threadId required');
         const r3 = await s5.unpinMessage(String(m3), String(t4));
+        this.assertFacebookActionSucceeded('bỏ ghim tin nhắn', r3);
         return { success: r3.success };
       }
 
@@ -2614,6 +2904,7 @@ class WorkflowEngineService {
         if (!cfg.question) throw new Error('[fb.action.createPoll] question required');
         const opts: string[] = String(cfg.options || '').split('\n').map((x: string) => x.trim()).filter(Boolean);
         const r4 = await s6.createPoll(String(t5), String(cfg.question), opts);
+        this.assertFacebookActionSucceeded('tạo bình chọn', r4);
         return { success: r4.success, pollId: r4.pollId };
       }
 
@@ -2625,6 +2916,7 @@ class WorkflowEngineService {
         const u1 = cfg.userId || ctx.trigger?.fromId;
         if (!u1) throw new Error('[fb.action.block] userId required');
         const r5 = await s7.blockUser(String(u1));
+        this.assertFacebookActionSucceeded('chặn người dùng', r5);
         return { success: r5.success };
       }
 
@@ -2636,6 +2928,7 @@ class WorkflowEngineService {
         const m4 = cfg.messageId || ctx.trigger?.messageId;
         if (!m4) throw new Error('[fb.action.unsend] messageId required');
         const r6 = await s8.unsendMessage(String(m4));
+        this.assertFacebookActionSucceeded('thu hồi tin nhắn', r6);
         return { success: r6.success };
       }
 
@@ -2649,6 +2942,7 @@ class WorkflowEngineService {
         if (!cfg.text && !cfg.newText) throw new Error('[fb.action.editMessage] text required');
         const editText = cfg.text || cfg.newText || '';
         const r7 = await s9.editMessage(String(m5), String(editText));
+        this.assertFacebookActionSucceeded('chỉnh sửa tin nhắn', r7);
         return { success: r7.success };
       }
 
@@ -2661,6 +2955,7 @@ class WorkflowEngineService {
         if (!t6) throw new Error('[fb.action.changeName] threadId required');
         if (!cfg.name) throw new Error('[fb.action.changeName] name required');
         const r8 = await s10.changeThreadName(String(t6), String(cfg.name));
+        this.assertFacebookActionSucceeded('đổi tên nhóm', r8);
         return { success: r8 };
       }
 
@@ -2673,6 +2968,7 @@ class WorkflowEngineService {
         if (!t7) throw new Error('[fb.action.changeEmoji] threadId required');
         if (!cfg.emoji) throw new Error('[fb.action.changeEmoji] emoji required');
         const r9 = await s11.changeThreadEmoji(String(t7), String(cfg.emoji));
+        this.assertFacebookActionSucceeded('đổi biểu tượng nhóm', r9);
         return { success: r9 };
       }
 
@@ -2687,6 +2983,7 @@ class WorkflowEngineService {
         if (!u2) throw new Error('[fb.action.changeNickname] userId required');
         if (cfg.nickname === undefined) throw new Error('[fb.action.changeNickname] nickname required');
         const r10 = await s12.changeNickname(String(t8), String(u2), String(cfg.nickname));
+        this.assertFacebookActionSucceeded('đổi biệt danh', r10);
         return { success: r10 };
       }
 
@@ -2944,6 +3241,229 @@ class WorkflowEngineService {
         return r;
       }
 
+      // ─── Telegram Bot Actions ──────────────────────────────────────────────
+
+      case 'tgbot.action.sendMessage': {
+        const botAccountId = cfg.accountId || ctx.trigger?.accountId || ctx.pageId;
+        if (!botAccountId) throw new Error('[tgbot.action.sendMessage] accountId required');
+        const chatId = cfg.chatId || ctx.trigger?.chatId;
+        if (!chatId) throw new Error('[tgbot.action.sendMessage] chatId required');
+        const text = cfg.message || cfg.text || ctx.trigger?.content || '';
+        if (!text) throw new Error('[tgbot.action.sendMessage] message required');
+
+        const TelegramBotChannel = require('../telegram/TelegramBotChannelService');
+        const replyMarkup = this.buildTelegramBotReplyMarkup(cfg.keyboard);
+        const result = await TelegramBotChannel.sendMessage({
+          accountId: botAccountId,
+          chatId,
+          text,
+          replyMarkup,
+        });
+        return { success: result?.success, messageId: result?.messageId };
+      }
+
+      case 'tgbot.action.sendPhoto': {
+        const botAccountId = cfg.accountId || ctx.trigger?.accountId || ctx.pageId;
+        if (!botAccountId) throw new Error('[tgbot.action.sendPhoto] accountId required');
+        const chatId = cfg.chatId || ctx.trigger?.chatId;
+        if (!chatId) throw new Error('[tgbot.action.sendPhoto] chatId required');
+        const photoPath = cfg.photoPath || cfg.url;
+        if (!photoPath) throw new Error('[tgbot.action.sendPhoto] photoPath required');
+
+        const result = await TelegramBot.sendPhoto(botAccountId, chatId, photoPath, cfg.caption || '');
+        return { success: result?.success, messageId: result?.messageId };
+      }
+
+      case 'tgbot.action.sendVideo': {
+        const botAccountId = cfg.accountId || ctx.trigger?.accountId || ctx.pageId;
+        const chatId = cfg.chatId || ctx.trigger?.chatId;
+        const videoPath = cfg.videoPath || cfg.url;
+        if (!botAccountId || !chatId || !videoPath) throw new Error('[tgbot.action.sendVideo] accountId, chatId and videoPath required');
+        const result = await TelegramBot.sendVideo(botAccountId, chatId, videoPath, cfg.caption || '');
+        return { success: result.success, messageId: result.messageId, error: result.error };
+      }
+
+      case 'tgbot.action.sendFile': {
+        const botAccountId = cfg.accountId || ctx.trigger?.accountId || ctx.pageId;
+        const chatId = cfg.chatId || ctx.trigger?.chatId;
+        if (!botAccountId || !chatId || !cfg.filePath) throw new Error('[tgbot.action.sendFile] accountId, chatId and filePath required');
+        const result = await TelegramBot.sendDocument(botAccountId, chatId, cfg.filePath, cfg.caption || '');
+        return { success: result.success, messageId: result.messageId, error: result.error };
+      }
+
+      case 'tgbot.action.sendMenu': {
+        const botAccountId = cfg.accountId || ctx.trigger?.accountId || ctx.pageId;
+        if (!botAccountId) throw new Error('[tgbot.action.sendMenu] accountId required');
+        const chatId = cfg.chatId || ctx.trigger?.chatId;
+        if (!chatId) throw new Error('[tgbot.action.sendMenu] chatId required');
+        const text = cfg.text || 'Chọn một tùy chọn:';
+        const buttons = cfg.buttons || []; // Array of { text, callback_data }
+
+        // Build inline keyboard
+        const inline_keyboard: any[][] = buttons.map((row: any) => {
+          if (Array.isArray(row)) {
+            return row.map((btn: any) => ({
+              text: btn.text || '',
+              callback_data: btn.callback_data || '',
+            }));
+          }
+          return [{ text: row.text || '', callback_data: row.callback_data || '' }];
+        });
+
+        const TelegramBotChannel = require('../telegram/TelegramBotChannelService');
+        const result = await TelegramBotChannel.sendMessage({
+          accountId: botAccountId,
+          chatId,
+          text,
+          replyMarkup: { inline_keyboard },
+        });
+        return { success: result?.success, messageId: result?.messageId };
+      }
+
+      case 'tgbot.action.sendForm': {
+        const botAccountId = cfg.accountId || ctx.trigger?.accountId || ctx.pageId;
+        if (!botAccountId) throw new Error('[tgbot.action.sendForm] accountId required');
+        const chatId = cfg.chatId || ctx.trigger?.chatId;
+        if (!chatId) throw new Error('[tgbot.action.sendForm] chatId required');
+        const formText = cfg.text || 'Vui lòng nhập thông tin:';
+        const fields = cfg.fields || []; // Array of { label, field_name, required }
+
+        // Build form as text with buttons
+        let formContent = formText + '\n\n';
+        fields.forEach((f: any, i: number) => {
+          formContent += `${i + 1}. ${f.label}${f.required ? ' *' : ''}\n`;
+        });
+
+        const TelegramBotChannel = require('../telegram/TelegramBotChannelService');
+        const result = await TelegramBotChannel.sendMessage({
+          accountId: botAccountId,
+          chatId,
+          text: formContent,
+        });
+
+        // Store form state in context for follow-up messages
+        return {
+          success: result?.success,
+          messageId: result?.messageId,
+          formFields: fields,
+          formChatId: chatId,
+        };
+      }
+
+      case 'tgbot.action.forward': {
+        const botAccountId = cfg.accountId || ctx.trigger?.accountId || ctx.pageId;
+        if (!botAccountId) throw new Error('[tgbot.action.forward] accountId required');
+        const targetChatId = cfg.targetChatId;
+        if (!targetChatId) throw new Error('[tgbot.action.forward] targetChatId required');
+        const fromChatId = cfg.fromChatId || ctx.trigger?.chatId;
+        const messageId = cfg.messageId || ctx.trigger?.messageId;
+        if (!fromChatId || !messageId) throw new Error('[tgbot.action.forward] fromChatId and messageId required');
+
+        const result = await TelegramBot.forwardMessage(botAccountId, targetChatId, fromChatId, String(messageId));
+        return { success: result.success, messageId: result.messageId, error: result.error };
+      }
+
+      case 'tgbot.action.editMessage': {
+        const botAccountId = cfg.accountId || ctx.trigger?.accountId || ctx.pageId;
+        if (!botAccountId) throw new Error('[tgbot.action.editMessage] accountId required');
+        const chatId = cfg.chatId || ctx.trigger?.chatId;
+        if (!chatId) throw new Error('[tgbot.action.editMessage] chatId required');
+        const messageId = cfg.messageId;
+        if (!messageId) throw new Error('[tgbot.action.editMessage] messageId required');
+        const text = cfg.text || '';
+
+        if (!text) throw new Error('[tgbot.action.editMessage] text required');
+        const result = await TelegramBot.editMessage(botAccountId, chatId, String(messageId), text);
+        return { success: result.success, error: result.error };
+      }
+
+      case 'tgbot.action.deleteMessage': {
+        const botAccountId = cfg.accountId || ctx.trigger?.accountId || ctx.pageId;
+        if (!botAccountId) throw new Error('[tgbot.action.deleteMessage] accountId required');
+        const chatId = cfg.chatId || ctx.trigger?.chatId;
+        if (!chatId) throw new Error('[tgbot.action.deleteMessage] chatId required');
+        const messageId = cfg.messageId || ctx.trigger?.messageId;
+        if (!messageId) throw new Error('[tgbot.action.deleteMessage] messageId required');
+
+        const result = await TelegramBot.deleteMessage(botAccountId, chatId, String(messageId));
+        return { success: result.success, error: result.error };
+      }
+
+      case 'tgbot.action.pinMessage': {
+        const botAccountId = cfg.accountId || ctx.trigger?.accountId || ctx.pageId;
+        const chatId = cfg.chatId || ctx.trigger?.chatId;
+        const messageId = cfg.messageId || ctx.trigger?.messageId;
+        if (!botAccountId || !chatId || !messageId) throw new Error('[tgbot.action.pinMessage] accountId, chatId and messageId required');
+        const result = await TelegramBot.pinMessage(botAccountId, chatId, String(messageId));
+        return { success: result.success, error: result.error };
+      }
+
+      case 'tgbot.action.unpinMessage': {
+        const botAccountId = cfg.accountId || ctx.trigger?.accountId || ctx.pageId;
+        const chatId = cfg.chatId || ctx.trigger?.chatId;
+        if (!botAccountId || !chatId) throw new Error('[tgbot.action.unpinMessage] accountId and chatId required');
+        const result = await TelegramBot.unpinChatMessage(botAccountId, chatId, cfg.messageId || ctx.trigger?.messageId || undefined);
+        return { success: result.success, error: result.error };
+      }
+
+      case 'tgbot.action.addReaction': {
+        const botAccountId = cfg.accountId || ctx.trigger?.accountId || ctx.pageId;
+        const chatId = cfg.chatId || ctx.trigger?.chatId;
+        const messageId = cfg.messageId || ctx.trigger?.messageId;
+        if (!botAccountId || !chatId || !messageId || !cfg.emoji) throw new Error('[tgbot.action.addReaction] accountId, chatId, messageId and emoji required');
+        const result = await TelegramBot.addReaction(botAccountId, chatId, String(messageId), cfg.emoji);
+        return { success: result.success, error: result.error };
+      }
+
+      case 'tgbot.action.sendPoll': {
+        const botAccountId = cfg.accountId || ctx.trigger?.accountId || ctx.pageId;
+        const chatId = cfg.chatId || ctx.trigger?.chatId;
+        const options = String(cfg.options || '').split(/\r?\n/).map((item: string) => item.trim()).filter(Boolean);
+        if (!botAccountId || !chatId || !cfg.question || options.length < 2) throw new Error('[tgbot.action.sendPoll] accountId, chatId, question and at least two options required');
+        const result = await TelegramBot.sendPoll(botAccountId, chatId, cfg.question, options);
+        return { success: result.success, messageId: result.messageId, error: result.error };
+      }
+
+      case 'tgbot.action.sendChatAction': {
+        const botAccountId = cfg.accountId || ctx.trigger?.accountId || ctx.pageId;
+        const chatId = cfg.chatId || ctx.trigger?.chatId;
+        if (!botAccountId || !chatId) throw new Error('[tgbot.action.sendChatAction] accountId and chatId required');
+        const result = await TelegramBot.sendChatAction(botAccountId, chatId, cfg.action || 'typing');
+        return { success: result.success, error: result.error };
+      }
+
+      case 'tgbot.action.banMember': {
+        const botAccountId = cfg.accountId || ctx.trigger?.accountId || ctx.pageId;
+        const chatId = cfg.chatId || ctx.trigger?.chatId;
+        const userId = cfg.userId || ctx.trigger?.fromId;
+        if (!botAccountId || !chatId || !userId) throw new Error('[tgbot.action.banMember] accountId, chatId and userId required');
+        const minutes = Number(cfg.durationMinutes || 0);
+        const untilDate = minutes > 0 ? Math.floor(Date.now() / 1000) + minutes * 60 : undefined;
+        const result = await TelegramBot.banChatMember(botAccountId, chatId, String(userId), untilDate);
+        return { success: result.success, error: result.error };
+      }
+
+      case 'tgbot.action.restrictMember': {
+        const botAccountId = cfg.accountId || ctx.trigger?.accountId || ctx.pageId;
+        const chatId = cfg.chatId || ctx.trigger?.chatId;
+        const userId = cfg.userId || ctx.trigger?.fromId;
+        if (!botAccountId || !chatId || !userId) throw new Error('[tgbot.action.restrictMember] accountId, chatId and userId required');
+        const minutes = Math.max(1, Number(cfg.durationMinutes || 10));
+        const result = await TelegramBot.restrictChatMember(botAccountId, chatId, String(userId), { canSendMessages: false }, Math.floor(Date.now() / 1000) + minutes * 60);
+        return { success: result.success, error: result.error };
+      }
+
+      case 'tgbot.action.answerCallback': {
+        const botAccountId = cfg.accountId || ctx.trigger?.accountId || ctx.pageId;
+        if (!botAccountId) throw new Error('[tgbot.action.answerCallback] accountId required');
+        const callbackQueryId = cfg.callbackQueryId || ctx.trigger?.callbackQueryId;
+        if (!callbackQueryId) throw new Error('[tgbot.action.answerCallback] callbackQueryId required');
+        const text = cfg.text || '';
+
+        const result = await TelegramBot.answerCallbackQuery(botAccountId, callbackQueryId, text, !!cfg.showAlert);
+        return { success: result.success, error: result.error };
+      }
+
       default:
         return {};
     }
@@ -2973,6 +3493,150 @@ class WorkflowEngineService {
     }
     if (!conn || !conn.api) throw new Error(`Account ${pageId || 'unknown'} không connected`);
     return conn.api;
+  }
+
+  private getAccountChannel(accountId: string): string {
+    if (!accountId) return '';
+    try {
+      return String((DatabaseService.getInstance().getAccounts?.() || [])
+        .find((account: any) => String(account.zalo_id) === String(accountId))?.channel || 'zalo');
+    } catch {
+      return '';
+    }
+  }
+
+  private getForwardText(raw: any): string {
+    if (raw === null || raw === undefined || raw === 'null') return '';
+    if (typeof raw !== 'string') return String(raw || '').trim();
+    try {
+      const parsed = JSON.parse(raw);
+      if (typeof parsed === 'string') return parsed.trim();
+      if (parsed?.msg) return String(parsed.msg).trim();
+      if (parsed?.text) return String(parsed.text).trim();
+      // Attachment-shaped JSON is not a human-readable caption.
+      if (parsed?.href || parsed?.thumb || parsed?.title) return '';
+    } catch {}
+    return raw.trim();
+  }
+
+  /** A returned { success: false } must fail the node, not produce a green run. */
+  private assertFacebookActionSucceeded(action: string, result: any): void {
+    const success = typeof result === 'boolean' ? result : result?.success;
+    if (!success) throw new Error(result?.error || `Facebook không thể ${action}`);
+  }
+
+  private getForwardMediaPath(message: any): string {
+    if (!message) return '';
+    try {
+      const paths = typeof message.local_paths === 'string' ? JSON.parse(message.local_paths || '{}') : (message.local_paths || {});
+      const candidate = paths.file || paths.video || paths.voice || paths.main || paths.hd
+        || Object.values(paths).find((value: any) => typeof value === 'string' && value) || '';
+      if (!candidate || typeof candidate !== 'string') return '';
+      const normalized = candidate.startsWith('local-media:///') ? candidate.replace('local-media:///', '')
+        : candidate.startsWith('local-media://') ? candidate.replace('local-media://', '') : candidate;
+      return fs.existsSync(normalized) ? normalized : '';
+    } catch {
+      return '';
+    }
+  }
+
+  private isForwardMedia(message: any, trigger: any): boolean {
+    const attachment = Array.isArray(trigger?.attachments) ? trigger.attachments[0] : trigger?.attachments;
+    const type = String(
+      message?.msg_type || message?.type || trigger?.msgType ||
+      attachment?.attachmentType || attachment?.type || '',
+    ).toLowerCase();
+    return ['image', 'photo', 'picture', 'video', 'video_note', 'audio', 'voice', 'file', 'document', 'sticker'].includes(type);
+  }
+
+  /** Wait only for the downloader of the message currently being forwarded. */
+  private async waitForForwardMedia(accountId: string, messageId: string, initialMessage: any): Promise<any> {
+    const deadline = Date.now() + 30_000;
+    let message = initialMessage;
+    while (Date.now() < deadline) {
+      if (this.getForwardMediaPath(message)) return message;
+      await new Promise(resolve => setTimeout(resolve, 400));
+      try { message = DatabaseService.getInstance().getMessageById(accountId, messageId) || message; } catch {}
+    }
+    return message;
+  }
+
+  /** targetThreadType is a Zalo-only knob. Facebook resolves the target from its DB. */
+  private resolveForwardTargetThreadType(channel: string, cfg: Record<string, any>): number | undefined {
+    if (channel !== 'zalo' || cfg.targetThreadType === undefined || cfg.targetThreadType === '') return undefined;
+    return Number(cfg.targetThreadType) === 1 ? 1 : 0;
+  }
+
+  private async sendForwardText(channel: string, accountId: string, chatId: string, text: string, threadType?: number): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    if (channel === 'zalo') {
+      try {
+        const result = await this.getApi(accountId).sendMessage({ msg: text, attachments: [] }, chatId, threadType ?? 0);
+        return { success: result?.success !== false, messageId: result?.msgId || result?.messageId };
+      } catch (err: any) { return { success: false, error: err.message }; }
+    }
+    if (channel === 'facebook') {
+      const typeChat = threadType === 0 ? 'user' : threadType === 1 ? null : undefined;
+      const result = await FacebookSendService.sendTextMessage({ accountId: this.resolveFBAccountId(accountId), threadId: chatId, body: text, typeChat });
+      return { success: !!result.success, messageId: result.messageId, error: result.error };
+    }
+    if (channel === 'telegram_bot') return TelegramBot.sendMessage(accountId, chatId, text);
+    if (channel === 'telegram_user') return TelegramUser.sendMessage(accountId, chatId, text);
+    return { success: false, error: `Kênh đích không hỗ trợ: ${channel}` };
+  }
+
+  private async sendForwardMedia(channel: string, accountId: string, chatId: string, filePath: string, mediaType: string, threadType?: number): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    const kind = mediaType.toLowerCase();
+    const isImage = ['photo', 'image', 'picture'].includes(kind);
+    const isVideo = ['video', 'video_note'].includes(kind);
+    if (channel === 'zalo') {
+      try {
+        const result = await this.getApi(accountId).sendMessage({ msg: '', attachments: [filePath] }, chatId, threadType ?? 0);
+        return { success: result?.success !== false, messageId: result?.msgId || result?.messageId };
+      } catch (err: any) { return { success: false, error: err.message }; }
+    }
+    if (channel === 'facebook') {
+      // DEPLAO_ADAPTER: Delegate to FacebookSendService.sendAttachment().
+      const typeChat = threadType === 0 ? 'user' : threadType === 1 ? null : undefined;
+      return FacebookSendService.sendAttachment({
+        accountId: this.resolveFBAccountId(accountId),
+        threadId: chatId,
+        filePath,
+        typeChat,
+      });
+    }
+    if (channel === 'telegram_bot') {
+      if (isImage) return TelegramBot.sendPhoto(accountId, chatId, filePath);
+      if (isVideo) return TelegramBot.sendVideo(accountId, chatId, filePath);
+      return TelegramBot.sendDocument(accountId, chatId, filePath);
+    }
+    if (channel === 'telegram_user') return TelegramUser.sendFile(accountId, chatId, filePath, '');
+    return { success: false, error: `Kênh đích không hỗ trợ: ${channel}` };
+  }
+
+  private async forwardNativeMessage(channel: string, accountId: string, sourceChatId: string, targetChatId: string, messageId: string, sourceMessage: any): Promise<{ success: boolean; error?: string }> {
+    if (channel === 'telegram_user' || channel === 'telegram_bot') {
+      return this.forwardTelegramMessage(accountId, sourceChatId, targetChatId, messageId);
+    }
+    if (channel === 'facebook') {
+      // DEPLAO_ADAPTER: Don't pass source message type — forwardMessage()
+      // resolves target thread kind from DB via resolveThreadKind().
+      // Passing sourceMessage.is_group would incorrectly route a group→user
+      // forward as group, or user→group as user.
+      try {
+        const service = await FacebookService.getInstance(this.resolveFBAccountId(accountId));
+        const result = await service.forwardMessage(messageId, targetChatId);
+        return { success: !!result.success, error: result.error };
+      } catch (err: any) { return { success: false, error: err.message }; }
+    }
+    if (channel === 'zalo') {
+      try {
+        const result = await this.getApi(accountId).forwardMessage({
+          message: '', reference: { id: messageId, ts: sourceMessage?.timestamp || Date.now(), logSrcType: 0, fwLvl: 0 },
+        }, [targetChatId], Number(sourceMessage?.thread_type || 0));
+        return { success: result?.success !== false, error: result?.error };
+      } catch (err: any) { return { success: false, error: err.message }; }
+    }
+    return { success: false, error: `Kênh nguồn không hỗ trợ: ${channel}` };
   }
 
   // ─── Telegram Helpers ─────────────────────────────────────────────────────
@@ -3136,6 +3800,9 @@ class WorkflowEngineService {
     const adj = new Map<string, string[]>();
     for (const node of wf.nodes) { inDegree.set(node.id, 0); adj.set(node.id, []); }
     for (const edge of wf.edges) {
+      // These dashed edges document an interaction route in the editor. They
+      // are activated only by an actual Bot API callback, never by normal flow.
+      if (edge.data?.telegramInline) continue;
       adj.get(edge.source)?.push(edge.target);
       inDegree.set(edge.target, (inDegree.get(edge.target) ?? 0) + 1);
     }
@@ -3156,6 +3823,21 @@ class WorkflowEngineService {
     return result;
   }
 
+  /** Nodes to execute after an inline button is pressed (normal edges only). */
+  private getReachableWorkflowNodes(wf: Workflow, startNodeId: string): Set<string> {
+    const reached = new Set<string>([startNodeId]);
+    const queue = [startNodeId];
+    while (queue.length) {
+      const nodeId = queue.shift()!;
+      for (const edge of wf.edges) {
+        if (edge.source !== nodeId || edge.data?.telegramInline || reached.has(edge.target)) continue;
+        reached.add(edge.target);
+        queue.push(edge.target);
+      }
+    }
+    return reached;
+  }
+
   /** Resolve target thread IDs từ cfg, hỗ trợ cả threadIds (mảng JSON) và threadId (string cũ) */
   private resolveTargetThreadIds(cfg: Record<string, any>, triggerThreadId?: string): string[] {
     if (cfg.threadIds) {
@@ -3167,6 +3849,52 @@ class WorkflowEngineService {
     if (cfg.threadId) return [String(cfg.threadId)];
     if (triggerThreadId) return [triggerThreadId];
     return [];
+  }
+
+  /**
+   * Converts the editor's compact keyboard model to Telegram Bot API markup.
+   * Never invent callback payloads: generic callbacks must be supplied by the
+   * editor, while routed buttons use a short button id payload (Bot API caps
+   * callback_data at 64 bytes).
+   */
+  private buildTelegramBotReplyMarkup(keyboard: any): Record<string, any> | undefined {
+    if (!keyboard?.enabled) return undefined;
+    const rows = Array.isArray(keyboard.rows) ? keyboard.rows : [];
+    if (!rows.length) return undefined;
+
+    if (keyboard.type === 'reply') {
+      const replyKeyboard = rows
+        .map((row: any) => (Array.isArray(row) ? row : [row]))
+        .map((row: any[]) => row
+          .map(btn => String(btn?.text || '').trim())
+          .filter(Boolean),
+        )
+        .filter((row: string[]) => row.length > 0);
+      return replyKeyboard.length ? {
+        keyboard: replyKeyboard,
+        resize_keyboard: keyboard.resize !== false,
+        one_time_keyboard: !!keyboard.oneTime,
+        is_persistent: !!keyboard.persistent,
+      } : undefined;
+    }
+
+    const inlineKeyboard = rows
+      .map((row: any) => (Array.isArray(row) ? row : [row]))
+      .map((row: any[]) => row.map((btn: any) => {
+        const text = String(btn?.text || '').trim();
+        if (!text) return null;
+        if (btn.action === 'url') {
+          const url = String(btn.url || '').trim();
+          return url ? { text, url } : null;
+        }
+        const callbackData = btn.action === 'node'
+          ? `dlw:n:${String(btn.id || '').trim()}`
+          : String(btn.callbackData || '').trim();
+        if (!callbackData || Buffer.byteLength(callbackData, 'utf8') > 64) return null;
+        return { text, callback_data: callbackData };
+      }).filter(Boolean))
+      .filter((row: any[]) => row.length > 0);
+    return inlineKeyboard.length ? { inline_keyboard: inlineKeyboard } : undefined;
   }
 
   private renderConfig(config: Record<string, any>, ctx: ExecutionContext): Record<string, any> {

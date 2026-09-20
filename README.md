@@ -9,7 +9,7 @@ Tích hợp CRM · MARKETING · ERP · POS · Workflow · Trợ lý AI - vận h
 
 [🌐 Website](https://deplaoapp.com/) · [🇬🇧 English](./README.en.md)
 
-![Version](https://img.shields.io/badge/version-26.8.5-22c55e)
+![Version](https://img.shields.io/badge/version-26.9.0-22c55e)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Ubuntu-3b82f6)
 ![Electron](https://img.shields.io/badge/Electron-41-47848f?logo=electron&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61dafb?logo=react&logoColor=white)
@@ -25,6 +25,7 @@ Tích hợp CRM · MARKETING · ERP · POS · Workflow · Trợ lý AI - vận h
   <a href="#-tải-xuống">📥 Tải xuống</a> &nbsp;|&nbsp;
   <a href="#-công-nghệ-ngôn-ngữ-sử-dụng">🛠️ Công nghệ</a> &nbsp;|&nbsp;
   <a href="#cài-đặt">📦 Cài đặt</a> &nbsp;|&nbsp;
+  <a href="#public-api-scan-group">🌐 Public API</a> &nbsp;|&nbsp;
   <a href="#-các-nhóm-tính-năng-chính">✨ Tính năng</a> &nbsp;|&nbsp;
   <a href="#-bảo-mật-dữ-liệu">🔒 Bảo mật</a> &nbsp;|&nbsp;
   <a href="#-giấy-phép">📝 MIT</a> &nbsp;|&nbsp;
@@ -39,41 +40,41 @@ Tích hợp CRM · MARKETING · ERP · POS · Workflow · Trợ lý AI - vận h
 <tr>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-Setup-26.8.5.exe">
-<img src="https://img.shields.io/badge/🪟_Windows_10/11-v26.8.5-0078d4?style=for-the-badge&logo=windows&logoColor=white" alt="Download Windows" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-Setup-26.9.0.exe">
+<img src="https://img.shields.io/badge/🪟_Windows_10/11-v26.9.0-0078d4?style=for-the-badge&logo=windows&logoColor=white" alt="Download Windows" />
 </a>
 
-<big><strong>Deplao-Setup-26.8.5.exe</strong></big>
+<big><strong>Deplao-Setup-26.9.0.exe</strong></big>
 
 </td>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.8.5-arm64.dmg">
-<img src="https://img.shields.io/badge/🍎_macOS_M1+-v26.8.5-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Apple Silicon" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.9.0-arm64.dmg">
+<img src="https://img.shields.io/badge/🍎_macOS_M1+-v26.9.0-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Apple Silicon" />
 </a>
 
-<big><strong>Deplao-26.8.5-arm64.dmg</strong></big>
+<big><strong>Deplao-26.9.0-arm64.dmg</strong></big>
 
 </td>
 </tr>
 <tr>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.8.5.AppImage">
-<img src="https://img.shields.io/badge/🐧_Ubuntu_Linux-v26.8.5-e95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Download Ubuntu" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.9.0.AppImage">
+<img src="https://img.shields.io/badge/🐧_Ubuntu_Linux-v26.9.0-e95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Download Ubuntu" />
 </a>
 
-<big><strong>Deplao-26.8.5.AppImage</strong></big><br>
+<big><strong>Deplao-26.9.0.AppImage</strong></big><br>
 <big>chạy mọi distro - <code>chmod +x</code> là dùng được</big>
 
 </td>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.8.5.dmg">
-<img src="https://img.shields.io/badge/🍎_macOS_Intel-v26.8.5-555555?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Intel" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.9.0.dmg">
+<img src="https://img.shields.io/badge/🍎_macOS_Intel-v26.9.0-555555?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Intel" />
 </a>
 
-<big><strong>Deplao-26.8.5.dmg</strong></big>
+<big><strong>Deplao-26.9.0.dmg</strong></big>
 
 </td>
 </tr>
@@ -322,7 +323,7 @@ flowchart TB
     EA --> MC
 ```
 
-> **Kiến trúc mới từ v26.8.5:** Employee gọi dữ liệu qua **REST API** (HTTP fetch → Boss) thay vì sync toàn bộ DB như trước. DataAccessor tự động routing: standalone/boss → IPC trực tiếp, employee → RestQueryService → Boss. Socket.IO thay SSE cho realtime event ổn định hơn. Media được cache local với cascade workspace → Boss → CDN. Employee vẫn có workspace riêng, nhưng không cần sync hàng GB khi vào app.
+> **Kiến trúc mới từ v26.9.0:** Employee gọi dữ liệu qua **REST API** (HTTP fetch → Boss) thay vì sync toàn bộ DB như trước. DataAccessor tự động routing: standalone/boss → IPC trực tiếp, employee → RestQueryService → Boss. Socket.IO thay SSE cho realtime event ổn định hơn. Media được cache local với cascade workspace → Boss → CDN. Employee vẫn có workspace riêng, nhưng không cần sync hàng GB khi vào app.
 
 ---
 
@@ -361,8 +362,127 @@ flowchart LR
 ---
 
 
-## 🚀 Deplao là gì?
+<a id="public-api-scan-group"></a>
 
+## 🌐 Public API - Quét thành viên nhóm Zalo
+
+Deplao cung cấp API quét danh sách thành viên của nhóm Zalo. API này **không yêu cầu gói premium hay kiểm tra hạn dùng**; tuy nhiên request phải dùng phiên đăng nhập Zalo hợp lệ của chính bạn. Chỉ quét dữ liệu mà tài khoản đó có quyền truy cập và tuân thủ điều khoản của Zalo cùng quy định về dữ liệu cá nhân.
+
+### Endpoint
+
+```http
+POST https://deplaoapp.com/api/scan/group
+Content-Type: application/json
+x-api-key: fb7457b7a39bdc9e742f08b657a8059a5e6a8fda6e32bfe0bfecf37eadf519eb
+```
+
+`x-api-key` là key public, cũng có trong `src/ui/lib/backendService.ts`, để client Deplao và tích hợp ngoài cùng dùng đúng contract. Deplao sử dụng API riêng cùng envelope AES để hạn chế việc gọi trực tiếp hoặc giả mạo payload một cách đơn giản; đây không phải là lớp xác thực thay thế cho việc bảo vệ cookie của bạn. Cookie và IMEI vẫn là dữ liệu phiên nhạy cảm: không đưa chúng vào Git, log công khai hoặc frontend không kiểm soát được.
+
+### Tham số
+
+Request dùng một envelope gồm `page_id` và `body`. `body` là chuỗi Base64 được mã hóa AES-128-CBC (IV gồm 16 byte `0x00`), với key là 16 byte đầu của API key dạng hex. Payload sau khi giải mã có các trường sau:
+
+| Trường | Kiểu | Bắt buộc | Mô tả |
+| --- | --- | :---: | --- |
+| `page_id` | `string` | Có | ID của tài khoản/trang Zalo đang dùng để quét. Giá trị này có mặt cả ở envelope lẫn payload mã hóa. |
+| `cookie` | `string` | Có | Cookie phiên Zalo còn hiệu lực của tài khoản thực hiện quét. |
+| `imei` | `string` | Có | IMEI/device ID đã ghép với phiên Zalo đó. |
+| `groupId` | `string` | Có | ID nhóm Zalo dạng số. Nếu đang có link mời/link nhóm, hãy resolve sang Group ID trước khi gọi API. |
+
+### Ví dụ Node.js
+
+```js
+import crypto from 'node:crypto';
+
+const endpoint = 'https://deplaoapp.com/api/scan/group';
+const apiKey = 'fb7457b7a39bdc9e742f08b657a8059a5e6a8fda6e32bfe0bfecf37eadf519eb';
+
+function encryptBody(payload) {
+  const key = Buffer.from(apiKey, 'hex').subarray(0, 16);
+  const iv = Buffer.alloc(16, 0);
+  const cipher = crypto.createCipheriv('aes-128-cbc', key, iv);
+  return Buffer.concat([
+    cipher.update(JSON.stringify(payload), 'utf8'),
+    cipher.final(),
+  ]).toString('base64');
+}
+
+const pageId = process.env.ZALO_PAGE_ID;
+const body = {
+  page_id: pageId,
+  cookie: process.env.ZALO_COOKIE,
+  imei: process.env.ZALO_IMEI,
+  groupId: '1234567890123456789',
+};
+
+const response = await fetch(endpoint, {
+  method: 'POST',
+  headers: {
+    'content-type': 'application/json',
+    'x-api-key': apiKey,
+  },
+  body: JSON.stringify({ page_id: pageId, body: encryptBody(body) }),
+});
+
+const result = await response.json();
+if (!result.success) throw new Error(result.error || 'Quét nhóm thất bại');
+console.log(`Đã nhận ${result.totalMembers} thành viên`);
+```
+
+### Response thành công
+
+```json
+{
+  "success": true,
+  "groupId": "1234567890123456789",
+  "totalMembers": 2,
+  "members": [
+    {
+      "userId": "987654321",
+      "id": "987654321",
+      "globalId": "987654321_0",
+      "displayName": "Nguyễn An",
+      "zaloName": "Nguyễn An",
+      "avatar": "https://zalo-ava.example/avatar.jpg",
+      "accountStatus": 1,
+      "type": 0,
+      "lastUpdateTime": 1726824000000
+    }
+  ]
+}
+```
+
+| Trường response | Mô tả |
+| --- | --- |
+| `success` | `true` khi backend hoàn tất quét. |
+| `groupId` | Group ID đã được quét. |
+| `totalMembers` | Tổng số thành viên trả về trong lần quét. |
+| `members` | Danh sách thành viên. `userId`/`id` là ID người dùng; `globalId` là định danh đầy đủ của Zalo; các trường tên, avatar và trạng thái có thể rỗng tùy quyền dữ liệu của Zalo. |
+| `accountStatus`, `type`, `lastUpdateTime` | Metadata trạng thái do Zalo trả về; giữ nguyên để ứng dụng gọi API tự diễn giải khi cần. |
+
+### Response lỗi
+
+```json
+{
+  "success": false,
+  "groupId": "1234567890123456789",
+  "totalMembers": 0,
+  "members": [],
+  "error": "Cookie Zalo đã hết hạn hoặc không có quyền truy cập nhóm"
+}
+```
+
+Các nguyên nhân thường gặp: API key không hợp lệ, thiếu tham số, cookie/IMEI không còn khớp phiên Zalo, Group ID sai hoặc tài khoản không có quyền xem nhóm, và giới hạn tạm thời từ Zalo. Luôn kiểm tra `success` trước khi dùng `members`; không retry dồn dập khi upstream đang từ chối request.
+
+### Lưu ý quyền riêng tư, điều khoản và trách nhiệm
+
+- Tính năng quét trong Deplao và Public API này hiện **không thu phí** và không kiểm tra hạn dùng.
+- Cookie của bạn chỉ được gửi trong request mã hóa để thực hiện lượt quét; **Deplao không lưu trữ cookie này trên server** sau khi xử lý request.
+- Khi dùng tính năng trong Deplao hoặc gọi Public API, bạn xác nhận đã đọc và đồng ý với chính sách, điều khoản sử dụng của Deplao; đồng thời tự chịu trách nhiệm về tài khoản, nhóm và dữ liệu mình quét.
+- Kết quả phụ thuộc vào phiên Zalo, quyền truy cập nhóm và phản hồi từ Zalo. Deplao không chịu trách nhiệm cho việc tài khoản bị hạn chế, lỗi dữ liệu, thay đổi từ nền tảng hoặc bất kỳ vấn đề phát sinh từ việc sử dụng tính năng/API này.
+- Hãy cân nhắc kỹ trước khi sử dụng, chỉ quét dữ liệu cần thiết và không dùng kết quả để spam, xâm phạm quyền riêng tư hoặc vi phạm điều khoản của Zalo.
+
+## 🚀 Deplao là gì?
 
 Nếu nhìn nhanh, có thể hiểu Deplao là:
 
@@ -371,7 +491,6 @@ Nếu nhìn nhanh, có thể hiểu Deplao là:
 - **lớp tự động hóa**: workflow, AI, trigger và action chạy nền
 - **lớp kết nối kinh doanh**: POS, vận chuyển, API và công cụ ngoài
 - **lớp quản trị nội bộ**: báo cáo, ERP, phân quyền, workspace nhân viên
-
 
 ## ✨ Điểm nổi bật
 

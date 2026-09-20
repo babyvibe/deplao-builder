@@ -447,10 +447,28 @@ export default function ChatHeader() {
         const dbRes = await DataAccessor.getMessages({ zaloId: activeAccountId, threadId: activeThreadId, limit: limit + 20, offset: 0 });
         if (dbRes?.messages?.length) {
           useChatStore.getState().setMessages(activeAccountId, activeThreadId, [...dbRes.messages].reverse());
+
+          // Update contact last_message/last_message_time from the newest message
+          const newest = dbRes.messages[0]; // Already sorted desc from DB
+          if (newest) {
+            const content = newest.content || '';
+            const preview = content.length > 80 ? content.substring(0, 80) + '...' : content;
+            useChatStore.getState().updateContact(activeAccountId, {
+              contact_id: activeThreadId,
+              last_message: preview,
+              last_message_time: newest.timestamp || Date.now(),
+            });
+          }
         }
         showNotification(`Đã tải ${res.messages.length} tin nhắn`, 'success');
       } else {
-        showNotification(res?.error || 'Không có tin nhắn mới', 'info');
+        // Skip noisy Telegram errors — CHANNEL_PRIVATE is expected for restricted channels
+        const err = res?.error || '';
+        if (err.includes('CHANNEL_PRIVATE') || err.includes('USER_BANNED_IN_CHANNEL')) {
+          showNotification('Kênh này không cho phép tải tin nhắn cũ', 'info');
+        } else {
+          showNotification(err || 'Không có tin nhắn mới', 'info');
+        }
       }
     } catch (err: any) {
       showNotification(err?.message || 'Lỗi tải tin nhắn', 'error');

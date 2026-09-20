@@ -93,6 +93,10 @@ const activePollers = new Map<string, ActivePoller>();
 /** accountId → tokenHash (reverse lookup) */
 const accountIdToTokenHash = new Map<string, string>();
 
+/** Accounts whose token is currently polled by another process. Kept outside
+ * the active poller map so the health check cannot immediately restart them. */
+const pollingConflicts = new Map<string, string>();
+
 function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex').slice(0, 32);
 }
@@ -269,6 +273,16 @@ async function pollLoop(poller: ActivePoller): Promise<void> {
   } catch (err: any) {
     if (err.response?.status === 409) {
       Logger.warn(`[BotIngress] 409 Conflict for token ${poller.tokenHash} — another consumer is polling this token. Stopping.`);
+      for (const accountId of poller.accountIds) {
+        pollingConflicts.set(accountId, poller.tokenHash);
+        try {
+          const { EventBroadcaster } = require('../event/EventBroadcaster');
+          EventBroadcaster.emit('event:disconnected', {
+            zaloId: accountId,
+            reason: 'bot_poll_conflict',
+          });
+        } catch {}
+      }
       stopPollerByTokenHash(poller.tokenHash);
       return;
     }
@@ -320,8 +334,12 @@ function stopPollerByTokenHash(tokenHash: string): void {
  * If a poller for the same token already exists, just registers the accountId
  * without starting a second getUpdates loop (TG-015 fix).
  */
-export function startBot(account: BotAccount): void {
+export function startBot(account: BotAccount): boolean {
   const tokenHash = hashToken(account.botToken);
+  if (pollingConflicts.get(account.accountId) === tokenHash) {
+    Logger.warn(`[BotIngress] Polling remains paused for ${account.accountId}: Telegram reported another getUpdates consumer. Stop the other consumer or restart after it is removed.`);
+    return false;
+  }
   const existingPoller = activePollers.get(tokenHash);
 
   if (existingPoller) {
@@ -332,7 +350,7 @@ export function startBot(account: BotAccount): void {
       existingPoller.consumers.set(account.accountId, []);
     }
     Logger.log(`[BotIngress] Reusing existing poller for ${account.accountId} (@${account.botUsername}) on token ${tokenHash}`);
-    return;
+    return true;
   }
 
   // New token — start a new poller
@@ -353,6 +371,7 @@ export function startBot(account: BotAccount): void {
 
   Logger.log(`[BotIngress] Started poller for ${account.accountId} (@${account.botUsername}) offset=${savedOffset}`);
   pollLoop(poller);
+  return true;
 }
 
 /**
@@ -360,6 +379,7 @@ export function startBot(account: BotAccount): void {
  * Only stops the poller when ALL accountIds for this token are removed.
  */
 export function stopBot(accountId: string): void {
+  pollingConflicts.delete(accountId);
   const tokenHash = accountIdToTokenHash.get(accountId);
   if (!tokenHash) return;
 
@@ -444,6 +464,11 @@ export function isPollerRunning(accountId: string): boolean {
   if (!tokenHash) return false;
   const poller = activePollers.get(tokenHash);
   return !!poller?.running;
+}
+
+/** True when Telegram rejected this process because another getUpdates loop owns the token. */
+export function hasPollingConflict(accountId: string): boolean {
+  return pollingConflicts.has(accountId);
 }
 
 /**

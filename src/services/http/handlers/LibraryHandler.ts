@@ -12,6 +12,24 @@ import Logger from '../../../utils/Logger';
 
 const lib = () => LibraryService.getInstance();
 
+function parseOwnerZaloIds(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(String).filter(Boolean);
+  if (typeof value !== 'string' || !value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
+  } catch {}
+  return value.split(',').filter(Boolean);
+}
+
+function resolveAccessibleOwners(employee: any, zaloId: string, requested: string[]): string[] | null {
+  const assigned = new Set((employee.assigned_accounts || []).map(String));
+  if (assigned.size === 0) return requested.length > 0 ? requested : [zaloId];
+  if (requested.length === 0) return assigned.has(zaloId) ? [zaloId] : null;
+  const allowed = requested.filter(id => assigned.has(id));
+  return allowed.length > 0 ? allowed : null;
+}
+
 interface JsonResponse {
   success: boolean;
   data?: any;
@@ -166,11 +184,15 @@ export const libraryHandlers = {
   getItems(employee: any, params: any): JsonResponse {
     const zaloId = params.zaloId || employee.assigned_accounts?.[0] || '';
     if (!zaloId) return error('Missing zaloId');
+    const requestedOwners = parseOwnerZaloIds(params.ownerZaloIds);
+    const ownerZaloIds = resolveAccessibleOwners(employee, zaloId, requestedOwners);
+    if (!ownerZaloIds) return error('Không có quyền xem thư viện của trang này');
 
     const page = parseInt(params.page) || 1;
     const limit = Math.min(parseInt(params.limit) || 50, 200);
     const result = lib().getItems({
       zaloId,
+      ownerZaloIds,
       type: params.type || params.type,
       search: params.search,
       folderId: params.folderId !== undefined ? parseInt(params.folderId) : undefined,
@@ -252,7 +274,10 @@ export const libraryHandlers = {
   getFolders(employee: any, params: any): JsonResponse {
     const zaloId = params.zaloId || employee.assigned_accounts?.[0] || '';
     if (!zaloId) return error('Missing zaloId');
-    const folders = lib().getFolders(zaloId, params.type);
+    const requestedOwners = parseOwnerZaloIds(params.ownerZaloIds);
+    const ownerZaloIds = resolveAccessibleOwners(employee, zaloId, requestedOwners);
+    if (!ownerZaloIds) return error('Không có quyền xem thư viện của trang này');
+    const folders = lib().getFolders(zaloId, params.type, ownerZaloIds);
     return success({ items: folders });
   },
 

@@ -9,7 +9,7 @@ import {
   FBReactionAction, FBAttachmentUploadResult, FBThread, FBMQTTMessage,
   FBE2EEStatus, FBE2EEMessageRaw,
 } from './FacebookTypes';
-import { initSession, checkCookieAlive, fetchUserAvatarFromProfile, getUserInfoFacebookHtml } from './FacebookSession';
+import { initSession, fetchUserAvatarFromProfile, getUserInfoFacebookHtml } from './FacebookSession';
 import { sendMessage as sendMessageREST, unsendMessage, addReaction, editMessage, forwardMessage, pinMessage, unpinMessage, createPoll, votePoll } from './FacebookMessageSender';
 import { uploadAttachment } from './FacebookAttachment';
 import {
@@ -25,6 +25,10 @@ import { FacebookMQTTListener } from './FacebookMQTTListener';
 import { FacebookE2EEBridge } from './FacebookE2EEBridge';
 import { FacebookE2EESender } from './FacebookE2EESender';
 import { parseE2EECookies, resolveE2EEBinaryPath, normalizeChatJid } from './FacebookUtils';
+import { FacebookE2EEStateStore } from './FacebookE2EEStateStore';
+import { resolveThreadKind } from './FacebookThreadKind';
+import { FacebookEventPipeline, EventPriority } from './FacebookEventPipeline';
+import { metricInc } from './FacebookMetrics';
 import EventBroadcaster from '../event/EventBroadcaster';
 import DatabaseService from '../database/DatabaseService';
 import FileStorageService from '../file/FileStorageService';
@@ -65,6 +69,8 @@ export class FacebookService {
   private e2eeBridge: FacebookE2EEBridge | null = null;
   private e2eeSender: FacebookE2EESender | null = null;
   private e2eeStatus: FBE2EEStatus = 'disconnected';
+  /** Serialize on-demand restarts so repeated sends cannot race bridge generations. */
+  private e2eeRetryPromise: Promise<void> | null = null;
   private e2eeEnabled: boolean = true; // Có thể disable nếu không tìm thấy binary
   /** Track thread IDs known to be E2EE-encrypted (auto-populated on error) */
   private e2eeThreads: Set<string> = new Set();
@@ -82,12 +88,17 @@ export class FacebookService {
    *  Dùng để ngăn self-echo duplicate khi bridge/MQTT echo ngược tin nhắn vừa gửi.
    *  Mỗi entry tự xoá sau 60s để tránh memory leak. */
   private _recentlySentMessageIds: Set<string> = new Set();
+  /** E2EE device state store — persists E2EE state across app restarts */
+  private e2eeStateStore: FacebookE2EEStateStore | null = null;
+  /** Phase 5: Sequential event pipeline — processes bridge events one-at-a-time */
+  private eventPipeline!: FacebookEventPipeline;
 
   private constructor(accountId: string, cookie: string, proxyId?: number | null) {
     this.accountId = accountId;
     this.cookie = cookie;
     this.proxyId = proxyId ?? null;
     this.httpsAgent = this.resolveProxyAgent();
+    this.eventPipeline = new FacebookEventPipeline(accountId);
   }
 
   /** Tạo proxy agent từ proxyId */
@@ -164,13 +175,16 @@ export class FacebookService {
     return FacebookService.instances.get(instanceKey)!;
   }
 
-  public static removeInstance(accountId: string): void {
+  public static async removeInstance(accountId: string): Promise<void> {
     const instanceKey = FacebookService.resolveInstanceKey(accountId);
     const instance = FacebookService.instances.get(instanceKey);
     if (instance) {
-      instance.disconnect().catch(() => {});
+      await instance.disconnect().catch(() => {});
       FacebookService.instances.delete(instanceKey);
     }
+    // Clear after disconnect, whose shutdown flushes the final pending snapshot.
+    // This also covers disconnected accounts with no in-memory service.
+    await FacebookE2EEStateStore.clearForAccount(instanceKey).catch(() => {});
   }
 
   public static getAllInstances(): FacebookService[] {
@@ -414,8 +428,14 @@ export class FacebookService {
       const fbId = this.dataFB.FacebookID;
       Logger.log(`[FacebookService:${this.accountId}] Connected (fbId=${fbId})`);
 
-      // 4. Start E2EE bridge (cho 1:1 encrypted messages)
-      await this.startE2EEBridge(fbId);
+      // 4. Start E2EE bridge (cho 1:1 encrypted messages).  A listener
+      // reconnect must not overwrite a still-running bridge process: doing so
+      // leaves the old child alive and races its device/socket lifecycle.
+      if (!this.e2eeBridge?.isAlive()) {
+        await this.startE2EEBridge(fbId);
+      } else if (!this.isE2EEConnected()) {
+        Logger.warn(`[FacebookService:${this.accountId}] Account reconnected while E2EE socket is recovering; preserving current bridge for serialized send recovery`);
+      }
     } catch (err: any) {
       Logger.error(`[FacebookService:${this.accountId}] Connect error: ${err.message}`);
       if (this.status !== 'cookie_expired') {
@@ -431,6 +451,7 @@ export class FacebookService {
   public async disconnect(): Promise<void> {
     // Disconnect E2EE bridge first
     await this.stopE2EEBridge();
+    this.e2eeStateStore = null;
 
     if (this.listener) {
       this.listener.disconnect();
@@ -445,13 +466,13 @@ export class FacebookService {
    */
   public async checkHealth(): Promise<{ alive: boolean; listenerConnected: boolean; reason?: string }> {
     try {
-      const cookieAlive = await checkCookieAlive(this.cookie, this.httpsAgent);
+      const cookieAlive = await this.checkCookieHealth();
       const listenerConnected = this.listener?.isConnected() || false;
 
       if (!cookieAlive) {
         return { alive: false, listenerConnected, reason: 'cookie_expired' };
       }
-      return { alive: true, listenerConnected };
+      return { alive: true, listenerConnected, ...(listenerConnected ? {} : { reason: 'transport_disconnected' }) };
     } catch (err: any) {
       return { alive: false, listenerConnected: false, reason: err.message };
     }
@@ -459,13 +480,22 @@ export class FacebookService {
 
   /**
    * Kiểm tra riêng cookie health (không check listener).
-   * Dùng cho health check callback trong FacebookMQTTListener.
-   * Return true nếu cookie còn sống, false nếu hết hạn.
+   * Dùng cho health check callback trong FacebookMQTTListener. Network failure
+   * is deliberately *not* treated as an expired cookie: during an offline
+   * period that would permanently stop the listener's own reconnect loop.
    */
   public async checkCookieHealth(): Promise<boolean> {
     try {
-      return await checkCookieAlive(this.cookie, this.httpsAgent);
-    } catch {
+      await initSession(this.cookie, this.httpsAgent);
+      return true;
+    } catch (err: any) {
+      const message = String(err?.message || err || '');
+      const transientNetworkError = /\b(?:ENOTFOUND|EAI_AGAIN|ECONNRESET|ECONNREFUSED|ECONNABORTED|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH)\b|\b(?:network|socket|fetch failed|timeout)\b/i.test(message);
+      if (transientNetworkError) {
+        Logger.warn(`[FacebookService:${this.accountId}] Cookie health check deferred because network is unavailable: ${message}`);
+        return true;
+      }
+      Logger.warn(`[FacebookService:${this.accountId}] Cookie health check rejected session: ${message}`);
       return false;
     }
   }
@@ -941,32 +971,94 @@ export class FacebookService {
         return;
       }
 
-      // 3. newClient + connect + connectE2EE
-      await this.e2eeBridge.newClient({
+      // 3. Hello handshake (Phase 2: validate bridge before newClient)
+      try {
+        const hello = await this.e2eeBridge.hello(10000);
+        Logger.log(`[FacebookService:${this.accountId}] Bridge hello: protocol=${hello.protocolVersion} version=${hello.bridgeVersion}`);
+      } catch (err: any) {
+        Logger.error(`[FacebookService:${this.accountId}] Bridge hello failed: ${err.message}`);
+        metricInc('fb_bridge_hello_failure', this.accountId);
+        this.e2eeBridge.close().catch(() => {});
+        this.e2eeBridge = null;
+        this.setE2EEStatus('error');
+        return;
+      }
+
+      // 4. Load E2EE device state from secure storage (Phase 3)
+      this.e2eeStateStore = new FacebookE2EEStateStore(this.accountId);
+      let deviceData: string | undefined;
+      // First boot must publish a snapshot too; memory-only mode would lose
+      // the new identity before it ever reaches secure storage.
+      const e2eeMemoryOnly = false;
+      try {
+        deviceData = await this.e2eeStateStore.load();
+        if (deviceData) {
+          Logger.log(`[FacebookService:${this.accountId}] Restored E2EE device state from secure storage`);
+        } else {
+          Logger.log(`[FacebookService:${this.accountId}] No saved E2EE state - will bootstrap new device`);
+        }
+      } catch (err: any) {
+        Logger.warn(`[FacebookService:${this.accountId}] Failed to load E2EE state: ${err.message}`);
+      }
+
+      // 5. newClient + connect + connectE2EE
+      // A laptop sleep can leave the old child process/socket half-open. The
+      // bridge RPC default is 120s; without a bound here, an on-demand retry
+      // keeps e2eeRetryPromise pending forever and every later chat send sees
+      // "not connected" until the user manually stops/reconnects the account.
+      Logger.log(`[FacebookService:${this.accountId}] E2EE startup: newClient`);
+      const newClientResult = await this.e2eeBridge.newClient({
         cookies,
         logLevel: 'error',
-        e2eeMemoryOnly: true,
+        e2eeMemoryOnly,
+        ...(deviceData ? { deviceData } : {}),
+      }, 25_000);
+      Logger.log(`[FacebookService:${this.accountId}] E2EE startup: newClient ready`);
+      if (newClientResult?.deviceData) {
+        this.e2eeStateStore.save(newClientResult.deviceData);
+        await this.e2eeStateStore.flushPending();
+      }
+
+      // Attach the bounded listener before connect/connectE2EE. A socket can
+      // replay events immediately after connect, so attaching it afterwards
+      // creates a silent loss window during every reconnect.
+      await this.eventPipeline.stop(true).catch(() => {});
+      this.eventPipeline = new FacebookEventPipeline(this.accountId);
+      this.eventPipeline.setGeneration(bridgeGen);
+      this.e2eeBridge.on('event', (evt: any) => {
+        if (this.e2eeBridge !== bridgeInstance || this.e2eeBridgeGen !== bridgeGen) {
+          metricInc('fb_bridge_generation_stale_event', this.accountId);
+          return;
+        }
+        if (evt?.type === 'deviceDataChanged' && evt?.data?.deviceData && this.e2eeStateStore) {
+          this.e2eeStateStore.save(evt.data.deviceData);
+        }
+        const eventId = evt?.data?.messageId || evt?.data?.id || `evt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        const priority = this.getEventPriority(evt?.type || '');
+        const accepted = this.eventPipeline.enqueue(eventId, priority, bridgeGen, () => this.handleBridgeEvent(evt));
+        if (!accepted && priority === EventPriority.HIGH) {
+          Logger.error(`[FacebookService:${this.accountId}] Critical bridge event was rejected; restarting bridge for recovery`);
+          void bridgeInstance.close();
+        }
       });
 
       // Timeout ngắn để không block group messaging nếu bridge không respond
+      Logger.log(`[FacebookService:${this.accountId}] E2EE startup: connect`);
       const info = await this.e2eeBridge.connect(30000);
       Logger.log(`[FacebookService:${this.accountId}] E2EE bridge connected: user=${JSON.stringify((info as any)?.user?.id ?? '?')}`);
 
+      Logger.log(`[FacebookService:${this.accountId}] E2EE startup: connectE2EE`);
       await this.e2eeBridge.connectE2EE(20000);
       Logger.log(`[FacebookService:${this.accountId}] E2EE pairing complete`);
 
       this.setE2EEStatus('connected');
 
-      // 4. Create sender (reuses bridge)
+      // 5. Create sender (reuses bridge)
       this.e2eeSender = new FacebookE2EESender({ mode: 'reuse', bridge: this.e2eeBridge });
-
-      // 5. Listen for events from bridge
-      this.e2eeBridge.on('event', (evt: any) => {
-        this.handleBridgeEvent(evt);
-      });
 
       // BUG #6 fix: dùng bridgeGen để detect stale timer
       this.e2eeBridge.on('closed', (code: number | null) => {
+        if (this.e2eeBridge !== bridgeInstance || this.e2eeBridgeGen !== bridgeGen) return;
         Logger.warn(`[FacebookService:${this.accountId}] E2EE bridge closed (code=${code}, gen=${bridgeGen})`);
         this._clearE2EEHeartbeat();
         // Chỉ clear nếu bridge hiện tại vẫn là instance này
@@ -977,6 +1069,7 @@ export class FacebookService {
         // Auto-reconnect nếu service vẫn connected và bridge chưa được thay thế
         if (this.isConnected()) {
           Logger.log(`[FacebookService:${this.accountId}] E2EE bridge closed - attempting reconnect in 10s...`);
+          metricInc('fb_bridge_restart', this.accountId);
           setTimeout(() => {
             // BUG #6 fix: chỉ reconnect nếu bridge instance không thay đổi
             // và e2eeBridgeGen không tăng (không có bridge mới được tạo)
@@ -991,7 +1084,7 @@ export class FacebookService {
         Logger.error(`[FacebookService:${this.accountId}] E2EE bridge error: ${err.message}`);
       });
 
-      // 6. Start heartbeat to detect hung bridge process (BUG #8 fix)
+      // 7. Start heartbeat to detect hung bridge process (BUG #8 fix)
       this._startE2EEHeartbeat(bridgeInstance, bridgeGen, fbId);
 
     } catch (err: any) {
@@ -1019,6 +1112,12 @@ export class FacebookService {
 
   private async stopE2EEBridge(): Promise<void> {
     this._clearE2EEHeartbeat();
+    // Phase 5: Stop event pipeline
+    await this.eventPipeline.stop(true).catch(() => {});
+    // Phase 3: Flush pending state before closing bridge
+    if (this.e2eeStateStore) {
+      await this.e2eeStateStore.flushPending();
+    }
     if (this.e2eeBridge) {
       await this.e2eeBridge.close().catch(() => {});
       this.e2eeBridge = null;
@@ -1077,18 +1176,43 @@ export class FacebookService {
   }
 
   /**
+   * Map event type to pipeline priority for bounded queue management.
+   */
+  private getEventPriority(eventType: string): EventPriority {
+    switch (eventType) {
+      case 'e2eeMessage':
+      case 'message':
+      case 'messageUnsend':
+        return EventPriority.HIGH;
+      case 'reaction':
+      case 'e2eeReaction':
+      case 'messageEdit':
+      case 'e2eeReceipt':
+        return EventPriority.NORMAL;
+      case 'typing':
+      case 'presence':
+      case 'seen':
+      case 'raw':
+        return EventPriority.LOW;
+      default:
+        return EventPriority.NORMAL;
+    }
+  }
+
+  /**
    * Xử lý tất cả events từ Go bridge.
    * e2eeMessage → normalize → same handleIncomingMessage() as MQTT
    */
-  private handleBridgeEvent(evt: any): void {
+  private async handleBridgeEvent(evt: any): Promise<void> {
     const type = evt?.type;
     const data = evt?.data;
-    Logger.log(`[FacebookService:${this.accountId}] [BRIDGE_EVENT] type=${type} data=${JSON.stringify(data).slice(0, 200)}`);
+    // Phase 8: Log event type only — no raw data (may contain message content/cookies)
+    Logger.log(`[FacebookService:${this.accountId}] [BRIDGE_EVENT] type=${type}`);
 
     switch (type) {
       case 'e2eeMessage':
         Logger.log(`[FacebookService:${this.accountId}] [DEBUG] handleBridgeEvent: received e2eeMessage event`);
-        this.handleE2EEMessage(data);
+        await this.handleE2EEMessage(data);
         break;
 
       case 'message':
@@ -1100,6 +1224,11 @@ export class FacebookService {
         Logger.log(`[FacebookService:${this.accountId}] E2EE bridge ready (isNewSession=${data?.isNewSession})`);
         break;
 
+      case 'deviceDataChanged':
+        // DEPLAO_ADAPTER: device state persistence is handled in the listener
+        // callback (line 1019) before this switch. Log at debug level only.
+        break;
+
       case 'e2eeConnected':
         Logger.log(`[FacebookService:${this.accountId}] E2EE bridge: e2eeConnected`);
         this.setE2EEStatus('connected');
@@ -1107,10 +1236,39 @@ export class FacebookService {
 
       case 'disconnected':
         Logger.warn(`[FacebookService:${this.accountId}] E2EE bridge: disconnected ${JSON.stringify(data)}`);
+        // The process can stay alive while its internal LightSpeed socket is
+        // offline. Do not report that stale bridge as ready for a new send.
+        this.setE2EEStatus('disconnected');
+        break;
+
+      case 'reconnected':
+        // Meta's LightSpeed socket owns its own reconnect loop. Do not spawn a
+        // second bridge here: that would create two device/socket lifecycles.
+        Logger.log(`[FacebookService:${this.accountId}] E2EE bridge LightSpeed socket reconnected`);
+        this.setE2EEStatus('connected');
         break;
 
       case 'error':
-        Logger.error(`[FacebookService:${this.accountId}] E2EE bridge event error: ${JSON.stringify(data)}`);
+        {
+          const message = String(data?.message || data?.error || 'Unknown bridge error');
+          const code = Number(data?.code || 0);
+          // A DatabaseQuery timeout while handling the connect acknowledgement
+          // is a transport-side Meta failure. messagix closes that socket and
+          // reconnects internally, so it is neither an expired login nor an
+          // application failure. Keep permanent/decryption failures prominent.
+          const transientSocketSync = code === 0 && /(?:timeout waiting for response|failed to ensure db \d+ is synced|failed to handle connect ack|lightspeed socket request)/i.test(message);
+          if (transientSocketSync) {
+            // DEPLAO_ADAPTER: Transient socket sync errors are handled internally
+            // by Meta's LightSpeed reconnect loop. The Facebook account itself
+            // remains connected, but this E2EE socket cannot send until it has
+            // re-established its state. Keep that distinction visible to the
+            // send path without marking the account/cookie as failed.
+            this.setE2EEStatus('connecting');
+            Logger.warn(`[FacebookService:${this.accountId}] E2EE bridge socket sync timed out (transient, Meta reconnect in progress)`);
+          } else {
+            Logger.error(`[FacebookService:${this.accountId}] E2EE bridge event error${code ? ` (code=${code})` : ''}: ${message}`);
+          }
+        }
         break;
 
       case 'raw':
@@ -1267,14 +1425,13 @@ export class FacebookService {
       return;
     }
 
-    // Log FULL raw bridge data for debugging
-    Logger.log(`[FacebookService:${this.accountId}] [DEBUG] handleE2EEMessage FULL: ${JSON.stringify(data)}`);
+    // Phase 8: Log metadata only — never log full message body/content
+    Logger.log(`[FacebookService:${this.accountId}] [E2EE_RECV] msgId=${data?.id} sender=${data?.senderId} thread=${data?.threadId} hasText=${!!data?.text} hasAttach=${!!data?.attachments?.length}`);
     if (data.attachments?.length) {
-      Logger.log(`[FacebookService:${this.accountId}] [DEBUG] E2EE raw attachments: ${JSON.stringify(data.attachments)}`);
-      // Check for E2EE media download fields specifically
+      // Phase 8: Log attachment metadata only — no URLs, no content
       for (let i = 0; i < data.attachments.length; i++) {
         const a = data.attachments[i] as any;
-        Logger.log(`[FacebookService:${this.accountId}] [DEBUG] Attachment[${i}]: type=${a.type || a.attachmentType} url=${a.url || '(none)'} directPath=${a.directPath ? 'YES' : 'MISSING'} mediaKey=${a.mediaKey ? 'YES' : 'MISSING'} fileName=${a.fileName || '(none)'} mimeType=${a.mimeType || '(none)'} fileSize=${a.fileSize ?? '(none)'}`);
+        Logger.log(`[FacebookService:${this.accountId}] [E2EE_ATTACH] type=${a.type || a.attachmentType} hasDirectPath=${!!a.directPath} hasMediaKey=${!!a.mediaKey} mimeType=${a.mimeType || '(none)'}`);
       }
     }
 
@@ -1524,6 +1681,9 @@ export class FacebookService {
           Logger.warn(`[FacebookService:${this.accountId}] E2EE download returned no data - mediaType=${att.type || 'image'} mimeType=${att.mimeType || ''} size=${att.fileSize || 0}. Go bridge may not support downloading this media type.`);
         }
       } catch (err: any) {
+        if (/too large|exceed/i.test(err.message)) {
+          metricInc('fb_e2ee_media_rejected_too_large', this.accountId, { mediaType: att.type });
+        }
         Logger.warn(`[FacebookService:${this.accountId}] E2EE download failed: ${err.message}`);
       }
     }
@@ -1684,50 +1844,142 @@ export class FacebookService {
    * @throws Error nếu bridge không thể khởi động - caller nên kiểm tra isE2EEConnected()
    */
   public async retryE2EE(): Promise<void> {
-    // Clean up stale bridge
-    await this.stopE2EEBridge();
-    // Reset flags so startE2EEBridge will attempt again
-    this.e2eeEnabled = true;
-    this.e2eeStatus = 'disconnected';
+    // A stalled send can otherwise start several stop/spawn sequences at the
+    // same time. Those sequences invalidate one another's bridge generation
+    // and make every caller wait without a useful error.
+    if (this.e2eeRetryPromise) return this.e2eeRetryPromise;
 
-    const fbId = this.getFacebookId() || this.dataFB?.FacebookID;
-    if (!fbId) {
-      throw new Error('Cannot retry E2EE: no Facebook ID available');
-    }
-    await this.startE2EEBridge(fbId);
-    // If bridge still not connected after startE2EEBridge, throw
-    if (!this.isE2EEConnected()) {
-      throw new Error('E2EE bridge retry failed - bridge not connected after startup');
+    const retry = (async () => {
+      Logger.log(`[FacebookService:${this.accountId}] Restarting E2EE bridge on demand`);
+      await this.stopE2EEBridge();
+      this.e2eeEnabled = true;
+      this.e2eeStatus = 'disconnected';
+
+      const fbId = this.getFacebookId() || this.dataFB?.FacebookID;
+      if (!fbId) {
+        throw new Error('Cannot retry E2EE: no Facebook ID available');
+      }
+      await this.startE2EEBridge(fbId);
+      if (!this.isE2EEConnected()) {
+        throw new Error('E2EE bridge retry failed - bridge not connected after startup');
+      }
+    })();
+    this.e2eeRetryPromise = retry;
+    try {
+      await retry;
+    } finally {
+      if (this.e2eeRetryPromise === retry) this.e2eeRetryPromise = null;
     }
   }
 
   // ─── E2EE Public Methods ──────────────────────────────────────────────────
+
+  /**
+   * `not connected` is returned before the bridge hands a message to Meta.
+   * It is safe to rebuild the bridge and retry once. Timeouts and all other
+   * errors are deliberately not retried because their outcome is ambiguous.
+   */
+  private isSafeE2EEReconnectError(error: unknown): boolean {
+    const message = String((error as any)?.message || error || '').toLowerCase();
+    if (!message || /timeout|timed out|etimedout/.test(message)) return false;
+    return /(?:e2ee\s+)?(?:bridge\s+)?not connected\b|bridge not ready\b|bridge exited\b|write after end\b|broken pipe\b|connection reset\b/.test(message);
+  }
+
+  /** Restart once and bound the wait so a queued chat message cannot hang. */
+  private async recoverE2EEForSend(): Promise<string | null> {
+    this.setE2EEStatus('disconnected');
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        this.retryE2EE(),
+        new Promise<void>((_, reject) => {
+          // The startup path has three bounded bridge RPCs: newClient (25s),
+          // connect (30s), and connectE2EE (20s). The old 20s wrapper fired
+          // while a healthy reconnect was still in progress, leaving the
+          // shared retry promise wedged after resume from sleep.
+          timer = setTimeout(() => reject(new Error('E2EE reconnect timed out after 80s')), 80_000);
+        }),
+      ]);
+      return this.isE2EEConnected() ? null : 'E2EE bridge chưa sẵn sàng sau khi kết nối lại.';
+    } catch (err: any) {
+      return String(err?.message || err || 'E2EE reconnect failed');
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  /** A bounded send attempt; recovery is kept outside to prevent unsafe retry. */
+  private async sendE2EETextOnce(
+    chatJid: string,
+    text: string,
+    replyToMessageId: string = '',
+    replyToSenderJid: string = '',
+  ): Promise<{ messageId?: string; timestampMs?: number }> {
+    if (!this.isE2EEConnected() || !this.e2eeBridge?.isAlive()) {
+      throw new Error('E2EE send failed: not connected');
+    }
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        this.e2eeBridge.sendE2EEMessage({ chatJid, text, replyToId: replyToMessageId, replyToSenderJid }),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('E2EE send timeout')), 15_000);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
 
   /** Gửi tin nhắn E2EE 1:1 */
   public async sendE2EEMessage(
     chatJid: string,
     text: string,
     opts?: FBSendOptions,
+    replyToSenderJid: string = '',
   ): Promise<FBSendResult> {
-    if (!this.e2eeSender) {
-      return { success: false, error: 'E2EE not connected' };
-    }
-    const result = await this.e2eeSender.send(
-      chatJid,
+    const normalizedChatJid = normalizeChatJid(chatJid);
+    const sendOnce = () => this.sendE2EETextOnce(
+      normalizedChatJid,
       text,
       opts?.replyToMessageId || '',
+      replyToSenderJid ? normalizeChatJid(replyToSenderJid) : '',
     );
-    return {
-      success: result.success,
-      messageId: result.messageId,
-      timestamp: result.timestamp,
-      error: result.error,
-    };
+
+    try {
+      const result = await sendOnce();
+      return { success: true, messageId: result.messageId, timestamp: result.timestampMs || Date.now() };
+    } catch (err: any) {
+      if (!this.isSafeE2EEReconnectError(err)) {
+        return { success: false, error: String(err?.message || err || 'Unknown E2EE send error') };
+      }
+
+      Logger.warn(`[FacebookService:${this.accountId}] E2EE pre-flight disconnect; reconnecting before one safe resend`);
+      const recoveryError = await this.recoverE2EEForSend();
+      if (recoveryError) {
+        return { success: false, error: `E2EE đang kết nối lại: ${recoveryError}` };
+      }
+
+      try {
+        const result = await sendOnce();
+        return { success: true, messageId: result.messageId, timestamp: result.timestampMs || Date.now() };
+      } catch (retryErr: any) {
+        return { success: false, error: `E2EE send failed after reconnect: ${String(retryErr?.message || retryErr || 'unknown error')}` };
+      }
+    }
   }
 
   /** Kiểm tra E2EE có đang kết nối */
   public isE2EEConnected(): boolean {
     return this.e2eeStatus === 'connected' && this.e2eeBridge?.isAlive() === true;
+  }
+
+  /** A normal 1:1 is only considered known after a REST probe succeeded in
+   * this session. Unknown 1:1 conversations must not be downgraded after an
+   * ambiguous E2EE attempt. */
+  public isKnownNonE2EEThread(threadId: string): boolean {
+    return this._nonE2EEThreads.has(threadId);
   }
 
   /** Lấy trạng thái E2EE hiện tại */
@@ -1740,14 +1992,38 @@ export class FacebookService {
     return this.e2eeSender;
   }
 
+  /**
+   * Attachment upload has the same stale-bridge failure mode as text sends.
+   * Retry only the deterministic pre-flight disconnect once; never replay a
+   * timeout or an upload error because Facebook may already have accepted it.
+   */
+  private async sendE2EEMediaWithRecovery(
+    sendOnce: () => Promise<{ success: boolean; messageId?: string; timestamp?: number; error?: string }>,
+  ): Promise<{ success: boolean; messageId?: string; timestamp?: number; error?: string }> {
+    let result = await sendOnce();
+    if (result.success || !this.isSafeE2EEReconnectError(result.error)) return result;
+
+    Logger.warn(`[FacebookService:${this.accountId}] E2EE media pre-flight disconnect; reconnecting before one safe resend`);
+    const recoveryError = await this.recoverE2EEForSend();
+    if (recoveryError) return { success: false, error: `E2EE đang kết nối lại: ${recoveryError}` };
+
+    result = await sendOnce();
+    if (!result.success && this.isSafeE2EEReconnectError(result.error)) {
+      return { ...result, error: `E2EE media send failed after reconnect: ${result.error || 'not connected'}` };
+    }
+    return result;
+  }
+
   /** Gửi ảnh qua E2EE 1:1 */
   public async sendE2EEImage(
     chatJid: string,
     imagePath: string,
     caption?: string,
   ): Promise<{ success: boolean; messageId?: string; timestamp?: number; error?: string }> {
-    if (!this.e2eeSender) return { success: false, error: 'E2EE not connected' };
-    const result = await this.e2eeSender.sendImage(chatJid, imagePath, caption);
+    const result = await this.sendE2EEMediaWithRecovery(async () => {
+      if (!this.e2eeSender) return { success: false, error: 'E2EE not connected' };
+      return this.e2eeSender.sendImage(chatJid, imagePath, caption);
+    });
     if (result.success && result.messageId) this.markMessageLocallySent(result.messageId);
     return result;
   }
@@ -1758,8 +2034,10 @@ export class FacebookService {
     videoPath: string,
     caption?: string,
   ): Promise<{ success: boolean; messageId?: string; timestamp?: number; error?: string }> {
-    if (!this.e2eeSender) return { success: false, error: 'E2EE not connected' };
-    const result = await this.e2eeSender.sendVideo(chatJid, videoPath, caption);
+    const result = await this.sendE2EEMediaWithRecovery(async () => {
+      if (!this.e2eeSender) return { success: false, error: 'E2EE not connected' };
+      return this.e2eeSender.sendVideo(chatJid, videoPath, caption);
+    });
     if (result.success && result.messageId) this.markMessageLocallySent(result.messageId);
     return result;
   }
@@ -1770,8 +2048,10 @@ export class FacebookService {
     audioPath: string,
     mimeType?: string,
   ): Promise<{ success: boolean; messageId?: string; timestamp?: number; error?: string }> {
-    if (!this.e2eeSender) return { success: false, error: 'E2EE not connected' };
-    const result = await this.e2eeSender.sendAudio(chatJid, audioPath, mimeType);
+    const result = await this.sendE2EEMediaWithRecovery(async () => {
+      if (!this.e2eeSender) return { success: false, error: 'E2EE not connected' };
+      return this.e2eeSender.sendAudio(chatJid, audioPath, mimeType);
+    });
     if (result.success && result.messageId) this.markMessageLocallySent(result.messageId);
     return result;
   }
@@ -1782,8 +2062,10 @@ export class FacebookService {
     filePath: string,
     fileName?: string,
   ): Promise<{ success: boolean; messageId?: string; timestamp?: number; error?: string }> {
-    if (!this.e2eeSender) return { success: false, error: 'E2EE not connected' };
-    const result = await this.e2eeSender.sendFile(chatJid, filePath, fileName);
+    const result = await this.sendE2EEMediaWithRecovery(async () => {
+      if (!this.e2eeSender) return { success: false, error: 'E2EE not connected' };
+      return this.e2eeSender.sendFile(chatJid, filePath, fileName);
+    });
     if (result.success && result.messageId) this.markMessageLocallySent(result.messageId);
     return result;
   }
@@ -1808,20 +2090,58 @@ export class FacebookService {
     return this.e2eeSender.sendSticker(chatJid, stickerId);
   }
 
-  /** Gửi typing indicator qua bridge (TODO: Go bridge chưa hỗ trợ sendTyping) */
+  /** Gửi typing indicator qua bridge */
   public async sendTyping(
-    _threadId: string,
-    _isTyping: boolean,
-    _isGroup: boolean = false,
+    threadId: string,
+    isTyping: boolean,
+    isGroup: boolean = false,
   ): Promise<void> {
-    // Go bridge hiện tại không có method sendTyping/markRead.
-    // Typing indicator sẽ được hỗ trợ khi Go bridge được cập nhật.
+    if (!this.e2eeBridge?.isAlive()) return;
+    try {
+      // Route by thread kind: 1:1 → E2EE typing, group → normal typing
+      const resolved = await resolveThreadKind(threadId, undefined, this.accountId);
+      if (resolved.kind === 'user') {
+        // E2EE 1:1
+        if (this.isE2EEConnected()) {
+          await this.e2eeBridge.sendE2EETyping({
+            chatJid: normalizeChatJid(threadId),
+            isTyping,
+          });
+        }
+      } else if (resolved.kind === 'group') {
+        // Group — best effort, no await needed
+        this.e2eeBridge.sendTypingIndicator({
+          threadId,
+          isTyping,
+          isGroup: true,
+        }).catch(() => {});
+      }
+      // Unknown kind → don't send (safe default)
+    } catch {
+      // Typing is best-effort — don't throw
+    }
   }
 
-  /** Đánh dấu thread đã đọc trên Facebook server (TODO: Go bridge chưa hỗ trợ markRead) */
-  public async markReadOnServer(_threadId: string): Promise<void> {
-    // Go bridge hiện tại không có method markRead.
-    // Read receipt sẽ được hỗ trợ khi Go bridge được cập nhật.
+  /** Đánh dấu thread đã đọc trên Facebook server */
+  public async markReadOnServer(threadId: string): Promise<{ success: boolean; error?: string }> {
+    const route = await resolveThreadKind(threadId, undefined, this.accountId);
+    if (route.kind === 'unknown') return { success: false, error: route.error };
+    if (!this.e2eeBridge?.isAlive()) return { success: false, error: 'Facebook bridge chưa sẵn sàng.' };
+    try {
+      // Prefer the newest message timestamp. Date.now() can incorrectly mark
+      // newer server messages as read after a delayed local event.
+      const newest = DatabaseService.getInstance().queryOne?.(
+        `SELECT MAX(timestamp) AS timestamp FROM fb_messages WHERE thread_id = ? AND account_id = ?`,
+        [threadId, this.accountId],
+      ) as { timestamp?: number } | undefined;
+      await this.e2eeBridge.markRead({
+        threadId,
+        watermarkTs: Number(newest?.timestamp) || Date.now(),
+      });
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
   }
 
   /** Gửi tin nhắn vào group qua bridge (non-E2EE) */
@@ -1916,32 +2236,15 @@ export class FacebookService {
    */
   public async sendMessage(threadId: string, body: string, opts?: FBSendOptions): Promise<FBSendResult> {
     const agent = this.httpsAgent;
-    const BRIDGE_SEND_TIMEOUT = 15000;
-
-    // ── Resolve 1:1 vs group ──────────────────────────────────────────────
-    let is1on1 = opts?.typeChat === 'user';
-    if (opts?.typeChat === undefined) {
-      try {
-        const fbThread = DatabaseService.getInstance().queryOne?.(
-          `SELECT type FROM fb_threads WHERE id = ? AND account_id = ?`,
-          [threadId, this.accountId]
-        ) as { type?: string } | undefined;
-        if (fbThread?.type === 'user') is1on1 = true;
-        else if (fbThread?.type === 'group') is1on1 = false;
-        else {
-          // ── Fallback: DB không có thông tin type → auto-detect ─────────
-          // Facebook user ID là số, và luôn != current account's own FB ID.
-          // Nếu threadId là số và không phải chính mình → 1:1 user chat.
-          // KHÔNG dùng regex thuần vì nhiều group ID cũng toàn số - chỉ dùng
-          // làm fallback khi DB lookup không trả về gì.
-          const myFbId = this.getFacebookId();
-          if (/^\d+$/.test(threadId) && threadId !== myFbId) {
-            is1on1 = true;
-            Logger.log(`[FacebookService:${this.accountId}] Auto-detected 1:1 from numeric threadId=${threadId} (not self)`);
-          }
-        }
-      } catch {}
+    // ── Resolve 1:1 vs group (Phase 4: use resolveThreadKind) ───────────
+    // DEPLAO_ADAPTER: No numeric-ID inference. Caller supplies typeChat or we
+    // resolve from DB. Unknown → structured error, never guess.
+    const resolved = await resolveThreadKind(threadId, opts?.typeChat, this.accountId);
+    if (resolved.kind === 'unknown') {
+      metricInc('fb_thread_kind_unknown', this.accountId);
+      return { success: false, error: resolved.error };
     }
+    const is1on1 = resolved.kind === 'user';
 
     // ── Ensure connection is alive before sending ─────────────────────────
     const ready = await this.ensureConnected();
@@ -1950,35 +2253,35 @@ export class FacebookService {
     }
 
     // ═════════════════════════════════════════════════════════════════════
-    // 1:1 ROUTING - E2EE FIRST, REST fallback
+    // 1:1 ROUTING — E2EE ONLY, no REST fallback
     // ═════════════════════════════════════════════════════════════════════
+    // DEPLAO_ADAPTER: Per plan §8 — once a thread is resolved as 'user',
+    // we send via E2EE bridge exclusively. If E2EE fails, return the error
+    // directly. We do NOT fallback to REST for 1:1 conversations.
+    // The only exception is the initial probe: if the thread is NOT yet known
+    // as E2EE, we try E2EE first; if E2EE probe fails, we try REST once to
+    // discover whether this is actually a non-E2EE user thread.
+    // If REST succeeds → mark as non-E2EE for future sends.
 
     if (is1on1) {
-      // ── PATH A: E2EE trước ────────────────────────────────────────────
-      // Nếu bridge chưa có E2EE session → retryE2EE trước
-      // BỎ QUA nếu thread đã biết non-E2EE
+      // ── PATH A: E2EE first (skip if thread already known non-E2EE) ────
       if (!this._nonE2EEThreads.has(threadId)) {
         let e2eeReady = this.isE2EEConnected();
-        if (!e2eeReady && this.e2eeBridge?.isAlive()) {
-          try {
-            Logger.log(`[FacebookService:${this.accountId}] 1:1 send - E2EE not ready, retrying...`);
-            await this.retryE2EE();
-            e2eeReady = this.isE2EEConnected();
-          } catch {}
+        let e2eeRecoveryError = '';
+        if (!e2eeReady) {
+          Logger.log(`[FacebookService:${this.accountId}] 1:1 send - E2EE not ready, retrying...`);
+          e2eeRecoveryError = (await this.recoverE2EEForSend()) || '';
+          e2eeReady = this.isE2EEConnected();
+          if (e2eeRecoveryError) {
+            Logger.warn(`[FacebookService:${this.accountId}] 1:1 E2EE reconnect failed: ${e2eeRecoveryError}`);
+          }
         }
 
         if (e2eeReady) {
           try {
-            const r: any = await Promise.race([
-              this.e2eeBridge!.sendE2EEMessage({
-                chatJid: normalizeChatJid(threadId),
-                text: body,
-                replyToId: opts?.replyToMessageId || '',
-              }),
-              new Promise<any>((_, reject) => setTimeout(() => reject(new Error('timeout')), BRIDGE_SEND_TIMEOUT)),
-            ]);
-            if (r?.messageId) {
-              // E2EE thành công → đánh dấu thread E2EE cho lần sau
+            const r = await this.sendE2EEMessage(normalizeChatJid(threadId), body, opts);
+            if (r.success && r.messageId) {
+              // E2EE success → mark thread as E2EE
               if (!this.e2eeThreads.has(threadId)) {
                 this.e2eeThreads.add(threadId);
                 try { DatabaseService.getInstance().markFBThreadE2EE(threadId, this.accountId); } catch {}
@@ -1986,18 +2289,55 @@ export class FacebookService {
               }
               this.markMessageLocallySent(r.messageId);
               Logger.log(`[FacebookService:${this.accountId}] 1:1 E2EE OK: msgId=${r.messageId} - marked thread as E2EE`);
-              return { success: true, messageId: r.messageId, timestamp: r.timestampMs };
+              return { success: true, messageId: r.messageId, timestamp: r.timestamp };
             }
+            throw new Error(r.error || 'E2EE send did not return a message ID.');
           } catch (err: any) {
-            Logger.warn(`[FacebookService:${this.accountId}] 1:1 E2EE failed: ${err.message} - falling back to REST`);
+            // DEPLAO_ADAPTER: A thread that has already succeeded with E2EE
+            // must NEVER be downgraded to REST merely because a send failed.
+            if (this.e2eeThreads.has(threadId)) {
+              return { success: false, error: `Không thể gửi tin nhắn E2EE: ${err.message}` };
+            }
+            // DEPLAO_ADAPTER: If E2EE timed out, the message may have been
+            // sent but response lost. Do NOT fallback to REST to avoid duplicate.
+            // Only fallback for real connection errors (not timeout).
+            if (/timeout|ETIMEDOUT/i.test(err.message || '')) {
+              Logger.warn(`[FacebookService:${this.accountId}] 1:1 E2EE timed out — NOT retrying REST (may duplicate)`);
+              return { success: false, error: `E2EE send timeout — tin nhắn có thể đã gửi. Vui lòng kiểm tra.` };
+            }
+            // Do not infer transport from a generic bridge failure. The remote
+            // operation may have succeeded even though its response was lost.
+            // A normal 1:1 may use REST only when we have not attempted E2EE
+            // (bridge unavailable) or a future explicit capability signal.
+            return { success: false, error: `E2EE send failed: ${err.message}` };
           }
+        }
+
+        // A fulfilled bridge response without a message ID is equally
+        // ambiguous. Never turn it into a REST send.
+        if (e2eeReady) {
+          return { success: false, error: 'E2EE send did not return a message ID.' };
+        }
+
+        // A known E2EE thread must never be sent through REST merely because
+        // its socket is reconnecting. The request may be retried manually once
+        // the bridge recovers, without risking a duplicate or protocol error.
+        if (this.e2eeThreads.has(threadId)) {
+          return {
+            success: false,
+            error: e2eeRecoveryError
+              ? `E2EE đang kết nối lại: ${e2eeRecoveryError}`
+              : 'E2EE đang kết nối lại. Vui lòng thử lại sau vài giây.',
+          };
         }
       }
 
-      // ── PATH B: REST API fallback ───────────────────────────────────
+      // ── PATH B: REST probe (only for threads not yet known as E2EE) ──
+      // If this thread is already known E2EE, we already returned above.
+      // If REST succeeds → mark as non-E2EE, return success.
+      // If REST fails → return error. No E2EE retry (avoids PATH C loop).
       const restResult = await sendMessageREST(this.requireSession(), threadId, body, opts, agent);
       if (restResult.success && restResult.messageId) {
-        // REST success → non-E2EE thread
         if (!this._nonE2EEThreads.has(threadId)) {
           this._nonE2EEThreads.add(threadId);
           Logger.log(`[FacebookService:${this.accountId}] 1:1 REST OK - marked thread as non-E2EE`);
@@ -2006,94 +2346,20 @@ export class FacebookService {
         return restResult;
       }
 
-      // ── PATH C: REST failed → có thể là E2EE conversation ───────────
-      // HTTP 500 / 403 / 400 thường là dấu hiệu E2EE (FB không chấp nhận REST)
-      if (/HTTP 5\d{2}|HTTP 403|HTTP 400/i.test(restResult.error || '')) {
-        Logger.warn(`[FacebookService:${this.accountId}] 1:1 REST failed (${restResult.error}) - treating as E2EE, retrying bridge`);
-        this.e2eeThreads.add(threadId);
-        try { DatabaseService.getInstance().markFBThreadE2EE(threadId, this.accountId); } catch {}
-
-        // Thử connect E2EE + gửi lại nếu bridge alive
-        if (this.e2eeBridge?.isAlive()) {
-          if (!this.isE2EEConnected()) {
-            try {
-              await this.retryE2EE();
-            } catch {}
-          }
-          if (this.isE2EEConnected()) {
-            try {
-              const r: any = await Promise.race([
-                this.e2eeBridge!.sendE2EEMessage({
-                  chatJid: normalizeChatJid(threadId),
-                  text: body,
-                  replyToId: opts?.replyToMessageId || '',
-                }),
-                new Promise<any>((_, reject) => setTimeout(() => reject(new Error('timeout')), BRIDGE_SEND_TIMEOUT)),
-              ]);
-              if (r?.messageId) {
-                this.markMessageLocallySent(r.messageId);
-                Logger.log(`[FacebookService:${this.accountId}] 1:1 E2EE re-connect + send OK: msgId=${r.messageId}`);
-                return { success: true, messageId: r.messageId, timestamp: r.timestampMs };
-              }
-            } catch (bridgeErr: any) {
-              Logger.warn(`[FacebookService:${this.accountId}] 1:1 E2EE retry still failed: ${bridgeErr.message}`);
-            }
-          } else {
-            // Bridge alive nhưng E2EE không connect được → gửi qua bridge MQTT thử
-            try {
-              const r: any = await Promise.race([
-                this.e2eeBridge!.sendMessage({ threadId, text: body, replyToId: opts?.replyToMessageId || '' }),
-                new Promise<any>((_, reject) => setTimeout(() => reject(new Error('timeout')), BRIDGE_SEND_TIMEOUT)),
-              ]);
-              if (r?.messageId) {
-                this.markMessageLocallySent(r.messageId);
-                Logger.log(`[FacebookService:${this.accountId}] 1:1 bridge sendMessage (fallback) OK: msgId=${r.messageId}`);
-                return { success: true, messageId: r.messageId, timestamp: r.timestampMs };
-              }
-            } catch (bridgeErr: any) {
-              Logger.warn(`[FacebookService:${this.accountId}] 1:1 bridge sendMessage (fallback) also failed: ${bridgeErr.message}`);
-            }
-          }
-        }
-
-        // Bridge hoàn toàn không available → sendE2EEWithFallback để thử start bridge
-        if (!this.e2eeBridge?.isAlive()) {
-          return this.sendE2EEWithFallback(threadId, body, opts);
-        }
-
-        return { success: false, error: 'Hội thoại đã được mã hoá E2EE nhưng bridge chưa sẵn sàng.' };
-      }
-
-      // Lỗi REST khác (không phải HTTP 500) → trả lỗi gốc
+      // Both E2EE probe and REST probe failed → return REST error
       return restResult;
     }
 
     // ═════════════════════════════════════════════════════════════════════
-    // GROUP ROUTING
+    // GROUP ROUTING — REST ONLY, no bridge fallback
     // ═════════════════════════════════════════════════════════════════════
+    // DEPLAO_ADAPTER: Group messages go through REST exclusively.
+    // Bridge sendMessage for groups is unreliable and not part of the plan.
 
     const result = await sendMessageREST(this.requireSession(), threadId, body, opts, agent);
     if (result.success && result.messageId) {
       this.markMessageLocallySent(result.messageId);
       return result;
-    }
-
-    // REST failed for group → thử bridge sendMessage như fallback
-    if (this.e2eeBridge?.isAlive()) {
-      Logger.warn(`[FacebookService:${this.accountId}] Group REST failed (${result.error}) - trying bridge sendMessage`);
-      try {
-        const r: any = await Promise.race([
-          this.e2eeBridge.sendMessage({ threadId, text: body, replyToId: opts?.replyToMessageId || '' }),
-          new Promise<any>((_, reject) => setTimeout(() => reject(new Error('timeout')), BRIDGE_SEND_TIMEOUT)),
-        ]);
-        if (r?.messageId) {
-          this.markMessageLocallySent(r.messageId);
-          Logger.log(`[FacebookService:${this.accountId}] Group bridge fallback OK: msgId=${r.messageId}`);
-          return { success: true, messageId: r.messageId, timestamp: r.timestampMs };
-        }
-      } catch (bridgeErr: any) {
-        Logger.warn(`[FacebookService:${this.accountId}] Group bridge fallback also failed: ${bridgeErr.message}`);
-      }
     }
 
     return result;
@@ -2138,31 +2404,106 @@ export class FacebookService {
     };
   }
 
+  private async resolveMessageThreadKind(messageId: string): Promise<{ threadId?: string; senderId?: string; kind: 'user' | 'group' | 'unknown'; error?: string }> {
+    const message = DatabaseService.getInstance().queryOne?.(
+      'SELECT thread_id, sender_id FROM fb_messages WHERE id = ? AND account_id = ?',
+      [messageId, this.accountId],
+    ) as { thread_id?: string; sender_id?: string } | undefined;
+    if (!message?.thread_id) return { kind: 'unknown', error: 'Không tìm thấy hội thoại của tin nhắn.' };
+    const resolved = await resolveThreadKind(message.thread_id, undefined, this.accountId);
+    return { threadId: message.thread_id, senderId: message.sender_id, ...resolved };
+  }
+
   public async unsendMessage(messageId: string): Promise<{ success: boolean; error?: string }> {
+    const route = await this.resolveMessageThreadKind(messageId);
+    if (route.kind === 'unknown' || !route.threadId) return { success: false, error: route.error };
+    if (route.kind === 'user') {
+      if (!this.isE2EEConnected()) return { success: false, error: 'E2EE bridge chưa sẵn sàng.' };
+      try {
+        await this.e2eeBridge!.unsendE2EEMessage({ chatJid: normalizeChatJid(route.threadId), messageId });
+        return { success: true };
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
+    }
     return unsendMessage(this.requireSession(), messageId, this.httpsAgent);
   }
 
   public async addReaction(messageId: string, emoji: string, action?: FBReactionAction) {
+    const route = await this.resolveMessageThreadKind(messageId);
+    if (route.kind === 'unknown' || !route.threadId) return { success: false, error: route.error };
+    if (route.kind === 'user') {
+      if (!this.isE2EEConnected()) return { success: false, error: 'E2EE bridge chưa sẵn sàng.' };
+      // The encrypted message key is tied to the original sender JID. An
+      // internal Deplao account UUID is not a valid JID.
+      if (!route.senderId) return { success: false, error: 'Thiếu người gửi của tin nhắn E2EE.' };
+      return this.sendE2EEReaction(
+        normalizeChatJid(route.threadId),
+        messageId,
+        normalizeChatJid(route.senderId),
+        action === 'remove' ? '' : emoji,
+      );
+    }
     return addReaction(this.requireSession(), messageId, emoji, action, this.httpsAgent);
   }
 
   public async editMessage(messageId: string, newText: string): Promise<{ success: boolean; error?: string }> {
+    const route = await this.resolveMessageThreadKind(messageId);
+    if (route.kind === 'unknown' || !route.threadId) return { success: false, error: route.error };
+    if (route.kind === 'user') {
+      if (!this.isE2EEConnected()) return { success: false, error: 'E2EE bridge chưa sẵn sàng.' };
+      try {
+        await this.e2eeBridge!.editE2EEMessage({ chatJid: normalizeChatJid(route.threadId), messageId, newText });
+        return { success: true };
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
+    }
     return editMessage(this.requireSession(), messageId, newText, this.httpsAgent);
   }
 
-  public async forwardMessage(messageId: string, targetThreadId: string, isGroup: boolean = false): Promise<{ success: boolean; error?: string }> {
-    return forwardMessage(this.requireSession(), messageId, targetThreadId, isGroup, this.httpsAgent);
+  public async forwardMessage(
+    messageId: string,
+    targetThreadId: string,
+    typeChat?: 'user' | null,
+  ): Promise<{ success: boolean; error?: string }> {
+    const route = await resolveThreadKind(targetThreadId, typeChat, this.accountId);
+    if (route.kind === 'unknown') {
+      return { success: false, error: route.error };
+    }
+    if (route.kind === 'user') {
+      // The GraphQL forward mutation is not valid for encrypted 1:1. Callers
+      // must resend content through FacebookSendService, where media/text are
+      // routed to the E2EE bridge safely.
+      return { success: false, error: 'Không thể chuyển tiếp native vào chat 1:1. Hãy gửi lại nội dung qua luồng E2EE.' };
+    }
+    return forwardMessage(this.requireSession(), messageId, targetThreadId, true, this.httpsAgent);
+  }
+
+  private async requireGroupOperation(threadId: string, operation: string): Promise<{ success: true } | { success: false; error: string }> {
+    const route = await resolveThreadKind(threadId, undefined, this.accountId);
+    if (route.kind === 'unknown') return { success: false, error: route.error || 'Không xác định được hội thoại.' };
+    if (route.kind === 'user') {
+      return { success: false, error: `${operation} chưa hỗ trợ trong chat 1:1 E2EE.` };
+    }
+    return { success: true };
   }
 
   public async pinMessage(messageId: string, threadId: string): Promise<{ success: boolean; error?: string }> {
+    const allowed = await this.requireGroupOperation(threadId, 'Ghim tin nhắn');
+    if (!allowed.success) return allowed;
     return pinMessage(this.requireSession(), messageId, threadId, this.httpsAgent);
   }
 
   public async unpinMessage(messageId: string, threadId: string): Promise<{ success: boolean; error?: string }> {
+    const allowed = await this.requireGroupOperation(threadId, 'Bỏ ghim tin nhắn');
+    if (!allowed.success) return allowed;
     return unpinMessage(this.requireSession(), messageId, threadId, this.httpsAgent);
   }
 
   public async createPoll(threadId: string, question: string, options: string[]): Promise<{ success: boolean; pollId?: string; error?: string }> {
+    const allowed = await this.requireGroupOperation(threadId, 'Tạo khảo sát');
+    if (!allowed.success) return allowed;
     return createPoll(this.requireSession(), threadId, question, options, this.httpsAgent);
   }
 
@@ -2435,13 +2776,10 @@ export class FacebookService {
    * Trả về true nếu sẵn sàng gửi, false nếu không thể gửi.
    */
   public async ensureConnected(): Promise<boolean> {
-    // ── BRIDGE PATH: Go bridge có MQTT nội bộ riêng → không phụ thuộc TypeScript MQTT ──
-    // Nếu bridge alive, luôn sẵn sàng gửi (group qua bridge MQTT, 1:1 qua bridge E2EE).
-    // E2EE status được check riêng trong sendMessage() routing.
-    if (this.e2eeBridge?.isAlive()) {
-      if (this.status !== 'connected') this.setStatus('connected');
-      return true;
-    }
+    // A live child process is not proof that Facebook is reachable: its
+    // internal LightSpeed socket can be disconnected after the computer comes
+    // back online.  Continue with the listener/session health checks below so
+    // a stale bridge never masks a necessary account reconnect.
 
     // ── OVERFLOW PATH: MQTT queue persistently overflow → không tạo listener mới ──
     // Nếu _mqttOverflowCount > 2, việc tạo listener mới chỉ gây thêm overflow.
@@ -2484,8 +2822,10 @@ export class FacebookService {
           this.listener.disconnect();
           this.listener = null;
         }
-        // Reset _connectPromise để connect() có thể chạy lại
+        // connect() intentionally no-ops while status is `connected`; clear
+        // that stale status before asking it to build a fresh session/listener.
         this._connectPromise = null;
+        this.setStatus('disconnected');
         await this.connect(); // ← dùng connect() có guard, không gọi _doConnect() trực tiếp
         // Đợi listener thực sự connected + ổn định
         return await this.waitForStableConnection(30000);
@@ -2590,4 +2930,3 @@ export class FacebookService {
 }
 
 export default FacebookService;
-

@@ -5,7 +5,7 @@
  */
 
 import axios from 'axios';
-import { TOTP } from 'otplib';
+import { generate } from 'otplib';
 import { FBLoginResult } from './FacebookTypes';
 import { randStr } from './FacebookUtils';
 import Logger from '../../utils/Logger';
@@ -87,15 +87,22 @@ async function postLogin(data: Record<string, string>, httpsAgent?: any): Promis
 }
 
 async function getToken2FA(key2FA: string): Promise<string> {
-  try {
-    if (!key2FA) return '';
-    const cleaned = key2FA.replace(/\s/g, '');
-    const totp = new TOTP();
-    return await totp.generate({secret: cleaned});
-  } catch (err: any) {
-    Logger.warn(`[FacebookLoginHelper] 2FA token error: ${err.message}`);
-    return String(100000 + Math.floor(Math.random() * 900000));
+  if (!key2FA) throw new Error('Thiếu mã bí mật 2FA');
+
+  // `TOTP` instances in otplib v13 have no crypto plugin by default. The old
+  // implementation therefore threw CryptoPluginMissingError, then submitted a
+  // random six-digit value which Facebook quite correctly rejected. The bundle
+  // level `generate` API wires its audited crypto/base32 defaults for Node.
+  const cleaned = key2FA.replace(/[\s-]/g, '').toUpperCase();
+  if (!/^[A-Z2-7]+=*$/.test(cleaned)) {
+    throw new Error('Mã bí mật 2FA không đúng định dạng Base32');
   }
+
+  const token = await generate({ secret: cleaned });
+  if (!/^\d{6}$/.test(token)) {
+    throw new Error('Không thể tạo mã 2FA gồm 6 chữ số');
+  }
+  return token;
 }
 
 /**
@@ -176,7 +183,18 @@ export async function loginWithCredentials(
   }
 
   // Step 2: Handle 2FA challenge
-  const totpCode = await getToken2FA(twoFASecret);
+  let totpCode: string;
+  try {
+    totpCode = await getToken2FA(twoFASecret);
+  } catch (err: any) {
+    Logger.warn(`[FacebookLoginHelper] 2FA token error: ${err.message}`);
+    return {
+      error: {
+        title: 'Mã bí mật 2FA không hợp lệ',
+        description: err.message || 'Không thể tạo mã xác thực 2FA.',
+      },
+    };
+  }
   const dataForm2FA = baseForm(totpCode, 'two_factor', 2);
   const errorData = error.error_data || {};
   dataForm2FA.twofactor_code = totpCode;
@@ -192,4 +210,3 @@ export async function loginWithCredentials(
   const cookies2FA = buildCookieExport(pass2FA?.session_cookies || []);
   return buildLoginResult(pass2FA, 1, [cookies2FA]);
 }
-

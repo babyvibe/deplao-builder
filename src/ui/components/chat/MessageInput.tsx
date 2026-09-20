@@ -3897,7 +3897,7 @@ export default function MessageInput() {
                   handleToggleBotMenu();
                 }
               }}
-              className={`px-3 py-2 text-xs font-medium rounded-xl transition-colors ${showBotMenu ? 'bg-blue-600 text-white' : menuBtnType === 'main_app' ? 'bg-green-600 text-white hover:bg-green-500' : 'bg-blue-600/80 text-white hover:bg-blue-500'}`}
+              className={`px-3 py-2 text-xs font-medium rounded-xl transition-colors ${showBotMenu ? 'bg-blue-600 text-white-important' : menuBtnType === 'main_app' ? 'bg-green-600 text-white-important hover:bg-green-500' : 'bg-blue-600/80 text-white-important hover:bg-blue-500'}`}
             >
               {menuBtnLabel}
             </button>

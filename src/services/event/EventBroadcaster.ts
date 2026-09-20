@@ -133,9 +133,26 @@ class EventBroadcaster {
     private static send(channel: string, data: any): void {
         // Fire before-send hooks (sync, không chặn send)
         const hooks = this.beforeSendHooks.get(channel);
+        const message = data?.message || data || {};
+        const msgData = message?.data || data?.data || {};
+        const messageChannel = data?.channel || message?.channel || msgData?.channel || '';
+        const threadId = String(message?.threadId || data?.threadId || msgData?.threadId || msgData?.idTo || '');
+        // if (channel === 'event:message' && messageChannel === 'telegram_user' && threadId.startsWith('-100')) {
+        //     Logger.log(
+        //         `[TG:channel-realtime] EVENT_BROADCASTER_DISPATCH | account=${data?.zaloId || data?.accountId || ''}` +
+        //         ` chatId=${threadId} msgId=${msgData?.msgId || data?.msgId || ''} hooks=${hooks?.length || 0}`,
+        //     );
+        // }
         if (hooks && hooks.length > 0) {
             for (const hook of hooks) {
-                try { hook(data); } catch {}
+                try {
+                    hook(data);
+                } catch (error: any) {
+                    // Do not let a workflow/relay hook stop the renderer event,
+                    // but never swallow the failure: doing so makes a message
+                    // visibly arrive while its automation appears to vanish.
+                    Logger.error(`[EventBroadcaster] before-send hook failed event=${channel}: ${error?.message || String(error)}`);
+                }
             }
         }
         if (this.window && !this.window.isDestroyed()) {
@@ -166,7 +183,11 @@ class EventBroadcaster {
         const hooks = this.beforeSendHooks.get(channel);
         if (hooks && hooks.length > 0) {
             for (const hook of hooks) {
-                try { hook(data); } catch {}
+                try {
+                    hook(data);
+                } catch (error: any) {
+                    Logger.error(`[EventBroadcaster] hooks-only hook failed event=${channel}: ${error?.message || String(error)}`);
+                }
             }
         }
     }

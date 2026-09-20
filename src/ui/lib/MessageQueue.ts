@@ -326,8 +326,13 @@ class MessageQueue {
       const isTimeout = errorMsg.includes('timeout');
       const newStatus = isTimeout ? 'timeout' : 'failed';
 
-      // Retry logic
-      if (item.retryCount < maxRetries && !isTimeout) {
+      // Facebook/E2EE sends are not idempotent: a lost response can mean the
+      // message was accepted remotely. Retrying automatically can duplicate a
+      // message (one click previously produced four IPC send requests).
+      // Surface the failure and let the user explicitly retry after checking
+      // the conversation instead.
+      const canAutoRetry = item.channel !== 'facebook' && !isTimeout;
+      if (item.retryCount < maxRetries && canAutoRetry) {
         const delay = RETRY_DELAYS[item.retryCount] || RETRY_DELAYS[RETRY_DELAYS.length - 1];
         console.warn(`[MessageQueue] ⚠️ Retry ${item.retryCount + 1}/${maxRetries} for tempId=${tempId} in ${delay}ms: ${errorMsg}`);
 
@@ -350,7 +355,7 @@ class MessageQueue {
           this.processThread(threadKey);
         }, delay);
       } else {
-        // ── FAILED: hết retry hoặc timeout ──
+        // ── FAILED: hết retry, timeout, hoặc Facebook ambiguous send ──
         console.error(`[MessageQueue] ❌ Failed tempId=${tempId}: ${errorMsg} (retries=${item.retryCount})`);
         this.updateStatus(zaloId, threadId, tempId, newStatus, {
           send_error: errorMsg,

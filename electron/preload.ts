@@ -462,6 +462,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   fb: {
     addAccount:          (params: { cookie: string; proxyId?: number | null }) => ipcRenderer.invoke('fb:addAccount', params),
     addAccountWithCredentials: (params: { username: string; password: string; twoFASecret?: string; proxyId?: number | null }) => ipcRenderer.invoke('fb:addAccountWithCredentials', params),
+    startMessengerLiteLogin: (params: { proxyId?: number | null }) => ipcRenderer.invoke('fb:startMessengerLiteLogin', params),
+    submitMessengerLiteLogin: (params: { sessionId: string; input: Record<string, string>; proxyId?: number | null }) => ipcRenderer.invoke('fb:submitMessengerLiteLogin', params),
+    cancelMessengerLiteLogin: (params: { sessionId: string }) => ipcRenderer.invoke('fb:cancelMessengerLiteLogin', params),
     removeAccount:       (params: { accountId: string }) => ipcRenderer.invoke('fb:removeAccount', params),
     updateCookie:        (params: { accountId: string; cookie: string }) => ipcRenderer.invoke('fb:updateCookie', params),
     refreshProfile:      (params: { accountId: string }) => ipcRenderer.invoke('fb:refreshProfile', params),
@@ -717,7 +720,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getItems:    (params: any) => ipcRenderer.invoke('library:getItems', params),
     upload:      (params: any) => ipcRenderer.invoke('library:upload', params),
     deleteItem:  (uuid: string) => ipcRenderer.invoke('library:deleteItem', uuid),
-    getFolders:  (params: { zaloId: string; type?: string }) => ipcRenderer.invoke('library:getFolders', params),
+    getFolders:  (params: { zaloId: string; ownerZaloIds?: string[]; type?: string }) => ipcRenderer.invoke('library:getFolders', params),
     createFolder:(params: any) => ipcRenderer.invoke('library:createFolder', params),
     updateItem:  (uuid: string, params: any) => ipcRenderer.invoke('library:updateItem', { uuid, ...params }),
     renameFolder:(id: number, name: string) => ipcRenderer.invoke('library:renameFolder', { id, name }),

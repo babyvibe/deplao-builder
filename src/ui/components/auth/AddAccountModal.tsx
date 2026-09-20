@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import ipc from '@/lib/ipc';
+import ipc, { type NativeLoginIpcField, type NativeLoginIpcResult, type NativeLoginIpcStep } from '@/lib/ipc';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
 import {ZaloIcon, FacebookIcon, TelegramIcon} from '../common/ChannelBadge';
@@ -54,7 +54,7 @@ export default function AddAccountModal({ onClose }: AddAccountModalProps) {
   const [step, setStep] = useState<Step>(getInitialStep());
   const [channel, setChannel] = useState<Channel>(initialCh || 'zalo');
   const [tab, setTab] = useState<'qr' | 'cookie'>('qr');
-  const [fbTab, setFbTab] = useState<'account' | 'cookie'>('account');
+  const [fbTab, setFbTab] = useState<'messenger_lite' | 'cookie'>('messenger_lite');
   const [selectedProxyId, setSelectedProxyId] = useState<number | null>(null);
   const [proxies, setProxies] = useState<any[]>([]);
   const [proxyLoading, setProxyLoading] = useState(false);
@@ -262,7 +262,7 @@ export default function AddAccountModal({ onClose }: AddAccountModalProps) {
             )}
             {/* Facebook sub-tabs */}
             <div className="flex border-b border-gray-700">
-              {(['account', 'cookie'] as const).map((t) => (
+              {(['messenger_lite', 'cookie'] as const).map((t) => (
                 <button
                   key={t}
                   onClick={() => setFbTab(t)}
@@ -272,13 +272,13 @@ export default function AddAccountModal({ onClose }: AddAccountModalProps) {
                       : 'text-gray-400 hover:text-gray-200'
                   }`}
                 >
-                  {t === 'account' ? <><KeyIcon className="w-4 h-4 inline" /> Tài khoản</> : 'Cookie'}
+                  {t === 'messenger_lite' ? 'Đăng nhập tài khoản' : 'Cookie'}
                 </button>
               ))}
             </div>
             <div className="p-6">
-              {fbTab === 'account' ? (
-                <FacebookAccountLoginTab onSuccess={onClose} proxyId={selectedProxyId} />
+              {fbTab === 'messenger_lite' ? (
+                <FacebookMessengerLiteLoginTab onSuccess={onClose} proxyId={selectedProxyId} />
               ) : (
                 <FacebookCookieLoginTab onSuccess={onClose} proxyId={selectedProxyId} />
               )}
@@ -825,6 +825,200 @@ function FacebookAccountLoginTab({ onSuccess, proxyId }: { onSuccess: () => void
   );
 }
 
+// ─── Facebook Messenger Lite Login Tab (fbchat-v2 native flow) ──────────────
+
+function FacebookMessengerLiteLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId?: number | null }) {
+  const [sessionId, setSessionId] = useState('');
+  const [step, setStep] = useState<NativeLoginIpcStep | null>(null);
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [started, setStarted] = useState(false);
+  const sessionRef = useRef('');
+  const hasStartedRef = useRef(false);
+  const { showNotification } = useAppStore();
+  const { setAccounts } = useAccountStore();
+
+  const applyResult = async (result: NativeLoginIpcResult) => {
+    if (!result.success) {
+      setError(result.error || 'Xác thực Messenger Lite thất bại.');
+      if (result.expired) {
+        sessionRef.current = '';
+        setSessionId('');
+        setStep(null);
+        setStarted(false);
+        hasStartedRef.current = false;
+      }
+      return;
+    }
+    if (result.account || result.facebookId) {
+      sessionRef.current = '';
+      setSessionId('');
+      showNotification('Đăng nhập Facebook thành công! Đang hoàn tất thiết lập tài khoản...', 'success');
+      const accounts = await ipc.login?.getAccounts();
+      if (accounts?.accounts) setAccounts(accounts.accounts);
+      showNotification('Tài khoản Facebook đã được thêm vào ứng dụng!', 'success');
+      onSuccess();
+      return;
+    }
+    const nextStep = result.step;
+    if (!result.sessionId || !nextStep) {
+      setError('Facebook chưa trả về bước xác thực tiếp theo. Vui lòng thử lại.');
+      return;
+    }
+    sessionRef.current = result.sessionId;
+    setSessionId(result.sessionId);
+    setStep(nextStep);
+    setValues(Object.fromEntries((nextStep.user_input?.fields || []).map((field) => [field.id, field.default_value || ''])));
+    setStarted(true);
+  };
+
+  const start = async () => {
+    if (hasStartedRef.current) return;
+    hasStartedRef.current = true;
+    setLoading(true);
+    setError('');
+    try {
+      const result = await ipc.fb?.startMessengerLiteLogin({ proxyId });
+      await applyResult(result || { success: false, error: 'Không thể khởi tạo đăng nhập Messenger Lite.' });
+    } catch (err: any) {
+      setError(err.message || 'Không thể khởi tạo đăng nhập Messenger Lite.');
+      hasStartedRef.current = false;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const submit = async () => {
+    if (!sessionId) return;
+    const fields = step?.user_input?.fields || [];
+    const missing = fields.find((field) => !values[field.id]?.trim());
+    if (missing) {
+      setError(`Vui lòng nhập ${missing.name}.`);
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      const result = await ipc.fb?.submitMessengerLiteLogin({ sessionId, input: values, proxyId });
+      await applyResult(result || { success: false, error: 'Không thể tiếp tục đăng nhập.' });
+    } catch (err: any) {
+      setError(err.message || 'Không thể tiếp tục đăng nhập.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const cancel = async () => {
+    if (sessionRef.current) await ipc.fb?.cancelMessengerLiteLogin({ sessionId: sessionRef.current }).catch(() => {});
+    sessionRef.current = '';
+    setSessionId('');
+    setStep(null);
+    setValues({});
+    setStarted(false);
+    setError('');
+    hasStartedRef.current = false;
+  };
+
+  // Open directly on the first credential step. The user should not have to
+  // understand or manually start the underlying Messenger Lite state machine.
+  useEffect(() => { void start(); }, []);
+
+  useEffect(() => () => {
+    if (sessionRef.current) void ipc.fb?.cancelMessengerLiteLogin({ sessionId: sessionRef.current });
+  }, []);
+
+  const fields = step?.user_input?.fields || [];
+  const attachment = step?.user_input?.attachments?.find((item) => item.content && item.info?.mimetype?.startsWith('image/'));
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-xl border border-blue-500/30 bg-blue-500/10 p-3 text-xs leading-relaxed text-gray-300">
+        <p className="font-semibold text-blue-400 mb-1">Đăng nhập trực tiếp, không cần tự quản lý Cookie</p>
+        Bạn không cần sao chép hay thay Cookie thủ công khi Cookie hết hạn. Ứng dụng quản lý phiên đăng nhập; nếu Facebook yêu cầu xác minh lại, bạn chỉ cần đăng nhập lại tại đây.
+      </div>
+
+      {!started && !error && <div className="flex justify-center gap-2 py-5 text-sm text-gray-400"><Spinner size={4} /> Đang mở biểu mẫu đăng nhập...</div>}
+      {!started && error && <button onClick={start} disabled={loading} className="btn-primary text-white w-full">Thử lại</button>}
+
+      {started && step && (
+        <>
+          <div className="rounded-xl border border-gray-700 bg-gray-900/40 p-3">
+            <p className="text-sm font-medium text-white">{translateMessengerLiteInstruction(step.instructions)}</p>
+            {step.type === 'display_and_wait' && <p className="text-xs text-gray-400 mt-1.5">Hãy hoàn tất yêu cầu trên thiết bị khác, sau đó bấm tiếp tục.</p>}
+          </div>
+          {attachment?.content && <img src={`data:${attachment.info?.mimetype || 'image/png'};base64,${attachment.content}`} alt="Captcha" className="mx-auto max-h-28 rounded-lg border border-gray-600" />}
+          {fields.map((field) => <MessengerLiteLoginField key={field.id} field={field} value={values[field.id] || ''} disabled={loading} onChange={(value) => { setValues((current) => ({ ...current, [field.id]: value })); setError(''); }} />)}
+          <div className="flex gap-2">
+            <button onClick={cancel} disabled={loading} className="btn-secondary flex-1">Huỷ</button>
+            <button onClick={submit} disabled={loading} className="btn-primary text-white flex-[2]">
+              {loading ? <span className="flex items-center justify-center gap-2"><Spinner size={4} /> Đang xác thực...</span> : step.type === 'display_and_wait' ? 'Tiếp tục kiểm tra' : 'Tiếp tục'}
+            </button>
+          </div>
+        </>
+      )}
+
+      {error && <div className="bg-red-900/30 border border-red-700 rounded-lg p-2 text-red-400 text-xs">{error}</div>}
+      <TosFooter />
+    </div>
+  );
+}
+
+function MessengerLiteLoginField({ field, value, disabled, onChange }: { field: NativeLoginIpcField; value: string; disabled: boolean; onChange: (value: string) => void }) {
+  const isSecret = field.type === 'password';
+  const isCode = field.type === '2fa_code' || field.type === 'captcha_code';
+  return (
+    <div>
+      <label className="text-xs text-gray-300 mb-1 block font-medium">{translateMessengerLiteField(field.name, field.id)}</label>
+      {field.description && <p className="text-[11px] text-gray-400 mb-1">{translateMessengerLiteInstruction(field.description)}</p>}
+      {field.type === 'select' ? (
+        <select value={value} onChange={(event) => onChange(event.target.value)} disabled={disabled} className="input-field text-sm">
+          <option value="">Chọn phương thức</option>
+          {(field.options || []).map((option) => <option key={option} value={option}>{translateMessengerLiteOption(option)}</option>)}
+        </select>
+      ) : (
+        <input type={isSecret ? 'password' : 'text'} inputMode={isCode ? 'numeric' : undefined} autoComplete={isSecret ? 'current-password' : 'off'} value={value} onChange={(event) => onChange(event.target.value)} placeholder={field.type === '2fa_code' ? 'Mã 6 chữ số' : translateMessengerLiteField(field.name, field.id)} maxLength={field.max_length || undefined} pattern={field.pattern || undefined} disabled={disabled} className={`input-field text-sm ${isCode ? 'font-mono tracking-wider' : ''}`} />
+      )}
+    </div>
+  );
+}
+
+function translateMessengerLiteField(label: string, id: string): string {
+  const mapped: Record<string, string> = {
+    username: 'Email hoặc số điện thoại', password: 'Mật khẩu', email_code: 'Mã xác minh từ email',
+    totp_code: 'Mã xác thực 6 chữ số', sms_code: 'Mã xác minh qua SMS', whatsapp_code: 'Mã xác minh qua WhatsApp',
+    backup_code: 'Mã dự phòng', captcha_code: 'Mã captcha', mfatype: 'Phương thức xác thực',
+  };
+  return mapped[id] || ({
+    'Username or email address': 'Email hoặc số điện thoại', Password: 'Mật khẩu', 'Six-digit code': 'Mã xác thực 6 chữ số',
+    'Code from email': 'Mã xác minh từ email', 'Login method': 'Phương thức xác thực', 'Captcha code': 'Mã captcha',
+  }[label] || label);
+}
+
+function translateMessengerLiteOption(value: string): string {
+  return ({
+    totp: 'Ứng dụng xác thực', sms: 'Tin nhắn SMS', whatsapp: 'WhatsApp', backup_code: 'Mã dự phòng',
+    'Notification on another device': 'Thông báo trên thiết bị khác', 'Authentication app': 'Ứng dụng xác thực',
+    Email: 'Email', 'Text message': 'Tin nhắn SMS', 'Backup code': 'Mã dự phòng', 'Verify with Google': 'Xác minh bằng Google',
+  }[value] || value);
+}
+
+function translateMessengerLiteInstruction(value: string): string {
+  if (!value) return 'Hoàn tất bước xác thực trên Facebook.';
+  if (value.includes('Enter your Facebook credentials')) return 'Nhập email hoặc số điện thoại và mật khẩu Facebook của bạn.';
+  if (value.includes('Invalid username or password')) return 'Email, số điện thoại hoặc mật khẩu chưa chính xác. Vui lòng kiểm tra và thử lại.';
+  if (value.includes("isn't connected to a Messenger account")) return 'Tài khoản này chưa được liên kết với Messenger.';
+  if (value.includes('backup codes')) return 'Nhập một mã dự phòng của xác thực hai lớp.';
+  if (value.includes('Facebook requires solving a captcha')) return 'Facebook yêu cầu nhập mã captcha hiển thị bên trên.';
+  if (value.includes('rejected that captcha')) return 'Mã captcha chưa đúng. Vui lòng thử lại.';
+  if (value.includes('Choose how to finish signing in')) return 'Chọn phương thức để hoàn tất đăng nhập.';
+  if (value.includes('code from your email') || value.startsWith('Enter the code') || value.startsWith('We sent a code')) return 'Nhập mã xác minh Facebook vừa gửi cho bạn.';
+  if (value.includes('six-digit')) return 'Nhập mã xác minh gồm 6 chữ số từ ứng dụng xác thực.';
+  if (value.includes('captcha')) return 'Nhập mã captcha hiển thị bên trên.';
+  if (value.startsWith('We sent a notification')) return 'Facebook đã gửi thông báo xác nhận đến một thiết bị khác của bạn.';
+  return 'Facebook yêu cầu thực hiện thêm một bước xác minh để hoàn tất đăng nhập.';
+}
+
 // ─── Facebook Cookie Login Tab ─────────────────────────────────────────────────
 
 function FacebookCookieLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId?: number | null }) {
@@ -1359,4 +1553,3 @@ function Setup2FAGuide() {
     </div>
   );
 }
-
