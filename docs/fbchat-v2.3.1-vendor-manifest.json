@@ -1,0 +1,20 @@
+{
+  "upstream": "https://github.com/m008v/fbchat-v2",
+  "version": "2.3.1",
+  "commit": "3e7676ca3f27a8c5d71f123faf0050022aef3ea2",
+  "submodules": {
+    "bridge-e2ee/meta": {
+      "upstream": "https://github.com/mautrix/meta.git",
+      "commit": "3ed7bfaa9fa047ab193377b838d95c1a49ad1c43"
+    }
+  },
+  "retrievedAt": "2026-09-12T16:00:00Z",
+  "bridgeAdapterPatches": [
+    "Electron JSON-RPC media localPath adapter",
+    "Electron secure-storage device state transport",
+    "Application event persistence adapter",
+    "hello handshake with protocol/capability validation",
+    "Serial write queue for stdin",
+    "Generation isolation for stale response detection"
+  ]
+}
