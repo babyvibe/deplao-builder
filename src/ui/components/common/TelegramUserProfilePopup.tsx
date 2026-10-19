@@ -88,7 +88,7 @@ export function TelegramUserProfilePopup({
     }}>
       <div
         style={{ position: 'absolute', left, top, width }}
-        className="overflow-hidden rounded-2xl border border-sky-500/20 bg-[#1e2535] shadow-2xl"
+        className="overflow-hidden rounded-2xl border border-sky-500/20 bg-popover shadow-2xl"
         onClick={event => event.stopPropagation()}
       >
         <div className="h-16 bg-gradient-to-br from-sky-600 to-blue-800" />
@@ -100,56 +100,56 @@ export function TelegramUserProfilePopup({
         <div className="relative px-4 pb-4">
           <div className="absolute -top-9 left-4">
             {avatarUrl ? (
-              <img src={avatarUrl} alt={displayName} className="h-[72px] w-[72px] rounded-full border-4 border-[#1e2535] object-cover" />
+              <img src={avatarUrl} alt={displayName} className="h-[72px] w-[72px] rounded-full border-4 border-border object-cover" />
             ) : (
-              <div className="flex h-[72px] w-[72px] items-center justify-center rounded-full border-4 border-[#1e2535] bg-sky-600 text-2xl font-bold text-white">
+              <div className="flex h-[72px] w-[72px] items-center justify-center rounded-full border-4 border-border bg-sky-600 text-2xl font-bold text-white">
                 {(displayName || 'T').charAt(0).toUpperCase()}
               </div>
             )}
           </div>
           <div className="min-w-0 pl-20 pt-2">
-            <p className="truncate text-base font-semibold text-white">{displayName}</p>
-            {presenceText && <p className="mt-0.5 text-[11px] text-gray-400">{presenceText}</p>}
+            <p className="truncate text-base font-semibold text-foreground">{displayName}</p>
+            {presenceText && <p className="mt-0.5 text-[11px] text-muted-foreground">{presenceText}</p>}
           </div>
 
-          <div className="mt-5 overflow-hidden rounded-xl border border-gray-700/70 text-sm">
+          <div className="mt-5 overflow-hidden rounded-xl border border-border/70 text-sm">
             <div className="flex items-center justify-between gap-3 px-3 py-2.5">
               <div className="min-w-0">
-                <p className="text-[11px] text-gray-400">Username</p>
-                <p className="truncate font-mono text-xs text-gray-200">{username}</p>
+                <p className="text-[11px] text-muted-foreground">Username</p>
+                <p className="truncate font-mono text-xs text-foreground">{username}</p>
               </div>
-              <button onClick={copyUserName} className="rounded-lg bg-gray-700 px-2 py-1 text-xs text-gray-200 hover:bg-gray-600">Sao chép</button>
+              <button onClick={copyUserName} className="rounded-lg bg-muted px-2 py-1 text-xs text-foreground hover:bg-accent">Sao chép</button>
             </div>
             <div className="flex items-center justify-between gap-3 px-3 py-2.5">
               <div className="min-w-0">
-                <p className="text-[11px] text-gray-400">Telegram ID</p>
-                <p className="truncate font-mono text-xs text-gray-200">{userId}</p>
+                <p className="text-[11px] text-muted-foreground">Telegram ID</p>
+                <p className="truncate font-mono text-xs text-foreground">{userId}</p>
               </div>
             </div>
             {phone && (
-              <div className="border-t border-gray-700/70 px-3 py-2.5">
-                <p className="text-[11px] text-gray-400">Số điện thoại</p>
-                <p className="text-sm text-gray-200">{phone}</p>
+              <div className="border-t border-border/70 px-3 py-2.5">
+                <p className="text-[11px] text-muted-foreground">Số điện thoại</p>
+                <p className="text-sm text-foreground">{phone}</p>
               </div>
             )}
             {bio && (
-              <div className="border-t border-gray-700/70 px-3 py-2.5">
-                <p className="text-[11px] text-gray-400">Giới thiệu</p>
-                <p className="mt-0.5 whitespace-pre-wrap text-sm text-gray-200">{bio}</p>
+              <div className="border-t border-border/70 px-3 py-2.5">
+                <p className="text-[11px] text-muted-foreground">Giới thiệu</p>
+                <p className="mt-0.5 whitespace-pre-wrap text-sm text-foreground">{bio}</p>
               </div>
             )}
             {profile?.commonChatsCount > 0 && (
-              <div className="border-t border-gray-700/70 px-3 py-2.5 text-sm text-gray-200">
+              <div className="border-t border-border/70 px-3 py-2.5 text-sm text-foreground">
                 {profile.commonChatsCount} nhóm chung
               </div>
             )}
             {flags.length > 0 && (
-              <div className="flex flex-wrap gap-1 border-t border-gray-700/70 px-3 py-2.5">
+              <div className="flex flex-wrap gap-1 border-t border-border/70 px-3 py-2.5">
                 {flags.map((flag: string) => <span key={flag} className="rounded-full bg-sky-500/15 px-2 py-0.5 text-[11px]">{flag}</span>)}
               </div>
             )}
           </div>
-          {loading && <p className="mt-2 text-center text-[11px] text-gray-500">Đang tải hồ sơ Telegram…</p>}
+          {loading && <p className="mt-2 text-center text-[11px] text-subtle-foreground">Đang tải hồ sơ Telegram…</p>}
 
           {!isMe && (
             <button

@@ -18,4 +18,6 @@ export interface Account {
     listener_active?: number;
     channel?: string;
     proxy_id?: number | null;
+    /** Zalo: ID hội thoại "My Documents" (loginInfo.send2me_id) — không phải zalo_id */
+    send2me_id?: string;
 }

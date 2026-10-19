@@ -176,7 +176,9 @@ export class TelegramUserAdapter extends BaseChannelAdapter {
 
   async sendAttachment(params: SendAttachmentParams): Promise<ActionResult> {
     try {
-      const filePath = params.filePath;
+      // Nhân viên gửi item thư viện: không có file trên máy → filePath rỗng + uuid, Boss tự đổi ra đường dẫn
+      const filePath = params.filePath || '';
+      const library = params.libraryUuid ? { _libraryUuid: params.libraryUuid } : {};
       const caption = params.body;
       const chatId = params.threadId;
       const topicId = params.topicRootMessageId;
@@ -193,7 +195,7 @@ export class TelegramUserAdapter extends BaseChannelAdapter {
       let res: any;
       if (topicId) {
         res = await (ipc.telegramUser as any)?.sendTopicFile({
-          accountId: params.accountId, chatId, topicRootMessageId: topicId, filePath, caption, fileType,
+          accountId: params.accountId, chatId, topicRootMessageId: topicId, filePath, caption, fileType, ...library,
         });
       } else {
         // Extract replyToMsgId from quote payload if available
@@ -202,7 +204,7 @@ export class TelegramUserAdapter extends BaseChannelAdapter {
           try { const q = JSON.parse(params.quote); replyToMsgId = q?.msgId || q?.msg_id; } catch {}
         }
         res = await (ipc.telegramUser as any)?.sendFile({
-          accountId: params.accountId, chatId, filePath, caption, fileType, replyToMsgId,
+          accountId: params.accountId, chatId, filePath, caption, fileType, replyToMsgId, ...library,
         });
       }
       console.log(`[TG:adapter] sendAttachment result: success=${res?.success} msgId=${res?.messageId} error=${res?.error}`);
@@ -222,6 +224,7 @@ export class TelegramUserAdapter extends BaseChannelAdapter {
       filePath: params.filePath,
       fileType: 'video',
       body: params.body,
+      libraryUuid: params.libraryUuid,
     });
   }
 

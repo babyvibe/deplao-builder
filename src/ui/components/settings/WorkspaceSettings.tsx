@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import ipc from '@/lib/ipc';
 import { useWorkspaceStore, WorkspaceInfo } from '@/store/workspaceStore';
 import { useAppStore } from '@/store/appStore';
@@ -23,8 +24,11 @@ function buildBossUrl(address: string, port: string): string {
 // ── WorkspaceSettings ─────────────────────────────────────────────────────────
 
 export default function WorkspaceSettings() {
-    const { workspaces, activeWorkspaceId, setWorkspaces, setActiveWorkspaceId, connectionStatuses } = useWorkspaceStore();
-    const { showNotification } = useAppStore();
+    const { workspaces, activeWorkspaceId, setWorkspaces, setActiveWorkspaceId, connectionStatuses } = useWorkspaceStore(useShallow(s => ({
+        workspaces: s.workspaces, activeWorkspaceId: s.activeWorkspaceId, setWorkspaces: s.setWorkspaces,
+        setActiveWorkspaceId: s.setActiveWorkspaceId, connectionStatuses: s.connectionStatuses,
+    })));
+    const showNotification = useAppStore(s => s.showNotification);
     const [editingId, setEditingId] = useState<string | null>(null);
     const [showCreateForm, setShowCreateForm] = useState(false);
 
@@ -71,8 +75,8 @@ export default function WorkspaceSettings() {
             {/* Header */}
             <div className="flex items-center justify-between">
                 <div>
-                    <h3 className="text-sm font-semibold text-gray-200">Quản lý Workspace</h3>
-                    <p className="text-xs text-gray-400 mt-0.5">
+                    <h3 className="text-sm font-semibold text-foreground">Quản lý Workspace</h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">
                         Mỗi workspace có dữ liệu, tài khoản Zalo và cài đặt riêng biệt.
                     </p>
                 </div>
@@ -152,15 +156,15 @@ function WorkspaceCard({ workspace, isActive, connectionStatus, onSwitch, onEdit
     return (
         <div className={`rounded-xl border p-4 transition-all ${
             isActive
-                ? 'bg-blue-600/10 border-blue-500/40'
-                : 'bg-gray-800/60 border-gray-700/60 hover:border-gray-600'
+                ? 'bg-selected border-blue-500/40'
+                : 'bg-card border-border/60 hover:border-input'
         }`}>
             <div className="flex items-start gap-3">
                 <span className="text-2xl mt-0.5 flex-shrink-0">{workspace.icon || (isRemote ? <UserIcon className="w-6 h-6" /> : <HomeIcon className="w-6 h-6" />)}</span>
 
                 <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-medium text-gray-200">{workspace.name}</span>
+                        <span className="text-sm font-medium text-foreground">{workspace.name}</span>
                         {isActive && (
                             <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-600/30 text-blue-300 font-medium">
                                 Active
@@ -169,16 +173,16 @@ function WorkspaceCard({ workspace, isActive, connectionStatus, onSwitch, onEdit
                         <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
                             isRemote
                                 ? 'bg-purple-600/20 text-purple-300'
-                                : 'bg-gray-700 text-gray-400'
+                                : 'bg-muted text-muted-foreground'
                         }`}>
                             {isRemote ? 'Remote' : 'Local'}
                         </span>
                         {isRemote && (
                             <span className={`flex items-center gap-1 text-[10px] font-medium ${
-                                isConnected ? 'text-green-400' : 'text-gray-400'
+                                isConnected ? 'text-green-400' : 'text-muted-foreground'
                             }`}>
                                 <span className={`w-1.5 h-1.5 rounded-full ${
-                                    isConnected ? 'bg-green-400' : 'bg-gray-600'
+                                    isConnected ? 'bg-green-400' : 'bg-accent'
                                 }`} />
                                 {isConnected
                                     ? `Online${connectionStatus?.latency ? ` · ${connectionStatus.latency}ms` : ''}`
@@ -190,16 +194,16 @@ function WorkspaceCard({ workspace, isActive, connectionStatus, onSwitch, onEdit
 
                     <div className="mt-1 space-y-0.5">
                         {isRemote && workspace.employeeName && (
-                            <p className="text-[11px] text-gray-400"><UserIcon className="w-4 h-4 inline" /> {workspace.employeeName}
-                                {workspace.employeeUsername && <span className="text-gray-400"> (@{workspace.employeeUsername})</span>}
+                            <p className="text-[11px] text-muted-foreground"><UserIcon className="w-4 h-4 inline" /> {workspace.employeeName}
+                                {workspace.employeeUsername && <span className="text-muted-foreground"> (@{workspace.employeeUsername})</span>}
                             </p>
                         )}
                         {isRemote && workspace.bossUrl && (
-                            <p className="text-[11px] text-gray-400 truncate"><LinkIcon className="w-4 h-4 inline" /> {workspace.bossUrl.replace(/^https?:\/\//, '')}
+                            <p className="text-[11px] text-muted-foreground truncate"><LinkIcon className="w-4 h-4 inline" /> {workspace.bossUrl.replace(/^https?:\/\//, '')}
                             </p>
                         )}
                         {!isRemote && workspace.dbPath && (
-                            <p className="text-[11px] text-gray-400 font-mono truncate">{workspace.dbPath}</p>
+                            <p className="text-[11px] text-muted-foreground font-mono truncate">{workspace.dbPath}</p>
                         )}
                     </div>
                 </div>
@@ -215,7 +219,7 @@ function WorkspaceCard({ workspace, isActive, connectionStatus, onSwitch, onEdit
                     )}
                     <button
                         onClick={onEdit}
-                        className="p-1.5 text-gray-400 hover:text-gray-300 hover:bg-gray-700 rounded-lg transition-colors"
+                        className="p-1.5 text-muted-foreground hover:text-foreground/80 hover:bg-muted rounded-lg transition-colors"
                         title="Chỉnh sửa"
                     >
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -226,7 +230,7 @@ function WorkspaceCard({ workspace, isActive, connectionStatus, onSwitch, onEdit
                     {workspace.id !== 'default' && (
                         <button
                             onClick={onDelete}
-                            className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-red-600/10 rounded-lg transition-colors"
+                            className="p-1.5 text-muted-foreground hover:text-red-400 hover:bg-red-600/10 rounded-lg transition-colors"
                             title="Xóa"
                         >
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -246,7 +250,7 @@ function WorkspaceCard({ workspace, isActive, connectionStatus, onSwitch, onEdit
 // ── Create Form ────────────────────────────────────────────────────────────────
 
 function CreateWorkspaceForm({ onCreated, onCancel }: { onCreated: () => void; onCancel: () => void }) {
-    const { showNotification } = useAppStore();
+    const showNotification = useAppStore(s => s.showNotification);
     const [name, setName] = useState('');
     const [type, setType] = useState<'local' | 'remote'>('local');
     const [icon, setIcon] = useState('');
@@ -339,8 +343,8 @@ function CreateWorkspaceForm({ onCreated, onCancel }: { onCreated: () => void; o
         : saving ? 'Đang tạo...' : 'Tạo workspace';
 
     return (
-        <div className="rounded-xl bg-gray-800/80 border border-gray-600/60 p-4 space-y-3">
-            <p className="text-xs font-semibold text-gray-300">Tạo workspace mới</p>
+        <div className="rounded-xl bg-card border border-input/60 p-4 space-y-3">
+            <p className="text-xs font-semibold text-foreground/80">Tạo workspace mới</p>
 
             <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2 flex gap-2">
@@ -348,7 +352,7 @@ function CreateWorkspaceForm({ onCreated, onCancel }: { onCreated: () => void; o
                         value={icon}
                         onChange={e => setIcon(e.target.value)}
                         placeholder="Icon (VD: 🏠)"
-                        className="w-12 text-center text-sm bg-gray-700 border border-gray-600 rounded-lg px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500"
+                        className="w-12 text-center text-sm bg-muted border border-input rounded-lg px-2 py-1.5 text-foreground focus:outline-none focus:border-blue-500"
                     />
                     <input
                         autoFocus
@@ -356,16 +360,16 @@ function CreateWorkspaceForm({ onCreated, onCancel }: { onCreated: () => void; o
                         onChange={e => setName(e.target.value)}
                         onKeyDown={e => { if (e.key === 'Enter') handleCreate(); if (e.key === 'Escape') onCancel(); }}
                         placeholder="Tên workspace (VD: Cá nhân, Công ty ABC...)"
-                        className="flex-1 text-xs bg-gray-700 border border-gray-600 rounded-lg px-3 py-1.5 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                        className="flex-1 text-xs bg-muted border border-input rounded-lg px-3 py-1.5 text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
                     />
                 </div>
 
                 <div>
-                    <label className="block text-[11px] text-gray-400 mb-1">Loại workspace</label>
+                    <label className="block text-[11px] text-muted-foreground mb-1">Loại workspace</label>
                     <select
                         value={type}
                         onChange={e => setType(e.target.value as any)}
-                        className="w-full text-xs bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-1.5 text-gray-300 focus:outline-none focus:border-blue-500"
+                        className="w-full text-xs bg-muted border border-input rounded-lg px-2.5 py-1.5 text-foreground/80 focus:outline-none focus:border-blue-500"
                     >
                         <option value="local"><HomeIcon className="w-4 h-4 inline" /> Local (Boss / Standalone)</option>
                         <option value="remote"><UserIcon className="w-4 h-4 inline" /> Remote (Nhân viên)</option>
@@ -374,27 +378,27 @@ function CreateWorkspaceForm({ onCreated, onCancel }: { onCreated: () => void; o
             </div>
 
             {type === 'remote' && (
-                <div className="space-y-2 pt-1 border-t border-gray-700">
-                    <p className="text-[11px] text-gray-400">Kết nối tới Boss (nhập IP, Port, tài khoản nhân viên)</p>
+                <div className="space-y-2 pt-1 border-t border-border">
+                    <p className="text-[11px] text-muted-foreground">Kết nối tới Boss (nhập IP, Port, tài khoản nhân viên)</p>
                     <div className="flex gap-2">
                         <input
                             value={ip}
                             onChange={e => setIp(e.target.value)}
                             placeholder="IP Boss - 192.168.1.100"
-                            className="flex-1 text-xs bg-gray-700 border border-gray-600 rounded-lg px-3 py-1.5 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                            className="flex-1 text-xs bg-muted border border-input rounded-lg px-3 py-1.5 text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
                         />
                         <input
                             value={port}
                             onChange={e => setPort(e.target.value)}
                             placeholder="Port"
-                            className="w-20 text-xs bg-gray-700 border border-gray-600 rounded-lg px-3 py-1.5 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                            className="w-20 text-xs bg-muted border border-input rounded-lg px-3 py-1.5 text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
                         />
                     </div>
                     <input
                         value={username}
                         onChange={e => setUsername(e.target.value)}
                         placeholder="Tên đăng nhập (nhận từ quản lý)"
-                        className="w-full text-xs bg-gray-700 border border-gray-600 rounded-lg px-3 py-1.5 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                        className="w-full text-xs bg-muted border border-input rounded-lg px-3 py-1.5 text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
                     />
                     <input
                         value={password}
@@ -402,7 +406,7 @@ function CreateWorkspaceForm({ onCreated, onCancel }: { onCreated: () => void; o
                         placeholder="Mật khẩu"
                         type="password"
                         onKeyDown={e => { if (e.key === 'Enter') handleCreate(); }}
-                        className="w-full text-xs bg-gray-700 border border-gray-600 rounded-lg px-3 py-1.5 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                        className="w-full text-xs bg-muted border border-input rounded-lg px-3 py-1.5 text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
                     />
                     <label className="flex items-center gap-2 cursor-pointer">
                         <input
@@ -411,13 +415,13 @@ function CreateWorkspaceForm({ onCreated, onCancel }: { onCreated: () => void; o
                             onChange={e => setAutoConnect(e.target.checked)}
                             className="rounded"
                         />
-                        <span className="text-xs text-gray-400">Tự động kết nối khi mở app</span>
+                        <span className="text-xs text-muted-foreground">Tự động kết nối khi mở app</span>
                     </label>
                 </div>
             )}
 
             <div className="flex items-center justify-end gap-2 pt-1">
-                <button onClick={onCancel} className="text-xs text-gray-400 hover:text-gray-200 px-3 py-1.5 rounded-lg transition-colors">
+                <button onClick={onCancel} className="text-xs text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg transition-colors">
                     Hủy
                 </button>
                 <button
@@ -440,7 +444,7 @@ function EditWorkspaceForm({ workspace, connectionStatus, onSaved, onCancel }: {
     onSaved: () => void;
     onCancel: () => void;
 }) {
-    const { showNotification } = useAppStore();
+    const showNotification = useAppStore(s => s.showNotification);
     const [name, setName] = useState(workspace.name);
     const [icon, setIcon] = useState(workspace.icon || '');
     const [autoConnect, setAutoConnect] = useState(workspace.autoConnect ?? true);
@@ -513,23 +517,22 @@ function EditWorkspaceForm({ workspace, connectionStatus, onSaved, onCancel }: {
 
             // Step 1: Login to get fresh token
             const loginRes = await ipc.workspace?.loginRemote(bossUrl, username.trim(), password);
-            if (!loginRes?.success) {
+            if (!loginRes?.success || !loginRes.token) {
                 showNotification(loginRes?.error || 'Đăng nhập thất bại', 'error');
                 setConnecting(false);
                 return;
             }
 
-            // Step 2: Update workspace with new connection info
+            // Step 2: Lưu thông tin nhân viên (KHÔNG gồm URL/token → workspace:update không tự kết nối lại)
             await ipc.workspace?.update(workspace.id, {
-                bossUrl,
-                token: loginRes.token,
                 employeeId: loginRes.employee?.employee_id,
                 employeeName: loginRes.employee?.display_name || username.trim(),
                 employeeUsername: username.trim(),
             });
 
-            // Step 3: Connect via Socket.IO
-            const res = await ipc.workspace?.connectRemote(workspace.id, bossUrl, loginRes.token!);
+            // Step 3: Lưu CẢ URL + token vào cấu hình workspace rồi kết nối qua main (heartbeat + Socket.IO)
+            // → main phát employee:credentials → REST client của renderer dùng đúng URL/token mới.
+            const res = await ipc.workspace?.connectRemote(workspace.id, bossUrl, loginRes.token);
             if (res?.success) {
                 showNotification('Đã kết nối tới boss!', 'success');
             } else {
@@ -551,15 +554,15 @@ function EditWorkspaceForm({ workspace, connectionStatus, onSaved, onCancel }: {
     };
 
     return (
-        <div className="rounded-xl bg-gray-800/80 border border-blue-500/30 p-4 space-y-3">
-            <p className="text-xs font-semibold text-gray-300">Chỉnh sửa workspace</p>
+        <div className="rounded-xl bg-card border border-blue-500/30 p-4 space-y-3">
+            <p className="text-xs font-semibold text-foreground/80">Chỉnh sửa workspace</p>
 
             <div className="flex gap-2">
                 <input
                     value={icon}
                     onChange={e => setIcon(e.target.value)}
                     placeholder="Icon (VD: 🏠)"
-                    className="w-12 text-center text-sm bg-gray-700 border border-gray-600 rounded-lg px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500"
+                    className="w-12 text-center text-sm bg-muted border border-input rounded-lg px-2 py-1.5 text-foreground focus:outline-none focus:border-blue-500"
                 />
                 <input
                     autoFocus
@@ -567,16 +570,16 @@ function EditWorkspaceForm({ workspace, connectionStatus, onSaved, onCancel }: {
                     onChange={e => setName(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') onCancel(); }}
                     placeholder="Tên workspace"
-                    className="flex-1 text-xs bg-gray-700 border border-gray-600 rounded-lg px-3 py-1.5 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                    className="flex-1 text-xs bg-muted border border-input rounded-lg px-3 py-1.5 text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
                 />
             </div>
 
             {isRemote && (
-                <div className="space-y-2 pt-1 border-t border-gray-700">
+                <div className="space-y-2 pt-1 border-t border-border">
                     <div className="flex items-center justify-between">
-                        <p className="text-[11px] text-gray-400">Kết nối boss</p>
-                        <span className={`flex items-center gap-1 text-[10px] font-medium ${isConnected ? 'text-green-400' : 'text-gray-400'}`}>
-                            <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-green-400' : 'bg-gray-600'}`} />
+                        <p className="text-[11px] text-muted-foreground">Kết nối boss</p>
+                        <span className={`flex items-center gap-1 text-[10px] font-medium ${isConnected ? 'text-green-400' : 'text-muted-foreground'}`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-green-400' : 'bg-accent'}`} />
                             {isConnected ? `Online${connectionStatus?.latency ? ` · ${connectionStatus.latency}ms` : ''}` : 'Offline'}
                         </span>
                     </div>
@@ -585,14 +588,14 @@ function EditWorkspaceForm({ workspace, connectionStatus, onSaved, onCancel }: {
                             value={ip}
                             onChange={e => setIp(e.target.value)}
                             placeholder="192.168.1.100 hoặc https://xxxx.loca.lt"
-                            className="flex-1 text-xs bg-gray-700 border border-gray-600 rounded-lg px-3 py-1.5 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                            className="flex-1 text-xs bg-muted border border-input rounded-lg px-3 py-1.5 text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
                         />
                         {!ip.startsWith('http') && (
                         <input
                             value={port}
                             onChange={e => setPort(e.target.value)}
                             placeholder="Port"
-                            className="w-20 text-xs bg-gray-700 border border-gray-600 rounded-lg px-3 py-1.5 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                            className="w-20 text-xs bg-muted border border-input rounded-lg px-3 py-1.5 text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
                         />
                         )}
                     </div>
@@ -600,7 +603,7 @@ function EditWorkspaceForm({ workspace, connectionStatus, onSaved, onCancel }: {
                         value={username}
                         onChange={e => setUsername(e.target.value)}
                         placeholder="Tên đăng nhập"
-                        className="w-full text-xs bg-gray-700 border border-gray-600 rounded-lg px-3 py-1.5 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                        className="w-full text-xs bg-muted border border-input rounded-lg px-3 py-1.5 text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
                     />
                     <input
                         value={password}
@@ -608,12 +611,12 @@ function EditWorkspaceForm({ workspace, connectionStatus, onSaved, onCancel }: {
                         placeholder="Mật khẩu (nhập để kết nối lại)"
                         type="password"
                         onKeyDown={e => { if (e.key === 'Enter') handleConnect(); }}
-                        className="w-full text-xs bg-gray-700 border border-gray-600 rounded-lg px-3 py-1.5 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                        className="w-full text-xs bg-muted border border-input rounded-lg px-3 py-1.5 text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
                     />
 
                     {workspace.employeeName && (
-                        <p className="text-[11px] text-gray-400"><UserIcon className="w-4 h-4 inline" /> Đăng nhập: <span className="text-gray-400">{workspace.employeeName}</span>
-                            {workspace.employeeUsername && <span className="text-gray-400"> (@{workspace.employeeUsername})</span>}
+                        <p className="text-[11px] text-muted-foreground"><UserIcon className="w-4 h-4 inline" /> Đăng nhập: <span className="text-muted-foreground">{workspace.employeeName}</span>
+                            {workspace.employeeUsername && <span className="text-muted-foreground"> (@{workspace.employeeUsername})</span>}
                         </p>
                     )}
 
@@ -624,7 +627,7 @@ function EditWorkspaceForm({ workspace, connectionStatus, onSaved, onCancel }: {
                             onChange={e => setAutoConnect(e.target.checked)}
                             className="rounded"
                         />
-                        <span className="text-xs text-gray-400">Tự động kết nối khi mở app</span>
+                        <span className="text-xs text-muted-foreground">Tự động kết nối khi mở app</span>
                     </label>
 
                     <div className="flex gap-2">
@@ -649,7 +652,7 @@ function EditWorkspaceForm({ workspace, connectionStatus, onSaved, onCancel }: {
             )}
 
             <div className="flex items-center justify-end gap-2 pt-1">
-                <button onClick={onCancel} className="text-xs text-gray-400 hover:text-gray-200 px-3 py-1.5 rounded-lg transition-colors">
+                <button onClick={onCancel} className="text-xs text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg transition-colors">
                     Hủy
                 </button>
                 <button

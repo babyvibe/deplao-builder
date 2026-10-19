@@ -1,3 +1,4 @@
+import { NODE_GROUPS, DEFAULT_CONFIGS } from '../../src/ui/components/workflow/workflowConfig';
 import { ipcMain } from 'electron';
 import DatabaseService from '../../src/services/database/DatabaseService';
 import WorkflowEngineService, { Workflow, WorkflowChannel } from '../../src/services/workflow/WorkflowEngineService';
@@ -8,6 +9,18 @@ import { v4 as uuidv4 } from 'uuid';
 import Logger from '../../src/utils/Logger';
 import WebhookGatewayService from '../../src/services/workflow/WebhookGatewayService';
 import TunnelService from '../../src/services/tunnel/TunnelService';
+import EventBroadcaster from '../../src/services/event/EventBroadcaster';
+import { proxyToBossWithResult } from './proxyHelper';
+
+/**
+ * Workflow chạy trên Boss. Nhân viên: lưu / xoá / bật tắt / nhân bản đi proxy chờ kết quả (Boss kiểm tra quyền module
+ * workflow + mọi trang của workflow thuộc tài khoản được giao — HttpRelayService.checkProxyWorkflowAccess). Trước đây
+ * WorkflowEditor / kho mẫu / nhân bản gọi IPC thẳng → chỉ ghi DB cục bộ của nhân viên, Boss không bao giờ có.
+ * Ghi xong trên Boss phát `workflow:changed` (relay mọi nhân viên) → danh sách workflow ở máy khác tải lại.
+ */
+function workflowChanged(action: string, workflowId?: string): void {
+    try { EventBroadcaster.emit('workflow:changed', { action, workflowId: workflowId || '' }); } catch { /* không chặn lệnh ghi */ }
+}
 
 function isEmployeeMode(): boolean {
     try {
@@ -79,6 +92,11 @@ function ensureWebhookToken(nodes: any[]): string | null {
   return hookNode.config.webhookToken;
 }
 
+/** Địa chỉ gốc của webhook workflow: gateway biết cả Cloudflare tự động (tunnel chung) lẫn tunnel riêng cổng 9889. */
+function workflowTunnelUrl(): string | null {
+  return WebhookGatewayService.getInstance().getStatus().tunnelUrl || TunnelService.getUrl(9889);
+}
+
 export function registerWorkflowIpc(): void {
 
     // ── Label Event bridge REMOVED - now centralized in databaseIpc.ts and zaloIpc.ts ──
@@ -123,6 +141,7 @@ export function registerWorkflowIpc(): void {
     // ─── Save ─────────────────────────────────────────────────────────────────
     ipcMain.handle('workflow:save', async (_e, { workflow }: { workflow: Partial<Workflow> }) => {
         try {
+            if (isEmployeeMode()) return await proxyToBossWithResult('workflow:save', { workflow });
             const now = Date.now();
             // Normalise pageIds: accept both pageIds[] and legacy pageId string
             const pageIds: string[] = Array.isArray(workflow.pageIds)
@@ -151,6 +170,7 @@ export function registerWorkflowIpc(): void {
             DatabaseService.getInstance().saveWorkflow(wf);
             DatabaseService.getInstance().save();
             WorkflowEngineService.getInstance().reloadWorkflow(wf.id);
+            workflowChanged('save', wf.id);
             return { success: true, id: wf.id, webhookToken };
         } catch (e: any) {
             Logger.error(`[WorkflowIpc] save error: ${e.message} | workflow=${JSON.stringify({ id: workflow?.id, name: workflow?.name })}`);
@@ -161,9 +181,11 @@ export function registerWorkflowIpc(): void {
     // ─── Delete ───────────────────────────────────────────────────────────────
     ipcMain.handle('workflow:delete', async (_e, { id }: { id: string }) => {
         try {
+            if (isEmployeeMode()) return await proxyToBossWithResult('workflow:delete', { id });
             DatabaseService.getInstance().deleteWorkflow(id);
             DatabaseService.getInstance().save();
             WorkflowEngineService.getInstance().removeWorkflow(id);
+            workflowChanged('delete', id);
             return { success: true };
         } catch (e: any) {
             return { success: false, error: e.message };
@@ -173,6 +195,7 @@ export function registerWorkflowIpc(): void {
     // ─── Toggle ───────────────────────────────────────────────────────────────
     ipcMain.handle('workflow:toggle', async (_e, { id, enabled }: { id: string; enabled: boolean }) => {
         try {
+            if (isEmployeeMode()) return await proxyToBossWithResult('workflow:toggle', { id, enabled });
             if (enabled) {
                 const row = DatabaseService.getInstance().getWorkflowById(id);
                 if (!row) return { success: false, error: 'Not found' };
@@ -182,6 +205,7 @@ export function registerWorkflowIpc(): void {
             DatabaseService.getInstance().toggleWorkflow(id, enabled);
             DatabaseService.getInstance().save();
             WorkflowEngineService.getInstance().reloadWorkflow(id);
+            workflowChanged('toggle', id);
             return { success: true };
         } catch (e: any) {
             return { success: false, error: e.message };
@@ -189,6 +213,45 @@ export function registerWorkflowIpc(): void {
     });
 
     // ─── Run manual ───────────────────────────────────────────────────────────
+    // ─── Danh mục node (palette) — UI và Public API v1 dùng chung ──────────
+    ipcMain.handle('workflow:getNodeTypes', async () => {
+        try {
+            // Node/trigger của plugin đang bật (palette động; node nội bộ giữ nguyên NODE_GROUPS tĩnh).
+            let pluginNodes: any[] = [];
+            try { pluginNodes = require('../../src/services/plugins/PluginNodeRegistry').default.getInstance().list(); } catch { /* chưa có plugin */ }
+            return { success: true, groups: NODE_GROUPS, defaults: DEFAULT_CONFIGS, pluginNodes };
+        } catch (e: any) {
+            return { success: false, error: e.message };
+        }
+    });
+
+    // ─── Public API v1: sự kiện cho node trigger.api ─────────────────────────
+    ipcMain.handle('workflow:triggerApi', async (_e, { eventName, payload, keyId, accountId, source }: { eventName: string; payload?: any; keyId?: string; accountId?: string; source?: string }) => {
+        try {
+            if (!eventName || typeof eventName !== 'string') return { success: false, error: 'Thiếu eventName' };
+            const result = WorkflowEngineService.getInstance().triggerApiEvent(eventName, payload, { keyId, accountId, source });
+            return { success: true, ...result };
+        } catch (e: any) {
+            return { success: false, error: e.message };
+        }
+    });
+
+    // ─── Plugin: trigger riêng của plugin (contributes.triggers) ─────────────
+    ipcMain.handle('workflow:triggerPlugin', async (_e, { type, payload, pluginId }: { type: string; payload?: any; pluginId?: string }) => {
+        try {
+            const t = String(type || '');
+            const registry = require('../../src/services/plugins/PluginNodeRegistry').default.getInstance();
+            const def = registry.get(t);
+            if (!def || def.kind !== 'trigger' || (pluginId && def.pluginId !== pluginId)) {
+                return { success: false, error: `Trigger ${t} không thuộc plugin đang bật` };
+            }
+            const result = WorkflowEngineService.getInstance().triggerPluginEvent(t, payload, { pluginId: def.pluginId });
+            return { success: true, ...result };
+        } catch (e: any) {
+            return { success: false, error: e.message };
+        }
+    });
+
     ipcMain.handle('workflow:runManual', async (_e, { id, triggerData }: { id: string; triggerData?: any }) => {
         try {
             const row = DatabaseService.getInstance().getWorkflowById(id);
@@ -201,9 +264,29 @@ export function registerWorkflowIpc(): void {
         }
     });
 
+    // ─── Simulate (dry-run) ───────────────────────────────────────────────────
+    ipcMain.handle('workflow:simulate', async (_e, { id, triggerData, triggeredBy }: { id: string; triggerData?: any; triggeredBy?: string }) => {
+        try {
+            const row = DatabaseService.getInstance().getWorkflowById(id);
+            if (!row) return { success: false, error: 'Not found' };
+            const wf = rowToWorkflow(row);
+            const log = await WorkflowEngineService.getInstance().executeWorkflow(
+                { ...wf, enabled: true },
+                triggerData || {},
+                triggeredBy || 'manual',
+                undefined,
+                { simulate: true },
+            );
+            return { success: true, log };
+        } catch (e: any) {
+            return { success: false, error: e.message };
+        }
+    });
+
     // ─── Clone workflow → target page ─────────────────────────────────────────
     ipcMain.handle('workflow:clone', async (_e, { id, targetZaloId }: { id: string; targetZaloId: string }) => {
         try {
+            if (isEmployeeMode()) return await proxyToBossWithResult('workflow:clone', { id, targetZaloId });
             const row = DatabaseService.getInstance().getWorkflowById(id);
             if (!row) return { success: false, error: 'Không tìm thấy workflow gốc' };
             const wf = rowToWorkflow(row);
@@ -223,6 +306,7 @@ export function registerWorkflowIpc(): void {
             }
             DatabaseService.getInstance().save();
             WorkflowEngineService.getInstance().reloadWorkflow(newId);
+            workflowChanged('clone', newId);
             return { success: true, newId };
         } catch (e: any) {
             Logger.error(`[WorkflowIpc] clone error: ${e.message}`);
@@ -233,6 +317,7 @@ export function registerWorkflowIpc(): void {
     // ─── Clone ALL workflows from one page → another ──────────────────────────
     ipcMain.handle('workflow:cloneAll', async (_e, { sourceZaloId, targetZaloId }: { sourceZaloId: string; targetZaloId: string }) => {
         try {
+            if (isEmployeeMode()) return await proxyToBossWithResult('workflow:cloneAll', { sourceZaloId, targetZaloId });
             const count = DatabaseService.getInstance().cloneAllWorkflows(sourceZaloId, targetZaloId);
             DatabaseService.getInstance().save();
             // Reload engine for newly cloned workflows
@@ -243,6 +328,7 @@ export function registerWorkflowIpc(): void {
                     WorkflowEngineService.getInstance().reloadWorkflow(r.id);
                 }
             }
+            workflowChanged('cloneAll');
             return { success: true, count };
         } catch (e: any) {
             Logger.error(`[WorkflowIpc] cloneAll error: ${e.message}`);
@@ -281,7 +367,7 @@ export function registerWorkflowIpc(): void {
             const hookNode = wf.nodes.find(n => n.type === 'trigger.webhook');
             if (!hookNode) return { success: false, error: 'Workflow này không có trigger.webhook' };
             const token = hookNode.config?.webhookToken || '';
-            const tunnelUrl = TunnelService.getUrl(9889);
+            const tunnelUrl = workflowTunnelUrl();
             const webhookUrl = tunnelUrl ? tunnelUrl + '/api/workflow/webhook/' + token : null;
             return { success: true, webhookUrl, token, tunnelActive: !!tunnelUrl };
         } catch (e: any) {
@@ -334,7 +420,7 @@ export function registerWorkflowIpc(): void {
             DatabaseService.getInstance().saveWorkflow(wf);
             DatabaseService.getInstance().save();
             WorkflowEngineService.getInstance().reloadWorkflow(wf.id);
-            const tunnelUrl = TunnelService.getUrl(9889);
+            const tunnelUrl = workflowTunnelUrl();
             const webhookUrl = tunnelUrl ? tunnelUrl + '/api/workflow/webhook/' + newToken : null;
             return { success: true, webhookUrl, token: newToken };
         } catch (e: any) {

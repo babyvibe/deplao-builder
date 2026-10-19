@@ -43,11 +43,16 @@ import {
   WebhookIcon,
   WrenchIcon,
 } from '@/components/common/icons';
+import ipc from '@/lib/ipc';
 import { useAppStore } from '@/store/appStore';
 import { useCRMStore, CRMTabView } from '@/store/crmStore';
+import { useEmployeeStore } from '@/store/employeeStore';
+import { usePluginStore } from '@/store/pluginStore';
 import { FeatureVisibilityKey, useFeatureVisibilityStore } from '@/store/featureVisibilityStore';
+import PluginAvatar from '@/components/plugins/PluginAvatar';
+import { pluginLauncherItems } from '@/components/plugins/pluginLauncher';
 
-type FeatureSection = 'Truy cập chính' | 'CRM' | 'Workflow' | 'Tích hợp' | 'Báo cáo' | 'Quản lý công việc' | 'Cài đặt';
+type FeatureSection = 'Truy cập chính' | 'CRM' | 'Workflow' | 'Tích hợp' | 'Báo cáo' | 'Quản lý công việc' | 'Ứng dụng, API & Webhook' | 'Cài đặt';
 
 interface FeatureNode {
   id: string;
@@ -55,6 +60,8 @@ interface FeatureNode {
   label: string;
   description: string;
   icon: React.ReactNode;
+  /** Thay ô icon (vd. biểu tượng riêng của ứng dụng). */
+  avatar?: React.ReactNode;
   onClick: () => void;
 }
 
@@ -73,6 +80,9 @@ export default function FeatureLauncherPanel({ onClose }: FeatureLauncherPanelPr
   const toggleFeature = useFeatureVisibilityStore(state => state.toggle);
   const [query, setQuery] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
+  const plugins = usePluginStore(state => state.plugins);
+  const pluginPages = usePluginStore(state => state.contributions.pages);
+  const isEmployee = useEmployeeStore(state => state.mode === 'employee');
   const isDark = theme === 'dark';
 
   useEffect(() => {
@@ -155,7 +165,6 @@ export default function FeatureLauncherPanel({ onClose }: FeatureLauncherPanelPr
     { id: 'settings-account', section: 'Cài đặt', label: 'Tài khoản', description: 'Quản lý tài khoản, phiên đăng nhập và kết nối', icon: <KeyIcon />, onClick: () => openSettings('accounts') },
     { id: 'settings-proxy', section: 'Cài đặt', label: 'Proxy', description: 'Cấu hình proxy cho các kết nối mạng', icon: <GlobeIcon />, onClick: () => openSettings('proxy') },
     { id: 'settings-security', section: 'Cài đặt', label: 'Bảo mật', description: 'Khóa ứng dụng và thiết lập bảo vệ dữ liệu', icon: <ShieldIcon />, onClick: () => openSettings('security') },
-    { id: 'settings-webhooks', section: 'Cài đặt', label: 'Webhooks', description: 'Cấu hình webhook và tunnel nhận dữ liệu', icon: <WebhookIcon />, onClick: () => openSettings('webhooks') },
     { id: 'settings-employees', section: 'Cài đặt', label: 'Nhân viên', description: 'Quản lý nhân viên, vai trò và quyền truy cập', icon: <UsersIcon />, onClick: () => openSettings('employees') },
     { id: 'settings-workspace', section: 'Cài đặt', label: 'Workspace', description: 'Thiết lập không gian làm việc hiện tại', icon: <ServerIcon />, onClick: () => openSettings('workspace') },
     { id: 'settings-storage', section: 'Cài đặt', label: 'Lưu trữ', description: 'Quản lý thư mục dữ liệu, media và bộ nhớ', icon: <HardDriveIcon />, onClick: () => openSettings('storage') },
@@ -164,25 +173,46 @@ export default function FeatureLauncherPanel({ onClose }: FeatureLauncherPanelPr
     { id: 'settings-logs', section: 'Cài đặt', label: 'Nhật ký', description: 'Xem log hoạt động và chẩn đoán lỗi ứng dụng', icon: <ActivityIcon />, onClick: () => openSettings('logs') },
   ], []);
 
+  // Ứng dụng, API & Webhook: trang Ứng dụng, API, Webhook, phát triển ứng dụng, rồi từng ứng dụng đang bật (mỗi trang là một ô).
+  const pluginNodes = useMemo<FeatureNode[]>(() => {
+    if (!ipc.plugins || isEmployee) return [];
+    const app = useAppStore.getState();
+    return pluginLauncherItems(plugins, pluginPages).map(item => ({
+      id: item.id,
+      section: 'Ứng dụng, API & Webhook' as const,
+      label: item.label,
+      description: item.description,
+      icon: item.id === 'plugin-dev' ? <WrenchIcon /> : item.id === 'plugin-api' ? <KeyIcon /> : item.id === 'plugin-webhooks' ? <WebhookIcon /> : <PluginIcon />,
+      avatar: item.plugin ? <PluginAvatar id={item.plugin.id} name={item.plugin.name} icon={item.plugin.icon} size={36} rounded={10} /> : undefined,
+      onClick: () => {
+        onClose();
+        const t = item.target;
+        if (t.kind === 'page') app.openPluginPage(t.pluginId, t.pageId);
+        else if (t.kind === 'api' || t.kind === 'webhooks') { app.setPluginHubSection(t.kind); app.openPluginHub(); }
+        else { app.setPluginHubSection('plugins'); app.setPluginHubTab(t.tab); app.openPluginHub(); }
+      },
+    }));
+  }, [plugins, pluginPages, isEmployee, onClose]);
+
   const filteredNodes = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
-    return nodes.filter(node => !normalized || `${node.label} ${node.description} ${node.section}`.toLocaleLowerCase().includes(normalized));
-  }, [nodes, query]);
+    return [...nodes, ...pluginNodes].filter(node => !normalized || `${node.label} ${node.description} ${node.section}`.toLocaleLowerCase().includes(normalized));
+  }, [nodes, pluginNodes, query]);
 
   const sections = useMemo(() => {
-    const order: FeatureSection[] = ['Truy cập chính', 'CRM', 'Workflow', 'Tích hợp', 'Báo cáo', 'Quản lý công việc', 'Cài đặt'];
-    const toggleable: FeatureSection[] = ['CRM', 'Workflow', 'Tích hợp', 'Báo cáo', 'Quản lý công việc', 'Cài đặt'];
+    const order: FeatureSection[] = ['Truy cập chính', 'CRM', 'Workflow', 'Tích hợp', 'Báo cáo', 'Quản lý công việc', 'Ứng dụng, API & Webhook', 'Cài đặt'];
+    const toggleable: FeatureSection[] = ['CRM', 'Workflow', 'Tích hợp', 'Báo cáo', 'Quản lý công việc', ...(pluginNodes.length ? ['Ứng dụng, API & Webhook' as const] : []), 'Cài đặt'];
     return order
       .map(section => ({ section, nodes: filteredNodes.filter(node => node.section === section) }))
       .filter(group => group.nodes.length > 0 || (!query.trim() && toggleable.includes(group.section)));
-  }, [filteredNodes, query]);
+  }, [filteredNodes, query, pluginNodes.length]);
 
-  const shell = isDark ? 'bg-gray-900 border-gray-700 text-gray-100' : 'bg-[#f7f6f3] border-[#d6d1c8] text-gray-900';
-  const muted = isDark ? 'text-gray-400' : 'text-gray-500';
-  const input = isDark ? 'bg-gray-800 border-gray-700 text-gray-100 placeholder-gray-500' : 'bg-[#f0ede8] border-[#d6d1c8] text-gray-900 placeholder-gray-400';
+  const shell = isDark ? 'bg-background border-border text-foreground' : 'bg-background border-border text-gray-900';
+  const muted = isDark ? 'text-muted-foreground' : 'text-subtle-foreground';
+  const input = isDark ? 'bg-card border-border text-foreground placeholder-subtle-foreground' : 'bg-muted border-border text-gray-900 placeholder-subtle-foreground';
   const card = isDark
-    ? 'border-gray-700 bg-gray-850 hover:border-blue-500/60 hover:bg-blue-500/10 hover:shadow-lg hover:shadow-blue-950/20'
-    : 'border-[#d6d1c8] bg-[#f0ede8] hover:border-blue-400/70 hover:bg-[#e8e4de] hover:shadow-md hover:shadow-blue-100/60';
+    ? 'border-border bg-background hover:border-blue-500/60 hover:bg-blue-500/10 hover:shadow-lg hover:shadow-blue-950/20'
+    : 'border-border bg-muted hover:border-blue-400/70 hover:bg-accent hover:shadow-md hover:shadow-blue-100/60';
   const iconBox = isDark
     ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20 group-hover:bg-blue-500/20 group-hover:text-blue-300'
     : 'bg-blue-50 text-blue-600 border border-blue-100 group-hover:bg-blue-100 group-hover:text-blue-700';
@@ -192,6 +222,7 @@ export default function FeatureLauncherPanel({ onClose }: FeatureLauncherPanelPr
     'Tích hợp': 'integration',
     'Báo cáo': 'analytics',
     'Quản lý công việc': 'erp',
+    'Ứng dụng, API & Webhook': 'plugins',
     'Cài đặt': 'settings',
   };
   return (
@@ -203,13 +234,13 @@ export default function FeatureLauncherPanel({ onClose }: FeatureLauncherPanelPr
         role="dialog"
         aria-label="Tất cả tính năng"
       >
-        <div className={`px-5 py-4 border-b ${isDark ? 'border-gray-700' : 'border-[#d6d1c8]'}`}>
+        <div className={`px-5 py-4 border-b ${isDark ? 'border-border' : 'border-border'}`}>
           <div className="flex items-start justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold">Tất cả tính năng</h2>
               <p className={`text-xs mt-1 ${muted}`}>Truy cập nhanh các menu đã có trong Deplao</p>
             </div>
-            <button onClick={onClose} className={`w-8 h-8 rounded-lg flex items-center justify-center ${muted} hover:text-current ${isDark ? 'hover:bg-gray-800' : 'hover:bg-gray-100'}`} aria-label="Đóng">
+            <button onClick={onClose} className={`w-8 h-8 rounded-lg flex items-center justify-center ${muted} hover:text-current ${isDark ? 'hover:bg-card' : 'hover:bg-gray-100'}`} aria-label="Đóng">
               <span className="text-xl leading-none">×</span>
             </button>
           </div>
@@ -236,7 +267,7 @@ export default function FeatureLauncherPanel({ onClose }: FeatureLauncherPanelPr
                           aria-checked={enabled}
                           aria-label={`${enabled ? 'Tắt' : 'Bật'} ${group.section}`}
                           onClick={() => toggleFeature(feature)}
-                          className={`relative left-0 w-9 h-5 rounded-full transition-colors flex-shrink-0 ${enabled ? 'bg-blue-600' : (isDark ? 'bg-gray-700' : 'bg-gray-300')}`}
+                          className={`relative left-0 w-9 h-5 rounded-full transition-colors flex-shrink-0 ${enabled ? 'bg-blue-600' : (isDark ? 'bg-muted' : 'bg-gray-300')}`}
                         >
                           <span className={`absolute left-0.5 top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${enabled ? 'translate-x-4' : 'translate-x-0'}`} />
                         </button>
@@ -246,9 +277,13 @@ export default function FeatureLauncherPanel({ onClose }: FeatureLauncherPanelPr
                       <div className="grid grid-cols-2 gap-2">
                         {group.nodes.map(node => (
                           <button key={node.id} onClick={node.onClick} className={`group w-full h-full flex items-start gap-3 rounded-xl border px-3 py-3 text-left transition-all duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60 ${card}`}>
-                            <span className={`mt-0.5 w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${iconBox}`}>
-                              {React.isValidElement(node.icon) ? React.cloneElement(node.icon as React.ReactElement<{ className?: string; size?: number }>, { className: 'w-5 h-5' }) : node.icon}
-                            </span>
+                            {node.avatar ? (
+                              <span className="mt-0.5 flex-shrink-0">{node.avatar}</span>
+                            ) : (
+                              <span className={`mt-0.5 w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${iconBox}`}>
+                                {React.isValidElement(node.icon) ? React.cloneElement(node.icon as React.ReactElement<{ className?: string; size?: number }>, { className: 'w-5 h-5' }) : node.icon}
+                              </span>
+                            )}
                             <span className="min-w-0">
                               <span className="block text-sm font-medium">{node.label}</span>
                               <span className={`block mt-0.5 text-xs leading-5 ${muted}`}>{node.description}</span>

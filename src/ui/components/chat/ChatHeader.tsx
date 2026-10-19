@@ -1,8 +1,15 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useChatStore } from '@/store/chatStore';
+import { useShallow } from 'zustand/react/shallow';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore, LabelData } from '@/store/appStore';
-import DataAccessor from '@/lib/data/DataAccessor';
+import DataAccessor, { isReadFailure, readFailureMessage } from '@/lib/data/DataAccessor';
+import { useEmployeeResync } from '@/hooks/useEmployeeResync';
+import {
+  EMPTY_THREAD_LOCAL_LABELS, nextThreadLocalLabels, sortActiveLocalLabels, threadLabelsKey, toLabelIdSet,
+  type ThreadLocalLabelsState,
+} from '@/lib/chat/chatLoadFailures';
+import { THREAD_LABELS_CHANGED_EVENT, threadLabelsEventTouches } from '@/lib/chat/relayUiEvents';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
 import { UserProfilePopup } from '../common/UserProfilePopup';
 import LabelPicker, { ActiveLabels, EditLabelsModal } from './LabelPicker';
@@ -13,7 +20,9 @@ import { fetchContactInfo } from '@/hooks/useZaloEvents';
 import { extractUserProfile } from '../../../utils/profileUtils';
 import { fetchAllAliases } from '@/lib/zaloAliasUtils';
 import { Spinner } from '@/components/common/PageLoading';
-import { BotIcon } from '@/components/common/icons';
+import { BotIcon, CloudIcon, RefreshIcon } from '@/components/common/icons';
+import { MY_DOCUMENTS_NAME, isMyDocumentsThread } from '@/lib/chat/myDocuments';
+import { PluginPanelToggle } from '@/components/plugins/PluginChatPanel';
 import { CHANNEL, isZalo, isFacebook, isTelegram, isTelegramUser } from '@/lib/channelHelper';
 
 interface HeaderLocalLabel {
@@ -27,15 +36,29 @@ interface HeaderLocalLabel {
 }
 
 export default function ChatHeader() {
-  const { activeThreadId, activeThreadType, contacts, updateContact } = useChatStore();
-  const { activeAccountId, getActiveAccount } = useAccountStore();
-  const { showConversationInfo, toggleConversationInfo, searchOpen, toggleSearch, setSearchOpen, setSearchHighlightQuery, showNotification, labels: allLabels, setLabels, groupInfoCache, showGroupBoard, setShowGroupBoard, showIntegrationQuickPanel, toggleIntegrationQuickPanel, showAIQuickPanel, toggleAIQuickPanel, mergedInboxMode, setMobileShowChat } = useAppStore();
+  // Selector: không render lại header với mọi tin nhắn / đang gõ / đã xem của các hội thoại khác
+  const { activeThreadId, activeThreadType, contacts, updateContact } = useChatStore(useShallow(s => ({
+    activeThreadId: s.activeThreadId, activeThreadType: s.activeThreadType, contacts: s.contacts, updateContact: s.updateContact,
+  })));
+  // getActiveAccount() đọc accounts → chọn kèm để vẫn cập nhật khi tài khoản đổi
+  const { activeAccountId, getActiveAccount } = useAccountStore(useShallow(s => ({
+    activeAccountId: s.activeAccountId, getActiveAccount: s.getActiveAccount, accounts: s.accounts,
+  })));
+  const { showConversationInfo, toggleConversationInfo, searchOpen, toggleSearch, setSearchOpen, setSearchHighlightQuery, showNotification, labels: allLabels, setLabels, groupInfoCache, showGroupBoard, setShowGroupBoard, showIntegrationQuickPanel, toggleIntegrationQuickPanel, showAIQuickPanel, toggleAIQuickPanel, mergedInboxMode, setMobileShowChat } = useAppStore(useShallow(s => ({
+    showConversationInfo: s.showConversationInfo, toggleConversationInfo: s.toggleConversationInfo, searchOpen: s.searchOpen,
+    toggleSearch: s.toggleSearch, setSearchOpen: s.setSearchOpen, setSearchHighlightQuery: s.setSearchHighlightQuery,
+    showNotification: s.showNotification, labels: s.labels, setLabels: s.setLabels, groupInfoCache: s.groupInfoCache,
+    showGroupBoard: s.showGroupBoard, setShowGroupBoard: s.setShowGroupBoard, showIntegrationQuickPanel: s.showIntegrationQuickPanel,
+    toggleIntegrationQuickPanel: s.toggleIntegrationQuickPanel, showAIQuickPanel: s.showAIQuickPanel,
+    toggleAIQuickPanel: s.toggleAIQuickPanel, mergedInboxMode: s.mergedInboxMode, setMobileShowChat: s.setMobileShowChat,
+  })));
   const isMobile = useIsMobile();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [avatarFailed, setAvatarFailed] = useState(false);
   const [searching, setSearching] = useState(false);
+  const [searchFailed, setSearchFailed] = useState(false);
   const [currentResultIdx, setCurrentResultIdx] = useState(0);
   const [copied, setCopied] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
@@ -61,43 +84,48 @@ export default function ChatHeader() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Local labels for the active thread
-  const [headerLocalLabels, setHeaderLocalLabels] = useState<HeaderLocalLabel[]>([]);
-  const [headerThreadLabelIds, setHeaderThreadLabelIds] = useState<Set<number>>(new Set());
+  // Local labels for the active thread. Lần đọc lỗi (chế độ nhân viên: mất kết nối BOSS) giữ nhãn đang có của đúng
+  // tài khoản / hội thoại (không thay bằng rỗng) và hiện "Thử lại" gọn trên hàng nhãn.
+  const [headerLabelState, setHeaderLabelState] = useState<ThreadLocalLabelsState<HeaderLocalLabel>>(EMPTY_THREAD_LOCAL_LABELS);
+  const headerLocalLabels = headerLabelState.labels;
+  const headerThreadLabelIds = headerLabelState.threadLabelIds;
+  // Hội thoại đang mở: phản hồi muộn của hội thoại trước không được ghi đè nhãn của hội thoại này
+  const headerLabelOwnerRef = useRef('');
+  headerLabelOwnerRef.current = activeAccountId && activeThreadId ? threadLabelsKey(activeAccountId, activeThreadId) : '';
 
   const loadHeaderLocalLabels = useCallback(async () => {
     if (!activeAccountId || !activeThreadId) {
-      setHeaderLocalLabels([]);
-      setHeaderThreadLabelIds(new Set());
+      setHeaderLabelState(EMPTY_THREAD_LOCAL_LABELS);
       return;
     }
-    try {
-      const [labelsRes, threadRes] = await Promise.all([
-        DataAccessor.getLocalLabels({ zaloId: activeAccountId }),
-        DataAccessor.getThreadLocalLabels({ zaloId: activeAccountId, threadId: activeThreadId }),
-      ]);
-      const labels = (labelsRes?.labels || [])
-        .filter((l: any) => (l?.is_active ?? 1) === 1)
-        .sort((a: any, b: any) => {
-          const sa = Number(a?.sort_order ?? 0);
-          const sb = Number(b?.sort_order ?? 0);
-          if (sa !== sb) return sa - sb;
-          return String(a?.name || '').localeCompare(String(b?.name || ''));
-        });
-      const threadLabels = threadRes?.labels || [];
-      setHeaderLocalLabels(labels);
-      setHeaderThreadLabelIds(new Set(threadLabels.map((l: any) => Number(l.id))));
-    } catch {
-      setHeaderLocalLabels([]);
-      setHeaderThreadLabelIds(new Set());
+    const accountId = activeAccountId;
+    const threadId = activeThreadId;
+    const [labelsRes, threadRes] = await Promise.all([
+      DataAccessor.getLocalLabels({ zaloId: accountId }).catch(() => null),
+      DataAccessor.getThreadLocalLabels({ zaloId: accountId, threadId }).catch(() => null),
+    ]);
+    if (headerLabelOwnerRef.current !== threadLabelsKey(accountId, threadId)) return;
+    const labelsOk = !!labelsRes && !isReadFailure(labelsRes);
+    const threadOk = !!threadRes && !isReadFailure(threadRes);
+    if (!labelsOk || !threadOk) {
+      console.warn('[ChatHeader] Không tải được Nhãn Local:', readFailureMessage(labelsOk ? threadRes : labelsRes) || 'lỗi không rõ');
     }
+    setHeaderLabelState(prev => nextThreadLocalLabels(
+      prev, accountId, threadId,
+      labelsOk ? sortActiveLocalLabels<HeaderLocalLabel>(labelsRes?.labels) : null,
+      threadOk ? toLabelIdSet(threadRes?.labels) : null,
+    ));
   }, [activeAccountId, activeThreadId]);
 
   useEffect(() => {
     loadHeaderLocalLabels();
   }, [loadHeaderLocalLabels]);
 
-  // Reload when local labels are changed externally (e.g. from MessageInput)
+  // Chế độ nhân viên: kết nối BOSS phục hồi → tải lại Nhãn Local của hội thoại đang mở
+  useEmployeeResync(loadHeaderLocalLabels);
+
+  // Reload when local labels are changed externally (e.g. from MessageInput) — và khi Boss / nhân viên khác gán / bỏ
+  // nhãn của hội thoại đang mở (relay db:localLabelThreadChanged → 'ui:threadLabelsChanged')
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail;
@@ -105,9 +133,16 @@ export default function ChatHeader() {
         loadHeaderLocalLabels();
       }
     };
+    const handleThreadLabels = (e: Event) => {
+      if (threadLabelsEventTouches((e as CustomEvent).detail, activeAccountId, activeThreadId)) loadHeaderLocalLabels();
+    };
     window.addEventListener('local-labels-changed', handler);
-    return () => window.removeEventListener('local-labels-changed', handler);
-  }, [activeAccountId, loadHeaderLocalLabels]);
+    window.addEventListener(THREAD_LABELS_CHANGED_EVENT, handleThreadLabels);
+    return () => {
+      window.removeEventListener('local-labels-changed', handler);
+      window.removeEventListener(THREAD_LABELS_CHANGED_EVENT, handleThreadLabels);
+    };
+  }, [activeAccountId, activeThreadId, loadHeaderLocalLabels]);
 
   useEffect(() => {
     if (searchOpen) {
@@ -236,6 +271,7 @@ export default function ChatHeader() {
     setSearchQuery(q);
     setSearchHighlightQuery(q);
     setCurrentResultIdx(0);
+    setSearchFailed(false);
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     if (!q.trim()) { setSearchResults([]); return; }
     searchTimerRef.current = setTimeout(async () => {
@@ -243,6 +279,13 @@ export default function ChatHeader() {
       setSearching(true);
       try {
         const res = await DataAccessor.searchMessages({ zaloId: activeAccountId, query: q.trim() });
+        // Đọc lỗi (chế độ nhân viên: mất kết nối BOSS) ≠ "Không tìm thấy": báo "Không tìm được · Thử lại"
+        if (isReadFailure(res)) {
+          console.warn('[ChatHeader] Không tìm được tin nhắn:', readFailureMessage(res));
+          setSearchResults([]);
+          setSearchFailed(true);
+          return;
+        }
         const all: any[] = res?.results || [];
         // Filter to current thread only
         const filtered = activeThreadId ? all.filter(m => m.thread_id === activeThreadId) : all;
@@ -253,7 +296,7 @@ export default function ChatHeader() {
           setCurrentResultIdx(0);
           scrollToResult(results[0]);
         }
-      } catch { setSearchResults([]); }
+      } catch { setSearchResults([]); setSearchFailed(true); }
       finally { setSearching(false); }
     }, 300);
   };
@@ -610,11 +653,13 @@ export default function ChatHeader() {
 
   const contactList = contacts[activeAccountId] || [];
   const contact = contactList.find((c) => c.contact_id === activeThreadId);
+  const activeAccount = getActiveAccount();
+  // Zalo "My Documents": hội thoại có sẵn của Zalo (ID = send2me_id của phiên, không phải UID của mình)
+  const isMyDocs = isMyDocumentsThread(activeAccount, activeThreadId, contact?.avatar_url);
   // Ưu tiên alias → display_name
-  const displayName = contact?.alias || contact?.display_name || activeThreadId;
+  const displayName = contact?.alias || contact?.display_name || (isMyDocs ? MY_DOCUMENTS_NAME : activeThreadId);
   const avatarUrl = toLocalMediaUrl(contact?.avatar_url || '');
   const isGroup = activeThreadType === 1 || contact?.contact_type === 'group';
-  const activeAccount = getActiveAccount();
   const isFacebookDM = !isGroup && isFacebook(activeAccount?.channel);
   const groupInfo = isGroup ? (groupInfoCache[activeAccountId] || {})[activeThreadId] : undefined;
   const isTelegramGroup = isGroup && isTelegram(contact?.channel || activeAccount?.channel);
@@ -633,6 +678,14 @@ export default function ChatHeader() {
 
   // Render avatar: group composite or user avatar
   const renderAvatar = () => {
+    // My Documents: ảnh thư mục của Zalo; chỉ dùng biểu tượng đám mây khi thiếu / lỗi ảnh
+    if (isMyDocs && (!avatarUrl || avatarFailed)) {
+      return (
+        <div className="w-9 h-9 rounded-full flex items-center justify-center bg-gradient-to-br from-sky-400 to-blue-600" style={{ color: '#fff' }}>
+          <CloudIcon className="w-5 h-5" />
+        </div>
+      );
+    }
     if (avatarUrl && !avatarFailed) {
       return <img src={avatarUrl} alt={displayName} className={`w-9 h-9 rounded-full object-cover ${!isGroup ? 'hover:ring-2 hover:ring-blue-400 transition-all' : ''}`}
         onError={() => {
@@ -676,7 +729,7 @@ export default function ChatHeader() {
                 <img src={members[1].avatar} alt="" className="w-full h-full object-cover"
                   onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
               </div>
-              <div className="flex-1 border-t border-gray-900/40 overflow-hidden">
+              <div className="flex-1 border-t border-border/40 overflow-hidden">
                 <img src={members[2].avatar} alt="" className="w-full h-full object-cover"
                   onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
               </div>
@@ -691,7 +744,7 @@ export default function ChatHeader() {
               <img src={members[0].avatar} alt="" className="w-full h-full object-cover"
                 onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
             </div>
-            <div className="flex-1 h-full border-l border-gray-900/40 overflow-hidden">
+            <div className="flex-1 h-full border-l border-border/40 overflow-hidden">
               <img src={members[1].avatar} alt="" className="w-full h-full object-cover"
                 onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
             </div>
@@ -712,14 +765,14 @@ export default function ChatHeader() {
   };
 
   return (
-    <div className="flex flex-col border-b border-gray-700 bg-gray-800 flex-shrink-0">
+    <div className="flex flex-col border-b border-border bg-card flex-shrink-0">
       {/* Main header row */}
       <div className="flex items-center gap-3 px-4 py-2.5">
         {/* Mobile back button - return to conversation list */}
         {isMobile && (
           <button
             onClick={() => setMobileShowChat(false)}
-            className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-white hover:bg-gray-700 transition-colors"
+            className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
             title="Quay lại"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -750,7 +803,7 @@ export default function ChatHeader() {
               title={copied ? 'Đã sao chép!' : 'Nhấn để sao chép tên'}
               className="flex items-center gap-1 group text-left min-w-0 overflow-hidden"
             >
-              <p className="text-md font-semibold text-white truncate group-hover:text-blue-300 transition-colors">{displayName}</p>
+              <p className="text-md font-semibold text-foreground truncate group-hover:text-blue-300 transition-colors">{displayName}</p>
               {copied
                 ? <span className="text-xs text-green-400 flex-shrink-0">✓</span>
                 : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="opacity-50 flex-shrink-0 transition-opacity">
@@ -763,7 +816,7 @@ export default function ChatHeader() {
               <button
                 title="Đổi tên nhóm"
                 onClick={(e) => handleOpenGroupNameEdit(e)}
-                className="flex-shrink-0 text-gray-400 hover:text-white transition-colors ml-1.5"
+                className="flex-shrink-0 text-muted-foreground hover:text-foreground transition-colors ml-1.5"
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
@@ -777,7 +830,7 @@ export default function ChatHeader() {
                 title="Cập nhật thông tin + tên gợi nhớ"
                 onClick={handleRefreshAlias}
                 disabled={aliasRefreshing}
-                className="flex-shrink-0 text-gray-400 hover:text-white transition-colors ml-1.5"
+                className="flex-shrink-0 text-muted-foreground hover:text-foreground transition-colors ml-1.5"
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
                   className={aliasRefreshing ? 'animate-spin' : ''}>
@@ -792,7 +845,7 @@ export default function ChatHeader() {
                     title="Tải lại thông tin từ Facebook"
                     onClick={handleRefreshFacebookInfo}
                     disabled={refreshingFBInfo}
-                    className="flex-shrink-0 text-gray-400 hover:text-white transition-colors ml-1.5"
+                    className="flex-shrink-0 text-muted-foreground hover:text-foreground transition-colors ml-1.5"
                 >
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
                        className={refreshingFBInfo ? 'animate-spin' : ''}>
@@ -806,7 +859,7 @@ export default function ChatHeader() {
               <button
                 title={isZalo(activeAccount?.channel) ? 'Sửa tên gợi nhớ (đồng bộ Zalo)' : 'Sửa tên gợi nhớ (lưu local trên app)'}
                 onClick={handleOpenAliasEdit}
-                className="flex-shrink-0 text-gray-400 hover:text-white transition-colors ml-1.5"
+                className="flex-shrink-0 text-muted-foreground hover:text-foreground transition-colors ml-1.5"
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
@@ -819,7 +872,7 @@ export default function ChatHeader() {
             <button
               type="button"
               onClick={openTelegramMembers}
-              className="mt-0.5 text-[11px] text-gray-400 hover:text-blue-300 transition-colors text-left"
+              className="mt-0.5 text-[11px] text-muted-foreground hover:text-blue-300 transition-colors text-left"
               title="Xem danh sách thành viên"
             >
               {telegramMemberCount > 0 && `${telegramMemberCount.toLocaleString()} ${telegramAudienceLabel}`}
@@ -841,14 +894,28 @@ export default function ChatHeader() {
             {/* Local labels - Pancake-style pills */}
             {(() => {
               const activeLocalLabels = headerLocalLabels.filter(l => headerThreadLabelIds.has(l.id));
-              if (activeLocalLabels.length === 0) return null;
+              if (activeLocalLabels.length === 0) {
+                // Đọc lỗi (chế độ nhân viên) và chưa biết nhãn nào: "Thử lại" gọn thay vì trông như không có nhãn
+                if (!headerLabelState.failed) return null;
+                return (
+                  <button
+                    type="button"
+                    onClick={() => { void loadHeaderLocalLabels(); }}
+                    className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                    title="Không tải được Nhãn Local — bấm để thử lại"
+                  >
+                    <RefreshIcon className="w-3 h-3" />
+                    <span>Nhãn Local: Thử lại</span>
+                  </button>
+                );
+              }
               const hasZaloLabels = (allLabels[activeAccountId] || []).some(l => {
                 const pid = isGroup ? `g${activeThreadId}` : activeThreadId;
                 return l.conversations?.includes(activeThreadId) || l.conversations?.includes(pid);
               });
               return (
                 <>
-                  {hasZaloLabels && <span className="w-px h-4 bg-gray-600 flex-shrink-0" />}
+                  {hasZaloLabels && <span className="w-px h-4 bg-accent flex-shrink-0" />}
                   {activeLocalLabels.slice(0, 4).map(label => (
                     <button
                       key={`local-${label.id}`}
@@ -861,7 +928,7 @@ export default function ChatHeader() {
                     </button>
                   ))}
                   {activeLocalLabels.length > 4 && (
-                    <button className="text-[11px] text-gray-400 hover:text-gray-300 transition-colors">
+                    <button className="text-[11px] text-muted-foreground hover:text-foreground/80 transition-colors">
                       +{activeLocalLabels.length - 4}
                     </button>
                   )}
@@ -875,7 +942,7 @@ export default function ChatHeader() {
           <button
             title="Tìm kiếm tin nhắn"
             onClick={toggleSearch}
-            className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${searchOpen ? 'bg-blue-600 text-white' : 'hover:bg-gray-700 text-gray-400 hover:text-white'}`}
+            className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${searchOpen ? 'bg-blue-600 text-white' : 'hover:bg-muted text-muted-foreground hover:text-foreground'}`}
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
@@ -887,7 +954,7 @@ export default function ChatHeader() {
               <button
                 title="Tải tin nhắn từ Telegram"
                 onClick={() => setTgDownloadOpen(true)}
-                className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors hover:bg-gray-700 text-gray-400 hover:text-white"
+                className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors hover:bg-muted text-muted-foreground hover:text-foreground"
               >
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
@@ -900,7 +967,7 @@ export default function ChatHeader() {
             <button
               title="Bảng tin nhóm"
               onClick={() => setShowGroupBoard(!showGroupBoard)}
-              className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${showGroupBoard ? 'bg-blue-600 text-white' : 'hover:bg-gray-700 text-gray-400 hover:text-white'}`}
+              className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${showGroupBoard ? 'bg-blue-600 text-white' : 'hover:bg-muted text-muted-foreground hover:text-foreground'}`}
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <rect x="3" y="3" width="18" height="18" rx="2"/>
@@ -912,22 +979,23 @@ export default function ChatHeader() {
           <button
             title={showAIQuickPanel ? 'Đóng trợ lý AI' : 'Trợ lý AI'}
             onClick={toggleAIQuickPanel}
-            className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${showAIQuickPanel ? 'bg-purple-600 text-white' : 'hover:bg-gray-700 text-gray-400 hover:text-white'}`}
+            className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${showAIQuickPanel ? 'bg-purple-600 text-white' : 'hover:bg-muted text-muted-foreground hover:text-foreground'}`}
           ><BotIcon className="w-5 h-5 inline" /> </button>
           <button
             title={showIntegrationQuickPanel ? 'Đóng tích hợp' : 'Tích hợp nhanh'}
             onClick={toggleIntegrationQuickPanel}
-            className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${showIntegrationQuickPanel ? 'bg-blue-600 text-white' : 'hover:bg-gray-700 text-gray-400 hover:text-white'}`}
+            className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${showIntegrationQuickPanel ? 'bg-blue-600 text-white' : 'hover:bg-muted text-muted-foreground hover:text-foreground'}`}
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
               <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
               <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
             </svg>
           </button>
+          <PluginPanelToggle />
           <button
             title={showConversationInfo ? 'Ẩn thông tin' : 'Thông tin hội thoại'}
             onClick={toggleConversationInfo}
-            className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${showConversationInfo ? 'bg-blue-600 text-white' : 'hover:bg-gray-700 text-gray-400 hover:text-white'}`}
+            className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${showConversationInfo ? 'bg-blue-600 text-white' : 'hover:bg-muted text-muted-foreground hover:text-foreground'}`}
           >
             {/* Panel/sidebar toggle icon - square with right divider, like Zalo */}
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -941,10 +1009,10 @@ export default function ChatHeader() {
 
       {/* Search bar - Zalo style with navigation */}
       {searchOpen && (
-        <div className="px-3 pb-2.5 pt-1 flex items-center gap-2 border-t border-gray-700/50">
+        <div className="px-3 pb-2.5 pt-1 flex items-center gap-2 border-t border-border/50">
           {/* Input */}
-          <div className="flex items-center gap-2 flex-1 bg-gray-700 border border-blue-500/60 rounded-full px-3 py-1.5 min-w-0">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-400 flex-shrink-0">
+          <div className="flex items-center gap-2 flex-1 bg-muted border border-blue-500/60 rounded-full px-3 py-1.5 min-w-0">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted-foreground flex-shrink-0">
               <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
             </svg>
             <input
@@ -957,15 +1025,15 @@ export default function ChatHeader() {
                 else if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); navigateResult('prev'); }
               }}
               placeholder="Tìm trong hội thoại..."
-              className="flex-1 bg-transparent text-sm text-white placeholder-gray-500 focus:outline-none min-w-0"
+              className="flex-1 bg-transparent text-sm text-foreground placeholder-subtle-foreground focus:outline-none min-w-0"
             />
             {searching && (
-              <Spinner size={3} className="text-gray-400 flex-shrink-0" />
+              <Spinner size={3} className="text-muted-foreground flex-shrink-0" />
             )}
             {searchQuery && !searching && (
               <button
                 onClick={() => { setSearchQuery(''); setSearchResults([]); setCurrentResultIdx(0); searchInputRef.current?.focus(); }}
-                className="w-4 h-4 rounded-full bg-gray-500 hover:bg-gray-400 flex items-center justify-center flex-shrink-0 transition-colors"
+                className="w-4 h-4 rounded-full bg-accent hover:bg-gray-400 flex items-center justify-center flex-shrink-0 transition-colors"
               >
                 <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="#111" strokeWidth="3">
                   <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -977,13 +1045,13 @@ export default function ChatHeader() {
           {/* Counter + Nav arrows */}
           {searchResults.length > 0 && (
             <div className="flex items-center gap-1 flex-shrink-0">
-              <span className="text-xs text-gray-400 whitespace-nowrap tabular-nums">
+              <span className="text-xs text-muted-foreground whitespace-nowrap tabular-nums">
                 {currentResultIdx + 1}/{searchResults.length}
               </span>
               <button
                 onClick={() => navigateResult('prev')}
                 title="Kết quả trước (Shift+Enter)"
-                className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 transition-colors"
+                className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
               >
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <polyline points="18 15 12 9 6 15"/>
@@ -992,7 +1060,7 @@ export default function ChatHeader() {
               <button
                 onClick={() => navigateResult('next')}
                 title="Kết quả tiếp theo (Enter)"
-                className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 transition-colors"
+                className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
               >
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <polyline points="6 9 12 15 18 9"/>
@@ -1000,9 +1068,21 @@ export default function ChatHeader() {
               </button>
             </div>
           )}
-          {/* No results indicator */}
+          {/* No results indicator (lần tìm lỗi → "Thử lại" thay vì "Không tìm thấy") */}
           {searchQuery.trim() && !searching && searchResults.length === 0 && (
-            <span className="text-xs text-gray-400 flex-shrink-0 whitespace-nowrap">Không tìm thấy</span>
+            searchFailed ? (
+              <button
+                type="button"
+                onClick={() => handleSearchChange(searchQuery)}
+                className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground flex-shrink-0 whitespace-nowrap transition-colors"
+                title="Không tìm được (mất kết nối) — bấm để thử lại"
+              >
+                <RefreshIcon className="w-3 h-3" />
+                Không tìm được · Thử lại
+              </button>
+            ) : (
+              <span className="text-xs text-muted-foreground flex-shrink-0 whitespace-nowrap">Không tìm thấy</span>
+            )
           )}
 
           {/* Close button */}
@@ -1086,10 +1166,10 @@ export default function ChatHeader() {
       {tgDownloadOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
           onClick={() => { if (!tgDownloading) setTgDownloadOpen(false); }}>
-          <div className="bg-gray-800 border border-gray-600 rounded-2xl w-80 p-5 shadow-2xl"
+          <div className="bg-card border border-input rounded-2xl w-80 p-5 shadow-2xl"
             onClick={e => e.stopPropagation()}>
-            <h3 className="font-semibold text-white mb-1">Tải tin nhắn từ Telegram</h3>
-            <p className="text-xs text-gray-400 mb-3">Nhập số lượng tin nhắn muốn tải từ Telegram API (tối đa 5.000).</p>
+            <h3 className="font-semibold text-foreground mb-1">Tải tin nhắn từ Telegram</h3>
+            <p className="text-xs text-muted-foreground mb-3">Nhập số lượng tin nhắn muốn tải từ Telegram API (tối đa 5.000).</p>
             <input
               type="number"
               value={tgDownloadCount}
@@ -1099,11 +1179,11 @@ export default function ChatHeader() {
               min="1"
               max="5000"
               disabled={tgDownloading}
-              className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 disabled:opacity-50 mb-3"
+              className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 disabled:opacity-50 mb-3"
             />
             <div className="flex gap-2">
               <button onClick={() => setTgDownloadOpen(false)} disabled={tgDownloading}
-                className="flex-1 py-2 rounded-xl bg-gray-700 text-gray-300 text-sm hover:bg-gray-600 disabled:opacity-40">
+                className="flex-1 py-2 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent disabled:opacity-40">
                 Hủy
               </button>
               <button onClick={handleTgDownload} disabled={tgDownloading || !tgDownloadCount}
@@ -1131,8 +1211,8 @@ function HeaderLabelPickerPopup({ contactId, isGroup, x, y, labels, onAssign, on
   onEditLabels: () => void;
 }) {
   const ref = React.useRef<HTMLDivElement>(null);
-  const { activeAccountId } = useAccountStore();
-  const { setLabels, showNotification } = useAppStore();
+  const activeAccountId = useAccountStore(s => s.activeAccountId);
+  const { setLabels, showNotification } = useAppStore(useShallow(s => ({ setLabels: s.setLabels, showNotification: s.showNotification })));
   const [labelsVersion, setLabelsVersion] = React.useState(0);
   const [syncingLabels, setSyncingLabels] = React.useState(false);
 
@@ -1158,7 +1238,7 @@ function HeaderLabelPickerPopup({ contactId, isGroup, x, y, labels, onAssign, on
   return (
     <div
       ref={ref}
-      className="fixed z-[300] bg-gray-800 border border-gray-700 rounded-xl shadow-2xl min-w-[190px]"
+      className="fixed z-[300] bg-card border border-border rounded-xl shadow-2xl min-w-[190px]"
       style={{ top: Math.max(8, top), left: Math.max(8, left) }}
     >
       <LabelPicker
@@ -1227,16 +1307,16 @@ function AliasEditPopup({ value, onChange, saving, onSave, onClose, anchorX, anc
   return (
     <div
       ref={ref}
-      className="fixed z-[300] bg-gray-800 border border-gray-700 rounded-xl shadow-2xl min-w-[220px] p-3"
+      className="fixed z-[300] bg-card border border-border rounded-xl shadow-2xl min-w-[220px] p-3"
       style={{ top: Math.max(8, top), left: Math.max(8, left) }}
       onMouseDown={(e) => e.stopPropagation()}
     >
-      <div className="text-xs text-gray-400 font-medium mb-2">{title || 'Sửa tên gợi nhớ'}</div>
+      <div className="text-xs text-muted-foreground font-medium mb-2">{title || 'Sửa tên gợi nhớ'}</div>
       <input
         ref={inputRef}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 mb-2"
+        className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 mb-2"
         placeholder={placeholder || 'Nhập tên gợi nhớ...'}
         onKeyDown={(e) => {
           if (e.key === 'Enter') onSave();
@@ -1246,7 +1326,7 @@ function AliasEditPopup({ value, onChange, saving, onSave, onClose, anchorX, anc
       <div className="flex items-center gap-2 justify-end">
         <button
           onClick={onClose}
-          className="px-3 py-1.5 text-xs text-gray-300 hover:text-white bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
+          className="px-3 py-1.5 text-xs text-foreground/80 hover:text-foreground bg-muted hover:bg-accent rounded-lg transition-colors"
         >
           Huỷ
         </button>

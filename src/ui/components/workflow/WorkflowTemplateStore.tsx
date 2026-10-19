@@ -71,7 +71,7 @@ function TemplateCard({
   const cat = TEMPLATE_CATEGORIES.find(c => c.key === tpl.category);
 
   return (
-    <div className="bg-gray-900 border border-gray-700/80 rounded-2xl p-5 hover:border-gray-600 transition-all group relative flex flex-col">
+    <div className="bg-card border border-border/80 rounded-2xl p-5 hover:border-input transition-all group relative flex flex-col">
       {/* Channel badge */}
       {(tpl.channel === CHANNEL.FACEBOOK) && (
         <div className="absolute top-3 right-3 flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-[#1877F2]/10 border border-[#1877F2]/30 text-[#1877F2] font-medium">
@@ -88,14 +88,14 @@ function TemplateCard({
 
       {/* Header */}
       <div className="flex items-start gap-3 mb-3">
-        <div className="w-11 h-11 rounded-xl bg-gray-800 border border-gray-700 flex items-center justify-center text-xl flex-shrink-0">
+        <div className="w-11 h-11 rounded-xl bg-card border border-border flex items-center justify-center text-xl flex-shrink-0">
           {tpl.icon}
         </div>
         <div className="flex-1 min-w-0">
-          <h3 className="text-white font-semibold text-sm leading-tight mb-1 truncate">{tpl.name}</h3>
+          <h3 className="text-foreground font-semibold text-sm leading-tight mb-1 truncate">{tpl.name}</h3>
           <div className="flex items-center gap-2 flex-wrap">
             {cat && (
-              <span className={`text-[10px] px-2 py-0.5 rounded-full text-white/80 font-medium flex ${cat.color}`}>
+              <span className={`text-[10px] px-2 py-0.5 rounded-full text-foreground/80 font-medium flex ${cat.color}`}>
                 {cat.icon} {cat.label}
               </span>
             )}
@@ -105,10 +105,10 @@ function TemplateCard({
       </div>
 
       {/* Description */}
-      <p className="text-gray-400 text-xs leading-relaxed mb-3 flex-1 line-clamp-3">{tpl.description}</p>
+      <p className="text-muted-foreground text-xs leading-relaxed mb-3 flex-1 line-clamp-3">{tpl.description}</p>
 
       {/* Stats */}
-      <div className="flex items-center gap-3 text-[11px] text-gray-400 mb-4">
+      <div className="flex items-center gap-3 text-[11px] text-muted-foreground mb-4">
         <span className="flex items-center gap-1">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
           {tpl.nodes.length} bước
@@ -122,7 +122,7 @@ function TemplateCard({
       {/* Tags */}
       <div className="flex flex-wrap gap-1.5 mb-4">
         {tpl.tags.slice(0, 4).map(tag => (
-          <span key={tag} className="text-[10px] px-2 py-0.5 rounded-md bg-gray-800 border border-gray-700/60 text-gray-400">
+          <span key={tag} className="text-[10px] px-2 py-0.5 rounded-md bg-card border border-border/60 text-muted-foreground">
             {tag}
           </span>
         ))}
@@ -132,7 +132,7 @@ function TemplateCard({
       <div className="flex gap-2 mt-auto">
         <button
           onClick={onPreview}
-          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-xs font-medium rounded-xl transition-colors"
+          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-card hover:bg-muted border border-border text-foreground/80 text-xs font-medium rounded-xl transition-colors"
         >
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
@@ -206,22 +206,22 @@ function PreviewModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl w-[900px] max-w-[95vw] max-h-[90vh] overflow-hidden flex flex-col">
+      <div className="bg-popover border border-border rounded-2xl shadow-2xl w-[900px] max-w-[95vw] max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header */}
-        <div className="px-6 py-4 border-b border-gray-700 flex items-center gap-4 flex-shrink-0">
-          <div className="w-12 h-12 rounded-xl bg-gray-800 border border-gray-700 flex items-center justify-center text-2xl flex-shrink-0">
+        <div className="px-6 py-4 border-b border-border flex items-center gap-4 flex-shrink-0">
+          <div className="w-12 h-12 rounded-xl bg-card border border-border flex items-center justify-center text-2xl flex-shrink-0">
             {tpl.icon}
           </div>
           <div className="flex-1 min-w-0">
-            <h2 className="text-white font-bold text-base">{tpl.name}</h2>
+            <h2 className="text-foreground font-bold text-base">{tpl.name}</h2>
             <div className="flex items-center gap-2 mt-1 flex-wrap">
               {cat && (
-                <span className={`text-[11px] px-2.5 py-0.5 rounded-full text-white/80 font-medium ${cat.color}`}>
+                <span className={`text-[11px] px-2.5 py-0.5 rounded-full text-foreground/80 font-medium ${cat.color}`}>
                   {cat.icon} {cat.label}
                 </span>
               )}
               <DifficultyBadge level={tpl.difficulty} />
-              <span className="text-[11px] text-gray-400">{tpl.nodes.length} bước · {tpl.edges.length} kết nối</span>
+              <span className="text-[11px] text-muted-foreground">{tpl.nodes.length} bước · {tpl.edges.length} kết nối</span>
             </div>
           </div>
           <button
@@ -233,7 +233,7 @@ function PreviewModal({
             </svg>
             Cài đặt workflow này
           </button>
-          <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 transition-colors flex-shrink-0">
+          <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors flex-shrink-0">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
@@ -243,7 +243,7 @@ function PreviewModal({
         {/* Body */}
         <div className="flex flex-1 overflow-hidden">
           {/* Flow preview */}
-          <div className="flex-1 relative bg-gray-950">
+          <div className="flex-1 relative bg-background">
             <ReactFlow
               nodes={rfNodes}
               edges={rfEdges}
@@ -267,22 +267,22 @@ function PreviewModal({
           </div>
 
           {/* Info sidebar */}
-          <div className="w-[280px] border-l border-gray-700 overflow-y-auto flex-shrink-0 p-5 space-y-5">
+          <div className="w-[280px] border-l border-border overflow-y-auto flex-shrink-0 p-5 space-y-5">
             {/* Description */}
             <div>
-              <h4 className="text-gray-400 text-[11px] font-semibold uppercase tracking-wider mb-2">Mô tả</h4>
-              <p className="text-gray-300 text-xs leading-relaxed">{tpl.description}</p>
+              <h4 className="text-muted-foreground text-[11px] font-semibold uppercase tracking-wider mb-2">Mô tả</h4>
+              <p className="text-foreground/80 text-xs leading-relaxed">{tpl.description}</p>
             </div>
 
             {/* Node breakdown */}
             <div>
-              <h4 className="text-gray-400 text-[11px] font-semibold uppercase tracking-wider mb-2">Thành phần</h4>
+              <h4 className="text-muted-foreground text-[11px] font-semibold uppercase tracking-wider mb-2">Thành phần</h4>
               <div className="space-y-1.5">
                 {Object.entries(nodeGroups).map(([group, count]) => (
                   <div key={group} className="flex items-center gap-2">
                     <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: GROUP_COLORS[group] || '#6b7280' }} />
-                    <span className="text-gray-300 text-xs flex-1">{groupLabels[group] || group}</span>
-                    <span className="text-gray-400 text-xs">{count}</span>
+                    <span className="text-foreground/80 text-xs flex-1">{groupLabels[group] || group}</span>
+                    <span className="text-muted-foreground text-xs">{count}</span>
                   </div>
                 ))}
               </div>
@@ -290,19 +290,19 @@ function PreviewModal({
 
             {/* Steps */}
             <div>
-              <h4 className="text-gray-400 text-[11px] font-semibold uppercase tracking-wider mb-2">Các bước</h4>
+              <h4 className="text-muted-foreground text-[11px] font-semibold uppercase tracking-wider mb-2">Các bước</h4>
               <div className="space-y-2">
                 {tpl.nodes.map((n, i) => {
                   const group = nodeTypeGroup(n.type);
                   return (
                     <div key={n.id} className="flex items-start gap-2">
-                      <div className="w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0 mt-0.5"
+                      <div className="w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-bold text-foreground flex-shrink-0 mt-0.5"
                         style={{ backgroundColor: GROUP_COLORS[group] || '#6b7280' }}>
                         {i + 1}
                       </div>
                       <div className="min-w-0">
-                        <p className="text-white text-xs font-medium truncate">{n.label}</p>
-                        <p className="text-gray-400 text-[10px] truncate">{n.type}</p>
+                        <p className="text-foreground text-xs font-medium truncate">{n.label}</p>
+                        <p className="text-muted-foreground text-[10px] truncate">{n.type}</p>
                       </div>
                     </div>
                   );
@@ -312,10 +312,10 @@ function PreviewModal({
 
             {/* Tags */}
             <div>
-              <h4 className="text-gray-400 text-[11px] font-semibold uppercase tracking-wider mb-2">Tags</h4>
+              <h4 className="text-muted-foreground text-[11px] font-semibold uppercase tracking-wider mb-2">Tags</h4>
               <div className="flex flex-wrap gap-1.5">
                 {tpl.tags.map(tag => (
-                  <span key={tag} className="text-[10px] px-2 py-0.5 rounded-md bg-gray-800 border border-gray-700/60 text-gray-400">
+                  <span key={tag} className="text-[10px] px-2 py-0.5 rounded-md bg-card border border-border/60 text-muted-foreground">
                     {tag}
                   </span>
                 ))}
@@ -394,19 +394,19 @@ function InstallModal({
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm"
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl w-[420px] max-w-[95vw] overflow-hidden">
+      <div className="bg-popover border border-border rounded-2xl shadow-2xl w-[420px] max-w-[95vw] overflow-hidden">
         {/* Header */}
-        <div className="px-5 py-4 border-b border-gray-700 flex items-center justify-between">
+        <div className="px-5 py-4 border-b border-border flex items-center justify-between">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-9 h-9 rounded-xl bg-gray-800 border border-gray-700 flex items-center justify-center text-lg flex-shrink-0">
+            <div className="w-9 h-9 rounded-xl bg-card border border-border flex items-center justify-center text-lg flex-shrink-0">
               {tpl.icon}
             </div>
             <div className="min-w-0">
-              <p className="text-white font-semibold text-sm truncate">Cài đặt workflow</p>
-              <p className="text-gray-400 text-[11px] truncate">{tpl.name}</p>
+              <p className="text-foreground font-semibold text-sm truncate">Cài đặt workflow</p>
+              <p className="text-muted-foreground text-[11px] truncate">{tpl.name}</p>
             </div>
           </div>
-          <button onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 transition-colors">
+          <button onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
@@ -417,25 +417,25 @@ function InstallModal({
         <div className="p-5 space-y-4">
           {/* Name */}
           <div>
-            <label className="text-gray-400 text-[11px] font-medium uppercase tracking-wider block mb-1.5">
+            <label className="text-muted-foreground text-[11px] font-medium uppercase tracking-wider block mb-1.5">
               Tên workflow
             </label>
             <input
               value={wfName}
               onChange={e => setWfName(e.target.value)}
-              className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-xl text-white text-sm outline-none focus:border-blue-500 transition-colors"
+              className="w-full px-3 py-2 bg-card border border-border rounded-xl text-foreground text-sm outline-none focus:border-blue-500 transition-colors"
               placeholder="Nhập tên..."
             />
           </div>
 
           {/* Page selection */}
           <div>
-            <label className="text-gray-400 text-[11px] font-medium uppercase tracking-wider block mb-1.5">
+            <label className="text-muted-foreground text-[11px] font-medium uppercase tracking-wider block mb-1.5">
               Áp dụng cho tài khoản {channelLabel}
             </label>
             {filteredAccounts.length === 0 ? (
-              <div className="bg-gray-800/60 border border-gray-700 rounded-xl px-4 py-3 text-center">
-                <p className="text-gray-400 text-xs">Chưa có tài khoản {channelLabel} nào. Workflow sẽ chạy cho tất cả tài khoản {channelLabel}.</p>
+              <div className="bg-card border border-border rounded-xl px-4 py-3 text-center">
+                <p className="text-muted-foreground text-xs">Chưa có tài khoản {channelLabel} nào. Workflow sẽ chạy cho tất cả tài khoản {channelLabel}.</p>
               </div>
             ) : (
               <div className="space-y-1.5 max-h-[160px] overflow-y-auto">
@@ -444,7 +444,7 @@ function InstallModal({
                   return (
                     <label key={acc.zalo_id}
                       className={`flex items-center gap-2.5 px-3 py-2 rounded-xl border cursor-pointer transition-colors ${
-                        selected ? 'bg-blue-500/10 border-blue-500/40' : 'bg-gray-800/50 border-gray-700/60 hover:border-gray-600'
+                        selected ? 'bg-blue-500/10 border-blue-500/40' : 'bg-card/50 border-border/60 hover:border-input'
                       }`}>
                       <input type="checkbox" checked={selected} onChange={() => togglePage(acc.zalo_id)} className="accent-blue-500 w-3.5 h-3.5 flex-shrink-0" />
                       {acc.avatar_url
@@ -454,15 +454,15 @@ function InstallModal({
                           </div>
                       }
                       <div className="min-w-0 flex-1">
-                        <p className="text-white text-xs font-medium truncate">{acc.full_name || acc.zalo_id}</p>
-                        {acc.phone && <p className="text-gray-400 text-[11px]">{acc.phone}</p>}
+                        <p className="text-foreground text-xs font-medium truncate">{acc.full_name || acc.zalo_id}</p>
+                        {acc.phone && <p className="text-muted-foreground text-[11px]">{acc.phone}</p>}
                       </div>
                     </label>
                   );
                 })}
               </div>
             )}
-            <p className="text-gray-400 text-[10px] mt-1.5">
+            <p className="text-muted-foreground text-[10px] mt-1.5">
               {selectedPages.length === 0
                 ? `⚠ Chưa chọn - workflow sẽ chạy cho TẤT CẢ tài khoản ${channelLabel}`
                 : `✓ Sẽ áp dụng cho ${selectedPages.length} tài khoản ${channelLabel}`}
@@ -472,7 +472,7 @@ function InstallModal({
           {/* Options */}
           <label className="flex items-center gap-2 cursor-pointer">
             <input type="checkbox" checked={openInEditor} onChange={e => setOpenInEditor(e.target.checked)} className="accent-blue-500 w-3.5 h-3.5" />
-            <span className="text-gray-300 text-xs">Mở trong trình chỉnh sửa sau khi cài đặt</span>
+            <span className="text-foreground/80 text-xs">Mở trong trình chỉnh sửa sau khi cài đặt</span>
           </label>
 
           {/* Info */}
@@ -484,7 +484,7 @@ function InstallModal({
 
         {/* Footer */}
         <div className="px-5 pb-5 flex gap-2">
-          <button onClick={onClose} className="flex-1 px-4 py-2.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm font-medium rounded-xl transition-colors">
+          <button onClick={onClose} className="flex-1 px-4 py-2.5 bg-card hover:bg-muted text-foreground/80 text-sm font-medium rounded-xl transition-colors">
             Hủy
           </button>
           <button onClick={handleInstall} disabled={installing || !wfName.trim()}
@@ -577,24 +577,24 @@ export default function WorkflowTemplateStore({ onBack, onEdit }: Props) {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="px-6 py-5 border-b border-gray-800 flex-shrink-0">
+      <div className="px-6 py-5 border-b border-border flex-shrink-0">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
-            <button onClick={onBack} className="text-gray-400 hover:text-white text-sm flex items-center gap-1 transition-colors">
+            <button onClick={onBack} className="text-muted-foreground hover:text-foreground text-sm flex items-center gap-1 transition-colors">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <polyline points="15 18 9 12 15 6"/>
               </svg>
               Quay lại
             </button>
-            <div className="w-px h-5 bg-gray-700" />
+            <div className="w-px h-5 bg-muted" />
             <div>
-              <h1 className="text-white text-xl font-bold flex items-center gap-2">
+              <h1 className="text-foreground text-xl font-bold flex items-center gap-2">
                 <span><PackageIcon className="w-4 h-4" /></span> Kho Workflow mẫu
               </h1>
-              <p className="text-gray-400 text-sm mt-0.5">Chọn workflow có sẵn, xem trước rồi cài đặt chỉ với 1 click</p>
+              <p className="text-muted-foreground text-sm mt-0.5">Chọn workflow có sẵn, xem trước rồi cài đặt chỉ với 1 click</p>
             </div>
           </div>
-          <div className="text-gray-400 text-xs">
+          <div className="text-muted-foreground text-xs">
             {ALL_TEMPLATES.length} mẫu có sẵn
           </div>
         </div>
@@ -604,18 +604,18 @@ export default function WorkflowTemplateStore({ onBack, onEdit }: Props) {
           {/* Search */}
           <div className="relative flex-1 min-w-[200px] max-w-[400px]">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
               <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
             </svg>
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Tìm kiếm mẫu workflow..."
-              className="w-full pl-9 pr-3 py-2.5 bg-gray-800 border border-gray-700 rounded-xl text-white text-sm placeholder-gray-600 outline-none focus:border-blue-500 transition-colors"
+              className="w-full pl-9 pr-3 py-2.5 bg-card border border-border rounded-xl text-foreground text-sm placeholder-subtle-foreground outline-none focus:border-blue-500 transition-colors"
             />
             {search && (
               <button onClick={() => setSearch('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-300 transition-colors">
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground/80 transition-colors">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                 </svg>
@@ -630,10 +630,10 @@ export default function WorkflowTemplateStore({ onBack, onEdit }: Props) {
               className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border flex ${
                 activeCategory === 'all'
                   ? 'bg-blue-600/20 border-blue-500/50 text-blue-300'
-                  : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600 hover:text-gray-300'
+                  : 'bg-card border-border text-muted-foreground hover:border-input hover:text-foreground/80'
               }`}
             >
-              Tất cả <span className="text-gray-400 ml-1">({ALL_TEMPLATES.length})</span>
+              Tất cả <span className="text-muted-foreground ml-1">({ALL_TEMPLATES.length})</span>
             </button>
             {TEMPLATE_CATEGORIES.map(cat => (
               <button
@@ -642,10 +642,10 @@ export default function WorkflowTemplateStore({ onBack, onEdit }: Props) {
                 className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border flex ${
                   activeCategory === cat.key
                     ? 'bg-blue-600/20 border-blue-500/50 text-blue-300'
-                    : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600 hover:text-gray-300'
+                    : 'bg-card border-border text-muted-foreground hover:border-input hover:text-foreground/80'
                 }`}
               >
-                {cat.icon} <span className="ml-2">{cat.label}</span> <span className="text-gray-400">({categoryCounts[cat.key] || 0})</span>
+                {cat.icon} <span className="ml-2">{cat.label}</span> <span className="text-muted-foreground">({categoryCounts[cat.key] || 0})</span>
               </button>
             ))}
           </div>
@@ -658,7 +658,7 @@ export default function WorkflowTemplateStore({ onBack, onEdit }: Props) {
             className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
               channelFilter === 'all'
                 ? 'bg-blue-600/20 border-blue-500/50 text-blue-300'
-                : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600 hover:text-gray-300'
+                : 'bg-card border-border text-muted-foreground hover:border-input hover:text-foreground/80'
             }`}
           >
             Tất cả kênh
@@ -668,7 +668,7 @@ export default function WorkflowTemplateStore({ onBack, onEdit }: Props) {
             className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
               channelFilter === CHANNEL.ZALO
                 ? 'bg-blue-600/20 border-blue-500/50 text-blue-300'
-                : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600 hover:text-gray-300'
+                : 'bg-card border-border text-muted-foreground hover:border-input hover:text-foreground/80'
             }`}
           >
             <span className="w-1.5 h-1.5 rounded-full bg-blue-500 inline-block mr-1" />
@@ -679,7 +679,7 @@ export default function WorkflowTemplateStore({ onBack, onEdit }: Props) {
             className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
               channelFilter === CHANNEL.FACEBOOK
                 ? 'bg-blue-600/20 border-blue-500/50 text-blue-300'
-                : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600 hover:text-gray-300'
+                : 'bg-card border-border text-muted-foreground hover:border-input hover:text-foreground/80'
             }`}
           >
             <span className="w-1.5 h-1.5 rounded-full bg-[#1877F2] inline-block mr-1" />
@@ -690,7 +690,7 @@ export default function WorkflowTemplateStore({ onBack, onEdit }: Props) {
             className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
               channelFilter === CHANNEL.TELEGRAM_USER || channelFilter === CHANNEL.TELEGRAM_BOT
                 ? 'bg-cyan-600/20 border-cyan-500/50 text-cyan-300'
-                : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600 hover:text-gray-300'
+                : 'bg-card border-border text-muted-foreground hover:border-input hover:text-foreground/80'
             }`}
           >
             <span className="w-1.5 h-1.5 rounded-full bg-[#0088CC] inline-block mr-1" />
@@ -703,9 +703,9 @@ export default function WorkflowTemplateStore({ onBack, onEdit }: Props) {
       <div className="flex-1 overflow-y-auto p-6">
         {filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-center">
-            <div className="w-16 h-16 rounded-2xl bg-gray-800 border border-gray-700 flex items-center justify-center mb-4 text-3xl"><SearchIcon className="w-4 h-4 inline" /> </div>
-            <p className="text-gray-300 font-semibold mb-1">Không tìm thấy mẫu nào</p>
-            <p className="text-gray-400 text-sm mb-4 max-w-xs">
+            <div className="w-16 h-16 rounded-2xl bg-card border border-border flex items-center justify-center mb-4 text-3xl"><SearchIcon className="w-4 h-4 inline" /> </div>
+            <p className="text-foreground/80 font-semibold mb-1">Không tìm thấy mẫu nào</p>
+            <p className="text-muted-foreground text-sm mb-4 max-w-xs">
               Thử tìm kiếm với từ khoá khác hoặc chọn danh mục khác.
             </p>
             <button onClick={() => { setSearch(''); setActiveCategory('all'); }}

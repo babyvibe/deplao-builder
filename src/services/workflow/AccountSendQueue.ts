@@ -47,6 +47,15 @@ class AccountSendQueue {
     return result;
   }
 
+  /**
+   * Resolve khi các lượt ĐANG xếp của account chạy xong, kể cả khoảng chờ sau lượt cuối (không bao giờ reject).
+   * Gửi hàng loạt chờ cái này trước khi xếp người nhận kế tiếp → tin trả lời tự động xếp vào trong lúc chờ được đi trước.
+   */
+  public whenIdle(accountId: string): Promise<void> {
+    const tail = this.tails.get(accountId || '__default__');
+    return tail ? tail.then(() => undefined, () => undefined) : Promise.resolve();
+  }
+
   private wait(minMs: number, maxMs: number): Promise<void> {
     const lo = Math.max(0, minMs);
     const hi = Math.max(lo, maxMs);

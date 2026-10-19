@@ -16,7 +16,7 @@
  *   messageQueue.enqueue({ tempId, zaloId, threadId, ... });
  */
 
-import { useChatStore, type MessageItem } from '@/store/chatStore';
+import { getMessageCacheKeysForThread, useChatStore, type MessageItem } from '@/store/chatStore';
 import { CHANNEL, isFacebook } from '@/lib/channelHelper';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -28,6 +28,12 @@ export interface SendResult {
   /** Nhiều msgIds khi gửi nhiều attachment (multi-image) — để webhook xử lý dedup */
   msgIds?: string[];
   error?: string;
+  /**
+   * Facebook E2EE: the server did not acknowledge in time and the message may
+   * have been delivered (fbchat-v2 2.3.2). Never retried; `msgId` lets a later
+   * echo replace the placeholder.
+   */
+  uncertain?: boolean;
 }
 
 export interface QueueItem {
@@ -63,6 +69,8 @@ const MAX_CONCURRENT_CROSS_THREAD = 5;
 const MAX_RETRIES_DEFAULT = 3;
 const SEND_TIMEOUT_MS = 60_000;
 const RETRY_DELAYS = [1_000, 2_000, 4_000]; // exponential backoff
+/** How long the real IDs of a sent message are kept for matching its image webhooks. */
+const SENT_IDS_TTL_MS = 2 * 60_000;
 
 // ─── MessageQueue ────────────────────────────────────────────────────────────
 
@@ -85,12 +93,25 @@ class MessageQueue {
     receivedCount: number;
     sentAt: number;
     onAllReceived: () => void;
+    /** Message IDs the send API returned for this batch (empty when it returned none). */
+    realIds: string[];
   }> = [];
+  /** Real message IDs returned by the send API, by temp ID (see SENT_IDS_TTL_MS). */
+  private sentIdsByTempId = new Map<string, { ids: string[]; at: number }>();
 
   /** Đăng ký 1 batch image gửi đi — giữ preview temp cho đến khi webhooks đủ */
   registerImageBatch(batchTempId: string, zaloId: string, threadId: string, expectedCount: number, onAllReceived: () => void): void {
+    const realIds = this.sentIdsByTempId.get(batchTempId)?.ids || [];
+    // The webhook can arrive before the send API answers. sendItem then
+    // already replaced the preview with the real message, and a batch
+    // registered now would wait for webhooks that came already (and could
+    // take the next batch's webhook instead).
+    if (!this.hasMessage(zaloId, threadId, batchTempId)) {
+      this.sentIdsByTempId.delete(batchTempId);
+      return;
+    }
     this.pendingImageBatches.push({
-      batchTempId, zaloId, threadId, expectedCount, receivedCount: 0, sentAt: Date.now(), onAllReceived,
+      batchTempId, zaloId, threadId, expectedCount, receivedCount: 0, sentAt: Date.now(), onAllReceived, realIds,
     });
     // Safety timeout: nếu webhook không đến đủ trong 30s → xóa preview
     setTimeout(() => {
@@ -99,14 +120,18 @@ class MessageQueue {
   }
 
   /** Webhook báo 1 image message đã đến — xóa batch temp ngay (tránh duplicate) */
-  onImageMessageReceived(zaloId: string, threadId: string): void {
+  onImageMessageReceived(zaloId: string, threadId: string, msgId?: string): void {
     const now = Date.now();
-    const batch = this.pendingImageBatches.find(b =>
+    const candidates = this.pendingImageBatches.filter(b =>
       b.zaloId === zaloId &&
       b.threadId === threadId &&
       b.receivedCount < b.expectedCount &&
       now - b.sentAt < 30_000
     );
+    // Prefer the batch whose send returned this message ID: the webhook of a
+    // later batch can arrive while an earlier one still waits. Otherwise end
+    // the oldest batch as before (the IDs are not guaranteed to match).
+    const batch = (msgId ? candidates.find(b => b.realIds.includes(msgId)) : undefined) || candidates[0];
     if (!batch) return;
 
     batch.receivedCount++;
@@ -133,6 +158,30 @@ class MessageQueue {
       }
       this.pendingImageBatches.splice(idx, 1);
     }
+    this.sentIdsByTempId.delete(batchTempId);
+  }
+
+  private hasMessage(zaloId: string, threadId: string, msgId: string): boolean {
+    const all = useChatStore.getState().messages;
+    return getMessageCacheKeysForThread(all, zaloId, threadId)
+      .some(key => (all[key] || []).some(m => String(m.msg_id) === msgId));
+  }
+
+  /** Whether a real (non-temp) message with one of these IDs is already listed. */
+  private hasRealMessage(zaloId: string, threadId: string, ids: string[]): boolean {
+    if (ids.length === 0) return false;
+    const wanted = new Set(ids);
+    const all = useChatStore.getState().messages;
+    return getMessageCacheKeysForThread(all, zaloId, threadId)
+      .some(key => (all[key] || []).some(m => !String(m.msg_id).startsWith('temp_') && wanted.has(String(m.msg_id))));
+  }
+
+  private rememberSentIds(tempId: string, ids: string[]): void {
+    const now = Date.now();
+    for (const [key, entry] of this.sentIdsByTempId) {
+      if (now - entry.at > SENT_IDS_TTL_MS) this.sentIdsByTempId.delete(key);
+    }
+    if (ids.length > 0) this.sentIdsByTempId.set(tempId, { ids, at: now });
   }
 
   // ── Public API ─────────────────────────────────────────────────────────
@@ -297,11 +346,23 @@ class MessageQueue {
       console.log(`[MessageQueue] sendFn result: success=${result?.success} msgId=${result?.msgId} error=${result?.error}`);
       this.clearTimeout(tempId);
 
+      // The webhook/echo of this send can arrive before the API response (it
+      // is pushed over the socket while the HTTP reply is still in flight).
+      // Then the real message is already listed and the optimistic copy would
+      // stay as a duplicate: the echo could not be matched to it yet (no
+      // real_msg_id, and an image preview has no comparable content).
+      const realIds = result.success
+        ? (result.msgId ? [String(result.msgId)] : (result.msgIds || []).map(String))
+        : [];
+      this.rememberSentIds(tempId, realIds);
+      const echoArrivedFirst = this.hasRealMessage(zaloId, threadId, realIds);
+
       if (result.success && result.msgId) {
         // ── SUCCESS: API trả về single msgId ──
         this.updateStatus(zaloId, threadId, tempId, 'sent', {
           real_msg_id: result.msgId,
         });
+        if (echoArrivedFirst) this.dropDuplicatePreview(zaloId, threadId, tempId);
         console.log(`[MessageQueue] ✅ Sent tempId=${tempId} → realMsgId=${result.msgId} (before onSuccess)`);
         item.onSuccess?.(result.msgId, result);
         console.log(`[MessageQueue] ✅ Sent tempId=${tempId} → realMsgId=${result.msgId} (after onSuccess)`);
@@ -310,12 +371,22 @@ class MessageQueue {
         this.updateStatus(zaloId, threadId, tempId, 'sent', {
           real_msg_id: result.msgIds[0],
         });
+        if (echoArrivedFirst) this.dropDuplicatePreview(zaloId, threadId, tempId);
         console.log(`[MessageQueue] ✅ Sent tempId=${tempId} → ${result.msgIds.length} attachments: [${result.msgIds.join(', ')}]`);
         item.onSuccess?.(result.msgIds[0], result);
       } else if (result.success) {
         this.updateStatus(zaloId, threadId, tempId, 'sent');
         console.log(`[MessageQueue] ✅ Sent tempId=${tempId} (no msgId in response)`);
         item.onSuccess?.('', result);
+      } else if (result.uncertain) {
+        // ── UNCERTAIN: maybe delivered — neither "sent" nor retried ──
+        const errorMsg = result.error || 'Chưa xác nhận được tin nhắn đã gửi.';
+        console.warn(`[MessageQueue] ⚠️ Unacknowledged tempId=${tempId} msgId=${result.msgId}: ${errorMsg}`);
+        this.updateStatus(zaloId, threadId, tempId, 'timeout', {
+          ...(result.msgId ? { real_msg_id: result.msgId } : {}),
+          send_error: errorMsg,
+        });
+        item.onFailed?.(errorMsg);
       } else {
         // ── API trả về error ──
         throw new Error(result.error || 'Send failed');
@@ -373,6 +444,11 @@ class MessageQueue {
     extra?: Partial<MessageItem>,
   ): void {
     useChatStore.getState().updateMessageStatus(zaloId, threadId, tempId, status, extra);
+  }
+
+  private dropDuplicatePreview(zaloId: string, threadId: string, tempId: string): void {
+    console.log(`[MessageQueue] Echo arrived before the send response → removing duplicate preview ${tempId}`);
+    useChatStore.getState().removeMessage(zaloId, threadId, tempId);
   }
 
   private getStatusOf(item: QueueItem): string {

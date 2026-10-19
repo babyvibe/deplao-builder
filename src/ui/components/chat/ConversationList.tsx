@@ -1,30 +1,46 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useChatStore } from '@/store/chatStore';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { getMessageCacheKey, useChatStore } from '@/store/chatStore';
+import { useShallow } from 'zustand/react/shallow';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
-import { MESSAGE_LOAD_LIMIT, MESSAGE_RESTORE_LIMIT, MESSAGE_SEARCH_LIMIT, PAGE_SIZE, INITIAL_BATCH, BACKGROUND_BATCH, BATCH_SIZE, BATCH_DELAY_MS, INITIAL_LOADING_TIMEOUT_MS, BACKGROUND_LOAD_DELAY_MS, LABELS_DEBOUNCE_MS } from '@/lib/chat/constants';
-import DataAccessor from '@/lib/data/DataAccessor';
+import { MESSAGE_LOAD_LIMIT, MESSAGE_RESTORE_LIMIT, MESSAGE_SEARCH_LIMIT, PAGE_SIZE, CONVERSATION_DISPLAY_STEP, INITIAL_LOADING_TIMEOUT_MS, LABELS_DEBOUNCE_MS } from '@/lib/chat/constants';
+import DataAccessor, {
+  isReadFailure, mergeAccountOnSuccess, nextConversationPaging, readFailureMessage, retryDelayMs,
+  type ConversationPaging,
+} from '@/lib/data/DataAccessor';
 import { useEmployeeStore } from '@/store/employeeStore';
+import { useEmployeeResync } from '@/hooks/useEmployeeResync';
+import { Button, EmptyState } from '@/components/ui';
 import { sendSeenForThread } from '@/lib/sendSeenHelper';
 import { getFilteredUnreadCount } from '@/lib/badgeUtils';
-import { CreateGroupModal, InviteToGroupModal } from './GroupModals';
+import { InviteToGroupModal } from './GroupModals';
+import QuickActionsButton from './quick/QuickActionsButton';
+import type { OpenQuickConversation } from './quick/quickActions';
 import { showConfirm } from '../common/ConfirmDialog';
 import LabelPicker, { EditLabelsModal } from './LabelPicker';
 import AddFriendModal from '../common/AddFriendModal';
-import GroupAvatar from '../common/GroupAvatar';
-import { Spinner } from '@/components/common/PageLoading';
-import { BellIcon, BellOffIcon, BookmarkIcon, ChatIcon, CheckIcon, CircleIcon, ClipboardListIcon, CloseIcon, CloudIcon, FolderIcon, GlobeIcon, HardDriveIcon, ImageIcon, LinkIcon, MapPinIcon, MessageCircleIcon, PaperclipIcon, PinIcon, PluginIcon, TargetIcon, TrashIcon, UsersIcon } from '@/components/common/icons';
+import ConversationGroupAvatar from './ConversationGroupAvatar';
+import { requestGroupAvatar } from '@/lib/chat/groupAvatarLoader';
+import { BellIcon, BellOffIcon, BookmarkIcon, ChatIcon, CheckCircleIcon, CheckIcon, CircleIcon, ClipboardListIcon, CloseIcon, CloudIcon, FolderIcon, GlobeIcon, HardDriveIcon, ImageIcon, LinkIcon, MapPinIcon, MessageCircleIcon, PaperclipIcon, PinIcon, PluginIcon, StarIcon, TargetIcon, TrashIcon, UsersIcon } from '@/components/common/icons';
 import { toLocalMediaUrl } from '@/lib/localMedia';
 import GlobalSearchPanel from './GlobalSearchPanel';
+import StarredMessagesPanel from './StarredMessagesPanel';
+import AutoMarkReadModal from './AutoMarkReadModal';
+import { useAutoReadStore } from '@/store/autoReadStore';
+import { markConversationRead } from '@/lib/chat/markConversationRead';
+import { useStarredStore } from '@/store/starredStore';
+import type { StarredItem } from '@/lib/chat/starredMessages';
+import { MY_DOCUMENTS_NAME, isMyDocumentsContact, isPinnedMyDocuments, myDocumentsThreadId } from '@/lib/chat/myDocuments';
+import { isSameMessagePage, newestMessages } from '@/lib/chat/messagePage';
 import useIsMobile from '@/hooks/useIsMobile';
-import { syncZaloGroups, MemberPlaceholder } from '@/lib/zaloGroupUtils';
 import ChannelBadge, { ChannelBadgeOverlay } from '../common/ChannelBadge';
 import { getCapability, channelSupports, getChannelLabel, type Channel } from '@/../configs/channelConfig';
 import { extractUserProfile } from '../../../utils/profileUtils';
 import { refreshContactAlias } from '../../hooks/useZaloEvents';
 import PageLoading from '@/components/common/PageLoading';
 import { CHANNEL, isFacebook, isZalo, isNonZalo, isTelegram, isTelegramUser } from '@/lib/channelHelper';
+import { getTelegramMembershipNotice, isTelegramNonMember } from '@/lib/telegramMembership';
 import { getAdapter } from '@/lib/adapters/registry';
 import ForumTopicsPanel from './ForumTopicsPanel';
 
@@ -74,9 +90,67 @@ function muteUntilToDuration(until: number): number | string {
   return remainSec > 0 ? remainSec : -1;
 }
 
+/**
+ * Đổi qua lại giữa các tài khoản: dữ liệu phụ của tài khoản (ghim, cờ tắt thông báo / Khác, nhãn Local, nháp) vừa tải
+ * trong khoảng này thì dùng lại — mỗi lần tải xong là một lần dựng lại cả danh sách. Thay đổi trong lúc đó vẫn tới qua
+ * sự kiện (ghim, nhãn, cờ).
+ */
+const ACCOUNT_SIDE_DATA_TTL_MS = 60_000;
+
+/** Tập ghim rỗng dùng chung (giữ nguyên tham chiếu giữa các lần render — useMemo không chạy lại vô ích). */
+const EMPTY_THREAD_SET: Set<string> = new Set();
+const EMPTY_PINNED_EXTRAS: any[] = [];
+
+const INITIAL_CONVERSATION_PAGING: ConversationPaging = {
+  nextOffset: PAGE_SIZE, hasMore: false, exhausted: false, failures: 0, failedPage: null,
+};
+
+function samePaging(a: ConversationPaging, b: ConversationPaging): boolean {
+  return a.nextOffset === b.nextOffset && a.hasMore === b.hasMore && a.exhausted === b.exhausted
+    && a.failures === b.failures && a.failedPage === b.failedPage;
+}
+
+/** Bật / tắt ghim một hội thoại trong tập ghim của đúng tài khoản. */
+function withThreadPinned(prev: Record<string, Set<string>>, zaloId: string, threadId: string, pinned: boolean) {
+  const next = new Set(prev[zaloId] || []);
+  if (pinned) next.add(threadId); else next.delete(threadId);
+  return { ...prev, [zaloId]: next };
+}
+
+/**
+ * Báo lỗi tải gọn ngay trong danh sách (chế độ nhân viên: mất kết nối BOSS). Hiện thay cho "trống" — lỗi mạng
+ * không được trông như không có dữ liệu.
+ */
+function LoadFailedNotice({ text, onRetry, busy }: { text: string; onRetry: () => void; busy?: boolean }) {
+  return (
+    <div role="status" className="flex items-center justify-center gap-2 px-3 py-2 text-xs text-muted-foreground">
+      <span>{text}</span>
+      <Button variant="link" size="sm" className="text-xs" onClick={onRetry} disabled={busy}>Thử lại</Button>
+    </div>
+  );
+}
+
+/** Tin Facebook lưu rỗng (bản cũ chưa đọc được tin mẫu của Page / đính kèm) — bong bóng chỉ còn giờ. */
+function isEmptyFacebookRow(m: any): boolean {
+  if (!m || m.is_recalled) return false;
+  const att = String(m.attachments ?? '').trim();
+  return (!m.msg_type || m.msg_type === 'text') && !String(m.content || '').trim() && (!att || att === '[]' || att === 'null');
+}
+
 export default function ConversationList() {
-  const { contacts, setActiveThread, activeThreadId, activeThreadType, activeTopicId, setMessages, updateContact, clearUnread, removeContact, drafts, draftTimestamps } = useChatStore();
-  const { syncRepliedState, saveAccountThread } = useChatStore();
+  // Chỉ subscribe các trường danh sách dùng: `useChatStore()` không selector làm cả danh sách (tới 200 hàng) render
+  // lại với mọi tin nhắn / đang gõ / đã xem của mọi hội thoại → cuộn và chuyển hội thoại bị giật.
+  const {
+    contacts, setActiveThread, activeThreadId, activeThreadType, activeTopicId, setMessages, updateContact, clearUnread,
+    removeContact, drafts, draftTimestamps, syncRepliedState, saveAccountThread,
+  } = useChatStore(useShallow(s => ({
+    contacts: s.contacts, setActiveThread: s.setActiveThread, activeThreadId: s.activeThreadId,
+    activeThreadType: s.activeThreadType, activeTopicId: s.activeTopicId, setMessages: s.setMessages,
+    updateContact: s.updateContact, clearUnread: s.clearUnread, removeContact: s.removeContact, drafts: s.drafts,
+    draftTimestamps: s.draftTimestamps, syncRepliedState: s.syncRepliedState, saveAccountThread: s.saveAccountThread,
+    // Đọc bằng getState() trong JSX (chỉ báo đang tải) → vẫn phải render lại khi đổi
+    conversationsLoading: s.conversationsLoading,
+  })));
 
   // Debug: log khi contacts thay đổi
   const prevCountRef = useRef(0);
@@ -90,12 +164,23 @@ export default function ConversationList() {
       }
     }
   });
-  const { activeAccountId, accounts: allAccountsList, setActiveAccount } = useAccountStore();
+  const { activeAccountId, accounts: allAccountsList, setActiveAccount } = useAccountStore(useShallow(s => ({
+    activeAccountId: s.activeAccountId, accounts: s.accounts, setActiveAccount: s.setActiveAccount,
+  })));
   const activeAccountObj = allAccountsList.find(a => a.zalo_id === activeAccountId);
-  const channelCap = getCapability((activeAccountObj?.channel || CHANNEL.ZALO) as Channel);
-  const { labels: allLabels, setLabels, showNotification, setMuted, clearMuted, isMuted: isMutedFn, groupInfoCache, setGroupInfo,
+  // groupInfoCache KHÔNG lấy ở đây: mỗi ảnh nhóm tự đọc phần của mình (ConversationGroupAvatar) — trước đây mỗi lần
+  // một nhóm tải xong ảnh / thành viên là cả danh sách dựng lại.
+  const { labels: allLabels, setLabels, showNotification, setMuted, clearMuted, isMuted: isMutedFn, setGroupInfo,
     othersConversations: allOthers, loadFlags, addToOthers, removeFromOthers,
-    mergedInboxMode, mergedInboxAccounts, mergedInboxFilterAccount, setMobileShowChat } = useAppStore();
+    mergedInboxMode, mergedInboxAccounts, mergedInboxFilterAccount, setMobileShowChat } = useAppStore(useShallow(s => ({
+    labels: s.labels, setLabels: s.setLabels, showNotification: s.showNotification, setMuted: s.setMuted,
+    clearMuted: s.clearMuted, isMuted: s.isMuted, setGroupInfo: s.setGroupInfo,
+    othersConversations: s.othersConversations, loadFlags: s.loadFlags, addToOthers: s.addToOthers,
+    removeFromOthers: s.removeFromOthers, mergedInboxMode: s.mergedInboxMode, mergedInboxAccounts: s.mergedInboxAccounts,
+    mergedInboxFilterAccount: s.mergedInboxFilterAccount, setMobileShowChat: s.setMobileShowChat,
+    // isMuted() đọc mutedThreads → biểu tượng tắt thông báo phải cập nhật khi đổi
+    mutedThreads: s.mutedThreads,
+  })));
   // Local labels work across every channel. Remote Zalo labels must not be
   // shown or loaded while viewing a standalone Telegram/Facebook inbox.
   const canUseZaloLabelFilter = mergedInboxMode || isZalo(activeAccountObj?.channel);
@@ -117,9 +202,21 @@ export default function ConversationList() {
   const [filterLabelMode, setFilterLabelMode] = useState<'all' | 'any'>('all'); // 'all' = AND, 'any' = OR
   const [filterDropdownOpen, setFilterDropdownOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
-  const [pinnedThreads, setPinnedThreads] = useState<Set<string>>(new Set());
-  const [localPinnedThreads, setLocalPinnedThreads] = useState<Set<string>>(new Set());
-  const [hoveredId, setHoveredId] = useState<string | null>(null);
+  // Ghim Zalo / ghim trong app theo TÀI KHOẢN: một lần tải lỗi giữ tập ghim cũ của đúng tài khoản đó (trước đây
+  // bị thay bằng tập rỗng, và đổi tài khoản còn mang tập ghim của tài khoản trước sang).
+  const [zaloPinsByAccount, setZaloPinsByAccount] = useState<Record<string, Set<string>>>({});
+  const [localPinsByAccount, setLocalPinsByAccount] = useState<Record<string, Set<string>>>({});
+  // Hội thoại ghim nằm ở trang sau (danh sách phân trang theo thời gian tin cuối) — tải bù theo id, giữ RIÊNG khỏi store:
+  // phân trang tính offset theo số hội thoại trong store, nhét thêm vào đó sẽ làm trang sau bỏ sót hội thoại.
+  const [pinnedExtrasByAccount, setPinnedExtrasByAccount] = useState<Record<string, any[]>>({});
+  const pinnedExtrasRequestedRef = useRef(new Set<string>());
+  const pinnedThreads = (activeAccountId && zaloPinsByAccount[activeAccountId]) || EMPTY_THREAD_SET;
+  const localPinnedThreads = (activeAccountId && localPinsByAccount[activeAccountId]) || EMPTY_THREAD_SET;
+  // "Tin đánh dấu" (menu ⋮) thay chỗ danh sách hội thoại khi mở
+  const [starredPanelOpen, setStarredPanelOpen] = useState(false);
+  // "Tự động đánh dấu đã đọc" (menu ⋮ → Tự động)
+  const [autoReadOpen, setAutoReadOpen] = useState(false);
+  const autoReadProgress = useAutoReadStore(s => (s.job.status === 'running' ? `${s.job.done}/${s.job.total}` : ''));
   const [failedAvatars, setFailedAvatars] = useState<Set<string>>(() => new Set());
   const [ctxMenu, setCtxMenu] = useState<{ contactId: string; zaloId: string; x: number; y: number } | null>(null);
   const [labelPickerId, setLabelPickerId] = useState<string | null>(null);
@@ -128,10 +225,9 @@ export default function ConversationList() {
   const [inlineLabelPicker, setInlineLabelPicker] = useState<{ contactId: string; zaloId: string; x: number; y: number } | null>(null);
   const [localLabelsByAccount, setLocalLabelsByAccount] = useState<Record<string, LocalLabelData[]>>({});
   const [localLabelThreadMapByAccount, setLocalLabelThreadMapByAccount] = useState<Record<string, Record<string, number[]>>>({});
-  const [createGroupOpen, setCreateGroupOpen] = useState(false);
+  /** Tài khoản có lần tải Nhãn Local gần nhất bị lỗi (danh sách nhãn trống ≠ "chưa có nhãn") */
+  const [localLabelsFailed, setLocalLabelsFailed] = useState<Record<string, boolean>>({});
   const [inviteContactId, setInviteContactId] = useState<string | null>(null);
-  const [loadingGroupAvatars, setLoadingGroupAvatars] = useState(false);
-  const tgAvatarLoadingRef = useRef(false); // Guard against re-entry during Telegram avatar fetch
   const [editLabelsOpen, setEditLabelsOpen] = useState(false);
   const [editLabelsZaloId, setEditLabelsZaloId] = useState<string | null>(null);
   const [editLabelsPickerOpen, setEditLabelsPickerOpen] = useState(false);
@@ -146,6 +242,15 @@ export default function ConversationList() {
   // Prevents the activeAccountId useEffect from overriding a manual merged-mode selection
   const isManualSelectingRef = React.useRef(false);
   const isEmp = useEmployeeStore(s => s.mode === 'employee');
+  // Hội thoại đang mở → "Thêm lịch hẹn" (thao tác nhanh) gắn được lịch với hội thoại này.
+  const activeThreadContact = activeAccountId && activeThreadId
+    ? (contacts[activeAccountId] || []).find(c => c.contact_id === activeThreadId)
+    : undefined;
+  const activeThreadName = activeThreadContact?.alias || activeThreadContact?.display_name || activeThreadId || '';
+  const quickActiveThread = useMemo(
+    () => (activeThreadId ? { id: activeThreadId, name: activeThreadName } : null),
+    [activeThreadId, activeThreadName],
+  );
 
   const effectiveFilterLabelSource: LabelSource = canUseZaloLabelFilter ? filterLabelSource : 'local';
   useEffect(() => {
@@ -161,7 +266,8 @@ export default function ConversationList() {
   /** Proxy Zalo API calls qua Boss khi ở employee mode */
   const zaloApi = useCallback(async (method: string, params: any) => {
     if (isEmp) {
-      const zaloId = params.auth?.zaloId || activeAccountId || '';
+      // Tài khoản của hội thoại (buildZaloAuth → auth.accountId) trước tài khoản đang mở — danh sách gộp nhiều tài khoản
+      const zaloId = params.auth?.zaloId || params.auth?.accountId || params.zaloId || activeAccountId || '';
       return ipc.employee?.proxyAction(`zalo:${method}`, {
         ...params,
         auth: { zaloId },
@@ -172,12 +278,21 @@ export default function ConversationList() {
   }, [isEmp, activeAccountId]);
 
   // ── Pagination: cố định 200 hội thoại mỗi trang, infinite scroll ──────
-  const [displayCount, setDisplayCount] = useState(PAGE_SIZE);
-  const [conversationHasMore, setConversationHasMore] = useState(false);
+  const [displayCount, setDisplayCount] = useState(CONVERSATION_DISPLAY_STEP);
+  // Phân trang server (offset / còn nữa / đã hết) + lỗi tải liên tiếp. Lỗi giữ offset + hasMore để thử lại
+  // (backoff / "Thử lại" / kết nối lại); chỉ dừng hẳn khi server nói hết.
+  const [paging, setPaging] = useState<ConversationPaging>(INITIAL_CONVERSATION_PAGING);
+  const conversationHasMore = paging.hasMore;
+  const conversationNextOffset = paging.nextOffset;
+  const conversationExhausted = paging.exhausted;
   const [conversationLoadingMore, setConversationLoadingMore] = useState(false);
 
   // ── DB-level filtered contacts (nhanh hơn filter trong memory) ──────
   const [dbFilteredContacts, setDbFilteredContacts] = useState<any[] | null>(null);
+  // The filtered list is a DB snapshot. Re-read it whenever the Others flags
+  // reload (they reload after every Telegram/Zalo contact refresh), so a newly
+  // archived or brand-new conversation shows up without switching tabs.
+  const othersSnapshotKey = mergedInboxMode ? allOthers : allOthers[activeAccountId || ''];
   useEffect(() => {
     const hasFilter = channelFilter !== 'all' || !!search || filter === 'unread' || filter === 'others';
     if (!hasFilter) { setDbFilteredContacts(null); return; }
@@ -222,7 +337,7 @@ export default function ConversationList() {
     }
 
     return () => { cancelled = true; };
-  }, [activeAccountId, mergedInboxMode, mergedInboxAccounts.join(','), channelFilter, search, filter]);
+  }, [activeAccountId, mergedInboxMode, mergedInboxAccounts.join(','), channelFilter, search, filter, othersSnapshotKey]);
 
   // A filtered DB query is a snapshot. Selection immediately clears unread in
   // the Zustand store, so overlay the live item before rendering; otherwise a
@@ -230,81 +345,228 @@ export default function ConversationList() {
   // database query.
   const dbFilteredContactsWithLiveState = useMemo(() => {
     if (!dbFilteredContacts) return null;
+    // Map theo tài khoản (giữ phần tử đầu tiên như .find): trước đây mỗi hội thoại .find() qua cả danh bạ,
+    // chạy lại theo mỗi tin nhắn đến khi đang lọc
+    const liveByOwner = new Map<string, Map<string, any>>();
+    const getLive = (ownerId: string, contactId: string) => {
+      let byId = liveByOwner.get(ownerId);
+      if (!byId) {
+        byId = new Map();
+        for (const item of contacts[ownerId] || []) {
+          if (!byId.has(item.contact_id)) byId.set(item.contact_id, item);
+        }
+        liveByOwner.set(ownerId, byId);
+      }
+      return byId.get(contactId);
+    };
     return dbFilteredContacts.map((contact) => {
       const ownerId = contact.owner_zalo_id || activeAccountId;
-      const live = ownerId
-        ? (contacts[ownerId] || []).find(item => item.contact_id === contact.contact_id)
-        : undefined;
+      const live = ownerId ? getLive(ownerId, contact.contact_id) : undefined;
       return live ? { ...contact, ...live } : contact;
     });
   }, [dbFilteredContacts, contacts, activeAccountId]);
-  const [conversationNextOffset, setConversationNextOffset] = useState(PAGE_SIZE);
-  const [conversationExhausted, setConversationExhausted] = useState(false);
-  const listContainerRef = useRef<HTMLDivElement>(null);
-  const sentinelRef = useRef<HTMLDivElement>(null);
-  const loadMoreConversationsRef = useRef<() => void>(() => {});
-
-  // Reset displayCount khi đổi account hoặc filter
+  const listContainerRef = useRef<HTMLDivElement | null>(null);
+  // Ảnh nhóm chỉ tải khi hàng vào vùng nhìn thấy (+240px trước / sau khi cuộn): một observer cho cả danh sách
+  const [listContainerEl, setListContainerEl] = useState<HTMLDivElement | null>(null);
+  const setListContainer = useCallback((el: HTMLDivElement | null) => {
+    listContainerRef.current = el;
+    setListContainerEl(el);
+  }, []);
+  const [groupAvatarObserver, setGroupAvatarObserver] = useState<IntersectionObserver | null>(null);
   useEffect(() => {
-    setDisplayCount(PAGE_SIZE);
-    setConversationHasMore(false);
-    setConversationNextOffset(PAGE_SIZE);
-    setConversationExhausted(false);
+    if (!listContainerEl || typeof IntersectionObserver === 'undefined') return undefined;
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        const el = entry.target as HTMLElement;
+        observer.unobserve(el);
+        requestGroupAvatar(el.dataset.avatarAccount || '', el.dataset.avatarGroup || '');
+      }
+    }, { root: listContainerEl, rootMargin: '240px 0px' });
+    setGroupAvatarObserver(observer);
+    return () => {
+      observer.disconnect();
+      setGroupAvatarObserver(null);
+    };
+  }, [listContainerEl]);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  // ── Vị trí cuộn theo từng danh sách ─────────────────────────────────────
+  // Danh sách = tài khoản (hoặc trang gộp) + thư mục / bộ lọc / nhãn / kênh. Đổi sang danh sách khác rồi quay lại: về
+  // đúng chỗ cũ; danh sách mới mở từ đầu. Trước đây phần tử cuộn giữ scrollTop của danh sách trước trong khi số hàng
+  // về lại 60 → trình duyệt kẹp xuống CUỐI danh sách mới ("nhảy xuống dưới cùng"); trang gộp còn bị vậy mỗi lần mở
+  // hội thoại của tài khoản khác (đổi tài khoản đang mở làm số hàng về 60).
+  const listBaseKey = [
+    mergedInboxMode ? `merged:${mergedInboxFilterAccount || ''}` : `acc:${activeAccountId || ''}`,
+    filter, filterLabelIds.join(','), channelFilter,
+  ].join('|');
+  const listViewKey = search ? `${listBaseKey}|q:${search}` : listBaseKey;
+  const listViewStateRef = useRef(new Map<string, { top: number; count: number }>());
+  const listViewKeyRef = useRef(listViewKey);
+  const lastListScrollTopRef = useRef(0);
+  const displayCountRef = useRef(displayCount);
+  displayCountRef.current = displayCount;
+  const pendingListScrollRef = useRef<number | null>(null);
+
+  useLayoutEffect(() => {
+    const prevKey = listViewKeyRef.current;
+    if (prevKey === listViewKey) return;
+    // Kết quả tìm kiếm là tạm thời: không nhớ vị trí của chúng
+    if (!prevKey.includes('|q:')) {
+      listViewStateRef.current.set(prevKey, { top: lastListScrollTopRef.current, count: displayCountRef.current });
+    }
+    listViewKeyRef.current = listViewKey;
+    const saved = listViewKey.includes('|q:') ? undefined : listViewStateRef.current.get(listViewKey);
+    setDisplayCount(Math.max(CONVERSATION_DISPLAY_STEP, saved?.count || 0));
+    pendingListScrollRef.current = saved && saved.top > 0 ? saved.top : null;
+    const el = listContainerRef.current;
+    if (el) el.scrollTop = 0;
+    lastListScrollTopRef.current = 0;
+  }, [listViewKey]);
+
+  // Về chỗ cũ khi danh sách đã dựng đủ hàng (danh sách theo bộ lọc tải từ DB có thể tới sau vài khung hình)
+  useLayoutEffect(() => {
+    const target = pendingListScrollRef.current;
+    const el = listContainerRef.current;
+    if (target == null || !el) return;
+    if (el.scrollHeight - el.clientHeight >= target) {
+      el.scrollTop = target;
+      lastListScrollTopRef.current = target;
+      pendingListScrollRef.current = null;
+    }
+  });
+
+  const handleListScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    const top = event.currentTarget.scrollTop;
+    lastListScrollTopRef.current = top;
+    // Người dùng tự cuộn trong lúc chờ khôi phục → thôi khôi phục
+    if (top > 0 && pendingListScrollRef.current != null && Math.abs(top - pendingListScrollRef.current) > 2) {
+      pendingListScrollRef.current = null;
+    }
+  }, []);
+  const loadMoreConversationsRef = useRef<() => void>(() => {});
+  const pagingAccountRef = useRef(activeAccountId);
+
+  // Phân trang khi đổi tài khoản / bộ lọc (số hàng đang dựng theo từng danh sách: xem listViewKey ở trên)
+  useEffect(() => {
+    const accountChanged = pagingAccountRef.current !== activeAccountId;
+    pagingAccountRef.current = activeAccountId;
+    setPaging(prev => {
+      // Chỉ đổi bộ lọc: lần tải TRANG ĐẦU vừa lỗi vẫn phải được thử lại → giữ đếm lỗi
+      const next = !accountChanged && prev.failedPage === 'first'
+        ? { ...INITIAL_CONVERSATION_PAGING, failures: prev.failures, failedPage: prev.failedPage }
+        : INITIAL_CONVERSATION_PAGING;
+      return samePaging(prev, next) ? prev : next;
+    });
   }, [activeAccountId, filter, filterLabelIds, search, mergedInboxFilterAccount, channelFilter]);
 
   useEffect(() => {
     if (!activeAccountId || mergedInboxMode || conversationExhausted) return;
     const count = contacts[activeAccountId]?.length || 0;
     if (count >= PAGE_SIZE) {
-      setConversationNextOffset(prev => Math.max(prev, count));
-      setConversationHasMore(true);
+      setPaging(prev => {
+        const nextOffset = Math.max(prev.nextOffset, count);
+        return nextOffset === prev.nextOffset && prev.hasMore ? prev : { ...prev, nextOffset, hasMore: true };
+      });
     }
   }, [activeAccountId, contacts, mergedInboxMode, conversationExhausted]);
 
   const loadMoreConversations = useCallback(async () => {
     if (!activeAccountId || mergedInboxMode || conversationLoadingMore || !conversationHasMore) return;
+    const accountId = activeAccountId;
     setConversationLoadingMore(true);
+    let result: Awaited<ReturnType<typeof DataAccessor.getConversations>> | null = null;
     try {
-      const current = useChatStore.getState().contacts[activeAccountId] || [];
-      const result = await DataAccessor.getConversations(activeAccountId, PAGE_SIZE, conversationNextOffset);
-      const items = Array.isArray(result?.items) ? result.items : [];
+      result = await DataAccessor.getConversations(accountId, PAGE_SIZE, conversationNextOffset);
+      const items = !isReadFailure(result) && Array.isArray(result?.items) ? result.items : [];
       if (items.length > 0) {
+        // Đọc danh sách SAU khi tải xong: hội thoại / tin mới đến trong lúc chờ không bị ghi đè
+        const current = useChatStore.getState().contacts[accountId] || [];
         const seen = new Set(current.map((contact) => contact.contact_id));
         const merged = [
           ...current,
           ...items.filter((contact: any) => !seen.has(contact.contact_id)),
         ];
-        useChatStore.getState().setContacts(activeAccountId, merged);
+        useChatStore.getState().setContacts(accountId, merged);
       }
-      setConversationNextOffset(prev => prev + items.length);
-      setConversationHasMore(!!result?.hasMore);
-      setConversationExhausted(!result?.hasMore);
     } catch (err) {
       console.warn('[ConversationList] Failed to load more contacts:', err);
+      result = null;
     } finally {
       setConversationLoadingMore(false);
     }
+    if (isReadFailure(result)) {
+      console.warn(`[ConversationList] Không tải được thêm hội thoại (${accountId}): ${readFailureMessage(result)}`);
+    }
+    // Đổi tài khoản trong lúc chờ → phân trang đã thuộc tài khoản mới
+    if (useAccountStore.getState().activeAccountId !== accountId) return;
+    // Lỗi: giữ offset + hasMore (không còn "bỏ cuộc" vĩnh viễn sau một lần lỗi)
+    setPaging(prev => nextConversationPaging(prev, result, 'more'));
   }, [activeAccountId, mergedInboxMode, conversationHasMore, conversationLoadingMore, conversationNextOffset]);
 
   loadMoreConversationsRef.current = loadMoreConversations;
 
-  // Infinite scroll: IntersectionObserver trên sentinel element
+  /**
+   * Trang đầu hội thoại của `zaloId`: đầu danh sách lấy từ server, giữ phần đã tải phía sau.
+   * `updatePaging`: lần tải đầu / thử lại lần tải đầu (đặt lại phân trang); lần làm mới khi kết nối lại chỉ gộp.
+   * Lỗi → giữ nguyên danh sách đang có, ghi nhận lỗi để "Thử lại" (không còn thành "Không có hội thoại").
+   */
+  const loadFirstConversationPage = async (zaloId: string, updatePaging: boolean): Promise<void> => {
+    if (useChatStore.getState().conversationsLoading[zaloId]) return;
+    useChatStore.getState().setConversationsLoading(zaloId, true);
+    try {
+      let result: Awaited<ReturnType<typeof DataAccessor.getConversations>> | null = null;
+      try {
+        result = await DataAccessor.getConversations(zaloId, PAGE_SIZE, 0);
+      } catch (err) {
+        console.warn('[ConversationList] Failed to load contacts:', err);
+      }
+      const applyPaging = updatePaging && useAccountStore.getState().activeAccountId === zaloId;
+      if (applyPaging) setPaging(prev => nextConversationPaging(prev, result, 'first'));
+      if (!result || isReadFailure(result)) {
+        if (result) console.warn(`[ConversationList] Không tải được hội thoại (${zaloId}): ${readFailureMessage(result)}`);
+        // Bỏ khung xương chờ: hiện "Không tải được — Thử lại" (tự thử lại theo backoff / khi kết nối lại)
+        if (applyPaging) setInitialLoading(false);
+        return;
+      }
+      const items = Array.isArray(result.items) ? result.items : [];
+      if (items.length) {
+        const existing = useChatStore.getState().contacts[zaloId] || [];
+        const seen = new Set(items.map((contact: any) => contact.contact_id));
+        const merged = [
+          ...items,
+          ...existing.filter((contact) => !seen.has(contact.contact_id)),
+        ];
+        useChatStore.getState().setContacts(zaloId, merged);
+        console.log(`[ConversationList] Loaded ${items.length} contacts for ${zaloId} via DataAccessor`);
+      } else if (applyPaging) {
+        console.warn(`[ConversationList] No contacts returned for ${zaloId}`);
+        // Clear initial loading ngay khi load xong mà không có data
+        setInitialLoading(false);
+      }
+    } finally {
+      useChatStore.getState().setConversationsLoading(zaloId, false);
+    }
+  };
+
+  /** Thử lại lần tải hội thoại vừa lỗi — nút "Thử lại", backoff, kết nối BOSS phục hồi. */
+  const retryConversationLoad = () => {
+    const accountId = useAccountStore.getState().activeAccountId;
+    if (!accountId || mergedInboxMode) return;
+    if (paging.failedPage === 'more') loadMoreConversationsRef.current();
+    else void loadFirstConversationPage(accountId, true);
+  };
+  const retryConversationLoadRef = useRef(retryConversationLoad);
+  retryConversationLoadRef.current = retryConversationLoad;
+
+  // Tự thử lại trang lỗi: 2 s → 4 → 8 → 16 → 30 s (5 lần); sau đó chờ cuộn / "Thử lại" / kết nối lại
   useEffect(() => {
-    const sentinel = sentinelRef.current;
-    const container = listContainerRef.current;
-    if (!sentinel || !container) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0]?.isIntersecting) {
-          setDisplayCount(prev => prev + PAGE_SIZE);
-          loadMoreConversationsRef.current();
-        }
-      },
-      { root: container, threshold: 0.1 }
-    );
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [searchPanelOpen, filter, activeAccountId]); // re-attach khi panel/filter/account thay đổi
+    if (paging.failures === 0 || mergedInboxMode) return;
+    const delay = retryDelayMs(paging.failures);
+    if (delay == null) return;
+    const timer = setTimeout(() => retryConversationLoadRef.current(), delay);
+    return () => clearTimeout(timer);
+  }, [paging.failures, mergedInboxMode, activeAccountId]);
 
   const labels: LabelData[] = activeAccountId ? (allLabels[activeAccountId] || []) : [];
   const othersConversations: Set<string> = activeAccountId ? (allOthers[activeAccountId] || new Set()) : new Set();
@@ -327,25 +589,58 @@ export default function ConversationList() {
         DataAccessor.getLocalLabels({ zaloId }),
         DataAccessor.getLocalLabelThreads({ zaloId }),
       ]);
-      const localLabelsRaw = (labelsRes?.labels || [])
+      const failed = isReadFailure(labelsRes) || isReadFailure(threadsRes);
+      setLocalLabelsFailed(prev => (!!prev[zaloId] === failed ? prev : { ...prev, [zaloId]: failed }));
+      // Lỗi → giữ nhãn / gán nhãn đang có của tài khoản (trước đây bị thay bằng rỗng: mất nhãn trên danh sách)
+      setLocalLabelsByAccount(prev => mergeAccountOnSuccess(prev, zaloId, labelsRes, () => (labelsRes?.labels || [])
         .filter((l: any) => (l?.is_active ?? 1) === 1)
         .sort((a: any, b: any) => {
           const sa = Number(a?.sort_order ?? 0);
           const sb = Number(b?.sort_order ?? 0);
           if (sa !== sb) return sa - sb;
           return String(a?.name || '').localeCompare(String(b?.name || ''));
+        })));
+      setLocalLabelThreadMapByAccount(prev => mergeAccountOnSuccess(prev, zaloId, threadsRes, () => {
+        const map: Record<string, number[]> = {};
+        (threadsRes?.threads || []).forEach((row: any) => {
+          const tid = String(row.thread_id || '');
+          if (!tid) return;
+          if (!map[tid]) map[tid] = [];
+          map[tid].push(Number(row.label_id));
         });
-      const map: Record<string, number[]> = {};
-      (threadsRes?.threads || []).forEach((row: any) => {
-        const tid = String(row.thread_id || '');
-        if (!tid) return;
-        if (!map[tid]) map[tid] = [];
-        map[tid].push(Number(row.label_id));
-      });
-      setLocalLabelsByAccount(prev => ({ ...prev, [zaloId]: localLabelsRaw }));
-      setLocalLabelThreadMapByAccount(prev => ({ ...prev, [zaloId]: map }));
+        return map;
+      }));
     } catch {}
   };
+
+  const localLabelsLoadFailed = mergedInboxMode
+    ? mergedInboxAccounts.some(id => localLabelsFailed[id])
+    : !!(activeAccountId && localLabelsFailed[activeAccountId]);
+  const reloadVisibleLocalLabels = () => {
+    const ids = mergedInboxMode ? mergedInboxAccounts : (activeAccountId ? [activeAccountId] : []);
+    ids.forEach(id => { loadLocalLabelsForAccount(id).catch(() => {}); });
+  };
+
+  /** Ghim trong app của `zaloId` — lỗi đọc giữ tập ghim đang có. */
+  const reloadLocalPins = (zaloId: string) => {
+    DataAccessor.getLocalPinnedConversations({ zaloId }).then((res: any) => {
+      setLocalPinsByAccount(prev => mergeAccountOnSuccess(prev, zaloId, res, () => new Set<string>(res?.threadIds || [])));
+    }).catch(() => {});
+  };
+
+  /** Ghim Zalo (getPinConversations) của tài khoản Zalo — phản hồi lỗi giữ tập ghim đang có. */
+  const reloadZaloPins = (zaloId: string, auth: any) => {
+    // getPinConversations returns { conversations: string[], version: number }
+    // where each ID is prefixed with 'u' (user) or 'g' (group)
+    zaloApi('getPinConversations', { auth }).then((res: any) => {
+      const convIds = res?.response?.conversations;
+      if (!Array.isArray(convIds)) return;
+      setZaloPinsByAccount(prev => ({ ...prev, [zaloId]: new Set(convIds.map((id: string) => String(id).replace(/^[ug]/, ''))) }));
+    }).catch(() => {});
+  };
+
+  // Lần tải dữ liệu phụ gần nhất theo tài khoản (theo vòng đời danh sách: mở lại danh sách thì tải lại)
+  const sideDataLoadedAtRef = useRef(new Map<string, number>());
 
   // Load labels, pinned, and others conversations when account changes
   useEffect(() => {
@@ -357,22 +652,20 @@ export default function ConversationList() {
 
     // Zalo-only APIs: labels, pin conversations
     if (isZaloChannel) {
-      // Labels: dùng cache 12h, không gọi API mỗi lần chuyển tab
+      // Labels: dùng cache 12h, không gọi API mỗi lần chuyển tab (luôn gọi: lấy version nhãn của ĐÚNG tài khoản này)
       useAppStore.getState().fetchLabelsWithCache(activeAccountId, auth).then(({ version }) => {
         setLabelsVersion(version);
       }).catch(() => {});
-      // FIX: getPinConversations returns { conversations: string[], version: number }
-      // where each ID is prefixed with 'u' (user) or 'g' (group)
-      zaloApi('getPinConversations', { auth }).then((res: any) => {
-        const convIds: string[] = res?.response?.conversations || [];
-        setPinnedThreads(new Set(convIds.map((id: string) => id.replace(/^[ug]/, ''))));
-      }).catch(() => {});
     }
 
+    // Đổi qua lại liên tục: ghim / cờ / nhãn Local / nháp vừa tải → dùng lại, không truy vấn + dựng lại danh sách nữa
+    const loadedAt = sideDataLoadedAtRef.current.get(activeAccountId) || 0;
+    if (Date.now() - loadedAt < ACCOUNT_SIDE_DATA_TTL_MS) return;
+    sideDataLoadedAtRef.current.set(activeAccountId, Date.now());
+    if (isZaloChannel) reloadZaloPins(activeAccountId, auth);
+
     // Load local pinned conversations from DB
-    DataAccessor.getLocalPinnedConversations({ zaloId: activeAccountId }).then((res: any) => {
-      setLocalPinnedThreads(new Set(res?.threadIds || []));
-    }).catch(() => {});
+    reloadLocalPins(activeAccountId);
 
     // Load mute + others flags from DB into store cache
     loadFlags(activeAccountId);
@@ -388,46 +681,20 @@ export default function ConversationList() {
     if (!activeAccountId) return;
     const currentContacts = useChatStore.getState().contacts[activeAccountId] || [];
     if (currentContacts.length > 0) {
-      setConversationNextOffset(currentContacts.length);
-      setConversationHasMore(currentContacts.length >= PAGE_SIZE && !conversationExhausted);
+      setPaging(prev => {
+        const hasMore = currentContacts.length >= PAGE_SIZE && !prev.exhausted;
+        return prev.nextOffset === currentContacts.length && prev.hasMore === hasMore
+          ? prev
+          : { ...prev, nextOffset: currentContacts.length, hasMore };
+      });
       // A Telegram event can create one in-memory contact before the initial
       // database hydration runs. Do not treat that partial cache as a complete
       // standalone inbox, otherwise the remaining saved conversations never
       // reach the list after an app restart.
       if (conversationExhausted || currentContacts.length >= PAGE_SIZE) return;
     }
-    if (useChatStore.getState().conversationsLoading[activeAccountId]) return;
-
-    const loadContactsForAccount = async () => {
-      useChatStore.getState().setConversationsLoading(activeAccountId, true);
-      try {
-        const result = await DataAccessor.getConversations(activeAccountId, PAGE_SIZE, 0);
-        const items = Array.isArray(result?.items) ? result.items : [];
-        setConversationHasMore(!!result?.hasMore);
-        setConversationExhausted(!result?.hasMore);
-        setConversationNextOffset(items.length);
-        if (items.length) {
-          const existing = useChatStore.getState().contacts[activeAccountId] || [];
-          const seen = new Set(items.map((contact) => contact.contact_id));
-          const merged = [
-            ...items,
-            ...existing.filter((contact) => !seen.has(contact.contact_id)),
-          ];
-          useChatStore.getState().setContacts(activeAccountId, merged);
-          console.log(`[ConversationList] Loaded ${items.length} contacts for ${activeAccountId} via DataAccessor`);
-        } else {
-          console.warn(`[ConversationList] No contacts returned for ${activeAccountId}`);
-          // Clear initial loading ngay khi load xong mà không có data
-          setInitialLoading(false);
-        }
-      } catch (err) {
-        console.warn('[ConversationList] Failed to load contacts:', err);
-      } finally {
-        useChatStore.getState().setConversationsLoading(activeAccountId, false);
-      }
-    };
-    loadContactsForAccount();
-  }, [activeAccountId, isEmp, conversationExhausted]);
+    void loadFirstConversationPage(activeAccountId, true);
+  }, [activeAccountId, isEmp, conversationExhausted]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Clear initial loading khi contacts load lần đầu ───────────────────
   // Trong employee mode với high ping, tránh hiển thị empty state trước khi fetch xong
@@ -454,28 +721,34 @@ export default function ConversationList() {
     }
   }, [activeAccountId, contacts, initialLoading]);
 
-  // Reload local labels when toggled from MessageInput, ChatHeader, CRM, etc.
+  // Reload local labels when toggled from MessageInput, ChatHeader, CRM, etc. — và khi Boss / nhân viên khác đổi
+  // (relay db:localLabelChanged / db:localLabelThreadChanged → useZaloEvents phát lại thành window event)
   useEffect(() => {
+    const isVisibleAccount = (zaloId: string) => zaloId === activeAccountId || (mergedInboxMode && mergedInboxAccounts.includes(zaloId));
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       const zaloId = detail?.zaloId;
       if (zaloId) {
         loadLocalLabelsForAccount(zaloId).catch(() => {});
-      } else if (activeAccountId) {
-        loadLocalLabelsForAccount(activeAccountId).catch(() => {});
+      } else {
+        // Định nghĩa nhãn dùng chung đổi (không gắn tài khoản) → mọi tài khoản đang hiển thị (cả khi gộp trang)
+        reloadVisibleLocalLabels();
       }
     };
     window.addEventListener('local-labels-changed', handler);
-    // Also reload when label-thread assignments change (assign/remove)
-    const handleThreadLabelsChanged = () => {
-      if (activeAccountId) loadLocalLabelsForAccount(activeAccountId).catch(() => {});
+    // Also reload when label-thread assignments change (assign/remove/bulkAssign) — đúng tài khoản của event
+    const handleThreadLabelsChanged = (e: Event) => {
+      const owner = String((e as CustomEvent).detail?.ownerZaloId || '');
+      if (owner && !isVisibleAccount(owner)) return; // tài khoản không hiển thị: tải lại khi mở
+      const target = owner || activeAccountId;
+      if (target) loadLocalLabelsForAccount(target).catch(() => {});
     };
     window.addEventListener('ui:threadLabelsChanged', handleThreadLabelsChanged);
     return () => {
       window.removeEventListener('local-labels-changed', handler);
       window.removeEventListener('ui:threadLabelsChanged', handleThreadLabelsChanged);
     };
-  }, [activeAccountId, contacts]);
+  }, [activeAccountId, contacts, mergedInboxMode, mergedInboxAccounts.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Listen for Ctrl+K from MessageInput → focus conversation search
   useEffect(() => {
@@ -487,19 +760,30 @@ export default function ConversationList() {
     return () => window.removeEventListener('focus:conversationSearch', handler);
   }, []);
 
-  // Refresh local pinned threads when pin state changes (Ctrl+P from MessageInput)
+  // Refresh local pinned threads when pin state changes: Ctrl+P (MessageInput — chỉ có zaloId → đọc lại) hoặc relay
+  // db:pinnedConversationChanged (useZaloEvents — có threadId + isPinned → áp thẳng, không hỏi lại Boss; tiếng vọng
+  // thao tác của chính mình / ghim từ ConversationInfo, GroupInfoPanel cũng tới đây)
   useEffect(() => {
-    if (!activeAccountId) return;
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail;
-      if (!detail?.zaloId || detail.zaloId !== activeAccountId) return;
-      DataAccessor.getLocalPinnedConversations({ zaloId: activeAccountId }).then((res: any) => {
-        setLocalPinnedThreads(new Set(res?.threadIds || []));
-      }).catch(() => {});
+      const zaloId = detail?.zaloId ? String(detail.zaloId) : '';
+      if (!zaloId) return;
+      const threadId = detail?.threadId ? String(detail.threadId) : '';
+      if (threadId && typeof detail?.isPinned === 'boolean') {
+        const pinned: boolean = detail.isPinned;
+        setLocalPinsByAccount(prev => {
+          const current = prev[zaloId];
+          // Tài khoản chưa nạp ghim (nạp khi mở) / trạng thái như cũ → giữ nguyên object (không render lại)
+          if (!current || current.has(threadId) === pinned) return prev;
+          return withThreadPinned(prev, zaloId, threadId, pinned);
+        });
+        return;
+      }
+      if (zaloId === activeAccountId) reloadLocalPins(zaloId);
     };
     window.addEventListener('local-pin-changed', handler);
     return () => window.removeEventListener('local-pin-changed', handler);
-  }, [activeAccountId, contacts]);
+  }, [activeAccountId, contacts]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!mergedInboxMode) return;
@@ -508,393 +792,22 @@ export default function ConversationList() {
     });
   }, [mergedInboxMode, mergedInboxAccounts.join(',')]);
 
-  // BATCH LOAD GROUP AVATARS - Load từ DB trước, API sau
-  useEffect(() => {
-    if (!activeAccountId) return;
-
-    const loadGroupAvatars = async () => {
-      // Guard: skip if Telegram avatar fetch is still running (avoid duplicate API calls)
-      if (tgAvatarLoadingRef.current) return;
-      // Không set loading state để tránh hiển thị loading indicator
-      // setLoadingGroupAvatars(true);
-
-      try {
-        const accountContacts = useChatStore.getState().contacts[activeAccountId] || [];
-
-        // Tìm các nhóm không có avatar
-        const groupsNeedingAvatars = accountContacts.filter(c => {
-          if (c.contact_type !== 'group') return false;
-          if (c.avatar_url) return false; // Đã có group avatar
-
-          // Check cache có members với avatar không
-          const cached = groupInfoCache?.[activeAccountId]?.[c.contact_id];
-          const membersWithAvatar = cached?.members?.filter(m => m.avatar && m.userId !== 'undefined') || [];
-          return membersWithAvatar.length < 2; // Cần ít nhất 2 members có avatar
-        });
-
-        if (groupsNeedingAvatars.length === 0) {
-          setLoadingGroupAvatars(false);
-          return;
-        }
-
-        console.log(`[ConversationList] Found ${groupsNeedingAvatars.length} groups needing avatars`);
-
-        // ═══ PROGRESSIVE LOADING ═══
-        const backgroundDelay = BACKGROUND_LOAD_DELAY_MS;
-
-        // Helper function để load members của 1 group từ DB
-        const loadGroupFromDB = async (group: typeof groupsNeedingAvatars[0]): Promise<boolean> => {
-          try {
-            const res = await DataAccessor.getGroupMembers({ zaloId: activeAccountId, groupId: group.contact_id });
-            const rows: any[] = res?.members || [];
-            const validMembers = rows.filter(r => r.member_id && /^\d+$/.test(r.member_id));
-
-            if (validMembers.length >= 1) {
-              // DB có member data → update cache (cho composite avatar)
-              setGroupInfo(activeAccountId, group.contact_id, {
-                groupId: group.contact_id,
-                name: group.display_name || group.contact_id,
-                avatar: '',
-                memberCount: validMembers.length,
-                members: validMembers.map(r => ({
-                  userId: r.member_id,
-                  displayName: r.display_name || r.member_id,
-                  avatar: r.avatar || '',
-                  role: r.role || 0,
-                })),
-                creatorId: '',
-                adminIds: [],
-                settings: undefined,
-                fetchedAt: Date.now(),
-              });
-              console.log(`[ConversationList] Group ${group.contact_id}: loaded ${validMembers.length} members from DB`);
-            }
-
-            // Luôn cần API để fetch group avatar (channel logo cho Telegram, group avatar cho Zalo)
-            // Trừ employee mode (không có API) hoặc group đã có avatar
-            if (group.avatar_url) return true; // Đã có avatar, bỏ qua
-            if (useEmployeeStore.getState().mode === 'employee') return true;
-            return false; // Cần API để lấy group avatar
-          } catch (err) {
-            console.warn(`[ConversationList] DB error for group ${group.contact_id}:`, err);
-            return false; // Need API
-          }
-        };
-
-        // ═══ Employee: fire all in background, progressive update ═══
-        const isEmployee = useEmployeeStore.getState().mode === 'employee';
-        if (isEmployee) {
-          // Background batches with delay, avoid saturating connection pool
-          (async () => {
-            for (let i = 0; i < groupsNeedingAvatars.length; i += BACKGROUND_BATCH) {
-              if (i > 0) {
-                await new Promise(resolve => setTimeout(resolve, backgroundDelay));
-              }
-              const batch = groupsNeedingAvatars.slice(i, i + BACKGROUND_BATCH);
-              await Promise.all(batch.map(g => loadGroupFromDB(g).catch(() => {})));
-            }
-          })();
-        } else {
-          // ═══ Boss: initial batch blocking, background batches + API ═══
-          const initialGroups = groupsNeedingAvatars.slice(0, INITIAL_BATCH);
-          const remainingGroups = groupsNeedingAvatars.slice(INITIAL_BATCH);
-          const groupsNeedingAPI: string[] = [];
-
-          // Load initial batch synchronously
-          for (const group of initialGroups) {
-            const success = await loadGroupFromDB(group);
-            if (!success) {
-              groupsNeedingAPI.push(group.contact_id);
-            }
-          }
-
-          // Load remaining groups in background (non-blocking)
-          if (remainingGroups.length > 0) {
-            console.log(`[ConversationList] Loading ${remainingGroups.length} remaining groups in background...`);
-
-            (async () => {
-              for (let i = 0; i < remainingGroups.length; i += BACKGROUND_BATCH) {
-                if (i > 0) {
-                  await new Promise(resolve => setTimeout(resolve, backgroundDelay));
-                }
-
-                const batch = remainingGroups.slice(i, i + BACKGROUND_BATCH);
-                for (const group of batch) {
-                  const success = await loadGroupFromDB(group);
-                  if (!success) {
-                    groupsNeedingAPI.push(group.contact_id);
-                  }
-                }
-              }
-
-              if (groupsNeedingAPI.length > 0) {
-                console.log(`[ConversationList] ${groupsNeedingAPI.length} groups need API call (background)`);
-                await loadGroupsFromAPI(groupsNeedingAPI, activeAccountId);
-              }
-            })();
-          } else if (groupsNeedingAPI.length > 0) {
-            console.log(`[ConversationList] ${groupsNeedingAPI.length} groups need API call`);
-            await loadGroupsFromAPI(groupsNeedingAPI, activeAccountId);
-          }
-        }
-
-      } finally {
-        setLoadingGroupAvatars(false);
-      }
-    };
-
-    // Helper function để load groups từ API
-    const loadGroupsFromAPI = async (groupIds: string[], accountId: string) => {
-      const acc = useAccountStore.getState().getActiveAccount();
-      if (!acc) return;
-      const accChannel = (acc.channel || CHANNEL.ZALO) as string;
-
-      // ── Telegram: use adapter (no batch API, throttle 1 req/500ms) ──
-      if (isTelegram(accChannel)) {
-        tgAvatarLoadingRef.current = true;
-        const TG_THROTTLE_MS = 500;
-        console.log(`[ConversationList] Telegram: fetching avatars for ${groupIds.length} groups`);
-        try {
-          for (let i = 0; i < groupIds.length; i++) {
-            const groupId = groupIds[i];
-            try {
-              const adapter = getAdapter(accChannel as Channel);
-              const res = await (adapter as any).getGroupInfo({ accountId, threadId: groupId });
-              if (res?.success && res.info) {
-                const info = res.info.entity || res.info.full || res.info || {};
-                const name = info.title || info.username || '';
-                const avatarUrl = res.info.avatarUrl || '';
-
-                // Persist to DB
-                if (name || avatarUrl) {
-                  await DataAccessor.updateContactProfile({
-                    zaloId: accountId, contactId: groupId,
-                    displayName: name || groupId, avatarUrl: avatarUrl || '',
-                    phone: '', contactType: 'group',
-                  }).catch(() => {});
-                }
-                // Update in-memory contact
-                if (name || avatarUrl) {
-                  useChatStore.getState().updateContact(accountId, {
-                    contact_id: groupId,
-                    ...(name ? { display_name: name } : {}),
-                    ...(avatarUrl ? { avatar_url: avatarUrl } : {}),
-                    contact_type: 'group',
-                  });
-                }
-                console.log(`[ConversationList] Telegram group ${i+1}/${groupIds.length} ${groupId}: avatar=${!!avatarUrl} name="${name}"`);
-              } else {
-                console.warn(`[ConversationList] Telegram group ${groupId}: getGroupInfo failed`, res?.error);
-              }
-            } catch (err) {
-              console.warn(`[ConversationList] Telegram getGroupInfo failed for ${groupId}:`, err);
-            }
-            // Throttle to avoid Telegram rate limits
-            if (i < groupIds.length - 1) {
-              await new Promise(r => setTimeout(r, TG_THROTTLE_MS));
-            }
-          }
-        } finally {
-          tgAvatarLoadingRef.current = false;
-          console.log(`[ConversationList] Telegram: avatar fetch complete`);
-        }
-        return;
-      }
-
-      // ── Zalo: batch getGroupInfo (max 10/request) ──
-      const auth = buildZaloAuth(acc, accountId);
-
-      // Batch getGroupInfo (max 10/request)
-      const batchSize = 10;
-      for (let i = 0; i < groupIds.length; i += batchSize) {
-        const batch = groupIds.slice(i, i + batchSize);
-
-        let gridMap: Record<string, any> = {};
-        try {
-          const res = await ipc.zalo?.getGroupInfo({ auth, groupId: batch });
-          gridMap = res?.response?.gridInfoMap || {};
-        } catch (err) {
-          console.warn('[ConversationList] Batch getGroupInfo failed:', err);
-          continue;
-        }
-
-        for (const groupId of batch) {
-          const gi = gridMap[groupId];
-          if (!gi) continue;
-
-          const groupName   = gi.name || gi.nameChanged || groupId;
-          const groupAvatar = gi.avt  || gi.fullAvt     || '';
-          const creatorId   = (gi.creatorId || gi.creator || '').replace(/_0$/, '');
-          const adminIds    = (gi.adminIds || gi.subAdmins || []).map((a: string) => a.replace(/_0$/, ''));
-          const adminSet    = new Set([creatorId, ...adminIds]);
-
-          // Update contact name/avatar
-          await DataAccessor.updateContactProfile({
-            zaloId: accountId, contactId: groupId,
-            displayName: groupName, avatarUrl: groupAvatar, phone: '', contactType: 'group',
-          }).catch(() => {});
-
-          // Parse member IDs (smart memVerList parsing, same as zaloGroupUtils)
-          const parseMemVerList = (list: string[]): string[] =>
-            list.map(entry => {
-              if (typeof entry !== 'string') return String(entry || '');
-              const lastUnder = entry.lastIndexOf('_');
-              if (lastUnder <= 0) return entry;
-              const possibleVer = entry.substring(lastUnder + 1);
-              if (/^\d+$/.test(possibleVer) && possibleVer.length < entry.substring(0, lastUnder).length)
-                return entry.substring(0, lastUnder);
-              return entry;
-            }).filter(uid => uid && /^\d+$/.test(uid));
-
-          const rawIds: string[] =
-            gi.memberIds?.length > 0     ? gi.memberIds.map(String) :
-            gi.currentMems?.length > 0   ? gi.currentMems.map((m: any) => String(m.id || '')) :
-            parseMemVerList(gi.memVerList || []);
-
-          const memberIds: string[] = [...new Set(
-            rawIds.map(id => id.replace(/_0$/, '').trim()).filter(id => /^\d+$/.test(id))
-          )];
-
-          if (memberIds.length === 0) continue;
-
-          // Placeholders: empty displayName → forces full enrichment in syncZaloGroups
-          const placeholders: MemberPlaceholder[] = memberIds.map(memberId => ({
-            memberId,
-            displayName: '',
-            avatar: '',
-            role: memberId === creatorId ? 2 : adminSet.has(memberId) ? 1 : 0,
-          }));
-
-          // Reload from DB and update groupInfoCache after each sync phase
-          const reloadFromDB = async (isFinal = false) => {
-            const dbRes = await DataAccessor.getGroupMembers({ zaloId: accountId, groupId });
-            const rows: any[] = (dbRes?.members ?? []).filter((r: any) => /^\d+$/.test(r.member_id?.trim() ?? ''));
-            if (rows.length === 0) return;
-
-            const trueTotalMembers = gi.totalMember || rows.length;
-            let effectiveAvatar = groupAvatar;
-            if (isFinal && !effectiveAvatar && trueTotalMembers <= 1) {
-              const memberAvatar = rows.find((r: any) => r.avatar)?.avatar || '';
-              if (memberAvatar) {
-                effectiveAvatar = memberAvatar;
-                DataAccessor.updateContactProfile({
-                  zaloId: accountId, contactId: groupId,
-                  displayName: groupName, avatarUrl: effectiveAvatar,
-                  phone: '', contactType: 'group',
-                }).catch(() => {});
-                console.log(`[ConversationList] Group ${groupId}: single-member, using member avatar as group avatar`);
-              }
-            }
-
-            setGroupInfo(accountId, groupId, {
-              groupId,
-              name: groupName,
-              avatar: effectiveAvatar,
-              memberCount: Math.max(trueTotalMembers, rows.length),
-              members: rows.map(r => ({
-                userId: r.member_id,
-                displayName: r.display_name || '',
-                avatar: r.avatar || '',
-                role: r.role ?? 0,
-              })),
-              creatorId, adminIds,
-              settings: gi.setting || {},
-              fetchedAt: Date.now(),
-            });
-            console.log(`[ConversationList] Group ${groupId}: enriched ${rows.filter((r: any) => r.avatar).length}/${rows.length} members`);
-          };
-
-          // Use syncZaloGroups (pre-parsed → skips duplicate getGroupInfo call)
-          await syncZaloGroups({
-            activeAccountId: accountId,
-            auth,
-            groupId,
-            memberIds,
-            placeholders,
-            onPhase1Done: () => reloadFromDB(false),
-            onGroupEnriched: () => reloadFromDB(true),
-          }).catch(err => console.warn(`[ConversationList] syncZaloGroups failed for ${groupId}:`, err));
-        }
-
-        // Add small delay between API batches to avoid rate limiting
-        if (i + batchSize < groupIds.length) {
-          await new Promise(resolve => setTimeout(resolve, 300));
-        }
-      }
-    };
-
-    // Delay 1s để contacts load xong từ DB
-    const timer = setTimeout(loadGroupAvatars, 1000);
-    return () => clearTimeout(timer);
-  }, [activeAccountId, contacts]);
-
-  // MERGED MODE: Load group avatars từ DB cho tất cả tài khoản trong merged list
-  useEffect(() => {
-    if (!mergedInboxMode || mergedInboxAccounts.length === 0) return;
-
-    const loadMergedGroupAvatars = async () => {
-
-      for (const zaloId of mergedInboxAccounts) {
-        const accountContacts = useChatStore.getState().contacts[zaloId] || [];
-        const groupsNeedingAvatars = accountContacts.filter(c => {
-          if (c.contact_type !== 'group') return false;
-          const cached = groupInfoCache?.[zaloId]?.[c.contact_id];
-          const membersWithId = cached?.members?.filter(m => m.userId && m.userId !== 'undefined') || [];
-          return membersWithId.length < 2;
-        });
-
-        if (groupsNeedingAvatars.length === 0) continue;
-
-        // Progressive loading: batch by batch with delay
-        for (let i = 0; i < groupsNeedingAvatars.length; i += BATCH_SIZE) {
-          if (i > 0) {
-            await new Promise(resolve => setTimeout(resolve, BATCH_DELAY_MS));
-          }
-
-          const batch = groupsNeedingAvatars.slice(i, i + BATCH_SIZE);
-          for (const group of batch) {
-            try {
-              const res = await DataAccessor.getGroupMembers({ zaloId, groupId: group.contact_id });
-              const rows: any[] = res?.members || [];
-              const validMembers = rows.filter(r => r.member_id && /^\d+$/.test(r.member_id));
-              if (validMembers.length >= 2) {
-                setGroupInfo(zaloId, group.contact_id, {
-                  groupId: group.contact_id,
-                  name: group.display_name || group.contact_id,
-                  avatar: group.avatar_url || '',
-                  memberCount: validMembers.length,
-                  members: validMembers.map(r => ({
-                    userId: r.member_id,
-                    displayName: r.display_name || r.member_id,
-                    avatar: r.avatar || '',
-                    role: r.role || 0,
-                  })),
-                  creatorId: '',
-                  adminIds: [],
-                  settings: undefined,
-                  fetchedAt: Date.now(),
-                });
-              }
-            } catch { /* ignore */ }
-          }
-        }
-      }
-    };
-
-    const timer = setTimeout(loadMergedGroupAvatars, 1500);
-    return () => clearTimeout(timer);
-  }, [mergedInboxMode, mergedInboxAccounts.join(',')]);
-
+  // Ảnh nhóm: tải theo hàng đang hiện (ConversationGroupAvatar → groupAvatarLoader), không quét cả tài khoản.
 
   // Background fetch group info for groups without real names
   // Chỉ chạy 1 lần khi activeAccountId thay đổi - KHÔNG depend vào contacts
   // để tránh gọi API liên tục mỗi khi nhận tin nhắn mới
+  const groupNamesFetchedAtRef = useRef(new Map<string, number>());
   useEffect(() => {
     if (!activeAccountId) return;
     const acc = useAccountStore.getState().getActiveAccount();
     if (!acc) return;
     // Guard: chỉ fetch group info cho Zalo accounts
     if (isNonZalo(acc.channel)) return;
+    // Đổi qua lại giữa các tài khoản: đã hỏi tên nhóm của tài khoản này trong 10 phút → bỏ qua
+    const fetchedAt = groupNamesFetchedAtRef.current.get(activeAccountId) || 0;
+    if (Date.now() - fetchedAt < 10 * 60_000) return;
+    groupNamesFetchedAtRef.current.set(activeAccountId, Date.now());
     const auth = buildZaloAuth(acc, activeAccountId);
 
     // Delay nhỏ để contacts kịp load từ DB
@@ -1010,16 +923,94 @@ export default function ConversationList() {
   }, 0);
   // Unread riêng của thư mục "Khác" - chỉ dùng để hiện dấu chấm đỏ
   const othersUnreadCount = accountContacts.reduce((s, c) => {
-    if (!othersConversations.has(c.contact_id)) return s;
+    if (!othersConversations.has(c.contact_id) || isTelegramNonMember(c)) return s;
     return s + (c.unread_count > 0 ? 1 : 0);
   }, 0);
   // const unrepliedCount = accountContacts.reduce((s, c) => s + (c.unread_count > 0 && c.is_replied !== 1 ? 1 : 0), 0);
   const othersCount = accountContacts.reduce((s, c) => s + (othersConversations.has(c.contact_id) ? 1 : 0), 0);
 
+  // Zalo "My Documents": hội thoại CÓ SẴN của Zalo, đồng bộ với Zalo (ID = loginInfo.send2me_id, KHÔNG phải UID của
+  // mình). Như Zalo: luôn ở đầu danh sách của tài khoản, không bỏ ghim được; hộp thư gộp chỉ ghim khi đã có tin.
+  // Ít khi có tin mới nên thường nằm ở trang sau → tải bù theo id như hội thoại ghim (không tự dựng hội thoại nào).
+  const accountOf = useCallback(
+    (accountId?: string | null) => allAccountsList.find(a => a.zalo_id === accountId),
+    [allAccountsList],
+  );
+  const activeMyDocsId = myDocumentsThreadId(activeAccountObj);
+
+  // Ghim Zalo + ghim trên máy + My Documents của tài khoản đang xem (không áp cho hộp thư gộp)
+  const pinnedIdsKey = useMemo(() => {
+    if (!activeAccountId || mergedInboxMode) return '';
+    const ids = new Set<string>([...pinnedThreads, ...localPinnedThreads]);
+    if (activeMyDocsId) ids.add(activeMyDocsId);
+    return [...ids].filter(Boolean).sort().join(',');
+  }, [activeAccountId, mergedInboxMode, pinnedThreads, localPinnedThreads, activeMyDocsId]);
+  const loadedContactCount = activeAccountId ? (contacts[activeAccountId]?.length || 0) : 0;
+  const pinnedExtrasRef = useRef(pinnedExtrasByAccount);
+  pinnedExtrasRef.current = pinnedExtrasByAccount;
+  /** Tải bù theo id các hội thoại chưa có trong trang nào đã tải (DB, không gọi Zalo). */
+  const requestPinnedExtras = useCallback((accountId: string, ids: string[]) => {
+    const loaded = new Set((useChatStore.getState().contacts[accountId] || []).map((contact) => contact.contact_id));
+    const fetched = new Set((pinnedExtrasRef.current[accountId] || []).map((contact: any) => contact.contact_id));
+    const missing = ids.filter((id) => id && !loaded.has(id) && !fetched.has(id));
+    if (missing.length === 0) return;
+    // Mỗi bộ id chỉ hỏi 1 lần (id không có trong DB thì thôi); lỗi đọc → cho hỏi lại lần sau
+    const requestKey = `${accountId}|${missing.join(',')}`;
+    if (pinnedExtrasRequestedRef.current.has(requestKey)) return;
+    pinnedExtrasRequestedRef.current.add(requestKey);
+    DataAccessor.getConversationsByIds(accountId, missing).then((result: any) => {
+      if (!result?.success) {
+        pinnedExtrasRequestedRef.current.delete(requestKey);
+        return;
+      }
+      const items: any[] = Array.isArray(result.items) ? result.items : [];
+      if (items.length === 0) return;
+      setPinnedExtrasByAccount((prev) => {
+        const byId = new Map((prev[accountId] || []).map((contact: any) => [contact.contact_id, contact]));
+        for (const contact of items) byId.set(contact.contact_id, contact);
+        return { ...prev, [accountId]: [...byId.values()] };
+      });
+    }).catch(() => { pinnedExtrasRequestedRef.current.delete(requestKey); });
+  }, []);
+  useEffect(() => {
+    if (!activeAccountId || !pinnedIdsKey) return;
+    requestPinnedExtras(activeAccountId, pinnedIdsKey.split(','));
+  }, [activeAccountId, pinnedIdsKey, loadedContactCount, requestPinnedExtras]);
+  // Hộp thư gộp: My Documents của từng tài khoản Zalo đang gộp
+  const mergedMyDocsKey = useMemo(() => {
+    if (!mergedInboxMode) return '';
+    return mergedInboxAccounts
+      .map((accountId) => {
+        const threadId = myDocumentsThreadId(accountOf(accountId));
+        return threadId ? `${accountId}:${threadId}` : '';
+      })
+      .filter(Boolean)
+      .join(',');
+  }, [mergedInboxMode, mergedInboxAccounts, accountOf]);
+  useEffect(() => {
+    if (!mergedMyDocsKey) return;
+    for (const pair of mergedMyDocsKey.split(',')) {
+      const [accountId, threadId] = pair.split(':');
+      requestPinnedExtras(accountId, [threadId]);
+    }
+  }, [mergedMyDocsKey, requestPinnedExtras]);
+
+  // Danh sách hiển thị = các trang đã tải + hội thoại ghim tải bù (chưa có trong trang nào, vẫn đang được ghim)
+  const pinnedExtras = (activeAccountId && pinnedExtrasByAccount[activeAccountId]) || EMPTY_PINNED_EXTRAS;
+  const accountContactsWithPinned = useMemo(() => {
+    if (pinnedExtras.length === 0) return accountContacts;
+    const loaded = new Set(accountContacts.map((contact) => contact.contact_id));
+    const extras = pinnedExtras.filter((contact: any) => !loaded.has(contact.contact_id) && (
+      pinnedThreads.has(contact.contact_id) || localPinnedThreads.has(contact.contact_id)
+      || isMyDocumentsContact(contact, activeAccountObj)
+    ));
+    return extras.length > 0 ? [...accountContacts, ...extras] : accountContacts;
+  }, [accountContacts, pinnedExtras, pinnedThreads, localPinnedThreads, activeAccountObj]);
+
   // ── Filtered list: dùng DB result khi có filter, fallback memory filter ──
   const filtered = useMemo(() => {
     // Ưu tiên DB-filtered result (nhanh, đã filter channel/search/unread/others ở DB level)
-    const rawSource = dbFilteredContactsWithLiveState ?? accountContacts;
+    const rawSource = dbFilteredContactsWithLiveState ?? accountContactsWithPinned;
     // Safety: luôn loại bỏ hội thoại "Khác" khi không ở tab "Khác"
     const source = filter === 'others'
       ? rawSource.filter(c => othersConversations.has(c.contact_id))
@@ -1063,22 +1054,53 @@ export default function ConversationList() {
       ? preFiltered.filter(c => c.unread_count > 0)
       : preFiltered;
 
+    // Khoá sắp xếp tính 1 lần / hội thoại (thứ tự y hệt): trước đây mỗi lần so sánh lại ghép chuỗi + tra Set
+    const sortKeys = new Map<any, { md: number; lp: number; p: number; out: number; hasDraft: boolean; draftTs: number; time: number }>();
+    for (const c of liveFiltered) {
+      const draftKey = `${activeAccountId}_${c.contact_id}`;
+      sortKeys.set(c, {
+        md: isMyDocumentsContact(c, activeAccountObj) ? 1 : 0,
+        lp: localPinnedThreads.has(c.contact_id) ? 1 : 0,
+        p: pinnedThreads.has(c.contact_id) ? 1 : 0,
+        out: filter === 'others' && isTelegramNonMember(c) ? 1 : 0,
+        hasDraft: c.contact_id !== activeThreadId && !!drafts[draftKey],
+        draftTs: draftTimestamps[draftKey] || 0,
+        time: c.last_message_time || 0,
+      });
+    }
     return liveFiltered.sort((a, b) => {
-      const aLP = localPinnedThreads.has(a.contact_id) ? 1 : 0, bLP = localPinnedThreads.has(b.contact_id) ? 1 : 0;
-      if (aLP !== bLP) return bLP - aLP;
-      const aP = pinnedThreads.has(a.contact_id) ? 1 : 0, bP = pinnedThreads.has(b.contact_id) ? 1 : 0;
-      if (aP !== bP) return bP - aP;
-      const aDraftKey = `${activeAccountId}_${a.contact_id}`;
-      const bDraftKey = `${activeAccountId}_${b.contact_id}`;
-      const aHasDraft = a.contact_id !== activeThreadId && !!drafts[aDraftKey];
-      const bHasDraft = b.contact_id !== activeThreadId && !!drafts[bDraftKey];
-      if (aHasDraft !== bHasDraft) return aHasDraft ? -1 : 1;
-      if (aHasDraft && bHasDraft) {
-        return (draftTimestamps[bDraftKey] || 0) - (draftTimestamps[aDraftKey] || 0);
-      }
-      return (b.last_message_time || 0) - (a.last_message_time || 0);
+      const ka = sortKeys.get(a)!, kb = sortKeys.get(b)!;
+      if (ka.md !== kb.md) return kb.md - ka.md;
+      if (ka.lp !== kb.lp) return kb.lp - ka.lp;
+      if (ka.p !== kb.p) return kb.p - ka.p;
+      // Groups/channels the account is no longer in never update; keep them
+      // below the archived conversations, under their own heading.
+      if (filter === 'others' && ka.out !== kb.out) return ka.out - kb.out;
+      if (ka.hasDraft !== kb.hasDraft) return ka.hasDraft ? -1 : 1;
+      if (ka.hasDraft && kb.hasDraft) return kb.draftTs - ka.draftTs;
+      return kb.time - ka.time;
     });
-  }, [dbFilteredContactsWithLiveState, accountContacts, filter, othersConversations, filterLabelIds, effectiveFilterLabelSource, filterLabelMode, labels, localLabelThreadMapByAccount, activeAccountId, localPinnedThreads, pinnedThreads, activeThreadId, drafts, draftTimestamps]);
+  }, [dbFilteredContactsWithLiveState, accountContactsWithPinned, filter, othersConversations, filterLabelIds, effectiveFilterLabelSource, filterLabelMode, labels, localLabelThreadMapByAccount, activeAccountId, localPinnedThreads, pinnedThreads, activeThreadId, drafts, draftTimestamps, activeAccountObj]);
+
+  // Nhãn Zalo đầu tiên (theo thứ tự nhãn của tài khoản) của mỗi hội thoại: tính 1 lần khi nhãn đổi, thay vì mỗi hàng
+  // quét toàn bộ nhãn × danh sách hội thoại của nhãn ở mỗi lần render
+  const firstZaloLabelIndex = useMemo(() => {
+    const index = new Map<string, Map<string, { label: LabelData; order: number }>>();
+    for (const [zaloId, accountLabels] of Object.entries(allLabels)) {
+      const byConversation = new Map<string, { label: LabelData; order: number }>();
+      (accountLabels || []).forEach((label, order) => {
+        for (const conversationId of label.conversations || []) {
+          if (!byConversation.has(conversationId)) byConversation.set(conversationId, { label, order });
+        }
+      });
+      index.set(zaloId, byConversation);
+    }
+    return index;
+  }, [allLabels]);
+
+  const nonMemberSectionIndex = filter === 'others' && !mergedInboxMode
+    ? filtered.findIndex(contact => isTelegramNonMember(contact))
+    : -1;
 
   // ── Chế độ Gộp trang: gộp contacts từ tất cả tài khoản được chọn ──────────
   const mergedContacts = useMemo(() => {
@@ -1087,22 +1109,33 @@ export default function ConversationList() {
     for (const zaloId of mergedInboxAccounts) {
       const acctContacts = contacts[zaloId] || [];
       result.push(...acctContacts);
+      // My Documents ở trang chưa tải (tải bù theo id)
+      const account = accountOf(zaloId);
+      for (const extra of pinnedExtrasByAccount[zaloId] || []) {
+        if (isMyDocumentsContact(extra, account) && !acctContacts.some(c => c.contact_id === extra.contact_id)) result.push(extra);
+      }
+    }
+    // Draft priority: conversations with drafts sort to top; skip draft for the currently active thread.
+    // Khoá tính 1 lần / hội thoại (thứ tự y hệt) — danh sách gộp có thể vài nghìn mục, sắp lại theo mỗi tin nhắn.
+    const sortKeys = new Map<any, { md: number; hasDraft: boolean; draftTs: number; time: number }>();
+    for (const c of result) {
+      const draftKey = `${c.owner_zalo_id}_${c.contact_id}`;
+      sortKeys.set(c, {
+        md: isPinnedMyDocuments(c, accountOf(c.owner_zalo_id)) ? 1 : 0,
+        hasDraft: c.contact_id !== activeThreadId && !!drafts[draftKey],
+        draftTs: draftTimestamps[draftKey] || 0,
+        time: c.last_message_time || 0,
+      });
     }
     result.sort((a, b) => {
-      // Draft priority: conversations with drafts sort to top
-      // Skip draft for the currently active thread
-      const aDraftKey = `${a.owner_zalo_id}_${a.contact_id}`;
-      const bDraftKey = `${b.owner_zalo_id}_${b.contact_id}`;
-      const aHasDraft = a.contact_id !== activeThreadId && !!drafts[aDraftKey];
-      const bHasDraft = b.contact_id !== activeThreadId && !!drafts[bDraftKey];
-      if (aHasDraft !== bHasDraft) return aHasDraft ? -1 : 1;
-      if (aHasDraft && bHasDraft) {
-        return (draftTimestamps[bDraftKey] || 0) - (draftTimestamps[aDraftKey] || 0);
-      }
-      return (b.last_message_time || 0) - (a.last_message_time || 0);
+      const ka = sortKeys.get(a)!, kb = sortKeys.get(b)!;
+      if (ka.md !== kb.md) return kb.md - ka.md;
+      if (ka.hasDraft !== kb.hasDraft) return ka.hasDraft ? -1 : 1;
+      if (ka.hasDraft && kb.hasDraft) return kb.draftTs - ka.draftTs;
+      return kb.time - ka.time;
     });
     return result;
-  }, [mergedInboxMode, mergedInboxAccounts, contacts, drafts, draftTimestamps, activeThreadId]);
+  }, [mergedInboxMode, mergedInboxAccounts, contacts, drafts, draftTimestamps, activeThreadId, accountOf, pinnedExtrasByAccount]);
 
   // Merge nhãn từ tất cả tài khoản trong merged mode - trùng tên thì gộp 1
   const mergedLabels = useMemo(() => {
@@ -1196,9 +1229,88 @@ export default function ConversationList() {
   const mergedOthersUnreadCount = mergedContacts
     ? mergedContacts.reduce((s, c) => {
         const ownerOthers = (allOthers[c.owner_zalo_id!] || new Set()) as Set<string>;
-        if (!ownerOthers.has(c.contact_id)) return s;
+        if (!ownerOthers.has(c.contact_id) || isTelegramNonMember(c)) return s;
         return s + (c.unread_count > 0 ? 1 : 0);
       }, 0) : 0;
+
+  // Sentinel cuộn vô hạn có đang hiển thị: observer phải gắn lại khi sentinel xuất hiện SAU lần render đầu
+  // (danh sách tải xong / trang lỗi được thử lại) — trước đây chỉ gắn khi đổi panel, bộ lọc hoặc tài khoản.
+  const showConversationSentinel = displayCount < (mergedInboxMode ? (filteredMerged?.length ?? 0) : filtered.length)
+    || (!mergedInboxMode && conversationHasMore);
+
+  // Infinite scroll: IntersectionObserver trên sentinel element
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    const container = listContainerRef.current;
+    if (!sentinel || !container) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          setDisplayCount(prev => prev + CONVERSATION_DISPLAY_STEP);
+          loadMoreConversationsRef.current();
+        }
+      },
+      // Hiện thêm trước khi cuộn chạm cuối danh sách (đỡ khựng khi cuộn)
+      { root: container, threshold: 0.1, rootMargin: '0px 0px 600px 0px' }
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [searchPanelOpen, filter, activeAccountId, showConversationSentinel]); // re-attach khi panel/filter/account/sentinel thay đổi
+
+  // ── Chế độ nhân viên: kết nối BOSS phục hồi → tải lại phần đang hiển thị (lỗi trong lúc mất kết nối đã được
+  // giữ dữ liệu cũ, giờ làm mới): cờ + nhãn (appStore), Nhãn Local, ghim, hội thoại, tin nhắn hội thoại đang mở nếu
+  // lần tải trước lỗi (trống).
+  useEmployeeResync(async () => {
+    const accountId = useAccountStore.getState().activeAccountId;
+    const ids = mergedInboxMode && mergedInboxAccounts.length > 0 ? mergedInboxAccounts : (accountId ? [accountId] : []);
+    if (ids.length === 0) return;
+    const tasks: Promise<unknown>[] = [useAppStore.getState().reloadEmployeeData(ids)];
+    for (const id of ids) {
+      tasks.push(loadLocalLabelsForAccount(id));
+      const isActiveList = !mergedInboxMode && id === accountId;
+      const listEmpty = !(useChatStore.getState().contacts[id]?.length);
+      // Trang đầu: tải lại (lần đầu lỗi / danh sách trống → đặt lại phân trang; còn lại chỉ gộp, giữ phần đã tải)
+      tasks.push(loadFirstConversationPage(id, isActiveList && (paging.failedPage === 'first' || listEmpty)));
+      // Trang tiếp theo vừa lỗi → thử lại ngay
+      if (isActiveList && paging.failedPage === 'more') loadMoreConversationsRef.current();
+    }
+    if (accountId) {
+      reloadLocalPins(accountId);
+      const acc = useAccountStore.getState().getActiveAccount();
+      if (acc && isZalo(acc.channel)) reloadZaloPins(accountId, buildZaloAuth(acc, accountId));
+      // Hội thoại đang mở → tải trang tin mới nhất. Chưa có tin (lần tải lúc mất kết nối lỗi) → đặt luôn. Đã có tin →
+      // gộp: tin trong trang mới lấy bản của Boss (thu hồi / cảm xúc / sửa trong lúc mất kết nối), giữ tin cũ hơn đã
+      // tải + tin đang gửi (temp_). Mất kết nối lâu / Boss khởi động lại (catch-up không phát lại được) thì tin đã lỡ
+      // chỉ về qua đây — trước đây hội thoại đang mở thiếu tin tới khi mở lại.
+      const chat = useChatStore.getState();
+      const threadId = chat.activeThreadId;
+      if (threadId && !chat.activeTopicId) {
+        tasks.push(DataAccessor.getMessages({ zaloId: accountId, threadId, limit: MESSAGE_LOAD_LIMIT, offset: 0 }).then((res: any) => {
+          const msgs: any[] = res?.messages || res?.items || [];
+          if (isReadFailure(res) || msgs.length === 0) return;
+          const latest = useChatStore.getState();
+          if (latest.activeThreadId !== threadId || latest.activeTopicId || useAccountStore.getState().activeAccountId !== accountId) return;
+          const fresh = [...msgs].reverse();
+          const cached = latest.messages[getMessageCacheKey(accountId, threadId)] || [];
+          if (cached.length === 0) {
+            latest.setMessages(accountId, threadId, fresh);
+            return;
+          }
+          const isTemp = (m: any) => String(m.msg_id || '').startsWith('temp_');
+          const freshIds = new Set(fresh.map((m: any) => String(m.msg_id)));
+          const newestCached = cached.reduce((max, m) => (isTemp(m) ? max : Math.max(max, Number(m.timestamp || 0))), 0);
+          const oldestFresh = fresh.reduce((min, m: any) => Math.min(min, Number(m.timestamp || 0)), Number.POSITIVE_INFINITY);
+          // Trang mới đầy và toàn tin mới hơn bộ nhớ → giữa hai phần có thể còn khoảng trống: thay hẳn (giữ tin đang gửi)
+          const kept = fresh.length >= MESSAGE_LOAD_LIMIT && oldestFresh > newestCached
+            ? cached.filter(isTemp)
+            : cached.filter((m) => !freshIds.has(String(m.msg_id)));
+          const merged = [...kept, ...fresh].sort((a: any, b: any) => (a.timestamp || 0) - (b.timestamp || 0));
+          latest.setMessages(accountId, threadId, merged);
+        }));
+      }
+    }
+    await Promise.allSettled(tasks);
+  });
 
 
   // ── Helper: thực sự tìm kiếm SĐT với tài khoản đã xác định ──────────────────
@@ -1299,6 +1411,17 @@ export default function ConversationList() {
     const selectedContact = (contacts[zaloId] || []).find(c => c.contact_id === contactId);
     const isTgGroup = threadType === 1 && isTelegramUser(selectedContact?.channel || accChannel);
 
+    // Tin trong máy được hỏi TRƯỚC mọi lệnh khác: main xử lý IPC lần lượt (SQLite đồng bộ) nên các lệnh ghi bên dưới (đã
+    // đọc, cờ @…) không được chen trước db:getMessages. Hội thoại đã có tin trong bộ nhớ thì hiện ngay; phần đã cuộn lên
+    // xem lần trước được cắt về trang mới nhất (như khi đọc DB) để lần vẽ đầu không phải dựng hàng trăm tin.
+    const messageKey = getMessageCacheKey(zaloId, contactId);
+    const cachedMessages = useChatStore.getState().messages[messageKey];
+    if (cachedMessages && useChatStore.getState().activeThreadId !== contactId) {
+      const newest = newestMessages(cachedMessages, MESSAGE_LOAD_LIMIT);
+      if (newest !== cachedMessages) setMessages(zaloId, contactId, [...newest]);
+    }
+    const messagesRequest = DataAccessor.getMessages({ zaloId, threadId: contactId, limit: MESSAGE_LOAD_LIMIT, offset: 0 });
+
     // Always open chat first (non-blocking) — clear topic state
     useChatStore.setState({
       activeThreadId: contactId,
@@ -1311,16 +1434,24 @@ export default function ConversationList() {
     if (isMobile) setMobileShowChat(true);
     DataAccessor.markAsRead({ zaloId, contactId }).catch(() => {});
     // Telegram needs an MTProto read acknowledgement as well as the local DB
-    // unread reset. This applies to channels, groups, forums and their topics.
-    if (isTelegramUser(selectedContact?.channel || accChannel)) {
+    // unread reset (ReadHistory + @-mentions + reactions). This applies to channels,
+    // groups, forums and their topics. Facebook: read receipt (was missing here).
+    // Zalo: sendSeenForThread once the messages are loaded (below).
+    const openedChannel = selectedContact?.channel || accChannel;
+    if (isTelegramUser(openedChannel) || isFacebook(openedChannel)) {
       void import('@/lib/adapters/registry')
-        .then(({ getAdapter }) => getAdapter('telegram_user').markAsRead({ accountId: zaloId, threadId: contactId }))
+        .then(({ getAdapter }) => getAdapter(isFacebook(openedChannel) ? 'facebook' : 'telegram_user')
+          .markAsRead({ accountId: zaloId, threadId: contactId }))
         .catch(() => {});
     }
     clearUnread(zaloId, contactId);
-    // Clear @mention flag when conversation is opened
-    DataAccessor.setContactFlags?.({ zaloId, contactId, flags: { has_mention: 0 } }).catch(() => {});
-    updateContact(zaloId, { contact_id: contactId, has_mention: 0 } as any);
+    // Clear @mention flag when conversation is opened — chỉ khi cờ đang bật / chưa biết: mỗi lần ghi là 1 lệnh DB + phát
+    // event cho nhân viên + sắp lại cả danh sách hội thoại.
+    const openedContact = (useChatStore.getState().contacts[zaloId] || []).find(c => c.contact_id === contactId);
+    if (!openedContact || openedContact.has_mention !== 0) {
+      DataAccessor.setContactFlags?.({ zaloId, contactId, flags: { has_mention: 0 } }).catch(() => {});
+      updateContact(zaloId, { contact_id: contactId, has_mention: 0 } as any);
+    }
     ipc.app?.setBadge(getFilteredUnreadCount());
     if (!overrideZaloId) loadLabelsIfStale();
 
@@ -1365,16 +1496,8 @@ export default function ConversationList() {
     // (Forum check runs in background above — if detected, forumChatId will be set)
 
     try {
-      console.log(`[ConversationList] handleSelect: calling DataAccessor.getMessages zaloId=${zaloId} threadId=${contactId} isEmp=${useEmployeeStore.getState().mode}`);
-    const res = await DataAccessor.getMessages({ zaloId, threadId: contactId, limit: MESSAGE_LOAD_LIMIT, offset: 0 });
+    const res = await messagesRequest;
     const dbMessages = res?.messages || res?.items || [];
-    console.log(`[ConversationList] handleSelect: ${dbMessages.length} msgs for ${contactId}`);
-    dbMessages.slice(0, 5).forEach((m: any, i: number) => {
-      let atts: any[] = []; try { atts = JSON.parse(m.attachments || '[]'); } catch {}
-      let lp: any = {}; try { lp = JSON.parse(m.local_paths || '{}'); } catch {}
-      const a0 = atts[0] || {};
-      console.log(`[ConvList] msg[${i}] id=${m.msg_id} type=${m.msg_type} sent=${m.is_sent} ch=${m.channel} content="${(m.content||'').slice(0,50)}" att_type=${a0.type||'-'} att_url=${(a0.url||'').slice(0,40)||'-'} att_lp=${(a0.localPath||'').slice(0,60)||'-'} att_mime=${a0.mime_type||'-'} att_fid=${a0.file_id?String(a0.file_id).slice(0,20):'-'} lp=${JSON.stringify(lp)} reply=${m.reply_to_id||'-'} quote=${m.quote_data?'y':'n'} react=${m.reactions?'y':'n'}`);
-    });
     if (dbMessages.length > 0) {
       // Build lookup map for reply_to_id → original message content
       const msgLookup = new Map<string, { content: string; type: string }>();
@@ -1396,8 +1519,9 @@ export default function ConversationList() {
         }
         return m;
       });
-      setMessages(zaloId, contactId, [...mapped].reverse());
-      console.log(`[ConversationList] handleSelect: setMessages OK count=${mapped.length} for ${contactId}`);
+      const page = [...mapped].reverse();
+      // Bộ nhớ đã đúng trang này (mở lại hội thoại vừa xem) → giữ mảng cũ, khỏi vẽ lại mọi tin ngay sau khi vừa hiện
+      if (!isSameMessagePage(useChatStore.getState().messages[messageKey], page)) setMessages(zaloId, contactId, page);
       // Gửi sự kiện đã đọc — truyền lastMsg để tránh query lại DB
       const lastMsg = dbMessages[0]; // already sorted DESC
       sendSeenForThread(zaloId, contactId, threadType, null, lastMsg);
@@ -1440,6 +1564,24 @@ export default function ConversationList() {
       }
       // Sync is_replied dựa trên tin nhắn cuối thực tế
       syncRepliedState(zaloId, contactId, zaloId);
+      // Facebook: tin rỗng trong trang mới nhất (tin mẫu / đính kèm mà bản cũ chưa đọc được) → tải lại trang mới nhất qua
+      // bridge (lưu DB sửa đúng hàng rỗng) rồi vá các tin đó. Chỉ khi có hàng rỗng nên không tốn mạng mỗi lần mở.
+      const emptyFbIds = isFacebook(accChannel) ? dbMessages.filter(isEmptyFacebookRow).map((m: any) => String(m.msg_id)) : [];
+      if (emptyFbIds.length > 0) {
+        void (async () => {
+          try {
+            const res: any = await ipc.fb?.fetchOlderMessages({ accountId: zaloId!, threadId: contactId });
+            if (!res?.success || !(res.stored > 0)) return;
+            const fixed = await DataAccessor.getMessagesByIds({ zaloId: zaloId!, msgIds: emptyFbIds });
+            for (const row of fixed?.messages || []) {
+              if (isEmptyFacebookRow(row)) continue;
+              useChatStore.getState().patchMessage(zaloId!, contactId, row.msg_id, {
+                content: row.content, msg_type: row.msg_type, attachments: row.attachments, is_recalled: row.is_recalled,
+              } as any);
+            }
+          } catch { /* lần mở sau thử lại */ }
+        })();
+      }
     } else {
       // Employee mode: load từ REST API qua DataAccessor
       const isEmp = useEmployeeStore.getState().mode === 'employee';
@@ -1490,9 +1632,13 @@ export default function ConversationList() {
               // fallback covers a thread opened before that background sync
               // reaches it; regular chats are available through GraphQL.
               try {
-                const fbRes = await ipc.fb?.fetchThreadMessages({
-                  accountId: zaloId!, threadId: contactId, limit: MESSAGE_LOAD_LIMIT,
-                });
+                // Trang mới nhất: hội thoại chưa có tin nào trong máy làm mốc cho FetchMessagesTask → main lấy qua GraphQL
+                // (source 'graphql', đã thử thì không gọi lại); bridge chưa chạy / bản cũ → đường GraphQL cũ. Hội thoại
+                // mã hoá đầu cuối: Facebook không cho tải tin cũ.
+                const bridgeRes: any = await ipc.fb?.fetchOlderMessages({ accountId: zaloId!, threadId: contactId });
+                const fbRes: any = bridgeRes?.success || bridgeRes?.code === 'E2EE' || bridgeRes?.source === 'graphql'
+                  ? bridgeRes
+                  : await ipc.fb?.fetchThreadMessages({ accountId: zaloId!, threadId: contactId, limit: MESSAGE_LOAD_LIMIT });
                 if (fbRes?.success) {
                   const refreshed = await DataAccessor.getMessages({
                     zaloId: zaloId!, threadId: contactId, limit: MESSAGE_LOAD_LIMIT,
@@ -1642,6 +1788,28 @@ export default function ConversationList() {
     setFilterDropdownOpen(false);
   };
 
+  /** Thao tác nhanh (tạo / tham gia nhóm, thêm bạn) xong → mở hội thoại, đổi tài khoản nếu thao tác bằng tài khoản khác. */
+  const openQuickActionConversation: OpenQuickConversation = (accountId, threadId, threadType, info) => {
+    if (!accountId || !threadId) return;
+    const existing = (useChatStore.getState().contacts[accountId] || []).find(c => c.contact_id === threadId);
+    updateContact(accountId, {
+      contact_id: threadId,
+      ...(info?.display_name && isUidOnlyName(existing) ? { display_name: info.display_name } : {}),
+      ...(info?.avatar_url && !existing?.avatar_url ? { avatar_url: info.avatar_url } : {}),
+      ...(info?.channel ? { channel: info.channel as Channel } : {}),
+      ...(existing ? {} : { contact_type: threadType === 1 ? 'group' : 'user', last_message_time: Date.now() }),
+    });
+    setSearchPanelOpen(false);
+    if (accountId !== useAccountStore.getState().activeAccountId) {
+      if (activeAccountId && activeThreadId) saveAccountThread(activeAccountId, activeThreadId, activeThreadType);
+      isManualSelectingRef.current = true;
+      setActiveAccount(accountId);
+      void handleSelect(threadId, threadType, accountId);
+    } else {
+      void handleSelect(threadId, threadType);
+    }
+  };
+
 
   const handleTogglePin = async (contactId: string, threadType: number) => {
     const acc = useAccountStore.getState().getActiveAccount(); if (!acc) return;
@@ -1654,7 +1822,7 @@ export default function ConversationList() {
     if (isTelegramUser(acc.channel)) {
       const result = await ipc.telegramUser?.setDialogPin({ accountId: acc.zalo_id, chatId: contactId, pinned: !wasPinned });
       if (result?.success) {
-        setPinnedThreads(prev => { const s = new Set(prev); wasPinned ? s.delete(contactId) : s.add(contactId); return s; });
+        setZaloPinsByAccount(prev => withThreadPinned(prev, acc.zalo_id, contactId, !wasPinned));
         showNotification(wasPinned ? 'Đã bỏ ghim hội thoại' : 'Đã ghim hội thoại', 'success');
       } else {
         showNotification('Lỗi ghim: ' + (result?.error || 'Không thể ghim'), 'error');
@@ -1665,7 +1833,7 @@ export default function ConversationList() {
     const auth = buildZaloAuth(acc, activeAccountId);
     const result = await zaloApi('setPinConversation', { auth, conversations: [{ threadId: contactId, type: threadType }], isPin: !wasPinned });
     if (result?.success) {
-      setPinnedThreads(prev => { const s = new Set(prev); wasPinned ? s.delete(contactId) : s.add(contactId); return s; });
+      setZaloPinsByAccount(prev => withThreadPinned(prev, acc.zalo_id, contactId, !wasPinned));
       showNotification(wasPinned ? 'Đã bỏ ghim hội thoại' : 'Đã ghim hội thoại', 'success');
     } else {
       showNotification('Lỗi ghim: ' + (result?.error || 'Không thể ghim'), 'error');
@@ -1673,13 +1841,64 @@ export default function ConversationList() {
     setCtxMenu(null);
   };
 
+  // ─── Tự động đánh dấu đã đọc: phạm vi = tài khoản đang xem (hoặc các tài khoản Gộp trang) của kênh đang lọc ──
+  const autoReadAccountIds = React.useMemo(() => {
+    const base = mergedInboxMode && mergedInboxAccounts.length ? mergedInboxAccounts : (activeAccountId ? [activeAccountId] : []);
+    return base.filter(id => channelFilter === 'all' || (allAccountsList.find(a => a.zalo_id === id)?.channel || CHANNEL.ZALO) === channelFilter);
+  }, [mergedInboxMode, mergedInboxAccounts, activeAccountId, channelFilter, allAccountsList]);
+  const autoReadScopeLabel = React.useMemo(() => {
+    if (autoReadAccountIds.length === 0) return 'không có tài khoản phù hợp kênh đang lọc';
+    const names = autoReadAccountIds.map(id => {
+      const account = allAccountsList.find(a => a.zalo_id === id);
+      return account?.full_name || (account as any)?.display_name || id;
+    });
+    const channelPart = channelFilter !== 'all' ? ` · kênh ${getChannelLabel(channelFilter as Channel)}` : '';
+    return (names.length <= 2 ? names.join(', ') : `${names.length} tài khoản`) + channelPart;
+  }, [autoReadAccountIds, allAccountsList, channelFilter]);
+
+  // ─── Tin đánh dấu ──────────────────────────────────────────────────────────
+  const starredAccountIds = React.useMemo(
+    () => (mergedInboxMode && mergedInboxAccounts.length ? mergedInboxAccounts : (activeAccountId ? [activeAccountId] : [])),
+    [mergedInboxMode, mergedInboxAccounts, activeAccountId],
+  );
+  // Số tin đánh dấu theo đúng phạm vi panel: gộp trang → mọi tài khoản đang gộp (hoặc tài khoản đang lọc)
+  const starredCountIds = React.useMemo(() => {
+    if (mergedInboxMode && mergedInboxFilterAccount && starredAccountIds.includes(mergedInboxFilterAccount)) {
+      return [mergedInboxFilterAccount];
+    }
+    return starredAccountIds;
+  }, [mergedInboxMode, mergedInboxFilterAccount, starredAccountIds]);
+  const starredCount = useStarredStore(s => starredCountIds.reduce((sum, id) => sum + (s.keys[id]?.size || 0), 0));
+  useEffect(() => {
+    for (const id of starredCountIds) void useStarredStore.getState().load(id);
+  }, [starredCountIds]);
+
+  /** Mở hội thoại của tin đánh dấu rồi nhảy tới tin (ChatWindow chờ hội thoại tải xong mới nhảy). */
+  const openStarredMessage = (item: StarredItem) => {
+    if (item.ownerId && item.ownerId !== activeAccountId) {
+      isManualSelectingRef.current = true;
+      setActiveAccount(item.ownerId);
+      handleSelect(item.threadId, item.threadType, item.ownerId);
+    } else if (item.threadId !== activeThreadId) {
+      handleSelect(item.threadId, item.threadType);
+    }
+    window.dispatchEvent(new CustomEvent('chat:jumpToMessage', {
+      detail: { accountId: item.ownerId || activeAccountId, threadId: item.threadId, messageId: item.msgId },
+    }));
+  };
+
   const handleToggleLocalPin = async (contactId: string) => {
     const zId = activeAccountId; if (!zId) return;
     const wasPinned = localPinnedThreads.has(contactId);
-    await DataAccessor.setLocalPinnedConversation({ zaloId: zId, threadId: contactId, isPinned: !wasPinned });
-    setLocalPinnedThreads(prev => { const s = new Set(prev); wasPinned ? s.delete(contactId) : s.add(contactId); return s; });
-    showNotification(wasPinned ? 'Đã bỏ ghim khỏi app' : 'Đã ghim trong app', 'success');
+    const res: any = await DataAccessor.setLocalPinnedConversation({ zaloId: zId, threadId: contactId, isPinned: !wasPinned });
     setCtxMenu(null);
+    // Nhân viên: Boss từ chối / mất kết nối → báo lỗi, không đổi trạng thái ghim trên UI (trước đây luôn báo thành công)
+    if (res?.success === false) {
+      showNotification(`Không ${wasPinned ? 'bỏ ghim' : 'ghim'} được: ${res.error || 'lỗi không xác định'}`, 'error');
+      return;
+    }
+    setLocalPinsByAccount(prev => withThreadPinned(prev, zId, contactId, !wasPinned));
+    showNotification(wasPinned ? 'Đã bỏ ghim khỏi app' : 'Đã ghim trong app', 'success');
   };
 
   const handleMute = (contactId: string, until: number, overrideZaloId?: string) => {
@@ -1698,7 +1917,7 @@ export default function ConversationList() {
       return;
     }
     if (!accObj || !channelSupports(accObj.channel || CHANNEL.ZALO, 'supportsMuteSync')) return;
-    const auth = { cookies: accObj.cookies, imei: accObj.imei, userAgent: accObj.user_agent };
+    const auth = buildZaloAuth(accObj);
     const contact = (useChatStore.getState().contacts[zId] || []).find(c => c.contact_id === contactId);
     const threadType = contact?.contact_type === 'group' ? 1 : 0;
     const duration = muteUntilToDuration(until);
@@ -1746,7 +1965,7 @@ export default function ConversationList() {
       return;
     }
     if (!channelSupports(ch, 'supportsMuteSync')) return;
-    const auth = { cookies: accObj.cookies, imei: accObj.imei, userAgent: accObj.user_agent };
+    const auth = buildZaloAuth(accObj);
     const contact = (useChatStore.getState().contacts[zId] || []).find(c => c.contact_id === contactId);
     const threadType = contact?.contact_type === 'group' ? 1 : 0;
     zaloApi('setMute', { auth, threadId: contactId, threadType, duration: -1, action: 1 }).catch(() => {});
@@ -1783,16 +2002,13 @@ export default function ConversationList() {
     if (!zId) return;
     const accObj = useAccountStore.getState().accounts.find(a => a.zalo_id === zId);
     const isZaloAcc = accObj && isZalo(accObj.channel);
-    const auth = (isZaloAcc && accObj) ? { cookies: accObj.cookies, imei: accObj.imei, userAgent: accObj.user_agent } : null;
+    const auth = (isZaloAcc && accObj) ? buildZaloAuth(accObj) : null;
     const contact = (contacts[zId] || []).find(c => c.contact_id === contactId);
     const threadType = contact?.contact_type === 'group' ? 1 : 0;
 
     if (asRead) {
-      clearUnread(zId, contactId);
-      DataAccessor.markAsRead({ zaloId: zId, contactId }).catch(() => {});
-      if (auth) zaloApi('removeUnreadMark', { auth, threadId: contactId, type: threadType }).catch(() => {});
-      // sendSeenForThread already has its own channel guard
-      sendSeenForThread(zId, contactId, threadType, auth);
+      // App (DB + store, cả dấu @) rồi nền tảng: Zalo seen + bỏ dấu chưa đọc, Telegram ReadHistory + @/reaction, Facebook
+      void markConversationRead({ accountId: zId, threadId: contactId, threadType });
     } else {
       useChatStore.getState().updateContact(zId, { contact_id: contactId, unread_count: 1 });
       if (auth) zaloApi('addUnreadMark', { auth, threadId: contactId, type: threadType }).catch(() => {});
@@ -1808,7 +2024,7 @@ export default function ConversationList() {
       showNotification('Nhãn Zalo không khả dụng cho kênh Facebook', 'warning');
       return;
     }
-    const auth = { cookies: accObj.cookies, imei: accObj.imei, userAgent: accObj.user_agent };
+    const auth = buildZaloAuth(accObj);
 
     // Use 'g' prefix for groups - consistent with Zalo's label API
     const contact = (contacts[zId] || []).find(c => c.contact_id === contactId);
@@ -1897,7 +2113,7 @@ export default function ConversationList() {
 
     if (accObj && isZalo(accObj.channel)) {
       try {
-        const auth = { cookies: accObj.cookies, imei: accObj.imei, userAgent: accObj.user_agent };
+        const auth = buildZaloAuth(accObj);
         const msgRes = await DataAccessor.getMessages({ zaloId: zId, threadId: contactId, limit: 1 });
         const lastMsg = msgRes?.messages?.[0];
         if (lastMsg) {
@@ -1930,8 +2146,10 @@ export default function ConversationList() {
     const hasUnread = contact.unread_count > 0;
     const ctxOthers: Set<string> = (allOthers[ctxZaloId] || new Set()) as Set<string>;
     const ctxLabels: LabelData[] = allLabels[ctxZaloId] || [];
+    // My Documents: Zalo luôn ghim ở đầu, không bỏ ghim / chuyển vào Khác / mời vào nhóm
+    const ctxIsMyDocs = isMyDocumentsContact(contact, accountOf(ctxZaloId));
     return (
-      <div ref={ctxRef} className="fixed z-50 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl py-1 min-w-[190px]"
+      <div ref={ctxRef} className="fixed z-50 bg-card border border-border rounded-xl shadow-2xl py-1 min-w-[190px]"
         style={{ top: Math.min(ctxMenu.y, window.innerHeight - 320), left: Math.min(ctxMenu.x, window.innerWidth - 210) }}>
         <CtxItem icon={hasUnread ? <CheckIcon className="w-4 h-4" /> : <CircleIcon className="w-4 h-4" />} label={hasUnread ? 'Đánh dấu đã đọc' : 'Đánh dấu chưa đọc'} onClick={() => handleMarkRead(contact.contact_id, hasUnread, ctxZaloId)} />
 
@@ -1945,10 +2163,10 @@ export default function ConversationList() {
             <CtxItem icon={<BellOffIcon className="w-4 h-4" />} label="Tắt thông báo" hasArrow onClick={() => {}} />
           )}
           {!isMuted && muteSubmenuId === contact.contact_id && (
-            <div className="absolute left-full top-0 bg-gray-800 border border-gray-700 rounded-xl shadow-xl min-w-[200px] py-1 z-50">
+            <div className="absolute left-full top-0 bg-card border border-border rounded-xl shadow-xl min-w-[200px] py-1 z-50">
               {MUTE_OPTIONS.map(opt => (
                 <button key={opt.label} onClick={() => handleMute(contact.contact_id, opt.until(), ctxZaloId)}
-                  className="w-full flex items-center px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white text-left transition-colors">
+                  className="w-full flex items-center px-4 py-2 text-sm text-foreground/80 hover:bg-muted hover:text-foreground text-left transition-colors">
                   {opt.label}
                 </button>
               ))}
@@ -1956,46 +2174,48 @@ export default function ConversationList() {
           )}
         </div>
 
-        {ctxChannelCap.supportsPinConversation && (
+        {ctxChannelCap.supportsPinConversation && !ctxIsMyDocs && (
           <CtxItem icon={isPinned ? <MapPinIcon className="w-4 h-4" /> : <PinIcon className="w-4 h-4" />} label={isPinned ? `Bỏ ghim (${isTelegramUser(contact.channel) ? 'Telegram' : 'Zalo'})` : `Ghim (đồng bộ ${isTelegramUser(contact.channel) ? 'Telegram' : 'Zalo'})`} onClick={() => handleTogglePin(contact.contact_id, threadType)} />
         )}
-        <CtxItem icon={isLocalPinned ? <BookmarkIcon className="w-4 h-4" /> : <PaperclipIcon className="w-4 h-4" />} label={isLocalPinned ? 'Bỏ ghim trong app' : 'Ghim trong app'} onClick={() => handleToggleLocalPin(contact.contact_id)} />
-        {ctxOthers.has(contact.contact_id) ? (
+        {!ctxIsMyDocs && (
+          <CtxItem icon={isLocalPinned ? <BookmarkIcon className="w-4 h-4" /> : <PaperclipIcon className="w-4 h-4" />} label={isLocalPinned ? 'Bỏ ghim trong app' : 'Ghim trong app'} onClick={() => handleToggleLocalPin(contact.contact_id)} />
+        )}
+        {ctxIsMyDocs ? null : ctxOthers.has(contact.contact_id) ? (
           <CtxItem icon={<GlobeIcon className="w-4 h-4" />} label="Chuyển về Chính" onClick={() => handleRemoveFromOthers(contact.contact_id, ctxZaloId)} />
         ) : (
           <div className="flex items-center">
             <button
               onClick={() => handleMoveToOthers(contact.contact_id, ctxZaloId)}
-              className="flex-1 flex items-center gap-2 px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-700 hover:text-white text-left transition-colors"
+              className="flex-1 flex items-center gap-2 px-3 py-1.5 text-sm text-foreground/80 hover:bg-muted hover:text-foreground text-left transition-colors"
             >
               <span><FolderIcon className="w-4 h-4" /></span>
               <span>Chuyển vào Khác</span>
             </button>
             <div className="relative group pr-2">
-              <span className="w-4 h-4 rounded-full border border-gray-500 text-gray-400 hover:border-gray-300 hover:text-gray-300 flex items-center justify-center text-xs cursor-default select-none transition-colors">
+              <span className="w-4 h-4 rounded-full border border-border-strong text-muted-foreground hover:border-gray-300 hover:text-foreground/80 flex items-center justify-center text-xs cursor-default select-none transition-colors">
                 ?
               </span>
-              <div className="absolute right-0 bottom-full mb-1 w-64 bg-gray-900 border border-gray-600 rounded-lg shadow-xl p-3 text-xs text-gray-300 leading-relaxed z-[60] hidden group-hover:block pointer-events-none">
+              <div className="absolute right-0 bottom-full mb-1 w-64 bg-popover border border-input rounded-lg shadow-xl p-3 text-xs text-foreground/80 leading-relaxed z-[60] hidden group-hover:block pointer-events-none">
                 <p>Dùng để lưu các hội thoại không quan trọng. Các hội thoại trong thư mục này sẽ <span className="text-yellow-400 font-medium">không phát âm thanh</span> và <span className="text-yellow-400 font-medium">không hiện thông báo</span> khi có tin nhắn mới.</p>
               </div>
             </div>
           </div>
         )}
 
-        {contact.contact_type !== 'group' && ctxChannelCap.supportsInviteToGroup && (
+        {contact.contact_type !== 'group' && ctxChannelCap.supportsInviteToGroup && !ctxIsMyDocs && (
           <>
-            <div className="border-t border-gray-700 my-1" />
+            <div className="border-t border-border my-1" />
             <CtxItem icon={<UsersIcon className="w-4 h-4" />} label="Mời vào nhóm" onClick={() => { setCtxMenu(null); setInviteContactId(contact.contact_id); }} />
           </>
         )}
-        <div className="border-t border-gray-700 my-1" />
+        <div className="border-t border-border my-1" />
         <div className="flex items-center">
           <CtxItem icon={<TrashIcon className="w-4 h-4" />} label="Xóa hội thoại" onClick={() => handleDeleteConversation(contact.contact_id, ctxZaloId)} danger />
           <div className="relative group pr-2">
-              <span className="w-4 h-4 rounded-full border border-gray-500 text-gray-400 hover:border-gray-300 hover:text-gray-300 flex items-center justify-center text-xs cursor-default select-none transition-colors">
+              <span className="w-4 h-4 rounded-full border border-border-strong text-muted-foreground hover:border-gray-300 hover:text-foreground/80 flex items-center justify-center text-xs cursor-default select-none transition-colors">
                 ?
               </span>
-            <div className="absolute right-0 bottom-full mb-1 w-64 bg-gray-900 border border-gray-600 rounded-lg shadow-xl p-3 text-xs text-gray-300 leading-relaxed z-[60] hidden group-hover:block pointer-events-none">
+            <div className="absolute right-0 bottom-full mb-1 w-64 bg-popover border border-input rounded-lg shadow-xl p-3 text-xs text-foreground/80 leading-relaxed z-[60] hidden group-hover:block pointer-events-none">
               <p>Chỉ xoá dữ liệu <span className="text-yellow-400 font-medium">trên app này</span></p>
             </div>
           </div>
@@ -2008,7 +2228,7 @@ export default function ConversationList() {
   // open; collapsing it into an icon rail loses titles and selection context.
   if (forumChatId && forumAccountId && (!isMobile || !activeTopicId)) {
     return (
-      <div className={`${isMobile ? 'w-full' : 'w-full'} border-r border-gray-700 flex-shrink-0`}>
+      <div className={`${isMobile ? 'w-full' : 'w-full'} border-r border-border flex-shrink-0`}>
         <ForumTopicsPanel
           accountId={forumAccountId}
           chatId={forumChatId}
@@ -2043,12 +2263,12 @@ export default function ConversationList() {
   }
 
   return (
-    <div className={`flex flex-col h-full border-r border-gray-700 bg-gray-850 relative w-full`}>
+    <div className={`flex flex-col h-full bg-card relative w-full`}>
       {/* Search row - Zalo style */}
-      <div className="px-2 pt-2 pb-1 border-b border-gray-700 flex items-center gap-1.5">
+      <div className="px-2 pt-2 pb-1 border-b border-border flex items-center gap-1.5">
         {/* Search input wrapper */}
-        <div className={`flex items-center gap-2 bg-gray-700/60 border rounded-full px-3 py-1.5 transition-all flex-1 min-w-0 ${searchPanelOpen ? 'border-blue-500 bg-gray-700' : 'border-gray-600 hover:border-gray-500'}`}>
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-400 flex-shrink-0">
+        <div className={`flex items-center gap-2 bg-muted/60 border rounded-full px-3 py-1.5 transition-all flex-1 min-w-0 ${searchPanelOpen ? 'border-blue-500 bg-muted' : 'border-input hover:border-border-strong'}`}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted-foreground flex-shrink-0">
             <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
           </svg>
           <input
@@ -2058,12 +2278,12 @@ export default function ConversationList() {
             onChange={e => handleSearchChange(e.target.value)}
             onKeyDown={e => { if (e.key === 'Escape') { setSearchPanelOpen(false); setSearch(''); searchInputRef.current?.blur(); } }}
             placeholder="Tìm kiếm..."
-            className="flex-1 bg-transparent text-sm text-white placeholder-gray-500 focus:outline-none min-w-0"
+            className="flex-1 bg-transparent text-sm text-foreground placeholder-subtle-foreground focus:outline-none min-w-0"
           />
           {search && (
             <button
               onClick={() => { setSearch(''); setPhoneResult(null); setSearchPanelOpen(false); searchInputRef.current?.blur(); }}
-              className="w-4 h-4 rounded-full bg-gray-500 hover:bg-gray-400 flex items-center justify-center text-gray-900 flex-shrink-0 transition-colors"
+              className="w-4 h-4 rounded-full bg-accent hover:bg-gray-400 flex items-center justify-center text-gray-900 flex-shrink-0 transition-colors"
             >
               <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
                 <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -2079,15 +2299,9 @@ export default function ConversationList() {
           >
             Đóng
           </button>
-        ) : channelCap.supportsCreateGroup ? (
-          <button title="Tạo nhóm" onClick={() => setCreateGroupOpen(true)}
-            className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-white hover:bg-gray-700 flex-shrink-0">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/>
-              <path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/>
-            </svg>
-          </button>
-        ) : null}
+        ) : (
+          <QuickActionsButton activeThread={quickActiveThread} onOpenConversation={openQuickActionConversation} />
+        )}
       </div>
 
       {/* GlobalSearchPanel - fills remaining space below search bar when active */}
@@ -2100,7 +2314,6 @@ export default function ConversationList() {
             allAccounts={allAccountsList}
             mergedInboxMode={mergedInboxMode}
             mergedInboxAccounts={mergedInboxAccounts}
-            groupInfoCache={groupInfoCache}
             onSelectConversation={(contactId, threadType, overrideZaloId, userInfo) => {
               // Nếu có userInfo từ phone/username search → cập nhật contact trước khi mở hội thoại
               if (userInfo) {
@@ -2182,9 +2395,19 @@ export default function ConversationList() {
         </div>
       )}
 
-      {/* Filter tabs + Contact list - hidden when global search is open */}
-      {!searchPanelOpen && (<>
-      <div className="flex border-b border-gray-700 relative">
+      {/* Tin đánh dấu - thay chỗ tab + danh sách hội thoại */}
+      {!searchPanelOpen && starredPanelOpen && (
+        <StarredMessagesPanel
+          accountIds={starredAccountIds}
+          showChannel={mergedInboxMode}
+          onOpen={openStarredMessage}
+          onClose={() => setStarredPanelOpen(false)}
+        />
+      )}
+
+      {/* Filter tabs + Contact list - hidden when global search / Tin đánh dấu is open */}
+      {!searchPanelOpen && !starredPanelOpen && (<>
+      <div className="flex border-b border-border relative">
         <TabBtn label="Tất cả" active={filter === 'all'} onClick={() => { setFilter('all'); setFilterLabelIds([]); setFilterDropdownOpen(false); setMoreMenuOpen(false); }} />
         <TabBtn label="Chưa đọc" active={filter === 'unread'} onClick={() => { setFilter('unread'); setFilterLabelIds([]); setFilterDropdownOpen(false); setMoreMenuOpen(false); }} badge={mergedInboxMode ? mergedUnreadCount : unreadCount} />
 
@@ -2201,39 +2424,39 @@ export default function ConversationList() {
             fullWidth
           />
           {filter === 'label' && filterDropdownOpen && (
-            <div className="absolute top-full left-0 z-30 bg-gray-800 border border-gray-700 rounded-xl shadow-xl min-w-[220px] py-1">
+            <div className="absolute top-full left-0 z-30 bg-card border border-border rounded-xl shadow-xl min-w-[220px] py-1">
               {/* Local / Zalo sub-tabs */}
-              <div className="px-2 pt-1.5 pb-1 border-b border-gray-700/60">
-                <div className="flex bg-gray-700/60 rounded-md p-0.5 gap-0.5">
+              <div className="px-2 pt-1.5 pb-1 border-b border-border/60">
+                <div className="flex bg-muted/60 rounded-md p-0.5 gap-0.5">
                   <button onClick={() => { setFilterLabelSource('local'); setFilterLabelIds([]); }}
                     className={`flex-1 px-2 py-1 rounded text-[11px] font-medium transition-colors ${
-                      effectiveFilterLabelSource === 'local' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'
+                      effectiveFilterLabelSource === 'local' ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'
                     }`}><HardDriveIcon className="w-4 h-4 inline" /> Local</button>
                   {canUseZaloLabelFilter && (
                     <button onClick={() => { setFilterLabelSource('zalo'); setFilterLabelIds([]); }}
                       className={`flex-1 px-2 py-1 rounded text-[11px] font-medium transition-colors ${
-                        effectiveFilterLabelSource === CHANNEL.ZALO ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'
+                        effectiveFilterLabelSource === CHANNEL.ZALO ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'
                       }`}><CloudIcon className="w-4 h-4 inline" /> Zalo</button>
                   )}
                 </div>
               </div>
 
               {/* AND/OR filter mode radio */}
-              <div className="px-2 py-1.5 border-b border-gray-700/60">
+              <div className="px-2 py-1.5 border-b border-border/60">
                 <div className="flex flex-col gap-1">
-                  <label className="flex items-center gap-2 px-1 py-0.5 rounded hover:bg-gray-700/50 cursor-pointer text-xs"
+                  <label className="flex items-center gap-2 px-1 py-0.5 rounded hover:bg-muted/50 cursor-pointer text-xs"
                     onClick={() => setFilterLabelMode('all')}>
-                    <div className={`w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${filterLabelMode === 'all' ? 'border-blue-500' : 'border-gray-500'}`}>
+                    <div className={`w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${filterLabelMode === 'all' ? 'border-blue-500' : 'border-border-strong'}`}>
                       {filterLabelMode === 'all' && <div className="w-2 h-2 rounded-full bg-blue-500" />}
                     </div>
-                    <span className="text-gray-300">Tất cả nhãn đã chọn</span>
+                    <span className="text-foreground/80">Tất cả nhãn đã chọn</span>
                   </label>
-                  <label className="flex items-center gap-2 px-1 py-0.5 rounded hover:bg-gray-700/50 cursor-pointer text-xs"
+                  <label className="flex items-center gap-2 px-1 py-0.5 rounded hover:bg-muted/50 cursor-pointer text-xs"
                     onClick={() => setFilterLabelMode('any')}>
-                    <div className={`w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${filterLabelMode === 'any' ? 'border-blue-500' : 'border-gray-500'}`}>
+                    <div className={`w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${filterLabelMode === 'any' ? 'border-blue-500' : 'border-border-strong'}`}>
                       {filterLabelMode === 'any' && <div className="w-2 h-2 rounded-full bg-blue-500" />}
                     </div>
-                    <span className="text-gray-300">Có chứa 1 trong số nhãn</span>
+                    <span className="text-foreground/80">Có chứa 1 trong số nhãn</span>
                   </label>
                 </div>
               </div>
@@ -2242,21 +2465,23 @@ export default function ConversationList() {
                 /* ── Local labels list (multi-select) ── */
                 <>
                   <button onClick={() => { setFilterLabelIds([]); setFilterDropdownOpen(false); }}
-                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-gray-700 text-left ${filterLabelIds.length === 0 ? 'text-white' : 'text-gray-400'}`}>
-                    <span className="w-3 h-3 rounded-full bg-gray-500 flex-shrink-0" />
+                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted text-left ${filterLabelIds.length === 0 ? 'text-foreground' : 'text-muted-foreground'}`}>
+                    <span className="w-3 h-3 rounded-full bg-accent flex-shrink-0" />
                     <span className="text-blue-700">Tất cả Nhãn Local</span>
                     {filterLabelIds.length === 0 && <span className="ml-auto text-blue-600">✓</span>}
                   </button>
-                  {localLabels.length === 0 ? (
-                    <p className="text-xs text-gray-400 px-3 py-2 italic">Chưa có Nhãn Local</p>
+                  {localLabels.length === 0 && localLabelsLoadFailed ? (
+                    <LoadFailedNotice text="Không tải được Nhãn Local" onRetry={reloadVisibleLocalLabels} />
+                  ) : localLabels.length === 0 ? (
+                    <p className="text-xs text-muted-foreground px-3 py-2 italic">Chưa có Nhãn Local</p>
                   ) : localLabels.map(l => {
                     const isActive = filterLabelIds.includes(l.id);
                     return (
                       <button key={l.id} onClick={() => {
                         setFilterLabelIds(prev => isActive ? prev.filter(x => x !== l.id) : [...prev, l.id]);
                       }}
-                        className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-gray-700 text-left ${isActive ? 'text-white' : 'text-gray-300'}`}>
-                        <span className={`w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center text-[10px] ${isActive ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-500'}`}>
+                        className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted text-left ${isActive ? 'text-foreground' : 'text-foreground/80'}`}>
+                        <span className={`w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center text-[10px] ${isActive ? 'bg-blue-600 border-blue-600 text-white' : 'border-border-strong'}`}>
                           {isActive && '✓'}
                         </span>
                         <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: l.color || '#3b82f6' }} />
@@ -2270,8 +2495,8 @@ export default function ConversationList() {
                 /* ── Zalo labels list ── */
                 <>
                   {/* Cập nhật */}
-                  <div className="px-3 py-1.5 border-b border-gray-700/60 flex items-center justify-between">
-                    <span className="text-[11px] text-gray-400 uppercase tracking-wide font-medium">Nhãn Zalo</span>
+                  <div className="px-3 py-1.5 border-b border-border/60 flex items-center justify-between">
+                    <span className="text-[11px] text-muted-foreground uppercase tracking-wide font-medium">Nhãn Zalo</span>
                     <button
                       onClick={async () => {
                         if (syncingLabels) return;
@@ -2281,7 +2506,7 @@ export default function ConversationList() {
                             for (const zaloId of mergedInboxAccounts) {
                               const accObj = useAccountStore.getState().accounts.find(a => a.zalo_id === zaloId);
                               if (!accObj || !channelSupports((accObj.channel || CHANNEL.ZALO) as Channel, 'supportsLabel')) continue;
-                              const auth = { cookies: accObj.cookies, imei: accObj.imei, userAgent: accObj.user_agent };
+                              const auth = buildZaloAuth(accObj);
                               const res = await zaloApi('getLabels', { auth });
                               if (res?.response?.labelData) setLabels(zaloId, res.response.labelData);
                             }
@@ -2311,21 +2536,21 @@ export default function ConversationList() {
                     </button>
                   </div>
                   <button onClick={() => { setFilterLabelIds([]); setFilterDropdownOpen(false); }}
-                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-gray-700 text-left ${filterLabelIds.length === 0 ? 'text-white' : 'text-gray-400'}`}>
-                    <span className="w-3 h-3 rounded-full bg-gray-500 flex-shrink-0" />
+                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted text-left ${filterLabelIds.length === 0 ? 'text-foreground' : 'text-muted-foreground'}`}>
+                    <span className="w-3 h-3 rounded-full bg-accent flex-shrink-0" />
                     <span>Tất cả nhãn Zalo</span>
                     {filterLabelIds.length === 0 && <span className="ml-auto text-blue-400">✓</span>}
                   </button>
                   {(mergedInboxMode ? mergedLabels! : labels).length === 0 ? (
-                    <p className="text-xs text-gray-400 px-3 py-2 italic">Chưa có nhãn Zalo</p>
+                    <p className="text-xs text-muted-foreground px-3 py-2 italic">Chưa có nhãn Zalo</p>
                   ) : (mergedInboxMode ? mergedLabels! : labels).map(l => {
                     const isActive = filterLabelIds.includes(l.id);
                     return (
                       <button key={l.id} onClick={() => {
                         setFilterLabelIds(prev => isActive ? prev.filter(x => x !== l.id) : [...prev, l.id]);
                       }}
-                        className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-gray-700 text-left ${isActive ? 'text-white' : 'text-gray-300'}`}>
-                        <span className={`w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center text-[10px] ${isActive ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-500'}`}>
+                        className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted text-left ${isActive ? 'text-foreground' : 'text-foreground/80'}`}>
+                        <span className={`w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center text-[10px] ${isActive ? 'bg-blue-600 border-blue-600 text-white' : 'border-border-strong'}`}>
                           {isActive && '✓'}
                         </span>
                         <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: l.color || '#3b82f6' }} />
@@ -2335,14 +2560,14 @@ export default function ConversationList() {
                     );
                   })}
                   {/* Chỉnh sửa nhãn Zalo */}
-                  <div className="px-3 py-2 border-t border-gray-700 mt-1">
+                  <div className="px-3 py-2 border-t border-border mt-1">
                     <button
                       onClick={() => {
                         setFilterDropdownOpen(false);
                         if (mergedInboxMode) setEditLabelsPickerOpen(true);
                         else setEditLabelsZaloId(activeAccountId);
                       }}
-                      className="flex items-center gap-1 text-xs text-gray-400 hover:text-white transition-colors"
+                      className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
                     >
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
@@ -2364,7 +2589,7 @@ export default function ConversationList() {
               setFilterDropdownOpen(false);
               setMoreMenuOpen(p => !p);
             }}
-            className={`h-10 px-3 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 transition-colors ${(filter === 'unreplied' || filter === 'others' || channelFilter !== 'all' || moreMenuOpen) ? 'bg-gray-700 text-white' : ''}`}
+            className={`h-10 px-3 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors ${(filter === 'unreplied' || filter === 'others' || channelFilter !== 'all' || moreMenuOpen) ? 'bg-muted text-foreground' : ''}`}
             title="Thêm"
           >
             <div className="relative">
@@ -2380,14 +2605,14 @@ export default function ConversationList() {
           </button>
 
           {moreMenuOpen && (
-            <div className="absolute top-full left-0 z-30 bg-gray-800 border border-gray-700 rounded-xl shadow-xl min-w-[160px] py-1 mt-1">
+            <div className="absolute top-full left-0 z-30 bg-card border border-border rounded-xl shadow-xl min-w-[160px] py-1 mt-1">
               {/*<button*/}
               {/*  onClick={() => {*/}
               {/*    setFilter('unreplied');*/}
               {/*    setFilterLabelId(null);*/}
               {/*    setMoreMenuOpen(false);*/}
               {/*  }}*/}
-              {/*  className={`w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-gray-700 text-left ${filter === 'unreplied' ? 'text-white bg-gray-700/50' : 'text-gray-300'}`}*/}
+              {/*  className={`w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted text-left ${filter === 'unreplied' ? 'text-foreground bg-muted/50' : 'text-foreground/80'}`}*/}
               {/*>*/}
               {/*  <span><ChatIcon className="w-4 h-4" /></span>*/}
               {/*  <span>Chưa trả lời</span>*/}
@@ -2401,30 +2626,53 @@ export default function ConversationList() {
                   setFilterLabelIds([]);
                   setMoreMenuOpen(false);
                 }}
-                className={`w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-gray-700 text-left ${filter === 'others' ? 'text-white bg-gray-700/50' : 'text-gray-300'}`}
+                className={`w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted text-left ${filter === 'others' ? 'text-foreground bg-muted/50' : 'text-foreground/80'}`}
               >
                 <span><PluginIcon className="w-4 h-4" /></span>
                 <span>Khác</span>
-                {othersCount > 0 && <span className="ml-auto bg-gray-600 text-white text-xs rounded-full px-1.5 min-w-[18px] text-center">{othersCount}</span>}
+                {othersCount > 0 && <span className="ml-auto bg-accent text-foreground text-xs rounded-full px-1.5 min-w-[18px] text-center">{othersCount}</span>}
                 {filter === 'others' && <span className="ml-auto text-blue-400">✓</span>}
                 <div className="relative group pr-2">
-                  <span className="w-4 h-4 rounded-full border border-gray-500 text-gray-400 hover:border-gray-300 hover:text-gray-300 flex items-center justify-center text-xs cursor-default select-none transition-colors">
+                  <span className="w-4 h-4 rounded-full border border-border-strong text-muted-foreground hover:border-gray-300 hover:text-foreground/80 flex items-center justify-center text-xs cursor-default select-none transition-colors">
                     ?
                   </span>
-                    <div className="absolute right-0 top-full mb-1 w-64 bg-gray-900 border border-gray-600 rounded-lg shadow-xl p-3 text-xs text-gray-300 leading-relaxed z-[60] hidden group-hover:block pointer-events-none">
+                    <div className="absolute right-0 top-full mb-1 w-64 bg-popover border border-input rounded-lg shadow-xl p-3 text-xs text-foreground/80 leading-relaxed z-[60] hidden group-hover:block pointer-events-none">
                       <p>Dùng để lưu các hội thoại không quan trọng. Các hội thoại trong thư mục này sẽ <span className="text-yellow-400 font-medium">không phát âm thanh</span> và <span className="text-yellow-400 font-medium">không hiện thông báo</span> khi có tin nhắn mới.</p>
                     </div>
                 </div>
               </button>
 
+              {/* Tin đánh dấu (như Zalo) */}
+              <button
+                onClick={() => { setStarredPanelOpen(true); setMoreMenuOpen(false); }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted text-left text-foreground/80"
+              >
+                <span className="text-yellow-500"><StarIcon className="w-4 h-4" /></span>
+                <span>Tin đánh dấu</span>
+                {starredCount > 0 && <span className="ml-auto bg-accent text-foreground text-xs rounded-full px-1.5 min-w-[18px] text-center">{starredCount}</span>}
+              </button>
+
+              {/* Tự động */}
+              <div className="border-t border-border mt-1 pt-1">
+                <div className="px-3 py-1 text-[10px] text-muted-foreground uppercase tracking-wider">Tự động</div>
+                <button
+                  onClick={() => { setAutoReadOpen(true); setMoreMenuOpen(false); }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted text-left text-foreground/80"
+                >
+                  <span><CheckCircleIcon className="w-4 h-4" /></span>
+                  <span>Tự động đánh dấu đã đọc</span>
+                  {autoReadProgress && <span className="ml-auto text-[10px] text-blue-400 tabular-nums" title="Đang chạy">{autoReadProgress}</span>}
+                </button>
+              </div>
+
               {/* Channel filter submenu */}
-              <div className="border-t border-gray-700 mt-1 pt-1">
-                <div className="px-3 py-1 text-[10px] text-gray-400 uppercase tracking-wider">Kênh</div>
+              <div className="border-t border-border mt-1 pt-1">
+                <div className="px-3 py-1 text-[10px] text-muted-foreground uppercase tracking-wider">Kênh</div>
                 {(['all', 'zalo', 'facebook', 'telegram_user', 'telegram_bot'] as const).map(ch => (
                   <button
                     key={ch}
                     onClick={() => { setChannelFilter(ch as any); setMoreMenuOpen(false); }}
-                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-gray-700 text-left ${channelFilter === ch ? 'text-white bg-gray-700/50' : 'text-gray-300'}`}
+                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted text-left ${channelFilter === ch ? 'text-foreground bg-muted/50' : 'text-foreground/80'}`}
                   >
                     <span>{ch === 'all' ? <GlobeIcon className="w-4 h-4" /> : <ChannelBadge channel={ch as Channel} size="sm" />}</span>
                     <span>{ch === 'all' ? 'Tất cả kênh' : getChannelLabel(ch as Channel)}</span>
@@ -2439,10 +2687,10 @@ export default function ConversationList() {
 
       {/* Merged inbox: cần chọn tài khoản để tìm SĐT trên Zalo */}
       {phoneSearchPendingPhone && !phoneSearching && !phoneResult && (
-        <div className="border-b border-gray-700 bg-gray-900 px-3 py-2">
+        <div className="border-b border-border bg-card px-3 py-2">
           <p className="text-xs text-yellow-400 mb-2 flex items-center gap-1">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-            Chọn tài khoản để tìm <span className="text-white font-medium">{phoneSearchPendingPhone}</span>:
+            Chọn tài khoản để tìm <span className="text-foreground font-medium">{phoneSearchPendingPhone}</span>:
           </p>
           <div className="flex flex-wrap gap-1.5">
             {mergedInboxAccounts.map(zaloId => {
@@ -2455,7 +2703,7 @@ export default function ConversationList() {
                     setPhoneSearchPendingPhone(null);
                     await doPhoneSearch(acc, phoneSearchPendingPhone!);
                   }}
-                  className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-gray-700 hover:bg-gray-600 text-xs text-gray-200 transition-colors"
+                  className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-muted hover:bg-accent text-xs text-foreground transition-colors"
                 >
                   {acc.avatar_url
                     ? <img src={acc.avatar_url} alt="" className="w-5 h-5 rounded-full object-cover flex-shrink-0" />
@@ -2471,20 +2719,20 @@ export default function ConversationList() {
 
       {/* Phone search result */}
       {(phoneSearching || phoneResult) && (
-        <div className="border-b border-gray-700 bg-gray-800 px-3 py-2">
-          {phoneSearching ? <p className="text-xs text-gray-400">Đang tìm...</p> : phoneResult ? (
+        <div className="border-b border-border bg-card px-3 py-2">
+          {phoneSearching ? <p className="text-xs text-muted-foreground">Đang tìm...</p> : phoneResult ? (
             phoneResult._notFound ? (
-              <p className="text-xs text-gray-400">Không tìm thấy người dùng với số này hoặc người dùng đã chặn tìm kiếm với người lạ</p>
+              <p className="text-xs text-muted-foreground">Không tìm thấy người dùng với số này hoặc người dùng đã chặn tìm kiếm với người lạ</p>
             ) : (
             <div className="flex items-center gap-2">
               {phoneResult.avatar ? <img src={phoneResult.avatar} alt="" className="w-9 h-9 rounded-full object-cover flex-shrink-0" />
                 : <div className="w-9 h-9 rounded-full bg-blue-600 flex items-center justify-center text-white text-sm font-bold flex-shrink-0">{(phoneResult.display_name || 'U').charAt(0).toUpperCase()}</div>}
               <div className="flex-1 min-w-0">
-                <p className="text-sm text-gray-200 truncate">{phoneResult.display_name || phoneResult.zalo_name}</p>
+                <p className="text-sm text-foreground truncate">{phoneResult.display_name || phoneResult.zalo_name}</p>
                 {phoneResult.isBlocked === 1 ? <p className="text-xs text-red-400"><CloseIcon className="w-4 h-4 inline" /> Đã chặn</p>
                   : phoneResult.isFr === 1 ? <p className="text-xs text-green-400">✓ Bạn bè</p>
                   : phoneResult._sentRequest ? <p className="text-xs text-yellow-400">✓ Đã gửi lời mời</p>
-                  : <p className="text-xs text-gray-400">Chưa kết bạn</p>}
+                  : <p className="text-xs text-muted-foreground">Chưa kết bạn</p>}
               </div>
               <div className="flex gap-1 flex-shrink-0">
                 {phoneResult.isBlocked !== 1 && phoneResult.isFr !== 1 && !phoneResult._sentRequest && (
@@ -2494,7 +2742,7 @@ export default function ConversationList() {
                     + Kết bạn
                   </button>
                 )}
-                <button onClick={() => handleOpenPhoneResult(phoneResult)} className="bg-gray-700 hover:bg-gray-600 text-gray-200 text-xs px-2 py-1 rounded-lg"><ChatIcon className="w-4 h-4" /></button>
+                <button onClick={() => handleOpenPhoneResult(phoneResult)} className="bg-muted hover:bg-accent text-foreground text-xs px-2 py-1 rounded-lg"><ChatIcon className="w-4 h-4" /></button>
               </div>
             </div>
             )
@@ -2503,37 +2751,45 @@ export default function ConversationList() {
       )}
 
       {/* Contact list */}
-      <div className="flex-1 overflow-y-auto relative" ref={listContainerRef}>
-        {/* Loading spinner overlay - hiện khi đang tải avatar nhóm, không chặn danh sách */}
-        {loadingGroupAvatars && (
-          <div className="sticky top-0 z-20 flex items-center justify-center py-1.5 bg-gray-850/80 backdrop-blur-sm border-b border-gray-700/40">
-            <Spinner size={4} className="text-blue-400 mr-2" />
-            <span className="text-xs text-gray-400">Đang tải avatar nhóm...</span>
-          </div>
-        )}
+      <div className="flex-1 overflow-y-auto relative" ref={setListContainer} onScroll={handleListScroll}>
         {initialLoading && activeAccountId && accountContacts.length === 0 ? (
           <PageLoading variant="skeleton" skeletonVariant="table" />
         ) : (mergedInboxMode ? (filteredMerged?.length ?? 0) : filtered.length) === 0 ? (
           useChatStore.getState().conversationsLoading[activeAccountId || ''] ? (
-            <div className="flex flex-col items-center justify-center h-full text-gray-400 text-sm gap-2">
-              <span className="w-5 h-5 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
+            <div className="flex flex-col items-center justify-center h-full text-muted-foreground text-sm gap-2">
+              <span className="w-5 h-5 border-2 border-border-strong border-t-transparent rounded-full animate-spin" />
               <p>Đang tải hội thoại...</p>
             </div>
+          ) : !mergedInboxMode && paging.failures > 0 && accountContacts.length === 0 ? (
+            // Lần tải lỗi (mất kết nối BOSS…) ≠ "không có hội thoại": tự thử lại theo backoff / khi kết nối lại
+            <EmptyState
+              compact
+              className="h-full"
+              title="Không tải được hội thoại"
+              description="Danh sách sẽ tự tải lại khi kết nối ổn định."
+              action={<Button variant="outline" size="sm" onClick={retryConversationLoad}>Thử lại</Button>}
+            />
           ) : (
-          <div className="flex flex-col items-center justify-center h-full text-gray-400 text-sm"><p>Không có hội thoại</p></div>
+          <div className="flex flex-col items-center justify-center h-full text-muted-foreground text-sm"><p>Không có hội thoại</p></div>
           )
-        ) : (mergedInboxMode ? filteredMerged! : filtered).slice(0, displayCount).map((contact) => {
+        ) : (mergedInboxMode ? filteredMerged! : filtered).slice(0, displayCount).map((contact, index) => {
           const threadType = contact.contact_type === 'group' ? 1 : 0;
+          const membershipNotice = getTelegramMembershipNotice(contact);
+          const startsNonMemberSection = index === nonMemberSectionIndex;
           const contactZaloId = contact.owner_zalo_id || activeAccountId || '';
           const isPinned = pinnedThreads.has(contact.contact_id);
           const isLocalPinned = localPinnedThreads.has(contact.contact_id);
           const isMuted = contactZaloId ? isMutedFn(contactZaloId, contact.contact_id) : false;
-          const isHovered = hoveredId === `${contact.owner_zalo_id}_${contact.contact_id}`;
           const isGroupC = contact.contact_type === 'group';
           const labelCId = isGroupC ? `g${contact.contact_id}` : contact.contact_id;
-          const contactLabels = (allLabels[contactZaloId] || []).filter(l =>
-            l.conversations?.includes(labelCId) || l.conversations?.includes(contact.contact_id)
-          );
+          // Hàng chỉ dùng nhãn đầu tiên (theo thứ tự nhãn của tài khoản) → tra chỉ mục dựng sẵn
+          const labelIndex = firstZaloLabelIndex.get(contactZaloId);
+          const labelByGroupId = labelIndex?.get(labelCId);
+          const labelByContactId = labelIndex?.get(contact.contact_id);
+          const firstLabelEntry = labelByGroupId && labelByContactId
+            ? (labelByGroupId.order <= labelByContactId.order ? labelByGroupId : labelByContactId)
+            : (labelByGroupId || labelByContactId);
+          const contactLabels: LabelData[] = firstLabelEntry ? [firstLabelEntry.label] : [];
           // Local labels for this thread
           const threadLocalLabelIds = (localLabelThreadMapByAccount[contactZaloId] || {})[contact.contact_id] || [];
           const threadLocalLabelsArr = threadLocalLabelIds
@@ -2541,22 +2797,38 @@ export default function ConversationList() {
             .filter(Boolean) as LocalLabelData[];
           // Badge tài khoản sở hữu (chỉ trong chế độ Gộp trang)
           const ownerAcc = mergedInboxMode ? allAccountsList.find(a => a.zalo_id === contact.owner_zalo_id) : null;
+          const contactAccount = accountOf(contactZaloId);
+          const isMyDocs = isMyDocumentsContact(contact, contactAccount);
+          // Danh sách của tài khoản: luôn ghim như Zalo; hộp thư gộp: khi đã có tin (như thứ tự sắp xếp)
+          const myDocsPinned = isMyDocs && (!mergedInboxMode || isPinnedMyDocuments(contact, contactAccount));
           return (
-            <div key={`${contact.owner_zalo_id}_${contact.contact_id}`}
-              className={`relative w-full flex items-center gap-3 px-3 py-2.5 hover:bg-gray-600 transition-colors cursor-pointer ${threadLocalLabelsArr.length > 0 ? 'min-h-[72px]' : 'max-h-[80px] min-h-[80px]'} ${activeThreadId === contact.contact_id && activeAccountId === contact.owner_zalo_id ? 'bg-gray-600' : ''}`}
-              onClick={() => { if (mergedInboxMode) { handleMergedClick(contact); } else { handleSelect(contact.contact_id, threadType, contact.owner_zalo_id || activeAccountId); setFilterDropdownOpen(false); } }}
-              onMouseEnter={() => setHoveredId(`${contact.owner_zalo_id}_${contact.contact_id}`)}
-              onMouseLeave={() => setHoveredId(null)}>
+            <React.Fragment key={`${contact.owner_zalo_id}_${contact.contact_id}`}>
+            {startsNonMemberSection && (
+              <div
+                className="px-3 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-subtle-foreground"
+                title="Telegram không gửi tin nhắn của nhóm/kênh bạn không còn tham gia"
+              >
+                Không còn là thành viên · không đồng bộ realtime
+              </div>
+            )}
+            <div
+              className={`group/conv relative w-full flex items-center gap-3 px-3 py-2.5 hover:bg-muted transition-colors cursor-pointer ${threadLocalLabelsArr.length > 0 ? 'min-h-[72px]' : 'max-h-[80px] min-h-[80px]'} ${activeThreadId === contact.contact_id && activeAccountId === contact.owner_zalo_id ? 'bg-selected hover:bg-selected' : ''}`}
+              onClick={() => { if (mergedInboxMode) { handleMergedClick(contact); } else { handleSelect(contact.contact_id, threadType, contact.owner_zalo_id || activeAccountId); setFilterDropdownOpen(false); } }}>
               <div className="relative flex-shrink-0">
-                {threadType === 1 ? (
-                  <GroupAvatar
+                {isMyDocs && (!contact.avatar_url || failedAvatars.has(contact.contact_id)) ? (
+                  <div className="w-10 h-10 rounded-full flex items-center justify-center bg-gradient-to-br from-sky-400 to-blue-600" style={{ color: '#fff' }} title={MY_DOCUMENTS_NAME}>
+                    <CloudIcon className="w-5 h-5" />
+                  </div>
+                ) : threadType === 1 ? (
+                  <ConversationGroupAvatar
+                    accountId={contactZaloId}
+                    groupId={contact.contact_id}
                     avatarUrl={contact.avatar_url}
-                    groupInfo={(groupInfoCache[contact.owner_zalo_id] || {})[contact.contact_id]}
                     name={contact.alias || contact.display_name}
-                    size="md"
+                    observer={groupAvatarObserver}
                   />
                 ) : contact.avatar_url && !failedAvatars.has(contact.contact_id) ? (
-                  <img src={toLocalMediaUrl(contact.avatar_url)} alt="" className="w-10 h-10 rounded-full object-cover"
+                  <img src={toLocalMediaUrl(contact.avatar_url)} alt="" loading="lazy" decoding="async" className="w-10 h-10 rounded-full object-cover"
                     onError={() => {
                       setFailedAvatars(prev => new Set(prev).add(contact.contact_id));
                       // Retry avatar cho cả Zalo + Facebook
@@ -2577,7 +2849,7 @@ export default function ConversationList() {
                 )}
                 {/* Badge tài khoản - chỉ hiện trong chế độ Gộp trang */}
                 {mergedInboxMode && ownerAcc && (
-                  <div className="absolute -bottom-1.5 -right-1.5 w-5 h-5 rounded-full border border-gray-800 overflow-hidden z-10 flex-shrink-0" title={ownerAcc.full_name || ownerAcc.zalo_id}>
+                  <div className="absolute -bottom-1.5 -right-1.5 w-5 h-5 rounded-full border border-border overflow-hidden z-10 flex-shrink-0" title={ownerAcc.full_name || ownerAcc.zalo_id}>
                     {ownerAcc.avatar_url
                       ? <img src={ownerAcc.avatar_url} alt="" className="w-full h-full object-cover" />
                       : <div className="w-full h-full bg-purple-600 flex items-center justify-center text-white text-[6px] font-bold">{(ownerAcc.full_name || ownerAcc.zalo_id).charAt(0).toUpperCase()}</div>
@@ -2593,30 +2865,37 @@ export default function ConversationList() {
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between gap-1">
-                  <span className="text-sm font-medium text-gray-200 truncate flex items-center gap-1">
-                    {isLocalPinned && <span title="Ghim trong app">📍</span>}
-                    {isPinned && <span title="Ghim Zalo"><PinIcon className="w-4 h-4" /></span>}
-                    {contact.alias || contact.display_name || contact.contact_id}
+                  <span className="text-sm font-medium text-foreground truncate flex items-center gap-1">
+                    {myDocsPinned && <span title="My Documents luôn ở đầu (như Zalo)"><PinIcon className="w-4 h-4" /></span>}
+                    {!isMyDocs && isLocalPinned && <span title="Ghim trong app">📍</span>}
+                    {!isMyDocs && isPinned && <span title="Ghim Zalo"><PinIcon className="w-4 h-4" /></span>}
+                    <span className="truncate">{contact.alias || contact.display_name || (isMyDocs ? MY_DOCUMENTS_NAME : contact.contact_id)}</span>
+                    {membershipNotice && (
+                      <span
+                        className="flex-shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium leading-none bg-amber-500/15 text-amber-400"
+                        title={membershipNotice.description}
+                      >
+                        {membershipNotice.label}
+                      </span>
+                    )}
                   </span>
                   {/* Fixed-width slot: always reserve space to prevent layout shift on hover */}
                   <div className="flex-shrink-0 w-14 flex items-center justify-end gap-1">
-                    {isHovered ? (
-                      <>
-                        <button onClick={(e) => { e.stopPropagation(); setCtxMenu({ contactId: contact.contact_id, zaloId: contactZaloId, x: e.clientX, y: e.clientY }); setLabelPickerId(null); }}
-                          className="w-6 h-4 flex items-center justify-center rounded-md hover:bg-gray-600 text-gray-400 hover:text-white">
-                          {/* Horizontal 3-dot (⋯) */}
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                            <circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>
-                          </svg>
-                        </button>
-                      </>
-                    ) : contact.last_message_time ? (
-                      <span className="text-xs text-gray-400 whitespace-nowrap">{formatTime(contact.last_message_time)}</span>
+                    {/* Rê chuột: nút ⋯ thay chỗ giờ — CSS group-hover (state hover làm cả danh sách render lại mỗi lần rê chuột) */}
+                    <button onClick={(e) => { e.stopPropagation(); setCtxMenu({ contactId: contact.contact_id, zaloId: contactZaloId, x: e.clientX, y: e.clientY }); setLabelPickerId(null); }}
+                      className="hidden group-hover/conv:flex w-6 h-4 items-center justify-center rounded-md hover:bg-accent text-muted-foreground hover:text-foreground">
+                      {/* Horizontal 3-dot (⋯) */}
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                        <circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>
+                      </svg>
+                    </button>
+                    {contact.last_message_time ? (
+                      <span className="text-xs text-muted-foreground whitespace-nowrap group-hover/conv:hidden">{formatTime(contact.last_message_time)}</span>
                     ) : null}
                   </div>
                 </div>
                 <div className="flex items-center justify-between gap-1 mt-1">
-                  <span className="text-sm text-gray-400 truncate flex items-center gap-1">
+                  <span className="text-sm text-muted-foreground truncate flex items-center gap-1">
                     {/* Zalo label icon before lastMessage */}
                     {contactLabels.length > 0 && (
                       <span
@@ -2635,14 +2914,14 @@ export default function ConversationList() {
                         const draftKey = `${contactZaloId}_${contact.contact_id}`;
                         const draftText = contact.contact_id !== activeThreadId ? drafts[draftKey] : undefined;
                         if (draftText) {
-                          return <><span className="text-red-400">Chưa gửi: </span><span className="text-gray-400">{draftText}</span></>;
+                          return <><span className="text-red-400">Chưa gửi: </span><span className="text-muted-foreground">{draftText}</span></>;
                         }
                         return formatLastMessage(contact.last_message) || (contact.phone ? `${contact.phone}` : '');
                       })()}
                     </span>
                   </span>
                   <div className="flex items-center gap-1 flex-shrink-0">
-                    {isMuted && <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-400"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>}
+                    {isMuted && <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted-foreground"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>}
                     {contact.has_main_app === 1 && isTelegramUser(contact.channel) && (
                       <button
                         onClick={(e) => {
@@ -2661,11 +2940,12 @@ export default function ConversationList() {
                         Open
                       </button>
                     )}
-                    {contact.has_mention === 1 && contact.unread_count > 0 && (
+                    {!membershipNotice && contact.has_mention === 1 && contact.unread_count > 0 && (
                       <span className="bg-cyan-600 text-white-important text-[10px] rounded-full w-4 h-4 flex items-center justify-center font-bold">@</span>
                     )}
-                    {contact.unread_count > 0
-                      ? <span className="bg-blue-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">{contact.unread_count > 99 ? '99+' : contact.unread_count}</span>
+                    {/* A left group's unread count is frozen from when the account was in it. */}
+                    {!membershipNotice && contact.unread_count > 0
+                      ? <span className="bg-primary text-primary-foreground text-[10px] font-medium leading-none tabular-nums rounded-full h-[18px] min-w-[18px] px-1.5 inline-flex items-center justify-center">{contact.unread_count > 99 ? '99+' : contact.unread_count}</span>
                       : contact.is_replied === 1
                         ? (
                           /* Icon double-checkmark "đã trả lời" */
@@ -2692,11 +2972,19 @@ export default function ConversationList() {
                 )}
               </div>
             </div>
+            </React.Fragment>
           );
         })}
+        {/* Trang tiếp theo (hoặc trang đầu khi đã có vài hội thoại) tải lỗi: giữ danh sách, báo gọn + thử lại */}
+        {!mergedInboxMode && paging.failures > 0 && accountContacts.length > 0 && (
+          <LoadFailedNotice
+            text={paging.failedPage === 'more' ? 'Không tải được thêm hội thoại' : 'Không tải được hội thoại mới nhất'}
+            onRetry={retryConversationLoad}
+            busy={conversationLoadingMore}
+          />
+        )}
         {/* Sentinel element for infinite scroll */}
-        {(displayCount < (mergedInboxMode ? filteredMerged?.length ?? 0 : filtered.length)
-          || (!mergedInboxMode && conversationHasMore)) && (
+        {showConversationSentinel && (
           <div ref={sentinelRef} className="h-1 w-full" />
         )}
       </div>
@@ -2718,7 +3006,7 @@ export default function ConversationList() {
             try {
               const accObj = useAccountStore.getState().accounts.find(a => a.zalo_id === zId);
               if (!accObj) return;
-              const auth = { cookies: accObj.cookies, imei: accObj.imei, userAgent: accObj.user_agent };
+              const auth = buildZaloAuth(accObj);
               const res = await zaloApi('getLabels', { auth });
               if (res?.response?.labelData) {
                 setLabels(zId, res.response.labelData);
@@ -2735,8 +3023,15 @@ export default function ConversationList() {
       {/* Context menu */}
       {ctxMenuEl}
 
+      {autoReadOpen && (
+        <AutoMarkReadModal
+          accountIds={autoReadAccountIds}
+          scopeLabel={autoReadScopeLabel}
+          onClose={() => setAutoReadOpen(false)}
+        />
+      )}
+
       {/* Modals */}
-      {createGroupOpen && <CreateGroupModal onClose={() => setCreateGroupOpen(false)} />}
       {inviteContactId && (
         <InviteToGroupModal
           contactId={inviteContactId}
@@ -2769,10 +3064,10 @@ export default function ConversationList() {
       {/* Account picker for editing labels in merged mode */}
       {editLabelsPickerOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setEditLabelsPickerOpen(false)}>
-          <div className="bg-gray-800 rounded-xl shadow-2xl w-72 flex flex-col" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
-              <h3 className="text-sm font-semibold text-white">Chọn trang để chỉnh sửa nhãn</h3>
-              <button onClick={() => setEditLabelsPickerOpen(false)} className="text-gray-400 hover:text-white">
+          <div className="bg-card rounded-xl shadow-2xl w-72 flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+              <h3 className="text-sm font-semibold text-foreground">Chọn trang để chỉnh sửa nhãn</h3>
+              <button onClick={() => setEditLabelsPickerOpen(false)} className="text-muted-foreground hover:text-foreground">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
               </button>
             </div>
@@ -2783,18 +3078,18 @@ export default function ConversationList() {
                 return (
                   <button key={zaloId}
                     onClick={() => { setEditLabelsPickerOpen(false); setEditLabelsZaloId(zaloId); }}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-700 text-left transition-colors"
+                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-muted text-left transition-colors"
                   >
                     {acc?.avatar_url
                       ? <img src={acc.avatar_url} alt="" className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
                       : <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">{(acc?.full_name || zaloId).charAt(0).toUpperCase()}</div>
                     }
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm text-gray-200 truncate">{acc?.full_name || zaloId}</p>
-                      <p className="text-gray-400 text-[12px]">{acc?.phone || zaloId}</p>
-                      <p className="text-xs text-gray-400">{accLabels.length} nhãn</p>
+                      <p className="text-sm text-foreground truncate">{acc?.full_name || zaloId}</p>
+                      <p className="text-muted-foreground text-[12px]">{acc?.phone || zaloId}</p>
+                      <p className="text-xs text-muted-foreground">{accLabels.length} nhãn</p>
                     </div>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-400 flex-shrink-0">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted-foreground flex-shrink-0">
                       <polyline points="9 18 15 12 9 6"/>
                     </svg>
                   </button>
@@ -2844,7 +3139,7 @@ export default function ConversationList() {
 
 function TabBtn({ label, active, onClick, badge, fullWidth }: { label: string; active: boolean; onClick: () => void; badge?: number; fullWidth?: boolean }) {
   return (
-    <button onClick={onClick} className={`${fullWidth ? 'w-full' : 'flex-1'} h-10 flex items-center justify-center text-xs font-medium transition-colors whitespace-nowrap px-3 ${active ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-gray-300'}`}>
+    <button onClick={onClick} className={`${fullWidth ? 'w-full' : 'flex-1'} h-10 flex items-center justify-center text-xs font-medium transition-colors whitespace-nowrap px-3 ${active ? 'text-blue-400 border-b-2 border-blue-400' : 'text-muted-foreground hover:text-foreground/80'}`}>
       {label}
       {badge !== undefined && badge > 0 && <span className="ml-1 bg-blue-600 text-white text-[9px] rounded-full px-1.5 min-w-[16px] text-center">{badge > 99 ? '99+' : badge}</span>}
     </button>
@@ -2853,7 +3148,7 @@ function TabBtn({ label, active, onClick, badge, fullWidth }: { label: string; a
 
 function CtxItem({ icon, label, onClick, hasArrow, danger }: { icon: React.ReactNode; label: string; onClick: () => void; hasArrow?: boolean; danger?: boolean }) {
   return (
-    <button onClick={onClick} className={`w-full flex items-center gap-2 px-3 py-2 text-sm text-left transition-colors ${danger ? 'text-red-400 hover:bg-red-900/30 hover:text-red-300' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}>
+    <button onClick={onClick} className={`w-full flex items-center gap-2 px-3 py-2 text-sm text-left transition-colors ${danger ? 'text-red-400 hover:bg-red-900/30 hover:text-red-300' : 'text-foreground/80 hover:bg-muted hover:text-foreground'}`}>
       <span className="w-4 text-center flex-shrink-0 text-base">{icon}</span>
       <span className="flex-1">{label}</span>
       {hasArrow && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>}
@@ -3037,10 +3332,10 @@ function InlineLabelPickerPopup({ contactId, x, y, labels, onAssign, onClose, on
   return (
     <div
       ref={ref}
-      className="fixed z-[200] bg-gray-800 border border-gray-700 rounded-xl shadow-2xl min-w-[185px]"
+      className="fixed z-[200] bg-card border border-border rounded-xl shadow-2xl min-w-[185px]"
       style={{ top: Math.max(8, top), left: Math.max(8, left) }}
     >
-      <p className="text-[11px] text-gray-400 px-3 pt-1.5 pb-1 font-medium uppercase tracking-wide">Nhãn</p>
+      <p className="text-[11px] text-muted-foreground px-3 pt-1.5 pb-1 font-medium uppercase tracking-wide">Nhãn</p>
       <LabelPicker
         labels={labels}
         activeThreadId={contactId}

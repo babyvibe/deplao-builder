@@ -1,8 +1,11 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useChatStore } from '@/store/chatStore';
+import { useShallow } from 'zustand/react/shallow';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore, CachedGroupInfo, GroupMember } from '@/store/appStore';
-import DataAccessor from '@/lib/data/DataAccessor';
+import DataAccessor, { isReadFailure, readFailureMessage } from '@/lib/data/DataAccessor';
+import { useEmployeeResync } from '@/hooks/useEmployeeResync';
+import { LOCAL_PIN_CHANGED_EVENT } from '@/lib/chat/relayUiEvents';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
 import { AddMemberToGroupModal } from './GroupModals';
 import ForumTopicsPanel from './ForumTopicsPanel';
@@ -18,8 +21,15 @@ import { CHANNEL, isZalo as isZaloCh, isTelegram as isTelegramCh, isFacebook as 
 import { Spinner } from '@/components/common/PageLoading';
 import * as channelIpc from '@/lib/channelIpc';
 import { getAdapter } from '@/lib/adapters/registry';
+import TelegramChatSettings from './quick/telegram/TelegramChatSettings';
 import { useGroupMemberSync } from '@/hooks/useGroupMemberSync';
 import { ArrowDownIcon, ArrowUpIcon, BellIcon, BellOffIcon, CloseIcon, MapPinIcon, PinIcon, SettingsIcon, TrashIcon, UserIcon, UsersIcon } from '@/components/common/icons';
+import { toLocalMediaUrl } from '@/lib/localMedia';
+import {
+  GROUP_MEMBERS_PAGE_SIZE, appendMemberPage, groupMembersApiSyncedAt, markGroupMembersApiSynced, memberFromRow,
+  mergeGroupMembers, withLiveMemberInfo,
+} from '@/lib/chat/groupMembersPanel';
+import { groupAdminRole, groupOwnerRole, groupRoleKind, groupRoleLabel, myGroupRoleKind } from '../../../shared/groupMemberRoles';
 
 
 type PanelView = 'info' | 'members' | 'manage' | 'media' | 'pending' | 'topics';
@@ -76,12 +86,50 @@ function invalidatePendingCache(accountId: string, groupId: string) {
   pendingMembersCache.delete(`${accountId}_${groupId}`);
 }
 
-const getMyRole = (groupInfo: CachedGroupInfo | null, myId: string | null): number => {
-  if (!myId || !groupInfo) return 0;
-  const me = groupInfo.members?.find(m => m.userId === myId);
-  return me?.role ?? (groupInfo.creatorId === myId ? 1 : groupInfo.adminIds?.includes(myId) ? 2 : 0);
-};
-const canManage = (role: number) => role >= 1; // owner or deputy
+/**
+ * Ghim trong app theo tài khoản — lần đọc thành công gần nhất (module-level, sống qua lần đóng/mở panel). Lần đọc lỗi
+ * (chế độ nhân viên: mất kết nối BOSS) dùng lại tập này thay vì coi hội thoại là "chưa ghim".
+ */
+const lastLocalPins = new Map<string, Set<string>>();
+
+/**
+ * Thành viên nhóm từ DB vào cache (chỉ khi cache chưa có ai — ví dụ lần tải lúc mở hội thoại bị lỗi vì mất kết nối).
+ * Đọc lỗi → giữ nguyên cache (không thay bằng rỗng).
+ */
+async function loadGroupMembersFromDB(accountId: string, groupId: string): Promise<void> {
+  const res: any = await DataAccessor.getGroupMembers({ zaloId: accountId, groupId });
+  if (isReadFailure(res)) {
+    console.warn('[GroupInfoPanel] Không tải được thành viên nhóm:', readFailureMessage(res));
+    return;
+  }
+  const rows: any[] = (res?.members ?? []).filter((m: any) => String(m?.member_id ?? '').trim());
+  if (!rows.length) return;
+  const app = useAppStore.getState();
+  const current = app.groupInfoCache?.[accountId]?.[groupId];
+  if (current?.members?.length) return; // đã có từ nguồn khác (ChatWindow / làm mới thủ công) trong lúc chờ
+  const contact = useChatStore.getState().contacts[accountId]?.find(c => c.contact_id === groupId);
+  const members: GroupMember[] = rows.map((m: any) => ({
+    userId: String(m.member_id).trim(),
+    displayName: m.display_name || '',
+    avatar: m.avatar || '',
+    role: m.role ?? 0,
+  }));
+  app.setGroupInfo(accountId, groupId, {
+    ...current,
+    groupId,
+    name: current?.name || contact?.display_name || groupId,
+    avatar: current?.avatar || contact?.avatar_url || '',
+    memberCount: Math.max(Number(current?.memberCount || 0), members.length),
+    members,
+    creatorId: current?.creatorId || '',
+    adminIds: current?.adminIds || [],
+    fetchedAt: Date.now(),
+  });
+}
+
+/** Trưởng / phó nhóm (Telegram: người tạo / quản trị viên) — role đọc theo kênh (shared/groupMemberRoles). */
+const canManageGroup = (groupInfo: CachedGroupInfo | null, myId: string | null, channel?: string | null) =>
+  myGroupRoleKind(groupInfo, myId, channel) !== 'member';
 
 function muteUntilToDuration(until: number): number | string {
   if (until === 0) return -1;
@@ -101,9 +149,17 @@ const MUTE_OPTIONS = [
 ];
 
 export default function GroupInfoPanel() {
-  const { activeThreadId, contacts } = useChatStore();
-  const { activeAccountId, getActiveAccount } = useAccountStore();
-  const { showNotification, setGroupInfo, setMuted, clearMuted, isMuted: isMutedFn, toggleConversationInfo } = useAppStore();
+  const { activeThreadId, contacts } = useChatStore(useShallow(s => ({
+    activeThreadId: s.activeThreadId, contacts: s.contacts,
+  })));
+  const { activeAccountId, getActiveAccount } = useAccountStore(useShallow(s => ({
+    activeAccountId: s.activeAccountId, getActiveAccount: s.getActiveAccount, accounts: s.accounts,
+  })));
+  const { showNotification, setGroupInfo, setMuted, clearMuted, isMuted: isMutedFn, toggleConversationInfo } = useAppStore(useShallow(s => ({
+    showNotification: s.showNotification, setGroupInfo: s.setGroupInfo, setMuted: s.setMuted,
+    clearMuted: s.clearMuted, isMuted: s.isMuted, toggleConversationInfo: s.toggleConversationInfo,
+    mutedThreads: s.mutedThreads,
+  })));
 
   const [panelView, setPanelView] = useState<PanelView>('info');
   const [mediaTab, setMediaTab] = useState<MediaTab>('image');
@@ -128,6 +184,11 @@ export default function GroupInfoPanel() {
 
   // Channel capability
   const channelCap = getCapability((contact?.channel || CHANNEL.ZALO) as Channel);
+  // Kênh Telegram (phát tin): "người theo dõi" thay cho "thành viên", "kênh" thay cho "nhóm"
+  const isTelegramChannel = isTelegramCh(channelCap.id)
+    && ((contact as any)?.telegram_peer_type === 'channel' || (groupInfo as any)?.peerType === 'channel');
+  const chatNoun = isTelegramChannel ? 'kênh' : 'nhóm';
+  const memberNoun = isTelegramChannel ? 'người theo dõi' : 'thành viên';
 
   const getAuth = () => {
     const acc = getActiveAccount();
@@ -148,13 +209,67 @@ export default function GroupInfoPanel() {
     }).catch(() => {});
   }, [activeThreadId, channelCap.supportsPinConversation]);
 
-  // Load local pin status - cho FB và các kênh không hỗ trợ Zalo API pin
-  useEffect(() => {
+  // Load local pin status - cho FB và các kênh không hỗ trợ Zalo API pin.
+  // Đọc lỗi (chế độ nhân viên: mất kết nối BOSS) ≠ "chưa ghim": giữ cờ đang hiện của đúng hội thoại này, không thì cờ
+  // của lần đọc thành công gần nhất của tài khoản (lastLocalPins).
+  const localPinOwnerRef = useRef('');
+  const reloadLocalPin = useCallback(async () => {
     if (!activeAccountId || !activeThreadId) return;
-    DataAccessor.getLocalPinnedConversations({ zaloId: activeAccountId })
-      .then((res: any) => setIsLocalPinned((res?.threadIds || []).includes(activeThreadId)))
-      .catch(() => {});
+    const accountId = activeAccountId;
+    const threadId = activeThreadId;
+    const owner = `${accountId}:${threadId}`;
+    const res: any = await DataAccessor.getLocalPinnedConversations({ zaloId: accountId }).catch(() => null);
+    const current = useAccountStore.getState().activeAccountId === accountId && useChatStore.getState().activeThreadId === threadId;
+    if (!current) return; // đã đổi hội thoại trong lúc chờ
+    if (!res || isReadFailure(res)) {
+      if (res) console.warn('[GroupInfoPanel] Không tải được trạng thái ghim:', readFailureMessage(res));
+      if (localPinOwnerRef.current === owner) return; // giữ cờ đang hiện của hội thoại này
+      const known = lastLocalPins.get(accountId);
+      localPinOwnerRef.current = known ? owner : '';
+      setIsLocalPinned(known ? known.has(threadId) : false);
+      return;
+    }
+    const pinned = new Set<string>((res?.threadIds || []).map((id: any) => String(id)));
+    lastLocalPins.set(accountId, pinned);
+    localPinOwnerRef.current = owner;
+    setIsLocalPinned(pinned.has(threadId));
   }, [activeAccountId, activeThreadId]);
+
+  useEffect(() => {
+    void reloadLocalPin();
+  }, [reloadLocalPin]);
+
+  // Ghim trong app đổi ở nơi khác (Boss / nhân viên khác / ConversationList — relay db:pinnedConversationChanged →
+  // 'local-pin-changed' có threadId + isPinned): cập nhật bộ nhớ tài khoản + cờ của hội thoại đang mở
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (!detail?.zaloId || !detail.threadId || typeof detail.isPinned !== 'boolean') return;
+      const accountId = String(detail.zaloId);
+      const threadId = String(detail.threadId);
+      const known = lastLocalPins.get(accountId);
+      if (known) { if (detail.isPinned) known.add(threadId); else known.delete(threadId); }
+      if (accountId === activeAccountId && threadId === activeThreadId) {
+        localPinOwnerRef.current = `${accountId}:${threadId}`;
+        setIsLocalPinned(detail.isPinned);
+      }
+    };
+    window.addEventListener(LOCAL_PIN_CHANGED_EVENT, handler);
+    return () => window.removeEventListener(LOCAL_PIN_CHANGED_EVENT, handler);
+  }, [activeAccountId, activeThreadId]);
+
+  // Chế độ nhân viên: kết nối BOSS phục hồi → tải lại cờ ghim; thành viên nhóm từ DB nếu cache còn trống (lần tải lúc
+  // mở hội thoại bị lỗi). Không gọi API Zalo (fetchGroupInfo vẫn chỉ chạy khi bấm làm mới).
+  useEmployeeResync(() => {
+    const accountId = useAccountStore.getState().activeAccountId;
+    const threadId = useChatStore.getState().activeThreadId;
+    if (!accountId || !threadId) return;
+    const tasks: Promise<unknown>[] = [reloadLocalPin()];
+    if (!useAppStore.getState().groupInfoCache?.[accountId]?.[threadId]?.members?.length) {
+      tasks.push(loadGroupMembersFromDB(accountId, threadId));
+    }
+    return Promise.allSettled(tasks);
+  });
 
 
   // Close mute dropdown on outside click
@@ -190,8 +305,13 @@ export default function GroupInfoPanel() {
     if (!activeAccountId || !activeThreadId) return;
     const newVal = !isLocalPinned;
     try {
-      await DataAccessor.setLocalPinnedConversation({ zaloId: activeAccountId, threadId: activeThreadId, isPinned: newVal });
+      const pinRes: any = await DataAccessor.setLocalPinnedConversation({ zaloId: activeAccountId, threadId: activeThreadId, isPinned: newVal });
+      // Nhân viên: Boss từ chối / mất kết nối trả success:false (không ném lỗi)
+      if (pinRes?.success === false) throw new Error(pinRes.error || 'Không thể ghim hội thoại');
       setIsLocalPinned(newVal);
+      localPinOwnerRef.current = `${activeAccountId}:${activeThreadId}`;
+      const known = lastLocalPins.get(activeAccountId);
+      if (known) { if (newVal) known.add(activeThreadId); else known.delete(activeThreadId); }
       showNotification(newVal ? 'Đã ghim trong app' : 'Đã bỏ ghim khỏi app', 'success');
     } catch (e: any) {
       showNotification('Lỗi: ' + (e.message || 'Không thể ghim hội thoại'), 'error');
@@ -286,8 +406,8 @@ export default function GroupInfoPanel() {
     const openMembers = (event: Event) => {
       const detail = (event as CustomEvent).detail || {};
       if (String(detail.accountId) !== String(activeAccountId) || String(detail.chatId) !== String(activeThreadId)) return;
+      // Danh sách đọc từ DB; panel tự gọi API nếu đây là lần đầu mở thành viên của nhóm
       setPanelView('members');
-      fetchGroupInfo().catch(() => {});
     };
     window.addEventListener('telegram:open-group-members', openMembers);
     return () => window.removeEventListener('telegram:open-group-members', openMembers);
@@ -295,7 +415,9 @@ export default function GroupInfoPanel() {
 
   // Sync localGroupInfo từ cache khi ChatWindow populate xong
   // (GroupInfoPanel có thể đang hiển thị trong khi ChatWindow async load từ DB)
-  const { groupInfoCache } = useAppStore();
+  const { groupInfoCache } = useAppStore(useShallow(s => ({
+    groupInfoCache: s.groupInfoCache,
+  })));
   useEffect(() => {
     if (!activeThreadId || !activeAccountId) return;
     const cached = (groupInfoCache[activeAccountId] || {})[activeThreadId];
@@ -308,15 +430,21 @@ export default function GroupInfoPanel() {
     }
   }, [groupInfoCache, activeThreadId, activeAccountId]);
 
-  const fetchGroupInfo = async () => {
-    if (!activeThreadId || !activeAccountId) return;
+  /**
+   * Gọi API lấy thông tin + thành viên nhóm (bấm làm mới, hoặc mở panel "Thành viên" lần đầu). Thành viên GỘP vào DB /
+   * cache, không thay thế: API trả ít hơn danh sách đã quét / thu thập. `forceEnrich` (làm mới thủ công, Zalo): lấy lại
+   * tên / ảnh của mọi thành viên. Trả true khi đã lấy được danh sách thành viên.
+   */
+  const fetchGroupInfo = async (options: { forceEnrich?: boolean } = {}): Promise<boolean> => {
+    if (!activeThreadId || !activeAccountId) return false;
     const ch = channelCap.id;
     // Facebook: no group info API
-    if (isFacebookCh(ch)) return;
+    if (isFacebookCh(ch)) return false;
 
     // Telegram: use adapter to fetch group info
     if (isTelegramCh(ch)) {
       setLoading(true);
+      let membersFetched = false;
       try {
         const adapter = getAdapter(ch);
         const res = await (adapter as any).getGroupInfo({ accountId: activeAccountId, threadId: activeThreadId });
@@ -340,38 +468,45 @@ export default function GroupInfoPanel() {
             zaloId: activeAccountId, contactId: activeThreadId, displayName: name, avatarUrl: telegramAvatarUrl, contactType: 'group',
           }).catch(() => {});
 
-          // Fetch members
-          const adminsRes = await (adapter as any).getGroupMembers({ accountId: activeAccountId, threadId: activeThreadId });
-          if (adminsRes?.success && adminsRes.members) {
-            const admins = adminsRes.members.map((m: any) => ({
+          // Thành viên: Telegram chỉ trả ~200 người gần đây (main đã lưu vào DB) → GỘP với người đã thu thập từ lịch sử
+          // tin, không thay (thay thì người từng nhắn tin quay về hiện id)
+          const membersRes = await (adapter as any).getGroupMembers({ accountId: activeAccountId, threadId: activeThreadId });
+          if (membersRes?.success && membersRes.members) {
+            const fresh: GroupMember[] = membersRes.members.map((m: any) => ({
               userId: String(m.id || ''),
               displayName: [m.firstName, m.lastName].filter(Boolean).join(' ') || m.username || '',
               avatar: m.avatar || '',
               role: Number(m.role || 0),
+              ...(m.username ? { username: m.username } : {}),
               status: m.status || '', statusText: m.statusText || '',
               lastSeenAt: m.lastSeenAt, onlineUntil: m.onlineUntil,
             }));
+            const current = useAppStore.getState().groupInfoCache?.[activeAccountId]?.[activeThreadId];
+            const members = mergeGroupMembers(current?.members, fresh);
             useAppStore.getState().setGroupInfo(activeAccountId, activeThreadId, {
-              name, avatar: telegramAvatarUrl, members: admins, fetchedAt: Date.now(),
-              groupId: activeThreadId, memberCount: memberCount || admins.length,
+              ...current,
+              name, avatar: telegramAvatarUrl, members, fetchedAt: Date.now(),
+              groupId: activeThreadId, memberCount: memberCount || Math.max(Number(current?.memberCount || 0), members.length),
               onlineCount, peerType: res.info.peerType,
               canSend: res.info.canSend, sendReason: res.info.sendReason,
               membershipState: res.info.membershipState, joinAction: res.info.joinAction,
               canManageTopics: res.info.canManageTopics,
             });
+            markGroupMembersApiSynced(activeAccountId, activeThreadId);
+            membersFetched = true;
           }
         }
       } catch {}
       setLoading(false);
-      return;
+      return membersFetched;
     }
 
     // Zalo: existing logic below
     // Guard: verify thread still belongs to current account at fetch time
     const currentContacts = useChatStore.getState().contacts[activeAccountId] || [];
-    if (currentContacts.length > 0 && !currentContacts.some(c => c.contact_id === activeThreadId)) return;
+    if (currentContacts.length > 0 && !currentContacts.some(c => c.contact_id === activeThreadId)) return false;
     const auth = getAuth();
-    if (!auth) return;
+    if (!auth) return false;
 
     // Capture to avoid stale closure in async callbacks
     const threadId = activeThreadId;
@@ -385,14 +520,14 @@ export default function GroupInfoPanel() {
       const res = await ipc.zalo?.getGroupInfo({ auth, groupId: threadId });
       if (res?.success === false) {
         showNotification('Không thể tải thông tin nhóm: ' + (res?.error || 'Lỗi không xác định'), 'error');
-        return;
+        return false;
       }
 
       const gridMap = res?.response?.gridInfoMap || res?.response?.changed_groups || {};
       const gData: any = gridMap[threadId] || (Object.values(gridMap)[0] as any);
       if (!gData) {
         showNotification('Không lấy được thông tin nhóm, vui lòng thử lại', 'error');
-        return;
+        return false;
       }
 
       const name: string     = gData.name || gData.nameChanged || displayName;
@@ -440,29 +575,39 @@ export default function GroupInfoPanel() {
       const memberIds: string[] = allRawIds;
       console.log('[GroupInfoPanel] memberIds union:', memberIds.length, 'first5:', memberIds.slice(0, 5));
 
-      // Build placeholders: empty displayName → forces full enrichment via syncZaloGroups
+      // Tên / ảnh đã có trong DB (quét thành viên ẩn, lần đồng bộ trước): placeholder lưu đè cả hàng (INSERT OR REPLACE)
+      // nên phải mang theo — trước đây lưu tên rỗng → danh sách mất tên tới khi lấy lại xong từng người
+      const existingRes = await DataAccessor.getGroupMembers({ zaloId: accountId, groupId: threadId });
+      const existingFailed = isReadFailure(existingRes);
+      const existingById = new Map<string, any>(
+        existingFailed ? [] : (existingRes?.members ?? []).map((m: any) => [String(m.member_id).trim(), m]),
+      );
+
+      // Vai trò Zalo: 2 = trưởng nhóm, 1 = phó nhóm (shared/groupMemberRoles)
+      const roleOf = (memberId: string) => (memberId === creatorId ? 2 : adminSet.has(memberId) ? 1 : 0);
+      const contactMap = new Map((useChatStore.getState().contacts[accountId] || []).map(c => [c.contact_id, c]));
       const placeholders: MemberPlaceholder[] = memberIds.map(memberId => {
-        let role = 0;
-        if (memberId === creatorId) role = 2;
-        else if (adminSet.has(memberId)) role = 1;
-        return { memberId, displayName: '', avatar: '', role };
+        const previous = existingById.get(memberId);
+        const cm = currentMemMap.get(memberId);
+        const c = contactMap.get(memberId);
+        return {
+          memberId,
+          displayName: previous?.display_name || cm?.dName || cm?.zaloName || c?.display_name || '',
+          avatar: previous?.avatar || cm?.avatar || c?.avatar_url || '',
+          role: roleOf(memberId),
+        };
       });
 
-      // Set initial cache with partial names from currentMems for immediate display
-      const contactMap = new Map((useChatStore.getState().contacts[accountId] || []).map(c => [c.contact_id, c]));
+      // Cache: GỘP với danh sách đang có (DB có thể nhiều hơn API — nhóm khoá xem thành viên, quét thành viên ẩn)
+      const currentCache = useAppStore.getState().groupInfoCache?.[accountId]?.[threadId];
+      const cacheMembers = mergeGroupMembers(currentCache?.members, placeholders.map(p => ({
+        userId: p.memberId, displayName: p.displayName, avatar: p.avatar, role: p.role,
+      })));
       const initialInfo: CachedGroupInfo = {
+        ...currentCache,
         groupId: threadId, name, avatar,
-        memberCount: gData.totalMember || memberIds.length,
-        members: memberIds.map(id => {
-          const cm = currentMemMap.get(id);
-          const c  = contactMap.get(id);
-          return {
-            userId: id,
-            displayName: cm?.dName || cm?.zaloName || c?.display_name || '',
-            avatar: cm?.avatar || c?.avatar_url || '',
-            role: id === creatorId ? 2 : adminSet.has(id) ? 1 : 0,
-          };
-        }),
+        memberCount: gData.totalMember || Math.max(Number(currentCache?.memberCount || 0), memberIds.length),
+        members: cacheMembers,
         creatorId, adminIds,
         settings: gData.setting,
         fetchedAt: Date.now(),
@@ -470,11 +615,22 @@ export default function GroupInfoPanel() {
       setLocalGroupInfo(initialInfo);
       setGroupInfo(accountId, threadId, initialInfo);
 
-      if (memberIds.length === 0) return;
+      if (memberIds.length === 0) return false;
+      // Không đọc được danh sách hiện có (nhân viên mất kết nối Boss): không lưu — lưu lúc này xoá trắng tên đã có
+      if (existingFailed) {
+        console.warn('[GroupInfoPanel] skip member save — cannot read existing members:', readFailureMessage(existingRes));
+        showNotification('Chưa lưu thành viên nhóm: không đọc được danh sách hiện có. Thử lại sau.', 'warning');
+        return false;
+      }
 
       // Helper: reload enriched members from DB into cache
       const reloadFromDB = async () => {
         const dbRes = await DataAccessor.getGroupMembers({ zaloId: accountId, groupId: threadId });
+        // Đọc lỗi (chế độ nhân viên) → giữ danh sách thành viên đang có (initialInfo / cache), không thay bằng rỗng
+        if (isReadFailure(dbRes)) {
+          console.warn('[GroupInfoPanel] Không tải được thành viên nhóm từ DB:', readFailureMessage(dbRes));
+          return;
+        }
         const rows: any[] = (dbRes?.members ?? []).filter((m: any) => /^\d+$/.test(m.member_id?.trim() ?? ''));
         if (rows.length === 0) return;
         const membersForCache: GroupMember[] = rows.map((m: any) => ({
@@ -486,7 +642,8 @@ export default function GroupInfoPanel() {
         const existing = useAppStore.getState().groupInfoCache?.[accountId]?.[threadId];
         const updated: CachedGroupInfo = {
           ...(existing || initialInfo),
-          members: membersForCache,
+          // DB đủ người; giữ trạng thái sống (online…) của cache cho người trùng
+          members: mergeGroupMembers(existing?.members, membersForCache),
           memberCount: Math.max(existing?.memberCount || 0, membersForCache.length, gData.totalMember || 0),
           fetchedAt: Date.now(),
         };
@@ -503,16 +660,19 @@ export default function GroupInfoPanel() {
         groupId: threadId,
         memberIds,
         placeholders,
-        // Phase 1: empty placeholders saved to DB - keep initialInfo in cache
-        // to avoid showing a blank member list during enrichment.
+        // Làm mới thủ công: lấy lại tên / ảnh của mọi người; mở panel lần đầu: chỉ người chưa có tên
+        forceEnrich: !!options.forceEnrich,
+        // Phase 1: placeholders (kèm tên đã có) saved to DB - keep initialInfo in cache
         onPhase1Done: async () => { /* intentionally no cache update here */ },
         // Phase 2 complete: enriched data in DB → refresh cache
         onGroupEnriched: reloadFromDB,
       });
-
+      markGroupMembersApiSynced(accountId, threadId);
+      return true;
     } catch (e: any) {
       console.error('[GroupInfoPanel] fetchGroupInfo error:', e?.message);
       showNotification('Không thể tải thông tin nhóm', 'error');
+      return false;
     } finally {
       setLoading(false);
     }
@@ -533,7 +693,7 @@ export default function GroupInfoPanel() {
   // Load pending count for admins whenever groupInfo is refreshed
   useEffect(() => {
     if (!groupInfo || !activeThreadId || !activeAccountId) return;
-    if (!canManage(getMyRole(groupInfo, activeAccountId))) return;
+    if (!canManageGroup(groupInfo, activeAccountId, channelCap.id)) return;
     const auth = getAuth();
     if (!auth) return;
     fetchPendingMembers(auth, activeThreadId, activeAccountId)
@@ -552,7 +712,8 @@ export default function GroupInfoPanel() {
           groupInfo={groupInfo}
           groupId={activeThreadId}
           onBack={() => setPanelView('info')}
-          onRefresh={fetchGroupInfo}
+          onRefresh={() => fetchGroupInfo({ forceEnrich: true })}
+          onApiSync={() => fetchGroupInfo()}
           myAccountId={activeAccountId || ''}
           channelCap={channelCap}
           onShowProfile={(userId, x, y) => setUserProfilePopup({ userId, x, y })}
@@ -626,24 +787,24 @@ export default function GroupInfoPanel() {
 
   // ─── Main info view ───────────────────────────────────────────────────────
   return (
-    <div className="w-72 h-full flex-shrink-0 bg-gray-800 border-l border-gray-700 flex flex-col overflow-y-auto">
+    <div className="w-72 h-full flex-shrink-0 bg-card border-l border-border flex flex-col overflow-y-auto">
       {/* Header - with close + refresh buttons */}
-      <div className="flex items-center px-3 py-3 border-b border-gray-700">
+      <div className="flex items-center px-3 py-3 border-b border-border">
         <button
           title="Đóng"
           onClick={toggleConversationInfo}
-          className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-gray-700 text-gray-400 hover:text-white transition-colors flex-shrink-0"
+          className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-muted text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
             <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
           </svg>
         </button>
-        <span className="flex-1 text-sm font-semibold text-white text-center">Thông tin nhóm</span>
+        <span className="flex-1 text-sm font-semibold text-foreground text-center">Thông tin {chatNoun}</span>
         <button
           title="Cập nhật thông tin nhóm"
-          onClick={fetchGroupInfo}
+          onClick={() => { void fetchGroupInfo({ forceEnrich: true }); }}
           disabled={loading}
-          className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors hover:bg-gray-700 text-gray-400 hover:text-white disabled:opacity-50 flex-shrink-0"
+          className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors hover:bg-muted text-muted-foreground hover:text-foreground disabled:opacity-50 flex-shrink-0"
         >
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
             className={loading ? 'animate-spin' : ''}>
@@ -654,7 +815,7 @@ export default function GroupInfoPanel() {
       </div>
 
       {/* Group avatar + name */}
-      <div className="flex flex-col items-center py-5 px-4 border-b border-gray-700">
+      <div className="flex flex-col items-center py-5 px-4 border-b border-border">
         <div className={`relative ${channelCap.supportsChangeGroupAvatar ? 'group cursor-pointer' : ''}`}
           onClick={channelCap.supportsChangeGroupAvatar ? handleChangeAvatar : undefined}
           title={channelCap.supportsChangeGroupAvatar ? 'Đổi ảnh nhóm' : undefined}>
@@ -669,10 +830,10 @@ export default function GroupInfoPanel() {
           )}
         </div>
         <div className="flex items-center gap-2 mt-3">
-          <p className="text-white font-semibold text-base text-center">{groupInfo?.name || displayName}</p>
+          <p className="text-foreground font-semibold text-base text-center">{groupInfo?.name || displayName}</p>
           {channelCap.supportsGroupRename && (
           <button onClick={() => startRenameGroup()} title="Đổi tên nhóm"
-            className="text-gray-400 hover:text-white transition-colors flex-shrink-0">
+            className="text-muted-foreground hover:text-foreground transition-colors flex-shrink-0">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
               <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
@@ -681,12 +842,12 @@ export default function GroupInfoPanel() {
           )}
         </div>
         {groupInfo && groupInfo.memberCount > 0 && (
-          <p className="mt-1 text-gray-400 text-xs">{groupInfo.memberCount} thành viên</p>
+          <p className="mt-1 text-muted-foreground text-xs">{groupInfo.memberCount} {memberNoun}</p>
         )}
       </div>
 
       {/* Action buttons */}
-      <div className="grid grid-cols-4 gap-1 px-3 py-3 border-b border-gray-700">
+      <div className="grid grid-cols-4 gap-1 px-3 py-3 border-b border-border">
         {/* Mute with dropdown */}
         <div className="relative" ref={muteRef}>
           <GrpActionBtn
@@ -702,11 +863,11 @@ export default function GroupInfoPanel() {
             active={isMuted}
           />
           {muteDropdownOpen && !isMuted && muteDropdownPos && (
-            <div className="fixed z-50 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl min-w-[210px] py-1"
+            <div className="fixed z-50 bg-card border border-border rounded-xl shadow-2xl min-w-[210px] py-1"
               style={{ top: muteDropdownPos.top, left: muteDropdownPos.left }}>
               {MUTE_OPTIONS.map(opt => (
                 <button key={opt.label} onClick={() => handleMuteWithTime(opt.until())}
-                  className="w-full flex items-center px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-700 hover:text-white text-left transition-colors">
+                  className="w-full flex items-center px-4 py-2.5 text-sm text-foreground/80 hover:bg-muted hover:text-foreground text-left transition-colors">
                   {opt.label}
                 </button>
               ))}
@@ -720,10 +881,10 @@ export default function GroupInfoPanel() {
           <GrpActionBtn icon={<MapPinIcon className="w-4 h-4" />} label={isLocalPinned ? 'Bỏ ghim app' : 'Ghim trong app'} onClick={handleToggleLocalPin} active={isLocalPinned} />
         )}
         {channelCap.supportsInviteToGroup && (
-          <GrpActionBtn icon={<UsersIcon className="w-4 h-4" />} label="Thêm thành viên" onClick={() => setAddMemberOpen(true)} />
+          <GrpActionBtn icon={<UsersIcon className="w-4 h-4" />} label={isTelegramChannel ? 'Mời người theo dõi' : 'Thêm thành viên'} onClick={() => setAddMemberOpen(true)} />
         )}
         {channelCap.supportsGroupManage && (
-          <GrpActionBtn icon={<SettingsIcon className="w-4 h-4" />} label="Quản lý nhóm" onClick={() => setPanelView('manage')} />
+          <GrpActionBtn icon={<SettingsIcon className="w-4 h-4" />} label={`Quản lý ${chatNoun}`} onClick={() => setPanelView('manage')} />
         )}
       </div>
 
@@ -737,28 +898,28 @@ export default function GroupInfoPanel() {
       {groupInfo && (
         <button
           onClick={() => setPanelView('members')}
-          className="w-full flex items-center justify-between px-4 py-3 border-b border-gray-700 hover:bg-gray-700/40 transition-colors group"
+          className="w-full flex items-center justify-between px-4 py-3 border-b border-border hover:bg-muted/40 transition-colors group"
         >
-          <div className="flex items-center gap-2 text-sm text-gray-200">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-400">
+          <div className="flex items-center gap-2 text-sm text-foreground">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted-foreground">
               <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/>
               <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
             </svg>
-            <span>{groupInfo.memberCount || groupInfo.members?.length || 0} thành viên</span>
+            <span>{groupInfo.memberCount || groupInfo.members?.length || 0} {memberNoun}</span>
           </div>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-400 group-hover:text-gray-300 transition-colors">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted-foreground group-hover:text-foreground/80 transition-colors">
             <polyline points="9 18 15 12 9 6"/>
           </svg>
         </button>
       )}
 
       {/* Chờ duyệt vào nhóm - chỉ hiển thị với admin/owner và kênh Zalo */}
-      {channelCap.supportsPendingApproval && groupInfo && canManage(getMyRole(groupInfo, activeAccountId)) && (
+      {channelCap.supportsPendingApproval && groupInfo && canManageGroup(groupInfo, activeAccountId, channelCap.id) && (
         <button
           onClick={() => setPanelView('pending')}
-          className="w-full flex items-center justify-between px-4 py-3 border-b border-gray-700 hover:bg-gray-700/40 transition-colors group"
+          className="w-full flex items-center justify-between px-4 py-3 border-b border-border hover:bg-muted/40 transition-colors group"
         >
-          <div className="flex items-center gap-2 text-sm text-gray-200">
+          <div className="flex items-center gap-2 text-sm text-foreground">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-yellow-400">
               <path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/>
               <circle cx="9" cy="7" r="4"/>
@@ -772,7 +933,7 @@ export default function GroupInfoPanel() {
               </span>
             )}
           </div>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-400 group-hover:text-gray-300 transition-colors">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted-foreground group-hover:text-foreground/80 transition-colors">
             <polyline points="9 18 15 12 9 6"/>
           </svg>
         </button>
@@ -782,15 +943,15 @@ export default function GroupInfoPanel() {
       {isTelegramCh(channelCap.id) && Number((contact as any)?.is_forum) === 1 && (
       <button
           onClick={() => setPanelView('topics')}
-          className="w-full flex items-center justify-between px-4 py-3 border-b border-gray-700 hover:bg-gray-700/40 transition-colors group"
+          className="w-full flex items-center justify-between px-4 py-3 border-b border-border hover:bg-muted/40 transition-colors group"
       >
-        <div className="flex items-center gap-2 text-sm text-gray-200">
+        <div className="flex items-center gap-2 text-sm text-foreground">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-sky-400">
             <path d="M21 15a4 4 0 01-4 4H8l-5 3V7a4 4 0 014-4h10a4 4 0 014 4z"/>
           </svg>
           <span>Chủ đề</span>
         </div>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-400 group-hover:text-gray-300 transition-colors">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted-foreground group-hover:text-foreground/80 transition-colors">
           <polyline points="9 18 15 12 9 6"/>
         </svg>
       </button>
@@ -800,17 +961,17 @@ export default function GroupInfoPanel() {
       {channelCap.supportsGroupBoard && isZaloCh(channelCap.id) && (
       <button
           onClick={() => useAppStore.getState().setShowGroupBoard(true)}
-          className="w-full flex items-center justify-between px-4 py-3 border-b border-gray-700 hover:bg-gray-700/40 transition-colors group"
+          className="w-full flex items-center justify-between px-4 py-3 border-b border-border hover:bg-muted/40 transition-colors group"
       >
-        <div className="flex items-center gap-2 text-sm text-gray-200">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-400">
+        <div className="flex items-center gap-2 text-sm text-foreground">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted-foreground">
             <rect x="3" y="3" width="18" height="18" rx="2"/>
             <line x1="3" y1="9" x2="21" y2="9"/>
             <line x1="9" y1="21" x2="9" y2="9"/>
           </svg>
           <span>Bảng tin nhóm</span>
         </div>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-400 group-hover:text-gray-300 transition-colors">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted-foreground group-hover:text-foreground/80 transition-colors">
           <polyline points="9 18 15 12 9 6"/>
         </svg>
       </button>
@@ -826,7 +987,7 @@ export default function GroupInfoPanel() {
       <GroupActionSection
         groupId={activeThreadId}
         groupName={groupInfo?.name || displayName}
-        isOwner={getMyRole(groupInfo, activeAccountId) === 1}
+        isOwner={myGroupRoleKind(groupInfo, activeAccountId, channelCap.id) === 'owner'}
         channelCap={channelCap}
         onLeft={() => {
           if (activeAccountId) {
@@ -865,21 +1026,21 @@ export default function GroupInfoPanel() {
       {showRenameDialog && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50"
           onClick={() => setShowRenameDialog(false)}>
-          <div className="bg-gray-800 border border-gray-600 rounded-2xl p-5 w-80 shadow-2xl"
+          <div className="bg-card border border-input rounded-2xl p-5 w-80 shadow-2xl"
             onClick={e => e.stopPropagation()}>
-            <p className="text-sm font-semibold text-white mb-3">Đổi tên nhóm</p>
+            <p className="text-sm font-semibold text-foreground mb-3">Đổi tên nhóm</p>
             <input
               ref={renameInputRef}
               autoFocus
               value={renameValue}
               onChange={e => setRenameValue(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') handleRenameConfirm(); if (e.key === 'Escape') setShowRenameDialog(false); }}
-              className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 mb-4"
+              className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 mb-4"
               placeholder="Nhập tên nhóm mới..."
             />
             <div className="flex justify-end gap-2">
               <button onClick={() => setShowRenameDialog(false)}
-                className="px-4 py-1.5 text-xs text-gray-300 hover:text-white bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors">
+                className="px-4 py-1.5 text-xs text-foreground/80 hover:text-foreground bg-muted hover:bg-accent rounded-lg transition-colors">
                 Hủy
               </button>
               <button onClick={handleRenameConfirm}
@@ -893,27 +1054,23 @@ export default function GroupInfoPanel() {
     </div>
   );
 
-  function handleChangeAvatar() {
+  async function handleChangeAvatar() {
     if (channelCap.id === CHANNEL.FACEBOOK) return; // FB uses different mechanism
-    const input = document.createElement('input');
-    input.type = 'file'; input.accept = 'image/*';
-    input.onchange = async (e) => {
-      const file = (e.target as HTMLInputElement).files?.[0];
-      if (!file || !activeThreadId) return;
-      if (!activeAccountId) return;
-      const auth = getAuth();
-      if (!auth) return;
-      const filePath = (file as any).path || '';
-      if (!filePath) { showNotification('Không đọc được đường dẫn file', 'error'); return; }
-      try {
-        const res = isTelegramCh(channelCap.id)
-          ? await (getAdapter(channelCap.id) as any).setGroupAvatar({ accountId: activeAccountId, threadId: activeThreadId, photoPath: filePath })
-          : await ipc.zalo?.changeGroupAvatar({ auth, avatarPath: filePath, groupId: activeThreadId });
-        if (res?.success) { showNotification('Đã đổi ảnh nhóm', 'success'); fetchGroupInfo(); }
-        else showNotification(extractApiError(res, 'Đổi ảnh nhóm thất bại'), 'error');
-      } catch (e: any) { showNotification(extractApiError(e, 'Đổi ảnh nhóm thất bại'), 'error'); }
-    };
-    input.click();
+    if (!activeThreadId || !activeAccountId) return;
+    // Electron mới bỏ File.path (input file trả đường dẫn rỗng) → chọn ảnh bằng hộp chọn file của máy
+    const picked: any = await ipc.file?.openDialog({ filters: [{ name: 'Ảnh', extensions: ['jpg', 'jpeg', 'png', 'webp'] }] });
+    const filePath = picked?.filePaths?.[0] || '';
+    if (!filePath) return;
+    const telegramGroup = isTelegramCh(channelCap.id);
+    const auth = telegramGroup ? null : getAuth();
+    if (!telegramGroup && !auth) return;
+    try {
+      const res = telegramGroup
+        ? await (getAdapter(channelCap.id) as any).setGroupAvatar({ accountId: activeAccountId, threadId: activeThreadId, photoPath: filePath })
+        : await ipc.zalo?.changeGroupAvatar({ auth, avatarPath: filePath, groupId: activeThreadId });
+      if (res?.success) { showNotification(`Đã đổi ảnh ${chatNoun}`, 'success'); fetchGroupInfo(); }
+      else showNotification(extractApiError(res, `Đổi ảnh ${chatNoun} thất bại`), 'error');
+    } catch (e: any) { showNotification(extractApiError(e, `Đổi ảnh ${chatNoun} thất bại`), 'error'); }
   }
 
   function startRenameGroup() {
@@ -946,50 +1103,177 @@ export default function GroupInfoPanel() {
 function GrpActionBtn({ icon, label, onClick, active }: { icon: React.ReactNode; label: string; onClick: () => void; active?: boolean }) {
   return (
     <button onClick={onClick}
-      className={`flex flex-col items-center gap-1 py-2 px-1 rounded-xl hover:bg-gray-700 transition-colors text-center`}>
-      <div className={`w-9 h-9 rounded-full flex items-center justify-center text-lg ${active ? 'bg-blue-500' : 'bg-gray-600'}`}>{icon}</div>
-      <span className={`text-[9px] leading-tight ${active ? 'text-blue-500' : 'text-gray-500'}`}>{label}</span>
+      className={`flex flex-col items-center gap-1 py-2 px-1 rounded-xl hover:bg-muted transition-colors text-center`}>
+      <div className={`w-9 h-9 rounded-full flex items-center justify-center text-lg ${active ? 'bg-blue-500' : 'bg-accent'}`}>{icon}</div>
+      <span className={`text-[9px] leading-tight ${active ? 'text-blue-500' : 'text-subtle-foreground'}`}>{label}</span>
     </button>
   );
 }
 
 
 // ─── MembersPanel ─────────────────────────────────────────────────────────────
-function MembersPanel({ groupInfo, groupId, onBack, onRefresh, myAccountId, channelCap, onShowProfile }: {
+/** Mở panel lần đầu → API đang chạy cho nhóm này (StrictMode / mở lại nhanh không gọi trùng). */
+const membersApiSyncInFlight = new Set<string>();
+
+/**
+ * Thành viên nhóm — đọc từ DB theo trang, ĐỦ người như CRM Nhóm (quét thành viên ẩn, thu thập từ lịch sử tin Telegram,
+ * các lần đồng bộ trước); tìm trong DB, không phân biệt dấu. API chỉ gọi khi mở panel lần đầu cho nhóm (gộp vào DB,
+ * không bớt ai) hoặc khi bấm làm mới. Thao tác quản trị cập nhật DB / cache tại chỗ thay vì tải lại cả nhóm qua API.
+ */
+function MembersPanel({ groupInfo, groupId, onBack, onRefresh, onApiSync, myAccountId, channelCap, onShowProfile }: {
   groupInfo: CachedGroupInfo | null;
   groupId: string;
   onBack: () => void;
-  onRefresh: () => void;
+  /** Làm mới thủ công (API, lấy lại tên mọi người). */
+  onRefresh: () => Promise<boolean>;
+  /** Đồng bộ API lần đầu mở panel (chỉ lấy tên người còn thiếu). */
+  onApiSync: () => Promise<boolean>;
   myAccountId: string;
   channelCap?: ChannelCapability;
   onShowProfile?: (userId: string, x: number, y: number) => void;
 }) {
+  const channel = channelCap?.id || CHANNEL.ZALO;
+  const reloadRef = useRef<() => Promise<void>>(async () => {});
   // ── Hidden-member scan is a Zalo-only capability ──────────────────────
   const { syncMembers } = useGroupMemberSync({
     accountId: myAccountId,
     groupId,
-    onMembersSynced: () => onRefresh(),
+    onMembersSynced: () => { void reloadRef.current(); },
   });
-  const { getActiveAccount } = useAccountStore();
-  const { showNotification } = useAppStore();
+  const { getActiveAccount } = useAccountStore(useShallow(s => ({
+    getActiveAccount: s.getActiveAccount, accounts: s.accounts, activeAccountId: s.activeAccountId,
+  })));
+  const { showNotification } = useAppStore(useShallow(s => ({
+    showNotification: s.showNotification,
+  })));
   const userPresence = useChatStore(state => state.userPresence);
   const [search, setSearch] = useState('');
+  const [query, setQuery] = useState('');
+  const [rows, setRows] = useState<GroupMember[]>([]);
+  const [total, setTotal] = useState<number | null>(null);
+  const [listLoading, setListLoading] = useState(false);
+  const [listError, setListError] = useState('');
+  const [apiSyncing, setApiSyncing] = useState(false);
   const [addMemberOpen, setAddMemberOpen] = useState(false);
   const [ctxMember, setCtxMember] = useState<GroupMember | null>(null);
   const [ctxPos, setCtxPos] = useState<{ top: number; left: number } | null>(null);
   const [reloading, setReloading] = useState(false);
   const ctxRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const rowsRef = useRef<GroupMember[]>([]);
+  rowsRef.current = rows;
+  const seqRef = useRef(0);
+  const loadingMoreRef = useRef(false);
 
-  const myRole = getMyRole(groupInfo, myAccountId);
-  const isAdmin = canManage(myRole);
+  const isAdmin = canManageGroup(groupInfo, myAccountId, channel);
+  const ownerRole = groupOwnerRole(channel);
+
+  // Gõ tìm: đợi ngừng gõ 250 ms rồi mới hỏi DB
+  useEffect(() => {
+    const timer = setTimeout(() => setQuery(search.trim()), 250);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  const fetchPage = useCallback((offset: number, limit: number) => DataAccessor.getGroupMembersPage({
+    zaloId: myAccountId, groupId, query, limit, offset, ownerRole,
+  }).catch((err: any) => ({ success: false as const, error: err?.message || String(err), members: [] as any[], total: 0 })), [myAccountId, groupId, query, ownerRole]);
+
+  /** Đọc lại từ đầu — giữ số người đang hiện (tối đa 500) để danh sách không co lại / nhảy vị trí cuộn. */
+  const reloadList = useCallback(async () => {
+    if (!myAccountId || !groupId) return;
+    const seq = ++seqRef.current;
+    const limit = Math.min(Math.max(rowsRef.current.length, GROUP_MEMBERS_PAGE_SIZE), 500);
+    setListLoading(true);
+    const res: any = await fetchPage(0, limit);
+    if (seq !== seqRef.current) return;
+    setListLoading(false);
+    // Đọc lỗi (nhân viên mất kết nối Boss): giữ danh sách đang hiện, báo lỗi
+    if (isReadFailure(res)) { setListError(readFailureMessage(res)); return; }
+    setListError('');
+    setRows((res.members || []).map(memberFromRow).filter((member: GroupMember) => member.userId));
+    setTotal(Number(res.total) || 0);
+  }, [fetchPage, myAccountId, groupId]);
+  reloadRef.current = reloadList;
+
+  const loadMore = useCallback(async () => {
+    if (loadingMoreRef.current || total === null || rowsRef.current.length >= total) return;
+    loadingMoreRef.current = true;
+    const seq = seqRef.current; // lần đọc lại từ đầu đang chạy / chạy sau sẽ thay kết quả này
+    setListLoading(true);
+    const res: any = await fetchPage(rowsRef.current.length, GROUP_MEMBERS_PAGE_SIZE);
+    loadingMoreRef.current = false;
+    if (seq !== seqRef.current) return;
+    setListLoading(false);
+    if (isReadFailure(res)) { setListError(readFailureMessage(res)); return; }
+    setListError('');
+    setRows(previous => appendMemberPage(previous, (res.members || []).map(memberFromRow)));
+    setTotal(Number(res.total) || 0);
+  }, [fetchPage, total]);
+
+  // Đổi nhóm / từ khoá → trang đầu (danh sách cũ còn hiện tới khi có kết quả mới, đổi nhóm thì xoá ngay)
+  const groupKey = `${myAccountId}:${groupId}`;
+  const shownGroupRef = useRef(groupKey);
+  useEffect(() => {
+    if (shownGroupRef.current !== groupKey) {
+      shownGroupRef.current = groupKey;
+      setRows([]);
+      setTotal(null);
+    }
+    rowsRef.current = [];
+    scrollRef.current?.scrollTo({ top: 0 });
+    void reloadList();
+  }, [reloadList, groupKey]);
+
+  // Mở thành viên của nhóm LẦN ĐẦU → gọi API một lần (đánh dấu khi thành công); về sau chỉ đọc DB
+  useEffect(() => {
+    const apiCapable = isZaloCh(channel) || channel === 'telegram_user';
+    if (!myAccountId || !groupId || !apiCapable) return;
+    if (groupMembersApiSyncedAt(myAccountId, groupId)) return;
+    const key = `${myAccountId}:${groupId}`;
+    if (membersApiSyncInFlight.has(key)) return;
+    membersApiSyncInFlight.add(key);
+    setApiSyncing(true);
+    let mounted = true;
+    onApiSync()
+      .catch(() => false)
+      .finally(() => {
+        membersApiSyncInFlight.delete(key);
+        if (!mounted) return;
+        setApiSyncing(false);
+        void reloadRef.current();
+      });
+    return () => { mounted = false; };
+    // Chỉ theo nhóm: onApiSync là hàm mới mỗi lần render
+  }, [myAccountId, groupId, channel]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Cache nhóm đổi (đồng bộ xong, ảnh Telegram vừa tải, có người vào / rời…) → đọc lại DB
+  const fetchedAt = groupInfo?.fetchedAt || 0;
+  const seenFetchedAtRef = useRef(fetchedAt);
+  useEffect(() => {
+    if (!fetchedAt || fetchedAt === seenFetchedAtRef.current) return;
+    seenFetchedAtRef.current = fetchedAt;
+    const timer = setTimeout(() => { void reloadRef.current(); }, 400);
+    return () => clearTimeout(timer);
+  }, [fetchedAt]);
+
+  // Cuộn gần cuối → trang sau; trang vừa tải chưa lấp đầy khung → tải tiếp
+  const onListScroll = () => {
+    const el = scrollRef.current;
+    if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 320) void loadMore();
+  };
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || total === null || rows.length >= total) return;
+    if (el.scrollHeight - el.clientHeight < 320) void loadMore();
+  }, [rows.length, total, loadMore]);
 
   const handleReload = async () => {
     if (reloading) return;
     setReloading(true);
     try {
-      if ((channelCap?.id || CHANNEL.ZALO) === CHANNEL.ZALO) await syncMembers();
-      // Always call onRefresh to update the UI
+      if (isZaloCh(channel)) await syncMembers();
       await onRefresh();
+      await reloadList();
     } finally {
       setReloading(false);
     }
@@ -1008,15 +1292,46 @@ function MembersPanel({ groupInfo, groupId, onBack, onRefresh, myAccountId, chan
     return buildZaloAuth(acc, myAccountId);
   };
 
-  const filtered = (groupInfo?.members || []).filter(m =>
-    !search || (m.displayName || m.userId).toLowerCase().includes(search.toLowerCase())
-  );
-  const sorted = [...filtered].sort((a, b) => b.role - a.role);
+  const visibleRows = React.useMemo(() => withLiveMemberInfo(rows, groupInfo?.members), [rows, groupInfo?.members]);
   const getStatusText = (member: GroupMember) => {
     const live = userPresence[`${myAccountId}_${member.userId}`];
     if (live?.status === 'online') return 'Đang online';
     if (live?.lastSeen) return formatTelegramMemberStatus({ ...member, lastSeenAt: live.lastSeen, statusText: 'Đã offline' });
     return formatTelegramMemberStatus(member);
+  };
+
+  /** Thao tác quản trị thành công → sửa DB + cache tại chỗ (danh sách đọc từ DB), không gọi lại API cả nhóm. */
+  const applyMemberChange = async (member: GroupMember, change: { removed: true } | { role: number }) => {
+    if ('removed' in change) {
+      await DataAccessor.removeGroupMember({ zaloId: myAccountId, groupId, memberId: member.userId }).catch(() => {});
+    } else {
+      await DataAccessor.upsertGroupMember({
+        zaloId: myAccountId, groupId,
+        member: { memberId: member.userId, displayName: member.displayName || '', avatar: member.avatar || '', role: change.role, username: member.username || '' },
+      }).catch(() => {});
+    }
+    const app = useAppStore.getState();
+    const cache = app.groupInfoCache?.[myAccountId]?.[groupId];
+    if (cache) {
+      const members = 'removed' in change
+        ? cache.members.filter(item => item.userId !== member.userId)
+        : cache.members.map(item => (item.userId === member.userId ? { ...item, role: change.role } : item));
+      const adminRole = groupAdminRole(channel);
+      const adminIds = 'removed' in change
+        ? (cache.adminIds || []).filter(id => id !== member.userId)
+        : change.role === adminRole
+          ? Array.from(new Set([...(cache.adminIds || []), member.userId]))
+          : (cache.adminIds || []).filter(id => id !== member.userId);
+      app.setGroupInfo(myAccountId, groupId, {
+        ...cache,
+        members,
+        adminIds,
+        memberCount: 'removed' in change ? Math.max(0, Number(cache.memberCount || members.length + 1) - 1) : cache.memberCount,
+        fetchedAt: Date.now(),
+      });
+    } else {
+      void reloadList();
+    }
   };
 
   const handleRemoveMember = async (member: GroupMember) => {
@@ -1030,15 +1345,14 @@ function MembersPanel({ groupInfo, groupId, onBack, onRefresh, myAccountId, chan
     const auth = getAuth();
     if (!auth) return;
     try {
-      const ch = channelCap?.id || CHANNEL.ZALO;
-      if (isNonZalo(ch)) {
-        const adapter = getAdapter(ch);
+      if (isNonZalo(channel)) {
+        const adapter = getAdapter(channel);
         const res = await (adapter as any).removeMember({ accountId: myAccountId, threadId: groupId, userId: member.userId });
-        if (res?.success) { showNotification('Đã xóa thành viên', 'success'); onRefresh(); }
+        if (res?.success) { showNotification('Đã xóa thành viên', 'success'); await applyMemberChange(member, { removed: true }); }
         else showNotification(res?.error || 'Xóa thành viên thất bại', 'error');
       } else {
         const res = await ipc.zalo?.removeUserFromGroup({ auth, userId: member.userId, groupId });
-        if (res?.success) { showNotification('Đã xóa thành viên', 'success'); onRefresh(); }
+        if (res?.success) { showNotification('Đã xóa thành viên', 'success'); await applyMemberChange(member, { removed: true }); }
         else showNotification(extractApiError(res, 'Xóa thành viên thất bại'), 'error');
       }
     } catch (e: any) { showNotification(extractApiError(e, 'Xóa thành viên thất bại'), 'error'); }
@@ -1048,22 +1362,21 @@ function MembersPanel({ groupInfo, groupId, onBack, onRefresh, myAccountId, chan
   const handleMakeDeputy = async (member: GroupMember) => {
     const auth = getAuth();
     if (!auth) return;
-    const ch = channelCap?.id || CHANNEL.ZALO;
+    const isDeputy = groupRoleKind(member.role, channel) === 'admin';
+    const nextRole = isDeputy ? 0 : groupAdminRole(channel);
     try {
-      if (isNonZalo(ch)) {
-        const adapter = getAdapter(ch);
-        const isDeputy = member.role === 2;
+      if (isNonZalo(channel)) {
+        const adapter = getAdapter(channel);
         const res = await (adapter as any).promoteMember({ accountId: myAccountId, threadId: groupId, userId: member.userId, isAdmin: !isDeputy });
-        if (res?.success) { showNotification(isDeputy ? 'Đã xóa quyền admin' : 'Đã cấp quyền admin', 'success'); onRefresh(); }
+        if (res?.success) { showNotification(isDeputy ? 'Đã xóa quyền admin' : 'Đã cấp quyền admin', 'success'); await applyMemberChange(member, { role: nextRole }); }
         else showNotification(res?.error || 'Thao tác thất bại', 'error');
         setCtxMember(null);
         return;
       }
-      const isDeputy = member.role === 2;
       const res = isDeputy
         ? await ipc.zalo?.removeGroupDeputy({ auth, userId: member.userId, groupId })
         : await ipc.zalo?.addGroupDeputy({ auth, userId: member.userId, groupId });
-      if (res?.success) { showNotification(isDeputy ? 'Đã xóa phó nhóm' : 'Đã thêm phó nhóm', 'success'); onRefresh(); }
+      if (res?.success) { showNotification(isDeputy ? 'Đã xóa phó nhóm' : 'Đã thêm phó nhóm', 'success'); await applyMemberChange(member, { role: nextRole }); }
       else showNotification(extractApiError(res, 'Thao tác thất bại'), 'error');
     } catch (e: any) { showNotification(extractApiError(e, 'Thao tác thất bại'), 'error'); }
     setCtxMember(null);
@@ -1079,61 +1392,42 @@ function MembersPanel({ groupInfo, groupId, onBack, onRefresh, myAccountId, chan
     if (!ok) return;
     const auth = getAuth();
     if (!auth) return;
-    const ch = channelCap?.id || CHANNEL.ZALO;
     try {
-      if (isNonZalo(ch)) {
-        const adapter = getAdapter(ch);
+      if (isNonZalo(channel)) {
+        const adapter = getAdapter(channel);
         const res = await (adapter as any).removeMember({ accountId: myAccountId, threadId: groupId, userId: member.userId });
-        if (res?.success) { showNotification('Đã chặn thành viên', 'success'); onRefresh(); }
+        if (res?.success) { showNotification('Đã chặn thành viên', 'success'); await applyMemberChange(member, { removed: true }); }
         else showNotification(res?.error || 'Chặn thành viên thất bại', 'error');
         setCtxMember(null);
         return;
       }
       const res = await ipc.zalo?.addGroupBlockedMember({ auth, userId: member.userId, groupId });
-      if (res?.success) { showNotification('Đã chặn thành viên', 'success'); onRefresh(); }
+      if (res?.success) { showNotification('Đã chặn thành viên', 'success'); await applyMemberChange(member, { removed: true }); }
       else showNotification(extractApiError(res, 'Chặn thành viên thất bại'), 'error');
     } catch (e: any) { showNotification(extractApiError(e, 'Chặn thành viên thất bại'), 'error'); }
     setCtxMember(null);
   };
 
-  const handleLeaveGroup = async () => {
-    const ok = await showConfirm({
-      title: 'Rời khỏi nhóm này?',
-      message: 'Bạn sẽ rời khỏi nhóm và không nhận tin nhắn mới.',
-      confirmText: 'Rời nhóm',
-      variant: 'warning',
-    });
-    if (!ok) return;
-    const auth = getAuth();
-    if (!auth) return;
-    const ch = channelCap?.id || CHANNEL.ZALO;
-    try {
-      if (isNonZalo(ch)) {
-        const adapter = getAdapter(ch);
-        const res = await (adapter as any).leaveGroup({ accountId: myAccountId, threadId: groupId });
-        if (res?.success) { showNotification('Đã rời khỏi nhóm', 'success'); onBack(); }
-        else showNotification(res?.error || 'Rời nhóm thất bại', 'error');
-        return;
-      }
-      const res = await ipc.zalo?.leaveGroup({ auth, groupId });
-      if (res?.success) { showNotification('Đã rời khỏi nhóm', 'success'); onBack(); }
-      else showNotification(extractApiError(res, 'Rời nhóm thất bại'), 'error');
-    } catch (e: any) { showNotification(extractApiError(e, 'Rời nhóm thất bại'), 'error'); }
-  };
+  const officialCount = Number(groupInfo?.memberCount || 0);
+  const shownTotal = total ?? 0;
+  const countLabel = query
+    ? `Kết quả tìm kiếm (${shownTotal})`
+    : `Danh sách thành viên (${officialCount > shownTotal ? `${shownTotal} / ${officialCount}` : shownTotal})`;
+  const hasMore = total !== null && rows.length < total;
 
   return (
-    <div className="w-72 h-full flex-shrink-0 bg-gray-800 border-l border-gray-700 flex flex-col overflow-hidden">
-      <div className="flex items-center gap-1 px-3 py-3 border-b border-gray-700">
-        <button onClick={onBack} className="p-1 rounded-lg hover:bg-gray-700 text-gray-400 hover:text-white transition-colors flex-shrink-0">
+    <div className="w-72 h-full flex-shrink-0 bg-card border-l border-border flex flex-col overflow-hidden">
+      <div className="flex items-center gap-1 px-3 py-3 border-b border-border">
+        <button onClick={onBack} className="p-1 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors flex-shrink-0">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg>
         </button>
-        <span className="text-sm font-semibold text-white flex-1 text-center">Thành viên</span>
+        <span className="text-sm font-semibold text-foreground flex-1 text-center">Thành viên</span>
         {/* Add member */}
         {(channelCap?.supportsInviteToGroup ?? true) && (
           <button
             title="Thêm thành viên"
             onClick={() => setAddMemberOpen(true)}
-            className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-gray-700 text-gray-400 hover:text-white transition-colors flex-shrink-0"
+            className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-muted text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/>
@@ -1142,15 +1436,15 @@ function MembersPanel({ groupInfo, groupId, onBack, onRefresh, myAccountId, chan
           </button>
         )}
 
-        {/* Reload member info */}
+        {/* Reload member info (API) */}
         <button
-          title="Tải lại thông tin thành viên"
+          title="Tải lại thành viên từ Zalo / Telegram"
           onClick={handleReload}
-          disabled={reloading}
-          className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-gray-700 text-gray-400 hover:text-white transition-colors disabled:opacity-50 flex-shrink-0"
+          disabled={reloading || apiSyncing}
+          className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-muted text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50 flex-shrink-0"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-            className={reloading ? 'animate-spin' : ''}>
+            className={reloading || apiSyncing ? 'animate-spin' : ''}>
             <path d="M23 4v6h-6"/><path d="M1 20v-6h6"/>
             <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
           </svg>
@@ -1160,85 +1454,114 @@ function MembersPanel({ groupInfo, groupId, onBack, onRefresh, myAccountId, chan
       <div className="px-3 pb-2 pt-2">
         <input value={search} onChange={e => setSearch(e.target.value)}
           placeholder="Tìm thành viên..."
-          className="w-full bg-gray-700 border border-gray-600 rounded-full px-3 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500" />
+          className="w-full bg-muted border border-input rounded-full px-3 py-1.5 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500" />
       </div>
 
-      <div className="px-4 pb-1">
-        <span className="text-xs text-gray-400 font-medium">Danh sách thành viên ({groupInfo?.memberCount || sorted.length})</span>
+      <div className="px-4 pb-1 flex items-center gap-2">
+        <span className="text-xs text-muted-foreground font-medium flex-1 min-w-0 truncate">{countLabel}</span>
+        {(listLoading || apiSyncing) && <Spinner size={3} />}
       </div>
+      {apiSyncing && (
+        <p className="px-4 pb-1 text-[11px] text-subtle-foreground">Đang đồng bộ thành viên lần đầu…</p>
+      )}
+      {listError && (
+        <div className="mx-3 mb-1 flex items-center gap-2 rounded-lg bg-destructive/10 px-2.5 py-1.5 text-[11px] text-destructive">
+          <span className="flex-1 min-w-0">{listError}</span>
+          <button onClick={() => { void reloadList(); }} className="shrink-0 font-medium underline-offset-2 hover:underline">Thử lại</button>
+        </div>
+      )}
 
-      <div className="flex-1 overflow-y-auto">
-        {sorted.map(m => (
-          <div key={m.userId} className="flex items-center gap-2 px-3 py-2 hover:bg-gray-700 transition-colors group">
-            {/* Avatar - clickable */}
-            <button
-              onClick={(e) => onShowProfile?.(m.userId, e.clientX, e.clientY)}
-              className="flex-shrink-0 focus:outline-none hover:opacity-80 transition-opacity"
-            >
-              {m.avatar ? (
-                <img src={m.avatar} alt="" className="w-9 h-9 rounded-full object-cover"
-                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-              ) : (
-                <div className="w-9 h-9 rounded-full bg-blue-600 flex items-center justify-center text-white text-sm font-bold">
-                  {(m.displayName || '?').charAt(0).toUpperCase()}
-                </div>
-              )}
-            </button>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm text-gray-200 truncate">{m.displayName || m.userId}</p>
-              {getStatusText(m) && (
-                <p className={`text-[11px] truncate ${getStatusText(m) === 'Đang online' ? 'text-green-400' : 'text-gray-500'}`}>
-                  {getStatusText(m)}
-                </p>
-              )}
-              <div className="flex items-center gap-1">
-                {m.role === 1 && <span className="text-[11px] bg-yellow-600/30 text-yellow-400 px-1.5 rounded">Trưởng nhóm</span>}
-                {m.role === 2 && <span className="text-[11px] bg-blue-600/30 text-blue-400 px-1.5 rounded">Phó nhóm</span>}
-              </div>
-            </div>
-            {/* Context menu - admin only, not for group owner */}
-            {isAdmin && (channelCap?.supportsGroupAdmin ?? true) && m.role !== 1 && m.userId !== myAccountId && (
+      <div ref={scrollRef} onScroll={onListScroll} className="flex-1 overflow-y-auto">
+        {visibleRows.map(m => {
+          const kind = groupRoleKind(m.role, channel);
+          const statusText = getStatusText(m);
+          const avatarSrc = m.avatar ? toLocalMediaUrl(m.avatar) : '';
+          return (
+            <div key={m.userId} className="flex items-center gap-2 px-3 py-2 hover:bg-muted transition-colors group">
+              {/* Avatar - clickable */}
               <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                  setCtxPos({ top: rect.top, left: rect.left - 196 });
-                  setCtxMember(m);
-                }}
-                className="opacity-0 group-hover:opacity-100 p-1 rounded-lg hover:bg-gray-600 text-gray-400 hover:text-white transition-all">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                  <circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>
-                </svg>
+                onClick={(e) => onShowProfile?.(m.userId, e.clientX, e.clientY)}
+                className="flex-shrink-0 focus:outline-none hover:opacity-80 transition-opacity"
+              >
+                {avatarSrc ? (
+                  <img src={avatarSrc} alt="" loading="lazy" className="w-9 h-9 rounded-full object-cover"
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                ) : (
+                  <div className="w-9 h-9 rounded-full bg-blue-600 flex items-center justify-center text-white text-sm font-bold">
+                    {(m.displayName || '?').charAt(0).toUpperCase()}
+                  </div>
+                )}
               </button>
-            )}
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-foreground truncate">{m.displayName || m.userId}</p>
+                {statusText && (
+                  <p className={`text-[11px] truncate ${statusText === 'Đang online' ? 'text-green-400' : 'text-subtle-foreground'}`}>
+                    {statusText}
+                  </p>
+                )}
+                {kind !== 'member' && (
+                  <div className="flex items-center gap-1">
+                    {kind === 'owner' && <span className="text-[11px] bg-yellow-600/30 text-yellow-400 px-1.5 rounded">{groupRoleLabel(kind)}</span>}
+                    {kind === 'admin' && <span className="text-[11px] bg-blue-600/30 text-blue-400 px-1.5 rounded">{groupRoleLabel(kind)}</span>}
+                  </div>
+                )}
+              </div>
+              {/* Context menu - admin only, not for group owner */}
+              {isAdmin && (channelCap?.supportsGroupAdmin ?? true) && kind !== 'owner' && m.userId !== myAccountId && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                    setCtxPos({ top: rect.top, left: rect.left - 196 });
+                    setCtxMember(m);
+                  }}
+                  className="opacity-0 group-hover:opacity-100 p-1 rounded-lg hover:bg-accent text-muted-foreground hover:text-foreground transition-all">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                    <circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>
+                  </svg>
+                </button>
+              )}
+            </div>
+          );
+        })}
+        {hasMore && (
+          <div className="flex justify-center py-3">
+            {listLoading
+              ? <Spinner size={4} />
+              : <button onClick={() => { void loadMore(); }} className="text-xs text-blue-500 hover:underline">Tải thêm thành viên</button>}
           </div>
-        ))}
-        {sorted.length === 0 && <p className="text-xs text-gray-400 text-center py-8">Không có thành viên</p>}
+        )}
+        {total === 0 && !listLoading && !apiSyncing && (
+          <p className="text-xs text-muted-foreground text-center py-8">{query ? 'Không tìm thấy thành viên' : 'Không có thành viên'}</p>
+        )}
+        {total === null && !listError && (
+          <div className="flex justify-center py-8"><Spinner size={5} /></div>
+        )}
       </div>
 
       {/* Context menu for admin actions */}
       {ctxMember && (
         <div ref={ctxRef}
-          className="fixed z-50 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl py-1 min-w-[180px]"
+          className="fixed z-50 bg-card border border-border rounded-xl shadow-2xl py-1 min-w-[180px]"
           style={{ top: ctxPos?.top ?? 200, left: Math.max(4, ctxPos?.left ?? 200) }}>
-          <div className="px-3 py-2 border-b border-gray-700">
-            <p className="text-sm text-white font-medium">{ctxMember.displayName || ctxMember.userId}</p>
+          <div className="px-3 py-2 border-b border-border">
+            <p className="text-sm text-foreground font-medium">{ctxMember.displayName || ctxMember.userId}</p>
           </div>
           <button onClick={() => { onShowProfile?.(ctxMember.userId, (ctxPos?.left ?? 0) + 200, ctxPos?.top ?? 0); setCtxMember(null); }}
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white text-left"><UserIcon className="w-4 h-4 inline" /> Xem thông tin
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-foreground/80 hover:bg-muted hover:text-foreground text-left"><UserIcon className="w-4 h-4 inline" /> Xem thông tin
           </button>
           <button onClick={() => handleMakeDeputy(ctxMember)}
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white text-left">
-            {ctxMember.role === 2 ? <><ArrowDownIcon className="w-4 h-4 inline" /> Xóa phó nhóm</> : <><ArrowUpIcon className="w-4 h-4 inline" /> Đặt làm phó nhóm</>}
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-foreground/80 hover:bg-muted hover:text-foreground text-left">
+            {groupRoleKind(ctxMember.role, channel) === 'admin' ? <><ArrowDownIcon className="w-4 h-4 inline" /> Xóa phó nhóm</> : <><ArrowUpIcon className="w-4 h-4 inline" /> Đặt làm phó nhóm</>}
           </button>
           <button onClick={() => handleBlockMember(ctxMember)}
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-orange-400 hover:bg-gray-700 text-left"><CloseIcon className="w-4 h-4 inline" /> Chặn khỏi nhóm
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-orange-400 hover:bg-muted text-left"><CloseIcon className="w-4 h-4 inline" /> Chặn khỏi nhóm
           </button>
           <button onClick={() => handleRemoveMember(ctxMember)}
             className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-red-900/30 text-left"><TrashIcon className="w-4 h-4 inline" /> Xóa khỏi nhóm
           </button>
           <button onClick={() => setCtxMember(null)}
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-400 hover:bg-gray-700 text-left">
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground hover:bg-muted text-left">
             ✕ Đóng
           </button>
         </div>
@@ -1248,10 +1571,10 @@ function MembersPanel({ groupInfo, groupId, onBack, onRefresh, myAccountId, chan
         <AddMemberToGroupModal
           groupId={groupId}
           groupName={groupInfo?.name || groupId}
-          channel={channelCap?.id || CHANNEL.ZALO}
+          channel={channel}
           existingMemberIds={groupInfo?.members?.map(m => m.userId) || []}
           onClose={() => setAddMemberOpen(false)}
-          onAdded={onRefresh}
+          onAdded={() => { void onApiSync().finally(() => { void reloadRef.current(); }); }}
         />
       )}
     </div>
@@ -1265,8 +1588,12 @@ function PendingPanel({ groupId, myAccountId, onBack, onCountChange }: {
   onBack: () => void;
   onCountChange: (count: number | null) => void;
 }) {
-  const { getActiveAccount } = useAccountStore();
-  const { showNotification } = useAppStore();
+  const { getActiveAccount } = useAccountStore(useShallow(s => ({
+    getActiveAccount: s.getActiveAccount, accounts: s.accounts, activeAccountId: s.activeAccountId,
+  })));
+  const { showNotification } = useAppStore(useShallow(s => ({
+    showNotification: s.showNotification,
+  })));
   const [pending, setPending] = useState<PendingMember[]>([]);
   const [loading, setLoading] = useState(false);
   const [processing, setProcessing] = useState<Set<string>>(new Set());
@@ -1355,16 +1682,16 @@ function PendingPanel({ groupId, myAccountId, onBack, onCountChange }: {
   };
 
   return (
-    <div className="w-72 h-full flex-shrink-0 bg-gray-800 border-l border-gray-700 flex flex-col overflow-hidden">
+    <div className="w-72 h-full flex-shrink-0 bg-card border-l border-border flex flex-col overflow-hidden">
       {/* Header */}
-      <div className="flex items-center gap-2 px-3 py-3 border-b border-gray-700 flex-shrink-0">
-        <button onClick={onBack} className="p-1 rounded-lg hover:bg-gray-700 text-gray-400 hover:text-white transition-colors">
+      <div className="flex items-center gap-2 px-3 py-3 border-b border-border flex-shrink-0">
+        <button onClick={onBack} className="p-1 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg>
         </button>
-        <span className="text-sm font-semibold text-white flex-1 text-center">Chờ duyệt vào nhóm</span>
+        <span className="text-sm font-semibold text-foreground flex-1 text-center">Chờ duyệt vào nhóm</span>
         <button onClick={() => loadPending(true)} disabled={loading || approvingAll}
           title="Tải lại"
-          className="p-1 rounded-lg hover:bg-gray-700 text-gray-400 hover:text-white transition-colors disabled:opacity-40">
+          className="p-1 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
             className={loading ? 'animate-spin' : ''}>
             <path d="M23 4v6h-6"/><path d="M1 20v-6h6"/>
@@ -1375,7 +1702,7 @@ function PendingPanel({ groupId, myAccountId, onBack, onCountChange }: {
 
       {/* Loading */}
       {loading && (
-        <div className="flex-1 flex flex-col items-center justify-center gap-3 text-gray-400">
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 text-muted-foreground">
           <Spinner size={8} className="text-yellow-400" />
           <p className="text-sm">Đang tải danh sách...</p>
         </div>
@@ -1384,8 +1711,8 @@ function PendingPanel({ groupId, myAccountId, onBack, onCountChange }: {
       {/* Empty state */}
       {!loading && pending.length === 0 && (
         <div className="flex-1 flex flex-col items-center justify-center gap-3 px-6 text-center">
-          <div className="w-16 h-16 rounded-full bg-gray-700/60 flex items-center justify-center">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-400">
+          <div className="w-16 h-16 rounded-full bg-muted/60 flex items-center justify-center">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-muted-foreground">
               <path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/>
               <circle cx="9" cy="7" r="4"/>
               <line x1="19" y1="8" x2="19" y2="14"/>
@@ -1393,8 +1720,8 @@ function PendingPanel({ groupId, myAccountId, onBack, onCountChange }: {
             </svg>
           </div>
           <div>
-            <p className="text-sm font-medium text-gray-300">Không có yêu cầu nào</p>
-            <p className="text-xs text-gray-400 mt-1">Chưa có ai đang chờ được phê duyệt</p>
+            <p className="text-sm font-medium text-foreground/80">Không có yêu cầu nào</p>
+            <p className="text-xs text-muted-foreground mt-1">Chưa có ai đang chờ được phê duyệt</p>
           </div>
         </div>
       )}
@@ -1403,12 +1730,12 @@ function PendingPanel({ groupId, myAccountId, onBack, onCountChange }: {
       {!loading && pending.length > 0 && (
         <>
           {/* Stats + approve-all */}
-          <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-700/60 flex-shrink-0 bg-gray-800/80">
+          <div className="flex items-center justify-between px-4 py-2.5 border-b border-border/60 flex-shrink-0 bg-card/80">
             <div className="flex items-center gap-1.5">
               <span className="w-5 h-5 rounded-full bg-yellow-500/20 text-yellow-400 text-[11px] font-bold flex items-center justify-center">
                 {pending.length}
               </span>
-              <span className="text-xs text-gray-400">người đang chờ duyệt</span>
+              <span className="text-xs text-muted-foreground">người đang chờ duyệt</span>
             </div>
             <button
               onClick={handleApproveAll}
@@ -1428,7 +1755,7 @@ function PendingPanel({ groupId, myAccountId, onBack, onCountChange }: {
           <div className="flex-1 overflow-y-auto py-2 space-y-1 px-2">
             {pending.map(member => (
               <div key={member.userId}
-                className="flex items-center gap-3 rounded-xl px-3 py-2.5 hover:bg-gray-700/50 transition-colors group">
+                className="flex items-center gap-3 rounded-xl px-3 py-2.5 hover:bg-muted/50 transition-colors group">
                 {/* Avatar */}
                 <div className="relative flex-shrink-0 w-10 h-10">
                   {member.avatar ? (
@@ -1453,8 +1780,8 @@ function PendingPanel({ groupId, myAccountId, onBack, onCountChange }: {
 
                 {/* Info */}
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-gray-100 truncate leading-tight">{member.displayName}</p>
-                  <p className="text-[11px] text-gray-400 truncate font-mono mt-0.5">{member.userId}</p>
+                  <p className="text-sm font-medium text-foreground truncate leading-tight">{member.displayName}</p>
+                  <p className="text-[11px] text-muted-foreground truncate font-mono mt-0.5">{member.userId}</p>
                 </div>
 
                 {/* Action buttons */}
@@ -1493,8 +1820,12 @@ function PendingPanel({ groupId, myAccountId, onBack, onCountChange }: {
 
 // ─── PendingMembersSection ────────────────────────────────────────────────────
 function PendingMembersSection({ groupId, isAdmin, channel }: { groupId: string; isAdmin: boolean; channel: string }) {
-  const { getActiveAccount } = useAccountStore();
-  const { showNotification } = useAppStore();
+  const { getActiveAccount } = useAccountStore(useShallow(s => ({
+    getActiveAccount: s.getActiveAccount, accounts: s.accounts, activeAccountId: s.activeAccountId,
+  })));
+  const { showNotification } = useAppStore(useShallow(s => ({
+    showNotification: s.showNotification,
+  })));
   const [pending, setPending] = useState<Array<{ userId: string; displayName: string; avatar: string }>>([]);
   const [loading, setLoading] = useState(false);
   const [processing, setProcessing] = useState<Set<string>>(new Set());
@@ -1605,13 +1936,13 @@ function PendingMembersSection({ groupId, isAdmin, channel }: { groupId: string;
   if (!isAdmin) return null;
 
   return (
-    <div className="border-t border-gray-700">
+    <div className="border-t border-border">
       {/* Toggle header */}
       <button
         onClick={() => setExpanded(v => !v)}
-        className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-700/40 transition-colors"
+        className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/40 transition-colors"
       >
-        <div className="flex items-center gap-2 text-sm text-gray-200">
+        <div className="flex items-center gap-2 text-sm text-foreground">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-yellow-400">
             <path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/>
             <circle cx="9" cy="7" r="4"/>
@@ -1626,7 +1957,7 @@ function PendingMembersSection({ groupId, isAdmin, channel }: { groupId: string;
           )}
         </div>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-          className={`text-gray-400 transition-transform ${expanded ? 'rotate-180' : ''}`}>
+          className={`text-muted-foreground transition-transform ${expanded ? 'rotate-180' : ''}`}>
           <polyline points="6 9 12 15 18 9"/>
         </svg>
       </button>
@@ -1635,7 +1966,7 @@ function PendingMembersSection({ groupId, isAdmin, channel }: { groupId: string;
         <div className="pb-3">
           {/* Sub-header: count + reload + approve-all */}
           <div className="flex items-center justify-between px-4 py-1.5 mb-1">
-            <span className="text-xs text-gray-400">{pending.length} người đang chờ</span>
+            <span className="text-xs text-muted-foreground">{pending.length} người đang chờ</span>
             <div className="flex items-center gap-2">
               {pending.length > 0 && (
                 <button onClick={handleApproveAll} disabled={approvingAll || loading}
@@ -1667,20 +1998,20 @@ function PendingMembersSection({ groupId, isAdmin, channel }: { groupId: string;
 
           {!loading && pending.length === 0 && (
             <div className="flex flex-col items-center gap-2 py-6 text-center">
-              <div className="w-10 h-10 rounded-full bg-gray-700/60 flex items-center justify-center">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-400">
+              <div className="w-10 h-10 rounded-full bg-muted/60 flex items-center justify-center">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-muted-foreground">
                   <path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/>
                   <line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/>
                 </svg>
               </div>
-              <p className="text-xs text-gray-400">Không có ai đang chờ duyệt</p>
+              <p className="text-xs text-muted-foreground">Không có ai đang chờ duyệt</p>
             </div>
           )}
 
           <div className="space-y-0.5 px-2">
             {pending.map(member => (
               <div key={member.userId}
-                className="flex items-center gap-2.5 rounded-xl px-3 py-2 hover:bg-gray-700/50 transition-colors group">
+                className="flex items-center gap-2.5 rounded-xl px-3 py-2 hover:bg-muted/50 transition-colors group">
                 {/* Avatar */}
                 <div className="relative flex-shrink-0 w-9 h-9">
                   {member.avatar ? (
@@ -1699,8 +2030,8 @@ function PendingMembersSection({ groupId, isAdmin, channel }: { groupId: string;
                 </div>
 
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-gray-200 truncate leading-tight">{member.displayName}</p>
-                  <p className="text-[11px] text-gray-400 font-mono truncate">{member.userId}</p>
+                  <p className="text-sm font-medium text-foreground truncate leading-tight">{member.displayName}</p>
+                  <p className="text-[11px] text-muted-foreground font-mono truncate">{member.userId}</p>
                 </div>
 
                 <div className="flex gap-1 flex-shrink-0">
@@ -1745,15 +2076,20 @@ export function ManagePanel({ groupInfo, groupId, onBack, myAccountId, asModal, 
   asModal?: boolean;
   channel?: string;
 }) {
-  const { getActiveAccount, activeAccountId } = useAccountStore();
-  const { showNotification } = useAppStore();
+  const { getActiveAccount, activeAccountId } = useAccountStore(useShallow(s => ({
+    getActiveAccount: s.getActiveAccount, activeAccountId: s.activeAccountId, accounts: s.accounts,
+  })));
+  const { showNotification } = useAppStore(useShallow(s => ({
+    showNotification: s.showNotification,
+  })));
   const [settings, setSettings] = useState<Record<string, any>>(groupInfo?.settings || {});
   const [groupLink, setGroupLink] = useState<string>('');
   const [loadingLink, setLoadingLink] = useState(false);
 
-  const myRole = getMyRole(groupInfo, myAccountId);
-  const isAdmin = canManage(myRole);
-  const isOwner = myRole === 1;
+  // Zalo: 2 = trưởng nhóm, 1 = phó nhóm; Telegram ngược lại — luôn đọc qua shared/groupMemberRoles
+  const myRoleKind = myGroupRoleKind(groupInfo, myAccountId, channel);
+  const isAdmin = myRoleKind !== 'member';
+  const isOwner = myRoleKind === 'owner';
 
   const getAuth = () => {
     const acc = getActiveAccount();
@@ -1773,30 +2109,19 @@ export function ManagePanel({ groupInfo, groupId, onBack, myAccountId, asModal, 
     || res?.response?.info?.group_link
     || '';
 
-  // Auto-load group link on mount
+  // Auto-load group link on mount (Telegram: TelegramChatSettings tải link + cài đặt trong một lần)
   useEffect(() => {
-    if (!groupId) return;
+    if (!groupId || isTelegram) return;
     setLoadingLink(true);
-    if (isTelegram) {
-      // Telegram: use adapter
-      import('@/lib/adapters/registry').then(({ getAdapter }) => {
-        const adapter = getAdapter(ch as any);
-        (adapter as any).getGroupLink?.({ accountId: myAccountId, threadId: groupId })
-          .then((res: any) => { if (res?.link) setGroupLink(res.link); })
-          .catch(() => {})
-          .finally(() => setLoadingLink(false));
-      });
-    } else {
-      const auth = getAuth();
-      if (!auth) { setLoadingLink(false); return; }
-      ipc.zalo?.getGroupLinkDetail({ auth, groupId })
-        .then((res: any) => {
-          const link = extractLink(res);
-          if (link) setGroupLink(link);
-        })
-        .catch(() => {})
-        .finally(() => setLoadingLink(false));
-    }
+    const auth = getAuth();
+    if (!auth) { setLoadingLink(false); return; }
+    ipc.zalo?.getGroupLinkDetail({ auth, groupId })
+      .then((res: any) => {
+        const link = extractLink(res);
+        if (link) setGroupLink(link);
+      })
+      .catch(() => {})
+      .finally(() => setLoadingLink(false));
   }, [groupId]);
 
   // Listen for new_link event to update link in real-time
@@ -1905,6 +2230,22 @@ export function ManagePanel({ groupInfo, groupId, onBack, myAccountId, asModal, 
     } catch (e: any) { showNotification(extractApiError(e, 'Giải tán nhóm thất bại'), 'error'); }
   };
 
+  if (isTelegram) {
+    const telegramChannel = (useChatStore.getState().contacts[myAccountId] || [])
+      .find(c => c.contact_id === groupId)?.telegram_peer_type === 'channel';
+    return (
+      <div className={asModal ? 'flex flex-col w-full h-full overflow-y-auto' : 'w-72 h-full flex-shrink-0 bg-card border-l border-border flex flex-col overflow-y-auto'}>
+        <div className="flex items-center gap-2 px-3 py-3 border-b border-border">
+          <button onClick={onBack} aria-label="Quay lại" className="p-1 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
+          <span className="text-sm font-semibold text-foreground flex-1 text-center pr-6">{telegramChannel ? 'Quản lý kênh' : 'Quản lý nhóm'}</span>
+        </div>
+        <TelegramChatSettings accountId={myAccountId} chatId={groupId} onDeleted={onBack} />
+      </div>
+    );
+  }
+
   const SETTINGS_LIST = isZalo ? [
     { key: 'blockName',       label: 'Thay đổi tên & ảnh đại diện của nhóm',                   inverted: true  },
     { key: 'setTopicOnly',    label: 'Ghim tin nhắn, ghi chú, bình chọn lên đầu hội thoại',    inverted: true  },
@@ -1917,13 +2258,13 @@ export function ManagePanel({ groupInfo, groupId, onBack, myAccountId, asModal, 
   ] : [];
 
   return (
-    <div className={asModal ? 'flex flex-col w-full h-full overflow-y-auto' : 'w-72 h-full flex-shrink-0 bg-gray-800 border-l border-gray-700 flex flex-col overflow-y-auto'}>
+    <div className={asModal ? 'flex flex-col w-full h-full overflow-y-auto' : 'w-72 h-full flex-shrink-0 bg-card border-l border-border flex flex-col overflow-y-auto'}>
       {/* Header */}
-      <div className="flex items-center gap-2 px-3 py-3 border-b border-gray-700">
-        <button onClick={onBack} className="p-1 rounded-lg hover:bg-gray-700 text-gray-400 hover:text-white">
+      <div className="flex items-center gap-2 px-3 py-3 border-b border-border">
+        <button onClick={onBack} className="p-1 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg>
         </button>
-        <span className="text-sm font-semibold text-white flex-1 text-center pr-6">Quản lý nhóm</span>
+        <span className="text-sm font-semibold text-foreground flex-1 text-center pr-6">Quản lý nhóm</span>
       </div>
 
       {/* Member permissions + settings — Zalo only */}
@@ -1936,18 +2277,18 @@ export function ManagePanel({ groupInfo, groupId, onBack, myAccountId, asModal, 
             Bạn không có quyền thay đổi cài đặt nhóm
           </p>
         )}
-        <p className="text-xs text-gray-400 mb-3 font-medium">Cho phép các thành viên trong nhóm:</p>
+        <p className="text-xs text-muted-foreground mb-3 font-medium">Cho phép các thành viên trong nhóm:</p>
         <div className="space-y-3">
           {SETTINGS_LIST.map(s => {
             const val = settings[s.key];
             const isOn = s.inverted ? !val : !!val;
             return (
               <div key={s.key} className="flex items-center justify-between gap-2">
-                <span className={`text-sm flex-1 leading-tight ${isAdmin ? 'text-gray-300' : 'text-gray-400'}`}>{s.label}</span>
+                <span className={`text-sm flex-1 leading-tight ${isAdmin ? 'text-foreground/80' : 'text-muted-foreground'}`}>{s.label}</span>
                 <button
                   onClick={() => isAdmin && handleToggleSetting(s.key, val)}
                   disabled={!isAdmin}
-                  className={`relative w-10 h-5 rounded-full transition-colors flex-shrink-0 ${isAdmin ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'} ${isOn ? 'bg-blue-600' : 'bg-gray-600'}`}>
+                  className={`relative w-10 h-5 rounded-full transition-colors flex-shrink-0 ${isAdmin ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'} ${isOn ? 'bg-blue-600' : 'bg-accent'}`}>
                   <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${isOn ? 'translate-x-5' : 'translate-x-0.5'}`} />
                 </button>
               </div>
@@ -1956,32 +2297,32 @@ export function ManagePanel({ groupInfo, groupId, onBack, myAccountId, asModal, 
         </div>
       </div>
 
-      <div className="border-t border-gray-700 px-4 py-3 space-y-2">
-        <p className="text-xs text-gray-400 font-medium mb-2">Chế độ phê duyệt thành viên mới</p>
+      <div className="border-t border-border px-4 py-3 space-y-2">
+        <p className="text-xs text-muted-foreground font-medium mb-2">Chế độ phê duyệt thành viên mới</p>
         <div className="flex items-center justify-between">
-          <span className={`text-sm ${isAdmin ? 'text-gray-300' : 'text-gray-400'}`}>Bật phê duyệt</span>
+          <span className={`text-sm ${isAdmin ? 'text-foreground/80' : 'text-muted-foreground'}`}>Bật phê duyệt</span>
           <button
             onClick={() => isAdmin && handleToggleSetting('joinAppr', settings.joinAppr)}
             disabled={!isAdmin}
-            className={`relative w-10 h-5 rounded-full transition-colors ${!isAdmin ? 'opacity-60 cursor-not-allowed' : ''} ${settings.joinAppr ? 'bg-blue-600' : 'bg-gray-600'}`}>
+            className={`relative w-10 h-5 rounded-full transition-colors ${!isAdmin ? 'opacity-60 cursor-not-allowed' : ''} ${settings.joinAppr ? 'bg-blue-600' : 'bg-accent'}`}>
             <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${settings.joinAppr ? 'translate-x-5' : 'translate-x-0.5'}`} />
           </button>
         </div>
         <div className="flex items-center justify-between">
-          <span className={`text-sm ${isAdmin ? 'text-gray-300' : 'text-gray-400'}`}>Đánh dấu tin nhắn từ trưởng/phó nhóm</span>
+          <span className={`text-sm ${isAdmin ? 'text-foreground/80' : 'text-muted-foreground'}`}>Đánh dấu tin nhắn từ trưởng/phó nhóm</span>
           <button
             onClick={() => isAdmin && handleToggleSetting('signAdminMsg', settings.signAdminMsg)}
             disabled={!isAdmin}
-            className={`relative w-10 h-5 rounded-full transition-colors ${!isAdmin ? 'opacity-60 cursor-not-allowed' : ''} ${settings.signAdminMsg ? 'bg-blue-600' : 'bg-gray-600'}`}>
+            className={`relative w-10 h-5 rounded-full transition-colors ${!isAdmin ? 'opacity-60 cursor-not-allowed' : ''} ${settings.signAdminMsg ? 'bg-blue-600' : 'bg-accent'}`}>
             <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${settings.signAdminMsg ? 'translate-x-5' : 'translate-x-0.5'}`} />
           </button>
         </div>
         <div className="flex items-center justify-between">
-          <span className={`text-sm ${isAdmin ? 'text-gray-300' : 'text-gray-400'}`}>Cho phép thành viên mới đọc tin nhắn gần nhất</span>
+          <span className={`text-sm ${isAdmin ? 'text-foreground/80' : 'text-muted-foreground'}`}>Cho phép thành viên mới đọc tin nhắn gần nhất</span>
           <button
             onClick={() => isAdmin && handleToggleSetting('enableMsgHistory', settings.enableMsgHistory)}
             disabled={!isAdmin}
-            className={`relative w-10 h-5 rounded-full transition-colors ${!isAdmin ? 'opacity-60 cursor-not-allowed' : ''} ${settings.enableMsgHistory ? 'bg-blue-600' : 'bg-gray-600'}`}>
+            className={`relative w-10 h-5 rounded-full transition-colors ${!isAdmin ? 'opacity-60 cursor-not-allowed' : ''} ${settings.enableMsgHistory ? 'bg-blue-600' : 'bg-accent'}`}>
             <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${settings.enableMsgHistory ? 'translate-x-5' : 'translate-x-0.5'}`} />
           </button>
         </div>
@@ -1993,20 +2334,20 @@ export function ManagePanel({ groupInfo, groupId, onBack, myAccountId, asModal, 
       <PendingMembersSection groupId={groupId} isAdmin={isAdmin} channel={channel || CHANNEL.ZALO} />
 
       {/* Group link */}
-      <div className="border-t border-gray-700 px-4 py-3 space-y-2">
-        <p className="text-xs text-gray-400 font-medium">Link tham gia nhóm</p>
+      <div className="border-t border-border px-4 py-3 space-y-2">
+        <p className="text-xs text-muted-foreground font-medium">Link tham gia nhóm</p>
         {groupLink ? (
           <div className="flex items-center gap-2">
-            <input value={groupLink} readOnly className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-2 py-1 text-xs text-gray-300 truncate" />
+            <input value={groupLink} readOnly className="flex-1 bg-muted border border-input rounded-lg px-2 py-1 text-xs text-foreground/80 truncate" />
             <button onClick={() => { navigator.clipboard.writeText(groupLink); showNotification('Đã sao chép link', 'success'); }}
               className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded-lg">Sao chép</button>
             {!isTelegram && (
-              <button onClick={handleDisable} className="text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 px-2 py-1 rounded-lg">Tắt</button>
+              <button onClick={handleDisable} className="text-xs bg-muted hover:bg-accent text-foreground/80 px-2 py-1 rounded-lg">Tắt</button>
             )}
           </div>
         ) : (
           <button onClick={handleGetGroupLink} disabled={loadingLink}
-            className="w-full py-2 rounded-xl bg-gray-700 hover:bg-gray-600 text-sm text-gray-300 flex items-center justify-center gap-2">
+            className="w-full py-2 rounded-xl bg-muted hover:bg-accent text-sm text-foreground/80 flex items-center justify-center gap-2">
             {loadingLink ? (
               <Spinner size={4} />
             ) : (
@@ -2022,10 +2363,10 @@ export function ManagePanel({ groupInfo, groupId, onBack, myAccountId, asModal, 
 
       {/* Danger zone - owner only, Zalo only */}
       {isOwner && isZalo && (
-        <div className="border-t border-gray-700 px-4 py-3 mt-auto space-y-2">
+        <div className="border-t border-border px-4 py-3 mt-auto space-y-2">
           <button
             onClick={() => setPanelViewBlocked()}
-            className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl bg-gray-700 hover:bg-gray-600 text-sm text-gray-300 transition-colors">
+            className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl bg-muted hover:bg-accent text-sm text-foreground/80 transition-colors">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/>
               <line x1="20" y1="8" x2="14" y2="14"/>

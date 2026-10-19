@@ -145,9 +145,9 @@ export function FBUserProfilePopup({ userId, anchorX, anchorY, contacts, activeA
           <div className="pl-[5.5rem] pt-1.5 min-w-0">
             <p className="text-gray-900 font-bold text-base leading-tight truncate">{name}</p>
             <div className="flex items-center gap-1.5 mt-0.5">
-              <span className="text-gray-400 text-xs">ID: {userId}</span>
+              <span className="text-muted-foreground text-xs">ID: {userId}</span>
               <button onClick={() => { navigator.clipboard.writeText(userId); showNotification('Đã sao chép ID', 'success'); }}
-                className="text-gray-400 hover:text-[#1877F2] transition-colors"
+                className="text-muted-foreground hover:text-[#1877F2] transition-colors"
                 title="Sao chép ID">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
@@ -168,7 +168,7 @@ export function FBUserProfilePopup({ userId, anchorX, anchorY, contacts, activeA
 
         {/* Quick actions */}
         <div className="px-5 py-4 space-y-2">
-          <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Hành động</p>
+          <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Hành động</p>
           <button onClick={handleOpenChat}
             className="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl bg-[#1877F2] hover:bg-[#166fe5] text-white text-sm font-medium transition-colors">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -207,7 +207,7 @@ export function FBUserProfilePopup({ userId, anchorX, anchorY, contacts, activeA
             <h3 className="text-gray-900 font-semibold text-base mb-2">
               {isBlocked ? 'Bỏ chặn người dùng?' : 'Chặn người dùng?'}
             </h3>
-            <p className="text-gray-400 text-sm mb-4">
+            <p className="text-muted-foreground text-sm mb-4">
               {isBlocked
                 ? `Bạn có chắc muốn bỏ chặn ${name}?`
                 : `${name} sẽ không thể nhắn tin hoặc gọi cho bạn.`}

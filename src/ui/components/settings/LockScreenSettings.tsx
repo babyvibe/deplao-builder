@@ -159,8 +159,8 @@ export default function LockScreenSettings() {
       onClick={() => { setTab(id); clearMessages(); setRecoveryView('idle'); setPassword(''); }}
       className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg transition-all ${
         tab === id
-          ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30'
-          : 'text-gray-400 hover:text-gray-300 hover:bg-gray-700/50 border border-transparent'
+          ? 'bg-selected text-primary border border-primary/30'
+          : 'text-muted-foreground hover:text-foreground/80 hover:bg-muted border border-transparent'
       }`}
     >
       <span>{icon}</span>
@@ -194,11 +194,11 @@ export default function LockScreenSettings() {
   if (enabled && savedRecoveryKey && recoveryView === 'show' && !recoveryKey) {
     return (
       <div className="space-y-4">
-        <h2 className="text-base font-semibold text-white flex items-center gap-2">
+        <h2 className="text-base font-semibold text-foreground flex items-center gap-2">
           <span><ShieldIcon className="w-4 h-4" /></span> Bảo mật
         </h2>
 
-        <div className="bg-gray-800 rounded-xl p-4">
+        <div className="bg-card rounded-xl p-4">
           <div className="flex items-center gap-2 mb-3">
             <svg className="w-5 h-5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
@@ -206,11 +206,11 @@ export default function LockScreenSettings() {
             <p className="text-sm font-semibold text-green-400">Khoá màn hình đã được bật!</p>
           </div>
 
-          <p className="text-sm text-gray-300 mb-3">
+          <p className="text-sm text-foreground/80 mb-3">
             Lưu recovery key bên dưới ở nơi an toàn. Nếu quên mật khẩu, bạn cần key này để khôi phục.
           </p>
 
-          <div className="bg-gray-900 rounded-lg p-4 text-center mb-4">
+          <div className="bg-muted rounded-lg p-4 text-center mb-4">
             <p className="text-lg font-mono font-bold text-amber-400 tracking-widest select-all">
               {savedRecoveryKey}
             </p>
@@ -219,12 +219,12 @@ export default function LockScreenSettings() {
           <div className="flex gap-2 mb-4">
             <button
               onClick={() => handleCopyKey(savedRecoveryKey)}
-              className="flex-1 py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium rounded-lg transition-colors"
+              className="flex-1 py-2 bg-muted hover:bg-accent text-foreground text-sm font-medium rounded-lg transition-colors"
             ><ClipboardListIcon className="w-4 h-4 inline" /> Sao chép
             </button>
           </div>
 
-          <label className="flex items-start gap-2 text-sm text-gray-300 cursor-pointer">
+          <label className="flex items-start gap-2 text-sm text-foreground/80 cursor-pointer">
             <input
               type="checkbox"
               checked={keySavedConfirm}
@@ -261,14 +261,14 @@ export default function LockScreenSettings() {
   if (recoveryKey && recoveryView === 'show') {
     return (
       <div className="space-y-4">
-        <h2 className="text-base font-semibold text-white flex items-center gap-2">
+        <h2 className="text-base font-semibold text-foreground flex items-center gap-2">
           <span><ShieldIcon className="w-4 h-4" /></span> Bảo mật
         </h2>
 
-        <div className="bg-gray-800 rounded-xl p-4">
+        <div className="bg-card rounded-xl p-4">
           <button
             onClick={() => { setRecoveryView('idle'); setRecoveryKey(''); setTab('recovery'); clearMessages(); }}
-            className="flex items-center gap-1 text-sm text-gray-400 hover:text-white transition-colors mb-3"
+            className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors mb-3"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -276,9 +276,9 @@ export default function LockScreenSettings() {
             Quay lại
           </button>
 
-          <p className="text-sm text-gray-300 mb-3">Recovery key của bạn:</p>
+          <p className="text-sm text-foreground/80 mb-3">Recovery key của bạn:</p>
 
-          <div className="bg-gray-900 rounded-lg p-4 text-center mb-4">
+          <div className="bg-muted rounded-lg p-4 text-center mb-4">
             <p className="text-lg font-mono font-bold text-amber-400 tracking-widest select-all">
               {recoveryKey}
             </p>
@@ -286,7 +286,7 @@ export default function LockScreenSettings() {
 
           <button
             onClick={() => handleCopyKey(recoveryKey)}
-            className="w-full py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium rounded-lg transition-colors"
+            className="w-full py-2 bg-muted hover:bg-accent text-foreground text-sm font-medium rounded-lg transition-colors"
           ><ClipboardListIcon className="w-4 h-4 inline" /> Sao chép Recovery Key
           </button>
         </div>
@@ -304,17 +304,17 @@ export default function LockScreenSettings() {
   if (!enabled) {
     return (
       <div className="space-y-4">
-        <h2 className="text-base font-semibold text-white flex items-center gap-2">
+        <h2 className="text-base font-semibold text-foreground flex items-center gap-2">
           <span><ShieldIcon className="w-4 h-4" /></span> Bảo mật
         </h2>
 
-        <div className="bg-gray-800 rounded-xl p-4">
+        <div className="bg-card rounded-xl p-4">
           <div className="flex items-center justify-between mb-4">
             <div>
-              <p className="text-sm font-medium text-white">Khoá màn hình</p>
-              <p className="text-xs text-gray-400 mt-0.5">Yêu cầu mật khẩu khi mở ứng dụng</p>
+              <p className="text-sm font-medium text-foreground">Khoá màn hình</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Yêu cầu mật khẩu khi mở ứng dụng</p>
             </div>
-            <span className="px-2.5 py-1 bg-gray-600/40 text-gray-400 text-xs font-medium rounded-full">
+            <span className="px-2.5 py-1 bg-accent/40 text-muted-foreground text-xs font-medium rounded-full">
               Chưa bật
             </span>
           </div>
@@ -325,16 +325,16 @@ export default function LockScreenSettings() {
               value={password}
               onChange={e => { setPassword(e.target.value); clearMessages(); }}
               placeholder="Đặt mật khẩu (tối thiểu 4 ký tự)"
-              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 bg-muted border border-input rounded-lg text-foreground text-sm placeholder-subtle-foreground focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
             <input
               type={showPassword ? 'text' : 'password'}
               value={confirmPassword}
               onChange={e => { setConfirmPassword(e.target.value); clearMessages(); }}
               placeholder="Xác nhận mật khẩu"
-              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 bg-muted border border-input rounded-lg text-foreground text-sm placeholder-subtle-foreground focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
-            <label className="flex items-center gap-2 text-xs text-gray-400 cursor-pointer">
+            <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
               <input type="checkbox" checked={showPassword} onChange={e => setShowPassword(e.target.checked)} className="rounded" />
               Hiện mật khẩu
             </label>
@@ -356,16 +356,16 @@ export default function LockScreenSettings() {
   // ─── Enabled: tabbed view ────────────────────────────────────────────────
   return (
     <div className="space-y-4">
-      <h2 className="text-base font-semibold text-white flex items-center gap-2">
+      <h2 className="text-base font-semibold text-foreground flex items-center gap-2">
         <span><ShieldIcon className="w-4 h-4" /></span> Bảo mật
       </h2>
 
       {/* Status bar */}
-      <div className="bg-gray-800 rounded-xl p-4">
+      <div className="bg-card rounded-xl p-4">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-sm font-medium text-white">Khoá màn hình</p>
-            <p className="text-xs text-gray-400 mt-0.5">Yêu cầu mật khẩu khi mở ứng dụng</p>
+            <p className="text-sm font-medium text-foreground">Khoá màn hình</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Yêu cầu mật khẩu khi mở ứng dụng</p>
           </div>
           <span className="px-2.5 py-1 bg-green-600/20 text-green-400 text-xs font-medium rounded-full">
             Đã bật
@@ -374,7 +374,7 @@ export default function LockScreenSettings() {
       </div>
 
       {/* Tab bar */}
-      <div className="flex gap-1.5 bg-gray-800/60 rounded-xl p-1">
+      <div className="flex gap-1.5 bg-card rounded-xl p-1">
         <TabBtn id="security" label="Đổi MK" icon={<KeyIcon className="w-4 h-4" />} />
         <TabBtn id="recovery" label="Recovery" icon={<KeyIcon className="w-4 h-4" />} />
         <TabBtn id="disable" label="Tắt khoá" icon={<LockIcon className="w-4 h-4" />} />
@@ -384,31 +384,31 @@ export default function LockScreenSettings() {
       {tab === 'security' && (
         <div className="space-y-4">
           {/* Change password */}
-          <div className="bg-gray-800 rounded-xl p-4">
-            <p className="text-sm font-medium text-white mb-3">Đổi mật khẩu</p>
+          <div className="bg-card rounded-xl p-4">
+            <p className="text-sm font-medium text-foreground mb-3">Đổi mật khẩu</p>
             <div className="space-y-3">
               <input
                 type={showPassword ? 'text' : 'password'}
                 value={oldPassword}
                 onChange={e => { setOldPassword(e.target.value); clearMessages(); }}
                 placeholder="Mật khẩu hiện tại"
-                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 bg-muted border border-input rounded-lg text-foreground text-sm placeholder-subtle-foreground focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <input
                 type={showPassword ? 'text' : 'password'}
                 value={newPassword}
                 onChange={e => { setNewPassword(e.target.value); clearMessages(); }}
                 placeholder="Mật khẩu mới (tối thiểu 4 ký tự)"
-                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 bg-muted border border-input rounded-lg text-foreground text-sm placeholder-subtle-foreground focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <input
                 type={showPassword ? 'text' : 'password'}
                 value={confirmPassword}
                 onChange={e => { setConfirmPassword(e.target.value); clearMessages(); }}
                 placeholder="Xác nhận mật khẩu mới"
-                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 bg-muted border border-input rounded-lg text-foreground text-sm placeholder-subtle-foreground focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
-              <label className="flex items-center gap-2 text-xs text-gray-400 cursor-pointer">
+              <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
                 <input type="checkbox" checked={showPassword} onChange={e => setShowPassword(e.target.checked)} className="rounded" />
                 Hiện mật khẩu
               </label>
@@ -429,9 +429,9 @@ export default function LockScreenSettings() {
       {/* ── Tab: Recovery key ───────────────────────────────────────────── */}
       {tab === 'recovery' && (
         <div className="space-y-4">
-          <div className="bg-gray-800 rounded-xl p-4">
-            <p className="text-sm font-medium text-white mb-2">Xem Recovery Key</p>
-            <p className="text-xs text-gray-400 mb-3">
+          <div className="bg-card rounded-xl p-4">
+            <p className="text-sm font-medium text-foreground mb-2">Xem Recovery Key</p>
+            <p className="text-xs text-muted-foreground mb-3">
               Nhập mật khẩu để xem recovery key. Giữ key này ở nơi an toàn.
             </p>
             <div className="space-y-3">
@@ -440,12 +440,12 @@ export default function LockScreenSettings() {
                 value={password}
                 onChange={e => { setPassword(e.target.value); clearMessages(); }}
                 placeholder="Nhập mật khẩu để xem recovery key"
-                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 bg-muted border border-input rounded-lg text-foreground text-sm placeholder-subtle-foreground focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <button
                 onClick={handleShowRecovery}
                 disabled={loading}
-                className="w-full py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+                className="w-full py-2 bg-muted hover:bg-accent text-foreground text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
               >
                 {loading ? 'Đang xử lý...' : 'Xem Recovery Key'}
               </button>
@@ -459,9 +459,9 @@ export default function LockScreenSettings() {
       {/* ── Tab: Disable ────────────────────────────────────────────────── */}
       {tab === 'disable' && (
         <div className="space-y-4">
-          <div className="bg-gray-800 rounded-xl p-4">
-            <p className="text-sm font-medium text-white mb-1">Tắt khoá màn hình</p>
-            <p className="text-xs text-gray-400 mb-3">
+          <div className="bg-card rounded-xl p-4">
+            <p className="text-sm font-medium text-foreground mb-1">Tắt khoá màn hình</p>
+            <p className="text-xs text-muted-foreground mb-3">
               Bạn sẽ không cần mật khẩu khi mở ứng dụng nữa.
             </p>
             <div className="space-y-3">
@@ -470,7 +470,7 @@ export default function LockScreenSettings() {
                 value={password}
                 onChange={e => { setPassword(e.target.value); clearMessages(); }}
                 placeholder="Nhập mật khẩu để tắt"
-                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 bg-muted border border-input rounded-lg text-foreground text-sm placeholder-subtle-foreground focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <button
                 onClick={handleDisable}

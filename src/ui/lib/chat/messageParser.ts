@@ -4,6 +4,7 @@
  */
 import React from 'react';
 import { convertZaloEmojis } from './emojiUtils';
+import { zinstantPreviewText } from '../../../shared/zaloZinstant';
 
 /**
  * Parse msg.content thành text thuần để hiển thị preview.
@@ -70,23 +71,70 @@ export function getTelegramMentionRanges(attachments: unknown): TelegramMentionR
   return getMentionRanges(attachments);
 }
 
+/** URL nhận diện trong tin nhắn — dùng chung cho linkifyText và findUrlRanges. */
+const LINK_URL_REGEX = /(https?:\/\/[^\s<>"')\]]+|www\.[^\s<>"')\]]+|[a-zA-Z0-9._-]+\.(com|vn|net|org|io|dev|app|me|co|xyz|info|tv|gg|link|page|site|online|tech|store|fun|icu|top|cc|pw|tk|ml|ga|cf|gq)(?:\/[^\s<>"')\]]*)?)/g;
+
+/**
+ * Địa chỉ email (vd ten.khach@gmail.com) — nhận NGUYÊN địa chỉ trước khi xét URL / mention. Trước đây "@" của
+ * email bị xét như mention còn tên miền "gmail.com" thành link riêng, nên email hiện như một tag màu xanh.
+ */
+// Lookbehind: chỉ thử từ đầu một cụm ký tự — không quét lại từng vị trí giữa chuỗi dài (tin chứa base64…)
+const EMAIL_REGEX = /(?<![a-zA-Z0-9._%+-])[a-zA-Z0-9._%+-]+@[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*\.[a-zA-Z]{2,}/g;
+const EMAIL_EXACT_REGEX = new RegExp(`^(?:${EMAIL_REGEX.source})$`);
+
+function collectRanges(text: string, source: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  if (!text) return ranges;
+  const re = new RegExp(source, 'g');
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (!m[0]) { re.lastIndex++; continue; }
+    ranges.push([m.index, m.index + m[0].length]);
+  }
+  return ranges;
+}
+
+/** Vị trí [start, end) các địa chỉ email trong text. */
+export function findEmailRanges(text: string): Array<[number, number]> {
+  return collectRanges(text, EMAIL_REGEX.source);
+}
+
+/**
+ * Vị trí [start, end) các URL trong text (cùng regex với linkifyText). Dùng để không coi "@" nằm trong
+ * URL (vd threads.com/@user/post/…) là mention. Tên miền nằm trong email (gmail.com của a@gmail.com) không phải URL.
+ */
+export function findUrlRanges(text: string): Array<[number, number]> {
+  if (!text) return [];
+  const emails = findEmailRanges(text);
+  return collectRanges(text, LINK_URL_REGEX.source)
+    .filter(([start, end]) => !emails.some(([emailStart, emailEnd]) => start >= emailStart && end <= emailEnd));
+}
+
+/** URL + email: "@" nằm trong các đoạn này thuộc về link / địa chỉ email, không phải mention. */
+export function findLinkRanges(text: string): Array<[number, number]> {
+  return [...findUrlRanges(text), ...findEmailRanges(text)].sort((a, b) => a[0] - b[0]);
+}
+
 /**
  * Detect URL và @mentions trong text → trả về React nodes.
  * - URLs: link clickable
  * - @name: highlight xanh (mention trong group chat)
  * - @@, @@@: KHÔNG bắt (chỉ bắt @ + ít nhất 1 chữ cái/số)
+ * - email (a@gmail.com): giữ nguyên là chữ thường — không mention, không biến tên miền thành link
  */
 export function linkifyText(text: string, options: { detectMentions?: boolean } = {}): React.ReactNode[] {
   if (!text) return [text];
   const detectMentions = options.detectMentions !== false;
   // URL regex (giữ nguyên)
-  const urlRegex = /(https?:\/\/[^\s<>"')\]]+|www\.[^\s<>"')\]]+|[a-zA-Z0-9._-]+\.(com|vn|net|org|io|dev|app|me|co|xyz|info|tv|gg|link|page|site|online|tech|store|fun|icu|top|cc|pw|tk|ml|ga|cf|gq)(?:\/[^\s<>"')\]]*)?)/g;
+  const urlRegex = LINK_URL_REGEX;
   // @mention regex: @ + ít nhất 1 chữ cái/số/underscore. The boundary is
   // validated below because this pattern is combined with the URL pattern.
   const mentionRegex = /@([a-zA-Z0-9_][a-zA-Z0-9_]*)/g;
-  // Combined: URL trước, mention sau (URL ưu tiên)
+  // Combined: email trước (nguyên địa chỉ), rồi URL, mention sau cùng (URL ưu tiên hơn mention)
   const combinedRegex = new RegExp(
-    detectMentions ? `(${urlRegex.source})|(${mentionRegex.source})` : `(${urlRegex.source})`,
+    detectMentions
+      ? `(${EMAIL_REGEX.source})|(${urlRegex.source})|(${mentionRegex.source})`
+      : `(${EMAIL_REGEX.source})|(${urlRegex.source})`,
     'g'
   );
 
@@ -100,6 +148,13 @@ export function linkifyText(text: string, options: { detectMentions?: boolean } 
       parts.push(text.slice(lastIndex, match.index));
     }
     const raw = match[0];
+
+    // Email: chữ thường, giữ nguyên cả địa chỉ
+    if (EMAIL_EXACT_REGEX.test(raw)) {
+      parts.push(raw);
+      lastIndex = match.index + raw.length;
+      continue;
+    }
 
     // Do not turn the second @ in @@name (or an @ embedded in a word) into a
     // mention. Telegram only treats a standalone @username token as a link.
@@ -156,6 +211,9 @@ export function linkifyText(text: string, options: { detectMentions?: boolean } 
  */
 export function parseContent(content: string, msgType?: string): string {
   if (!content || content === 'null') return '';
+  // Bản tin / thông báo của Official Account (zinstant): chữ của OA thay vì "[Đính kèm]" / chuỗi JSON
+  const zinstant = zinstantPreviewText(content, msgType);
+  if (zinstant) return zinstant;
   // Location message (chat.location.new): show description or coordinates
   if (msgType === 'chat.location.new') {
     try {
@@ -181,6 +239,50 @@ export function parseContent(content: string, msgType?: string): string {
   } catch {
     return convertZaloEmojis(content) || '';
   }
+}
+
+/** Chú thích giả do app / nền tảng tự sinh cho tin media (không phải chữ người gửi gõ). */
+const MEDIA_CAPTION_PLACEHOLDER = /^(?:[\u{1F300}-\u{1FAFF}\u2600-\u27BF]\uFE0F?\s*)?\[?(?:hình ảnh|ảnh|image|photo|video|sticker|gif|file|tệp|ghi âm|voice|link)\]?$/iu;
+
+function cleanQuoteCaption(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const text = value.trim();
+  if (!text || text === 'null' || /^https?:\/\//i.test(text)) return '';
+  if (MEDIA_CAPTION_PLACEHOLDER.test(text) || /^\[[^\]]*\]$/.test(text)) return '';
+  return text;
+}
+
+function captionFromQuotePart(value: unknown): string {
+  if (!value) return '';
+  if (typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    return cleanQuoteCaption(obj.title) || cleanQuoteCaption(obj.caption) || cleanQuoteCaption(obj.description);
+  }
+  const text = String(value).trim();
+  if (text.startsWith('{') || text.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(text);
+      if (typeof parsed === 'string') return cleanQuoteCaption(parsed);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return captionFromQuotePart(parsed);
+    } catch {
+      /* không phải JSON → coi là chữ thường */
+    }
+    return '';
+  }
+  return cleanQuoteCaption(text);
+}
+
+/**
+ * Chú thích (caption) của ảnh / video / sticker được trích dẫn — để khối trích dẫn hiện cả ảnh lẫn chữ như
+ * Telegram. Zalo: `attach.title` (msg rỗng); Telegram / Facebook: `msg` là chữ thường; thiếu thì lấy từ nội dung
+ * tin gốc (`originalContent`, JSON có title hoặc chữ thường). Trả '' khi chỉ có nhãn kiểu "[Hình ảnh]".
+ */
+export function getQuotedMediaCaption(
+  quote: { msg?: unknown; attach?: unknown } | null | undefined,
+  originalContent?: unknown,
+): string {
+  if (!quote) return captionFromQuotePart(originalContent);
+  return captionFromQuotePart(quote.attach) || captionFromQuotePart(quote.msg) || captionFromQuotePart(originalContent);
 }
 
 /**
@@ -221,11 +323,13 @@ export function parseQuoteMsg(msg: string, msgType?: string): string {
     if (msgType === 'chat.poll') {
       return '[Bình chọn]';
     }
-    if (msgType === 'chat.webcontent') {
+    if (msgType === 'chat.webcontent' || msgType === 'chat.webcontent.v2') {
       try {
         const parsed = JSON.parse(msg);
         if (parsed?.action === 'zinstant.bankcard') return '🏦 [Tài khoản ngân hàng]';
       } catch {}
+      const zinstant = zinstantPreviewText(msg, msgType);
+      if (zinstant) return zinstant;
     }
     // chat.recommended / chat.link = link chia sẻ, parse msg để lấy title
     if (msgType === 'chat.recommended' || msgType === 'chat.link') {
@@ -410,6 +514,50 @@ export function formatMsgTime(timestamp: number): string {
     day: '2-digit',
     month: '2-digit',
   });
+}
+
+/**
+ * Nhãn mốc thời gian giữa khung chat: "13:50 Hôm nay", "15:12 Hôm qua", còn lại giữ "HH:mm dd/MM".
+ */
+export function formatMsgSeparatorTime(timestamp: number): string {
+  const d = new Date(timestamp);
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfYesterday = startOfToday - 24 * 60 * 60 * 1000;
+  const t = d.getTime();
+  if (t >= startOfToday && t < startOfToday + 24 * 60 * 60 * 1000) {
+    return `${d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} Hôm nay`;
+  }
+  if (t >= startOfYesterday && t < startOfToday) {
+    return `${d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} Hôm qua`;
+  }
+  return formatMsgTime(timestamp);
+}
+
+/**
+ * Mốc ngày trong khung chat — 1 lần mỗi ngày (giờ từng tin đã nằm trong bubble). Theo ngày lịch của máy:
+ * "Hôm nay", "Hôm qua", "5 ngày trước, 11-10", "1 tháng trước, 16-09", "1 năm trước, 16-10-2025"
+ * (ngày khác năm hiện tại luôn kèm năm, kể cả "2 tháng trước, 20-12-2025").
+ */
+export function formatDaySeparator(timestamp: number, now: Date = new Date()): string {
+  const d = new Date(timestamp);
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfTomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
+  const startOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime();
+  const t = d.getTime();
+  if (t >= startOfToday && t < startOfTomorrow) return 'Hôm nay';
+  if (t >= startOfYesterday && t < startOfToday) return 'Hôm qua';
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const date = d.getFullYear() === now.getFullYear() ? `${day}-${month}` : `${day}-${month}-${d.getFullYear()}`;
+  // Tin ở tương lai (lệch giờ máy) → chỉ ngày
+  if (t >= startOfTomorrow) return date;
+  const startOfDay = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round((startOfToday - startOfDay) / 86_400_000);
+  // Số tháng lịch đã tròn (16/09 → 16/10 = 1 tháng; 17/09 → 16/10 = 29 ngày)
+  const months = (now.getFullYear() - d.getFullYear()) * 12 + (now.getMonth() - d.getMonth()) - (now.getDate() < d.getDate() ? 1 : 0);
+  const relative = months < 1 ? `${days} ngày trước` : months < 12 ? `${months} tháng trước` : `${Math.floor(months / 12)} năm trước`;
+  return `${relative}, ${date}`;
 }
 
 /**

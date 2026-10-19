@@ -5,11 +5,16 @@ import { AccountInfo } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
 import { showConfirm } from '../../common/ConfirmDialog';
 import AccountSelectorDropdown, { AccountOption } from '../../common/AccountSelectorDropdown';
+import AccountMultiDropdown from '../../common/AccountMultiDropdown';
 import { QuickMessage, LocalMediaFile, fetchZaloQuickMessages, invalidateZaloQuickMessageCache } from '../../chat/QuickMessageManager';
 import { toLocalMediaUrl } from '@/lib/localMedia';
 import { CHANNEL, isZalo } from '@/lib/channelHelper';
+import {
+  QMConflictMode, QMMediaFile, findSharedCopies, formatAccountNames, groupSharedCopies, mediaFileName,
+  pickOwnMediaCopy, planQuickMessageSave, qmContentSignature, rowsByOwnerForKeyword, summarizeQuickMessageResult,
+} from '@/lib/quickMessageAccounts';
 import PhoneDisplay from '@/components/common/PhoneDisplay';
-import { AlertIcon, ChartIcon, CheckIcon, ClipboardListIcon, CloudIcon, HardDriveIcon, ImageIcon, InboxIcon, LightningIcon, PluginIcon, PlusIcon, RefreshIcon } from '@/components/common/icons';
+import { AlertIcon, ChartIcon, ClipboardListIcon, CloudIcon, HardDriveIcon, ImageIcon, InboxIcon, LightningIcon, PluginIcon, PlusIcon, RefreshIcon, UsersIcon } from '@/components/common/icons';
 
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -56,8 +61,8 @@ function EmptyState({ icon, title, subtitle }: { icon: React.ReactNode; title: s
   return (
     <div className="text-center py-14">
       <p className="text-3xl mb-2 justify-items-center">{icon}</p>
-      <p className="text-gray-400 text-sm font-medium">{title}</p>
-      <p className="text-gray-400 text-xs mt-1">{subtitle}</p>
+      <p className="text-muted-foreground text-sm font-medium">{title}</p>
+      <p className="text-muted-foreground text-xs mt-1">{subtitle}</p>
     </div>
   );
 }
@@ -78,13 +83,13 @@ function MediaThumbs({ item }: { item: QuickMessage }) {
     <div className="flex flex-wrap gap-1 mt-1.5">
       {zaloThumb && (
         <img src={zaloThumb.thumbUrl || zaloThumb.normalUrl} alt=""
-          className="w-10 h-10 rounded-lg object-cover border border-gray-600" />
+          className="w-10 h-10 rounded-lg object-cover border border-input" />
       )}
       {localFiles?.slice(0, 4).map((f, fi) => (
-        <div key={fi} className="relative w-10 h-10 rounded-lg overflow-hidden border border-gray-600 flex-shrink-0 bg-gray-700">
+        <div key={fi} className="relative w-10 h-10 rounded-lg overflow-hidden border border-input flex-shrink-0 bg-muted">
           {f.type === 'image'
             ? <img src={toLocalMediaUrl(f.path)} alt="" className="w-full h-full object-cover" />
-            : <div className="w-full h-full flex items-center justify-center bg-gray-800">
+            : <div className="w-full h-full flex items-center justify-center bg-card">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="white" className="opacity-70"><polygon points="5 3 19 12 5 21 5 3"/></svg>
               </div>
           }
@@ -111,21 +116,23 @@ function MediaThumbs({ item }: { item: QuickMessage }) {
 // ─── LocalMsgRow ──────────────────────────────────────────────────────────────
 function LocalMsgRow({
   item, accountName, accountPhone, accountAvatarUrl,
-  showAccountBadge,
+  showAccountBadge, sharedCount, sharedNames,
   onEdit, onDelete, onToggleActive, isDragging
 }: {
   item: LocalQMItem;
   accountName: string; accountPhone: string; accountAvatarUrl?: string;
   showAccountBadge: boolean;
+  /** Accounts holding this same quick message (same keyword + content), this one included. */
+  sharedCount: number; sharedNames: string;
   onEdit: () => void; onDelete: () => void; onToggleActive: () => void;
   isDragging?: boolean;
 }) {
   const isActive = (item.is_active ?? 1) === 1;
   return (
-    <div className={`bg-gray-900 border rounded-xl p-3 hover:border-gray-600 transition-colors ${isDragging ? 'opacity-40' : ''} ${isActive ? 'border-gray-700/80' : 'border-gray-700/30 opacity-60'}`}>
+    <div className={`bg-card border rounded-xl p-3 hover:border-input transition-colors ${isDragging ? 'opacity-40' : ''} ${isActive ? 'border-border/80' : 'border-border/30 opacity-60'}`}>
       <div className="flex items-start gap-3">
         {/* Drag handle */}
-        <div className="pt-2 shrink-0 cursor-grab text-gray-400 hover:text-gray-400 select-none" title="Kéo để sắp xếp">
+        <div className="pt-2 shrink-0 cursor-grab text-muted-foreground hover:text-muted-foreground select-none" title="Kéo để sắp xếp">
           <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor">
             <circle cx="3" cy="2.5" r="1.2"/><circle cx="7" cy="2.5" r="1.2"/>
             <circle cx="3" cy="7" r="1.2"/><circle cx="7" cy="7" r="1.2"/>
@@ -133,35 +140,40 @@ function LocalMsgRow({
           </svg>
         </div>
         <div className="pt-0.5 shrink-0">
-          <span className="bg-gray-800 text-blue-300 text-[11px] font-mono px-1.5 py-0.5 rounded border border-gray-700 whitespace-nowrap">
+          <span className="bg-card text-blue-300 text-[11px] font-mono px-1.5 py-0.5 rounded border border-border whitespace-nowrap">
             /{item.keyword}
           </span>
           {(item.sort_order ?? 0) > 0 && (
-            <span className="block mt-1 text-center text-[9px] text-gray-400 font-mono">#{item.sort_order}</span>
+            <span className="block mt-1 text-center text-[9px] text-muted-foreground font-mono">#{item.sort_order}</span>
           )}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm text-gray-200 whitespace-pre-wrap line-clamp-2">{item.message?.title || ''}</p>
+          <p className="text-sm text-foreground whitespace-pre-wrap line-clamp-2">{item.message?.title || ''}</p>
           <MediaThumbs item={item} />
+          {sharedCount > 1 && (
+            <p className="mt-1.5 flex items-center gap-1 w-fit text-[11px] text-muted-foreground" title={sharedNames}>
+              <UsersIcon className="w-3.5 h-3.5 shrink-0" /> Dùng chung {sharedCount} tài khoản
+            </p>
+          )}
         </div>
         {/* Actions */}
         <div className="flex items-center gap-0.5 shrink-0">
           <button onClick={onToggleActive} title={isActive ? 'Tắt' : 'Bật'}
-            className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${isActive ? 'text-green-400 hover:bg-green-500/10' : 'text-gray-400 hover:bg-gray-700 hover:text-gray-400'}`}>
+            className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${isActive ? 'text-green-400 hover:bg-green-500/10' : 'text-muted-foreground hover:bg-muted hover:text-muted-foreground'}`}>
             {isActive
               ? <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"/><polyline points="9 12 11 14 15 10"/></svg>
               : <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/></svg>
             }
           </button>
           <button onClick={onEdit} title="Sửa"
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-blue-400 hover:bg-blue-500/10 transition-colors">
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-blue-400 hover:bg-blue-500/10 transition-colors">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
               <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
             </svg>
           </button>
           <button onClick={onDelete} title="Xóa"
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-red-400 hover:bg-red-500/10 transition-colors">
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
               <path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/>
@@ -172,16 +184,16 @@ function LocalMsgRow({
       {/* Account badge - only show when 2+ accounts are in filter */}
       {showAccountBadge && (
         <div className="mt-2 pl-[calc(theme(spacing.10)+theme(spacing.3))] flex items-center gap-1.5">
-          <div className="flex items-center gap-1.5 bg-gray-800 rounded-full px-2 py-0.5 border border-gray-700/50">
+          <div className="flex items-center gap-1.5 bg-card rounded-full px-2 py-0.5 border border-border/50">
             {accountAvatarUrl ? (
-              <img src={accountAvatarUrl} alt="" className="w-3.5 h-3.5 rounded-full object-cover shrink-0 border border-gray-600" />
+              <img src={accountAvatarUrl} alt="" className="w-3.5 h-3.5 rounded-full object-cover shrink-0 border border-input" />
             ) : (
               <div className="w-3 h-3 bg-blue-600 rounded-full flex items-center justify-center text-[7px] text-white font-bold uppercase shrink-0">
                 {(accountName || '?').charAt(0)}
               </div>
             )}
-            <span className="text-[11px] text-gray-400 truncate max-w-[140px]">{accountName}</span>
-            <PhoneDisplay phone={accountPhone} className="text-xs text-gray-400" />
+            <span className="text-[11px] text-muted-foreground truncate max-w-[140px]">{accountName}</span>
+            <PhoneDisplay phone={accountPhone} className="text-xs text-muted-foreground" />
           </div>
         </div>
       )}
@@ -191,7 +203,7 @@ function LocalMsgRow({
 
 function ZaloMsgRow({ item, onEdit, onDelete }: { item: QuickMessage; onEdit: () => void; onDelete: () => void }) {
   return (
-    <div className="bg-gray-900 border border-blue-900/30 rounded-xl p-3 hover:border-blue-700/40 transition-colors">
+    <div className="bg-card border border-blue-900/30 rounded-xl p-3 hover:border-blue-700/40 transition-colors">
       <div className="flex items-start gap-3">
         <div className="pt-0.5 shrink-0">
           <span className="bg-blue-900/30 text-blue-300 text-[11px] font-mono px-1.5 py-0.5 rounded border border-blue-800/50 whitespace-nowrap">
@@ -199,20 +211,20 @@ function ZaloMsgRow({ item, onEdit, onDelete }: { item: QuickMessage; onEdit: ()
           </span>
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm text-gray-200 whitespace-pre-wrap line-clamp-2">{item.message?.title || '<Không có nội dung>'}</p>
+          <p className="text-sm text-foreground whitespace-pre-wrap line-clamp-2">{item.message?.title || '<Không có nội dung>'}</p>
           <MediaThumbs item={item} />
           <span className="text-[11px] text-blue-500/80 mt-1 flex items-center gap-1"><CloudIcon className="w-4 h-4 inline" /> Lưu trên Zalo</span>
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
           <button onClick={onEdit} title="Sửa"
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-blue-400 hover:bg-blue-500/10 transition-colors">
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-blue-400 hover:bg-blue-500/10 transition-colors">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
               <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
             </svg>
           </button>
           <button onClick={onDelete} title="Xóa"
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-red-400 hover:bg-red-500/10 transition-colors">
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
               <path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/>
@@ -225,43 +237,75 @@ function ZaloMsgRow({ item, onEdit, onDelete }: { item: QuickMessage; onEdit: ()
 }
 
 // ─── Modal: Local Quick Message ───────────────────────────────────────────────
+// Multi-account like LabelModal (AccountMultiDropdown). Labels share ONE row (`page_ids`);
+// local quick messages are one row per account, so the rules live in planQuickMessageSave()
+// (@/lib/quickMessageAccounts): the same keyword + content on several accounts is one shared
+// item, a deselected sharing account loses it, an account that already uses the keyword with
+// other content is a conflict resolved once (overwrite / skip).
+interface LocalMsgSaveData {
+  keyword: string;
+  title: string;
+  localMediaFiles: LocalMediaFile[];
+  /** Paths that came with the opened item (already stored) — only new picks get uploaded. */
+  existingMediaPaths: string[];
+  /** Zalo-style media of an item synced from Zalo, kept while no local file is attached. */
+  zaloMedia: QuickMessage['media'];
+  selected: string[];
+  /** Edit mode: keyword of the opened item + the accounts that shared it when the dialog opened. */
+  original: { keyword: string; members: string[] } | null;
+  conflictMode: QMConflictMode;
+}
+
 function LocalMsgModal({
-  initialData, accounts, filterAccounts, onClose, onSave,
+  initialData, accounts, filterAccounts, items, nameOf, onClose, onSave,
 }: {
   initialData: LocalQMItem | null;
   accounts: AccountInfo[];
   filterAccounts: string[];
+  /** Local rows of every account: who shares the item, who already uses the keyword. */
+  items: LocalQMItem[];
+  nameOf: (zaloId: string) => string;
   onClose: () => void;
-  onSave: (data: {
-    keyword: string; title: string; target_zalo_ids: string[]; owner_zalo_id?: string;
-    original_id?: number; original_owner_zalo_id?: string; localMediaFiles?: LocalMediaFile[];
-  }) => void;
+  onSave: (data: LocalMsgSaveData) => Promise<void>;
 }) {
   const isEdit = !!initialData;
   const [keyword, setKeyword] = useState(initialData?.keyword ?? '');
   const [title, setTitle] = useState(initialData?.message?.title ?? '');
   const [localMediaFiles, setLocalMediaFiles] = useState<LocalMediaFile[]>(initialData?._localMedia || []);
+  const [zaloMedia, setZaloMedia] = useState<QuickMessage['media']>(initialData?.media?.items?.length ? initialData.media : null);
+  const [conflictMode, setConflictMode] = useState<QMConflictMode>('skip');
+  const [saving, setSaving] = useState(false);
 
-  // Edit mode: single account select
-  const [editAccountId, setEditAccountId] = useState<string>(
-    initialData?.owner_zalo_id || accounts[0]?.zalo_id || ''
+  // Like a label's page_ids: the accounts sharing the opened item, captured when the dialog opens.
+  const [original] = useState(() => {
+    if (!initialData) return null;
+    const known = new Set(accounts.map(a => a.zalo_id));
+    const members = findSharedCopies(items, initialData).map(r => r.owner_zalo_id).filter(id => known.has(id));
+    return { keyword: initialData.keyword, members };
+  });
+  // Create: the filtered accounts, else every account (same default as LabelModal).
+  const [selected, setSelected] = useState<string[]>(() => {
+    if (original) return original.members;
+    const known = new Set(accounts.map(a => a.zalo_id));
+    const fromFilter = filterAccounts.filter(id => known.has(id));
+    return fromFilter.length > 0 ? fromFilter : accounts.map(a => a.zalo_id);
+  });
+
+  const kw = keyword.trim();
+  const keptZaloMedia = localMediaFiles.length ? null : zaloMedia;
+  const signature = qmContentSignature(title, localMediaFiles, keptZaloMedia);
+  const plan = useMemo(
+    () => planQuickMessageSave({ items, keyword: kw, signature, selected, original, conflictMode }),
+    [items, kw, signature, selected, original, conflictMode],
   );
-
-  // Add mode: multi-select checkboxes - pre-select filterAccounts or all
-  const defaultSelected = !isEdit
-    ? (filterAccounts.length > 0 ? filterAccounts : accounts.map(a => a.zalo_id))
-    : [];
-  const [selectedAccountIds, setSelectedAccountIds] = useState<Set<string>>(new Set(defaultSelected));
-
-  const toggleAccount = (id: string) => {
-    const s = new Set(selectedAccountIds);
-    s.has(id) ? s.delete(id) : s.add(id);
-    setSelectedAccountIds(s);
-  };
-
-  const editAccountOptions: AccountOption[] = accounts.map(a => ({
-    id: a.zalo_id, name: a.full_name || a.zalo_id, phone: a.phone, avatarUrl: a.avatar_url,
-  }));
+  const removedIds = plan.actions.filter(a => a.kind === 'remove').map(a => a.zaloId);
+  const conflictIds = plan.conflicts.map(r => r.owner_zalo_id);
+  const upsertCount = plan.actions.filter(a => a.upsert).length;
+  // Other accounts already using the keyword, left as they are — every account that has it is listed.
+  const knownIds = new Set(accounts.map(a => a.zalo_id));
+  const listedIds = new Set([...selected, ...removedIds]);
+  const untouchedIds = Array.from(rowsByOwnerForKeyword(items, kw).keys()).filter(id => knownIds.has(id) && !listedIds.has(id));
+  const zaloThumb = keptZaloMedia?.items?.[0];
 
   const handlePickImages = async () => {
     const r = await ipc.file?.openDialog({
@@ -285,75 +329,80 @@ function LocalMsgModal({
     });
   };
 
-  const valid = keyword.trim() && title.trim() && (isEdit ? !!editAccountId : selectedAccountIds.size > 0);
+  const valid = !!kw && !!title.trim() && selected.length > 0 && plan.actions.length > 0 && !saving;
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!valid) return;
-    if (isEdit) {
-      onSave({
-        keyword: keyword.trim(), title: title.trim(),
-        target_zalo_ids: [],
-        owner_zalo_id: editAccountId,
-        original_id: initialData!.id,
-        original_owner_zalo_id: initialData!.owner_zalo_id,
-        localMediaFiles: localMediaFiles.length > 0 ? localMediaFiles : undefined,
+    setSaving(true);
+    try {
+      await onSave({
+        keyword: kw, title: title.trim(), localMediaFiles,
+        existingMediaPaths: (initialData?._localMedia || []).map(f => f.path),
+        zaloMedia: keptZaloMedia, selected, original, conflictMode,
       });
-    } else {
-      onSave({
-        keyword: keyword.trim(), title: title.trim(),
-        target_zalo_ids: Array.from(selectedAccountIds),
-        localMediaFiles: localMediaFiles.length > 0 ? localMediaFiles : undefined,
-      });
+    } finally {
+      setSaving(false);
     }
   };
 
+  const close = saving ? () => {} : onClose;
+
   return (
-    <ModalWrapper onClose={onClose}>
-      <div className="bg-gray-800 rounded-xl w-full max-w-md border border-gray-700 shadow-2xl flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
-        <div className="px-5 py-3 border-b border-gray-700 flex justify-between items-center shrink-0">
-          <h3 className="text-white font-medium">{isEdit ? 'Sửa tin nhắn nhanh' : 'Thêm tin nhắn nhanh'}</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-white">✕</button>
+    <ModalWrapper onClose={close}>
+      <div className="bg-card rounded-xl w-full max-w-md border border-border shadow-2xl flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
+        <div className="px-5 py-3 border-b border-border flex justify-between items-center shrink-0">
+          <h3 className="text-foreground font-medium">{isEdit ? 'Sửa tin nhắn nhanh' : 'Thêm tin nhắn nhanh'}</h3>
+          <button onClick={close} disabled={saving} className="text-muted-foreground hover:text-foreground disabled:opacity-40">✕</button>
         </div>
         <div className="p-5 space-y-4 overflow-y-auto">
           {/* Keyword */}
           <div>
-            <label className="block text-xs text-gray-400 mb-1.5 font-medium">Phím tắt (Keyword)</label>
+            <label className="block text-xs text-muted-foreground mb-1.5 font-medium">Phím tắt (Keyword)</label>
             <div className="relative">
-              <span className="absolute left-3 top-2 text-gray-400 text-sm">/</span>
+              <span className="absolute left-3 top-2 text-muted-foreground text-sm">/</span>
               <input type="text" value={keyword}
                 onChange={e => setKeyword(e.target.value.replace(/\s/g, '').slice(0, 20))}
                 placeholder="ten_phim_tat"
-                className="w-full bg-gray-700 text-white text-sm rounded-lg pl-6 pr-3 py-2 border border-gray-600 focus:border-blue-500 outline-none"
+                className="w-full bg-muted text-foreground text-sm rounded-lg pl-6 pr-3 py-2 border border-input focus:border-blue-500 outline-none"
               />
             </div>
           </div>
 
           {/* Content */}
           <div>
-            <label className="block text-xs text-gray-400 mb-1.5 font-medium">Nội dung tin nhắn</label>
+            <label className="block text-xs text-muted-foreground mb-1.5 font-medium">Nội dung tin nhắn</label>
             <textarea value={title} onChange={e => setTitle(e.target.value)} rows={4}
               placeholder="Nhập nội dung tin nhắn nhanh..."
-              className="w-full bg-gray-700 text-white text-sm rounded-lg px-3 py-2 border border-gray-600 focus:border-blue-500 outline-none resize-none"
+              className="w-full bg-muted text-foreground text-sm rounded-lg px-3 py-2 border border-input focus:border-blue-500 outline-none resize-none"
             />
           </div>
 
           {/* Media */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <label className="text-xs text-gray-400 font-medium">
-                Media đính kèm <span className="text-gray-400">({localMediaFiles.length} file)</span>
+              <label className="text-xs text-muted-foreground font-medium">
+                Media đính kèm <span className="text-muted-foreground">({localMediaFiles.length + (zaloThumb ? 1 : 0)} file)</span>
               </label>
-              {localMediaFiles.length > 0 && (
-                <button onClick={() => setLocalMediaFiles([])} className="text-[11px] text-red-400 hover:text-red-300">Xóa tất cả</button>
+              {(localMediaFiles.length > 0 || zaloThumb) && (
+                <button onClick={() => { setLocalMediaFiles([]); setZaloMedia(null); }} className="text-[11px] text-destructive hover:text-destructive/80">Xóa tất cả</button>
               )}
             </div>
-            {localMediaFiles.length > 0 && (
+            {(localMediaFiles.length > 0 || zaloThumb) && (
               <div className="flex flex-wrap gap-2 mb-2">
+                {zaloThumb && (
+                  /* Image of an item synced from Zalo: kept on save until removed or replaced by local files */
+                  <div className="relative group w-16 h-16 shrink-0" title="Ảnh đồng bộ từ Zalo">
+                    <img src={zaloThumb.thumbUrl || zaloThumb.normalUrl} alt="" className="w-full h-full rounded-xl object-cover border border-input"/>
+                    <span className="absolute bottom-0.5 left-0.5 text-[8px] bg-black/70 text-white px-1 rounded z-10">Zalo</span>
+                    <button onClick={() => setZaloMedia(null)}
+                      className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-destructive text-destructive-foreground rounded-full flex items-center justify-center text-xs font-bold shadow z-20 opacity-0 group-hover:opacity-100 transition-opacity">✕</button>
+                  </div>
+                )}
                 {localMediaFiles.map(f => (
                   <div key={f.path} className="relative group w-16 h-16 shrink-0">
                     {f.type === 'image'
-                      ? <img src={toLocalMediaUrl(f.path)} alt="" className="w-full h-full rounded-xl object-cover border border-gray-600"/>
-                      : <div className="w-full h-full rounded-xl border border-gray-600 bg-gray-700 flex flex-col items-center justify-center gap-1 relative overflow-hidden">
+                      ? <img src={toLocalMediaUrl(f.path)} alt="" className="w-full h-full rounded-xl object-cover border border-input"/>
+                      : <div className="w-full h-full rounded-xl border border-input bg-muted flex flex-col items-center justify-center gap-1 relative overflow-hidden">
                           <video src={toLocalMediaUrl(f.path)} className="absolute inset-0 w-full h-full object-cover opacity-50" muted/>
                           <div className="relative z-10 w-7 h-7 bg-black/60 rounded-full flex items-center justify-center">
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="white"><polygon points="5 3 19 12 5 21 5 3"/></svg>
@@ -371,90 +420,90 @@ function LocalMsgModal({
             )}
             <div className="flex items-center gap-2 flex-wrap">
               <button onClick={handlePickImages}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg text-xs text-gray-300 hover:text-white transition-colors">
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-muted hover:bg-accent border border-input rounded-lg text-xs text-foreground/80 hover:text-foreground transition-colors">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
                 </svg>
                 Thêm ảnh
               </button>
               <button onClick={handlePickVideos}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg text-xs text-gray-300 hover:text-white transition-colors">
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-muted hover:bg-accent border border-input rounded-lg text-xs text-foreground/80 hover:text-foreground transition-colors">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
                 </svg>
                 Thêm video
               </button>
             </div>
-            <p className="text-[11px] text-gray-400 mt-1.5">Ảnh/video sẽ được gửi kèm khi chọn tin nhắn nhanh này.</p>
+            <p className="text-[11px] text-muted-foreground mt-1.5">Ảnh/video sẽ được gửi kèm khi chọn tin nhắn nhanh này.</p>
           </div>
 
           {/* Tài khoản áp dụng */}
-          <div className="border-t border-gray-700/50 pt-4">
-            <label className="block text-xs text-gray-400 mb-2 font-medium">Tài khoản áp dụng</label>
+          <div className="border-t border-border/50 pt-4">
+            <label className="block text-xs text-muted-foreground mb-2 font-medium">Tài khoản áp dụng</label>
             {accounts.length === 0 ? (
-              <p className="text-xs text-gray-400 italic">Chưa có tài khoản nào</p>
-            ) : isEdit ? (
-              /* Edit mode: single account selector */
-              <>
-                <AccountSelectorDropdown
-                  options={editAccountOptions}
-                  activeId={editAccountId}
-                  onSelect={setEditAccountId}
-                  placeholder="Chọn tài khoản..."
-                  position="up-left"
-                  fullWidth
-                />
-                {editAccountId !== initialData!.owner_zalo_id && (
-                  <p className="text-[11px] text-yellow-400/80 mt-1.5">
-                    <AlertIcon className="w-4 h-4 inline" /> Tin nhắn sẽ được chuyển sang tài khoản mới.
-                  </p>
-                )}
-              </>
+              <p className="text-xs text-muted-foreground italic">Chưa có tài khoản nào</p>
             ) : (
-              /* Add mode: multi-select checkboxes */
               <>
-                <div className="max-h-40 overflow-y-auto border border-gray-700 rounded-lg divide-y divide-gray-700/50 bg-gray-900/50">
-                  {accounts.map(acc => (
-                    <label key={acc.zalo_id} className="flex items-center gap-3 px-3 py-2 hover:bg-gray-700/50 cursor-pointer">
-                      <input type="checkbox"
-                        checked={selectedAccountIds.has(acc.zalo_id)}
-                        onChange={() => toggleAccount(acc.zalo_id)}
-                        className="w-4 h-4 rounded bg-gray-600 border-gray-500 text-blue-600 focus:ring-blue-500 accent-blue-500"
-                      />
-                      {acc.avatar_url ? (
-                        <img src={acc.avatar_url} alt="" className="w-6 h-6 rounded-full object-cover flex-shrink-0" />
-                      ) : (
-                        <div className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-[9px] font-bold flex-shrink-0">
-                          {(acc.full_name || acc.zalo_id || '?').charAt(0).toUpperCase()}
-                        </div>
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm text-gray-200 truncate">{acc.full_name || acc.zalo_id}</p>
-                        {acc.phone && <p className="text-[11px] text-gray-400">{acc.phone}</p>}
-                      </div>
-                    </label>
-                  ))}
-                </div>
-                {selectedAccountIds.size > 0 && (
-                  <p className="text-[11px] text-blue-400/80 mt-1.5">
-                    <CheckIcon className="w-4 h-4 inline" /> Sẽ thêm cho {selectedAccountIds.size} tài khoản đã chọn.
+                <AccountMultiDropdown
+                  accounts={accounts}
+                  selectedIds={selected}
+                  onChange={setSelected}
+                  dropPosition="up"
+                  fullWidth
+                  placeholder="Chọn tài khoản áp dụng..."
+                />
+                {selected.length === 0 && (
+                  <p className="text-[11px] text-destructive mt-1.5"><AlertIcon className="w-4 h-4 inline" /> Chọn ít nhất 1 tài khoản.</p>
+                )}
+                {original && original.members.length > 1 && (
+                  <p className="text-[11px] text-muted-foreground mt-1.5">
+                    <UsersIcon className="w-3.5 h-3.5 inline" /> Đang dùng chung cho {original.members.length} tài khoản: {formatAccountNames(original.members, nameOf)}.
                   </p>
                 )}
-                {selectedAccountIds.size === 0 && (
-                  <p className="text-[11px] text-red-400/80 mt-1.5">
-                    <AlertIcon className="w-4 h-4 inline" /> Chọn ít nhất 1 tài khoản.
+                {removedIds.length > 0 && (
+                  <p className="text-[11px] text-warning mt-1.5">
+                    <AlertIcon className="w-4 h-4 inline" /> Sẽ gỡ /{original?.keyword} khỏi {formatAccountNames(removedIds, nameOf)} (đã bỏ chọn).
                   </p>
                 )}
+                {conflictIds.length > 0 && (
+                  <div className="mt-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2.5 space-y-2">
+                    <p className="text-[11px] text-warning">
+                      <AlertIcon className="w-4 h-4 inline" /> {formatAccountNames(conflictIds, nameOf)} đã có /{kw} với nội dung khác.
+                    </p>
+                    <div className="flex gap-1.5">
+                      {([
+                        { id: 'skip' as const, label: 'Bỏ qua, giữ bản cũ' },
+                        { id: 'overwrite' as const, label: 'Ghi đè bằng bản này' },
+                      ]).map(opt => (
+                        <button key={opt.id} type="button" aria-pressed={conflictMode === opt.id} onClick={() => setConflictMode(opt.id)}
+                          className={`flex-1 px-2.5 py-1.5 rounded-md border text-xs font-medium transition-colors ${conflictMode === opt.id
+                            ? 'border-primary bg-primary/10 text-primary'
+                            : 'border-input text-muted-foreground hover:text-foreground hover:bg-muted'}`}
+                        >{opt.label}</button>
+                      ))}
+                    </div>
+                    {plan.actions.length === 0 && (
+                      <p className="text-[11px] text-muted-foreground">Không còn tài khoản nào để lưu: chọn "Ghi đè" hoặc thêm tài khoản khác.</p>
+                    )}
+                  </div>
+                )}
+                {untouchedIds.length > 0 && (
+                  <p className="text-[11px] text-muted-foreground mt-1.5">
+                    Cũng có /{kw} ở {formatAccountNames(untouchedIds, nameOf)}: không thay đổi.
+                  </p>
+                )}
+                <p className="text-[11px] text-muted-foreground mt-1.5 italic">* Tin nhắn nhanh được lưu riêng cho từng tài khoản được chọn.</p>
               </>
             )}
           </div>
         </div>
 
-        <div className="px-5 py-3 border-t border-gray-700 flex justify-end gap-2 shrink-0">
-          <button onClick={onClose} className="px-4 py-2 text-gray-400 hover:text-white text-sm">Hủy</button>
+        <div className="px-5 py-3 border-t border-border flex justify-end gap-2 shrink-0">
+          <button onClick={close} disabled={saving} className="px-4 py-2 text-muted-foreground hover:text-foreground text-sm disabled:opacity-40">Hủy</button>
           <button onClick={handleSave} disabled={!valid}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg disabled:opacity-40 disabled:cursor-not-allowed">
-            {isEdit ? 'Lưu thay đổi' : (selectedAccountIds.size > 1 ? `Lưu (${selectedAccountIds.size} tài khoản)` : 'Lưu')}
+            className="px-4 py-2 bg-primary hover:bg-primary-hover text-primary-foreground text-sm font-medium rounded-lg disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-2">
+            {saving && <span className="w-3.5 h-3.5 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />}
+            {saving ? 'Đang lưu...' : isEdit ? 'Lưu thay đổi' : (upsertCount > 1 ? `Lưu (${upsertCount} tài khoản)` : 'Lưu')}
           </button>
         </div>
       </div>
@@ -489,10 +538,10 @@ function ZaloMsgModal({ initialData, accountName, onClose, onSave }: {
 
   return (
     <ModalWrapper onClose={onClose}>
-      <div className="bg-gray-800 rounded-xl w-full max-w-md border border-gray-700 shadow-2xl flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
-        <div className="px-5 py-3 border-b border-gray-700 flex justify-between items-center shrink-0">
-          <h3 className="text-white font-medium">{isEdit ? 'Sửa trên Zalo' : 'Thêm lên Zalo'}</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-white">✕</button>
+      <div className="bg-card rounded-xl w-full max-w-md border border-border shadow-2xl flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
+        <div className="px-5 py-3 border-b border-border flex justify-between items-center shrink-0">
+          <h3 className="text-foreground font-medium">{isEdit ? 'Sửa trên Zalo' : 'Thêm lên Zalo'}</h3>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">✕</button>
         </div>
         <div className="p-5 space-y-4 overflow-y-auto">
           <div className="flex items-center gap-2 bg-blue-900/20 rounded-lg px-3 py-2 border border-blue-800/30">
@@ -500,33 +549,33 @@ function ZaloMsgModal({ initialData, accountName, onClose, onSave }: {
             <p className="text-xs text-blue-300">Tài khoản: <strong>{accountName}</strong></p>
           </div>
           <div>
-            <label className="block text-xs text-gray-400 mb-1.5 font-medium">Phím tắt (Keyword)</label>
+            <label className="block text-xs text-muted-foreground mb-1.5 font-medium">Phím tắt (Keyword)</label>
             <div className="relative">
-              <span className="absolute left-3 top-2 text-gray-400 text-sm">/</span>
+              <span className="absolute left-3 top-2 text-muted-foreground text-sm">/</span>
               <input type="text" value={keyword}
                 onChange={e => setKeyword(e.target.value.replace(/\s/g, '').slice(0, 20))}
                 placeholder="ten_phim_tat"
-                className="w-full bg-gray-700 text-white text-sm rounded-lg pl-6 pr-3 py-2 border border-gray-600 focus:border-blue-500 outline-none"
+                className="w-full bg-muted text-foreground text-sm rounded-lg pl-6 pr-3 py-2 border border-input focus:border-blue-500 outline-none"
               />
             </div>
           </div>
           <div>
-            <label className="block text-xs text-gray-400 mb-1.5 font-medium">Nội dung tin nhắn</label>
+            <label className="block text-xs text-muted-foreground mb-1.5 font-medium">Nội dung tin nhắn</label>
             <textarea value={title} onChange={e => setTitle(e.target.value)} rows={4} placeholder="Nhập nội dung..."
-              className="w-full bg-gray-700 text-white text-sm rounded-lg px-3 py-2 border border-gray-600 focus:border-blue-500 outline-none resize-none"
+              className="w-full bg-muted text-foreground text-sm rounded-lg px-3 py-2 border border-input focus:border-blue-500 outline-none resize-none"
             />
           </div>
           <div>
-            <label className="block text-xs text-gray-400 mb-1.5 font-medium">Ảnh đính kèm (tuỳ chọn)</label>
+            <label className="block text-xs text-muted-foreground mb-1.5 font-medium">Ảnh đính kèm (tuỳ chọn)</label>
             {mediaPreview ? (
               <div className="relative inline-block">
-                <img src={mediaPreview} alt="preview" className="w-24 h-24 rounded-xl object-cover border border-gray-600"/>
+                <img src={mediaPreview} alt="preview" className="w-24 h-24 rounded-xl object-cover border border-input"/>
                 <button onClick={() => { setMediaPath(undefined); setMediaPreview(undefined); }}
                   className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 rounded-full flex items-center justify-center text-white text-xs font-bold shadow">✕</button>
               </div>
             ) : (
               <button onClick={handlePickImage}
-                className="flex items-center gap-2 px-3 py-2 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-xl text-sm text-gray-300 hover:text-white transition-colors">
+                className="flex items-center gap-2 px-3 py-2 bg-muted hover:bg-accent border border-input rounded-xl text-sm text-foreground/80 hover:text-foreground transition-colors">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
                 </svg>
@@ -535,8 +584,8 @@ function ZaloMsgModal({ initialData, accountName, onClose, onSave }: {
             )}
           </div>
         </div>
-        <div className="px-5 py-3 border-t border-gray-700 flex justify-end gap-2 shrink-0">
-          <button onClick={onClose} className="px-4 py-2 text-gray-400 hover:text-white text-sm">Hủy</button>
+        <div className="px-5 py-3 border-t border-border flex justify-end gap-2 shrink-0">
+          <button onClick={onClose} className="px-4 py-2 text-muted-foreground hover:text-foreground text-sm">Hủy</button>
           <button
             onClick={() => onSave({ keyword: keyword.trim(), title: title.trim(), mediaPath, itemId: isEdit ? initialData!.id : undefined })}
             disabled={!valid}
@@ -571,48 +620,48 @@ function CloneMsgModal({ accounts, onClose, onSave }: {
 
   return (
     <ModalWrapper onClose={onClose}>
-      <div className="bg-gray-800 rounded-xl w-full max-w-sm border border-gray-700 shadow-2xl" onClick={e => e.stopPropagation()}>
-        <div className="px-5 py-3 border-b border-gray-700 flex justify-between items-center">
-          <h3 className="text-white font-medium">Sao chép tin nhắn nhanh</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-white">✕</button>
+      <div className="bg-card rounded-xl w-full max-w-sm border border-border shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="px-5 py-3 border-b border-border flex justify-between items-center">
+          <h3 className="text-foreground font-medium">Sao chép tin nhắn nhanh</h3>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">✕</button>
         </div>
         <div className="p-5 space-y-4">
-          <p className="text-xs text-gray-400 bg-gray-700/50 rounded-lg px-3 py-2 border border-gray-600"><ClipboardListIcon className="w-4 h-4 inline" /> Sao chép tin nhắn nhanh Local từ tài khoản nguồn sang đích.
+          <p className="text-xs text-muted-foreground bg-muted rounded-lg px-3 py-2 border border-input"><ClipboardListIcon className="w-4 h-4 inline" /> Sao chép tin nhắn nhanh Local từ tài khoản nguồn sang đích.
           </p>
           <div>
-            <label className="block text-xs text-gray-400 mb-1.5">Từ tài khoản (Nguồn)</label>
+            <label className="block text-xs text-muted-foreground mb-1.5">Từ tài khoản (Nguồn)</label>
             <AccountSelectorDropdown position="up-left" fullWidth options={sourceOptions} activeId={source} onSelect={setSource} placeholder="Chọn tài khoản nguồn..." />
           </div>
-          <div className="flex justify-center text-xl text-gray-400">⬇️</div>
+          <div className="flex justify-center text-xl text-muted-foreground">⬇️</div>
           <div>
-            <label className="block text-xs text-gray-400 mb-1.5">Sang tài khoản (Đích)</label>
+            <label className="block text-xs text-muted-foreground mb-1.5">Sang tài khoản (Đích)</label>
             {targetOptions.length === 0
-              ? <p className="text-xs text-gray-400 italic px-2">Không có tài khoản đích khả dụng</p>
+              ? <p className="text-xs text-muted-foreground italic px-2">Không có tài khoản đích khả dụng</p>
               : <AccountSelectorDropdown position="up-left" fullWidth options={targetOptions} activeId={target} onSelect={setTarget} placeholder="Chọn tài khoản đích..." />
             }
           </div>
           <div>
-            <label className="block text-xs text-gray-400 mb-2 font-medium">Chế độ sao chép</label>
+            <label className="block text-xs text-muted-foreground mb-2 font-medium">Chế độ sao chép</label>
             <div className="space-y-2">
-              <label className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${mode === 'add' ? 'border-blue-500 bg-blue-500/10' : 'border-gray-600 hover:border-gray-500'}`}>
+              <label className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${mode === 'add' ? 'border-blue-500 bg-blue-500/10' : 'border-input hover:border-border-strong'}`}>
                 <input type="radio" name="clone-mode" value="add" checked={mode === 'add'} onChange={() => setMode('add')} className="mt-0.5 accent-blue-500" />
                 <div>
-                  <p className="text-sm font-semibold text-gray-200">➕ Thêm mới</p>
-                  <p className="text-xs text-gray-400 mt-0.5">Chỉ thêm keyword chưa có ở đích. Không ghi đè.</p>
+                  <p className="text-sm font-semibold text-foreground">➕ Thêm mới</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Chỉ thêm keyword chưa có ở đích. Không ghi đè.</p>
                 </div>
               </label>
-              <label className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${mode === 'replace' ? 'border-red-500 bg-red-500/10' : 'border-gray-600 hover:border-gray-500'}`}>
+              <label className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${mode === 'replace' ? 'border-red-500 bg-red-500/10' : 'border-input hover:border-border-strong'}`}>
                 <input type="radio" name="clone-mode" value="replace" checked={mode === 'replace'} onChange={() => setMode('replace')} className="mt-0.5 accent-red-500" />
                 <div>
                   <p className="text-sm font-semibold text-red-300"><RefreshIcon className="w-4 h-4 inline" /> Thay thế (Ghi đè)</p>
-                  <p className="text-xs text-gray-400 mt-0.5">Trùng keyword sẽ bị ghi đè bởi bản từ nguồn.</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Trùng keyword sẽ bị ghi đè bởi bản từ nguồn.</p>
                 </div>
               </label>
             </div>
           </div>
         </div>
-        <div className="px-5 py-3 border-t border-gray-700 flex justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-2 text-gray-400 hover:text-white text-sm">Hủy</button>
+        <div className="px-5 py-3 border-t border-border flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 text-muted-foreground hover:text-foreground text-sm">Hủy</button>
           <button onClick={() => onSave(source, target, mode)} disabled={!valid}
             className={`px-4 py-2 text-white text-sm font-medium rounded-lg disabled:opacity-40 ${mode === 'replace' ? 'bg-red-600 hover:bg-red-500' : 'bg-blue-600 hover:bg-blue-500'}`}
           >{mode === 'replace' ? <><RefreshIcon className="w-4 h-4 inline" /> Thay thế</> : <><PlusIcon className="w-4 h-4 inline" /> Thêm mới</>}</button>
@@ -628,30 +677,74 @@ function SyncModal({ accountName, zaloCount, onClose, onSave }: {
 }) {
   return (
     <ModalWrapper onClose={onClose}>
-      <div className="bg-gray-800 rounded-xl w-full max-w-sm border border-gray-700 shadow-2xl" onClick={e => e.stopPropagation()}>
-        <div className="px-5 py-3 border-b border-gray-700 flex justify-between items-center">
-          <h3 className="text-white font-medium">Đồng bộ Zalo → Local</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-white">✕</button>
+      <div className="bg-card rounded-xl w-full max-w-sm border border-border shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="px-5 py-3 border-b border-border flex justify-between items-center">
+          <h3 className="text-foreground font-medium">Đồng bộ Zalo → Local</h3>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">✕</button>
         </div>
         <div className="p-5 space-y-3">
           <div className="bg-blue-900/20 rounded-lg px-3 py-2.5 border border-blue-800/30 space-y-0.5">
             <p className="text-xs text-blue-300"><CloudIcon className="w-4 h-4 inline" /> Tài khoản: <strong>{accountName}</strong></p>
             <p className="text-xs text-blue-300"><ChartIcon className="w-4 h-4 inline" /> Số tin nhắn sẽ đồng bộ: <strong>{zaloCount}</strong></p>
           </div>
-          <p className="text-xs text-gray-400 font-medium pt-1">Chọn chế độ đồng bộ:</p>
+          <p className="text-xs text-muted-foreground font-medium pt-1">Chọn chế độ đồng bộ:</p>
           <button onClick={() => onSave('merge')}
-            className="w-full bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-xl p-3.5 text-left transition-colors">
-            <p className="text-sm font-semibold text-gray-200">➕ Thêm vào (Merge)</p>
-            <p className="text-xs text-gray-400 mt-0.5">Chỉ thêm keyword mới chưa có trong Local. Không ghi đè.</p>
+            className="w-full bg-muted hover:bg-accent border border-input rounded-xl p-3.5 text-left transition-colors">
+            <p className="text-sm font-semibold text-foreground">➕ Thêm vào (Merge)</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Chỉ thêm keyword mới chưa có trong Local. Không ghi đè.</p>
           </button>
           <button onClick={() => onSave('replace')}
-            className="w-full bg-gray-700 hover:bg-red-900/30 border border-gray-600 hover:border-red-700/50 rounded-xl p-3.5 text-left transition-colors">
+            className="w-full bg-muted hover:bg-red-900/30 border border-input hover:border-red-700/50 rounded-xl p-3.5 text-left transition-colors">
             <p className="text-sm font-semibold text-red-300"><RefreshIcon className="w-4 h-4 inline" /> Thay thế hoàn toàn (Replace)</p>
-            <p className="text-xs text-gray-400 mt-0.5">Xóa toàn bộ Local của tài khoản này và thay bằng dữ liệu từ Zalo.</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Xóa toàn bộ Local của tài khoản này và thay bằng dữ liệu từ Zalo.</p>
           </button>
         </div>
-        <div className="px-5 py-3 border-t border-gray-700 flex justify-end">
-          <button onClick={onClose} className="px-4 py-2 text-gray-400 hover:text-white text-sm">Hủy</button>
+        <div className="px-5 py-3 border-t border-border flex justify-end">
+          <button onClick={onClose} className="px-4 py-2 text-muted-foreground hover:text-foreground text-sm">Hủy</button>
+        </div>
+      </div>
+    </ModalWrapper>
+  );
+}
+
+// ─── Modal: Delete a quick message shared by several accounts ────────────────
+// A label is deleted for every account at once (one row). A shared local quick message is one
+// row per account, so let the user pick: only the clicked account, or every account sharing it.
+function DeleteSharedModal({ item, copies, nameOf, onClose, onDelete }: {
+  item: LocalQMItem; copies: LocalQMItem[];
+  nameOf: (zaloId: string) => string;
+  onClose: () => void; onDelete: (rows: LocalQMItem[]) => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const run = async (rows: LocalQMItem[]) => {
+    setBusy(true);
+    try { await onDelete(rows); } finally { setBusy(false); }
+  };
+  const close = busy ? () => {} : onClose;
+  return (
+    <ModalWrapper onClose={close}>
+      <div className="bg-card rounded-xl w-full max-w-sm border border-border shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="px-5 py-3 border-b border-border flex justify-between items-center">
+          <h3 className="text-foreground font-medium">Xóa tin nhắn nhanh /{item.keyword}?</h3>
+          <button onClick={close} disabled={busy} className="text-muted-foreground hover:text-foreground disabled:opacity-40">✕</button>
+        </div>
+        <div className="p-5 space-y-3">
+          <p className="text-xs text-muted-foreground bg-muted rounded-lg px-3 py-2.5 border border-input">
+            <UsersIcon className="w-4 h-4 inline" /> Đang dùng chung cho <strong className="text-foreground">{copies.length} tài khoản</strong>: {formatAccountNames(copies.map(c => c.owner_zalo_id), nameOf, 5)}.
+          </p>
+          <button onClick={() => run([item])} disabled={busy}
+            className="w-full bg-muted hover:bg-accent border border-input rounded-xl p-3.5 text-left transition-colors disabled:opacity-50">
+            <p className="text-sm font-semibold text-foreground">Chỉ xóa ở {nameOf(item.owner_zalo_id)}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Các tài khoản khác vẫn giữ /{item.keyword}.</p>
+          </button>
+          <button onClick={() => run(copies)} disabled={busy}
+            className="w-full bg-muted hover:bg-destructive/10 border border-input hover:border-destructive/40 rounded-xl p-3.5 text-left transition-colors disabled:opacity-50">
+            <p className="text-sm font-semibold text-destructive">Xóa ở cả {copies.length} tài khoản</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Hành động này không thể hoàn tác.</p>
+          </button>
+        </div>
+        <div className="px-5 py-3 border-t border-border flex justify-end">
+          <button onClick={close} disabled={busy} className="px-4 py-2 text-muted-foreground hover:text-foreground text-sm disabled:opacity-40">Hủy</button>
         </div>
       </div>
     </ModalWrapper>
@@ -662,41 +755,42 @@ function SyncModal({ accountName, zaloCount, onClose, onSave }: {
 function HelpModal({ onClose }: { onClose: () => void }) {
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60]" onClick={onClose}>
-      <div className="bg-gray-800 rounded-xl border border-gray-700 p-6 max-w-lg w-full mx-4 shadow-2xl relative" onClick={e => e.stopPropagation()}>
-        <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 hover:text-white">✕</button>
-        <h3 className="text-lg font-bold text-white mb-4"><LightningIcon className="w-4 h-4 inline" /> Hướng dẫn - Tin nhắn nhanh</h3>
+      <div className="bg-card rounded-xl border border-border p-6 max-w-lg w-full mx-4 shadow-2xl relative" onClick={e => e.stopPropagation()}>
+        <button onClick={onClose} className="absolute top-4 right-4 text-muted-foreground hover:text-foreground">✕</button>
+        <h3 className="text-lg font-bold text-foreground mb-4"><LightningIcon className="w-4 h-4 inline" /> Hướng dẫn - Tin nhắn nhanh</h3>
 
         {/* Comparison table */}
         <div className="grid grid-cols-2 gap-3 mb-5 text-xs">
           {/* Local */}
           <div className="bg-blue-950/40 border border-blue-800/40 rounded-xl p-3.5">
             <p className="font-bold text-blue-400 mb-2.5 flex items-center gap-1.5"><HardDriveIcon className="w-4 h-4 inline" /> Local <span className="text-[11px] font-normal text-blue-500/70 bg-blue-900/30 px-1.5 py-0.5 rounded">Khuyến nghị</span></p>
-            <ul className="space-y-1.5 text-gray-300">
-              <li className="flex items-start gap-1.5"><span className="text-green-400 mt-0.5 shrink-0">✓</span><span><strong className="text-white">Không giới hạn</strong> số lượng tin nhắn tạo ra</span></li>
-              <li className="flex items-start gap-1.5"><span className="text-green-400 mt-0.5 shrink-0">✓</span><span>Đính kèm <strong className="text-white">nhiều ảnh + video</strong> cùng lúc</span></li>
+            <ul className="space-y-1.5 text-foreground/80">
+              <li className="flex items-start gap-1.5"><span className="text-green-400 mt-0.5 shrink-0">✓</span><span><strong className="text-foreground">Không giới hạn</strong> số lượng tin nhắn tạo ra</span></li>
+              <li className="flex items-start gap-1.5"><span className="text-green-400 mt-0.5 shrink-0">✓</span><span>Đính kèm <strong className="text-foreground">nhiều ảnh + video</strong> cùng lúc</span></li>
               <li className="flex items-start gap-1.5"><span className="text-green-400 mt-0.5 shrink-0">✓</span><span>Dùng chung cho nhiều tài khoản</span></li>
               <li className="flex items-start gap-1.5"><span className="text-green-400 mt-0.5 shrink-0">✓</span><span>Sắp xếp thứ tự, bật/tắt từng mục</span></li>
-              <li className="flex items-start gap-1.5"><span className="text-yellow-500 mt-0.5 shrink-0">−</span><span className="text-gray-400">Không đồng bộ điện thoại Zalo</span></li>
+              <li className="flex items-start gap-1.5"><span className="text-yellow-500 mt-0.5 shrink-0">−</span><span className="text-muted-foreground">Không đồng bộ điện thoại Zalo</span></li>
             </ul>
           </div>
           {/* Zalo */}
-          <div className="bg-gray-900/60 border border-gray-700/60 rounded-xl p-3.5">
-            <p className="font-bold text-gray-400 mb-2.5 flex items-center gap-1.5"><CloudIcon className="w-4 h-4 inline" /> Zalo</p>
-            <ul className="space-y-1.5 text-gray-400">
+          <div className="bg-muted border border-border/60 rounded-xl p-3.5">
+            <p className="font-bold text-muted-foreground mb-2.5 flex items-center gap-1.5"><CloudIcon className="w-4 h-4 inline" /> Zalo</p>
+            <ul className="space-y-1.5 text-muted-foreground">
               <li className="flex items-start gap-1.5"><span className="text-red-400 mt-0.5 shrink-0">✗</span><span><strong className="text-red-300">Chỉ 1 tin nhắn nhanh</strong> - Zalo giới hạn rất ít</span></li>
               <li className="flex items-start gap-1.5"><span className="text-red-400 mt-0.5 shrink-0">✗</span><span>Chỉ đính kèm <strong className="text-red-300">1 ảnh</strong>, không hỗ trợ video</span></li>
-              <li className="flex items-start gap-1.5"><span className="text-green-400 mt-0.5 shrink-0">✓</span><span className="text-gray-400">Đồng bộ trên điện thoại Zalo</span></li>
+              <li className="flex items-start gap-1.5"><span className="text-green-400 mt-0.5 shrink-0">✓</span><span className="text-muted-foreground">Đồng bộ trên điện thoại Zalo</span></li>
             </ul>
           </div>
         </div>
 
-        <div className="border-t border-gray-700 pt-4 space-y-1.5 text-xs text-gray-400">
-          <p className="text-gray-300 font-semibold mb-2"><ClipboardListIcon className="w-4 h-4 inline" /> Các tính năng</p>
-          <p><HardDriveIcon className="w-4 h-4 inline" /> <strong className="text-gray-300">Local:</strong> Tạo/sửa/xóa, đính kèm ảnh+video, tạo cho nhiều tài khoản cùng lúc.</p>
-          <p><CloudIcon className="w-4 h-4 inline" /> <strong className="text-gray-300">Zalo:</strong> Xem & quản lý trực tiếp trên server Zalo. Cần tài khoản kết nối.</p>
-          <p><InboxIcon className="w-4 h-4 inline" /> <strong className="text-gray-300">Đồng bộ về Local:</strong> Kéo tin nhắn Zalo về Local (Merge hoặc Replace).</p>
-          <p><ClipboardListIcon className="w-4 h-4 inline" /> <strong className="text-gray-300">Sao chép:</strong> Copy tin nhắn Local từ tài khoản A sang B.</p>
-          <p>↕️ <strong className="text-gray-300">Kéo thả:</strong> Kéo icon ⠿ để sắp xếp thứ tự hiển thị.</p>
+        <div className="border-t border-border pt-4 space-y-1.5 text-xs text-muted-foreground">
+          <p className="text-foreground/80 font-semibold mb-2"><ClipboardListIcon className="w-4 h-4 inline" /> Các tính năng</p>
+          <p><HardDriveIcon className="w-4 h-4 inline" /> <strong className="text-foreground/80">Local:</strong> Tạo/sửa/xóa, đính kèm ảnh+video, áp dụng cho nhiều tài khoản cùng lúc.</p>
+          <p><UsersIcon className="w-4 h-4 inline" /> <strong className="text-foreground/80">Dùng chung:</strong> Cùng phím tắt và nội dung ở nhiều tài khoản được sửa/xóa một lần; bỏ chọn tài khoản khi sửa sẽ gỡ tin nhắn khỏi tài khoản đó.</p>
+          <p><CloudIcon className="w-4 h-4 inline" /> <strong className="text-foreground/80">Zalo:</strong> Xem & quản lý trực tiếp trên server Zalo. Cần tài khoản kết nối.</p>
+          <p><InboxIcon className="w-4 h-4 inline" /> <strong className="text-foreground/80">Đồng bộ về Local:</strong> Kéo tin nhắn Zalo về Local (Merge hoặc Replace).</p>
+          <p><ClipboardListIcon className="w-4 h-4 inline" /> <strong className="text-foreground/80">Sao chép:</strong> Copy tin nhắn Local từ tài khoản A sang B.</p>
+          <p>↕️ <strong className="text-foreground/80">Kéo thả:</strong> Kéo icon ⠿ để sắp xếp thứ tự hiển thị.</p>
         </div>
       </div>
     </div>
@@ -711,7 +805,7 @@ interface Props {
 }
 
 export default function QuickMessageSettings({ accounts, filterAccounts, searchText }: Props) {
-  const { showNotification } = useAppStore();
+  const showNotification = useAppStore(s => s.showNotification);
   const [source, setSource] = useState<QuickMsgSource>('local');
   const [showHelp, setShowHelp] = useState(false);
 
@@ -737,6 +831,7 @@ export default function QuickMessageSettings({ accounts, filterAccounts, searchT
   const [zaloMsgModal, setZaloMsgModal] = useState<{ open: boolean; data: QuickMessage | null }>({ open: false, data: null });
   const [cloneMsgModal, setCloneMsgModal] = useState(false);
   const [syncModal, setSyncModal] = useState(false);
+  const [deleteSharedModal, setDeleteSharedModal] = useState<{ item: LocalQMItem; copies: LocalQMItem[] } | null>(null);
 
   // Drag & drop
   const qmDragFromRef = useRef<number | null>(null);
@@ -821,48 +916,125 @@ export default function QuickMessageSettings({ accounts, filterAccounts, searchT
     });
   }, [zaloMessages, searchText]);
 
+  // Row id → every known account's copy of the same quick message (same keyword + content):
+  // the quick-message counterpart of a label's page_ids.
+  const sharedById = useMemo(() => {
+    const known = new Set(accounts.map(a => a.zalo_id));
+    const byId = new Map<number, LocalQMItem[]>();
+    for (const group of groupSharedCopies(localMessages.filter(m => known.has(m.owner_zalo_id))).values()) {
+      for (const row of group) byId.set(row.id, group);
+    }
+    return byId;
+  }, [localMessages, accounts]);
+  const sharedCopiesOf = (item: LocalQMItem) => sharedById.get(item.id) ?? [item];
+
   // ─── Local Quick Msg Actions ──────────────────────────────────────────────
-  const handleDeleteLocalMsg = async (item: LocalQMItem) => {
-    const ok = await showConfirm({ title: 'Xóa tin nhắn nhanh?', message: 'Hành động này không thể hoàn tác.', variant: 'danger' });
-    if (!ok) return;
-    await DataAccessor.deleteLocalQuickMessage({ zaloId: item.owner_zalo_id, id: item.id });
+  const deleteLocalRows = async (keyword: string, rows: LocalQMItem[]) => {
+    const removed: string[] = [];
+    const failed: Array<{ zaloId: string; error?: string }> = [];
+    for (const row of rows) {
+      try {
+        const res: any = await DataAccessor.deleteLocalQuickMessage({ zaloId: row.owner_zalo_id, id: row.id });
+        if (!res?.success) throw new Error(res?.error || 'Xóa thất bại');
+        removed.push(row.owner_zalo_id);
+      } catch (err: any) {
+        failed.push({ zaloId: row.owner_zalo_id, error: err?.message });
+      }
+    }
+    setDeleteSharedModal(null);
     fetchLocalMessages();
-    showNotification('Đã xóa tin nhắn nhanh');
+    const summary = summarizeQuickMessageResult({ keyword, removed, failed, mode: 'delete' }, getAccountName);
+    showNotification(summary.message, summary.type);
   };
 
-  const handleSaveLocalMsg = async (data: {
-    keyword: string; title: string; target_zalo_ids: string[]; owner_zalo_id?: string;
-    original_id?: number; original_owner_zalo_id?: string; localMediaFiles?: LocalMediaFile[];
-  }) => {
-    if (!data.keyword || !data.title) return;
-    if (data.original_id !== undefined && data.original_owner_zalo_id) {
-      await DataAccessor.deleteLocalQuickMessage({ zaloId: data.original_owner_zalo_id, id: data.original_id });
+  const handleDeleteLocalMsg = async (item: LocalQMItem) => {
+    const copies = sharedCopiesOf(item);
+    if (copies.length > 1) {
+      setDeleteSharedModal({ item, copies });
+      return;
     }
-    const targets = data.owner_zalo_id ? [data.owner_zalo_id] : (data.target_zalo_ids || []);
-    if (!targets.length) return;
+    const ok = await showConfirm({ title: 'Xóa tin nhắn nhanh?', message: 'Hành động này không thể hoàn tác.', variant: 'danger' });
+    if (!ok) return;
+    await deleteLocalRows(item.keyword, [item]);
+  };
 
-    // Upload media files to boss if in employee mode
-    let processedMedia = data.localMediaFiles;
-    if (data.localMediaFiles && data.localMediaFiles.length > 0) {
-      const uploaded: LocalMediaFile[] = [];
+  const handleSaveLocalMsg = async (data: LocalMsgSaveData) => {
+    const { keyword, title } = data;
+    if (!keyword || !title) return;
+
+    // Plan against fresh rows: the chat composer, another window or an employee may have
+    // changed quick messages since this list was loaded.
+    let rows = localMessages;
+    try {
+      const res = await DataAccessor.getAllLocalQuickMessages();
+      if (res?.success && Array.isArray(res.items)) rows = res.items.map(mapDbRowToLocalQMItem);
+    } catch { /* keep the loaded list */ }
+
+    const plan = planQuickMessageSave({
+      items: rows, keyword,
+      signature: qmContentSignature(title, data.localMediaFiles, data.zaloMedia),
+      selected: data.selected, original: data.original, conflictMode: data.conflictMode,
+    });
+    if (plan.actions.length === 0) {
+      showNotification(summarizeQuickMessageResult({ keyword, skipped: plan.skipped }, getAccountName).message, 'warning');
+      return;
+    }
+
+    // Media for one account. Files already stored with the opened item keep their path (an
+    // account sharing it keeps its own copy). New files go through uploadMediaFile per account:
+    // standalone/boss returns the path unchanged; employee mode uploads a copy into THAT account's
+    // media folder on the boss, so its auto-delete / account removal cannot break the others.
+    const existingPaths = new Set(data.existingMediaPaths);
+    const mediaFor = async (zaloId: string, ownMedia?: QMMediaFile[]) => {
+      if (!data.localMediaFiles.length) return data.zaloMedia || undefined;
+      const files: LocalMediaFile[] = [];
       for (const f of data.localMediaFiles) {
-        const result = await DataAccessor.uploadMediaFile(f.path, targets[0]);
-        if (result.success && result.bossPath) {
-          uploaded.push({ ...f, path: result.bossPath });
-        } else {
-          uploaded.push(f);
+        if (existingPaths.has(f.path)) {
+          files.push(pickOwnMediaCopy(f, ownMedia));
+          continue;
         }
+        const up = await DataAccessor.uploadMediaFile(f.path, zaloId);
+        if (!up.success || !up.bossPath) {
+          throw new Error(`Không tải được ${mediaFileName(f.path)}${up.error ? `: ${up.error}` : ''}`);
+        }
+        files.push({ ...f, path: up.bossPath });
       }
-      processedMedia = uploaded;
+      return { localFiles: files };
+    };
+
+    const saved: string[] = [];
+    const removed: string[] = [];
+    const failed: Array<{ zaloId: string; error?: string }> = [];
+    for (const action of plan.actions) {
+      try {
+        if (action.upsert) {
+          const media = await mediaFor(action.zaloId, action.ownMedia);
+          const res: any = await DataAccessor.upsertLocalQuickMessage({ zaloId: action.zaloId, item: { keyword, title, media } });
+          if (!res?.success) throw new Error(res?.error || 'Lưu thất bại');
+          const newId: number | undefined = res.id ?? res.data?.id;
+          if (action.carry && newId) {
+            // Renamed copy = new row: keep it disabled / at its position like the old row.
+            try {
+              if (action.carry.isActive !== 1) await DataAccessor.setLocalQMActive({ id: newId, isActive: action.carry.isActive });
+              if (action.carry.sortOrder) await DataAccessor.setLocalQMOrder({ id: newId, order: action.carry.sortOrder });
+            } catch { /* cosmetic, the message itself is saved */ }
+          }
+        }
+        if (action.deleteRowId !== undefined) {
+          const res: any = await DataAccessor.deleteLocalQuickMessage({ zaloId: action.zaloId, id: action.deleteRowId });
+          if (!res?.success) throw new Error(res?.error || 'Không gỡ được bản cũ');
+        }
+        (action.upsert ? saved : removed).push(action.zaloId);
+      } catch (err: any) {
+        failed.push({ zaloId: action.zaloId, error: err?.message || String(err) });
+      }
     }
 
-    const mediaObj = processedMedia?.length ? { localFiles: processedMedia } : undefined;
-    for (const zId of targets) {
-      await DataAccessor.upsertLocalQuickMessage({ zaloId: zId, item: { keyword: data.keyword, title: data.title, media: mediaObj } });
-    }
-    setLocalMsgModal({ open: false, data: null });
     fetchLocalMessages();
-    showNotification(targets.length > 1 ? `Đã lưu cho ${targets.length} tài khoản` : 'Đã lưu tin nhắn nhanh');
+    const summary = summarizeQuickMessageResult({ keyword, saved, removed, skipped: plan.skipped, failed }, getAccountName);
+    showNotification(summary.message, summary.type);
+    // Nothing went through → keep the dialog (and what was typed) so the user can retry.
+    if (saved.length || removed.length) setLocalMsgModal({ open: false, data: null });
   };
 
   const handleToggleQMActive = async (item: LocalQMItem) => {
@@ -964,21 +1136,21 @@ export default function QuickMessageSettings({ accounts, filterAccounts, searchT
   return (
     <div className="flex flex-col flex-1 min-h-0">
       {/* Sub-tabs + Actions header */}
-      <div className="bg-gray-800/30 px-4 py-2 border-b border-gray-800 flex items-center gap-2">
-        <div className="flex bg-gray-800 rounded-lg p-0.5 gap-0.5">
+      <div className="bg-background px-4 py-2 border-b border-border flex items-center gap-2">
+        <div className="flex bg-card rounded-lg p-0.5 gap-0.5">
           {([
             { id: 'local' as const, label: 'Local' },
             ...(!hideZaloTab ? [{ id: 'zalo' as const, label: 'Zalo' }] : []),
           ] as const).map(src => (
             <button key={src.id} onClick={() => setSource(src.id)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap
-                ${effectiveSource === src.id ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'}`}
+                ${effectiveSource === src.id ? 'bg-blue-600 text-white shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}
             >{src.label}</button>
           ))}
         </div>
         {/* Help button - right next to tabs */}
         <button onClick={() => setShowHelp(true)} title="Hướng dẫn sử dụng"
-          className="p-1.5 hover:bg-gray-700 rounded-full text-gray-400 hover:text-blue-400 transition-colors">
+          className="p-1.5 hover:bg-muted rounded-full text-muted-foreground hover:text-blue-400 transition-colors">
           <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>
           </svg>
@@ -987,7 +1159,7 @@ export default function QuickMessageSettings({ accounts, filterAccounts, searchT
         <div className="ml-auto flex items-center gap-2">
           {effectiveSource === 'local' && (<>
             <button onClick={() => setCloneMsgModal(true)}
-              className="bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 border border-gray-600"><ClipboardListIcon className="w-4 h-4 inline" /> Sao chép
+              className="bg-card hover:bg-muted text-foreground/80 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 border border-input"><ClipboardListIcon className="w-4 h-4 inline" /> Sao chép
             </button>
             <button onClick={() => setLocalMsgModal({ open: true, data: null })}
               className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5">
@@ -998,7 +1170,7 @@ export default function QuickMessageSettings({ accounts, filterAccounts, searchT
           {effectiveSource === CHANNEL.ZALO && activeZaloId && (<>
             {zaloMessages.length > 0 && (
               <button onClick={() => setSyncModal(true)}
-                className="bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 border border-gray-600"><InboxIcon className="w-4 h-4 inline" /> Đồng bộ về Local
+                className="bg-card hover:bg-muted text-foreground/80 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 border border-input"><InboxIcon className="w-4 h-4 inline" /> Đồng bộ về Local
               </button>
             )}
             <button onClick={() => setZaloMsgModal({ open: true, data: null })} disabled={!isConnected}
@@ -1030,6 +1202,8 @@ export default function QuickMessageSettings({ accounts, filterAccounts, searchT
                   accountPhone={getAccountPhone(item.owner_zalo_id)}
                   accountAvatarUrl={getAccountAvatar(item.owner_zalo_id)}
                   showAccountBadge={showAccountBadge}
+                  sharedCount={sharedCopiesOf(item).length}
+                  sharedNames={formatAccountNames(sharedCopiesOf(item).map(c => c.owner_zalo_id), getAccountName, 10)}
                   onEdit={() => setLocalMsgModal({ open: true, data: item })}
                   onDelete={() => handleDeleteLocalMsg(item)}
                   onToggleActive={() => handleToggleQMActive(item)}
@@ -1050,7 +1224,7 @@ export default function QuickMessageSettings({ accounts, filterAccounts, searchT
           {activeZaloId && isConnected && zaloLoading && (
             <div className="text-center py-14">
               <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3"/>
-              <p className="text-gray-400 text-sm">Đang tải từ Zalo...</p>
+              <p className="text-muted-foreground text-sm">Đang tải từ Zalo...</p>
             </div>
           )}
           {activeZaloId && isConnected && !zaloLoading && filteredZaloMessages.length === 0 &&
@@ -1072,8 +1246,19 @@ export default function QuickMessageSettings({ accounts, filterAccounts, searchT
           initialData={localMsgModal.data}
           accounts={accounts}
           filterAccounts={filterAccounts}
+          items={localMessages}
+          nameOf={getAccountName}
           onClose={() => setLocalMsgModal({ open: false, data: null })}
           onSave={handleSaveLocalMsg}
+        />
+      )}
+      {deleteSharedModal && (
+        <DeleteSharedModal
+          item={deleteSharedModal.item}
+          copies={deleteSharedModal.copies}
+          nameOf={getAccountName}
+          onClose={() => setDeleteSharedModal(null)}
+          onDelete={rows => deleteLocalRows(deleteSharedModal.item.keyword, rows)}
         />
       )}
       {zaloMsgModal.open && activeZaloId && (

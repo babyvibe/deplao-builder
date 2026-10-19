@@ -1,5 +1,7 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import ipc from '@/lib/ipc';
+import DataAccessor, { isReadFailure } from '@/lib/data/DataAccessor';
+import { useEmployeeResync } from '@/hooks/useEmployeeResync';
 import { toLocalMediaUrl } from '@/lib/localMedia';
 import { useAppStore } from '@/store/appStore';
 import { ChartIcon, EditIcon, PinIcon } from '@/components/common/icons';
@@ -54,7 +56,7 @@ export default function PinnedBar({ zaloId, threadId, pins, onPinsChange, onScro
 
   return (
     <>
-      <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-800 border-b border-gray-700 z-20 flex-shrink-0 min-h-[44px]">
+      <div className="flex items-center gap-2 px-3 py-1.5 bg-card border-b border-border z-20 flex-shrink-0 min-h-[44px]">
 
         {/* Left accent bar - blue for msg, yellow for note */}
         <div className={`w-0.5 self-stretch rounded-full flex-shrink-0 ${effectiveTab === 'note' ? 'bg-yellow-400' : 'bg-blue-500'}`} />
@@ -84,15 +86,15 @@ export default function PinnedBar({ zaloId, threadId, pins, onPinsChange, onScro
         {effectiveTab === 'msg' && pins.length > 0 ? (
           <button className="flex-1 min-w-0 text-left" onClick={() => onScrollToMsg(pins[0].msg_id)}>
             <p className="text-[11px] font-semibold text-blue-400 leading-tight">Tin nhắn đã ghim</p>
-            <p className="text-xs text-gray-300 truncate leading-tight mt-0.5">
-              {pins[0].sender_name ? <span className="text-gray-400">{pins[0].sender_name}: </span> : null}
+            <p className="text-xs text-foreground/80 truncate leading-tight mt-0.5">
+              {pins[0].sender_name ? <span className="text-muted-foreground">{pins[0].sender_name}: </span> : null}
               {renderPreviewLabel(pins[0])}
             </p>
           </button>
         ) : effectiveTab === 'note' && pinnedNotes.length > 0 ? (
           <button className="flex-1 min-w-0 text-left" onClick={() => onNoteClick?.(pinnedNotes[0])}>
             <p className="text-[11px] font-semibold text-yellow-400 leading-tight">Ghi chú nhóm</p>
-            <p className="text-xs text-gray-300 truncate leading-tight mt-0.5">{pinnedNotes[0].title}</p>
+            <p className="text-xs text-foreground/80 truncate leading-tight mt-0.5">{pinnedNotes[0].title}</p>
           </button>
         ) : null}
 
@@ -100,11 +102,11 @@ export default function PinnedBar({ zaloId, threadId, pins, onPinsChange, onScro
         <div className="flex items-center gap-1 flex-shrink-0">
           {/* Tab switcher - only when both types exist */}
           {hasMsg && hasNote && (
-            <div className="flex rounded-lg overflow-hidden border border-gray-600">
+            <div className="flex rounded-lg overflow-hidden border border-input">
               <button
                 onClick={() => setActiveTab('msg')}
                 title="Tin nhắn đã ghim"
-                className={`px-1.5 py-1 transition-colors ${effectiveTab === 'msg' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-300 hover:bg-gray-700'}`}
+                className={`px-1.5 py-1 transition-colors ${effectiveTab === 'msg' ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground/80 hover:bg-muted'}`}
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
                   <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
@@ -113,7 +115,7 @@ export default function PinnedBar({ zaloId, threadId, pins, onPinsChange, onScro
               <button
                 onClick={() => setActiveTab('note')}
                 title="Ghi chú nhóm"
-                className={`px-1.5 py-1 transition-colors ${effectiveTab === 'note' ? 'bg-yellow-600 text-white' : 'text-gray-400 hover:text-gray-300 hover:bg-gray-700'}`}
+                className={`px-1.5 py-1 transition-colors ${effectiveTab === 'note' ? 'bg-yellow-600 text-white' : 'text-muted-foreground hover:text-foreground/80 hover:bg-muted'}`}
               >
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
@@ -128,7 +130,7 @@ export default function PinnedBar({ zaloId, threadId, pins, onPinsChange, onScro
           {effectiveTab === 'msg' && pins.length > 1 && (
             <button
               onClick={() => setShowList(true)}
-              className="flex items-center gap-0.5 px-2 py-1 rounded-lg bg-gray-700 hover:bg-gray-600 text-xs text-gray-300 transition-colors"
+              className="flex items-center gap-0.5 px-2 py-1 rounded-lg bg-muted hover:bg-accent text-xs text-foreground/80 transition-colors"
             >
               +{pins.length - 1}
             </button>
@@ -138,7 +140,7 @@ export default function PinnedBar({ zaloId, threadId, pins, onPinsChange, onScro
           {effectiveTab === 'note' && (
             <button
               onClick={() => setShowList(true)}
-              className="px-2 py-1 rounded-lg bg-gray-700 hover:bg-yellow-600/30 text-xs text-gray-300 hover:text-yellow-300 transition-colors whitespace-nowrap"
+              className="px-2 py-1 rounded-lg bg-muted hover:bg-yellow-600/30 text-xs text-foreground/80 hover:text-yellow-300 transition-colors whitespace-nowrap"
             >
               Xem tất cả
             </button>
@@ -154,7 +156,7 @@ export default function PinnedBar({ zaloId, threadId, pins, onPinsChange, onScro
                   const result = await ipc.telegramUser?.pinMessage({ accountId: zaloId, chatId: threadId, messageId: pins[0].msg_id, unpin: true });
                   if (!result?.success) return;
                 }
-                await ipc.db?.unpinMessage({ zaloId, threadId, msgId: pins[0].msg_id });
+                if (pinWriteFailed(await ipc.db?.unpinMessage({ zaloId, threadId, msgId: pins[0].msg_id }))) return;
                 onPinsChange(pins.filter(p => p.msg_id !== pins[0].msg_id));
               }}
               onCopy={() => copyPinText(pins[0])}
@@ -165,17 +167,17 @@ export default function PinnedBar({ zaloId, threadId, pins, onPinsChange, onScro
               multiple pinned messages, so do not show a Zalo-only warning. */}
           {effectiveTab === 'msg' && showsZaloPinLimit && (
             <div className="relative group">
-              <span className="w-4 h-4 rounded-full border border-gray-600 text-gray-400 hover:border-blue-400 hover:text-blue-400 flex items-center justify-center text-[11px] font-bold cursor-default select-none transition-colors">
+              <span className="w-4 h-4 rounded-full border border-input text-muted-foreground hover:border-blue-400 hover:text-blue-400 flex items-center justify-center text-[11px] font-bold cursor-default select-none transition-colors">
                 ?
               </span>
-              <div className="absolute right-0 top-full mt-1.5 w-72 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-3.5 text-xs text-gray-300 leading-relaxed z-[60] hidden group-hover:block pointer-events-none">
-                <p className="font-semibold text-white mb-1.5 flex items-center gap-1.5">
+              <div className="absolute right-0 top-full mt-1.5 w-72 bg-popover border border-border rounded-xl shadow-2xl p-3.5 text-xs text-foreground/80 leading-relaxed z-[60] hidden group-hover:block pointer-events-none">
+                <p className="font-semibold text-foreground mb-1.5 flex items-center gap-1.5">
                   <span><PinIcon className="w-4 h-4" /></span> Ghim tin nhắn
                 </p>
                 <p className="mb-2">
                   Zalo <span className="text-yellow-400 font-medium">giới hạn tối đa 3 tin nhắn</span> được ghim mỗi cuộc trò chuyện. Khi vượt quá giới hạn, tin nhắn vẫn được ghim <span className="text-blue-400 font-medium">trong thiết bị này</span> nhưng sẽ không đồng bộ lên Zalo.
                 </p>
-                <p className="text-gray-400 border-t border-gray-700 pt-2">
+                <p className="text-muted-foreground border-t border-border pt-2">
                   Bạn có thể dùng Zalo xoá các tin ghim cũ rồi ghim lại để được đồng bộ trên cả hai bên.
                 </p>
               </div>
@@ -199,6 +201,16 @@ export default function PinnedBar({ zaloId, threadId, pins, onPinsChange, onScro
       )}
     </>
   );
+}
+
+/**
+ * Ghim / bỏ ghim (IPC). Chế độ nhân viên chờ Boss xác nhận và trả `{ success: false }` khi Boss từ chối / mất kết
+ * nối → báo lỗi và giữ nguyên danh sách (trước đây luôn gỡ khỏi UI dù Boss chưa ghi). true = thất bại.
+ */
+function pinWriteFailed(res: any): boolean {
+  if (res?.success !== false) return false;
+  useAppStore.getState().showNotification?.(`Không cập nhật được tin ghim: ${res.error || 'lỗi không xác định'}`, 'error');
+  return true;
 }
 
 // ─── PinnedListModal ──────────────────────────────────────────────────────────
@@ -225,12 +237,12 @@ function PinnedListModal({ pins, notes, zaloId, threadId, onClose, onScrollToMsg
       const result = await ipc.telegramUser?.pinMessage({ accountId: zaloId, chatId: threadId, messageId: msgId, unpin: true });
       if (!result?.success) return;
     }
-    await ipc.db?.unpinMessage({ zaloId, threadId, msgId });
+    if (pinWriteFailed(await ipc.db?.unpinMessage({ zaloId, threadId, msgId }))) return;
     onPinsChange(pins.filter(p => p.msg_id !== msgId));
   };
 
   const handleBringToTop = async (msgId: string) => {
-    await ipc.db?.bringPinnedToTop({ zaloId, threadId, msgId });
+    if (pinWriteFailed(await ipc.db?.bringPinnedToTop({ zaloId, threadId, msgId }))) return;
     const pin = pins.find(p => p.msg_id === msgId);
     if (!pin) return;
     onPinsChange([{ ...pin, pinned_at: Date.now() }, ...pins.filter(p => p.msg_id !== msgId)]);
@@ -240,12 +252,12 @@ function PinnedListModal({ pins, notes, zaloId, threadId, onClose, onScrollToMsg
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center pt-16 bg-black/40 backdrop-blur-sm">
-      <div ref={ref} className="bg-gray-800 border border-gray-700 rounded-2xl shadow-2xl w-full max-w-lg mx-4 flex flex-col" style={{ maxHeight: '70vh' }}>
+      <div ref={ref} className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-lg mx-4 flex flex-col" style={{ maxHeight: '70vh' }}>
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700 flex-shrink-0">
-          <span className="font-semibold text-white">Danh sách ghim ({totalCount})</span>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border flex-shrink-0">
+          <span className="font-semibold text-foreground">Danh sách ghim ({totalCount})</span>
           <div className="flex items-center gap-2">
-            <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors p-1 rounded-lg hover:bg-gray-700">
+            <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded-lg hover:bg-muted">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
               </svg>
@@ -258,7 +270,7 @@ function PinnedListModal({ pins, notes, zaloId, threadId, onClose, onScrollToMsg
           {/* Notes first */}
           {notes.map((note) => (
             <div key={`note_${note.topicId}`}
-              className="flex items-center gap-3 px-4 py-3 border-b border-gray-700/50 hover:bg-gray-700/30 transition-colors cursor-pointer"
+              className="flex items-center gap-3 px-4 py-3 border-b border-border/50 hover:bg-muted/30 transition-colors cursor-pointer"
               onClick={() => { onNoteClick?.(note); onClose(); }}
             >
               {/* Note icon - orange */}
@@ -272,12 +284,12 @@ function PinnedListModal({ pins, notes, zaloId, threadId, onClose, onScrollToMsg
                 </svg>
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-gray-100">Ghi chú</p>
-                <p className="text-xs text-gray-400 truncate mt-0.5">{note.title}</p>
+                <p className="text-sm font-semibold text-foreground">Ghi chú</p>
+                <p className="text-xs text-muted-foreground truncate mt-0.5">{note.title}</p>
               </div>
               <button
                 onClick={e => { e.stopPropagation(); onNoteClick?.(note); onClose(); }}
-                className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-600 transition-colors flex-shrink-0"
+                className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors flex-shrink-0"
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                   <circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>
@@ -289,7 +301,7 @@ function PinnedListModal({ pins, notes, zaloId, threadId, onClose, onScrollToMsg
           {/* Pinned messages */}
           {pins.map((pin, idx) => (
             <div key={pin.msg_id}
-              className="flex items-center gap-3 px-4 py-3 border-b border-gray-700/50 hover:bg-gray-700/30 transition-colors">
+              className="flex items-center gap-3 px-4 py-3 border-b border-border/50 hover:bg-muted/30 transition-colors">
               {/* Message icon - blue */}
               <div className="w-9 h-9 flex-shrink-0 flex items-center justify-center bg-blue-500/15 text-blue-400 rounded-xl overflow-hidden">
                 {pin.preview_image ? (
@@ -305,12 +317,12 @@ function PinnedListModal({ pins, notes, zaloId, threadId, onClose, onScrollToMsg
                 )}
               </div>
               <button className="flex-1 min-w-0 text-left py-0.5" onClick={() => { onScrollToMsg(pin.msg_id); onClose(); }}>
-                <p className="text-sm font-semibold text-gray-100">Tin nhắn</p>
-                <p className="text-xs text-gray-400 truncate mt-0.5">
-                  {pin.sender_name ? <span className="text-gray-400">{pin.sender_name}: </span> : null}
+                <p className="text-sm font-semibold text-foreground">Tin nhắn</p>
+                <p className="text-xs text-muted-foreground truncate mt-0.5">
+                  {pin.sender_name ? <span className="text-muted-foreground">{pin.sender_name}: </span> : null}
                   {renderPreviewLabel(pin)}
                 </p>
-                <p className="text-[11px] text-gray-500 mt-1">
+                <p className="text-[11px] text-subtle-foreground mt-1">
                   Gửi lúc {formatPinnedMessageTime(pin.timestamp)}
                 </p>
               </button>
@@ -327,13 +339,13 @@ function PinnedListModal({ pins, notes, zaloId, threadId, onClose, onScrollToMsg
         </div>
 
         {/* Footer - Xem tất cả */}
-        <div className="border-t border-gray-700 flex-shrink-0">
+        <div className="border-t border-border flex-shrink-0">
           <button
             onClick={() => {
               onClose();
               useAppStore.getState().setShowGroupBoard(true);
             }}
-            className="w-full py-3 flex items-center justify-center gap-1.5 text-sm text-gray-400 hover:text-white hover:bg-gray-700/50 transition-colors rounded-b-2xl"
+            className="w-full py-3 flex items-center justify-center gap-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors rounded-b-2xl"
           >
             Xem tất cả ở bảng tin nhóm
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -391,7 +403,7 @@ function PinItemMenu({ pin, isFirst, onUnpin, onCopy, onBringToTop, useFixed }: 
       <button
         ref={btnRef}
         onClick={handleOpen}
-        className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-600 transition-colors"
+        className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
           <circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>
@@ -404,7 +416,7 @@ function PinItemMenu({ pin, isFirst, onUnpin, onCopy, onBringToTop, useFixed }: 
           <div
             ref={menuRef}
             style={{ position: 'fixed', top: pos.top, left: pos.left, zIndex: 9999 }}
-            className="bg-gray-800 border border-gray-600 rounded-xl shadow-2xl w-40 py-1"
+            className="bg-card border border-input rounded-xl shadow-2xl w-40 py-1"
           >
             {hasText && <DropItem label="Copy" onClick={() => { onCopy(); setOpen(false); }} />}
             {!isFirst && onBringToTop && <DropItem label="Đưa lên đầu" onClick={() => { onBringToTop(); setOpen(false); }} />}
@@ -413,7 +425,7 @@ function PinItemMenu({ pin, isFirst, onUnpin, onCopy, onBringToTop, useFixed }: 
         ) : (
           <div
             ref={menuRef}
-            className="absolute right-0 top-full mt-1 bg-gray-800 border border-gray-600 rounded-xl shadow-2xl z-50 w-40 py-1"
+            className="absolute right-0 top-full mt-1 bg-card border border-input rounded-xl shadow-2xl z-50 w-40 py-1"
           >
             {hasText && <DropItem label="Copy" onClick={() => { onCopy(); setOpen(false); }} />}
             {!isFirst && onBringToTop && <DropItem label="Đưa lên đầu" onClick={() => { onBringToTop(); setOpen(false); }} />}
@@ -429,7 +441,7 @@ function DropItem({ label, onClick, danger }: { label: string; onClick: () => vo
   return (
     <button
       onClick={onClick}
-      className={`w-full text-left px-4 py-2.5 text-sm hover:bg-gray-700 transition-colors ${danger ? 'text-red-400' : 'text-gray-200'}`}
+      className={`w-full text-left px-4 py-2.5 text-sm hover:bg-muted transition-colors ${danger ? 'text-red-400' : 'text-foreground'}`}
     >
       {label}
     </button>
@@ -477,7 +489,8 @@ export function usePinnedMessages(zaloId: string | null, threadId: string | null
 
   const loadPins = useCallback(() => {
     if (!zaloId || !threadId) { setPins([]); return; }
-    ipc.db?.getPinnedMessages({ zaloId, threadId })
+    // DataAccessor: chế độ nhân viên đọc ghim từ Boss (IPC chỉ trả stub rỗng)
+    DataAccessor.getPinnedMessages({ zaloId, threadId })
       .then((res: any) => { if (res?.success) setPins(res.pins || []); })
       .catch(() => setPins([]));
   }, [zaloId, threadId]);
@@ -515,7 +528,7 @@ export function usePinnedNotes(zaloId: string | null, threadId: string | null) {
   // Load from DB on mount / thread change
   const loadNotes = useCallback(() => {
     if (!zaloId || !threadId) { setPinnedNotes([]); return; }
-    ipc.db?.getPinnedMessages({ zaloId, threadId })
+    DataAccessor.getPinnedMessages({ zaloId, threadId })
       .then((res: any) => {
         if (!res?.success) return;
         const notePins: PinnedNote[] = (res.pins || [])
@@ -608,52 +621,111 @@ function parsePinsResponse(res: any): { pins: PinnedMsg[]; notes: PinnedNote[] }
   return { pins, notes };
 }
 
+const NO_PINS: PinnedMsg[] = [];
+const NO_NOTES: PinnedNote[] = [];
+/**
+ * Pins + notes đã tải, theo `zaloId:threadId`. Mở lại hội thoại thì thanh ghim có ngay từ khung hình đầu
+ * (không chờ IPC — thanh ghim hiện muộn đẩy khung chat); vẫn tải lại nền mỗi lần mở.
+ */
+const pinnedDataCache = new Map<string, { pins: PinnedMsg[]; notes: PinnedNote[] }>();
+
+/** Ghim Telegram: lần đồng bộ qua mạng gần nhất theo hội thoại (TELEGRAM_PINS_SYNCING = đang chạy). Mở lại trong TTL
+ *  không gọi mạng nữa — ghim đổi sau đó đến qua update Telegram (event:pinsUpdated). */
+const telegramPinsSync = new Map<string, number>();
+const TELEGRAM_PINS_SYNCING = -1;
+const TELEGRAM_PINS_SYNC_TTL_MS = 5 * 60_000;
+
+function shouldSyncTelegramPins(key: string): boolean {
+  const last = telegramPinsSync.get(key);
+  if (last === undefined) return true;
+  return last !== TELEGRAM_PINS_SYNCING && Date.now() - last >= TELEGRAM_PINS_SYNC_TTL_MS;
+}
+
+function dropCachedPins(ownerZaloId: string, threadId?: string): void {
+  if (threadId) {
+    pinnedDataCache.delete(`${ownerZaloId}:${threadId}`);
+    return;
+  }
+  for (const key of pinnedDataCache.keys()) {
+    if (key.startsWith(`${ownerZaloId}:`)) pinnedDataCache.delete(key);
+  }
+}
+
 /**
  * usePinnedData - Combined hook thay thế usePinnedMessages + usePinnedNotes.
  * Chỉ gọi 1 IPC getPinnedMessages duy nhất, trả về cả pins và notes.
  * Trả thêm `ready` flag để ChatWindow biết khi nào data đã load xong.
  */
 export function usePinnedData(zaloId: string | null, threadId: string | null, channel?: string) {
-  const [pins, setPins] = useState<PinnedMsg[]>([]);
-  const [pinnedNotes, setPinnedNotes] = useState<PinnedNote[]>([]);
-  const [ready, setReady] = useState(false);
-  const remoteSyncedKeyRef = useRef('');
+  const key = zaloId && threadId ? `${zaloId}:${threadId}` : '';
+  const [pins, setPins] = useState<PinnedMsg[]>(() => pinnedDataCache.get(key)?.pins || NO_PINS);
+  const [pinnedNotes, setPinnedNotes] = useState<PinnedNote[]>(() => pinnedDataCache.get(key)?.notes || NO_NOTES);
+  // Hội thoại mà pins/notes đang giữ thuộc về. `ready` so với hội thoại đang mở: ngay sau khi đổi hội thoại,
+  // dữ liệu và cờ ready của hội thoại trước không được dùng (trước đây ready=true cũ làm threadReady bật sớm).
+  const [loadedKey, setLoadedKey] = useState<string | null>(() => (pinnedDataCache.has(key) ? key : null));
+  const currentKeyRef = useRef(key);
+  currentKeyRef.current = key;
 
   const loadAll = useCallback(async () => {
     if (!zaloId || !threadId) {
-      setPins([]);
-      setPinnedNotes([]);
-      setReady(true);
+      setPins(NO_PINS);
+      setPinnedNotes(NO_NOTES);
+      setLoadedKey('');
       return;
     }
-    try {
-      const syncKey = `${zaloId}:${threadId}`;
-      const syncingKey = `syncing:${syncKey}`;
-      if (
-        channel === 'telegram_user'
-        && remoteSyncedKeyRef.current !== syncKey
-        && remoteSyncedKeyRef.current !== syncingKey
-      ) {
-        remoteSyncedKeyRef.current = syncingKey;
-        const remoteResult = await ipc.telegramUser?.syncPinnedMessages({ accountId: zaloId, chatId: threadId });
-        remoteSyncedKeyRef.current = remoteResult?.success ? syncKey : '';
+    const loadKey = `${zaloId}:${threadId}`;
+    const readLocal = async () => {
+      let p: PinnedMsg[] = NO_PINS;
+      let n: PinnedNote[] = NO_NOTES;
+      let failed = false;
+      try {
+        // DataAccessor: chế độ nhân viên đọc ghim từ Boss (IPC chỉ trả stub rỗng → thanh ghim trống)
+        const res = await DataAccessor.getPinnedMessages({ zaloId, threadId });
+        if (isReadFailure(res)) failed = true;
+        else ({ pins: p, notes: n } = parsePinsResponse(res));
+      } catch {
+        // giữ mảng rỗng
       }
-      const res = await ipc.db?.getPinnedMessages({ zaloId, threadId });
-      const { pins: p, notes: n } = parsePinsResponse(res);
+      // Kết quả về muộn của hội thoại đã rời đi không được ghi đè hội thoại đang mở
+      if (currentKeyRef.current !== loadKey) return;
+      // Đọc lỗi (mất kết nối Boss): giữ ghim đã tải của hội thoại này, không ghi đè cache bằng danh sách rỗng
+      const previous = failed ? pinnedDataCache.get(loadKey) : undefined;
+      if (previous) ({ pins: p, notes: n } = previous);
+      else if (!failed) pinnedDataCache.set(loadKey, { pins: p, notes: n });
       setPins(p);
       setPinnedNotes(n);
-    } catch {
-      setPins([]);
-      setPinnedNotes([]);
-    }
-    setReady(true);
+      setLoadedKey(loadKey);
+    };
+    await readLocal();
+    // Telegram: ghim lấy qua mạng ở NỀN, sau khi ghim trong máy đã hiện (trước đây hội thoại chờ mạng mới mở được).
+    if (channel !== 'telegram_user' || !shouldSyncTelegramPins(loadKey)) return;
+    telegramPinsSync.set(loadKey, TELEGRAM_PINS_SYNCING);
+    let synced = false;
+    try {
+      synced = !!(await ipc.telegramUser?.syncPinnedMessages({ accountId: zaloId, chatId: threadId }))?.success;
+    } catch { /* lần mở sau thử lại */ }
+    if (synced) telegramPinsSync.set(loadKey, Date.now());
+    else telegramPinsSync.delete(loadKey);
+    if (synced && currentKeyRef.current === loadKey) await readLocal();
   }, [zaloId, threadId, channel]);
 
-  // Reset ready khi thread thay đổi
+  // Đổi hội thoại: có dữ liệu đã tải thì hiện ngay (trước khi vẽ), rồi vẫn tải lại nền bên dưới
+  useLayoutEffect(() => {
+    const cached = key ? pinnedDataCache.get(key) : undefined;
+    if (!cached) return;
+    setPins(cached.pins);
+    setPinnedNotes(cached.notes);
+    setLoadedKey(key);
+  }, [key]);
+
   useEffect(() => {
-    setReady(false);
     loadAll();
   }, [loadAll]);
+
+  // Giữ bộ nhớ đệm khớp với thay đổi tại chỗ (ghim / bỏ ghim qua setPins, sự kiện ghi chú nhóm)
+  useEffect(() => {
+    if (key && loadedKey === key) pinnedDataCache.set(key, { pins, notes: pinnedNotes });
+  }, [key, loadedKey, pins, pinnedNotes]);
 
   // Listen for remote pin events (webhook từ Zalo)
   useEffect(() => {
@@ -661,26 +733,38 @@ export function usePinnedData(zaloId: string | null, threadId: string | null, ch
     const unsub = ipc.on?.('event:pinsUpdated', (data: any) => {
       if (data?.zaloId === zaloId && data?.threadId === threadId) {
         loadAll();
+      } else if (data?.zaloId && data?.threadId) {
+        dropCachedPins(String(data.zaloId), String(data.threadId));
       }
     });
-    // Also listen for local DB pin changes (from boss/employee sync)
+    // Also listen for local DB pin changes (from boss/employee sync) — relay db:pinnedMessageChanged qua useZaloEvents.
+    // Ghim của hội thoại khác: chỉ bỏ bản đệm của hội thoại đó (mở lại thì tải), không tải lại hội thoại đang mở.
     const handleLocalPinChange = (e: Event) => {
       const detail = (e as CustomEvent).detail;
-      if (!detail?.ownerZaloId || detail.ownerZaloId === zaloId) {
-        loadAll();
-      }
+      if (detail?.ownerZaloId) dropCachedPins(String(detail.ownerZaloId), detail.threadId ? String(detail.threadId) : undefined);
+      if (detail?.ownerZaloId && detail.ownerZaloId !== zaloId) return;
+      if (detail?.threadId && String(detail.threadId) !== String(threadId)) return;
+      loadAll();
     };
     window.addEventListener('ui:pinnedChanged', handleLocalPinChange);
     return () => { unsub?.(); window.removeEventListener('ui:pinnedChanged', handleLocalPinChange); };
   }, [zaloId, threadId, loadAll]);
 
+  // Chế độ nhân viên: kết nối BOSS phục hồi → tải lại ghim của hội thoại đang mở (đổi trong lúc mất kết nối không có event)
+  useEmployeeResync(loadAll);
+
   // Listen for group note events
   const handleGroupEvent = useCallback((data: any) => {
     if (!threadId) return;
     const evThreadId = data?.groupId || data?.threadId || data?.data?.threadId || data?.data?.groupId;
-    if (evThreadId !== threadId) return;
-
     const eventType = data?.eventType;
+    if (evThreadId !== threadId) {
+      // Ghi chú của hội thoại khác đổi → bỏ bản đệm, lần mở sau tải lại
+      if ((eventType === 'new_pin_topic' || eventType === 'unpin_topic') && data?.zaloId && evThreadId) {
+        dropCachedPins(String(data.zaloId), String(evThreadId));
+      }
+      return;
+    }
 
     if (eventType === 'new_pin_topic') {
       const notePin = data?.notePin;
@@ -714,7 +798,14 @@ export function usePinnedData(zaloId: string | null, threadId: string | null, ch
     return () => { unsub?.(); };
   }, [threadId, handleGroupEvent]);
 
-  return { pins, setPins, pinnedNotes, setPinnedNotes, ready };
+  const ready = loadedKey === key;
+  return {
+    pins: ready ? pins : NO_PINS,
+    setPins,
+    pinnedNotes: ready ? pinnedNotes : NO_NOTES,
+    setPinnedNotes,
+    ready,
+  };
 }
 
 // ─── Build pin object from message ───────────────────────────────────────────

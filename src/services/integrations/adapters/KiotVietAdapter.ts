@@ -1,12 +1,24 @@
 import axios from 'axios';
 import { IntegrationAdapter, IntegrationConfig, TestResult } from '../IntegrationAdapter';
+import type { PosWebhookApi, RemoteWebhook } from '../posWebhookRegistration';
+
+/** Webhook KiotViet (Public API 2.11: id, type, url, isActive, description) → dạng chung. */
+function toRemoteWebhook(webhook: any): RemoteWebhook {
+  return {
+    id: String(webhook?.id ?? webhook?.Id ?? ''),
+    event: String(webhook?.type ?? webhook?.Type ?? ''),
+    url: String(webhook?.url ?? webhook?.Url ?? ''),
+    active: (webhook?.isActive ?? webhook?.IsActive) !== false,
+    description: String(webhook?.description ?? webhook?.Description ?? ''),
+  };
+}
 
 /**
  * KiotViet POS adapter.
  * Credentials required: clientId, clientSecret, retailerName
  * Docs: https://developer.kiotviet.vn/
  */
-export class KiotVietAdapter extends IntegrationAdapter {
+export class KiotVietAdapter extends IntegrationAdapter implements PosWebhookApi {
   readonly type = 'kiotviet';
   readonly name = 'KiotViet';
 
@@ -63,6 +75,45 @@ export class KiotVietAdapter extends IntegrationAdapter {
       timeout: 15000,
     });
     return res.data;
+  }
+
+  private async apiDelete(path: string): Promise<any> {
+    const token = await this.getAccessToken();
+    const { retailerName } = this.config.credentials;
+    const res = await axios.delete(`https://public.kiotapi.com${path}`, {
+      headers: { Authorization: `Bearer ${token}`, Retailer: retailerName },
+      timeout: 15000,
+    });
+    return res.data;
+  }
+
+  // ─── Webhook (Public API 2.11) — posWebhookRegistration.ts ────────────────
+
+  /** GET /webhooks: { total, pageSize (≤ 100), data }. */
+  async listWebhooks(): Promise<RemoteWebhook[]> {
+    const pageSize = 100;
+    const webhooks: RemoteWebhook[] = [];
+    for (let page = 0; page < 5; page++) {
+      const data = await this.apiGet('/webhooks', { pageSize, currentItem: page * pageSize });
+      const items: any[] = Array.isArray(data?.data) ? data.data : [];
+      webhooks.push(...items.map(toRemoteWebhook));
+      const total = Number(data?.total);
+      if (items.length < pageSize || !Number.isFinite(total) || webhooks.length >= total) break;
+    }
+    return webhooks;
+  }
+
+  /** POST /webhooks { Webhook: { Type, Url, IsActive, Description, Secret } } — Secret là chuỗi đã mã hoá Base64. */
+  async createWebhook(input: { event: string; url: string; secret?: string; description: string }): Promise<RemoteWebhook> {
+    const data = await this.apiPost('/webhooks', {
+      Webhook: { Type: input.event, Url: input.url, IsActive: true, Description: input.description, Secret: input.secret },
+    });
+    return toRemoteWebhook(data);
+  }
+
+  /** DELETE /webhooks/{id}. */
+  async deleteWebhook(id: string): Promise<void> {
+    await this.apiDelete(`/webhooks/${encodeURIComponent(id)}`);
   }
 
   async testConnection(): Promise<TestResult> {

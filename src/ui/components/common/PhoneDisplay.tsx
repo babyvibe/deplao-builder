@@ -38,7 +38,7 @@ export default function PhoneDisplay({ phone, maskIfEmpty = false, className = '
       onClick={handleCopy}
     >
       {showIcon && <PhoneIcon className="w-3 h-3" />}
-      <span className={`${formatted ? 'group-hover:text-blue-400 transition-colors' : 'text-gray-400'}`}>
+      <span className={`${formatted ? 'group-hover:text-blue-400 transition-colors' : 'text-muted-foreground'}`}>
         {display}
       </span>
       {/* Clipboard icon – hiện khi hover */}
@@ -53,7 +53,7 @@ export default function PhoneDisplay({ phone, maskIfEmpty = false, className = '
       )}
       {/* Tooltip "Đã copy" */}
       {copied && (
-        <span className="absolute -top-7 left-1/2 -translate-x-1/2 bg-gray-900 text-green-400 text-[11px] px-2 py-0.5 rounded shadow whitespace-nowrap z-50 pointer-events-none">
+        <span className="absolute -top-7 left-1/2 -translate-x-1/2 bg-card text-green-400 text-[11px] px-2 py-0.5 rounded shadow whitespace-nowrap z-50 pointer-events-none">
           ✓ Đã copy
         </span>
       )}

@@ -1,3 +1,5 @@
+import { telegramCallPreviewFromContent } from '../../shared/telegramQuickModel';
+
 /**
  * Text used outside the message detail (conversation rows, notifications and
  * workflow/webhook payloads). A caption remains the message content, but must
@@ -5,6 +7,8 @@
  */
 export function getTelegramMessagePreview(msgType: string, content?: string): string {
   switch (String(msgType || 'text').toLowerCase()) {
+    // Thẻ cuộc gọi (messageActionPhoneCall, cùng định dạng thẻ cuộc gọi Zalo)
+    case 'chat.recommended': return telegramCallPreviewFromContent(content) || '📞 Cuộc gọi';
     case 'photo': return '🖼️ Hình ảnh';
     case 'video': return '🎬 Video';
     case 'video_note': return '🎥 Video tròn';

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { clearReplyDrafts } from '@/lib/chat/replyDrafts';
 import ipc from "@/lib/ipc";
 import type { Channel } from '@/../configs/channelConfig';
 import { CHANNEL } from '@/lib/channelHelper';
@@ -83,6 +84,8 @@ export interface MessageItem {
   is_sent: number;
   attachments?: string;
   local_paths?: string;
+  /** 1 = media Zalo đã hết hạn (CDN không còn file) — hiển thị "Ảnh/Video đã hết hạn" */
+  media_expired?: number;
   status: string;
   is_recalled?: number;  // 1 = tin nhắn đã thu hồi
   recalled_content?: string | null; // Nội dung gốc trước khi thu hồi
@@ -218,12 +221,23 @@ interface ChatStore {
   /** Load tất cả drafts cho account từ DB - gọi khi khởi tạo hoặc switch account */
   loadDrafts: (zaloId: string) => Promise<void>;
   removeMessage: (zaloId: string, threadId: string, msgId: string) => void;
+  /** Bỏ tin khỏi khung chat theo id; không biết thread → tìm trong mọi khung chat của tài khoản ("Xoá khỏi app" ở máy khác). */
+  removeMessagesById: (zaloId: string, msgIds: string[], threadId?: string) => void;
+  /** Sửa vài trường của một tin đã có (vd dòng thông báo nhóm vừa tra được tên người thực hiện). */
+  patchMessage: (zaloId: string, threadId: string, msgId: string, patch: Partial<MessageItem>) => void;
   recallMessage: (zaloId: string, msgId: string, threadId?: string) => void;
-  updateMessageReaction: (zaloId: string, threadId: string, msgId: string, userId: string, icon: string) => void;
+  /**
+   * mode 'accumulate' (Zalo, mặc định): mỗi lần bấm +1. mode 'set' (Telegram): mỗi người 1 reaction — SendReaction
+   * thay thế reaction cũ của mình, nên bỏ reaction cũ của người này rồi mới thêm.
+   */
+  updateMessageReaction: (zaloId: string, threadId: string, msgId: string, userId: string, icon: string, mode?: 'accumulate' | 'set') => void;
   replaceMessageReactions: (zaloId: string, threadId: string, msgId: string, reactions: ReactionData) => void;
-  updateMessageEdit: (zaloId: string, threadId: string, msgId: string, newText: string, editCount: number, timestampMs: number) => void;
+  /** `silent`: content refresh without the "edited" mark (Telegram hidden edit, e.g. a bot updating its reply). */
+  updateMessageEdit: (zaloId: string, threadId: string, msgId: string, newText: string, editCount: number, timestampMs: number, opts?: { silent?: boolean }) => void;
   updateLocalPaths: (zaloId: string, threadId: string, msgId: string, localPaths: Record<string, string>) => void;
   updateMessageLocalPath: (zaloId: string, threadId: string, msgId: string, localPaths: Record<string, string>) => void;
+  /** Đánh dấu media của tin nhắn đã hết hạn / còn dùng được (đồng bộ với cột messages.media_expired) */
+  setMessageMediaExpired: (zaloId: string, threadId: string, msgId: string, expired: boolean) => void;
   removeContact: (zaloId: string, contactId: string) => void;
   // ── Optimistic message actions ──
   /** Cập nhật send_status + các field liên quan cho 1 temp message */
@@ -288,23 +302,27 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       perAccountThread: { ...state.perAccountThread, [accountId]: { threadId, threadType } },
     })),
 
-  resetForWorkspaceSwitch: () => set({
-    contacts: {},
-    messages: {},
-    activeThreadId: null,
-    activeThreadType: 0,
-    activeTopicId: null,
-    activeForumTopicId: null,
-    activeTopicTitle: null,
-    forumTopics: {},
-    replyTo: null,
-    editingMsg: null,
-    perAccountThread: {},
-    drafts: {},
-    draftTimestamps: {},
-    typingUsers: {},
-    seenInfo: {},
-  }),
+  resetForWorkspaceSwitch: () => {
+    // Trích dẫn đang dở theo hội thoại (MessageInput) thuộc tài khoản của workspace cũ
+    clearReplyDrafts();
+    set({
+      contacts: {},
+      messages: {},
+      activeThreadId: null,
+      activeThreadType: 0,
+      activeTopicId: null,
+      activeForumTopicId: null,
+      activeTopicTitle: null,
+      forumTopics: {},
+      replyTo: null,
+      editingMsg: null,
+      perAccountThread: {},
+      drafts: {},
+      draftTimestamps: {},
+      typingUsers: {},
+      seenInfo: {},
+    });
+  },
 
   setContacts: (zaloId, contacts) =>
     set((state) => ({
@@ -559,6 +577,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   clearUnread: (zaloId, contactId) =>
     set((state) => {
       const list = state.contacts[zaloId] || [];
+      // Đã 0 → giữ mảng cũ (mở hội thoại luôn gọi; mảng mới làm cả danh sách hội thoại vẽ lại)
+      if (!list.some((c) => c.contact_id === contactId && c.unread_count)) return state;
       return {
         contacts: {
           ...state.contacts,
@@ -594,6 +614,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       if (!lastReal) return state;
       const isReplied = lastReal.sender_id === ownZaloId || lastReal.is_sent === 1 ? 1 : 0;
       const list = state.contacts[zaloId] || [];
+      // Không đổi → giữ mảng cũ (gọi mỗi lần mở hội thoại; mảng mới làm cả danh sách hội thoại vẽ lại)
+      const current = list.find((c) => c.contact_id === contactId);
+      if (!current || (current.is_replied ?? 0) === isReplied) return state;
       return {
         contacts: {
           ...state.contacts,
@@ -630,6 +653,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   clearDraft: (zaloId, threadId) => {
     const key = `${zaloId}_${threadId}`;
     set((state) => {
+      // Không có nháp → giữ object cũ (gọi mỗi lần rời hội thoại; object mới làm danh sách hội thoại vẽ lại)
+      if (!(key in state.drafts) && !(key in state.draftTimestamps)) return state;
       const { [key]: _, ...restDrafts } = state.drafts;
       const { [key]: __, ...restTs } = state.draftTimestamps;
       return { drafts: restDrafts, draftTimestamps: restTs };
@@ -663,6 +688,44 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       for (const key of getMessageCacheKeysForThread(updatedMessages, zaloId, threadId)) {
         const current = updatedMessages[key] || [];
         const next = current.filter((m) => String(m.msg_id) !== String(msgId));
+        if (next.length !== current.length) {
+          updatedMessages[key] = next;
+          changed = true;
+        }
+      }
+      return changed ? { messages: updatedMessages } : state;
+    });
+  },
+
+  patchMessage: (zaloId, threadId, msgId, patch) => {
+    set((state) => {
+      const updatedMessages = { ...state.messages };
+      let changed = false;
+      for (const key of getMessageCacheKeysForThread(updatedMessages, zaloId, threadId)) {
+        const current = updatedMessages[key];
+        const idx = current ? current.findIndex((m) => String(m.msg_id) === String(msgId)) : -1;
+        if (idx < 0) continue;
+        const next = [...current];
+        next[idx] = { ...next[idx], ...patch };
+        updatedMessages[key] = next;
+        changed = true;
+      }
+      return changed ? { messages: updatedMessages } : state;
+    });
+  },
+
+  removeMessagesById: (zaloId, msgIds, threadId) => {
+    const ids = new Set((msgIds || []).map(String));
+    if (!zaloId || ids.size === 0) return;
+    set((state) => {
+      const keys = threadId
+        ? getMessageCacheKeysForThread(state.messages, zaloId, threadId)
+        : Object.keys(state.messages).filter((k) => k.startsWith(`${zaloId}_`));
+      const updatedMessages = { ...state.messages };
+      let changed = false;
+      for (const key of keys) {
+        const current = updatedMessages[key] || [];
+        const next = current.filter((m) => !ids.has(String(m.msg_id)));
         if (next.length !== current.length) {
           updatedMessages[key] = next;
           changed = true;
@@ -716,7 +779,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     });
   },
 
-  updateMessageReaction: (zaloId, threadId, msgId, userId, icon) => {
+  updateMessageReaction: (zaloId, threadId, msgId, userId, icon, mode = 'accumulate') => {
     const msgIdStr = String(msgId);
     set((state) => {
       const updatedMessages = { ...state.messages };
@@ -739,7 +802,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
           // Detect format: new = has .emoji object, old = { userId: emojiChar }
           if (parsed && typeof parsed === 'object' && parsed.emoji && typeof parsed.emoji === 'object') {
-            current = parsed as ReactionData;
+            // Bản sao: object từ store không được sửa tại chỗ (state cũ đang được tham chiếu)
+            current = JSON.parse(JSON.stringify(parsed)) as ReactionData;
           } else {
             // Migrate old format { userId: emojiChar } to new format
             current = { total: 0, lastReact: '', emoji: {} };
@@ -754,7 +818,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           }
 
           // Apply PHP-like reaction logic
-          if (!icon) {
+          if (!icon || mode === 'set') {
             // Remove user's reactions across all emojis
             for (const emo of Object.keys(current.emoji)) {
               const userCount = current.emoji[emo].users[userId] || 0;
@@ -765,13 +829,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                 if (current.emoji[emo].total <= 0) delete current.emoji[emo];
               }
             }
-          } else {
-            if (!current.emoji[icon]) {
-              current.emoji[icon] = { total: 1, users: { [userId]: 1 } };
-            } else {
-              current.emoji[icon].total++;
-              current.emoji[icon].users[userId] = (current.emoji[icon].users[userId] || 0) + 1;
-            }
+          }
+          if (icon) {
+            if (!current.emoji[icon]) current.emoji[icon] = { total: 0, users: {} };
+            current.emoji[icon].total++;
+            current.emoji[icon].users[userId] = mode === 'set' ? 1 : (current.emoji[icon].users[userId] || 0) + 1;
             current.total++;
             current.lastReact = icon;
           }
@@ -802,7 +864,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     });
   },
 
-  updateMessageEdit: (zaloId, threadId, msgId, newText, editCount, timestampMs) => {
+  updateMessageEdit: (zaloId, threadId, msgId, newText, editCount, timestampMs, opts) => {
     set((state) => {
       const updatedMessages = { ...state.messages };
       const msgIdStr = String(msgId);
@@ -824,6 +886,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
           // Skip if content hasn't actually changed (prevents false "edited" marks)
           if (current.content === newText) return state;
+
+          if (opts?.silent) {
+            updated[idx] = { ...current, content: newText };
+            updatedMessages[key] = updated;
+            foundThreadKey = key;
+            break;
+          }
 
           // Preserve old content in edit_history
           let historyArr: Array<{ oldBody: string; editedAt: number; editCount: number }> = [];
@@ -867,7 +936,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             updatedContacts[contactIdx] = {
               ...updatedContacts[contactIdx],
               last_message: newText?.slice(0, 100) || '[Đã chỉnh sửa]',
-              last_message_time: timestampMs || Date.now(),
+              last_message_time: opts?.silent ? updatedContacts[contactIdx].last_message_time : (timestampMs || Date.now()),
             };
             result.contacts = { ...state.contacts, [zaloId]: updatedContacts };
           }
@@ -904,14 +973,33 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     useChatStore.getState().updateMessageLocalPath(zaloId, threadId, msgId, localPaths);
   },
 
+  setMessageMediaExpired: (zaloId, threadId, msgId, expired) => {
+    const msgIdStr = String(msgId);
+    const flag = expired ? 1 : 0;
+    set((state) => {
+      const updatedMessages = { ...state.messages };
+      let changed = false;
+      for (const key of getMessageCacheKeysForThread(updatedMessages, zaloId, threadId)) {
+        const msgs = updatedMessages[key] || [];
+        if (!msgs.some(m => String(m.msg_id) === msgIdStr && Number(m.media_expired || 0) !== flag)) continue;
+        updatedMessages[key] = msgs.map(m => String(m.msg_id) === msgIdStr ? { ...m, media_expired: flag } : m);
+        changed = true;
+      }
+      return changed ? { messages: updatedMessages } : state;
+    });
+  },
+
   setTyping: (zaloId, threadId, userId) => {
     const key = `${zaloId}_${threadId}_${userId}`;
     set((state) => ({ typingUsers: { ...state.typingUsers, [key]: Date.now() } }));
-    // Auto-clear after 8s max (tin nhắn đến sẽ clear sớm hơn qua clearTypingForThread)
+    // Auto-clear after 8s max (tin nhắn đến sẽ clear sớm hơn qua clearTypingForThread).
+    // Ngưỡng 7.5s (< 8s của timer): ngưỡng cũ 9.5s không bao giờ đạt → key không bao giờ bị xoá.
     setTimeout(() => {
       set((state) => {
+        // Không còn gì để xoá → giữ nguyên state (trả object mới sẽ làm mọi màn hình subscribe render lại)
+        if (!state.typingUsers[key] || Date.now() - state.typingUsers[key] < 7500) return state;
         const updated = { ...state.typingUsers };
-        if (updated[key] && Date.now() - updated[key] >= 9500) delete updated[key];
+        delete updated[key];
         return { typingUsers: updated };
       });
     }, 8000);

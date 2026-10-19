@@ -2,6 +2,7 @@ import DateInputVN from '@/components/common/DateInputVN';
 import React, { useEffect, useRef, useState } from 'react';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
 import { useAccountStore } from '@/store/accountStore';
+import { useShallow } from 'zustand/react/shallow';
 import { Spinner } from '@/components/common/PageLoading';
 import { BellIcon, CalendarIcon, CheckIcon, ClockIcon, CloseIcon, LightbulbIcon, PinIcon, StarIcon, TargetIcon } from '@/components/common/icons';
 
@@ -122,7 +123,9 @@ const defaultForm = (): FormState => {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function ReminderPanel({ threadId, threadType, onClose, anchorRef }: Props) {
-  const { getActiveAccount, activeAccountId } = useAccountStore();
+  const { getActiveAccount, activeAccountId } = useAccountStore(useShallow(s => ({
+    getActiveAccount: s.getActiveAccount, activeAccountId: s.activeAccountId, accounts: s.accounts,
+  })));
 
   const [reminders, setReminders] = useState<ReminderItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -371,11 +374,11 @@ export default function ReminderPanel({ threadId, threadType, onClose, anchorRef
 
   return (
     <div ref={panelRef} style={popupStyle}
-      className="bg-gray-800 border border-gray-700 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+      className="bg-card border border-border rounded-2xl shadow-2xl flex flex-col overflow-hidden">
 
       {/* Header */}
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-700 flex-shrink-0">
-        <span className="flex-1 text-sm font-semibold text-white"><ClockIcon className="w-4 h-4 inline" /> Nhắc hẹn</span>
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-border flex-shrink-0">
+        <span className="flex-1 text-sm font-semibold text-foreground"><ClockIcon className="w-4 h-4 inline" /> Nhắc hẹn</span>
         <button onClick={openCreate}
           className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-blue-600 bg-blue-600/20 text-blue-400 hover:text-white transition-colors"
           title="Tạo nhắc hẹn mới">
@@ -384,7 +387,7 @@ export default function ReminderPanel({ threadId, threadType, onClose, anchorRef
           </svg>
         </button>
         <button onClick={loadReminders} disabled={loading}
-          className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-gray-700 text-gray-400 hover:text-white transition-colors disabled:opacity-50"
+          className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-muted text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
           title="Tải lại">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={loading ? 'animate-spin' : ''}>
             <path d="M23 4v6h-6"/><path d="M1 20v-6h6"/>
@@ -392,7 +395,7 @@ export default function ReminderPanel({ threadId, threadType, onClose, anchorRef
           </svg>
         </button>
         <button onClick={onClose}
-          className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-gray-700 text-gray-400 hover:text-white transition-colors"
+          className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
           title="Đóng">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -415,7 +418,7 @@ export default function ReminderPanel({ threadId, threadType, onClose, anchorRef
             className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-colors ${
               activeTab === 'upcoming'
                 ? 'bg-blue-600 text-white'
-                : 'text-gray-400 hover:text-white hover:bg-gray-700'
+                : 'text-muted-foreground hover:text-foreground hover:bg-muted'
             }`}
           >
             Sắp tới {tabCounts.upcoming > 0 && `(${tabCounts.upcoming})`}
@@ -425,7 +428,7 @@ export default function ReminderPanel({ threadId, threadType, onClose, anchorRef
             className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-colors ${
               activeTab === 'past'
                 ? 'bg-blue-600 text-white'
-                : 'text-gray-400 hover:text-white hover:bg-gray-700'
+                : 'text-muted-foreground hover:text-foreground hover:bg-muted'
             }`}
           >
             Đã qua {tabCounts.past > 0 && `(${tabCounts.past})`}
@@ -435,7 +438,7 @@ export default function ReminderPanel({ threadId, threadType, onClose, anchorRef
             className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-colors ${
               activeTab === 'cancelled'
                 ? 'bg-blue-600 text-white'
-                : 'text-gray-400 hover:text-white hover:bg-gray-700'
+                : 'text-muted-foreground hover:text-foreground hover:bg-muted'
             }`}
           >
             Đã huỷ {tabCounts.cancelled > 0 && `(${tabCounts.cancelled})`}
@@ -445,29 +448,29 @@ export default function ReminderPanel({ threadId, threadType, onClose, anchorRef
 
       {/* Form */}
       {formOpen && (
-        <div className="mx-3 my-2 bg-gray-750 border border-gray-600 rounded-xl p-3 flex-shrink-0 space-y-3">
-          <p className="text-xs font-semibold text-white">{editingId ? 'Chỉnh sửa nhắc hẹn' : 'Tạo nhắc hẹn mới'}</p>
+        <div className="mx-3 my-2 bg-muted border border-input rounded-xl p-3 flex-shrink-0 space-y-3">
+          <p className="text-xs font-semibold text-foreground">{editingId ? 'Chỉnh sửa nhắc hẹn' : 'Tạo nhắc hẹn mới'}</p>
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Tiêu đề</label>
+            <label className="block text-xs text-muted-foreground mb-1">Tiêu đề</label>
             <input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
               placeholder="Nhập tiêu đề nhắc hẹn..."
               autoFocus
-              className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-colors"
+              className="w-full bg-muted border border-input rounded-lg px-3 py-1.5 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 transition-colors"
             />
           </div>
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Biểu tượng</label>
+            <label className="block text-xs text-muted-foreground mb-1">Biểu tượng</label>
             <div className="flex gap-1 flex-wrap">
               {EMOJI_OPTIONS.map(opt => (
                 <button key={opt.icon} onClick={() => setForm(f => ({ ...f, emoji: opt.icon }))}
-                  className={`w-8 h-8 rounded-lg text-base flex items-center justify-center transition-colors ${form.emoji === opt.icon ? 'bg-blue-600' : 'hover:bg-gray-600'}`}>
+                  className={`w-8 h-8 rounded-lg text-base flex items-center justify-center transition-colors ${form.emoji === opt.icon ? 'bg-blue-600' : 'hover:bg-accent'}`}>
                   {opt.component}
                 </button>
               ))}
             </div>
           </div>
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Màu sắc</label>
+            <label className="block text-xs text-muted-foreground mb-1">Màu sắc</label>
             <div className="flex gap-1.5 flex-wrap">
               {COLOR_OPTIONS.map(c => (
                 <button key={c.value} onClick={() => setForm(f => ({ ...f, color: c.value }))} title={c.label}
@@ -477,22 +480,22 @@ export default function ReminderPanel({ threadId, threadType, onClose, anchorRef
             </div>
           </div>
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Thời gian</label>
+            <label className="block text-xs text-muted-foreground mb-1">Thời gian</label>
             <DateInputVN type="datetime-local" value={toDatetimeLocal(form.startTime)}
               onChange={e => setForm(f => ({ ...f, startTime: fromDatetimeLocal(e.target.value) }))}
-              className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors"
+              className="w-full bg-muted border border-input rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-blue-500 transition-colors"
             />
           </div>
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Lặp lại</label>
+            <label className="block text-xs text-muted-foreground mb-1">Lặp lại</label>
             <select value={form.repeat} onChange={e => setForm(f => ({ ...f, repeat: Number(e.target.value) as ReminderRepeatMode }))}
-              className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors">
+              className="w-full bg-muted border border-input rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-blue-500 transition-colors">
               {Object.entries(REPEAT_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
           </div>
           <div className="flex gap-2">
             <button onClick={() => setFormOpen(false)} disabled={saving}
-              className="flex-1 py-1.5 rounded-lg border border-gray-600 text-gray-300 text-sm hover:bg-gray-700 transition-colors disabled:opacity-50">
+              className="flex-1 py-1.5 rounded-lg border border-input text-foreground/80 text-sm hover:bg-muted transition-colors disabled:opacity-50">
               Huỷ
             </button>
             <button onClick={handleSave} disabled={saving}
@@ -511,7 +514,7 @@ export default function ReminderPanel({ threadId, threadType, onClose, anchorRef
             <Spinner size={5} />
           </div>
         ) : currentList.length === 0 ? (
-          <div className="flex flex-col items-center py-8 text-gray-400">
+          <div className="flex flex-col items-center py-8 text-muted-foreground">
             <span className="text-3xl mb-2">
               {activeTab === 'upcoming' ? <ClockIcon className="w-8 h-8" /> : activeTab === 'past' ? <CheckIcon className="w-8 h-8" /> : <CloseIcon className="w-8 h-8" />}
             </span>
@@ -530,24 +533,24 @@ export default function ReminderPanel({ threadId, threadType, onClose, anchorRef
               const displayTime = (r as any).nextOccurrence || r.startTime;
               return (
                 <div key={r.id}
-                  className={`relative rounded-xl border p-3 transition-colors group ${isPast ? 'border-gray-700 bg-gray-800/60 opacity-60' : 'border-gray-600 bg-gray-750 hover:border-gray-500'}`}>
+                  className={`relative rounded-xl border p-3 transition-colors group ${isPast ? 'border-border bg-card opacity-60' : 'border-input bg-muted hover:border-border-strong'}`}>
                   <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl" style={{ backgroundColor: colorHex }} />
                   <div className="pl-3">
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex items-center gap-1.5 min-w-0">
                         <span className="text-base flex-shrink-0">{r.emoji}</span>
-                        <p className="text-sm text-white font-medium truncate">{r.params?.title || '(Không có tiêu đề)'}</p>
+                        <p className="text-sm text-foreground font-medium truncate">{r.params?.title || '(Không có tiêu đề)'}</p>
                       </div>
                       <div className="flex gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button onClick={() => openEdit(r)} title="Chỉnh sửa"
-                          className="w-6 h-6 rounded flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-600 transition-colors">
+                          className="w-6 h-6 rounded flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
                           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
                             <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
                           </svg>
                         </button>
                         <button onClick={() => handleDelete(r)} disabled={deletingId === r.id} title="Xoá"
-                          className="w-6 h-6 rounded flex items-center justify-center text-gray-400 hover:text-red-400 hover:bg-gray-600 transition-colors disabled:opacity-40">
+                          className="w-6 h-6 rounded flex items-center justify-center text-muted-foreground hover:text-red-400 hover:bg-accent transition-colors disabled:opacity-40">
                           {deletingId === r.id ? (
                             <Spinner size={3} />
                           ) : (
@@ -562,7 +565,7 @@ export default function ReminderPanel({ threadId, threadType, onClose, anchorRef
                       </div>
                     </div>
                     <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
-                      <span className={`inline-flex items-center gap-1 text-[11px] ${isPast ? 'text-gray-400' : 'text-blue-400'}`}>
+                      <span className={`inline-flex items-center gap-1 text-[11px] ${isPast ? 'text-muted-foreground' : 'text-blue-400'}`}>
                         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                           <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
                         </svg>

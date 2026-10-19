@@ -1,6 +1,9 @@
 import { app, BrowserWindow, ipcMain, shell, Tray, Menu, nativeImage, protocol, net, Notification, safeStorage, powerMonitor } from 'electron';
+// Public API v1: ghi nhận mọi IPC handler để API/plugin gọi đúng logic của UI (phải đứng trước các import IPC).
+import { ipcHandlerRegistry } from './ipc/handlerRegistry';
 import * as path from 'path';
 import * as fs from 'fs';
+import { Readable } from 'stream';
 import { autoUpdater } from 'electron-updater';
 import * as cron from 'node-cron';
 import DatabaseService from '../src/services/database/DatabaseService';
@@ -27,8 +30,14 @@ import { registerErpNotificationIpc } from './ipc/erpNotificationIpc';
 import { registerErpHrmIpc } from './ipc/erpHrmIpc';
 import { registerLockScreenIpc } from './ipc/lockScreenIpc';
 import { registerLibraryIpc } from './ipc/libraryIpc';
+import { registerMobileSyncIpc } from './ipc/mobileSyncIpc';
+import { registerApiIpc } from './ipc/apiIpc';
+import { registerPluginIpc } from './ipc/pluginIpc';
+import { registerCloudflareIpc } from './ipc/cloudflareIpc';
+import ApiPlatform from '../src/services/api/ApiPlatform';
 import WorkspaceManager from '../src/utils/WorkspaceManager';
 import HttpConnectionManager from '../src/services/http/HttpConnectionManager';
+import { installBossFileAuthHook, setPreferredBossWorkspace } from '../src/services/http/bossSessionAuth';
 import WorkflowEngineService from '../src/services/workflow/WorkflowEngineService';
 import WebhookGatewayService from '../src/services/workflow/WebhookGatewayService';
 import IntegrationRegistry from '../src/services/integrations/IntegrationRegistry';
@@ -179,6 +188,17 @@ protocol.registerSchemesAsPrivileged([
       stream: false,
     },
   },
+  {
+    // UI plugin: mỗi plugin một origin riêng deplao-plugin://<id> (không bypass CSP).
+    scheme: 'deplao-plugin',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: false,
+      stream: true,
+    },
+  },
 ]);
 
 // ─── Suppress Chromium DevTools "Autofill.enable" / "Autofill.setAddresses" errors ──
@@ -245,7 +265,7 @@ function createWindow() {
     frame: isMac,
     titleBarStyle: isMac ? 'hiddenInset' : 'default',
     trafficLightPosition: isMac ? { x: 12, y: 12 } : undefined,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: '#131518',
     icon: cachedNormalIcon && !cachedNormalIcon.isEmpty()
       ? cachedNormalIcon
       : (process.platform === 'win32'
@@ -311,6 +331,16 @@ function createWindow() {
 
   // A successful full page load means Vite is reachable again. Reset the
   // bounded retry budget so a later laptop suspend can recover independently.
+  mainWindow.webContents.on('will-frame-navigate', (details: any) => {
+    try {
+      if (details.isMainFrame) return;
+      const current = String(details.frame?.url || '');
+      const target = String(details.url || '');
+      const { shouldBlockPluginFrameNavigation } = require('../src/services/plugins/PluginProtocol');
+      if (shouldBlockPluginFrameNavigation(current, target)) details.preventDefault();
+    } catch {}
+  });
+
   mainWindow.webContents.on('did-finish-load', () => {
     if (!isDev) return;
     devRendererReloadAttempts = 0;
@@ -375,6 +405,23 @@ function createWindow() {
     loadDevRenderer(`load failure ${errorDescription}`, 1500);
   });
 
+  // Production: console.* của renderer đã bị tắt (terser drop_console + obfuscator) → chỉ còn lỗi do Chromium
+  // tự báo (uncaught exception, unhandled rejection, CSP…). Đưa warn/error đó vào Nhật ký (prefix [renderer]).
+  // Dev không cần (DevTools + Logger renderer đã gửi qua 'log:append' → tránh ghi trùng).
+  if (!isDev) {
+    mainWindow.webContents.on('console-message', (details: any) => {
+      try {
+        const level = details?.level;
+        if (level !== 'error' && level !== 'warning') return;
+        if (details?.frame?.parent) return; // iframe plugin → bỏ qua
+        const message = String(details?.message ?? '');
+        if (!message || message.startsWith('Failed to load resource')) return; // ảnh/CDN hỏng: quá ồn
+        // source 'console': Logger bỏ chuỗi trích dẫn (có thể chứa dữ liệu), cắt ngắn, thêm prefix [console]
+        Logger.appendFromRenderer(level === 'error' ? 'error' : 'warn', message, 'console');
+      } catch { /* frame đã dispose */ }
+    });
+  }
+
   // CSP: chặn inline scripts bên ngoài trong production
   if (!isDev) {
     mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
@@ -389,6 +436,18 @@ function createWindow() {
       });
     });
   }
+
+  // Nhân viên: <img>/<video> trỏ thẳng tới file của Boss (/api/media, /api/library). Boss bắt buộc Authorization mà
+  // thẻ không gửi được → gắn token phiên nhân viên ở đây — chỉ cho Boss đã đăng ký, chỉ khung chính cửa sổ này.
+  // ⚠️ Electron chỉ giữ MỘT listener mỗi sự kiện webRequest của một session: đây là onBeforeSendHeaders DUY NHẤT của
+  // session cửa sổ chính (trình duyệt nội bộ dùng chung session, bị loại theo webContentsId) — cần thêm thì gộp vào hook.
+  installBossFileAuthHook(mainWindow.webContents.session, () => {
+    try { return mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents.id : null; } catch { return null; }
+  });
+  setPreferredBossWorkspace(() => {
+    try { return WorkspaceManager.getInstance().getActiveWorkspaceId(); } catch { return undefined; }
+  });
+  HttpConnectionManager.getInstance().seedBossSessions();
 
   // Nút X của OS frame (không dùng vì frame=false) - vẫn handle để an toàn
   mainWindow.on('close', (event) => {
@@ -555,6 +614,11 @@ function registerWindowControls() {
   });
   ipcMain.handle('log:getBuffer', () => Logger.getBuffer());
   ipcMain.handle('log:clear', () => { Logger.clearBuffer(); return true; });
+  // Renderer → Nhật ký: console renderer bị strip ở production, nên Logger renderer gửi warn/error/notice
+  // qua kênh này. appendFromRenderer tự kiểm tra kiểu, che token/cookie, giới hạn 20 dòng/s + gộp dòng trùng 2 s.
+  ipcMain.on('log:append', (_event, payload: { level?: unknown; msg?: unknown } | undefined) => {
+    Logger.appendFromRenderer(payload?.level, payload?.msg);
+  });
 
   // Open external link in browser
   ipcMain.on('shell:openExternal', (_event, url: string) => {
@@ -589,7 +653,7 @@ function registerWindowControls() {
           title: 'Trình duyệt nội bộ',
           autoHideMenuBar: true,
           parent: mainWindow ?? undefined,
-          backgroundColor: '#111827',
+          backgroundColor: '#131518',
           webPreferences: {
             contextIsolation: true,
             sandbox: true,
@@ -901,6 +965,103 @@ async function startupAllWorkspaces(): Promise<void> {
   HttpConnectionManager.getInstance().startHealthCheck(60_000);
 }
 
+// ─── Cloudflare (địa chỉ cố định, R2 media, đồng bộ DB) — tuỳ chọn, mặc định tắt ─────────────────
+// Module được require muộn: lỗi nạp / init của một module không làm hỏng khởi động app.
+type CloudLifecycleModule = { init(): Promise<void>; shutdown(): Promise<void> };
+let cloudModulesStarted = false;
+let cloudShutdownState: 'idle' | 'running' | 'done' = 'idle';
+
+/** Cloudflare chỉ chạy trên máy chủ (không phải máy nhân viên). */
+function cloudAllowedHere(): boolean {
+  try {
+    return require('../src/utils/AppModeManager').default.getInstance().getMode() !== 'employee';
+  } catch {
+    return true;
+  }
+}
+
+function loadCloudModules(): Array<{ name: string; mod: CloudLifecycleModule }> {
+  const loaders: Array<[string, () => CloudLifecycleModule]> = [
+    ['tunnel', () => (require('../src/services/cloudflare/tunnel') as typeof import('../src/services/cloudflare/tunnel')).cloudTunnel],
+    ['media', () => (require('../src/services/cloudflare/media') as typeof import('../src/services/cloudflare/media')).cloudMedia],
+    ['db', () => (require('../src/services/cloudflare/dbsync') as typeof import('../src/services/cloudflare/dbsync')).cloudDb],
+    // Bộ đếm mức sử dụng kho (R2 / Google Drive): ghi xuống đĩa khi thoát (bình thường ghi gộp ~15 s)
+    ['usage', () => {
+      const { cloudflare } = require('../src/services/cloudflare/CloudflareService') as typeof import('../src/services/cloudflare/CloudflareService');
+      return { init: async () => undefined, shutdown: async () => { cloudflare.usage.flush(); } };
+    }],
+  ];
+  const out: Array<{ name: string; mod: CloudLifecycleModule }> = [];
+  for (const [name, load] of loaders) {
+    try {
+      const mod = load();
+      if (mod) out.push({ name, mod });
+    } catch (err: any) {
+      console.error(`[main] Cloudflare ${name}: không nạp được module:`, err?.message || err);
+    }
+  }
+  return out;
+}
+
+/** Khởi động module Cloudflare (tự bật lại tunnel / hàng đợi R2 / đồng bộ DB nếu đã bật). Không ném. */
+async function startCloudModules(): Promise<void> {
+  if (cloudModulesStarted || !cloudAllowedHere()) return;
+  cloudModulesStarted = true;
+  for (const { name, mod } of loadCloudModules()) {
+    try {
+      await mod.init();
+    } catch (err: any) {
+      console.error(`[main] Cloudflare ${name} init error:`, err?.message || err);
+    }
+  }
+}
+
+/** Dừng module Cloudflare khi thoát (không xoá gì trên Cloudflare), chờ tối đa timeoutMs. */
+async function shutdownCloudModules(timeoutMs: number): Promise<void> {
+  const tasks = loadCloudModules().map(({ name, mod }) => Promise.resolve()
+    .then(() => mod.shutdown())
+    .catch((err: any) => console.warn(`[main] Cloudflare ${name} shutdown error:`, err?.message || err)));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<'timeout'>(resolve => { timer = setTimeout(() => resolve('timeout'), timeoutMs); });
+  const result = await Promise.race([Promise.all(tasks).then(() => 'done' as const), timeout]);
+  clearTimeout(timer);
+  if (result === 'timeout') console.warn(`[main] Cloudflare shutdown quá ${timeoutMs} ms — thoát tiếp`);
+}
+
+/**
+ * local-media://: file không có trên máy → hỏi module R2 media (null khi R2 tắt / không có trên R2). Không ném.
+ * Chờ ngắn (4 s) khi giao diện còn link CDN của kênh để hiện thay — ảnh ra ngay, R2 vẫn tải tiếp ở nền cho lần sau;
+ * chờ dài (45 s) khi giao diện báo R2 là nguồn duy nhất (link CDN đã hết hạn / không có: `?cw=long`).
+ */
+const CLOUD_MEDIA_WAIT_SHORT_MS = 4_000;
+const CLOUD_MEDIA_WAIT_LONG_MS = 45_000;
+async function resolveMissingMediaFromCloud(absPath: string, waitMs: number): Promise<string | null> {
+  if (!cloudAllowedHere()) return null;
+  try {
+    const { cloudMedia } = require('../src/services/cloudflare/media') as typeof import('../src/services/cloudflare/media');
+    const resolved = await cloudMedia.resolveMissingMediaFile(absPath, { waitMs });
+    return resolved && fs.existsSync(resolved) ? resolved : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * before-quit: hoãn thoát tối đa ~3 s để module Cloudflare dừng gọn (cloudflared, hàng đợi R2, đồng bộ DB) khi DB
+ * còn mở, rồi app.quit() lại — lần before-quit thứ hai chạy phần dọn dẹp như cũ. true = đã hoãn.
+ */
+function deferQuitForCloudShutdown(event: { preventDefault(): void }): boolean {
+  if (!cloudModulesStarted || cloudShutdownState === 'done') return false;
+  event.preventDefault();
+  if (cloudShutdownState === 'running') return true;
+  cloudShutdownState = 'running';
+  shutdownCloudModules(3000).finally(() => {
+    cloudShutdownState = 'done';
+    app.quit();
+  });
+  return true;
+}
+
 app.whenReady().then(async () => {
   // A resume wakes the Electron main process and background sync services, but
   // Chromium's requests to Vite can remain suspended. The blank screen in dev
@@ -911,7 +1072,20 @@ app.whenReady().then(async () => {
       console.log('[main] System suspend detected; monitoring Vite renderer on resume');
     }
   });
+  // Telegram User MTProto connections cannot notice a sleep by themselves:
+  // GramJS finds the dead socket only at its next ping and then backs off.
+  // Probe them on wake, in production as well as dev.
+  const notifyTelegramUserResume = (reason: 'resume' | 'unlock-screen') => {
+    try {
+      const { handleSystemResume } = require('../src/services/telegram/TelegramUserListener');
+      handleSystemResume(reason);
+    } catch (err: any) {
+      console.warn(`[main] Telegram resume handling failed: ${err?.message || err}`);
+    }
+  };
+  powerMonitor.on('unlock-screen', () => notifyTelegramUserResume('unlock-screen'));
   powerMonitor.on('resume', () => {
+    notifyTelegramUserResume('resume');
     if (!isDev) return;
     devRendererSystemSuspended = false;
     if (!devRendererSuspended) {
@@ -926,9 +1100,17 @@ app.whenReady().then(async () => {
 
   // ── Register local-media:// protocol handler ───────────────────────────
   // Supports Range requests for video/audio streaming (seeking, partial load)
-  protocol.handle('local-media', (request) => {
+  protocol.handle('local-media', async (request) => {
     try {
-      let filePath = decodeURIComponent(new URL(request.url).pathname);
+      // local-media trả ACAO * và bypass CSP: chỉ trang của chính app được đọc. Plugin, trình duyệt
+      // nội bộ, Mini App… (Origin khác app) bị chặn để không đọc được file bất kỳ trên máy.
+      if (require('../src/services/plugins/PluginProtocol').isBlockedMediaRequest(request.headers, (request as any).referrer, 'http://localhost:27799')) {
+        return new Response('Forbidden', { status: 403 });
+      }
+      const requestUrl = new URL(request.url);
+      let filePath = decodeURIComponent(requestUrl.pathname);
+      // Gợi ý của giao diện khi file phải lấy từ R2: 'long' = không còn nguồn nào khác (CDN của kênh hết hạn / không có).
+      const cloudWaitMs = requestUrl.searchParams.get('cw') === 'long' ? CLOUD_MEDIA_WAIT_LONG_MS : CLOUD_MEDIA_WAIT_SHORT_MS;
       // Windows: strip leading slash → "D:/..." or "media/..."
       if (process.platform === 'win32' && filePath.startsWith('/')) {
         filePath = filePath.slice(1);
@@ -974,6 +1156,12 @@ app.whenReady().then(async () => {
         if (fs.existsSync(oldTelegramPath)) {
           filePath = oldTelegramPath;
         }
+      }
+
+      if (!fs.existsSync(filePath)) {
+        // R2 media (tuỳ chọn, mặc định tắt): file đã được dọn khỏi máy / máy mới khôi phục → tải lại từ R2.
+        const fromCloud = await resolveMissingMediaFromCloud(path.resolve(filePath), cloudWaitMs);
+        if (fromCloud) filePath = fromCloud;
       }
 
       if (!fs.existsSync(filePath)) {
@@ -1065,21 +1253,29 @@ app.whenReady().then(async () => {
         return new Response(null, { status: 204, headers: corsHeaders });
       }
 
+      // Stream file bất đồng bộ. Trước đây readFileSync CẢ file trên main process cho mỗi request — với video
+      // là mỗi request Range (trình phát gửi nhiều request) — nên mở hội thoại nhiều ảnh / video chặn main
+      // process: IPC (tin nhắn, tin ghim…) và các ảnh khác phải xếp hàng chờ.
+      const fileBody = (range?: { start: number; end: number }) =>
+        Readable.toWeb(fs.createReadStream(absPath, range)) as unknown as ReadableStream;
+
       if (rangeHeader) {
         // Parse "bytes=start-end" or "bytes=start-"
         const match = rangeHeader.match(/bytes=(\d*)-(\d*)/);
         if (match) {
           const start = match[1] ? parseInt(match[1], 10) : 0;
-          const end = match[2] ? parseInt(match[2], 10) : fileSize - 1;
+          const end = Math.min(match[2] ? parseInt(match[2], 10) : fileSize - 1, fileSize - 1);
+          if (start > end) {
+            return new Response(null, {
+              status: 416,
+              headers: { 'Content-Range': `bytes */${fileSize}`, ...corsHeaders },
+            });
+          }
           const chunkSize = end - start + 1;
 
           // console.log(`[local-media] Range request: bytes=${start}-${end}/${fileSize} (chunk=${chunkSize})`);
 
-          // Use readFileSync + subarray for maximum compatibility with <video> element
-          const fullData = fs.readFileSync(absPath);
-          const chunk = fullData.subarray(start, end + 1);
-
-          return new Response(chunk, {
+          return new Response(fileBody({ start, end }), {
             status: 206,
             headers: {
               'Content-Type': contentType,
@@ -1093,9 +1289,7 @@ app.whenReady().then(async () => {
       }
 
       // ── Full file response (no Range header) ──
-      const data = fs.readFileSync(absPath);
-      const body = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-      return new Response(body, {
+      return new Response(fileBody(), {
         status: 200,
         headers: {
           'Content-Type': contentType,
@@ -1214,6 +1408,48 @@ app.whenReady().then(async () => {
   registerErpHrmIpc();
   registerLockScreenIpc();
   registerLibraryIpc();
+  registerMobileSyncIpc();
+  registerCloudflareIpc();
+  registerApiIpc();
+  ApiPlatform.getInstance().configure({
+    handlers: ipcHandlerRegistry,
+    onBeforeSend: (channel, cb) => EventBroadcaster.onBeforeSend(channel, cb),
+    serverUrls: () => {
+      try {
+        const HttpRelayService = require('../src/services/http/HttpRelayService').default;
+        const st = HttpRelayService.getInstance().getStatus();
+        const urls = [`http://127.0.0.1:${st.port}/api`];
+        if (st.tunnelUrl) urls.unshift(`${String(st.tunnelUrl).replace(/\/+$/, '')}/api`);
+        return urls;
+      } catch {
+        return [];
+      }
+    },
+  });
+  // Sự kiện cho API/plugin: chỉ đăng ký hook; không ghi gì khi chưa ai dùng API.
+  ApiPlatform.getInstance().startEvents();
+  // Plugin: IPC + protocol deplao-plugin://; plugin đã bật khởi động sau khi cửa sổ hiện.
+  registerPluginIpc();
+  try {
+    const PluginsPlatform = require('../src/services/plugins/PluginsPlatform').default;
+    const { forkElectron } = require('../src/services/plugins/PluginSandbox');
+    const { handlePluginRequest } = require('../src/services/plugins/PluginProtocol');
+    PluginsPlatform.getInstance().init({
+      fork: forkElectron,
+      notifyRenderer: (channel: string, payload: any) => {
+        try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload); } catch {}
+      },
+    });
+    protocol.handle('deplao-plugin', (request) => handlePluginRequest(request as any, {
+      activeRecord: (id: string) => PluginsPlatform.getInstance().activeRecord(id),
+      devOrigin: 'http://localhost:27799',
+    }));
+    setTimeout(() => {
+      PluginsPlatform.getInstance().start().catch((err: any) => console.error('[main] plugins start:', err?.message || err));
+    }, 4500);
+  } catch (err: any) {
+    console.error('[main] plugins init error:', err?.message || err);
+  }
   // Show the renderer before starting network listeners. At startup this account
   // can have a large Telegram recovery queue and a Zalo WebSocket login; doing
   // both while Chromium is still loading leaves the window hidden and makes the
@@ -1235,6 +1471,8 @@ app.whenReady().then(async () => {
     setTimeout(() => startupAllWorkspaces().catch(err => {
       console.error('[main] startupAllWorkspaces error:', err.message);
     }), 500);
+    // Cloudflare (tuỳ chọn, mặc định tắt): sau khi DB + relay đã khởi động; không chặn khởi động.
+    setTimeout(() => { void startCloudModules(); }, 5000);
   };
   onRendererReportedReady = () => {
     startConnectorServices();
@@ -1269,14 +1507,26 @@ app.whenReady().then(async () => {
   }, 3700);
   // Initialize Workflow Engine after a short delay to ensure DB is ready
   setTimeout(() => WorkflowEngineService.getInstance().initialize(), 2000);
-  // Initialize Integration Registry
-  setTimeout(() => {
-    IntegrationRegistry.initialize();
-    // Bridge integration:payment events → workflow trigger.payment
-    EventBroadcaster.onBeforeSend('integration:payment', (data: any) => {
-      WorkflowEngineService.getInstance()['triggerWorkflows']('trigger.payment', data);
-    });
-  }, 2500);
+  // Initialize Integration Registry. integration:payment → trigger.payment do WorkflowEngineService tự đăng ký
+  // (rehookEvents) — thêm hook ở đây sẽ chạy mỗi workflow thanh toán hai lần.
+  setTimeout(() => IntegrationRegistry.initialize(), 2500);
+  // Public API v1: tự bật API server nếu người dùng bật "Tự bật khi mở app" (mặc định tắt).
+  setTimeout(async () => {
+    try {
+      const { getApiSettingBool } = require('../src/services/api/settings');
+      if (!getApiSettingBool('api_server_autostart')) return;
+      const AppModeManager = require('../src/utils/AppModeManager').default;
+      if (AppModeManager.getInstance().getMode() === 'employee') return;
+      const HttpRelayService = (await import('../src/services/http/HttpRelayService')).default;
+      const relay = HttpRelayService.getInstance();
+      if (relay.getStatus().running) return;
+      const res = await relay.start();
+      console.log('[main] API server autostart:', res?.success ? `port ${res.port}` : res?.error);
+    } catch (err: any) {
+      console.error('[main] API server autostart error:', err?.message || err);
+    }
+  }, 3600);
+
   // Initialize Webhook Gateway (port 9889)
   setTimeout(() => {
     WebhookGatewayService.getInstance().start().then(result => {
@@ -1404,8 +1654,16 @@ app.on('activate', () => {
   else { mainWindow.show(); mainWindow.focus(); }
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
+  // Cloudflare: dừng tunnel / hàng đợi R2 / đồng bộ DB trước (≤ ~3 s), rồi quit lại và chạy phần dưới như cũ.
+  if (deferQuitForCloudShutdown(event)) return;
   isQuitting = true;
+
+  // Dừng tiến trình plugin (deactivate ≤ 5 s chạy nền; utilityProcess tự đóng khi app thoát).
+  try {
+    const PluginsPlatform = require('../src/services/plugins/PluginsPlatform').default;
+    void PluginsPlatform.getInstance().stop();
+  } catch {}
 
   // ── Cleanup background services giữ event loop ──────────────────────
   // Nếu không dọn, CRM timers / cron / webhook server giữ process sống,

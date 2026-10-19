@@ -2,11 +2,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import ipc from '@/lib/ipc';
+import DataAccessor from '@/lib/data/DataAccessor';
 import { toLocalMediaUrl } from '@/lib/localMedia';
 import { useAppStore } from '@/store/appStore';
 import { useEmployeeStore } from '@/store/employeeStore';
 import { useErpEmployeeStore } from '@/store/erp/erpEmployeeStore';
 import { useErpTaskStore } from '@/store/erp/erpTaskStore';
+import { withErpDeniedNotice } from '@/store/erp/erpStoreHelpers';
 import type {
   CreateTaskInput,
   ErpAttachment,
@@ -194,13 +196,17 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
       return;
     }
     setLoading(true);
-    const res = await ipc.erp?.taskGet({ id: nextTaskId });
+    // Nhân viên: chi tiết task trên Boss (REST) — trước đây IPC ở máy nhân viên → DB cục bộ không có task, drawer trống.
+    // Lỗi đọc → giữ dữ liệu đang hiện
+    const res: any = await DataAccessor.erpTaskDetail(nextTaskId);
     if (res?.success && res.task) {
       setTask(res.task);
       syncFormFromTask(res.task);
+    } else if (res?.error) {
+      showNotification(res.error, 'error');
     }
     setLoading(false);
-  }, [syncFormFromTask, taskId]);
+  }, [showNotification, syncFormFromTask, taskId]);
 
   useEffect(() => {
     loadEmployees();
@@ -316,6 +322,8 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
           showNotification('Đã tạo task thành công', 'success');
           onSaved?.(created);
           onClose();
+        } else {
+          showNotification('Không tạo được task', 'error');
         }
         return;
       }
@@ -331,15 +339,20 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
         watchers: form.watchers,
         attachments: attachmentPayload,
       };
-      await updateTask(taskId, patch);
-      const updated = await ipc.erp?.taskGet({ id: taskId });
+      const saved = await updateTask(taskId, patch);
+      if (!saved.success) {
+        // Boss / handler từ chối (quyền ERP, tệp đính kèm không hợp lệ…) — không báo "đã lưu"
+        showNotification(saved.error || 'Không lưu được task', 'error');
+        return;
+      }
+      const updated: any = await DataAccessor.erpTaskDetail(taskId);
       if (updated?.success && updated.task) {
         setTask(updated.task);
         syncFormFromTask(updated.task);
-        showNotification('Đã lưu task thành công', 'success');
         onSaved?.(updated.task);
-        onClose();
       }
+      showNotification('Đã lưu task thành công', 'success');
+      onClose();
     } finally {
       setSaving(false);
     }
@@ -347,13 +360,21 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
 
   const handleAddComment = async () => {
     if (!taskId || !comment.trim()) return;
-    await ipc.erp?.taskAddComment({ taskId, content: comment });
+    const res: any = withErpDeniedNotice(await DataAccessor.erpAddComment(taskId, comment));
+    if (res && res.success === false) {
+      showNotification(res.error || 'Không gửi được bình luận', 'error');
+      return;
+    }
     setComment('');
     await refresh(taskId);
   };
 
   const handleChecklistToggle = async (itemId: number, done: boolean) => {
-    await ipc.erp?.taskToggleChecklist({ id: itemId, done });
+    const res: any = withErpDeniedNotice(await DataAccessor.erpTaskChecklistToggle(itemId, done));
+    if (res && res.success === false) {
+      showNotification(res.error || 'Không cập nhật được checklist', 'error');
+      return;
+    }
     await refresh(taskId);
   };
 
@@ -369,18 +390,18 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/30" onClick={onClose}>
       <div
-        className="w-full max-w-[980px] bg-gray-800 border-l border-gray-700 h-full overflow-hidden shadow-2xl flex flex-col"
+        className="w-full max-w-[980px] bg-card border-l border-border h-full overflow-hidden shadow-2xl flex flex-col"
         onClick={event => event.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700/60 flex-shrink-0">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border/60 flex-shrink-0">
           <div className="min-w-0">
-            <h3 className="text-base font-semibold text-white truncate">{taskId ? 'Cập nhật task' : 'Tạo task mới'}</h3>
-            <p className="text-[11px] text-gray-400 mt-1 truncate">{taskId ? `Task ID: ${taskId}` : 'Mọi thay đổi của task sẽ được lưu bằng một nút lưu tổng.'}</p>
+            <h3 className="text-base font-semibold text-foreground truncate">{taskId ? 'Cập nhật task' : 'Tạo task mới'}</h3>
+            <p className="text-[11px] text-muted-foreground mt-1 truncate">{taskId ? `Task ID: ${taskId}` : 'Mọi thay đổi của task sẽ được lưu bằng một nút lưu tổng.'}</p>
           </div>
           <div className="flex items-center gap-2">
             <button
               onClick={onClose}
-              className="px-3 py-1.5 text-sm text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-colors"
+              className="px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors"
             >
               Đóng
             </button>
@@ -401,14 +422,14 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
         ) : (
           <div className="flex-1 overflow-hidden">
             <div className="h-full grid grid-cols-1">
-              <div className="overflow-y-auto px-5 py-5 space-y-5 border-r border-gray-700/50">
+              <div className="overflow-y-auto px-5 py-5 space-y-5 border-r border-border/50">
                 <div>
-                  <label className="text-xs text-gray-400 mb-1.5 block font-medium">Tiêu đề <span className="text-red-400">*</span></label>
+                  <label className="text-xs text-muted-foreground mb-1.5 block font-medium">Tiêu đề <span className="text-red-400">*</span></label>
                   <input
                     autoFocus={!taskId}
                     value={form.title}
                     onChange={event => setForm(current => ({ ...current, title: event.target.value }))}
-                    className="w-full bg-gray-700 border border-gray-600 rounded-xl px-4 py-3 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30"
+                    className="w-full bg-muted border border-input rounded-xl px-4 py-3 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30"
                     placeholder="Nhập tiêu đề task..."
                   />
                 </div>
@@ -454,7 +475,7 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
 
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
                   <div>
-                    <label className="text-xs text-gray-400 font-medium block mb-1.5">Người thực hiện</label>
+                    <label className="text-xs text-muted-foreground font-medium block mb-1.5">Người thực hiện</label>
                     <TaskMultiSelect
                       options={assigneeOptions.map((employee: any) => ({ value: employee.employee_id, label: employee.display_name }))}
                       value={form.assignees}
@@ -463,7 +484,7 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
                     />
                   </div>
                   <div>
-                    <label className="text-xs text-gray-400 font-medium block mb-1.5">Người theo dõi</label>
+                    <label className="text-xs text-muted-foreground font-medium block mb-1.5">Người theo dõi</label>
                     <TaskMultiSelect
                       options={assigneeOptions.map((employee: any) => ({ value: employee.employee_id, label: employee.display_name }))}
                       value={form.watchers}
@@ -477,8 +498,8 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
                 <div>
                   <div className="flex items-center justify-between gap-2 mb-2">
                     <div>
-                      <label className="text-xs text-gray-400 font-medium block">Nội dung task</label>
-                      <p className="text-[11px] text-gray-400 mt-1">Soạn nội dung với heading, danh sách, màu chữ, code block và chèn ảnh trực tiếp.</p>
+                      <label className="text-xs text-muted-foreground font-medium block">Nội dung task</label>
+                      <p className="text-[11px] text-muted-foreground mt-1">Soạn nội dung với heading, danh sách, màu chữ, code block và chèn ảnh trực tiếp.</p>
                     </div>
                     <button
                       type="button"
@@ -488,7 +509,7 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
                       + Chèn ảnh vào nội dung
                     </button>
                   </div>
-                  <div className="task-rich-editor-wrap rounded-xl border border-gray-600 overflow-hidden bg-gray-900/70">
+                  <div className="task-rich-editor-wrap rounded-xl border border-input overflow-hidden bg-card">
                     <ReactQuill
                       ref={quillRef}
                       theme="snow"
@@ -505,13 +526,13 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
                 <div>
                   <div className="flex items-center justify-between gap-2 mb-2">
                     <div>
-                      <label className="text-xs text-gray-400 font-medium block">Tệp đính kèm</label>
-                      <p className="text-[11px] text-gray-400 mt-1">Đính kèm file tham chiếu riêng. Ảnh có thể chèn trực tiếp vào nội dung hoặc đính kèm ở đây.</p>
+                      <label className="text-xs text-muted-foreground font-medium block">Tệp đính kèm</label>
+                      <p className="text-[11px] text-muted-foreground mt-1">Đính kèm file tham chiếu riêng. Ảnh có thể chèn trực tiếp vào nội dung hoặc đính kèm ở đây.</p>
                     </div>
                     <button
                       type="button"
                       onClick={() => attachmentInputRef.current?.click()}
-                      className="px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-600 bg-gray-700/70 text-gray-200 hover:border-gray-500 hover:bg-gray-700"
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium border border-input bg-muted/70 text-foreground hover:border-border-strong hover:bg-muted"
                     >
                       + Thêm tệp
                     </button>
@@ -520,28 +541,28 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
                   <input ref={editorImageInputRef} type="file" accept="image/*" className="hidden" onChange={handleInlineImageSelected} />
 
                   {attachments.length === 0 ? (
-                    <div className="rounded-xl border border-dashed border-gray-700 bg-gray-900/40 px-4 py-6 text-center text-sm text-gray-400">
+                    <div className="rounded-xl border border-dashed border-border bg-card px-4 py-6 text-center text-sm text-muted-foreground">
                       Chưa có tệp đính kèm
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       {attachments.map(attachment => (
-                        <div key={attachment.id} className="rounded-xl border border-gray-700/60 bg-gray-900/40 p-3">
+                        <div key={attachment.id} className="rounded-xl border border-border/60 bg-card p-3">
                           {attachment.previewUrl && isImageAttachment(attachment) ? (
-                            <img src={attachment.previewUrl} alt={attachment.file_name} className="w-full h-32 object-cover rounded-lg border border-gray-700/60 mb-3" />
+                            <img src={attachment.previewUrl} alt={attachment.file_name} className="w-full h-32 object-cover rounded-lg border border-border/60 mb-3" />
                           ) : (
-                            <div className="h-32 rounded-lg border border-dashed border-gray-700/60 flex items-center justify-center text-4xl text-gray-400 mb-3"><PaperclipIcon className="w-4 h-4" /></div>
+                            <div className="h-32 rounded-lg border border-dashed border-border/60 flex items-center justify-center text-4xl text-muted-foreground mb-3"><PaperclipIcon className="w-4 h-4" /></div>
                           )}
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
-                              <div className="text-sm text-gray-100 font-medium truncate">{attachment.file_name}</div>
-                              <div className="text-[11px] text-gray-400 mt-1 truncate">{attachment.mime_type || 'Tệp đính kèm'}{attachment.size ? ` · ${(attachment.size / 1024).toFixed(1)} KB` : ''}</div>
+                              <div className="text-sm text-foreground font-medium truncate">{attachment.file_name}</div>
+                              <div className="text-[11px] text-muted-foreground mt-1 truncate">{attachment.mime_type || 'Tệp đính kèm'}{attachment.size ? ` · ${(attachment.size / 1024).toFixed(1)} KB` : ''}</div>
                             </div>
                             <div className="flex items-center gap-2">
                               <button
                                 type="button"
                                 onClick={() => openAttachment(attachment)}
-                                className="inline-flex items-center justify-center rounded-lg border border-blue-500/30 bg-blue-500/10 px-2.5 py-1.5 text-[11px] font-medium text-blue-300 hover:border-blue-400/50 hover:bg-blue-500/20 hover:text-white"
+                                className="inline-flex items-center justify-center rounded-lg border border-blue-500/30 bg-blue-500/10 px-2.5 py-1.5 text-[11px] font-medium text-blue-300 hover:border-blue-400/50 hover:bg-blue-500/20 hover:text-foreground"
                                 title="Mở tệp"
                               >
                                 Mở
@@ -549,7 +570,7 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
                               <button
                                 type="button"
                                 onClick={() => removeAttachment(attachment.id)}
-                                className="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-red-500/30 bg-red-500/10 text-red-300 hover:border-red-400/50 hover:bg-red-500/20 hover:text-white"
+                                className="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-red-500/30 bg-red-500/10 text-red-300 hover:border-red-400/50 hover:bg-red-500/20 hover:text-foreground"
                                 title="Gỡ tệp"
                               >
                                 ✕
@@ -574,7 +595,7 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="text-xs text-gray-400 mb-1.5 block font-medium">{label}</label>
+      <label className="text-xs text-muted-foreground mb-1.5 block font-medium">{label}</label>
       {children}
     </div>
   );
@@ -590,12 +611,12 @@ function PeopleChips({
   tone: 'blue' | 'violet';
 }) {
   if (!ids.length) {
-    return <span className="text-xs text-gray-400 italic">{emptyLabel}</span>;
+    return <span className="text-xs text-muted-foreground italic">{emptyLabel}</span>;
   }
 
   const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
   if (!uniqueIds.length) {
-    return <span className="text-xs text-gray-400 italic">{emptyLabel}</span>;
+    return <span className="text-xs text-muted-foreground italic">{emptyLabel}</span>;
   }
 
   const toneClass = tone === 'violet'

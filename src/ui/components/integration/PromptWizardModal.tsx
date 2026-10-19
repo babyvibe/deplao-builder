@@ -579,25 +579,25 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
 
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl w-[780px] max-h-[88vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+      <div className="bg-popover border border-border rounded-2xl shadow-2xl w-[780px] max-h-[88vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
         {/* ─ Header ─ */}
-        <div className="px-5 py-3 border-b border-gray-700 flex items-center gap-3 flex-shrink-0">
+        <div className="px-5 py-3 border-b border-border flex items-center gap-3 flex-shrink-0">
           <SparklesIcon className="w-5 h-5 text-yellow-400" />
           <div className="flex-1 min-w-0">
-            <h2 className="text-sm font-bold text-white">Gợi ý Prompt bằng AI</h2>
-            <p className="text-[10px] text-gray-400">Tạo prompt chuyên nghiệp trong vài phút - không cần biết viết prompt</p>
+            <h2 className="text-sm font-bold text-foreground">Gợi ý Prompt bằng AI</h2>
+            <p className="text-[10px] text-muted-foreground">Tạo prompt chuyên nghiệp trong vài phút - không cần biết viết prompt</p>
           </div>
           {/* Tab switcher */}
-          <div className="flex items-center bg-gray-800 rounded-lg p-0.5 gap-0.5 flex-shrink-0">
+          <div className="flex items-center bg-card rounded-lg p-0.5 gap-0.5 flex-shrink-0">
             <button onClick={() => { setTab('create'); if (step === 5 && !result) setStep(1); }}
-              className={`px-3 py-1 rounded-md text-xs transition-colors ${tab === 'create' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}><PaletteIcon className="w-4 h-4 inline" /> Tạo mới
+              className={`px-3 py-1 rounded-md text-xs transition-colors ${tab === 'create' ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}><PaletteIcon className="w-4 h-4 inline" /> Tạo mới
             </button>
             <button onClick={() => setTab('library')}
-              className={`px-3 py-1 rounded-md text-xs transition-colors ${tab === 'library' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}>
+              className={`px-3 py-1 rounded-md text-xs transition-colors ${tab === 'library' ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}>
               <BookIcon className="w-4 h-4 inline" /> Thu vien
             </button>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-800"><CloseIcon className="w-4 h-4" /></button>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-lg hover:bg-card"><CloseIcon className="w-4 h-4" /></button>
         </div>
 
         {/* ─ Body ─ */}
@@ -605,18 +605,18 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
           {tab === 'create' && step < 5 && (
             <div className="p-5">
               {/* Quick mode bar */}
-              <div className="mb-4 p-3 bg-gray-800/60 rounded-xl border border-gray-700/50">
+              <div className="mb-4 p-3 bg-card rounded-xl border border-border/50">
                 <div className="flex items-center gap-2 mb-2">
                   <LightningIcon className="w-4 h-4" />
-                  <span className="text-xs font-medium text-gray-300">Chế độ nhanh - 1 click ra prompt</span>
+                  <span className="text-xs font-medium text-foreground/80">Chế độ nhanh - 1 click ra prompt</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <input type="text" value={quickIndustry} onChange={e => setQuickIndustry(e.target.value)}
                     placeholder="VD: Bán mỹ phẩm, spa, bất động sản..."
-                    className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"/>
+                    className="flex-1 bg-muted border border-input rounded-lg px-3 py-1.5 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"/>
                   <input type="text" value={quickGoal} onChange={e => setQuickGoal(e.target.value)}
                     placeholder="Mục tiêu (tuỳ chọn)"
-                    className="w-40 bg-gray-700 border border-gray-600 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"/>
+                    className="w-40 bg-muted border border-input rounded-lg px-3 py-1.5 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"/>
                   <button onClick={handleQuickGenerate} disabled={generating || !assistantId}
                     className="px-3 py-1.5 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white text-xs font-medium rounded-lg transition-all disabled:opacity-50 flex-shrink-0 whitespace-nowrap">
                     {generating ? <Spinner size={4} /> : <LightningIcon className="w-4 h-4" />} Tạo nhanh
@@ -629,9 +629,9 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
 
               {/* Divider */}
               <div className="flex items-center gap-3 mb-4">
-                <div className="flex-1 border-t border-gray-700"/>
-                <span className="text-[10px] text-gray-400">hoặc wizard chi tiết</span>
-                <div className="flex-1 border-t border-gray-700"/>
+                <div className="flex-1 border-t border-border"/>
+                <span className="text-[10px] text-muted-foreground">hoặc wizard chi tiết</span>
+                <div className="flex-1 border-t border-border"/>
               </div>
 
               {/* Step indicator */}
@@ -640,9 +640,9 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
                   <React.Fragment key={s}>
                     <button onClick={() => { if (s < step || (s === step)) setStep(s); }}
                       className={`w-7 h-7 rounded-full text-xs font-bold flex items-center justify-center transition-all ${
-                        s === step ? 'bg-blue-600 text-white scale-110' : s < step ? 'bg-blue-600/30 text-blue-400 cursor-pointer hover:bg-blue-600/50' : 'bg-gray-700 text-gray-400'
+                        s === step ? 'bg-blue-600 text-white scale-110' : s < step ? 'bg-blue-600/30 text-blue-400 cursor-pointer hover:bg-blue-600/50' : 'bg-muted text-muted-foreground'
                       }`}>{s}</button>
-                    {s < 4 && <div className={`flex-1 h-0.5 rounded ${s < step ? 'bg-blue-600/50' : 'bg-gray-700'}`}/>}
+                    {s < 4 && <div className={`flex-1 h-0.5 rounded ${s < step ? 'bg-blue-600/50' : 'bg-muted'}`}/>}
                   </React.Fragment>
                 ))}
               </div>
@@ -650,22 +650,22 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
               {/* ─── Step 1: Industry ─── */}
               {step === 1 && (
                 <div>
-                  <h3 className="text-sm font-semibold text-white mb-1">🧱 Bước 1: Chọn ngành nghề</h3>
-                  <p className="text-[10px] text-gray-400 mb-3">Chọn ngành để AI tạo prompt phù hợp nhất</p>
+                  <h3 className="text-sm font-semibold text-foreground mb-1">🧱 Bước 1: Chọn ngành nghề</h3>
+                  <p className="text-[10px] text-muted-foreground mb-3">Chọn ngành để AI tạo prompt phù hợp nhất</p>
                   <input type="text" value={industrySearch} onChange={e => setIndustrySearch(e.target.value)}
                     placeholder="Tim ngangh..."
-                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 mb-3"/>
+                    className="w-full bg-card border border-border rounded-lg px-3 py-2 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 mb-3"/>
                   <div className="grid grid-cols-3 gap-2 max-h-[260px] overflow-y-auto pr-1">
                     {filteredIndustries.map(ind => (
                       <button key={ind.key} onClick={() => setSelectedIndustry(ind.key)}
                         className={`p-3 rounded-xl border text-left transition-all ${
                           selectedIndustry === ind.key
                             ? 'bg-blue-600/20 border-blue-500 ring-1 ring-blue-500/50'
-                            : 'bg-gray-800/60 border-gray-700 hover:border-gray-600 hover:bg-gray-800'
+                            : 'bg-card/60 border-border hover:border-input hover:bg-card'
                         }`}>
                         <span className="text-xl">{ind.icon}</span>
-                        <p className="text-xs font-medium text-white mt-1">{ind.label}</p>
-                        <p className="text-[10px] text-gray-400 mt-0.5">{ind.desc}</p>
+                        <p className="text-xs font-medium text-foreground mt-1">{ind.label}</p>
+                        <p className="text-[10px] text-muted-foreground mt-0.5">{ind.desc}</p>
                       </button>
                     ))}
                     {/* Custom */}
@@ -673,18 +673,18 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
                       className={`p-3 rounded-xl border text-left transition-all ${
                         selectedIndustry === 'custom'
                           ? 'bg-blue-600/20 border-blue-500 ring-1 ring-blue-500/50'
-                          : 'bg-gray-800/60 border-gray-700 hover:border-gray-600 hover:bg-gray-800'
+                          : 'bg-card/60 border-border hover:border-input hover:bg-card'
                       }`}>
                       <EditIcon className="w-5 h-5" />
-                      <p className="text-xs font-medium text-white mt-1">Khac</p>
-                      <p className="text-[10px] text-gray-400 mt-0.5">Tự nhập ngành</p>
+                      <p className="text-xs font-medium text-foreground mt-1">Khac</p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">Tự nhập ngành</p>
                     </button>
                   </div>
                   {selectedIndustry === 'custom' && (
                     <input type="text" value={customIndustry} onChange={e => setCustomIndustry(e.target.value)}
                       placeholder="Nhập tên ngành nghề..."
                       autoFocus
-                      className="w-full mt-3 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"/>
+                      className="w-full mt-3 bg-card border border-border rounded-lg px-3 py-2 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"/>
                   )}
                 </div>
               )}
@@ -692,20 +692,20 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
               {/* ─── Step 2: Goals ─── */}
               {step === 2 && (
                 <div>
-                  <h3 className="text-sm font-semibold text-white mb-1"><TargetIcon className="w-4 h-4 inline" /> Bước 2: Mục tiêu sử dụng AI</h3>
-                  <p className="text-[10px] text-gray-400 mb-3">Có thể chọn nhiều mục tiêu</p>
+                  <h3 className="text-sm font-semibold text-foreground mb-1"><TargetIcon className="w-4 h-4 inline" /> Bước 2: Mục tiêu sử dụng AI</h3>
+                  <p className="text-[10px] text-muted-foreground mb-3">Có thể chọn nhiều mục tiêu</p>
                   <div className="grid grid-cols-2 gap-2">
                     {GOALS.map(g => (
                       <button key={g.key} onClick={() => setSelectedGoals(toggleMulti(selectedGoals, g.key))}
                         className={`p-3 rounded-xl border text-left transition-all flex items-start gap-3 ${
                           selectedGoals.includes(g.key)
                             ? 'bg-blue-600/20 border-blue-500 ring-1 ring-blue-500/50'
-                            : 'bg-gray-800/60 border-gray-700 hover:border-gray-600 hover:bg-gray-800'
+                            : 'bg-card/60 border-border hover:border-input hover:bg-card'
                         }`}>
                         <span className="text-xl flex-shrink-0">{g.icon}</span>
                         <div className="min-w-0">
-                          <p className="text-xs font-medium text-white">{g.label}</p>
-                          <p className="text-[10px] text-gray-400 mt-0.5">{g.desc}</p>
+                          <p className="text-xs font-medium text-foreground">{g.label}</p>
+                          <p className="text-[10px] text-muted-foreground mt-0.5">{g.desc}</p>
                         </div>
                         {selectedGoals.includes(g.key) && <span className="text-blue-400 text-sm flex-shrink-0 ml-auto">✓</span>}
                       </button>
@@ -717,19 +717,19 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
               {/* ─── Step 3: Tone ─── */}
               {step === 3 && (
                 <div>
-                  <h3 className="text-sm font-semibold text-white mb-1"><UsersIcon className="w-4 h-4 inline" /> Bước 3: Phong cách trả lời</h3>
-                  <p className="text-[10px] text-gray-400 mb-3">Chọn nhiều để phối hợp phong cách → tạo tone prompt</p>
+                  <h3 className="text-sm font-semibold text-foreground mb-1"><UsersIcon className="w-4 h-4 inline" /> Bước 3: Phong cách trả lời</h3>
+                  <p className="text-[10px] text-muted-foreground mb-3">Chọn nhiều để phối hợp phong cách → tạo tone prompt</p>
                   <div className="grid grid-cols-3 gap-2">
                     {TONES.map(t => (
                       <button key={t.key} onClick={() => setSelectedTones(toggleMulti(selectedTones, t.key))}
                         className={`p-3 rounded-xl border text-center transition-all ${
                           selectedTones.includes(t.key)
                             ? 'bg-blue-600/20 border-blue-500 ring-1 ring-blue-500/50'
-                            : 'bg-gray-800/60 border-gray-700 hover:border-gray-600 hover:bg-gray-800'
+                            : 'bg-card/60 border-border hover:border-input hover:bg-card'
                         }`}>
                         <span className="text-xl">{t.icon}</span>
-                        <p className="text-xs font-medium text-white mt-1">{t.label}</p>
-                        <p className="text-[10px] text-gray-400 mt-0.5">{t.desc}</p>
+                        <p className="text-xs font-medium text-foreground mt-1">{t.label}</p>
+                        <p className="text-[10px] text-muted-foreground mt-0.5">{t.desc}</p>
                         {selectedTones.includes(t.key) && <span className="text-blue-400 text-xs mt-1 block">✓</span>}
                       </button>
                     ))}
@@ -741,105 +741,105 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
               {step === 4 && (
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <h3 className="text-sm font-semibold text-white"><EditIcon className="w-4 h-4 inline" /> Bước 4: Thông tin bổ sung</h3>
+                    <h3 className="text-sm font-semibold text-foreground"><EditIcon className="w-4 h-4 inline" /> Bước 4: Thông tin bổ sung</h3>
                     <button onClick={handleAutoFillExtra} disabled={generating || !assistantId}
                       className="text-[10px] px-2.5 py-1 rounded-lg bg-purple-600/20 text-purple-400 hover:bg-purple-600/30 border border-purple-600/30 transition-colors disabled:opacity-50">
                       {generating ? <><Spinner size={3} /> Dang goi y...</> : <><BotIcon className="w-4 h-4 inline" /> Toi chua co → AI tu de xuat</>}
                     </button>
                   </div>
-                  <p className="text-[10px] text-gray-400 mb-3">Tuỳ chọn - thêm thông tin để prompt chính xác hơn. Không cần POS hay file, nhập trực tiếp tại đây.</p>
+                  <p className="text-[10px] text-muted-foreground mb-3">Tuỳ chọn - thêm thông tin để prompt chính xác hơn. Không cần POS hay file, nhập trực tiếp tại đây.</p>
                   <div className="space-y-4">
 
                     {/* Product overview */}
                     <div>
-                      <label className="block text-[10px] text-gray-400 mb-1">Mô tả chung về sản phẩm/dịch vụ</label>
+                      <label className="block text-[10px] text-muted-foreground mb-1">Mô tả chung về sản phẩm/dịch vụ</label>
                       <textarea value={extraInfo.products} onChange={e => setExtraInfo({ ...extraInfo, products: e.target.value })}
                         rows={2}
                         placeholder="VD: Shop chuyên skincare Hàn Quốc, chủ yếu kem dưỡng, serum, tẩy trang cho da dầu mụn..."
-                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 resize-y min-h-[48px]"/>
+                        className="w-full bg-card border border-border rounded-lg px-3 py-2 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 resize-y min-h-[48px]"/>
                     </div>
 
                     {/* Structured product lines */}
                     <div>
                       <div className="flex items-center justify-between mb-1.5">
-                        <label className="text-[10px] text-gray-400 flex items-center gap-1"><PackageIcon className="w-4 h-4 inline" /> Danh sách sản phẩm chi tiết
-                          <span className="text-[9px] text-gray-400">(sẽ đính kèm vào prompt)</span>
+                        <label className="text-[10px] text-muted-foreground flex items-center gap-1"><PackageIcon className="w-4 h-4 inline" /> Danh sách sản phẩm chi tiết
+                          <span className="text-[9px] text-muted-foreground">(sẽ đính kèm vào prompt)</span>
                         </label>
-                        <span className="text-[9px] text-gray-400">{productLines.filter(p => p.name.trim()).length} sản phẩm</span>
+                        <span className="text-[9px] text-muted-foreground">{productLines.filter(p => p.name.trim()).length} sản phẩm</span>
                       </div>
-                      <div className="bg-gray-800/80 rounded-xl border border-gray-700/50 overflow-hidden">
+                      <div className="bg-card rounded-xl border border-border/50 overflow-hidden">
                         {/* Table header */}
-                        <div className="grid grid-cols-[1fr_140px_1fr_32px] gap-1.5 px-3 py-1.5 bg-gray-800 border-b border-gray-700/50">
-                          <span className="text-[9px] text-gray-400 font-semibold uppercase tracking-wide">Tên sản phẩm</span>
-                          <span className="text-[9px] text-gray-400 font-semibold uppercase tracking-wide">Giá</span>
-                          <span className="text-[9px] text-gray-400 font-semibold uppercase tracking-wide">Ghi chú (mô tả, SKU...)</span>
+                        <div className="grid grid-cols-[1fr_140px_1fr_32px] gap-1.5 px-3 py-1.5 bg-card border-b border-border/50">
+                          <span className="text-[9px] text-muted-foreground font-semibold uppercase tracking-wide">Tên sản phẩm</span>
+                          <span className="text-[9px] text-muted-foreground font-semibold uppercase tracking-wide">Giá</span>
+                          <span className="text-[9px] text-muted-foreground font-semibold uppercase tracking-wide">Ghi chú (mô tả, SKU...)</span>
                           <span/>
                         </div>
                         {/* Product rows */}
                         <div className="max-h-[200px] overflow-y-auto">
                           {productLines.map((line, idx) => (
-                            <div key={idx} className="grid grid-cols-[1fr_140px_1fr_32px] gap-1.5 px-3 py-1 items-center border-b border-gray-800/50 last:border-b-0 hover:bg-gray-700/20 transition-colors">
+                            <div key={idx} className="grid grid-cols-[1fr_140px_1fr_32px] gap-1.5 px-3 py-1 items-center border-b border-border/50 last:border-b-0 hover:bg-muted/20 transition-colors">
                               <input type="text" value={line.name}
                                 onChange={e => { const arr = [...productLines]; arr[idx] = { ...arr[idx], name: e.target.value }; setProductLines(arr); }}
                                 placeholder={`SP ${idx + 1}...`}
-                                className="bg-transparent border-0 text-xs text-white placeholder-gray-600 focus:outline-none py-1"/>
+                                className="bg-transparent border-0 text-xs text-foreground placeholder-subtle-foreground focus:outline-none py-1"/>
                               <input type="text" value={line.price}
                                 onChange={e => { const arr = [...productLines]; arr[idx] = { ...arr[idx], price: e.target.value }; setProductLines(arr); }}
                                 placeholder="299k"
-                                className="bg-transparent border-0 text-xs text-green-400 placeholder-gray-600 focus:outline-none py-1 font-mono"/>
+                                className="bg-transparent border-0 text-xs text-green-400 placeholder-subtle-foreground focus:outline-none py-1 font-mono"/>
                               <input type="text" value={line.note}
                                 onChange={e => { const arr = [...productLines]; arr[idx] = { ...arr[idx], note: e.target.value }; setProductLines(arr); }}
                                 placeholder="VD: Chiết xuất tự nhiên, best seller..."
-                                className="bg-transparent border-0 text-xs text-gray-400 placeholder-gray-600 focus:outline-none py-1"/>
+                                className="bg-transparent border-0 text-xs text-muted-foreground placeholder-subtle-foreground focus:outline-none py-1"/>
                               <button onClick={() => { if (productLines.length > 1) setProductLines(productLines.filter((_, i) => i !== idx)); }}
-                                className="w-6 h-6 flex items-center justify-center rounded text-gray-400 hover:text-red-400 hover:bg-red-900/20 transition-colors text-[10px]"
+                                className="w-6 h-6 flex items-center justify-center rounded text-muted-foreground hover:text-red-400 hover:bg-red-900/20 transition-colors text-[10px]"
                                 title="Xóa dòng">✕</button>
                             </div>
                           ))}
                         </div>
                         {/* Add row button */}
                         <button onClick={() => setProductLines([...productLines, { name: '', price: '', note: '' }])}
-                          className="w-full px-3 py-1.5 text-[10px] text-gray-400 hover:text-blue-400 hover:bg-gray-700/30 transition-colors border-t border-gray-700/30 flex items-center justify-center gap-1">
+                          className="w-full px-3 py-1.5 text-[10px] text-muted-foreground hover:text-blue-400 hover:bg-muted/30 transition-colors border-t border-border/30 flex items-center justify-center gap-1">
                           + Thêm sản phẩm
                         </button>
                       </div>
-                      <p className="text-[9px] text-gray-400 mt-1"><SunIcon className="w-4 h-4 inline" /> Nhập tên + giá → AI sẽ biết chính xác sản phẩm để tư vấn. Không cần file hay POS.</p>
+                      <p className="text-[9px] text-muted-foreground mt-1"><SunIcon className="w-4 h-4 inline" /> Nhập tên + giá → AI sẽ biết chính xác sản phẩm để tư vấn. Không cần file hay POS.</p>
                     </div>
 
                     {/* Price + USP row */}
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-[10px] text-gray-400 mb-1">Mức giá chung</label>
+                        <label className="block text-[10px] text-muted-foreground mb-1">Mức giá chung</label>
                         <textarea value={extraInfo.price} onChange={e => setExtraInfo({ ...extraInfo, price: e.target.value })}
                           rows={2}
                           placeholder="VD: Skincare: 199k-599k&#10;Combo tiết kiệm: 399k (2 sản phẩm)&#10;Freeship đơn từ 500k"
-                          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 resize-y min-h-[56px]"/>
+                          className="w-full bg-card border border-border rounded-lg px-3 py-2 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 resize-y min-h-[56px]"/>
                       </div>
                       <div>
-                        <label className="block text-[10px] text-gray-400 mb-1">Điểm khác biệt (USP)</label>
+                        <label className="block text-[10px] text-muted-foreground mb-1">Điểm khác biệt (USP)</label>
                         <textarea value={extraInfo.usp} onChange={e => setExtraInfo({ ...extraInfo, usp: e.target.value })}
                           rows={2}
                           placeholder="VD: Chiết xuất tự nhiên 100%&#10;Cam kết hoàn tiền nếu không hiệu quả&#10;Nhập khẩu chính hãng Hàn Quốc"
-                          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 resize-y min-h-[56px]"/>
+                          className="w-full bg-card border border-border rounded-lg px-3 py-2 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 resize-y min-h-[56px]"/>
                       </div>
                     </div>
 
                     {/* Policy */}
                     <div>
-                      <label className="block text-[10px] text-gray-400 mb-1">Chính sách (ship, đổi trả, bảo hành...)</label>
+                      <label className="block text-[10px] text-muted-foreground mb-1">Chính sách (ship, đổi trả, bảo hành...)</label>
                       <textarea value={extraInfo.policy} onChange={e => setExtraInfo({ ...extraInfo, policy: e.target.value })}
                         rows={2}
                         placeholder="VD: Freeship đơn 500k, đổi trả 7 ngày&#10;Bảo hành 12 tháng&#10;COD toàn quốc"
-                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 resize-y min-h-[56px]"/>
+                        className="w-full bg-card border border-border rounded-lg px-3 py-2 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 resize-y min-h-[56px]"/>
                     </div>
 
                     {/* Customer insight */}
                     <div>
-                      <label className="block text-[10px] text-gray-400 mb-1">Insight khách hàng</label>
+                      <label className="block text-[10px] text-muted-foreground mb-1">Insight khách hàng</label>
                       <textarea value={extraInfo.insight} onChange={e => setExtraInfo({ ...extraInfo, insight: e.target.value })}
                         rows={3}
                         placeholder="VD: Khách thường so sánh giá với hàng Trung Quốc, cần chứng minh chất lượng&#10;Phần lớn là nữ 25-35 tuổi, quan tâm thành phần&#10;Hay hỏi 'dùng bao lâu có kết quả?'"
-                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 resize-y min-h-[72px]"/>
+                        className="w-full bg-card border border-border rounded-lg px-3 py-2 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 resize-y min-h-[72px]"/>
                     </div>
                   </div>
                 </div>
@@ -853,41 +853,41 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
               {/* Prompt preview - editable */}
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-sm font-semibold text-white"><FileTextIcon className="w-4 h-4 inline" /> Prompt đã tạo</h3>
-                  <span className="text-[10px] text-gray-400">{editablePrompt.length} ký tự</span>
+                  <h3 className="text-sm font-semibold text-foreground"><FileTextIcon className="w-4 h-4 inline" /> Prompt đã tạo</h3>
+                  <span className="text-[10px] text-muted-foreground">{editablePrompt.length} ký tự</span>
                 </div>
                 <textarea value={editablePrompt} onChange={e => setEditablePrompt(e.target.value)}
                   rows={10}
-                  className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-xs text-gray-200 leading-relaxed focus:outline-none focus:border-blue-500 resize-y font-mono"/>
+                  className="w-full bg-card border border-border rounded-xl px-4 py-3 text-xs text-foreground leading-relaxed focus:outline-none focus:border-blue-500 resize-y font-mono"/>
               </div>
 
               {/* Breakdown sections */}
               {(result.role || result.context || result.tone || result.rules || result.constraints) && (
                 <div>
-                  <h4 className="text-xs font-semibold text-gray-400 mb-2">Phân tích chi tiết</h4>
+                  <h4 className="text-xs font-semibold text-muted-foreground mb-2">Phân tích chi tiết</h4>
                   <div className="grid grid-cols-2 gap-2">
                     {result.role && (
-                      <div className="bg-gray-800/60 rounded-lg p-3 border border-gray-700/50">
+                      <div className="bg-card rounded-lg p-3 border border-border/50">
                         <p className="text-[10px] font-semibold text-blue-400 mb-1"><TargetIcon className="w-4 h-4 inline" /> Vai trò AI</p>
-                        <p className="text-[10px] text-gray-400 leading-relaxed whitespace-pre-wrap">{result.role.replace(/^🎯\s*/, '').substring(0, 200)}</p>
+                        <p className="text-[10px] text-muted-foreground leading-relaxed whitespace-pre-wrap">{result.role.replace(/^🎯\s*/, '').substring(0, 200)}</p>
                       </div>
                     )}
                     {result.context && (
-                      <div className="bg-gray-800/60 rounded-lg p-3 border border-gray-700/50">
+                      <div className="bg-card rounded-lg p-3 border border-border/50">
                         <p className="text-[10px] font-semibold text-green-400 mb-1"><BrainIcon className="w-4 h-4 inline" /> Context</p>
-                        <p className="text-[10px] text-gray-400 leading-relaxed whitespace-pre-wrap">{result.context.replace(/^🧠\s*/, '').substring(0, 200)}</p>
+                        <p className="text-[10px] text-muted-foreground leading-relaxed whitespace-pre-wrap">{result.context.replace(/^🧠\s*/, '').substring(0, 200)}</p>
                       </div>
                     )}
                     {result.tone && (
-                      <div className="bg-gray-800/60 rounded-lg p-3 border border-gray-700/50">
+                      <div className="bg-card rounded-lg p-3 border border-border/50">
                         <p className="text-[10px] font-semibold text-purple-400 mb-1"><UsersIcon className="w-4 h-4 inline" /> Tone</p>
-                        <p className="text-[10px] text-gray-400 leading-relaxed whitespace-pre-wrap">{result.tone.replace(/^🗣️\s*/, '').substring(0, 200)}</p>
+                        <p className="text-[10px] text-muted-foreground leading-relaxed whitespace-pre-wrap">{result.tone.replace(/^🗣️\s*/, '').substring(0, 200)}</p>
                       </div>
                     )}
                     {result.constraints && (
-                      <div className="bg-gray-800/60 rounded-lg p-3 border border-gray-700/50">
+                      <div className="bg-card rounded-lg p-3 border border-border/50">
                         <p className="text-[10px] font-semibold text-red-400 mb-1">Rang buoc</p>
-                        <p className="text-[10px] text-gray-400 leading-relaxed whitespace-pre-wrap">{result.constraints.replace(/^❌\s*/, '').substring(0, 200)}</p>
+                        <p className="text-[10px] text-muted-foreground leading-relaxed whitespace-pre-wrap">{result.constraints.replace(/^❌\s*/, '').substring(0, 200)}</p>
                       </div>
                     )}
                   </div>
@@ -896,15 +896,15 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
 
               {/* Improve panel */}
               {showImprove && (
-                <div className="bg-gray-800/60 rounded-xl p-4 border border-purple-600/30">
+                <div className="bg-card rounded-xl p-4 border border-purple-600/30">
                   <h4 className="text-xs font-semibold text-purple-400 mb-2"><SparklesIcon className="w-4 h-4 inline" /> Cai thien prompt</h4>
-                  <p className="text-[10px] text-gray-400 mb-3">Chọn hướng cải thiện - AI sẽ viết lại prompt</p>
+                  <p className="text-[10px] text-muted-foreground mb-3">Chọn hướng cải thiện - AI sẽ viết lại prompt</p>
                   <div className="grid grid-cols-2 gap-2">
                     {IMPROVE_OPTIONS.map(opt => (
                       <button key={opt.key} onClick={() => handleImprove(opt.key)} disabled={improveLoading}
-                        className="flex items-center gap-2 p-2 rounded-lg bg-gray-700/50 hover:bg-gray-700 border border-gray-600 hover:border-purple-500/50 transition-colors text-left disabled:opacity-50">
+                        className="flex items-center gap-2 p-2 rounded-lg bg-muted/50 hover:bg-muted border border-input hover:border-purple-500/50 transition-colors text-left disabled:opacity-50">
                         <span className="text-sm">{opt.icon}</span>
-                        <span className="text-[10px] text-gray-300">{opt.label}</span>
+                        <span className="text-[10px] text-foreground/80">{opt.label}</span>
                       </button>
                     ))}
                   </div>
@@ -919,19 +919,19 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
 
               {/* Chat refine panel */}
               {showChatRefine && (
-                <div className="bg-gray-800/60 rounded-xl border border-blue-600/30 overflow-hidden">
-                  <div className="px-4 py-2 border-b border-gray-700/50">
+                <div className="bg-card rounded-xl border border-blue-600/30 overflow-hidden">
+                  <div className="px-4 py-2 border-b border-border/50">
                     <h4 className="text-xs font-semibold text-blue-400"><ChatIcon className="w-4 h-4 inline" /> Chỉnh sửa bằng hội thoại</h4>
-                    <p className="text-[10px] text-gray-400">Chat với AI để tinh chỉnh prompt</p>
+                    <p className="text-[10px] text-muted-foreground">Chat với AI để tinh chỉnh prompt</p>
                   </div>
                   <div className="max-h-40 overflow-y-auto p-3 space-y-2">
                     {chatRefineHistory.length === 0 && (
-                      <p className="text-[10px] text-gray-400 text-center py-2">VD: "Prompt này hơi cứng", "Thêm phần xử lý từ chối"</p>
+                      <p className="text-[10px] text-muted-foreground text-center py-2">VD: "Prompt này hơi cứng", "Thêm phần xử lý từ chối"</p>
                     )}
                     {chatRefineHistory.map((msg, i) => (
                       <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                         <div className={`max-w-[80%] rounded-lg px-3 py-1.5 text-[10px] ${
-                          msg.role === 'user' ? 'bg-blue-600/30 text-blue-200' : 'bg-gray-700 text-gray-300'
+                          msg.role === 'user' ? 'bg-blue-600/30 text-blue-200' : 'bg-muted text-foreground/80'
                         }`}>
                           <span className="whitespace-pre-wrap">{msg.content.substring(0, 500)}</span>
                         </div>
@@ -939,7 +939,7 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
                     ))}
                     {chatRefineLoading && (
                       <div className="flex justify-start">
-                        <div className="bg-gray-700 rounded-lg px-3 py-1.5 flex items-center gap-1">
+                        <div className="bg-muted rounded-lg px-3 py-1.5 flex items-center gap-1">
                           <span className="w-1 h-1 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}/>
                           <span className="w-1 h-1 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}/>
                           <span className="w-1 h-1 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}/>
@@ -951,7 +951,7 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
                     <input type="text" value={chatRefineInput} onChange={e => setChatRefineInput(e.target.value)}
                       onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleChatRefineSend(); } }}
                       placeholder="Nhập yêu cầu chỉnh sửa..."
-                      className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-3 py-1.5 text-[10px] text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"/>
+                      className="flex-1 bg-muted border border-input rounded-lg px-3 py-1.5 text-[10px] text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"/>
                     <button onClick={handleChatRefineSend} disabled={chatRefineLoading || !chatRefineInput.trim()}
                       className="w-7 h-7 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 flex items-center justify-center text-white transition-colors flex-shrink-0">
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
@@ -965,16 +965,16 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
           {/* ─── Library tab ─── */}
           {tab === 'library' && !previewTemplate && (
             <div className="p-5">
-              <p className="text-[10px] text-gray-400 mb-3">Chọn template có sẵn - preview → áp dụng ngay</p>
+              <p className="text-[10px] text-muted-foreground mb-3">Chọn template có sẵn - preview → áp dụng ngay</p>
               <div className="grid grid-cols-2 gap-2">
                 {PROMPT_TEMPLATES.map(tpl => (
                   <button key={tpl.id} onClick={() => setPreviewTemplate(tpl)}
-                    className="p-3 rounded-xl bg-gray-800/60 border border-gray-700 hover:border-blue-500/50 hover:bg-gray-800 transition-all text-left">
+                    className="p-3 rounded-xl bg-card border border-border hover:border-blue-500/50 hover:bg-card transition-all text-left">
                     <div className="flex items-center gap-2 mb-1">
                       <span className="text-lg">{tpl.icon}</span>
-                      <span className="text-xs font-medium text-white">{tpl.label}</span>
+                      <span className="text-xs font-medium text-foreground">{tpl.label}</span>
                     </div>
-                    <p className="text-[10px] text-gray-400">{tpl.desc}</p>
+                    <p className="text-[10px] text-muted-foreground">{tpl.desc}</p>
                   </button>
                 ))}
               </div>
@@ -984,18 +984,18 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
           {/* Library preview */}
           {tab === 'library' && previewTemplate && (
             <div className="p-5 space-y-3">
-              <button onClick={() => setPreviewTemplate(null)} className="text-[10px] text-gray-400 hover:text-white transition-colors flex items-center gap-1">
+              <button onClick={() => setPreviewTemplate(null)} className="text-[10px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
                 ← Quay lại thư viện
               </button>
               <div className="flex items-center gap-2">
                 <span className="text-xl">{previewTemplate.icon}</span>
                 <div>
-                  <h3 className="text-sm font-semibold text-white">{previewTemplate.label}</h3>
-                  <p className="text-[10px] text-gray-400">{previewTemplate.desc}</p>
+                  <h3 className="text-sm font-semibold text-foreground">{previewTemplate.label}</h3>
+                  <p className="text-[10px] text-muted-foreground">{previewTemplate.desc}</p>
                 </div>
               </div>
-              <div className="bg-gray-800 border border-gray-700 rounded-xl px-4 py-3">
-                <pre className="text-[11px] text-gray-300 leading-relaxed whitespace-pre-wrap font-sans">{previewTemplate.prompt}</pre>
+              <div className="bg-card border border-border rounded-xl px-4 py-3">
+                <pre className="text-[11px] text-foreground/80 leading-relaxed whitespace-pre-wrap font-sans">{previewTemplate.prompt}</pre>
               </div>
               <div className="flex items-center gap-2">
                 <button onClick={() => { onApply(previewTemplate.prompt); showNotification('Da ap dung template!', 'success'); onClose(); }}
@@ -1003,7 +1003,7 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
                   <CheckIcon className="w-4 h-4 inline" /> Ap dung
                 </button>
                 <button onClick={() => { navigator.clipboard.writeText(previewTemplate.prompt); showNotification('Da copy!', 'success'); }}
-                  className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white text-xs rounded-lg transition-colors"><ClipboardListIcon className="w-4 h-4 inline" /> Copy
+                  className="px-4 py-2 bg-muted hover:bg-accent text-foreground text-xs rounded-lg transition-colors"><ClipboardListIcon className="w-4 h-4 inline" /> Copy
                 </button>
                 <button onClick={() => {
                   setEditablePrompt(previewTemplate.prompt);
@@ -1011,7 +1011,7 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
                   setTab('create');
                   setStep(5);
                 }}
-                  className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white text-xs rounded-lg transition-colors">
+                  className="px-4 py-2 bg-muted hover:bg-accent text-foreground text-xs rounded-lg transition-colors">
                   <EditIcon className="w-4 h-4 inline" /> Chinh sua
                 </button>
               </div>
@@ -1020,17 +1020,17 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
         </div>
 
         {/* ─ Footer ─ */}
-        <div className="px-5 py-3 border-t border-gray-700 flex items-center gap-2 flex-shrink-0">
+        <div className="px-5 py-3 border-t border-border flex items-center gap-2 flex-shrink-0">
           {tab === 'create' && step < 5 && (
             <>
               {step > 1 && (
                 <button onClick={() => setStep((step - 1) as WizardStep)}
-                  className="px-3 py-1.5 text-xs text-gray-400 hover:text-white transition-colors">
+                  className="px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
                   ← Quay lại
                 </button>
               )}
               <div className="flex-1"/>
-              <span className="text-[10px] text-gray-400">Bước {step}/4</span>
+              <span className="text-[10px] text-muted-foreground">Bước {step}/4</span>
               {step < 4 && (
                 <button onClick={() => setStep((step + 1) as WizardStep)}
                   disabled={step === 1 && !selectedIndustry}
@@ -1049,21 +1049,21 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
 
           {tab === 'create' && step === 5 && result && (
             <>
-              <button onClick={resetWizard} className="px-3 py-1.5 text-xs text-gray-400 hover:text-white transition-colors"><RefreshIcon className="w-4 h-4 inline" /> Làm lại từ đầu
+              <button onClick={resetWizard} className="px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"><RefreshIcon className="w-4 h-4 inline" /> Làm lại từ đầu
               </button>
               <div className="flex-1"/>
               <button onClick={() => setShowChatRefine(!showChatRefine)}
-                className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${showChatRefine ? 'bg-blue-600/20 text-blue-400 border-blue-600/40' : 'text-gray-400 hover:text-white border-gray-600'}`}><ChatIcon className="w-4 h-4 inline" /> Chat chỉnh sửa
+                className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${showChatRefine ? 'bg-blue-600/20 text-blue-400 border-blue-600/40' : 'text-muted-foreground hover:text-foreground border-input'}`}><ChatIcon className="w-4 h-4 inline" /> Chat chỉnh sửa
               </button>
               <button onClick={() => setShowImprove(!showImprove)}
-                className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${showImprove ? 'bg-purple-600/20 text-purple-400 border-purple-600/40' : 'text-gray-400 hover:text-white border-gray-600'}`}>
+                className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${showImprove ? 'bg-purple-600/20 text-purple-400 border-purple-600/40' : 'text-muted-foreground hover:text-foreground border-input'}`}>
                 <SparklesIcon className="w-4 h-4 inline" /> Cai thien
               </button>
               <button onClick={handleRegenerate} disabled={generating}
-                className="px-3 py-1.5 text-xs text-gray-400 hover:text-white border border-gray-600 rounded-lg transition-colors disabled:opacity-50">
+                className="px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground border border-input rounded-lg transition-colors disabled:opacity-50">
                 {generating ? <Spinner size={3} /> : <RefreshIcon className="w-4 h-4 inline" />} Tao lai
               </button>
-              <button onClick={handleCopy} className="px-3 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"><ClipboardListIcon className="w-4 h-4 inline" /> Copy
+              <button onClick={handleCopy} className="px-3 py-1.5 text-xs bg-muted hover:bg-accent text-foreground rounded-lg transition-colors"><ClipboardListIcon className="w-4 h-4 inline" /> Copy
               </button>
               <button onClick={handleApply}
                 className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium rounded-lg transition-colors">
@@ -1073,7 +1073,7 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
           )}
 
           {tab === 'library' && !previewTemplate && (
-            <div className="flex-1 text-center text-[10px] text-gray-400">{PROMPT_TEMPLATES.length} templates có sẵn</div>
+            <div className="flex-1 text-center text-[10px] text-muted-foreground">{PROMPT_TEMPLATES.length} templates có sẵn</div>
           )}
         </div>
       </div>

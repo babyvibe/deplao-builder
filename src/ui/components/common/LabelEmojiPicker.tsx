@@ -44,15 +44,15 @@ export function LabelEmojiPicker({ value, onChange, onClose }: LabelEmojiPickerP
     : EMOJI_CATEGORIES;
 
   return (
-    <div ref={ref} className="bg-gray-800 border border-gray-600 rounded-xl shadow-2xl overflow-hidden w-80">
+    <div ref={ref} className="bg-card border border-input rounded-xl shadow-2xl overflow-hidden w-80">
       {/* Search */}
-      <div className="p-2 border-b border-gray-700">
+      <div className="p-2 border-b border-border">
         <input
           type="text"
           value={searchQuery}
           onChange={e => setSearchQuery(e.target.value)}
           placeholder="Tìm emoji..."
-          className="w-full bg-gray-700 text-white text-sm rounded-lg px-3 py-1.5 border border-gray-600 focus:border-blue-500 outline-none"
+          className="w-full bg-muted text-foreground text-sm rounded-lg px-3 py-1.5 border border-input focus:border-blue-500 outline-none"
         />
       </div>
 
@@ -60,13 +60,13 @@ export function LabelEmojiPicker({ value, onChange, onClose }: LabelEmojiPickerP
       <div className="max-h-64 overflow-y-auto p-2 space-y-3">
         {Object.entries(filteredCategories).map(([category, emojis]) => (
           <div key={category}>
-            <p className="text-[11px] text-gray-400 font-medium mb-1.5 px-1">{category}</p>
+            <p className="text-[11px] text-muted-foreground font-medium mb-1.5 px-1">{category}</p>
             <div className="grid grid-cols-8 gap-0.5">
               {emojis.map((emoji, idx) => (
                 <button
                   key={`${category}-${emoji}-${idx}`}
                   onClick={() => onChange(emoji)}
-                  className={`w-8 h-8 flex items-center justify-center text-lg rounded transition-colors hover:bg-gray-700 ${
+                  className={`w-8 h-8 flex items-center justify-center text-lg rounded transition-colors hover:bg-muted ${
                     value === emoji ? 'bg-blue-600/30 ring-1 ring-blue-500' : ''
                   }`}
                 >
@@ -77,13 +77,13 @@ export function LabelEmojiPicker({ value, onChange, onClose }: LabelEmojiPickerP
           </div>
         ))}
         {Object.values(filteredCategories).flat().length === 0 && (
-          <p className="text-center text-gray-400 text-sm py-4">Không tìm thấy emoji</p>
+          <p className="text-center text-muted-foreground text-sm py-4">Không tìm thấy emoji</p>
         )}
       </div>
 
       {/* Current selection */}
-      <div className="px-3 py-2 border-t border-gray-700 flex items-center gap-2 bg-gray-900/50">
-        <span className="text-gray-400 text-xs">Đã chọn:</span>
+      <div className="px-3 py-2 border-t border-border flex items-center gap-2 bg-card">
+        <span className="text-muted-foreground text-xs">Đã chọn:</span>
         <span className="text-2xl">{value || '🏷️'}</span>
       </div>
     </div>
@@ -152,17 +152,17 @@ export function KeyboardShortcutInput({ value, onChange, placeholder }: Keyboard
         onFocus={handleFocus}
         onBlur={handleBlur}
         placeholder={placeholder || 'Click để ghi phím tắt...'}
-        className={`w-full bg-gray-700 text-white text-sm rounded-lg px-3 py-2 border outline-none cursor-pointer ${
+        className={`w-full bg-muted text-foreground text-sm rounded-lg px-3 py-2 border outline-none cursor-pointer ${
           isRecording 
             ? 'border-blue-500 ring-2 ring-blue-500/30' 
-            : 'border-gray-600 focus:border-blue-500'
+            : 'border-input focus:border-blue-500'
         }`}
       />
       {value && (
         <button
           type="button"
           onClick={clearShortcut}
-          className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white p-1"
+          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-1"
           title="Xóa phím tắt"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

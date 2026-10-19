@@ -58,6 +58,8 @@ export interface CRMContact {
   gender?: number | null;
   /** DD/MM/YYYY format */
   birthday?: string | null;
+  /** Lần cuối tên/avatar được làm mới hàng loạt từ API (unix ms); 0/undefined = chưa bao giờ */
+  info_refreshed_at?: number;
 }
 
 export type CRMTabView = 'contacts' | 'campaigns' | 'history' | 'groups' | 'search' | 'requests' | 'scan' | 'scan_history' | 'scan_stats';

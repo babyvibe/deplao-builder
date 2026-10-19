@@ -251,7 +251,11 @@ class LibraryService {
     values.push(uuid);
 
     db.run(`UPDATE media_library_items SET ${sets.join(', ')} WHERE uuid = ?`, values);
-    EventBroadcaster.emit('library:itemUpdated', { uuid, ...params });
+    // zaloId = trang sở hữu item → chỉ nhân viên được giao trang đó nhận (relayAudience); trước đây event không có id
+    // tài khoản nên đổi tên / gắn thẻ đi tới MỌI nhân viên. Chỉ gửi các trường vừa sửa (không đẩy cả tham số IPC).
+    const owner = db.queryOne<{ owner_zalo_id: string }>('SELECT owner_zalo_id FROM media_library_items WHERE uuid = ?', [uuid]);
+    const { name, tags, folderId, isFavorite, altText } = params;
+    EventBroadcaster.emit('library:itemUpdated', { uuid, name, tags, folderId, isFavorite, altText, zaloId: String(owner?.owner_zalo_id || '') });
     return true;
   }
 

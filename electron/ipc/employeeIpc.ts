@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain } from 'electron';
 import EmployeeService from '../../src/services/employee/EmployeeService';
 import DatabaseService from '../../src/services/database/DatabaseService';
 import AppModeManager from '../../src/utils/AppModeManager';
@@ -51,7 +51,17 @@ export function registerEmployeeIpc(): void {
         employeeId: string; updates: { display_name?: string; avatar_url?: string; password?: string; is_active?: number; role?: string; group_id?: string | null };
     }) => {
         try {
-            return svc().updateEmployee(employeeId, updates);
+            const result = svc().updateEmployee(employeeId, updates);
+            if (result.success) {
+                // Khoá / đổi mật khẩu: EmployeeService đã thu hồi token — ngắt luôn phiên đang mở (báo lý do cho nhân viên)
+                const disabled = updates?.is_active !== undefined && !Number(updates.is_active);
+                if (disabled) {
+                    HttpRelayService.getInstance().terminateEmployeeSession(employeeId, 'Tài khoản đã bị vô hiệu hóa');
+                } else if (updates?.password) {
+                    HttpRelayService.getInstance().terminateEmployeeSession(employeeId, 'Mật khẩu đã được thay đổi — vui lòng đăng nhập lại');
+                }
+            }
+            return result;
         } catch (err: any) {
             return { success: false, error: err.message };
         }
@@ -59,8 +69,27 @@ export function registerEmployeeIpc(): void {
 
     ipcMain.handle('employee:delete', async (_e, { employeeId }: { employeeId: string }) => {
         try {
-            return svc().deleteEmployee(employeeId);
+            const result = svc().deleteEmployee(employeeId);
+            if (result.success) HttpRelayService.getInstance().terminateEmployeeSession(employeeId, 'Tài khoản đã bị xóa');
+            return result;
         } catch (err: any) {
+            return { success: false, error: err.message };
+        }
+    });
+
+    // ─── Đăng xuất tất cả nhân viên (chỉ máy Boss) ──────────────────────
+    // Đổi khoá ký token → mọi nhân viên (đang nối hay không) phải đăng nhập lại bằng mật khẩu.
+    ipcMain.handle('employee:logoutAll', async (e) => {
+        // Chỉ renderer của chính máy này — proxy cũ của nhân viên (/api/proxy/action) gọi handler với event = null
+        if (!e?.sender) return { success: false, error: 'Không được phép' };
+        try {
+            const relay = HttpRelayService.getInstance();
+            if (WorkspaceManager.getInstance().isActiveRemote() && !relay.isRunning()) {
+                return { success: false, error: 'Chỉ dùng trên máy quản lý (BOSS)' };
+            }
+            return relay.logoutAllEmployees();
+        } catch (err: any) {
+            Logger.error(`[employeeIpc] logoutAll error: ${err.message}`);
             return { success: false, error: err.message };
         }
     });
@@ -196,61 +225,8 @@ export function registerEmployeeIpc(): void {
     });
 
     // ─── HTTP Client (Employee side) ────────────────────────────────
-
-    ipcMain.handle('employee:connectToBoss', async (_e, { bossUrl, token }: { bossUrl: string; token: string }) => {
-        try {
-            AppModeManager.getInstance().setMode('employee');
-
-            // Extract employee_id from JWT payload (no verification needed - boss already verified)
-            try {
-                const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
-                if (payload.employee_id) {
-                    AppModeManager.getInstance().setEmployeeId(payload.employee_id);
-                }
-            } catch {}
-
-            // Workspace-aware: register connection under the active workspace ID
-            const activeWs = WorkspaceManager.getInstance().getActiveWorkspace();
-            const wsId = activeWs?.id || 'legacy';
-
-            const result = await HttpConnectionManager.getInstance().connect(wsId, bossUrl, token);
-
-            // Also update legacy singleton for backward compat with old callers
-            if (!result.success) {
-                AppModeManager.getInstance().setMode('standalone');
-                AppModeManager.getInstance().setEmployeeId(null);
-            }
-            return result;
-        } catch (err: any) {
-            return { success: false, error: err.message };
-        }
-    });
-
-    ipcMain.handle('employee:disconnectFromBoss', async () => {
-        try {
-            // Disconnect the active workspace's connection
-            const activeWs = WorkspaceManager.getInstance().getActiveWorkspace();
-            if (activeWs) {
-                HttpConnectionManager.getInstance().disconnect(activeWs.id);
-            }
-            // Also disconnect legacy singleton
-            HttpClientService.getInstance().disconnect();
-            AppModeManager.getInstance().setMode('standalone');
-            AppModeManager.getInstance().setEmployeeId(null);
-
-            // Notify renderer to update mode + reset employee store
-            try {
-                const win = BrowserWindow.getAllWindows()[0];
-                if (win && !win.isDestroyed()) {
-                    win.webContents.send('employee:modeChanged', { mode: 'standalone' });
-                }
-            } catch {}
-
-            return { success: true };
-        } catch (err: any) {
-            return { success: false, error: err.message };
-        }
-    });
+    // Kết nối / ngắt Boss đi qua remote workspace (workspace:loginRemote → workspace:connectRemote / disconnectRemote).
+    // employee:connectToBoss / disconnectFromBoss (kết nối dưới workspace đang active, không lưu gì) đã bỏ.
 
     ipcMain.handle('employee:getConnectionStatus', async () => {
         // Return status for the active workspace connection (or legacy singleton)
@@ -310,18 +286,20 @@ export function registerEmployeeIpc(): void {
 
     // ─── Employee Analytics (Advanced) ───────────────────────────────
 
-    ipcMain.handle('employee:analytics:comparison', async (_e, { sinceTs, untilTs }: { sinceTs: number; untilTs: number }) => {
+    // zaloIds (Reports account filter): only activity on these accounts; omitted = every account.
+    // Online hours come from login sessions, which are not per account.
+    ipcMain.handle('employee:analytics:comparison', async (_e, { sinceTs, untilTs, zaloIds }: { sinceTs: number; untilTs: number; zaloIds?: string[] }) => {
         try {
-            const data = DatabaseService.getInstance().getEmployeeComparison(sinceTs, untilTs);
+            const data = DatabaseService.getInstance().getEmployeeComparison(sinceTs, untilTs, Array.isArray(zaloIds) ? zaloIds.map(String) : undefined);
             return { success: true, data };
         } catch (err: any) {
             return { success: false, error: err.message, data: [] };
         }
     });
 
-    ipcMain.handle('employee:analytics:messageTimeline', async (_e, { sinceTs, untilTs }: { sinceTs: number; untilTs: number }) => {
+    ipcMain.handle('employee:analytics:messageTimeline', async (_e, { sinceTs, untilTs, zaloIds }: { sinceTs: number; untilTs: number; zaloIds?: string[] }) => {
         try {
-            const data = DatabaseService.getInstance().getEmployeeMessageTimeline(sinceTs, untilTs);
+            const data = DatabaseService.getInstance().getEmployeeMessageTimeline(sinceTs, untilTs, Array.isArray(zaloIds) ? zaloIds.map(String) : undefined);
             return { success: true, data };
         } catch (err: any) {
             return { success: false, error: err.message, data: [] };
@@ -337,23 +315,23 @@ export function registerEmployeeIpc(): void {
         }
     });
 
-    ipcMain.handle('employee:analytics:responseDistribution', async (_e, { sinceTs, untilTs }: { sinceTs: number; untilTs: number }) => {
+    ipcMain.handle('employee:analytics:responseDistribution', async (_e, { sinceTs, untilTs, zaloIds }: { sinceTs: number; untilTs: number; zaloIds?: string[] }) => {
         try {
-            const data = DatabaseService.getInstance().getEmployeeResponseDistribution(sinceTs, untilTs);
+            const data = DatabaseService.getInstance().getEmployeeResponseDistribution(sinceTs, untilTs, Array.isArray(zaloIds) ? zaloIds.map(String) : undefined);
             return { success: true, data };
         } catch (err: any) {
             return { success: false, error: err.message, data: [] };
         }
     });
 
-    ipcMain.handle('employee:analytics:hourlyActivity', async (_e, { sinceTs, untilTs }: { sinceTs: number; untilTs: number }) => {
+    ipcMain.handle('employee:analytics:hourlyActivity', async (_e, { sinceTs, untilTs, zaloIds }: { sinceTs: number; untilTs: number; zaloIds?: string[] }) => {
         try {
-            const data = DatabaseService.getInstance().getEmployeeHourlyActivity(sinceTs, untilTs);
+            const data = DatabaseService.getInstance().getEmployeeHourlyActivity(sinceTs, untilTs, Array.isArray(zaloIds) ? zaloIds.map(String) : undefined);
             return { success: true, data };
         } catch (err: any) {
             return { success: false, error: err.message, data: [] };
         }
     });
 
-    Logger.log('[employeeIpc] Registered 26 employee IPC channels');
+    Logger.log('[employeeIpc] Registered 27 employee IPC channels');
 }

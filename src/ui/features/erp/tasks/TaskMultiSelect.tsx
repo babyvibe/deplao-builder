@@ -57,21 +57,21 @@ export default function TaskMultiSelect({ options, value, onChange, placeholder,
       <button
         type="button"
         onClick={() => setOpen(v => !v)}
-        className="w-full min-h-[50px] flex flex-wrap items-center gap-1.5 bg-gray-900/70 border border-gray-600 rounded-xl px-3 py-2.5 text-sm text-left text-gray-100 shadow-sm hover:border-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+        className="w-full min-h-[50px] flex flex-wrap items-center gap-1.5 bg-card border border-input rounded-xl px-3 py-2.5 text-sm text-left text-foreground shadow-sm hover:border-border-strong focus:outline-none focus:ring-2 focus:ring-blue-500/20"
       >
         {selectedOptions.length > 0 ? selectedOptions.map(option => (
           <span key={option.value} className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-medium max-w-[150px] truncate ${toneStyle.badge}`}>
             {option.label}
           </span>
-        )) : <span className="text-gray-400 font-medium">{placeholder}</span>}
+        )) : <span className="text-muted-foreground font-medium">{placeholder}</span>}
         <span className={`ml-auto inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${toneStyle.count}`}>
           {selectedOptions.length} chọn
         </span>
-        <span className="text-sm text-gray-400">▾</span>
+        <span className="text-sm text-muted-foreground">▾</span>
       </button>
       {open && (
-        <div className="absolute z-20 mt-2 w-full rounded-xl border border-gray-600 bg-gray-800 shadow-2xl max-h-64 overflow-auto p-2.5">
-          <div className="px-1 pb-2 text-[11px] font-medium text-gray-400">
+        <div className="absolute z-20 mt-2 w-full rounded-xl border border-input bg-card shadow-2xl max-h-64 overflow-auto p-2.5">
+          <div className="px-1 pb-2 text-[11px] font-medium text-muted-foreground">
             {selectedOptions.length > 0 ? `Đã chọn ${selectedOptions.length} người` : placeholder}
           </div>
           {options.map(option => {
@@ -82,9 +82,9 @@ export default function TaskMultiSelect({ options, value, onChange, placeholder,
                 type="button"
                 onClick={() => toggleOption(option.value)}
                 data-checked={checked}
-                className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg border border-transparent hover:bg-gray-700/70 text-sm text-gray-100 text-left transition-colors ${toneStyle.row}`}
+                className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg border border-transparent hover:bg-muted/70 text-sm text-foreground text-left transition-colors ${toneStyle.row}`}
               >
-                <span className={`w-4 h-4 rounded border flex items-center justify-center text-[10px] font-bold ${checked ? toneStyle.checked : 'border-gray-500 bg-gray-900/50 text-transparent'}`}>
+                <span className={`w-4 h-4 rounded border flex items-center justify-center text-[10px] font-bold ${checked ? toneStyle.checked : 'border-border-strong bg-card text-transparent'}`}>
                   ✓
                 </span>
                 <span className="truncate font-medium">{option.label}</span>

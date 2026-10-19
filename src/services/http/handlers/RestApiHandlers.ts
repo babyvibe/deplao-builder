@@ -12,7 +12,12 @@
  */
 
 import DatabaseService from '../../database/DatabaseService';
-import ErpTaskService from '../../erp/ErpTaskService';
+import { clampMediaPageLimit, normalizeMediaCursor } from '../../database/mediaMessagesQuery';
+import { getCRMChannelDecision } from '../../crm/CRMChannelCapabilityService';
+import {
+  labelsVisibleToAccounts, maskProxyRow, ownedByAccounts, toConversationItem, toMessageItem,
+  workflowRowToDto, workflowVisibleToAccounts,
+} from '../employeeRestRead';
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -49,6 +54,58 @@ function error(msg: string, code?: string): JsonResponse {
   return { success: false, error: msg };
 }
 
+/**
+ * zaloIds of a multi-account analytics report (JSON array or "a,b"). Every one of them must be
+ * assigned to the employee — as for proxy actions — or the whole request is refused.
+ */
+function assignedAnalyticsAccounts(employee: RegisteredEmployee, raw: any): { ids: string[] } | { error: string } {
+  const list: any[] = Array.isArray(raw) ? raw : String(raw ?? '').split(',');
+  const ids = Array.from(new Set(list.map(id => String(id ?? '').trim()).filter(Boolean)));
+  if (ids.length === 0) return { error: 'Missing zaloIds' };
+  const assigned = new Set(employee.assigned_accounts || []);
+  if (ids.some(id => !assigned.has(id))) return { error: 'Không có quyền truy cập tài khoản này' };
+  return { ids };
+}
+
+/** Tài khoản được giao của nhân viên (chuỗi). */
+function assignedIds(employee: RegisteredEmployee): string[] {
+  return (employee.assigned_accounts || []).map(String);
+}
+
+/** limit trong [1, max], mặc định `fallback` (tham số REST luôn là chuỗi). */
+function clampLimit(raw: unknown, fallback: number, max: number): number {
+  const n = Math.floor(Number(raw));
+  return Math.min(Math.max(Number.isFinite(n) && n > 0 ? n : fallback, 1), max);
+}
+
+/**
+ * Dữ liệu khởi động của MỘT tài khoản (/api/boot → byAccount): trang hội thoại đầu, nhãn + gắn nhãn, tin nhắn nhanh,
+ * ghim, cờ (tắt tiếng / Khác / lưu trữ), cài đặt thông báo. Mỗi phần lỗi riêng → rỗng, không làm hỏng cả boot.
+ */
+function bootAccountData(zaloId: string): Record<string, any> {
+  const safe = <T,>(fn: () => T, fallback: T): T => { try { return fn() ?? fallback; } catch { return fallback; } };
+  const conversations = safe(() => (db().query<any>(
+    `SELECT * FROM contacts WHERE owner_zalo_id = ? ORDER BY last_message_time DESC LIMIT 50`, [zaloId],
+  ) || []).map(toConversationItem), [] as any[]);
+  const totalConversations = safe(() => Number((db().query<any>(
+    `SELECT COUNT(*) as cnt FROM contacts WHERE owner_zalo_id = ?`, [zaloId],
+  ))[0]?.cnt) || 0, 0);
+  const notifSettings = safe(() => {
+    const raw = db().getSetting(`notifSettings_${zaloId}`);
+    return raw ? JSON.parse(raw) : null;
+  }, null as any);
+  return {
+    conversations,
+    totalConversations,
+    labels: safe(() => db().getLocalLabels(zaloId), [] as any[]),
+    labelThreads: safe(() => db().getLocalLabelThreads(zaloId), [] as any[]),
+    quickMessages: safe(() => db().getLocalQuickMessages(zaloId), [] as any[]),
+    pinnedConversations: safe(() => db().getLocalPinnedConversations(zaloId), [] as string[]),
+    flags: safe(() => db().getContactsWithFlags(zaloId), [] as any[]),
+    notifSettings,
+  };
+}
+
 // ── Handlers ────────────────────────────────────────────────────────
 
 export const handlers = {
@@ -57,52 +114,25 @@ export const handlers = {
   // ═══════════════════════════════════════════════════════════════
 
   getBoot(employee: RegisteredEmployee, _params: any): JsonResponse {
-    const zaloIds = employee.assigned_accounts || [];
+    const zaloIds = assignedIds(employee);
     if (zaloIds.length === 0) return success({
       conversations: [], totalConversations: 0, accounts: [],
       labels: [], quickMessages: [], pinnedConversations: [],
-      settings: {}, drafts: [],
+      settings: {}, drafts: [], byAccount: {},
     });
 
+    // Dữ liệu khởi động của MỌI tài khoản được giao (trước đây chỉ tài khoản đầu tiên — nhân viên nhiều tài khoản
+    // thiếu dữ liệu tài khoản thứ hai). Các trường cấp trên (conversations, labels…) giữ = tài khoản đầu cho bản cũ.
+    const byAccount: Record<string, Record<string, any>> = {};
+    for (const zaloId of zaloIds) byAccount[zaloId] = bootAccountData(zaloId);
+
     const mainZaloId = zaloIds[0];
-
-    // Conversations — 50 đầu (SQL LIMIT, không load all)
-    const conversations = (db().query<any>(
-      `SELECT * FROM contacts WHERE owner_zalo_id = ? ORDER BY last_message_time DESC LIMIT 50`,
-      [mainZaloId]
-    ) || []).map((c: any) => ({
-      contact_id: c.contact_id,
-      owner_zalo_id: c.owner_zalo_id || '',
-      display_name: c.display_name || '',
-      avatar_url: c.avatar_url || '',
-      last_message: c.last_message || '',
-      last_message_time: c.last_message_time || 0,
-      unread_count: c.unread_count || 0,
-      is_group: c.is_group ? 1 : 0,
-      is_muted: c.is_muted ? 1 : 0,
-      contact_type: c.contact_type || 0,
-      phone: c.phone || '',
-      gender: c.gender ?? null,
-      birthday: c.birthday ?? null,
-      alias: c.alias || '',
-      is_friend: c.is_friend ? 1 : 0,
-    }));
-    const totalConversations = (db().query<any>(
-      `SELECT COUNT(*) as cnt FROM contacts WHERE owner_zalo_id = ?`,
-      [mainZaloId]
-    ))[0]?.cnt || 0;
-
-    // Labels
-    let labels: any[] = [];
-    try { labels = db().getLocalLabels(mainZaloId) || []; } catch {}
-
-    // Quick messages
-    let quickMessages: any[] = [];
-    try { quickMessages = db().getLocalQuickMessages(mainZaloId) || []; } catch {}
-
-    // Pinned conversations
-    let pinnedConversations: string[] = [];
-    try { pinnedConversations = db().getLocalPinnedConversations(mainZaloId) || []; } catch {}
+    const main = byAccount[mainZaloId];
+    const conversations = main.conversations;
+    const totalConversations = main.totalConversations;
+    const labels: any[] = main.labels;
+    const quickMessages: any[] = main.quickMessages;
+    const pinnedConversations: string[] = main.pinnedConversations;
 
     // Drafts
     let drafts: any[] = [];
@@ -116,10 +146,15 @@ export const handlers = {
 
     // Accounts info (safe columns only)
     const accountsData = zaloIds.map(zaloId => {
+      let acc: any;
       try {
         const rows = db().query<any>('SELECT zalo_id, full_name, avatar_url, phone, is_active, listener_active FROM accounts WHERE zalo_id=?', [zaloId]);
-        return rows[0] || { zalo_id: zaloId, full_name: '', avatar_url: '', phone: '', is_active: 1, listener_active: 0 };
-      } catch { return { zalo_id: zaloId, full_name: '', avatar_url: '', phone: '', is_active: 1, listener_active: 0 }; }
+        acc = rows[0] || { zalo_id: zaloId, full_name: '', avatar_url: '', phone: '', is_active: 1, listener_active: 0 };
+      } catch { acc = { zalo_id: zaloId, full_name: '', avatar_url: '', phone: '', is_active: 1, listener_active: 0 }; }
+      // Zalo My Documents (hội thoại có sẵn của Zalo)
+      let send2meId = '';
+      try { send2meId = db().getMyDocumentsId(zaloId) || ''; } catch {}
+      return { ...acc, send2me_id: send2meId };
     });
 
     return success({
@@ -130,6 +165,7 @@ export const handlers = {
       quickMessages,
       pinnedConversations,
       drafts,
+      byAccount,
       serverTime: Date.now(),
     });
   },
@@ -142,9 +178,10 @@ export const handlers = {
     const zaloId = params.zaloId || employee.assigned_accounts[0];
     if (!zaloId) return error('Missing zaloId');
 
-    const limit = Math.min(parseInt(params.limit) || 50, 200);
-    const offset = parseInt(params.offset) || 0;
-    const search = params.search || '';
+    // Trần 500 như nhánh IPC (DataAccessor.getConversations): CRM / nhóm xin 500–999 — trước đây nhân viên chỉ nhận 200
+    const limit = clampLimit(params.limit, 50, 500);
+    const offset = Math.max(parseInt(params.offset) || 0, 0);
+    const search = params.search !== undefined && params.search !== null ? String(params.search) : '';
 
     // Build query với SQL LIMIT/OFFSET — không load all
     let whereClause = 'owner_zalo_id = ?';
@@ -157,6 +194,16 @@ export const handlers = {
       queryParams.push(q, q, q);
       countParams.push(q, q, q);
     }
+    // ids=a,b,c: chỉ các hội thoại này (hội thoại ghim nằm ở trang sau — ConversationList tải bù), tối đa 200
+    if (params.ids !== undefined && params.ids !== null && params.ids !== '') {
+      const ids = [...new Set((Array.isArray(params.ids) ? params.ids : String(params.ids).split(','))
+        .map((id: any) => String(id).trim()).filter(Boolean))].slice(0, 200);
+      if (ids.length === 0) return success({ items: [], total: 0 }, { page: 1, limit, total: 0, hasMore: false });
+      const marks = ids.map(() => '?').join(', ');
+      whereClause += ` AND contact_id IN (${marks})`;
+      queryParams.push(...ids);
+      countParams.push(...ids);
+    }
 
     const total = (db().query<any>(
       `SELECT COUNT(*) as cnt FROM contacts WHERE ${whereClause}`, countParams
@@ -167,25 +214,8 @@ export const handlers = {
       [...queryParams, limit, offset]
     ) || [];
 
-    const items = page.map((c: any) => ({
-      contact_id: c.contact_id,
-      owner_zalo_id: c.owner_zalo_id || '',
-      display_name: c.display_name || '',
-      avatar_url: c.avatar_url || '',
-      last_message: c.last_message || '',
-      last_message_time: c.last_message_time || 0,
-      last_message_type: c.last_message_type || 'text',
-      unread_count: c.unread_count || 0,
-      is_group: c.is_group ? 1 : 0,
-      is_muted: c.is_muted ? 1 : 0,
-      is_pinned: false, // client-side sẽ check
-      is_friend: c.is_friend ? 1 : 0,
-      contact_type: c.contact_type || 0,
-      alias: c.alias || '',
-      phone: c.phone || '',
-      gender: c.gender ?? null,
-      birthday: c.birthday ?? null,
-    }));
+    // Dòng đầy đủ như IPC (channel, is_in_others, is_forum, telegram_*…) — xem toConversationItem
+    const items = page.map(toConversationItem);
 
     return success({ items, total }, {
       page: Math.floor(offset / limit) + 1,
@@ -239,8 +269,9 @@ export const handlers = {
     const zaloId = params.zaloId || employee.assigned_accounts[0];
     if (!zaloId || !params.threadId) return error('Missing zaloId or threadId');
 
-    const limit = Math.min(parseInt(params.limit) || 50, 100);
-    const offset = parseInt(params.offset) || 0;
+    // Trần 200 như IPC db:getMessages (ChatHeader xin 200 — trước đây nhân viên chỉ nhận 100)
+    const limit = clampLimit(params.limit, 50, 200);
+    const offset = Math.max(parseInt(params.offset) || 0, 0);
     const before = params.before ? parseInt(params.before) : undefined;
 
     // Nếu có before → cursor-based, nếu không → offset-based
@@ -250,26 +281,9 @@ export const handlers = {
 
     console.log(`[RestApi] getMessages: zaloId=${zaloId} threadId=${params.threadId} limit=${limit} → ${messages.length} msgs`);
 
-    const items = messages.map((m: any) => ({
-      msg_id: m.msg_id,
-      cli_msg_id: m.cli_msg_id,
-      thread_id: m.thread_id,
-      owner_zalo_id: m.owner_zalo_id,
-      msg_type: m.msg_type,
-      content: m.content,
-      timestamp: m.timestamp,
-      is_sent: m.is_sent ? 1 : 0,
-      is_recalled: m.is_recalled ? 1 : 0,
-      is_self: m.is_self ? 1 : 0,
-      sender_id: m.sender_id || '',
-      sender_name: m.sender_name || '',
-      reactions: m.reactions || null,
-      attachments: m.attachments || null,
-      local_paths: m.local_paths || null,
-      handled_by_employee: m.handled_by_employee || null,
-      quote_data: m.quote_data || null,
-      topic_id: m.topic_id || null,
-    }));
+    // Dòng đầy đủ như IPC (channel, reply_to_id, status, is_edited…) — trước đây thiếu → trích dẫn / album / sửa tin
+    // hiển thị khác chủ (xem toMessageItem)
+    const items = messages.map(toMessageItem);
 
     return success({ items, total: items.length }, {
       page: 1,
@@ -281,11 +295,12 @@ export const handlers = {
 
   getMessagesAround(employee: RegisteredEmployee, params: any): JsonResponse {
     const zaloId = params.zaloId || employee.assigned_accounts[0];
-    if (!zaloId || !params.threadId || !params.msgId) return error('Missing params');
+    const rawTs = params.timestamp ?? params.msgId; // DataAccessor gửi cả hai (msgId = timestamp, tên cũ)
+    if (!zaloId || !params.threadId || !rawTs) return error('Missing params');
 
-    // Lấy timestamp từ msgId, load 20 messages xung quanh
-    const timestamp = parseInt(params.msgId) || Date.now();
-    const limit = Math.min(parseInt(params.limit) || 20, 50);
+    // Tin quanh mốc timestamp — mặc định 50, trần 200 như IPC (trước đây 20 / trần 50: "nhảy tới tin" thiếu ngữ cảnh)
+    const timestamp = parseInt(rawTs) || Date.now();
+    const limit = clampLimit(params.limit, 50, 200);
 
     const around = db().getMessagesAround(zaloId, params.threadId, timestamp, limit);
     return success({ items: around || [] });
@@ -313,12 +328,17 @@ export const handlers = {
 
     const limit = Math.min(parseInt(params.limit) || 50, 200);
     const offset = parseInt(params.offset) || 0;
+    // beforeTs/afterTs (+ beforeMsgId/afterMsgId): keyset page for the image viewer gallery (newest-first).
+    // `cursor: true` in the reply tells the employee app the cursor was applied (older Boss builds ignore it).
+    const cursor = params.threadId ? normalizeMediaCursor(params) : null;
 
-    const messages = params.threadId
-        ? db().getMediaMessages(zaloId, params.threadId, limit, offset)
-        : db().getAllLocalMediaMessages(zaloId);
+    const messages = !params.threadId
+        ? db().getAllLocalMediaMessages(zaloId)
+        : cursor
+            ? db().getMediaMessages(zaloId, params.threadId, clampMediaPageLimit(params.limit), 0, cursor)
+            : db().getMediaMessages(zaloId, params.threadId, limit, offset);
 
-    return success({ items: messages || [] }, {
+    return success(cursor ? { items: messages || [], cursor: true } : { items: messages || [] }, {
       page: Math.floor(offset / limit) + 1,
       limit,
       total: messages?.length || 0,
@@ -340,23 +360,54 @@ export const handlers = {
 
   searchMessages(employee: RegisteredEmployee, params: any): JsonResponse {
     const zaloId = params.zaloId || employee.assigned_accounts[0];
-    if (!zaloId || !params.q) return error('Missing zaloId or query');
+    // DataAccessor gửi `query` (cùng tên tham số IPC db:searchMessages); bản cũ gửi `q`. Trước đây chỉ đọc `q` →
+    // tìm tin của nhân viên luôn lỗi "Missing zaloId or query".
+    const raw = params.query ?? params.q;
+    if (!zaloId || raw === undefined || raw === null) return error('Missing zaloId or query');
 
-    const query = String(params.q).trim();
+    const query = String(raw).trim();
     if (!query) return success({ items: [], total: 0 });
 
-    const limit = Math.min(parseInt(params.limit) || 50, 100);
+    // Như IPC: tối đa 100 dòng của DB (người gọi lọc theo hội thoại rồi mới cắt)
+    const limit = clampLimit(params.limit, 100, 100);
     const messages = db().searchMessages(zaloId, query);
 
+    // Dòng tin đầy đủ như IPC (`content` để lọc / hiển thị, `timestamp` để nhảy tới tin) + thread_name/snippet cũ
     const items = (messages || []).slice(0, limit).map((m: any) => ({
-      msg_id: m.msg_id,
-      thread_id: m.thread_id,
+      ...m,
       thread_name: m.thread_name || m.thread_id || '',
       snippet: extractSnippet(m.content, query),
-      timestamp: m.timestamp,
     }));
 
     return success({ items, total: items.length });
+  },
+
+  /**
+   * Ô chọn liên hệ (workflow, AI workflow): tìm không dấu + lọc loại + phân trang — như IPC db:searchContactsForPicker
+   * (trước đây nhân viên nhận stub rỗng). Bắt buộc zaloId (không đoán tài khoản đầu tiên).
+   */
+  searchContactsForPicker(employee: RegisteredEmployee, params: any): JsonResponse {
+    const zaloId = params.zaloId ? String(params.zaloId) : '';
+    if (!zaloId) return error('Missing zaloId');
+    const ids = Array.isArray(params.ids)
+      ? params.ids.map(String)
+      : (params.ids ? String(params.ids).split(',').map((s: string) => s.trim()).filter(Boolean) : undefined);
+    const result = db().searchContactsForPicker(zaloId, {
+      search: params.search !== undefined && params.search !== null ? String(params.search) : undefined,
+      type: params.type === 'user' || params.type === 'group' ? params.type : 'all',
+      limit: params.limit !== undefined ? Number(params.limit) : undefined,
+      offset: params.offset !== undefined ? Number(params.offset) : undefined,
+      ids,
+    });
+    return success(result || { items: [], total: 0, counts: { all: 0, user: 0, group: 0 } });
+  },
+
+  /** Liên hệ theo số điện thoại (gợi ý danh thiếp khi gõ số) — như IPC db:searchContactByPhone; null = không có. */
+  searchContactByPhone(employee: RegisteredEmployee, params: any): JsonResponse {
+    const zaloId = params.zaloId ? String(params.zaloId) : '';
+    const phone = String(params.phone ?? '').trim();
+    if (!zaloId || !phone) return error('Missing zaloId or phone');
+    return success(db().searchContactByPhone(zaloId, phone) || null);
   },
 
   // ═══════════════════════════════════════════════════════════════
@@ -376,11 +427,8 @@ export const handlers = {
     const zaloId = params.zaloId || employee.assigned_accounts[0];
     if (!zaloId || !params.userId) return error('Missing zaloId or userId');
     try {
-      const row = db().queryOne<any>(
-        `SELECT user_id FROM friends WHERE owner_zalo_id = ? AND user_id = ?`,
-        [zaloId, params.userId]
-      );
-      return success({ isFriend: !!row });
+      // Cùng quy tắc IPC db:isFriend: bảng friends, rồi cờ contacts.is_friend (danh sách bạn chưa đồng bộ)
+      return success({ isFriend: !!db().checkIsFriend(String(zaloId), String(params.userId)) });
     } catch {
       return success({ isFriend: false });
     }
@@ -395,13 +443,15 @@ export const handlers = {
     if (!zaloId) return error('Missing zaloId');
 
     const direction = params.direction === 'sent' ? 'sent' : 'received';
-    const limit = Math.min(parseInt(params.limit) || 50, 200);
-    const offset = parseInt(params.offset) || 0;
-
     const all = db().getFriendRequests(zaloId, direction) || [];
     const total = all.length;
-    const items = all.slice(offset, offset + limit);
-    return success({ items, total });
+    // Như IPC: trả ĐỦ danh sách (trước đây cắt 50 → nhân viên thấy tối đa 50 lời mời, số đếm sai); chỉ cắt trang khi
+    // người gọi truyền limit
+    const paged = params.limit !== undefined && params.limit !== '';
+    const offset = Math.max(parseInt(params.offset) || 0, 0);
+    const items = paged ? all.slice(offset, offset + clampLimit(params.limit, 50, 500)) : all;
+    const lastFetched = db().getFriendRequestsLastFetched(zaloId, direction) || 0;
+    return success({ items, total, lastFetched });
   },
 
   // ═══════════════════════════════════════════════════════════════
@@ -414,6 +464,20 @@ export const handlers = {
 
     const members = db().getGroupMembers(zaloId, params.groupId) || [];
     return success({ items: members });
+  },
+
+  /** Như IPC db:getGroupMembersPage: một trang thành viên + tổng, tìm theo `query`. */
+  getGroupMembersPage(employee: RegisteredEmployee, params: any): JsonResponse {
+    const zaloId = params.zaloId || employee.assigned_accounts[0];
+    if (!zaloId || !params.groupId) return error('Missing zaloId or groupId');
+
+    const page = db().getGroupMembersPage(zaloId, params.groupId, {
+      query: params.query || '',
+      limit: params.limit !== undefined && params.limit !== '' ? Number(params.limit) : undefined,
+      offset: params.offset !== undefined && params.offset !== '' ? Number(params.offset) : undefined,
+      ownerRole: params.ownerRole !== undefined && params.ownerRole !== '' ? Number(params.ownerRole) : undefined,
+    });
+    return success({ items: page.members, total: page.total });
   },
 
   getAllGroupMembers(employee: RegisteredEmployee, params: any): JsonResponse {
@@ -444,6 +508,8 @@ export const handlers = {
     const zaloId = params.zaloId || employee.assigned_accounts[0];
     if (!zaloId) return error('Missing zaloId');
 
+    // Như IPC crm:getCampaigns: kênh không hỗ trợ chiến dịch → danh sách rỗng
+    if (!getCRMChannelDecision(String(zaloId), 'campaign').allowed) return success({ items: [] });
     const campaigns = db().getCRMCampaigns(zaloId) || [];
     return success({ items: campaigns });
   },
@@ -453,9 +519,11 @@ export const handlers = {
   // ═══════════════════════════════════════════════════════════════
 
   getLabels(employee: RegisteredEmployee, params: any): JsonResponse {
-    const zaloId = params.zaloId || employee.assigned_accounts[0];
-    const labels = db().getLocalLabels(zaloId) || [];
-    return success({ items: labels });
+    const zaloId = params.zaloId ? String(params.zaloId) : '';
+    if (zaloId) return success({ items: db().getLocalLabels(zaloId) || [] });
+    // Không truyền tài khoản (Cài đặt → Nhãn, workflow): nhãn chung + nhãn của MỌI tài khoản được giao — nhánh IPC trả
+    // mọi nhãn của máy; trước đây Boss trả nhãn của tài khoản được giao ĐẦU TIÊN (thiếu nhãn tài khoản thứ hai)
+    return success({ items: labelsVisibleToAccounts(db().getLocalLabels() || [], assignedIds(employee)) });
   },
 
   getLabelThreads(employee: RegisteredEmployee, params: any): JsonResponse {
@@ -532,6 +600,40 @@ export const handlers = {
   },
 
   // ═══════════════════════════════════════════════════════════════
+  // TỰ ĐỘNG ĐÁNH DẤU ĐÃ ĐỌC
+  // ═══════════════════════════════════════════════════════════════
+
+  getUnreadConversations(employee: RegisteredEmployee, params: any): JsonResponse {
+    const zaloId = String(params.zaloId || employee.assigned_accounts[0] || '');
+    if (!zaloId || !(employee.assigned_accounts || []).map(String).includes(zaloId)) return error('Không có quyền truy cập tài khoản này');
+    const number = (value: unknown) => (value === undefined || value === null || value === '' ? undefined : Number(value));
+    const items = db().getUnreadConversations(zaloId, {
+      from: number(params.from),
+      to: number(params.to),
+      includeOthers: params.includeOthers === true || params.includeOthers === 'true',
+      channel: params.channel ? String(params.channel) : undefined,
+    });
+    return success({ items });
+  },
+
+  // ═══════════════════════════════════════════════════════════════
+  // STARRED MESSAGES ("Tin đánh dấu")
+  // ═══════════════════════════════════════════════════════════════
+
+  getStarredMessages(employee: RegisteredEmployee, params: any): JsonResponse {
+    const assigned = new Set((employee.assigned_accounts || []).map(String));
+    const requested: string[] = Array.isArray(params.zaloIds) && params.zaloIds.length
+      ? params.zaloIds.map(String)
+      : [String(params.zaloId || employee.assigned_accounts[0] || '')];
+    const zaloIds = requested.filter(id => id && assigned.has(id));
+    if (!zaloIds.length) return error('Không có quyền truy cập tài khoản này');
+    if (params.mode === 'keys') return success({ items: db().getStarredMessageKeys(zaloIds[0]) });
+    const limit = Math.max(1, Math.min(200, Number(params.limit) || 50));
+    const rows = db().getStarredMessages(zaloIds, limit + 1, Math.max(0, Number(params.offset) || 0));
+    return success({ items: rows.slice(0, limit), hasMore: rows.length > limit });
+  },
+
+  // ═══════════════════════════════════════════════════════════════
   // PINNED MESSAGES
   // ═══════════════════════════════════════════════════════════════
 
@@ -593,8 +695,9 @@ export const handlers = {
   // PROXIES
   // ═══════════════════════════════════════════════════════════════
 
+  // Mật khẩu proxy không bao giờ rời máy Boss (trước đây trả nguyên dòng cho mọi nhân viên)
   getProxies(employee: RegisteredEmployee, _params: any): JsonResponse {
-    const proxies = db().getProxies() || [];
+    const proxies = (db().getProxies() || []).map(maskProxyRow);
     return success({ items: proxies });
   },
 
@@ -602,7 +705,7 @@ export const handlers = {
     const id = parseInt(params.id) || 0;
     if (!id) return error('Missing proxy id');
     const proxy = db().getProxyById(id);
-    return success(proxy || null);
+    return success(proxy ? maskProxyRow(proxy) : null);
   },
 
   // ═══════════════════════════════════════════════════════════════
@@ -636,8 +739,10 @@ export const handlers = {
 
   getKeywordStickersHandler(employee: RegisteredEmployee, params: any): JsonResponse {
     if (!params.keyword) return error('Missing keyword');
-    const stickerIds = db().getKeywordStickers(params.keyword);
-    return success({ stickerIds: stickerIds || [] });
+    const stickerIds = db().getKeywordStickers(String(params.keyword));
+    // null = từ khoá CHƯA có trong cache (người gọi hỏi API), [] = đã tìm, không có sticker — như IPC. Trước đây null
+    // thành [] → gợi ý sticker của nhân viên không bao giờ gọi API cho từ khoá mới.
+    return success({ stickerIds: Array.isArray(stickerIds) ? stickerIds : null });
   },
 
   getCachedPackSummariesHandler(employee: RegisteredEmployee, _params: any): JsonResponse {
@@ -667,6 +772,12 @@ export const handlers = {
   getCampaignContactsHandler(employee: RegisteredEmployee, params: any): JsonResponse {
     const id = parseInt(params.campaignId) || 0;
     if (!id) return error('Missing campaignId');
+    // Chỉ có campaignId (không có tham số tài khoản → checkEmployeeAccess không chặn được): chiến dịch phải thuộc
+    // tài khoản được giao. Không phân biệt "không có" với "không được giao".
+    const campaign = db().getCRMCampaign(id);
+    if (!campaign || !assignedIds(employee).includes(String(campaign.owner_zalo_id))) {
+      return error('Không tìm thấy chiến dịch');
+    }
     const contacts = db().getCampaignContacts(id) || [];
     return success({ items: contacts });
   },
@@ -674,6 +785,8 @@ export const handlers = {
   getSendLogHandler(employee: RegisteredEmployee, params: any): JsonResponse {
     const zaloId = params.zaloId || employee.assigned_accounts[0];
     if (!zaloId) return error('Missing zaloId');
+    // Như IPC crm:getSendLog: kênh không có lịch sử CRM → rỗng
+    if (!getCRMChannelDecision(String(zaloId), 'history').allowed) return success({ items: [] });
     const logs = db().getSendLog(zaloId, params.opts || {}) || [];
     return success({ items: logs });
   },
@@ -681,10 +794,10 @@ export const handlers = {
   getQueueStatusHandler(employee: RegisteredEmployee, params: any): JsonResponse {
     const zaloId = params.zaloId || employee.assigned_accounts[0];
     if (!zaloId) return error('Missing zaloId');
-    // CRMQueueService quản lý queue status — query trực tiếp từ app_settings
-    const queueData = db().getSetting(`queue_status_${zaloId}`);
-    const status = queueData ? JSON.parse(queueData) : { running: false, tokens: 60 };
-    return success(status);
+    // Trạng thái hàng đợi sống trong CRMQueueService (như IPC crm:getQueueStatus). Trước đây đọc app_settings
+    // `queue_status_<id>` — khoá không ai ghi → nhân viên luôn thấy "đang dừng".
+    const CRMQueueService = require('../../crm/CRMQueueService').default;
+    return success(CRMQueueService.getInstance().getStatus(String(zaloId)));
   },
 
   getCampaignStatsHandler(employee: RegisteredEmployee, params: any): JsonResponse {
@@ -726,7 +839,8 @@ export const handlers = {
   // ═══════════════════════════════════════════════════════════════
 
   getAllQuickMessagesHandler(employee: RegisteredEmployee, _params: any): JsonResponse {
-    const items = db().getAllLocalQuickMessages() || [];
+    // Chỉ tin nhắn nhanh của tài khoản được giao (trước đây trả của MỌI tài khoản trên máy Boss)
+    const items = ownedByAccounts(db().getAllLocalQuickMessages() || [], assignedIds(employee));
     return success({ items });
   },
 
@@ -837,6 +951,17 @@ export const handlers = {
     return success(data);
   },
 
+  /** Several accounts in one query (Reports multi-select): a workflow shared by them counts once. */
+  getWorkflowAnalyticsMulti(employee: RegisteredEmployee, params: any): JsonResponse {
+    const accounts = assignedAnalyticsAccounts(employee, params.zaloIds);
+    if ('error' in accounts) return error(accounts.error);
+
+    const data = db().getWorkflowAnalytics(
+      accounts.ids, parseInt(params.sinceTs) || 0, parseInt(params.untilTs) || Date.now()
+    );
+    return success(data);
+  },
+
   getAIAnalytics(employee: RegisteredEmployee, params: any): JsonResponse {
     const data = db().getAIAnalytics(
       parseInt(params.sinceTs) || 0, parseInt(params.untilTs) || Date.now()
@@ -850,6 +975,18 @@ export const handlers = {
 
     const data = db().getResponseTimeStats(
       zaloId, parseInt(params.sinceTs) || 0, parseInt(params.untilTs) || Date.now(),
+      params.threadType !== undefined ? parseInt(params.threadType) : undefined
+    );
+    return success(data);
+  },
+
+  /** Several accounts in one query (Reports multi-select): median / min / max over all their replies. */
+  getResponseTimeMulti(employee: RegisteredEmployee, params: any): JsonResponse {
+    const accounts = assignedAnalyticsAccounts(employee, params.zaloIds);
+    if ('error' in accounts) return error(accounts.error);
+
+    const data = db().getResponseTimeStats(
+      accounts.ids, parseInt(params.sinceTs) || 0, parseInt(params.untilTs) || Date.now(),
       params.threadType !== undefined ? parseInt(params.threadType) : undefined
     );
     return success(data);
@@ -869,20 +1006,27 @@ export const handlers = {
   // WORKFLOWS
   // ═══════════════════════════════════════════════════════════════
 
+  // Hình dạng `Workflow` như IPC workflow:list (pageIds, nodes/edges đã parse, enabled boolean — trước đây trả dòng thô
+  // nodes_json/page_ids) và chỉ workflow chung hoặc gắn tài khoản được giao (cùng quy tắc nhánh nhân viên của workflowIpc)
   getWorkflows(employee: RegisteredEmployee, _params: any): JsonResponse {
-    const workflows = db().getWorkflows() || [];
+    const assigned = assignedIds(employee);
+    const workflows = (db().getWorkflows() || []).map(workflowRowToDto).filter(wf => workflowVisibleToAccounts(wf, assigned));
     return success({ items: workflows });
   },
 
   getWorkflowById(employee: RegisteredEmployee, params: any): JsonResponse {
     if (!params.id) return error('Missing workflow id');
-    const wf = db().getWorkflowById(params.id);
-    return success(wf || null);
+    const row = db().getWorkflowById(params.id);
+    const wf = row ? workflowRowToDto(row) : null;
+    return success(wf && workflowVisibleToAccounts(wf, assignedIds(employee)) ? wf : null);
   },
 
   getWorkflowRunLogs(employee: RegisteredEmployee, params: any): JsonResponse {
     const workflowId = params.workflowId || params.id;
     if (!workflowId) return error('Missing workflow id');
+    // Nhật ký chạy chứa nội dung tin của trang gắn workflow: chỉ workflow nhân viên được thấy (như getWorkflows)
+    const row = db().getWorkflowById(workflowId);
+    if (!row || !workflowVisibleToAccounts(workflowRowToDto(row), assignedIds(employee))) return error('Không tìm thấy workflow');
     const limit = Math.min(parseInt(params.limit) || 50, 200);
     const logs = db().getWorkflowRunLogs(workflowId, limit) || [];
     return success({ items: logs });
@@ -901,8 +1045,10 @@ export const handlers = {
   // ═══════════════════════════════════════════════════════════════
 
   getIntegrations(employee: RegisteredEmployee, _params: any): JsonResponse {
-    const integrations = db().query<any>('SELECT * FROM integrations ORDER BY name ASC') || [];
-    return success({ items: integrations });
+    // Như IPC integration:list: cấu hình KHÔNG kèm thông tin xác thực + cổng webhook. Trước đây trả dòng thô
+    // (credentials_encrypted — JSON thường khi máy không có safeStorage; settings là chuỗi; enabled là số).
+    const { IntegrationRegistry } = require('../../integrations/IntegrationRegistry');
+    return success({ items: IntegrationRegistry.listConfigs(), webhookPort: IntegrationRegistry.getWebhookPort() });
   },
 
   // ═══════════════════════════════════════════════════════════════
@@ -972,245 +1118,7 @@ export const handlers = {
     return success(result);
   },
 
-  // ═══════════════════════════════════════════════════════════════
-  // ERP TASKS — Employee mode REST API
-  // ═══════════════════════════════════════════════════════════════
-
-  getErpProjects(_employee: RegisteredEmployee, params: any): JsonResponse {
-    const svc = ErpTaskService.getInstance();
-    const projects = svc.listProjects({ archived: !!params?.archived });
-    return success({ projects });
-  },
-
-  getErpTasks(employee: RegisteredEmployee, params: any): JsonResponse {
-    const svc = ErpTaskService.getInstance();
-    const filter: any = {};
-    if (params.projectId) filter.projectId = params.projectId;
-    if (params.assigneeId) filter.assigneeId = params.assigneeId;
-    if (params.priority) filter.priority = params.priority;
-    if (params.status) filter.status = params.status;
-    if (params.search) filter.search = params.search;
-    if (params.archived !== undefined) filter.archived = params.archived === 'true' || params.archived === true;
-    if (params.parentTaskId !== undefined) filter.parentTaskId = params.parentTaskId;
-    if (params.limit) filter.limit = parseInt(params.limit);
-    if (params.offset) filter.offset = parseInt(params.offset);
-    if (params.dueRange) {
-      try {
-        filter.dueRange = typeof params.dueRange === 'string' ? JSON.parse(params.dueRange) : params.dueRange;
-      } catch {}
-    }
-
-    // Employee chỉ thấy task mình liên quan: assignee, watcher, hoặc reporter
-    const { erpCan } = require('../../../services/erp/permissions');
-    let erpRole = 'member';
-    try {
-      const profile = db().queryOne<any>(`SELECT erp_role FROM erp_employee_profiles WHERE employee_id = ?`, [employee.employee_id]);
-      if (profile?.erp_role) erpRole = profile.erp_role;
-    } catch {}
-    const canViewAll = erpCan(erpRole, 'task.edit_any'); // owner, admin, manager
-    if (!canViewAll) {
-      filter._viewerEmployeeId = employee.employee_id;
-    }
-
-    const tasks = svc.listTasks(filter);
-    return success({ tasks });
-  },
-
-  getErpTaskDetail(employee: RegisteredEmployee, params: any): JsonResponse {
-    if (!params.id) return error('Missing task id');
-    const svc = ErpTaskService.getInstance();
-    const task = svc.getTaskDetail(params.id);
-    if (!task) return error('Không tìm thấy task');
-
-    // Permission: employee chỉ xem task mình liên quan
-    const { erpCan } = require('../../../services/erp/permissions');
-    let erpRole = 'member';
-    try {
-      const profile = db().queryOne<any>(`SELECT erp_role FROM erp_employee_profiles WHERE employee_id = ?`, [employee.employee_id]);
-      if (profile?.erp_role) erpRole = profile.erp_role;
-    } catch {}
-    const canViewAll = erpCan(erpRole, 'task.edit_any');
-    if (!canViewAll) {
-      const isReporter = task.reporter_id === employee.employee_id;
-      const isAssignee = task.assignees?.includes(employee.employee_id);
-      const isWatcher = task.watchers?.includes(employee.employee_id);
-      if (!isReporter && !isAssignee && !isWatcher) {
-        return error('Không có quyền xem task này');
-      }
-    }
-
-    return success({ task });
-  },
-
-  getErpMyInbox(employee: RegisteredEmployee, params: any): JsonResponse {
-    const svc = ErpTaskService.getInstance();
-    const filter = params?.filter || 'week';
-    // Boss/admin: xem tất cả tasks, employee: chỉ xem task liên quan
-    const { erpCan } = require('../../../services/erp/permissions');
-    let erpRole = 'member';
-    try {
-      const profile = db().queryOne<any>(`SELECT erp_role FROM erp_employee_profiles WHERE employee_id = ?`, [employee.employee_id]);
-      if (profile?.erp_role) erpRole = profile.erp_role;
-    } catch {}
-    const viewAll = erpCan(erpRole, 'task.edit_any');
-    const tasks = svc.getMyInbox(employee.employee_id, filter, viewAll);
-    return success({ tasks });
-  },
-
-  // ── ERP Task WRITE operations ──
-
-  createErpTask(employee: RegisteredEmployee, params: any): JsonResponse {
-    if (!params?.title) return error('Missing task title');
-    const svc = ErpTaskService.getInstance();
-    const task = svc.createTask(params, employee.employee_id);
-    return success({ task });
-  },
-
-  updateErpTask(employee: RegisteredEmployee, params: any): JsonResponse {
-    if (!params?.id) return error('Missing task id');
-    const svc = ErpTaskService.getInstance();
-    const task = svc.updateTask(params.id, params.patch || {}, employee.employee_id);
-    return success({ task });
-  },
-
-  updateErpTaskStatus(employee: RegisteredEmployee, params: any): JsonResponse {
-    if (!params?.id || !params?.status) return error('Missing task id or status');
-    const svc = ErpTaskService.getInstance();
-    const task = svc.updateTask(params.id, { status: params.status }, employee.employee_id);
-    return success({ task });
-  },
-
-  deleteErpTask(employee: RegisteredEmployee, params: any): JsonResponse {
-    if (!params?.id) return error('Missing task id');
-    const svc = ErpTaskService.getInstance();
-    // Permission: chỉ reporter hoặc admin mới được xóa
-    const task = svc.getTaskDetail(params.id);
-    if (!task) return error('Không tìm thấy task');
-    const { erpCan } = require('../../../services/erp/permissions');
-    const isReporter = task.reporter_id === employee.employee_id;
-    // Resolve ERP role từ DB
-    let erpRole = 'member';
-    try {
-      const profile = db().queryOne<any>(`SELECT erp_role FROM erp_employee_profiles WHERE employee_id = ?`, [employee.employee_id]);
-      if (profile?.erp_role) erpRole = profile.erp_role;
-    } catch {}
-    if (!isReporter && !erpCan(erpRole, 'task.delete')) {
-      return error('Không có quyền xóa task này');
-    }
-    svc.deleteTask(params.id);
-    return success({});
-  },
-
-  assignErpTask(employee: RegisteredEmployee, params: any): JsonResponse {
-    if (!params?.id) return error('Missing task id');
-    const svc = ErpTaskService.getInstance();
-    svc.assignTask(params.id, params.employeeIds || [], employee.employee_id);
-    return success({});
-  },
-
-  addErpTaskWatcher(employee: RegisteredEmployee, params: any): JsonResponse {
-    if (!params?.taskId) return error('Missing taskId');
-    const svc = ErpTaskService.getInstance();
-    svc.addWatcher(params.taskId, params.employeeId || employee.employee_id);
-    return success({});
-  },
-
-  removeErpTaskWatcher(employee: RegisteredEmployee, params: any): JsonResponse {
-    if (!params?.taskId) return error('Missing taskId');
-    const svc = ErpTaskService.getInstance();
-    svc.removeWatcher(params.taskId, params.employeeId || employee.employee_id);
-    return success({});
-  },
-
-  addErpTaskComment(employee: RegisteredEmployee, params: any): JsonResponse {
-    if (!params?.taskId || !params?.content) return error('Missing taskId or content');
-    const svc = ErpTaskService.getInstance();
-    const comment = svc.addComment(params.taskId, employee.employee_id, params.content, params.mentions || []);
-    return success({ comment });
-  },
-
-  editErpTaskComment(employee: RegisteredEmployee, params: any): JsonResponse {
-    if (!params?.id || !params?.content) return error('Missing id or content');
-    const svc = ErpTaskService.getInstance();
-    const comment = svc.editComment(Number(params.id), params.content);
-    return success({ comment });
-  },
-
-  deleteErpTaskComment(employee: RegisteredEmployee, params: any): JsonResponse {
-    if (!params?.id) return error('Missing comment id');
-    const svc = ErpTaskService.getInstance();
-    svc.deleteComment(Number(params.id));
-    return success({});
-  },
-
-  addErpTaskChecklist(employee: RegisteredEmployee, params: any): JsonResponse {
-    if (!params?.taskId || !params?.content) return error('Missing taskId or content');
-    const svc = ErpTaskService.getInstance();
-    const item = svc.addChecklist(params.taskId, params.content);
-    return success({ item });
-  },
-
-  toggleErpTaskChecklist(employee: RegisteredEmployee, params: any): JsonResponse {
-    if (!params?.id) return error('Missing checklist id');
-    const svc = ErpTaskService.getInstance();
-    const item = svc.toggleChecklist(Number(params.id), !!params.done);
-    return success({ item });
-  },
-
-  createErpProject(employee: RegisteredEmployee, params: any): JsonResponse {
-    if (!params?.name) return error('Missing project name');
-    const svc = ErpTaskService.getInstance();
-    const project = svc.createProject({
-      name: params.name,
-      description: params.description,
-      color: params.color,
-      department_id: params.department_id,
-    }, employee.employee_id);
-    return success({ project });
-  },
-
-  // ── ERP Employee Profiles ──
-
-  getErpDepartments(_employee: RegisteredEmployee, _params: any): JsonResponse {
-    const rows = db().query<any>(`SELECT * FROM erp_departments ORDER BY name ASC`) || [];
-    return success({ departments: rows });
-  },
-
-  getErpPositions(_employee: RegisteredEmployee, _params: any): JsonResponse {
-    const rows = db().query<any>(`SELECT * FROM erp_positions ORDER BY name ASC`) || [];
-    return success({ positions: rows });
-  },
-
-  getErpProfiles(_employee: RegisteredEmployee, params: any): JsonResponse {
-    let sql = `SELECT * FROM erp_employee_profiles`;
-    const sqlParams: any[] = [];
-    if (params?.departmentId) {
-      sql += ` WHERE department_id = ?`;
-      sqlParams.push(params.departmentId);
-    }
-    sql += ` ORDER BY employee_id ASC`;
-    const rows = db().query<any>(sql, sqlParams) || [];
-    return success({ profiles: rows });
-  },
-
-  getErpProfile(_employee: RegisteredEmployee, params: any): JsonResponse {
-    if (!params?.employeeId) return error('Missing employeeId');
-    const row = db().queryOne<any>(`SELECT * FROM erp_employee_profiles WHERE employee_id = ?`, [params.employeeId]);
-    return success({ profile: row || null });
-  },
-
-  // ── ERP Calendar ──
-
-  getErpCalendarEvents(employee: RegisteredEmployee, params: any): JsonResponse {
-    const from = parseInt(params?.from) || 0;
-    const to = parseInt(params?.to) || Date.now();
-    const organizerId = params?.organizerId || employee.employee_id;
-    const rows = db().query<any>(
-      `SELECT * FROM erp_calendar_events WHERE organizer_id = ? AND start_at <= ? AND (end_at >= ? OR (end_at IS NULL AND start_at >= ?)) ORDER BY start_at ASC`,
-      [organizerId, to, from, from]
-    ) || [];
-    return success({ events: rows });
-  },
+  // ERP: route /api/query/erp/* + /api/command/erp/* chạy handler IPC erp:* (ErpRestRoutes + HttpRelayService.executeErpRest)
 };
 
 // ── Helper: trích snippet từ content JSON ─────────────────────────

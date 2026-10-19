@@ -3,6 +3,8 @@
  * Tất cả TypeScript interfaces và types cho Facebook integration
  */
 
+import type { FbTemplate } from '../../shared/facebookTemplate';
+
 // ─── Session & Auth ───────────────────────────────────────────────────────────
 
 export interface FBSessionData {
@@ -148,6 +150,13 @@ export interface FBSendResult {
   messageId?: string;
   timestamp?: number;
   error?: string;
+  /**
+   * fbchat-v2 2.3.2: an E2EE send whose server acknowledgement timed out. The
+   * message may have been delivered, so it is reported as not successful, is
+   * not cached as locally sent and must not be retried automatically.
+   * `messageId` is set so a later echo can be matched.
+   */
+  uncertain?: boolean;
 }
 
 // ─── Attachment Upload ────────────────────────────────────────────────────────
@@ -204,6 +213,8 @@ export interface FBMQTTAttachment {
   mediaSha256?: string;
   /** Encrypted media SHA256 hash (base64) for E2EE decryption */
   mediaEncSha256?: string;
+  /** Tin mẫu của Page (attachmentType 'template'): chữ, ảnh, nút, carousel — xem shared/facebookTemplate.ts */
+  template?: FbTemplate;
 }
 
 export interface FBMQTTMessage {
@@ -230,6 +241,8 @@ export interface FBMQTTMessage {
   senderJid?: string;
   /** Whether this message was decrypted by the E2EE bridge */
   isE2EE?: boolean;
+  /** Bridge không hiển thị được nội dung (xem một lần, thanh toán…) → chữ thay thế, không lưu bong bóng rỗng */
+  unsupported?: string;
 }
 
 // ─── E2EE Bridge Types ───────────────────────────────────────────────────────
@@ -284,6 +297,8 @@ export interface FBE2EESendPayload {
 export interface FBE2EESendResult {
   messageId?: string;
   timestampMs?: number;
+  /** 'unknown' when the bridge timed out waiting for the server (fbchat-v2 2.3.2). */
+  deliveryStatus?: 'acknowledged' | 'unknown';
 }
 
 /** E2EE message shape from bridge - normalized before passing to handleIncomingMessage */
@@ -298,6 +313,8 @@ export interface FBE2EEMessageRaw {
   mentions?: any[];
   attachments?: any[];
   type: 'e2ee';
+  /** Loại nội dung bridge chưa hiển thị được (view_once, payment, contact…) */
+  unsupported?: string;
   /** Original message being replied to (if this message is a reply) */
   replyTo?: {
     messageId: string;

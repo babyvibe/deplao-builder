@@ -23,6 +23,10 @@
 // sendImage, sendFile, sendE2EESticker, sendE2EEAudio, sendE2EEVideo, sendE2EEDocument,
 // getUserInfo.
 //
+// DEPLAO_ADAPTER: the credential login wizard is not served here. It needs a
+// newer mautrix/meta than fbchat-v2 pins and runs in the separate
+// fbchat-login-bridge (./login), which only returns session cookies.
+//
 // Build:
 //
 //	go mod tidy
@@ -31,40 +35,40 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"fbchat-bridge-e2ee/bridge"
-	"github.com/rs/zerolog"
-	"go.mau.fi/mautrix-meta/pkg/messagix"
-	"go.mau.fi/mautrix-meta/pkg/messagix/cookies"
-	"go.mau.fi/mautrix-meta/pkg/messagix/types"
-	"maunium.net/go/mautrix/bridgev2"
 )
 
 var (
 	// bridgeVersion is set via -ldflags "-X main.bridgeVersion=..."
 	// Default fallback for local builds without build script.
-	bridgeVersion = "2.3.1-dev"
+	bridgeVersion = "2.3.3-dev"
 )
 
 const (
 	protocolVersion      = 2
 	maxDecodedMediaBytes = 25 * 1024 * 1024 // 25 MiB
+	// fbchat-v2 2.3.2: hard cap for a single JSON-RPC request line.
+	maxRPCRequestBytes = 150 * 1024 * 1024
 )
 
 // DEPLAO_ADAPTER: localPath media transport — Electron-only adapter.
 // Upstream expects base64 `data` in JSON-RPC. Electron passes `localPath`
 // (filesystem path) to avoid copying large buffers across IPC.
 // This adapter reads the file, validates it, then passes bytes to bridge/.
-// See: docs/fbchat-v2.3.1-vendor-manifest.json
+// See: docs/fbchat-v2.3.3-vendor-manifest.json
 func readAndValidateLocalPath(localPath string, label string) ([]byte, error) {
 	if localPath == "" {
 		return nil, fmt.Errorf("%s: localPath is empty", label)
@@ -118,57 +122,9 @@ type eventEnvelope struct {
 }
 
 var (
-	client *bridge.Client
-	// nativeLoginClient is deliberately separate from the connected chat client.
-	// It only exists while the Messenger Lite login wizard is active, so an
-	// experimental credential login can never replace a live account session.
-	nativeLoginClient *messagix.Client
-	stdoutMu          sync.Mutex
+	client   *bridge.Client
+	stdoutMu sync.Mutex
 )
-
-type nativeLoginStartParams struct {
-	ProxyURL string `json:"proxyUrl,omitempty"`
-}
-
-type nativeLoginSubmitParams struct {
-	Input map[string]string `json:"input"`
-}
-
-type nativeLoginResult struct {
-	Complete bool                `json:"complete"`
-	Step     *bridgev2.LoginStep `json:"step,omitempty"`
-	Cookies  map[string]string   `json:"cookies,omitempty"`
-}
-
-// advanceNativeLogin delegates the complete state machine (password encryption,
-// captcha, TOTP, SMS, email and checkpoint choices) to fbchat-v2's Messenger
-// Lite implementation. Do not log input values: they may contain credentials.
-func advanceNativeLogin(input map[string]string) (*nativeLoginResult, error) {
-	if nativeLoginClient == nil || nativeLoginClient.MessengerLite == nil {
-		return nil, fmt.Errorf("native login is not initialised")
-	}
-
-	step, loginCookies, err := nativeLoginClient.MessengerLite.DoLoginSteps(context.Background(), input)
-	if err != nil {
-		return nil, err
-	}
-	if step != nil {
-		return &nativeLoginResult{Step: step}, nil
-	}
-	if loginCookies == nil {
-		return nil, fmt.Errorf("native login completed without session cookies")
-	}
-
-	values := loginCookies.GetAll()
-	resultCookies := make(map[string]string, len(values))
-	for key, value := range values {
-		resultCookies[string(key)] = value
-	}
-	// Cookies are returned exactly once to Electron. The client is discarded so
-	// another call cannot accidentally continue an already-completed login.
-	nativeLoginClient = nil
-	return &nativeLoginResult{Complete: true, Cookies: resultCookies}, nil
-}
 
 func writeJSON(v interface{}) {
 	stdoutMu.Lock()
@@ -207,8 +163,8 @@ func handle(req *request) {
 				"sendE2EEMessage", "sendE2EEReaction", "sendE2EESticker", "sendE2EEImage",
 				"sendE2EEVideo", "sendE2EEAudio", "sendE2EEDocument", "downloadE2EEAttachment",
 				"mediaLocalPath", "sendTypingIndicator", "sendE2EETyping", "markRead",
-				"editMessage", "unsendMessage", "editE2EEMessage", "unsendE2EEMessage", "syncHistory", "getUserInfo",
-				"nativeLogin",
+				"editMessage", "unsendMessage", "editE2EEMessage", "unsendE2EEMessage", "syncHistory", "fetchMessages", "getUserInfo",
+				"createGroup",
 			},
 			"maxDecodedMediaBytes": maxDecodedMediaBytes,
 		})
@@ -217,7 +173,7 @@ func handle(req *request) {
 		// DEPLAO_ADAPTER: deviceData transport — Electron passes device state
 		// as a JSON string via secureStorage instead of file I/O.
 		// Upstream uses DevicePath (file); Electron uses DeviceData (string).
-		// See: docs/fbchat-v2.3.1-vendor-manifest.json
+		// See: docs/fbchat-v2.3.3-vendor-manifest.json
 		if client != nil {
 			fail(req.ID, fmt.Errorf("client already created"))
 			return
@@ -246,62 +202,6 @@ func handle(req *request) {
 		}
 		ok(req.ID, map[string]interface{}{"ready": true, "deviceData": initialDeviceData})
 
-	case "startNativeLogin":
-		if nativeLoginClient != nil {
-			fail(req.ID, fmt.Errorf("native login is already active"))
-			return
-		}
-		var params nativeLoginStartParams
-		if err := json.Unmarshal(req.Params, &params); err != nil {
-			fail(req.ID, err)
-			return
-		}
-		loginCookies := &cookies.Cookies{Platform: types.MessengerLite}
-		loginCookies.UpdateValues(map[cookies.MetaCookieName]string{})
-		loginLogger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).With().Timestamp().Logger()
-		nativeLoginClient = messagix.NewClient(loginCookies, loginLogger, &messagix.Config{})
-		if params.ProxyURL != "" {
-			if err := nativeLoginClient.SetProxy(params.ProxyURL); err != nil {
-				nativeLoginClient = nil
-				fail(req.ID, fmt.Errorf("invalid login proxy: %w", err))
-				return
-			}
-		}
-		result, err := advanceNativeLogin(nil)
-		if err != nil {
-			nativeLoginClient = nil
-			fail(req.ID, err)
-			return
-		}
-		ok(req.ID, result)
-
-	case "submitNativeLogin":
-		var params nativeLoginSubmitParams
-		if err := json.Unmarshal(req.Params, &params); err != nil {
-			fail(req.ID, err)
-			return
-		}
-		if len(params.Input) > 8 {
-			fail(req.ID, fmt.Errorf("too many native login inputs"))
-			return
-		}
-		for key, value := range params.Input {
-			if len(key) > 128 || len(value) > 4096 {
-				fail(req.ID, fmt.Errorf("native login input exceeds size limit"))
-				return
-			}
-		}
-		result, err := advanceNativeLogin(params.Input)
-		if err != nil {
-			fail(req.ID, err)
-			return
-		}
-		ok(req.ID, result)
-
-	case "cancelNativeLogin":
-		nativeLoginClient = nil
-		ok(req.ID, map[string]interface{}{})
-
 	case "connect":
 		if client == nil {
 			fail(req.ID, fmt.Errorf("client not initialised"))
@@ -328,6 +228,47 @@ func handle(req *request) {
 			return
 		}
 		ok(req.ID, initialData)
+
+	case "fetchMessages":
+		// DEPLAO_ADAPTER: one page of a thread's history (bridge/history.go).
+		// The answer arrives asynchronously on the LightSpeed socket, so the wait
+		// runs in a goroutine: requests are served one at a time and a blocking
+		// wait would hold up sends.
+		if client == nil {
+			fail(req.ID, fmt.Errorf("client not initialised"))
+			return
+		}
+		var params struct {
+			ThreadID          string `json:"threadId"`
+			BeforeTimestampMs int64  `json:"beforeTimestampMs"`
+			BeforeMessageID   string `json:"beforeMessageId"`
+			TimeoutMs         int64  `json:"timeoutMs"`
+		}
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			fail(req.ID, err)
+			return
+		}
+		threadID, err := strconv.ParseInt(strings.TrimSpace(strings.SplitN(params.ThreadID, "@", 2)[0]), 10, 64)
+		if err != nil || threadID == 0 {
+			fail(req.ID, fmt.Errorf("invalid threadId %q", params.ThreadID))
+			return
+		}
+		current, reqID := client, req.ID
+		timeout := time.Duration(params.TimeoutMs) * time.Millisecond
+		go func() {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					fmt.Fprintf(os.Stderr, "panic in fetchMessages: %v\n%s\n", recovered, debug.Stack())
+					fail(reqID, fmt.Errorf("internal bridge error in fetchMessages: %v", recovered))
+				}
+			}()
+			page, err := current.FetchThreadHistory(context.Background(), threadID, params.BeforeTimestampMs, params.BeforeMessageID, timeout)
+			if err != nil {
+				fail(reqID, err)
+				return
+			}
+			ok(reqID, page)
+		}()
 
 	case "connectE2EE":
 		if client == nil {
@@ -833,12 +774,38 @@ func handle(req *request) {
 		}
 		ok(req.ID, info)
 
+	case "createGroup":
+		// DEPLAO_ADAPTER: quick "Tạo nhóm" action. Participant ids are strings across the
+		// Electron boundary (JavaScript number precision); the task needs int64.
+		if client == nil {
+			fail(req.ID, fmt.Errorf("client not initialised"))
+			return
+		}
+		var p struct {
+			Participants []string `json:"participants"`
+			Name         string   `json:"name"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			fail(req.ID, err)
+			return
+		}
+		participants, err := bridge.ParseParticipantIDs(p.Participants)
+		if err != nil {
+			fail(req.ID, err)
+			return
+		}
+		created, err := client.CreateGroup(participants, p.Name)
+		if err != nil {
+			fail(req.ID, err)
+			return
+		}
+		ok(req.ID, created)
+
 	case "disconnect":
 		if client != nil {
 			client.Disconnect()
 			client = nil
 		}
-		nativeLoginClient = nil
 		ok(req.ID, map[string]interface{}{})
 
 	default:
@@ -846,29 +813,62 @@ func handle(req *request) {
 	}
 }
 
-func main() {
-	// Use a large buffer because initial sync data can be substantial.
-	reader := bufio.NewReaderSize(os.Stdin, 1<<20)
-	for {
-		line, err := reader.ReadBytes('\n')
-		if len(line) > 0 {
-			var req request
-			if jerr := json.Unmarshal(line, &req); jerr != nil {
-				fail(0, fmt.Errorf("invalid json: %w", jerr))
-			} else {
-				handle(&req)
-			}
-		}
-		if err != nil {
-			if err == io.EOF {
-				if client != nil {
-					client.Disconnect()
-				}
-				nativeLoginClient = nil
-				return
-			}
-			fmt.Fprintln(os.Stderr, "stdin error:", err)
+// handleSafely turns a panic in one request into an error response for that
+// request. Without it, a nil dereference inside a dependency (seen in the
+// Messenger Lite Bloks interpreter) killed the whole process, and Electron only
+// saw "Bridge exited". DEPLAO_ADAPTER.
+func handleSafely(req *request) {
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
 			return
 		}
+		fmt.Fprintf(os.Stderr, "panic in %s: %v\n%s\n", req.Method, recovered, debug.Stack())
+		fail(req.ID, fmt.Errorf("internal bridge error in %s: %v", req.Method, recovered))
+	}()
+	handleRequest(req)
+}
+
+// handleRequest is a test seam for handleSafely.
+var handleRequest = handle
+
+// serveRequests reads one JSON-RPC request per line, rejecting any line larger
+// than maxRequestBytes (fbchat-v2 2.3.2) instead of buffering it without bound.
+func serveRequests(input io.Reader, maxRequestBytes int) error {
+	if maxRequestBytes <= 0 {
+		return fmt.Errorf("max request size must be positive")
+	}
+	initialBufferSize := 64 * 1024
+	if maxRequestBytes < initialBufferSize {
+		initialBufferSize = maxRequestBytes
+	}
+	scanner := bufio.NewScanner(input)
+	scanner.Buffer(make([]byte, initialBufferSize), maxRequestBytes)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var req request
+		if err := json.Unmarshal(line, &req); err != nil {
+			fail(0, fmt.Errorf("invalid json: %w", err))
+			continue
+		}
+		handleSafely(&req)
+	}
+	return scanner.Err()
+}
+
+func disconnectClient() {
+	if client != nil {
+		client.Disconnect()
+		client = nil
+	}
+}
+
+func main() {
+	defer disconnectClient()
+	if err := serveRequests(os.Stdin, maxRPCRequestBytes); err != nil {
+		fail(0, fmt.Errorf("stdin request exceeds the 150 MiB limit or could not be read: %w", err))
 	}
 }

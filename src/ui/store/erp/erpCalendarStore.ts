@@ -1,6 +1,18 @@
 import { create } from 'zustand';
 import ipc from '@/lib/ipc';
+import DataAccessor from '@/lib/data/DataAccessor';
+import { useEmployeeStore } from '@/store/employeeStore';
 import type { CreateCalendarEventInput, ErpCalendarEvent } from '../../../models/erp';
+import { withErpDeniedNotice } from './erpStoreHelpers';
+
+function isEmployee(): boolean {
+  try { return useEmployeeStore.getState().mode === 'employee'; } catch { return false; }
+}
+
+/** Sự kiện trong phản hồi: IPC `{ success, event }`, REST (nhân viên) `{ success, data: { event } }`. */
+function eventOf(res: any): ErpCalendarEvent | null {
+  return res?.event ?? res?.data?.event ?? null;
+}
 
 interface ErpCalendarState {
   events: ErpCalendarEvent[];
@@ -23,31 +35,46 @@ export const useErpCalendarStore = create<ErpCalendarState>((set, get) => ({
   error: null,
   currentRange: null,
 
+  // Nhân viên: lịch nằm trên DB Boss (REST qua DataAccessor) — IPC ở máy nhân viên đọc / ghi DB cục bộ (trống, không
+  // tới Boss, không phát erp:event cho người khác). Lỗi đọc → giữ lịch đang hiện.
   loadEvents: async (from, to, organizerId) => {
     set({ loading: true, currentRange: { from, to } });
-    const res = await ipc.erp?.calendarListEvents({ from, to, organizerId });
-    if (res?.success) set({ events: res.events, loading: false });
-    else set({ error: res?.error, loading: false });
+    const res: any = isEmployee()
+      ? await DataAccessor.erpCalendarEvents({ from, to, organizerId })
+      : await ipc.erp?.calendarListEvents({ from, to, organizerId });
+    const events = res?.events ?? res?.data?.events;
+    if (res?.success && Array.isArray(events)) set({ events, loading: false, error: null });
+    else set({ error: res?.error || 'Không tải được lịch', loading: false });
   },
 
+  // Lệnh ghi bị từ chối quyền (Boss kiểm tra quyền ERP của nhân viên) → hộp thoại quyền ERP như ipc.erp
   createEvent: async (input) => {
-    const res = await ipc.erp?.calendarCreate({ input });
-    if (res?.success && res.event) {
-      set(s => ({ events: reconcileEventForRange(s.events, res.event, s.currentRange) }));
-      return res.event;
+    const res: any = withErpDeniedNotice(isEmployee()
+      ? await DataAccessor.erpCalendarCreate(input)
+      : await ipc.erp?.calendarCreate({ input }));
+    const event = res?.success ? eventOf(res) : null;
+    if (event) {
+      set(s => ({ events: reconcileEventForRange(s.events, event, s.currentRange) }));
+      return event;
     }
     return null;
   },
 
   updateEvent: async (id, patch) => {
-    const res = await ipc.erp?.calendarUpdate({ id, patch });
-    if (res?.success && res.event) {
-      set(s => ({ events: reconcileEventForRange(s.events, res.event, s.currentRange) }));
+    const res: any = withErpDeniedNotice(isEmployee()
+      ? await DataAccessor.erpCalendarUpdate(id, patch)
+      : await ipc.erp?.calendarUpdate({ id, patch }));
+    const event = res?.success ? eventOf(res) : null;
+    if (event) {
+      set(s => ({ events: reconcileEventForRange(s.events, event, s.currentRange) }));
     }
   },
 
   deleteEvent: async (id) => {
-    await ipc.erp?.calendarDelete({ id });
+    const res: any = withErpDeniedNotice(isEmployee()
+      ? await DataAccessor.erpCalendarDelete(id)
+      : await ipc.erp?.calendarDelete({ id }));
+    if (res && res.success === false) return; // Boss từ chối / mất kết nối: giữ sự kiện
     set(s => ({ events: s.events.filter(e => e.id !== id) }));
   },
 

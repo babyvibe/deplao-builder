@@ -66,6 +66,7 @@ export class FacebookAdapter extends BaseChannelAdapter {
         ? params.fileType as 'image' | 'video' | 'audio' | 'file'
         : 'file',
       ...(replyToMessageId ? { replyToMessageId } : {}),
+      ...(params.libraryUuid ? { _libraryUuid: params.libraryUuid } : {}),
     }) ?? { success: false, error: 'FB IPC not available' };
   }
 
@@ -80,6 +81,7 @@ export class FacebookAdapter extends BaseChannelAdapter {
       ...(typeChat !== undefined ? { typeChat } : {}),
       fileType: 'video',
       ...(replyToMessageId ? { replyToMessageId } : {}),
+      ...(params.libraryUuid ? { _libraryUuid: params.libraryUuid } : {}),
     }) ?? { success: false, error: 'FB IPC not available' };
   }
 

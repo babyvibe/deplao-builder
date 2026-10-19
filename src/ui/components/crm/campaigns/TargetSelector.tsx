@@ -1,11 +1,17 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import type { LabelData } from '@/store/appStore';
-import DataAccessor from '@/lib/data/DataAccessor';
+import DataAccessor, { isReadFailure } from '@/lib/data/DataAccessor';
+import { useEmployeeResync } from '@/hooks/useEmployeeResync';
+import {
+  collectGroupTargets, countMembersByGroup, readOutcome, targetConfirmBlockReason, type GroupMembersRead,
+} from '@/lib/crm/loadFailure';
 import ipc from '@/lib/ipc';
 import ZaloLabelBadge from '../tags/ZaloLabelBadge';
+import LoadFailedNotice from '../LoadFailedNotice';
 import { formatPhone } from '@/utils/phoneUtils';
 import { CloudIcon, HardDriveIcon, LinkIcon, TagIcon, UserCheckIcon, UsersIcon } from '@/components/common/icons';
 import { CHANNEL } from '@/lib/channelHelper';
+import { getCapability, type Channel } from '../../../../configs/channelConfig';
 
 export interface LocalLabelItem {
   id: number;
@@ -17,6 +23,12 @@ export interface LocalLabelItem {
 
 interface TargetSelectorProps {
   zaloId: string;
+  /**
+   * Kênh của tài khoản (mặc định Zalo). "Theo SĐT" chỉ có khi kênh tra được SĐT → tài khoản lúc gửi (Zalo); tab Nhãn
+   * Zalo chỉ khi kênh có nhãn Zalo. Telegram trước đây vẫn thấy cả hai: SĐT chưa có trong danh bạ thành người nhận
+   * "phone:…" mà queue không gửi được.
+   */
+  channel?: Channel;
   allLabels: LabelData[];
   localLabels?: LocalLabelItem[];
   localLabelThreadMap?: Record<string, number[]>;
@@ -42,7 +54,10 @@ function normalizePhone(raw: string): string {
 }
 
 
-export default function TargetSelector({ zaloId, allLabels, localLabels, localLabelThreadMap, existingContactIds, onConfirm, onClose, headerContent }: TargetSelectorProps) {
+export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabels, localLabels, localLabelThreadMap, existingContactIds, onConfirm, onClose, headerContent }: TargetSelectorProps) {
+  const channelCap = getCapability(channel);
+  const supportsPhoneTargets = channelCap.supportsCRMPhoneImport;
+  const supportsZaloLabels = channelCap.supportsLabel;
   const [mode, setMode] = useState<SelectMode>('manual');
   const [selectedZaloLabelIds, setSelectedZaloLabelIds] = useState<number[]>([]);
   const [selectedLocalLabelIds, setSelectedLocalLabelIds] = useState<number[]>([]);
@@ -50,6 +65,11 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
   const [search, setSearch] = useState('');
   const [allContacts, setAllContacts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  // Lần tải danh sách liên hệ gần nhất lỗi (employee: mất kết nối BOSS) → danh sách trống / cũ, khoá nút "Thêm"
+  const [contactsFailed, setContactsFailed] = useState(false);
+  /** Tài khoản của `allContacts` đang hiện: lỗi chỉ giữ danh sách cũ khi nó thuộc đúng tài khoản này. */
+  const contactsOwnerRef = useRef<string | null>(null);
+  const contactsSeqRef = useRef(0);
 
   // ── Phone tab state ──
   const [phoneInput, setPhoneInput] = useState('');
@@ -65,6 +85,11 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
   const [selectedGroupIds, setSelectedGroupIds] = useState<Set<string>>(new Set());
   const [groupMemberCounts, setGroupMemberCounts] = useState<Record<string, number>>({});
   const [groupConfirmLoading, setGroupConfirmLoading] = useState(false);
+  /** Lần "Thêm thành viên" vừa rồi không đọc được thành viên của một nhóm → chưa thêm ai. */
+  const [groupConfirmError, setGroupConfirmError] = useState<string | null>(null);
+  const [groupCountsFailed, setGroupCountsFailed] = useState(false);
+  const countsOwnerRef = useRef<string | null>(null);
+  const countsSeqRef = useRef(0);
 
   // Label section scroll ref
   const labelScrollRef = useRef<HTMLDivElement>(null);
@@ -73,24 +98,54 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
   // ── Load local labels directly (self-sufficient, not relying on parent props) ──
   const [fetchedLocalLabels, setFetchedLocalLabels] = useState<LocalLabelItem[]>([]);
   const [fetchedThreadMap, setFetchedThreadMap] = useState<Record<string, number[]>>({});
+  // Lỗi (nhãn hoặc bảng gán nhãn) → giữ bản đang có, hiện "Không tải được — Thử lại" chỗ danh sách lẽ ra trống
+  const [localLabelsFailed, setLocalLabelsFailed] = useState(false);
+  const [localLabelsLoading, setLocalLabelsLoading] = useState(false);
+  const labelsOwnerRef = useRef<string | null>(null);
+  const labelsSeqRef = useRef(0);
 
-  useEffect(() => {
+  const loadLocalLabels = useCallback(async () => {
     if (!zaloId) return;
-    Promise.all([
-      DataAccessor.getLocalLabels({ zaloId }),
-      DataAccessor.getLocalLabelThreads({ zaloId }),
-    ]).then(([labelsRes, threadsRes]) => {
+    const owner = zaloId;
+    const seq = ++labelsSeqRef.current;
+    setLocalLabelsLoading(true);
+    let labelsRes: any;
+    let threadsRes: any;
+    try {
+      [labelsRes, threadsRes] = await Promise.all([
+        DataAccessor.getLocalLabels({ zaloId: owner }),
+        DataAccessor.getLocalLabelThreads({ zaloId: owner }),
+      ]);
+    } catch (err: any) {
+      labelsRes = threadsRes = { success: false, error: err?.message };
+    }
+    if (seq !== labelsSeqRef.current) return; // đã có lần tải mới hơn
+    setLocalLabelsLoading(false);
+    const labelsFailed = isReadFailure(labelsRes);
+    const threadsFailed = isReadFailure(threadsRes);
+    const failed = labelsFailed || threadsFailed;
+    if (readOutcome(failed, labelsOwnerRef.current, owner) === 'clear') {
+      // Lỗi ngay khi đổi tài khoản: không lọc / hiện nhãn của tài khoản trước
+      setFetchedLocalLabels([]);
+      setFetchedThreadMap({});
+    }
+    labelsOwnerRef.current = owner;
+    if (!labelsFailed) {
       // Filter only active labels (is_active !== 0)
-      const labels = (labelsRes?.labels || []).filter((l: any) => (l.is_active ?? 1) !== 0);
-      setFetchedLocalLabels(labels);
+      setFetchedLocalLabels((labelsRes?.labels || []).filter((l: any) => (l.is_active ?? 1) !== 0));
+    }
+    if (!threadsFailed) {
       const map: Record<string, number[]> = {};
       (threadsRes?.threads || []).forEach((row: any) => {
         if (!map[row.thread_id]) map[row.thread_id] = [];
         map[row.thread_id].push(Number(row.label_id));
       });
       setFetchedThreadMap(map);
-    }).catch(() => {});
+    }
+    setLocalLabelsFailed(failed);
   }, [zaloId]);
+
+  useEffect(() => { loadLocalLabels(); }, [loadLocalLabels]);
 
   // Use fetched labels if prop is empty, otherwise prefer props (merged)
   const effectiveLocalLabels = useMemo(() => {
@@ -106,19 +161,56 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
   }, [localLabelThreadMap, fetchedThreadMap]);
 
   // Load ALL contacts (no pagination limit)
-  useEffect(() => {
+  const loadContacts = useCallback(async () => {
     if (!zaloId) return;
+    const owner = zaloId;
+    const seq = ++contactsSeqRef.current;
     setLoading(true);
-    DataAccessor.getCRMContacts({ zaloId, opts: { limit: 99999, offset: 0 } })
-      .then(res => { if (res?.success) setAllContacts(res.contacts || []); })
-      .finally(() => setLoading(false));
+    let res: any;
+    try {
+      res = await DataAccessor.getCRMContacts({ zaloId: owner, opts: { limit: 99999, offset: 0 } });
+    } catch (err: any) {
+      res = { success: false, error: err?.message };
+    }
+    if (seq !== contactsSeqRef.current) return; // đã có lần tải mới hơn
+    setLoading(false);
+    if (res?.success) {
+      contactsOwnerRef.current = owner;
+      setAllContacts(res.contacts || []);
+      setContactsFailed(false);
+    } else if (isReadFailure(res)) {
+      // Lỗi → giữ danh sách đang có của đúng tài khoản (nút "Thêm" bị khoá tới khi tải lại được); của tài khoản khác thì bỏ
+      if (readOutcome(true, contactsOwnerRef.current, owner) === 'clear') {
+        contactsOwnerRef.current = owner;
+        setAllContacts([]);
+      }
+      setContactsFailed(true);
+    }
   }, [zaloId]);
 
-  // Đổi mode/nhãn → reset danh sách đã chọn để không giữ nhầm sang tập khác.
+  useEffect(() => { loadContacts(); }, [loadContacts]);
+
+  // Đổi mode/nhãn (hoặc tài khoản) → reset danh sách đã chọn để không giữ nhầm sang tập khác.
   useEffect(() => {
     setManualSelected(new Set());
     setSelectedGroupIds(new Set());
-  }, [mode, selectedZaloLabelIds, selectedLocalLabelIds]);
+    setGroupConfirmError(null);
+  }, [mode, selectedZaloLabelIds, selectedLocalLabelIds, zaloId]);
+
+  // Đổi sang kênh không có "Theo SĐT" / Nhãn Zalo khi đang mở → về chế độ có sẵn
+  useEffect(() => {
+    if (!supportsPhoneTargets && mode === 'by_phone') setMode('manual');
+    if (!supportsZaloLabels && labelTab === 'zalo') setLabelTab('local');
+  }, [supportsPhoneTargets, supportsZaloLabels, mode, labelTab]);
+
+  // Đổi tài khoản khi đang mở (hiếm): SĐT/UID đã khớp theo danh bạ tài khoản trước không dùng cho tài khoản này
+  const resolvedForRef = useRef(zaloId);
+  useEffect(() => {
+    if (resolvedForRef.current === zaloId) return;
+    resolvedForRef.current = zaloId;
+    setPhoneResolved(new Map());
+    setUidResolved(new Map());
+  }, [zaloId]);
 
   // Available = not already in campaign
   const available = useMemo(() =>
@@ -135,7 +227,7 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
       // Filter by selected Zalo labels.
       // Nhãn Zalo lưu ID nhóm có tiền tố "g" (vd "g4579..."), còn contact_id trong CRM
       // không có tiền tố → chuẩn hóa cả hai đầu trước khi so khớp.
-      if (selectedZaloLabelIds.length > 0) {
+      if (supportsZaloLabels && selectedZaloLabelIds.length > 0) {
         list = list.filter(c => {
           const cid = stripGroupPrefix(c.contact_id);
           return selectedZaloLabelIds.every(labelId =>
@@ -151,7 +243,7 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
         });
       }
       // If no labels selected at all, show nothing (require at least one label filter)
-      if (selectedZaloLabelIds.length === 0 && selectedLocalLabelIds.length === 0) {
+      if ((!supportsZaloLabels || selectedZaloLabelIds.length === 0) && selectedLocalLabelIds.length === 0) {
         list = [];
       }
     }
@@ -164,7 +256,7 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
       );
     }
     return list;
-  }, [available, mode, selectedZaloLabelIds, selectedLocalLabelIds, search, allLabels, effectiveThreadMap]);
+  }, [available, mode, selectedZaloLabelIds, selectedLocalLabelIds, search, allLabels, effectiveThreadMap, supportsZaloLabels]);
 
   // ── Phone input handling ──
   useEffect(() => {
@@ -243,18 +335,42 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
   );
 
   // Load member counts from DB when groups are available
+  const loadGroupCounts = useCallback(async () => {
+    if (!zaloId) return;
+    const owner = zaloId;
+    const seq = ++countsSeqRef.current;
+    let res: any;
+    try {
+      res = await DataAccessor.getAllGroupMembers(owner);
+    } catch (err: any) {
+      res = { success: false, error: err?.message };
+    }
+    if (seq !== countsSeqRef.current) return;
+    if (isReadFailure(res)) {
+      // Lỗi → giữ số đã biết (cùng tài khoản) thay vì "Chưa có thông tin" cho mọi nhóm; số của tài khoản khác thì bỏ
+      if (readOutcome(true, countsOwnerRef.current, owner) === 'clear') {
+        countsOwnerRef.current = owner;
+        setGroupMemberCounts({});
+      }
+      setGroupCountsFailed(true);
+      return;
+    }
+    countsOwnerRef.current = owner;
+    setGroupMemberCounts(countMembersByGroup(res?.rows));
+    setGroupCountsFailed(false);
+  }, [zaloId]);
+
   useEffect(() => {
     if (!zaloId || groups.length === 0) return;
-    DataAccessor.getAllGroupMembers(zaloId).then(res => {
-      const rows = res?.rows || [];
-      const countMap: Record<string, number> = {};
-      for (const row of rows) {
-        const gid = row.group_id;
-        if (gid) countMap[gid] = (countMap[gid] || 0) + 1;
-      }
-      setGroupMemberCounts(countMap);
-    }).catch(() => {});
+    loadGroupCounts();
   }, [zaloId, groups.length]);
+
+  // Chế độ nhân viên: kết nối BOSS phục hồi → tải lại danh sách liên hệ, Nhãn Local, số thành viên nhóm
+  useEmployeeResync(() => Promise.allSettled([
+    loadContacts(),
+    loadLocalLabels(),
+    groups.length > 0 ? loadGroupCounts() : Promise.resolve(),
+  ]));
 
   // Get member count for a group
   const getMemberCount = (groupId: string): number => {
@@ -396,28 +512,28 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
   const handleConfirmGroups = async () => {
     if (selectedGroupIds.size === 0) return;
     setGroupConfirmLoading(true);
+    setGroupConfirmError(null);
     try {
-      const allMembers: any[] = [];
+      const reads: GroupMembersRead[] = [];
       for (const groupId of selectedGroupIds) {
+        let dbRes: any;
         try {
-          const dbRes = await DataAccessor.getGroupMembers({ zaloId, groupId });
-          const rows = (dbRes?.members || []).filter((m: any) => {
-            const id = (m.member_id || m.memberId || '').trim();
-            return id && /^\d+$/.test(id);
-          });
-          for (const m of rows) {
-            const uid = m.member_id || m.memberId || '';
-            if (uid && !existingContactIds.has(uid)) {
-              allMembers.push({
-                contact_id: uid,
-                display_name: m.display_name || m.displayName || uid,
-                avatar: m.avatar || '',
-                source: 'group',
-                groupId,
-              });
-            }
-          }
-        } catch { /* skip this group */ }
+          dbRes = await DataAccessor.getGroupMembers({ zaloId, groupId });
+        } catch (err: any) {
+          dbRes = { success: false, error: err?.message };
+        }
+        const failed = isReadFailure(dbRes);
+        reads.push({ groupId, failed, members: dbRes?.members });
+        // Một nhóm lỗi là đủ để không thêm gì — khỏi chờ lỗi / timeout lần lượt từng nhóm khi mất kết nối
+        if (failed) break;
+      }
+      const { members: allMembers, failedGroupIds } = collectGroupTargets(reads, existingContactIds);
+      if (failedGroupIds.length > 0) {
+        // Trước đây nhóm lỗi bị bỏ qua lặng lẽ → chiến dịch nhận tập người nhận thiếu / rỗng. Giờ: không thêm, báo rõ.
+        const failedId = failedGroupIds[0];
+        const name = groups.find(g => g.contact_id === failedId)?.display_name || failedId;
+        setGroupConfirmError(`Không tải được thành viên nhóm "${name}" — chưa thêm ai. Bấm "Thêm thành viên" để thử lại.`);
+        return;
       }
       if (allMembers.length > 0) {
         onConfirm(allMembers);
@@ -428,33 +544,53 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
     }
   };
 
-  const totalLabelFilters = selectedZaloLabelIds.length + selectedLocalLabelIds.length;
+  const totalLabelFilters = (supportsZaloLabels ? selectedZaloLabelIds.length : 0) + selectedLocalLabelIds.length;
+
+  // ── Lần tải lỗi → khoá nút "Thêm …" và nói rõ lý do ────────────────────────
+  // Danh sách liên hệ / bảng gán Nhãn Local lỗi có thể cho ra tập người nhận rỗng hoặc thiếu mà người dùng không
+  // nhận ra (rồi chạy chiến dịch với tập đó). Bảng gán nhãn chỉ tính khi đang dùng bản tự tải (props rỗng).
+  const localLabelMapFailed = localLabelsFailed && effectiveThreadMap === fetchedThreadMap;
+  const blockReason = targetConfirmBlockReason(mode, {
+    contactsFailed,
+    localLabelMapFailed,
+    filteringByLocalLabel: selectedLocalLabelIds.length > 0,
+  });
+  const retryFailedLoads = () => {
+    if (contactsFailed) loadContacts();
+    if (localLabelsFailed) loadLocalLabels();
+  };
+  const blockedHint = blockReason ? (
+    <LoadFailedNotice className="justify-start px-0 py-0 text-warning" text={`${blockReason} — chưa thể thêm người nhận`}
+      onRetry={retryFailedLoads} busy={loading || localLabelsLoading} />
+  ) : null;
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onClose}>
-      <div className={`bg-gray-800 border border-gray-600 rounded-2xl max-h-[85vh] flex flex-col shadow-2xl ${mode === 'by_phone' || mode === 'by_uid' ? 'w-[700px]' : 'w-[540px]'}`}
+      <div className={`bg-card border border-input rounded-2xl max-h-[85vh] flex flex-col shadow-2xl ${mode === 'by_phone' || mode === 'by_uid' ? 'w-[700px]' : 'w-[540px]'}`}
         onClick={e => e.stopPropagation()}>
 
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700 flex-shrink-0">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
           <div>
-            <h3 className="font-semibold text-white">Chọn liên hệ</h3>
-            <p className="text-xs text-gray-400 mt-0.5">
-              {loading ? 'Đang tải...' : `${finalSelected.length} đã chọn · ${available.length} khả dụng`}
+            <h3 className="font-semibold text-foreground">Chọn liên hệ</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {loading ? 'Đang tải...'
+                : contactsFailed && allContacts.length === 0 ? 'Không tải được danh sách liên hệ'
+                : `${finalSelected.length} đã chọn · ${available.length} khả dụng`}
             </p>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-white">✕</button>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">✕</button>
         </div>
 
         {/* Header content slot (e.g. wizard step indicator) */}
         {headerContent && (
-          <div className="border-b border-gray-700 flex-shrink-0 px-5">
+          <div className="border-b border-border flex-shrink-0 px-5">
             {headerContent}
           </div>
         )}
 
         {/* Mode selector */}
-        <div className="flex gap-1 px-4 py-2.5 border-b border-gray-700 flex-shrink-0 overflow-x-auto">
+        <div className="flex gap-1 px-4 py-2.5 border-b border-border flex-shrink-0 overflow-x-auto">
           {([
             { key: 'manual' as const, label: 'Thủ công' },
             { key: 'by_label' as const, label: 'Theo nhãn' },
@@ -463,34 +599,36 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
             { key: 'friends_only' as const, label: 'Bạn bè' },
             { key: 'groups_only' as const, label: 'Nhóm' },
             { key: 'by_group' as const, label: 'Theo thành viên nhóm' },
-          ]).map(({ key, label }) => (
+          ]).filter(({ key }) => key !== 'by_phone' || supportsPhoneTargets).map(({ key, label }) => (
             <button key={key} onClick={() => setMode(key)}
               className={`text-xs px-3 py-1.5 rounded-lg border transition-colors whitespace-nowrap flex-shrink-0 ${
-                mode === key ? 'border-blue-500 bg-blue-500/20 text-blue-300' : 'border-gray-600 text-gray-400 hover:border-gray-500'
+                mode === key ? 'border-blue-500 bg-blue-500/20 text-blue-300' : 'border-input text-muted-foreground hover:border-border-strong'
               }`}>{label}</button>
           ))}
         </div>
 
         {/* ── Label filter chips (by_label mode) ── */}
         {mode === 'by_label' && (
-          <div className="border-b border-gray-700 flex-shrink-0 px-4 py-2.5 space-y-2">
+          <div className="border-b border-border flex-shrink-0 px-4 py-2.5 space-y-2">
             {/* Tab switcher */}
             <div className="flex gap-1 mb-1">
               <button onClick={() => setLabelTab('local')}
                 className={`text-[11px] px-3 py-1 rounded-md font-medium transition-colors ${
                   labelTab === 'local'
                     ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
-                    : 'text-gray-400 hover:text-gray-300 border border-transparent'
+                    : 'text-muted-foreground hover:text-foreground/80 border border-transparent'
                 }`}><HardDriveIcon className="w-4 h-4 inline" /> Nhãn Local{effectiveLocalLabels.length > 0 ? ` (${effectiveLocalLabels.length})` : ''}
               </button>
-              <button onClick={() => setLabelTab('zalo')}
-                className={`text-[11px] px-3 py-1 rounded-md font-medium transition-colors ${
-                  labelTab === CHANNEL.ZALO
-                    ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
-                    : 'text-gray-400 hover:text-gray-300 border border-transparent'
-                }`}>
-                <CloudIcon className="w-4 h-4 inline" /> Nhãn Zalo{allLabels.length > 0 ? ` (${allLabels.length})` : ''}
-              </button>
+              {supportsZaloLabels && (
+                <button onClick={() => setLabelTab('zalo')}
+                  className={`text-[11px] px-3 py-1 rounded-md font-medium transition-colors ${
+                    labelTab === CHANNEL.ZALO
+                      ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
+                      : 'text-muted-foreground hover:text-foreground/80 border border-transparent'
+                  }`}>
+                  <CloudIcon className="w-4 h-4 inline" /> Nhãn Zalo{allLabels.length > 0 ? ` (${allLabels.length})` : ''}
+                </button>
+              )}
             </div>
 
             {/* Local labels tab */}
@@ -502,7 +640,7 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
                     return (
                       <button key={`local-${label.id}`} onClick={() => toggleLocalLabel(label.id)}
                         className={`text-xs px-2.5 py-1 rounded-full border transition-all whitespace-nowrap flex-shrink-0 ${
-                          isActive ? 'border-transparent' : 'border-gray-600 text-gray-400 hover:border-gray-500'
+                          isActive ? 'border-transparent' : 'border-input text-muted-foreground hover:border-border-strong'
                         }`}
                         style={isActive
                           ? { backgroundColor: (label.color || '#3b82f6') + '28', color: label.text_color || label.color || '#3b82f6', border: `1px solid ${label.color || '#3b82f6'}55` }
@@ -512,13 +650,16 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
                     );
                   })}
                 </div>
+              ) : localLabelsFailed ? (
+                <LoadFailedNotice className="justify-start px-0" text="Không tải được Nhãn Local"
+                  onRetry={loadLocalLabels} busy={localLabelsLoading} />
               ) : (
-                <p className="text-xs text-gray-400 py-2">Chưa có Nhãn Local nào. Tạo nhãn từ trang Liên hệ.</p>
+                <p className="text-xs text-muted-foreground py-2">Chưa có Nhãn Local nào. Tạo nhãn từ trang Liên hệ.</p>
               )
             )}
 
             {/* Zalo labels tab */}
-            {labelTab === CHANNEL.ZALO && (
+            {supportsZaloLabels && labelTab === CHANNEL.ZALO && (
               allLabels.length > 0 ? (
                 <div className="flex gap-1.5 overflow-x-auto pb-1 flex-wrap" style={{ scrollbarWidth: 'thin' }}>
                   {allLabels.map(label => {
@@ -526,7 +667,7 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
                     return (
                       <button key={`zalo-${label.id}`} onClick={() => toggleZaloLabel(label.id)}
                         className={`text-xs px-2.5 py-1 rounded-full border transition-all whitespace-nowrap flex-shrink-0 ${
-                          isActive ? 'border-transparent' : 'border-gray-600 text-gray-400 hover:border-gray-500'
+                          isActive ? 'border-transparent' : 'border-input text-muted-foreground hover:border-border-strong'
                         }`}
                         style={isActive
                           ? { backgroundColor: (label.color || '#3b82f6') + '28', color: label.color || '#3b82f6', border: `1px solid ${label.color || '#3b82f6'}55` }
@@ -537,7 +678,7 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
                   })}
                 </div>
               ) : (
-                <p className="text-xs text-gray-400 py-2">Chưa có nhãn Zalo nào. Đồng bộ nhãn từ header trước.</p>
+                <p className="text-xs text-muted-foreground py-2">Chưa có nhãn Zalo nào. Đồng bộ nhãn từ header trước.</p>
               )
             )}
 
@@ -548,26 +689,26 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
         )}
 
         {/* ── Phone input mode ── */}
-        {mode === 'by_phone' ? (
+        {mode === 'by_phone' && supportsPhoneTargets ? (
           <>
-            <div className="flex flex-1 overflow-hidden border-b border-gray-700">
+            <div className="flex flex-1 overflow-hidden border-b border-border">
               {/* Left: textarea */}
-              <div className="w-1/2 flex flex-col border-r border-gray-700">
-                <div className="px-3 py-2 border-b border-gray-700/50 flex-shrink-0">
-                  <p className="text-[11px] text-gray-400 font-medium">Nhập hoặc dán SĐT (mỗi số 1 dòng)</p>
+              <div className="w-1/2 flex flex-col border-r border-border">
+                <div className="px-3 py-2 border-b border-border/50 flex-shrink-0">
+                  <p className="text-[11px] text-muted-foreground font-medium">Nhập hoặc dán SĐT (mỗi số 1 dòng)</p>
                 </div>
                 <textarea
                   value={phoneInput}
                   onChange={e => setPhoneInput(e.target.value)}
                   placeholder={"0901234567\n0912345678\n84987654321\n..."}
-                  className="flex-1 bg-transparent text-xs text-white placeholder-gray-600 p-3 resize-none outline-none font-mono leading-relaxed"
+                  className="flex-1 bg-transparent text-xs text-foreground placeholder-subtle-foreground p-3 resize-none outline-none font-mono leading-relaxed"
                   spellCheck={false}
                 />
               </div>
               {/* Right: phone list */}
               <div className="w-1/2 flex flex-col">
-                <div className="px-3 py-2 border-b border-gray-700/50 flex-shrink-0 flex items-center justify-between">
-                  <p className="text-[11px] text-gray-400 font-medium">
+                <div className="px-3 py-2 border-b border-border/50 flex-shrink-0 flex items-center justify-between">
+                  <p className="text-[11px] text-muted-foreground font-medium">
                     {phoneList.length} số hợp lệ
                     {phoneList.length > 0 && (() => {
                       const resolved = phoneList.filter(p => phoneResolved.get(p) != null).length;
@@ -581,7 +722,7 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
                 </div>
                 <div className="flex-1 overflow-y-auto">
                   {phoneList.length === 0 ? (
-                    <p className="text-xs text-gray-400 text-center py-8">Nhập SĐT bên trái →</p>
+                    <p className="text-xs text-muted-foreground text-center py-8">Nhập SĐT bên trái →</p>
                   ) : (
                     phoneList.map((phone, i) => {
                       const resolved = phoneResolved.get(phone);
@@ -589,13 +730,13 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
                       const phoneContactId = `phone:${phone}`;
                       const existing = existingContactIds.has(resolved?.uid || '') || existingContactIds.has(phoneContactId);
                       return (
-                        <div key={phone} className={`flex items-center gap-2 px-3 py-2 border-b border-gray-700/30 ${existing ? 'opacity-40' : ''}`}>
-                          <span className="text-[11px] text-gray-400 w-5 text-right flex-shrink-0">{i + 1}</span>
+                        <div key={phone} className={`flex items-center gap-2 px-3 py-2 border-b border-border/30 ${existing ? 'opacity-40' : ''}`}>
+                          <span className="text-[11px] text-muted-foreground w-5 text-right flex-shrink-0">{i + 1}</span>
                           {/* Avatar */}
-                          <div className="w-7 h-7 rounded-full flex-shrink-0 overflow-hidden bg-gray-700">
+                          <div className="w-7 h-7 rounded-full flex-shrink-0 overflow-hidden bg-muted">
                             {resolved?.avatar
                               ? <img src={resolved.avatar} alt="" className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-                              : <div className="w-full h-full flex items-center justify-center text-white text-[10px] font-bold"
+                              : <div className="w-full h-full flex items-center justify-center text-foreground text-[10px] font-bold"
                                   style={{ background: resolved ? 'linear-gradient(135deg,#3b82f6,#8b5cf6)' : '#374151' }}>
                                   {resolved ? (resolved.name || phone).charAt(0).toUpperCase() : '?'}
                                 </div>}
@@ -604,14 +745,14 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
                           <div className="flex-1 min-w-0">
                             {resolved
                               ? <>
-                                  <p className="text-xs text-gray-100 truncate font-medium leading-tight">{resolved.name || phone}</p>
-                                  <p className="text-[10px] text-gray-400 font-mono leading-tight">{phone}</p>
+                                  <p className="text-xs text-foreground truncate font-medium leading-tight">{resolved.name || phone}</p>
+                                  <p className="text-[10px] text-muted-foreground font-mono leading-tight">{phone}</p>
                                 </>
-                              : <p className="text-xs text-gray-400 font-mono">{phone}</p>
+                              : <p className="text-xs text-muted-foreground font-mono">{phone}</p>
                             }
                           </div>
                           {existing && <span className="text-[10px] text-yellow-500 flex-shrink-0">đã có</span>}
-                          <button onClick={() => removePhone(phone)} className="text-gray-400 hover:text-red-400 text-xs flex-shrink-0 ml-1">✕</button>
+                          <button onClick={() => removePhone(phone)} className="text-muted-foreground hover:text-red-400 text-xs flex-shrink-0 ml-1">✕</button>
                         </div>
                       );
                     })
@@ -621,17 +762,23 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
             </div>
 
             {/* Phone footer */}
-            <div className="flex items-center gap-2 px-4 py-3 border-t border-gray-700 flex-shrink-0">
-              <span className="text-xs text-gray-400 flex-1">
+            <div className="flex items-center gap-2 px-4 py-3 border-t border-border flex-shrink-0">
+              {blockedHint ? (
+                // Khớp SĐT ↔ UID + chống trùng dựa vào danh sách liên hệ → chưa cho thêm khi danh sách lỗi
+                <div className="flex-1 min-w-0 text-xs">{blockedHint}</div>
+              ) : (
+              <span className="text-xs text-muted-foreground flex-1">
                 {phoneList.length} SĐT
                 {phoneList.length > 0 && (() => {
                   const resolvedCount = phoneList.filter(p => phoneResolved.get(p) != null).length;
                   return resolvedCount > 0 ? <span className="text-green-400"> · {resolvedCount} có tên</span> : null;
                 })()}
               </span>
-              <button onClick={onClose} className="px-4 py-2 rounded-xl bg-gray-700 text-gray-300 text-sm hover:bg-gray-600">Hủy</button>
+              )}
+              <button onClick={onClose} className="px-4 py-2 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent">Hủy</button>
               <button
-                disabled={phoneList.length === 0}
+                disabled={phoneList.length === 0 || !!blockReason}
+                title={blockReason || undefined}
                 onClick={handleConfirmPhones}
                 className="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-40">
                 Thêm {phoneList.length} SĐT
@@ -640,24 +787,24 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
           </>
         ) : mode === 'by_uid' ? (
           <>
-            <div className="flex flex-1 overflow-hidden border-b border-gray-700">
+            <div className="flex flex-1 overflow-hidden border-b border-border">
               {/* Left: textarea */}
-              <div className="w-1/2 flex flex-col border-r border-gray-700">
-                <div className="px-3 py-2 border-b border-gray-700/50 flex-shrink-0">
-                  <p className="text-[11px] text-gray-400 font-medium">Nhập hoặc dán UID (mỗi UID 1 dòng)</p>
+              <div className="w-1/2 flex flex-col border-r border-border">
+                <div className="px-3 py-2 border-b border-border/50 flex-shrink-0">
+                  <p className="text-[11px] text-muted-foreground font-medium">Nhập hoặc dán UID (mỗi UID 1 dòng)</p>
                 </div>
                 <textarea
                   value={uidInput}
                   onChange={e => setUidInput(e.target.value)}
                   placeholder={"5872634901234\n1234567890123\n..."}
-                  className="flex-1 bg-transparent text-xs text-white placeholder-gray-600 p-3 resize-none outline-none font-mono leading-relaxed"
+                  className="flex-1 bg-transparent text-xs text-foreground placeholder-subtle-foreground p-3 resize-none outline-none font-mono leading-relaxed"
                   spellCheck={false}
                 />
               </div>
               {/* Right: uid list */}
               <div className="w-1/2 flex flex-col">
-                <div className="px-3 py-2 border-b border-gray-700/50 flex-shrink-0 flex items-center justify-between">
-                  <p className="text-[11px] text-gray-400 font-medium">
+                <div className="px-3 py-2 border-b border-border/50 flex-shrink-0 flex items-center justify-between">
+                  <p className="text-[11px] text-muted-foreground font-medium">
                     {uidList.length} UID hợp lệ
                     {uidList.length > 0 && (() => {
                       const resolved = uidList.filter(u => uidResolved.get(u) != null).length;
@@ -671,19 +818,19 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
                 </div>
                 <div className="flex-1 overflow-y-auto">
                   {uidList.length === 0 ? (
-                    <p className="text-xs text-gray-400 text-center py-8">Nhập UID bên trái →</p>
+                    <p className="text-xs text-muted-foreground text-center py-8">Nhập UID bên trái →</p>
                   ) : (
                     uidList.map((uid, i) => {
                       const resolved = uidResolved.get(uid);
                       const existing = existingContactIds.has(uid);
                       return (
-                        <div key={uid} className={`flex items-center gap-2 px-3 py-2 border-b border-gray-700/30 ${existing ? 'opacity-40' : ''}`}>
-                          <span className="text-[11px] text-gray-400 w-5 text-right flex-shrink-0">{i + 1}</span>
+                        <div key={uid} className={`flex items-center gap-2 px-3 py-2 border-b border-border/30 ${existing ? 'opacity-40' : ''}`}>
+                          <span className="text-[11px] text-muted-foreground w-5 text-right flex-shrink-0">{i + 1}</span>
                           {/* Avatar */}
-                          <div className="w-7 h-7 rounded-full flex-shrink-0 overflow-hidden bg-gray-700">
+                          <div className="w-7 h-7 rounded-full flex-shrink-0 overflow-hidden bg-muted">
                             {resolved?.avatar
                               ? <img src={resolved.avatar} alt="" className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-                              : <div className="w-full h-full flex items-center justify-center text-white text-[10px] font-bold"
+                              : <div className="w-full h-full flex items-center justify-center text-foreground text-[10px] font-bold"
                                   style={{ background: resolved ? 'linear-gradient(135deg,#3b82f6,#8b5cf6)' : '#374151' }}>
                                   {resolved ? (resolved.name || uid).charAt(0).toUpperCase() : '?'}
                                 </div>}
@@ -692,14 +839,14 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
                           <div className="flex-1 min-w-0">
                             {resolved
                               ? <>
-                                  <p className="text-xs text-gray-100 truncate font-medium leading-tight">{resolved.name || uid}</p>
-                                  <p className="text-[10px] text-gray-400 font-mono leading-tight">{uid}</p>
+                                  <p className="text-xs text-foreground truncate font-medium leading-tight">{resolved.name || uid}</p>
+                                  <p className="text-[10px] text-muted-foreground font-mono leading-tight">{uid}</p>
                                 </>
-                              : <p className="text-xs text-gray-400 font-mono">{uid}</p>
+                              : <p className="text-xs text-muted-foreground font-mono">{uid}</p>
                             }
                           </div>
                           {existing && <span className="text-[10px] text-yellow-500 flex-shrink-0">đã có</span>}
-                          <button onClick={() => removeUid(uid)} className="text-gray-400 hover:text-red-400 text-xs flex-shrink-0 ml-1">✕</button>
+                          <button onClick={() => removeUid(uid)} className="text-muted-foreground hover:text-red-400 text-xs flex-shrink-0 ml-1">✕</button>
                         </div>
                       );
                     })
@@ -709,16 +856,16 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
             </div>
 
             {/* UID footer */}
-            <div className="flex items-center gap-2 px-4 py-3 border-t border-gray-700 flex-shrink-0">
-              <span className="text-xs text-gray-400 flex-1">
+            <div className="flex items-center gap-2 px-4 py-3 border-t border-border flex-shrink-0">
+              <span className="text-xs text-muted-foreground flex-1">
                 {uidList.length} UID
                 {uidList.length > 0 && (() => {
                   const resolvedCount = uidList.filter(u => uidResolved.get(u) != null).length;
                   return resolvedCount > 0 ? <span className="text-green-400"> · {resolvedCount} có tên</span> : null;
                 })()}
-                {uidList.length > 0 && <span className="text-gray-400"> · Còn lại sẽ lấy tên khi gửi</span>}
+                {uidList.length > 0 && <span className="text-muted-foreground"> · Còn lại sẽ lấy tên khi gửi</span>}
               </span>
-              <button onClick={onClose} className="px-4 py-2 rounded-xl bg-gray-700 text-gray-300 text-sm hover:bg-gray-600">Hủy</button>
+              <button onClick={onClose} className="px-4 py-2 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent">Hủy</button>
               <button
                 disabled={uidList.length === 0}
                 onClick={handleConfirmUids}
@@ -731,19 +878,28 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
           <>
             {/* Group list */}
             <div className="flex-1 overflow-y-auto">
-              {groups.length === 0 ? (
-                <p className="text-xs text-gray-400 text-center py-8">Không có nhóm nào</p>
+              {groups.length > 0 && groupCountsFailed && (
+                <LoadFailedNotice className="justify-start px-4" text="Không tải được số thành viên nhóm"
+                  onRetry={loadGroupCounts} />
+              )}
+              {groups.length === 0 && loading ? (
+                <p className="text-xs text-muted-foreground text-center py-8">Đang tải...</p>
+              ) : groups.length === 0 && contactsFailed ? (
+                <LoadFailedNotice className="py-8" text="Không tải được danh sách nhóm" onRetry={loadContacts} busy={loading} />
+              ) : groups.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-8">Không có nhóm nào</p>
               ) : (
                 groups.map(g => {
                   const isSelected = selectedGroupIds.has(g.contact_id);
                   const memberCount = getMemberCount(g.contact_id);
                   return (
                     <label key={g.contact_id}
-                      className={`flex items-center gap-2.5 px-4 py-2.5 border-b border-gray-700/50 cursor-pointer transition-colors hover:bg-gray-700/40 ${
+                      className={`flex items-center gap-2.5 px-4 py-2.5 border-b border-border/50 cursor-pointer transition-colors hover:bg-muted/40 ${
                         isSelected ? 'bg-blue-500/5' : ''
                       }`}>
                       <input type="checkbox" checked={isSelected} className="accent-blue-500 flex-shrink-0"
                         onChange={() => {
+                          setGroupConfirmError(null);
                           setSelectedGroupIds(prev => {
                             const next = new Set(prev);
                             next.has(g.contact_id) ? next.delete(g.contact_id) : next.add(g.contact_id);
@@ -758,8 +914,8 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
                             </div>}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-xs text-gray-200 truncate font-medium">{g.display_name || g.contact_id}</p>
-                        <p className="text-[10px] text-gray-400">
+                        <p className="text-xs text-foreground truncate font-medium">{g.display_name || g.contact_id}</p>
+                        <p className="text-[10px] text-muted-foreground">
                           {memberCount > 0 ? `${memberCount} thành viên` : 'Chưa có thông tin'}
                         </p>
                       </div>
@@ -770,13 +926,20 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
             </div>
 
             {/* Group footer */}
-            <div className="flex items-center gap-2 px-4 py-3 border-t border-gray-700 flex-shrink-0">
-              <span className="text-xs text-gray-400 flex-1">
+            <div className="flex items-center gap-2 px-4 py-3 border-t border-border flex-shrink-0">
+              {groupConfirmError ? (
+                <p role="alert" className="flex-1 min-w-0 text-xs text-destructive">{groupConfirmError}</p>
+              ) : blockedHint ? (
+                <div className="flex-1 min-w-0 text-xs">{blockedHint}</div>
+              ) : (
+              <span className="text-xs text-muted-foreground flex-1">
                 {selectedGroupIds.size} nhóm · ~{totalEstimatedMembers} thành viên
               </span>
-              <button onClick={onClose} className="px-4 py-2 rounded-xl bg-gray-700 text-gray-300 text-sm hover:bg-gray-600">Hủy</button>
+              )}
+              <button onClick={onClose} className="px-4 py-2 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent">Hủy</button>
               <button
-                disabled={selectedGroupIds.size === 0 || groupConfirmLoading}
+                disabled={selectedGroupIds.size === 0 || groupConfirmLoading || !!blockReason}
+                title={blockReason || undefined}
                 onClick={handleConfirmGroups}
                 className="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-40">
                 {groupConfirmLoading ? 'Đang tải...' : `Thêm thành viên`}
@@ -786,15 +949,15 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
         ) : (
           <>
             {/* Search + select-all (for non-phone modes) */}
-            <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-700 flex-shrink-0">
+            <div className="flex items-center gap-2 px-4 py-2 border-b border-border flex-shrink-0">
               <div className="relative flex-1">
-                <svg width="12" height="12" className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"
+                <svg width="12" height="12" className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
                   viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
                 </svg>
                 <input value={search} onChange={e => setSearch(e.target.value)}
                   placeholder="Tìm tên, SĐT, UID..."
-                  className="w-full bg-gray-700 border border-gray-600 rounded-full pl-7 pr-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500" />
+                  className="w-full bg-muted border border-input rounded-full pl-7 pr-3 py-1.5 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500" />
               </div>
               <button onClick={selectAllFiltered} className="text-xs text-blue-400 hover:text-blue-300 flex-shrink-0">
                 Chọn tất cả ({filtered.length})
@@ -803,10 +966,14 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
 
             {/* Contact list */}
             <div className="flex-1 overflow-y-auto">
-              {loading ? (
-                <div className="p-4 space-y-2">{[...Array(6)].map((_, i) => <div key={i} className="h-10 bg-gray-700/50 rounded-lg animate-pulse" />)}</div>
+              {loading && (allContacts.length === 0 || contactsOwnerRef.current !== zaloId) ? (
+                <div className="p-4 space-y-2">{[...Array(6)].map((_, i) => <div key={i} className="h-10 bg-muted/50 rounded-lg animate-pulse" />)}</div>
+              ) : filtered.length === 0 && contactsFailed && allContacts.length === 0 ? (
+                <LoadFailedNotice className="py-8" text="Không tải được danh sách liên hệ" onRetry={loadContacts} busy={loading} />
+              ) : filtered.length === 0 && mode === 'by_label' && selectedLocalLabelIds.length > 0 && localLabelMapFailed ? (
+                <LoadFailedNotice className="py-8" text="Không tải được Nhãn Local" onRetry={loadLocalLabels} busy={localLabelsLoading} />
               ) : filtered.length === 0 ? (
-                <p className="text-xs text-gray-400 text-center py-8">
+                <p className="text-xs text-muted-foreground text-center py-8">
                   {mode === 'by_label' && totalLabelFilters === 0
                     ? 'Chọn ít nhất 1 nhãn để lọc liên hệ'
                     : 'Không tìm thấy liên hệ phù hợp'}
@@ -821,7 +988,7 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
                   const contactLocalLabels = effectiveLocalLabels.filter(l => contactLocalLabelIds.includes(l.id));
                   return (
                     <label key={c.contact_id}
-                      className={`flex items-center gap-2.5 px-4 py-2.5 border-b border-gray-700/50 transition-colors cursor-pointer hover:bg-gray-700/40 ${
+                      className={`flex items-center gap-2.5 px-4 py-2.5 border-b border-border/50 transition-colors cursor-pointer hover:bg-muted/40 ${
                         isChecked ? 'bg-blue-500/5' : ''
                       }`}>
                       <input type="checkbox" checked={isChecked} className="accent-blue-500 flex-shrink-0"
@@ -836,7 +1003,7 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1.5">
-                          <span className="text-xs text-gray-200 truncate font-medium">{name}</span>
+                          <span className="text-xs text-foreground truncate font-medium">{name}</span>
                           {c.contact_type === 'group'
                             ? <span className="text-[9px] text-purple-400 flex-shrink-0 bg-purple-400/10 px-1 rounded">nhóm</span>
                             : c.is_friend === 1 && <span className="text-[9px] text-green-500 flex-shrink-0">●</span>}
@@ -852,7 +1019,7 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
                           </div>
                         )}
                       </div>
-                      {c.phone && <span className="text-[11px] text-gray-400 flex-shrink-0">{formatPhone(c.phone)}</span>}
+                      {c.phone && <span className="text-[11px] text-muted-foreground flex-shrink-0">{formatPhone(c.phone)}</span>}
                     </label>
                   );
                 })
@@ -860,10 +1027,15 @@ export default function TargetSelector({ zaloId, allLabels, localLabels, localLa
             </div>
 
             {/* Footer */}
-            <div className="flex items-center gap-2 px-4 py-3 border-t border-gray-700 flex-shrink-0">
-              <span className="text-xs text-gray-400 flex-1">{finalSelected.length} liên hệ được chọn</span>
-              <button onClick={onClose} className="px-4 py-2 rounded-xl bg-gray-700 text-gray-300 text-sm hover:bg-gray-600">Hủy</button>
-              <button disabled={finalSelected.length === 0}
+            <div className="flex items-center gap-2 px-4 py-3 border-t border-border flex-shrink-0">
+              {blockedHint ? (
+                <div className="flex-1 min-w-0 text-xs">{blockedHint}</div>
+              ) : (
+                <span className="text-xs text-muted-foreground flex-1">{finalSelected.length} liên hệ được chọn</span>
+              )}
+              <button onClick={onClose} className="px-4 py-2 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent">Hủy</button>
+              <button disabled={finalSelected.length === 0 || !!blockReason}
+                title={blockReason || undefined}
                 onClick={() => { onConfirm(finalSelected); onClose(); }}
                 className="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-40">
                 Thêm {finalSelected.length} liên hệ

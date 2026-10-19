@@ -1,0 +1,99 @@
+package connector
+
+import (
+	_ "embed"
+	"strings"
+	"text/template"
+	"time"
+
+	up "go.mau.fi/util/configupgrade"
+	"gopkg.in/yaml.v3"
+)
+
+//go:embed example-config.yaml
+var ExampleConfig string
+
+type Config struct {
+	Proxy              string `yaml:"proxy"`
+	Tor                bool   `yaml:"tor"`
+	GetProxyFrom       string `yaml:"get_proxy_from"`
+	ProxyMedia         bool   `yaml:"proxy_media"`
+	ProxyE2EE          bool   `yaml:"proxy_e2ee"`
+	ProxyMessengerLite bool   `yaml:"proxy_messenger_lite"`
+	ProxyOther         bool   `yaml:"proxy_other"`
+
+	MinFullReconnectIntervalSeconds int  `yaml:"min_full_reconnect_interval_seconds"`
+	ForceRefreshIntervalSeconds     int  `yaml:"force_refresh_interval_seconds"`
+	CacheConnectionState            bool `yaml:"cache_connection_state"`
+
+	DisplaynameTemplate string             `yaml:"displayname_template"`
+	displaynameTemplate *template.Template `yaml:"-"`
+
+	// Only affects E2EE chats right now.
+	SendPresenceOnTyping      bool `yaml:"send_presence_on_typing"`
+	DisableViewOnce           bool `yaml:"disable_view_once"`
+	MarketplaceSpace          bool `yaml:"marketplace_space"`
+	LogRedactedLoginResponses bool `yaml:"log_redacted_login_responses"`
+
+	ThreadBackfill ThreadBackfillConfig `yaml:"thread_backfill"`
+}
+
+type ThreadBackfillConfig struct {
+	BatchCount int           `yaml:"batch_count"`
+	BatchDelay time.Duration `yaml:"batch_delay"`
+}
+
+type umConfig Config
+
+func (c *Config) UnmarshalYAML(node *yaml.Node) error {
+	err := node.Decode((*umConfig)(c))
+	if err != nil {
+		return err
+	}
+	return c.PostProcess()
+}
+
+func (c *Config) PostProcess() (err error) {
+	c.displaynameTemplate, err = template.New("displayname").Parse(c.DisplaynameTemplate)
+	return err
+}
+
+func upgradeConfig(helper up.Helper) {
+	helper.Copy(up.Str, "displayname_template")
+	helper.Copy(up.Str|up.Null, "proxy")
+	if val, ok := helper.Get(up.Str|up.Null, "mode"); ok && val == "facebook-tor" {
+		helper.Set(up.Bool, "true", "tor")
+	} else {
+		helper.Copy(up.Bool, "tor")
+	}
+	helper.Copy(up.Str|up.Null, "get_proxy_from")
+	helper.Copy(up.Bool, "proxy_media")
+	helper.Copy(up.Bool, "proxy_e2ee")
+	helper.Copy(up.Bool, "proxy_messenger_lite")
+	helper.Copy(up.Bool, "proxy_other")
+	helper.Copy(up.Int, "min_full_reconnect_interval_seconds")
+	helper.Copy(up.Int, "force_refresh_interval_seconds")
+	helper.Copy(up.Bool, "cache_connection_state")
+	helper.Copy(up.Bool, "send_presence_on_typing")
+	helper.Copy(up.Bool, "disable_view_once")
+	helper.Copy(up.Bool, "marketplace_space")
+	helper.Copy(up.Bool, "log_redacted_login_responses")
+	helper.Copy(up.Int, "thread_backfill", "batch_count")
+	helper.Copy(up.Str|up.Int, "thread_backfill", "batch_delay")
+}
+
+func (m *MetaConnector) GetConfig() (string, any, up.Upgrader) {
+	return ExampleConfig, &m.Config, up.SimpleUpgrader(upgradeConfig)
+}
+
+type DisplaynameParams struct {
+	DisplayName string
+	Username    string
+	ID          int64
+}
+
+func (c *Config) FormatDisplayname(params DisplaynameParams) string {
+	var buffer strings.Builder
+	_ = c.displaynameTemplate.Execute(&buffer, params)
+	return buffer.String()
+}

@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import ErpCalendarService from '../../src/services/erp/ErpCalendarService';
-import { withErpAuth, erpValidate } from './erpIpcMiddleware';
+import { eventInviteAction } from '../../src/services/erp/erpAccessRules';
+import { withErpAuth, erpValidate, requireErpPermission } from './erpIpcMiddleware';
 
 export function registerErpCalendarIpc(): void {
   const svc = () => ErpCalendarService.getInstance();
@@ -22,6 +23,9 @@ export function registerErpCalendarIpc(): void {
     if (input?.input?.end_at !== undefined && input?.input?.end_at !== null && input?.input?.end_at !== '') {
       erpValidate.int(input?.input?.end_at, 'end_at');
     }
+    // Mời người khác = cuộc họp → calendar.create_meeting (erpAccessRules.eventInviteAction)
+    const inviteAction = eventInviteAction(input?.input?.attendees, ctx.employeeId);
+    if (inviteAction) requireErpPermission(inviteAction, ctx);
     return { event: svc().createEvent(input.input, ctx.employeeId) };
   }));
 

@@ -69,7 +69,7 @@ function TestProxyButton({ proxy, size = 'sm' }: { proxy: any; size?: 'sm' | 'xs
         className={`p-1.5 rounded-lg transition-colors text-xs ${
           state === 'ok' ? 'text-green-400 bg-green-900/20' :
           state === 'fail' ? 'text-red-400 bg-red-900/20' :
-          'text-gray-400 hover:text-blue-400 hover:bg-blue-900/20'
+          'text-muted-foreground hover:text-blue-400 hover:bg-blue-900/20'
         }`}
       >
         {state === 'testing' ? (
@@ -94,7 +94,7 @@ function TestProxyButton({ proxy, size = 'sm' }: { proxy: any; size?: 'sm' | 'xs
         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
           state === 'ok' ? 'border-green-500 text-green-400 bg-green-900/20' :
           state === 'fail' ? 'border-red-500 text-red-400 bg-red-900/20' :
-          'border-gray-600 text-gray-400 hover:border-blue-500 hover:text-blue-400'
+          'border-input text-muted-foreground hover:border-blue-500 hover:text-blue-400'
         }`}
       >
         {state === 'testing' ? (
@@ -140,7 +140,7 @@ function ProxyForm({
     <form onSubmit={handleSubmit} className="space-y-3">
       {/* Name */}
       <div>
-        <label className="text-xs text-gray-400 mb-1 block">Tên proxy</label>
+        <label className="text-xs text-muted-foreground mb-1 block">Tên proxy</label>
         <input
           className="input-field text-sm w-full"
           placeholder="VD: Proxy HN 1"
@@ -152,7 +152,7 @@ function ProxyForm({
 
       {/* Type */}
       <div>
-        <label className="text-xs text-gray-400 mb-1 block">Giao thức</label>
+        <label className="text-xs text-muted-foreground mb-1 block">Giao thức</label>
         <div className="flex gap-2">
           {PROXY_TYPES.map((t) => (
             <button
@@ -163,7 +163,7 @@ function ProxyForm({
               className={`flex-1 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
                 form.type === t
                   ? `${TYPE_BADGE[t].bg} ${TYPE_BADGE[t].text} border-current`
-                  : 'border-gray-600 text-gray-400 hover:border-gray-400'
+                  : 'border-input text-muted-foreground hover:border-border-strong'
               }`}
             >
               {t.toUpperCase()}
@@ -175,7 +175,7 @@ function ProxyForm({
       {/* Host + Port */}
       <div className="flex gap-2">
         <div className="flex-1">
-          <label className="text-xs text-gray-400 mb-1 block">Host / IP</label>
+          <label className="text-xs text-muted-foreground mb-1 block">Host / IP</label>
           <input
             className="input-field text-sm w-full"
             placeholder="proxy.example.com"
@@ -186,7 +186,7 @@ function ProxyForm({
           />
         </div>
         <div className="w-24">
-          <label className="text-xs text-gray-400 mb-1 block">Port</label>
+          <label className="text-xs text-muted-foreground mb-1 block">Port</label>
           <input
             className="input-field text-sm w-full"
             placeholder="8080"
@@ -204,7 +204,7 @@ function ProxyForm({
       {/* Username + Password (optional) */}
       <div className="flex gap-2">
         <div className="flex-1">
-          <label className="text-xs text-gray-400 mb-1 block">Username <span className="text-gray-400">(tuỳ chọn)</span></label>
+          <label className="text-xs text-muted-foreground mb-1 block">Username <span className="text-muted-foreground">(tuỳ chọn)</span></label>
           <input
             className="input-field text-sm w-full"
             placeholder="user"
@@ -215,7 +215,7 @@ function ProxyForm({
           />
         </div>
         <div className="flex-1">
-          <label className="text-xs text-gray-400 mb-1 block">Password <span className="text-gray-400">(tuỳ chọn)</span></label>
+          <label className="text-xs text-muted-foreground mb-1 block">Password <span className="text-muted-foreground">(tuỳ chọn)</span></label>
           <input
             className="input-field text-sm w-full"
             placeholder="••••••••"
@@ -230,8 +230,8 @@ function ProxyForm({
 
       {/* URL preview */}
       {form.host && form.port && (
-        <div className="bg-gray-900 rounded-lg px-3 py-2">
-          <p className="text-[11px] text-gray-400 mb-0.5">URL proxy</p>
+        <div className="bg-muted rounded-lg px-3 py-2">
+          <p className="text-[11px] text-muted-foreground mb-0.5">URL proxy</p>
           <code className="text-xs text-green-400 break-word">
             {form.type}://{form.username ? `${form.username}:••••@` : ''}{form.host}:{form.port}
           </code>
@@ -248,14 +248,14 @@ function ProxyForm({
             type="button"
             onClick={onCancel}
             disabled={loading}
-            className="flex-1 py-2 rounded-lg border border-gray-600 text-gray-400 text-sm hover:border-gray-400 transition-colors"
+            className="flex-1 py-2 rounded-lg border border-input text-muted-foreground text-sm hover:border-border-strong transition-colors"
           >
             Huỷ
           </button>
           <button
             type="submit"
             disabled={loading || !form.host.trim() || !form.port}
-            className="flex-1 btn-primary text-sm py-2 text-white"
+            className="flex-1 btn-primary text-sm py-2 text-foreground"
           >
             {loading ? 'Đang lưu...' : 'Lưu proxy'}
           </button>
@@ -364,15 +364,15 @@ export default function ProxySettings() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-base font-semibold text-white"><LockIcon className="w-4 h-4 inline" /> Quản lý Proxy</h2>
-          <p className="text-xs text-gray-400 mt-0.5">
+          <h2 className="text-base font-semibold text-foreground"><LockIcon className="w-4 h-4 inline" /> Quản lý Proxy</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">
             Mỗi tài khoản có thể gắn 1 proxy riêng. Hỗ trợ HTTP, HTTPS, SOCKS4, SOCKS5.
           </p>
         </div>
         {formMode === 'none' && (
           <button
             onClick={() => setFormMode('add')}
-            className="btn-primary text-sm flex items-center gap-1.5 px-3 py-1.5 text-white"
+            className="btn-primary text-sm flex items-center gap-1.5 px-3 py-1.5 text-white-important"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
@@ -384,8 +384,8 @@ export default function ProxySettings() {
 
       {/* Add / Edit Form */}
       {formMode !== 'none' && (
-        <div className="bg-gray-750 border border-gray-600 rounded-xl p-4">
-          <p className="text-sm font-semibold text-white mb-3">
+        <div className="bg-card border border-input rounded-xl p-4">
+          <p className="text-sm font-semibold text-foreground mb-3">
             {formMode === 'add' ? <><PlusIcon className="w-4 h-4 inline" /> Thêm proxy mới</> : <><EditIcon className="w-4 h-4 inline" /> Sửa "{editTarget?.name}"</>}
           </p>
           <ProxyForm
@@ -406,9 +406,9 @@ export default function ProxySettings() {
 
       {/* Proxy List */}
       {proxies.length === 0 ? (
-        <div className="text-center py-12 text-gray-400">
+        <div className="text-center py-12 text-muted-foreground">
           <div className="text-4xl mb-3 justify-self-center"><LockIcon className="w-4 h-4" /></div>
-          <p className="text-sm font-medium text-gray-400">Chưa có proxy nào</p>
+          <p className="text-sm font-medium text-muted-foreground">Chưa có proxy nào</p>
           <p className="text-xs mt-1">Thêm proxy để gán cho từng tài khoản Zalo khi đăng nhập</p>
         </div>
       ) : (
@@ -419,7 +419,7 @@ export default function ProxySettings() {
             return (
               <div
                 key={proxy.id}
-                className="bg-gray-750 border border-gray-700 rounded-xl px-4 py-3 flex items-center gap-3 hover:border-gray-600 transition-colors"
+                className="bg-card border border-border rounded-xl px-4 py-3 flex items-center gap-3 hover:border-input transition-colors"
               >
                 {/* Type badge */}
                 <span className={`px-2 py-0.5 rounded-md text-[11px] font-bold ${badge.bg} ${badge.text} flex-shrink-0`}>
@@ -429,9 +429,9 @@ export default function ProxySettings() {
                 {/* Info */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-white truncate">{proxy.name}</span>
+                    <span className="text-sm font-medium text-foreground truncate">{proxy.name}</span>
                   </div>
-                  <p className="text-xs text-gray-400 font-mono truncate">
+                  <p className="text-xs text-muted-foreground font-mono truncate">
                     {proxy.username ? `${proxy.username}@` : ''}{proxy.host}:{proxy.port}
                   </p>
                 </div>
@@ -441,10 +441,10 @@ export default function ProxySettings() {
                   {usedAccounts.length > 0 ? (
                     <div className="text-center">
                       <span className="text-sm font-semibold text-blue-400">{usedAccounts.length}</span>
-                      <p className="text-[10px] text-gray-400">tài khoản</p>
+                      <p className="text-[10px] text-muted-foreground">tài khoản</p>
                     </div>
                   ) : (
-                    <span className="text-xs text-gray-400">Chưa dùng</span>
+                    <span className="text-xs text-muted-foreground">Chưa dùng</span>
                   )}
                 </div>
 
@@ -454,7 +454,7 @@ export default function ProxySettings() {
                   <TestProxyButton proxy={proxy} size="xs" />
                   <button
                     onClick={() => handleEdit(proxy)}
-                    className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-gray-700 transition-colors"
+                    className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                     title="Sửa"
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -464,7 +464,7 @@ export default function ProxySettings() {
                   </button>
                   <button
                     onClick={() => handleDelete(proxy)}
-                    className="p-1.5 rounded-lg text-gray-400 hover:text-red-400 hover:bg-red-900/20 transition-colors"
+                    className="p-1.5 rounded-lg text-muted-foreground hover:text-red-400 hover:bg-red-900/20 transition-colors"
                     title="Xóa"
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -483,22 +483,22 @@ export default function ProxySettings() {
 
       {/* Used accounts detail */}
       {proxies.some((p) => (accountsByProxy[p.id]?.length || 0) > 0) && (
-        <div className="border-t border-gray-700 pt-4">
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Tài khoản đang dùng proxy</h3>
+        <div className="border-t border-border pt-4">
+          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Tài khoản đang dùng proxy</h3>
           <div className="space-y-1.5">
             {accounts
               .filter((a) => a.proxy_id)
               .map((acc) => {
                 const p = proxies.find((x) => x.id === acc.proxy_id);
                 return (
-                  <div key={acc.zalo_id} className="flex items-center gap-3 px-3 py-2 bg-gray-800 rounded-lg">
+                  <div key={acc.zalo_id} className="flex items-center gap-3 px-3 py-2 bg-card rounded-lg">
                     <img
                       src={acc.avatar_url || ''}
                       alt=""
-                      className="w-7 h-7 rounded-full bg-gray-700 flex-shrink-0 object-cover"
+                      className="w-7 h-7 rounded-full bg-muted flex-shrink-0 object-cover"
                       onError={(e) => { (e.target as HTMLImageElement).src = ''; }}
                     />
-                    <span className="text-sm text-gray-200 flex-1 truncate">{acc.full_name || acc.zalo_id}</span>
+                    <span className="text-sm text-foreground flex-1 truncate">{acc.full_name || acc.zalo_id}</span>
                     {p && (
                       <span className={`text-[11px] font-semibold px-2 py-0.5 rounded ${TYPE_BADGE[p.type]?.bg} ${TYPE_BADGE[p.type]?.text}`}>
                         {p.name}

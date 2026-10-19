@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import ipc from '@/lib/ipc';
+import DataAccessor from '@/lib/data/DataAccessor';
 import { useAppStore } from '@/store/appStore';
+import { withErpDeniedNotice } from '@/store/erp/erpStoreHelpers';
 import { useErpEmployeeStore } from '@/store/erp/erpEmployeeStore';
 import { useErpTaskStore } from '@/store/erp/erpTaskStore';
 import { useCurrentEmployeeId, useErpPermissions } from '@/hooks/erp/useErpContext';
@@ -86,7 +87,8 @@ export default function TaskInboxPage() {
   }, []);
 
   const loadOwnEvents = useCallback(async () => {
-    const res = await ipc.erp?.calendarListEvents({ from: windowStart, to: windowEnd, organizerId: currentEmployeeId });
+    // Nhân viên: lịch trên Boss (REST — Boss lấy người xem từ token). Lỗi đọc → giữ lịch đang hiện
+    const res: any = await DataAccessor.erpCalendarEvents({ from: windowStart, to: windowEnd, organizerId: currentEmployeeId });
     if (res?.success) {
       const next = (res.events || [])
         .filter((event: ErpCalendarEvent) => (event.end_at ?? event.start_at) >= windowStart && event.start_at <= windowEnd)
@@ -94,7 +96,6 @@ export default function TaskInboxPage() {
       setEvents(next);
       return;
     }
-    setEvents([]);
     if (res?.error) showNotification(res.error, 'error');
   }, [currentEmployeeId, showNotification, windowEnd, windowStart]);
 
@@ -145,9 +146,9 @@ export default function TaskInboxPage() {
 
     setSavingEvent(true);
     try {
-      const res = editingEventId
-        ? await ipc.erp?.calendarUpdate({ id: editingEventId, patch: payload })
-        : await ipc.erp?.calendarCreate({ input: payload });
+      const res: any = withErpDeniedNotice(editingEventId
+        ? await DataAccessor.erpCalendarUpdate(editingEventId, payload)
+        : await DataAccessor.erpCalendarCreate(payload));
 
       if (!res?.success) {
         showNotification(res?.error || 'Không thể lưu sự kiện', 'error');
@@ -166,7 +167,7 @@ export default function TaskInboxPage() {
   const handleDeleteEvent = useCallback(async () => {
     if (!deleteTarget) return;
     const target = deleteTarget;
-    const res = await ipc.erp?.calendarDelete({ id: target.id });
+    const res: any = withErpDeniedNotice(await DataAccessor.erpCalendarDelete(target.id));
     if (!res?.success) {
       showNotification(res?.error || 'Không thể xóa sự kiện', 'error');
       return;
@@ -219,18 +220,18 @@ export default function TaskInboxPage() {
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <div className="px-4 py-3 border-b border-gray-700/60 flex-shrink-0 space-y-3">
+      <div className="px-4 py-3 border-b border-border/60 flex-shrink-0 space-y-3">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>
-            <h3 className="text-sm font-semibold text-white">Tổng quan công việc của tôi</h3>
-            <p className="text-[11px] text-gray-400 mt-1">Vai trò hiện tại: <span className="text-gray-300">{roleLabel(perms.role)}</span></p>
+            <h3 className="text-sm font-semibold text-foreground">Tổng quan công việc của tôi</h3>
+            <p className="text-[11px] text-muted-foreground mt-1">Vai trò hiện tại: <span className="text-foreground/80">{roleLabel(perms.role)}</span></p>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-[11px] uppercase tracking-wider text-gray-400">Thời gian</span>
+            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">Thời gian</span>
             <select
               value={dateFilter}
               onChange={e => setDateFilter(e.target.value as ErpDateFilterPreset)}
-              className="bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-gray-200"
+              className="bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground"
             >
               {ERP_DATE_FILTER_OPTIONS.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
             </select>
@@ -240,13 +241,13 @@ export default function TaskInboxPage() {
                   type="date"
                   value={customDateRange.from}
                   onChange={e => setCustomDateRange(current => ({ ...current, from: e.target.value }))}
-                  className="bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-gray-200"
+                  className="bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground"
                 />
                 <input
                   type="date"
                   value={customDateRange.to}
                   onChange={e => setCustomDateRange(current => ({ ...current, to: e.target.value }))}
-                  className="bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-gray-200"
+                  className="bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground"
                 />
               </>
             )}
@@ -257,7 +258,7 @@ export default function TaskInboxPage() {
           {summaryCards.cards.map(card => (
             <div key={card.label} className={`rounded-xl border px-4 py-3 shadow-sm ${card.card}`}>
               <div className="flex items-center justify-between gap-2">
-                <div className="text-[11px] uppercase tracking-wider text-gray-400 font-semibold">{card.label}</div>
+                <div className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">{card.label}</div>
                 <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${card.chip}`}>task</span>
               </div>
               <div className={`text-[32px] leading-none font-bold mt-3 tracking-tight ${card.tone}`}>{card.value}</div>
@@ -269,12 +270,12 @@ export default function TaskInboxPage() {
       <div className="flex-1 overflow-y-auto p-4 grid grid-cols-1 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)] gap-4">
         <div className="space-y-3">
           <div className="flex items-center justify-between gap-2">
-            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Task trong giai đoạn đã chọn</div>
-            <div className="text-[11px] text-gray-400">{taskList.length} / {relevantTasks.length} task hiển thị</div>
+            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Task trong giai đoạn đã chọn</div>
+            <div className="text-[11px] text-muted-foreground">{taskList.length} / {relevantTasks.length} task hiển thị</div>
           </div>
 
           {taskList.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-40 text-gray-400 bg-gray-800/40 border border-gray-700/50 rounded-xl">
+            <div className="flex flex-col items-center justify-center h-40 text-muted-foreground bg-card border border-border/50 rounded-xl">
               <span className="mb-2"><CheckIcon className="w-8 h-8" /></span>
               <p className="text-sm">Không có task nào trong giai đoạn này</p>
             </div>
@@ -285,26 +286,26 @@ export default function TaskInboxPage() {
                 <div
                   key={task.id}
                   onClick={() => setSelectedTaskId(task.id)}
-                  className="bg-gray-800 border border-gray-700/60 rounded-xl p-3 cursor-pointer shadow-sm hover:border-gray-500 hover:bg-gray-800/80 transition-colors"
+                  className="bg-card border border-border/60 rounded-xl p-3 cursor-pointer shadow-sm hover:border-border-strong hover:bg-card/80 transition-colors"
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <p className="text-sm text-gray-100 font-semibold leading-snug">{task.title}</p>
+                    <p className="text-sm text-foreground font-semibold leading-snug">{task.title}</p>
                     <span className={`text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0 ${
                       task.status === 'done' ? 'bg-green-900/50 text-green-200 border border-green-600/40'
                       : task.status === 'doing' ? 'bg-blue-900/50 text-blue-200 border border-blue-500/30'
                       : task.status === 'review' ? 'bg-yellow-900/50 text-yellow-200 border border-yellow-500/30'
-                      : 'bg-gray-700 text-gray-300 border border-gray-600'
+                      : 'bg-muted text-foreground/80 border border-input'
                     }`}>{STATUS_LABELS[task.status] || task.status}</span>
                   </div>
                   {task.description?.trim() && (
-                    <div className="mt-2 rounded-lg border border-gray-700/50 bg-gray-900/30 px-3 py-2">
-                      <RichContentPreview source={task.description} compact className="text-[12px] text-gray-400" />
+                    <div className="mt-2 rounded-lg border border-border/50 bg-card px-3 py-2">
+                      <RichContentPreview source={task.description} compact className="text-[12px] text-muted-foreground" />
                     </div>
                   )}
-                  <div className="flex items-center gap-3 mt-2 text-[11px] text-gray-400 flex-wrap">
+                  <div className="flex items-center gap-3 mt-2 text-[11px] text-muted-foreground flex-wrap">
                     <span className="font-medium"><span className={`inline-block w-2.5 h-2.5 rounded-full ${task.priority === 'urgent' ? 'bg-red-500' : task.priority === 'high' ? 'bg-orange-500' : task.priority === 'normal' ? 'bg-blue-500' : 'bg-gray-400'}`} /> {task.priority}</span>
                     {task.due_date && (
-                      <span className={overdue ? 'text-red-300 font-medium' : 'text-gray-400'}><CalendarIcon className="w-4 h-4 inline" /> {new Date(task.due_date).toLocaleDateString('vi-VN')}
+                      <span className={overdue ? 'text-red-300 font-medium' : 'text-muted-foreground'}><CalendarIcon className="w-4 h-4 inline" /> {new Date(task.due_date).toLocaleDateString('vi-VN')}
                       </span>
                     )}
                     {!!task.assignees?.length && (
@@ -334,33 +335,33 @@ export default function TaskInboxPage() {
 
         <div className="space-y-3">
           <div className="flex items-center justify-between gap-2">
-            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Lịch của tôi</div>
+            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Lịch của tôi</div>
             <button
               type="button"
               onClick={openCreateEventModal}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 px-2.5 py-1 text-[11px] font-medium text-blue-300 hover:border-blue-400/50 hover:bg-blue-500/20 hover:text-white transition-colors"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 px-2.5 py-1 text-[11px] font-medium text-blue-300 hover:border-blue-400/50 hover:bg-blue-500/20 hover:text-foreground transition-colors"
             >
               <span className="text-sm leading-none">＋</span>
               <span>Thêm sự kiện</span>
             </button>
           </div>
-          <div className="bg-gray-800/50 border border-gray-700/60 rounded-xl p-3 space-y-2">
+          <div className="bg-card border border-border/60 rounded-xl p-3 space-y-2">
             {events.length === 0 ? (
-              <div className="text-sm text-gray-400 py-6 text-center">Không có sự kiện trong khoảng thời gian hiện tại</div>
+              <div className="text-sm text-muted-foreground py-6 text-center">Không có sự kiện trong khoảng thời gian hiện tại</div>
             ) : (
               events.slice(0, 12).map(event => (
                 <button
                   key={event.id}
                   type="button"
                   onClick={() => setSelectedEvent(event)}
-                  className="w-full rounded-lg border border-gray-700/60 bg-gray-900/30 px-3 py-2 shadow-sm text-left hover:border-blue-500/40 hover:bg-gray-900/50 transition-colors"
+                  className="w-full rounded-lg border border-border/60 bg-card px-3 py-2 shadow-sm text-left hover:border-blue-500/40 hover:bg-background/50 transition-colors"
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <p className="text-sm text-gray-100 font-medium truncate">{event.title}</p>
+                    <p className="text-sm text-foreground font-medium truncate">{event.title}</p>
                     <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: event.color || '#3b82f6' }} />
                   </div>
-                  <p className="text-xs text-gray-300 mt-1">{new Date(event.start_at).toLocaleString('vi-VN')}</p>
-                  {event.location && <p className="text-[11px] text-gray-400 mt-1">📍 {event.location}</p>}
+                  <p className="text-xs text-foreground/80 mt-1">{new Date(event.start_at).toLocaleString('vi-VN')}</p>
+                  {event.location && <p className="text-[11px] text-muted-foreground mt-1">📍 {event.location}</p>}
                 </button>
               ))
             )}
@@ -375,9 +376,9 @@ export default function TaskInboxPage() {
                     key={task.id}
                     type="button"
                     onClick={() => setSelectedTaskId(task.id)}
-                    className="w-full text-left rounded-lg border border-red-500/10 bg-gray-900/30 px-3 py-2 hover:border-red-400/40"
+                    className="w-full text-left rounded-lg border border-red-500/10 bg-card px-3 py-2 hover:border-red-400/40"
                   >
-                    <div className="text-sm text-white truncate">{task.title}</div>
+                    <div className="text-sm text-foreground truncate">{task.title}</div>
                     <div className="text-[11px] text-red-300 mt-1">Quá hạn từ {task.due_date ? new Date(task.due_date).toLocaleDateString('vi-VN') : '-'}</div>
                   </button>
                 ))}
@@ -394,24 +395,24 @@ export default function TaskInboxPage() {
       {showEventModal && (
         <ErpOverlay onClose={closeEventModal} className="z-50">
           <ErpModalCard className="w-full max-w-md p-5">
-            <h3 className="text-sm font-bold text-white mb-4">{editingEventId ? 'Chỉnh sửa sự kiện' : 'Tạo sự kiện mới'}</h3>
+            <h3 className="text-sm font-bold text-foreground mb-4">{editingEventId ? 'Chỉnh sửa sự kiện' : 'Tạo sự kiện mới'}</h3>
             <div className="space-y-3">
               <input
                 placeholder="Tiêu đề sự kiện"
                 value={eventDraft.title ?? ''}
                 onChange={e => setEventDraft(v => ({ ...v, title: e.target.value }))}
-                className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
               />
               <div>
-                <label className="text-[11px] text-gray-400 mb-1 block">Bắt đầu</label>
+                <label className="text-[11px] text-muted-foreground mb-1 block">Bắt đầu</label>
                 <input
                   type="datetime-local"
                   value={eventDraft.start_at ? new Date(eventDraft.start_at - new Date(eventDraft.start_at).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''}
                   onChange={e => setEventDraft(v => ({ ...v, start_at: e.target.value ? new Date(e.target.value).getTime() : undefined }))}
-                  className="w-full bg-gray-700 border border-gray-600 rounded-lg px-2 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-blue-500"
+                  className="w-full bg-muted border border-input rounded-lg px-2 py-1.5 text-xs text-foreground focus:outline-none focus:border-blue-500"
                 />
               </div>
-              <label className="flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-900/40 px-3 py-2 text-xs text-gray-300 cursor-pointer">
+              <label className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs text-foreground/80 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={hasEndTime}
@@ -425,12 +426,12 @@ export default function TaskInboxPage() {
               </label>
               {hasEndTime && (
                 <div>
-                  <label className="text-[11px] text-gray-400 mb-1 block">Kết thúc</label>
+                  <label className="text-[11px] text-muted-foreground mb-1 block">Kết thúc</label>
                   <input
                     type="datetime-local"
                     value={eventDraft.end_at ? new Date(eventDraft.end_at - new Date(eventDraft.end_at).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''}
                     onChange={e => setEventDraft(v => ({ ...v, end_at: e.target.value ? new Date(e.target.value).getTime() : undefined }))}
-                    className="w-full bg-gray-700 border border-gray-600 rounded-lg px-2 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-blue-500"
+                    className="w-full bg-muted border border-input rounded-lg px-2 py-1.5 text-xs text-foreground focus:outline-none focus:border-blue-500"
                   />
                 </div>
               )}
@@ -438,14 +439,14 @@ export default function TaskInboxPage() {
                 placeholder="Địa điểm (tùy chọn)"
                 value={eventDraft.location ?? ''}
                 onChange={e => setEventDraft(v => ({ ...v, location: e.target.value }))}
-                className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
               />
               <textarea
                 placeholder="Ghi chú / note thông tin thêm (tùy chọn)"
                 value={eventDraft.description ?? ''}
                 onChange={e => setEventDraft(v => ({ ...v, description: e.target.value }))}
                 rows={3}
-                className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500 resize-y"
+                className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 resize-y"
               />
             </div>
             <div className="flex gap-2 mt-4">
@@ -454,7 +455,7 @@ export default function TaskInboxPage() {
                 disabled={savingEvent || !eventDraft.title?.trim() || !eventDraft.start_at || (hasEndTime && !eventDraft.end_at)}
                 className="flex-1 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-sm rounded-lg"
               >{savingEvent ? 'Đang lưu...' : (editingEventId ? 'Lưu' : 'Tạo')}</button>
-              <button onClick={closeEventModal} className="px-4 py-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg text-sm">Huỷ</button>
+              <button onClick={closeEventModal} className="px-4 py-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg text-sm">Huỷ</button>
             </div>
           </ErpModalCard>
         </ErpOverlay>
@@ -463,15 +464,15 @@ export default function TaskInboxPage() {
       {selectedEvent && (
         <ErpOverlay onClose={() => setSelectedEvent(null)} className="z-50" backdropClassName="bg-black/50">
           <ErpModalCard className="w-full max-w-sm p-5">
-            <h3 className="text-sm font-bold text-white mb-2">{selectedEvent.title}</h3>
-            <p className="text-xs text-gray-400">
+            <h3 className="text-sm font-bold text-foreground mb-2">{selectedEvent.title}</h3>
+            <p className="text-xs text-muted-foreground">
               {new Date(selectedEvent.start_at).toLocaleString('vi-VN')}
               {selectedEvent.end_at && selectedEvent.end_at > selectedEvent.start_at
                 ? ` → ${new Date(selectedEvent.end_at).toLocaleString('vi-VN')}`
                 : ''}
             </p>
-            {selectedEvent.location && <p className="text-xs text-gray-400 mt-1">📍 {selectedEvent.location}</p>}
-            {selectedEvent.description && <p className="text-xs text-gray-300 mt-2 whitespace-pre-wrap">{selectedEvent.description}</p>}
+            {selectedEvent.location && <p className="text-xs text-muted-foreground mt-1">📍 {selectedEvent.location}</p>}
+            {selectedEvent.description && <p className="text-xs text-foreground/80 mt-2 whitespace-pre-wrap">{selectedEvent.description}</p>}
             <div className="flex gap-2 mt-4 justify-end">
               <button
                 onClick={() => openEditEventModal(selectedEvent)}
@@ -484,7 +485,7 @@ export default function TaskInboxPage() {
                 }}
                 className="px-3 py-1.5 text-xs font-medium text-red-300 border border-red-500/30 bg-red-500/10 hover:text-white hover:bg-red-600 rounded-lg"
               >Xoá</button>
-              <button onClick={() => setSelectedEvent(null)} className="px-3 py-1.5 text-xs text-gray-300 hover:text-white hover:bg-gray-700 rounded-lg">Đóng</button>
+              <button onClick={() => setSelectedEvent(null)} className="px-3 py-1.5 text-xs text-foreground/80 hover:text-foreground hover:bg-muted rounded-lg">Đóng</button>
             </div>
           </ErpModalCard>
         </ErpOverlay>

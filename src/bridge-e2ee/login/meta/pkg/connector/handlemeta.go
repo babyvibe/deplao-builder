@@ -1,0 +1,895 @@
+package connector
+
+import (
+	"context"
+	"net/url"
+	"time"
+
+	"github.com/coder/websocket"
+	"github.com/rs/zerolog"
+	"go.mau.fi/util/exmaps"
+	"go.mau.fi/util/ptr"
+	"golang.org/x/exp/maps"
+	"maunium.net/go/mautrix/bridgev2"
+	"maunium.net/go/mautrix/bridgev2/networkid"
+	"maunium.net/go/mautrix/bridgev2/simplevent"
+	"maunium.net/go/mautrix/bridgev2/status"
+	"maunium.net/go/mautrix/event"
+
+	"go.mau.fi/mautrix-meta/pkg/messagix"
+	"go.mau.fi/mautrix-meta/pkg/messagix/dgw"
+	"go.mau.fi/mautrix-meta/pkg/messagix/table"
+	"go.mau.fi/mautrix-meta/pkg/messagix/types"
+	"go.mau.fi/mautrix-meta/pkg/metaid"
+)
+
+const (
+	WADisconnected            status.BridgeStateErrorCode = "wa-transient-disconnect"
+	WAPermanentError          status.BridgeStateErrorCode = "wa-unknown-permanent-error"
+	WACATError                status.BridgeStateErrorCode = "wa-cat-refresh-error"
+	WAConnectError            status.BridgeStateErrorCode = "wa-unknown-connect-error"
+	DGWConnectionUnauthorized status.BridgeStateErrorCode = "dgw-connection-unauthorized"
+	MetaPermanentError        status.BridgeStateErrorCode = "meta-unknown-permanent-error"
+	MetaCookieRemoved         status.BridgeStateErrorCode = "meta-cookie-removed"
+	MetaUserIDIsZero          status.BridgeStateErrorCode = "meta-user-id-is-zero"
+	MetaRedirectedToLoginPage status.BridgeStateErrorCode = "meta-redirected-to-login"
+	MetaNotLoggedIn           status.BridgeStateErrorCode = "meta-not-logged-in"
+	MetaConnectError          status.BridgeStateErrorCode = "meta-connect-error"
+	MetaGraphQLError          status.BridgeStateErrorCode = "meta-graphql-error"
+	MetaTransientDisconnect   status.BridgeStateErrorCode = "meta-transient-disconnect"
+	FBChallengeRequired       status.BridgeStateErrorCode = "fb-challenge-required"
+	FBAccountSuspended        status.BridgeStateErrorCode = "fb-account-suspended"
+	FBConsentRequired         status.BridgeStateErrorCode = "fb-consent-required"
+	FBCheckpointRequired      status.BridgeStateErrorCode = "fb-checkpoint-required"
+	MetaProxyUpdateFail       status.BridgeStateErrorCode = "meta-proxy-update-fail"
+	IGNotSupported            status.BridgeStateErrorCode = "meta-ig-not-supported"
+)
+
+func init() {
+	status.BridgeStateHumanErrors.Update(status.BridgeStateErrorMap{
+		WADisconnected:            "Disconnected from encrypted chat server. Trying to reconnect.",
+		MetaTransientDisconnect:   "Disconnected from server, trying to reconnect",
+		DGWConnectionUnauthorized: "Logged out, please relogin to continue",
+		MetaCookieRemoved:         "Logged out, please relogin to continue",
+		MetaUserIDIsZero:          "Logged out, please relogin to continue",
+		MetaRedirectedToLoginPage: "Logged out, please relogin to continue",
+		MetaNotLoggedIn:           "Logged out, please relogin to continue",
+		FBAccountSuspended:        "Logged out, please check the Facebook website to continue",
+		FBChallengeRequired:       "Challenge required, please check the Facebook website to continue",
+		FBConsentRequired:         "Consent required, please check the Facebook website to continue",
+		FBCheckpointRequired:      "Checkpoint required, please check the Facebook website to continue",
+		MetaConnectError:          "Unknown connection error",
+		MetaProxyUpdateFail:       "Failed to update proxy",
+		IGNotSupported:            "This bridge no longer supports Instagram",
+	})
+}
+
+func (m *MetaClient) handleMetaEvent(ctx context.Context, rawEvt any) {
+	log := m.UserLogin.Log
+
+	switch evt := rawEvt.(type) {
+	case *table.LSTable:
+		log.Trace().Any("table", evt).Msg("Got new event")
+		for _, rng := range evt.LSInsertNewMessageRange {
+			log.Debug().Any("message_range", rng).Msg("Message range in publish response")
+		}
+		m.parseAndQueueTable(ctx, evt, false)
+	case *messagix.ConnectedEvent:
+		log.Debug().Msg("Initial connect to Meta socket completed")
+		m.permanentErrored.Store(false)
+		m.connectWaiter.Set()
+		m.firstE2EEConnectDone = true
+		go m.tryConnectE2EE(false)
+		m.metaState = status.BridgeState{StateEvent: status.StateConnected}
+		m.UserLogin.BridgeState.Send(m.metaState)
+		if tbl := m.initialTable.Swap(nil); tbl != nil {
+			log.Debug().Msg("Handling cached initial table")
+			m.parseAndQueueTable(ctx, tbl, true)
+		}
+		// Start thread backfill in background after initial sync
+		go func() {
+			if err := m.StartThreadBackfill(ctx); err != nil {
+				log.Err(err).Msg("Thread backfill failed")
+			}
+		}()
+	case *messagix.TransientDisconnectEvent:
+		log.Debug().Err(evt.Err).Msg("Disconnected from Meta socket")
+		m.connectWaiter.Clear()
+		m.metaState = status.BridgeState{
+			StateEvent: status.StateTransientDisconnect,
+			Error:      MetaTransientDisconnect,
+		}
+		m.UserLogin.BridgeState.Send(m.metaState)
+	case *messagix.ReconnectedEvent:
+		if !m.firstE2EEConnectDone {
+			m.firstE2EEConnectDone = true
+			go m.tryConnectE2EE(false)
+		}
+		log.Debug().Msg("Reconnected to Meta socket")
+		m.connectWaiter.Set()
+		m.metaState = status.BridgeState{StateEvent: status.StateConnected}
+		m.UserLogin.BridgeState.Send(m.metaState)
+	case *messagix.PermanentErrorEvent:
+		// TODO do full reconnect in some cases?
+		m.permanentErrored.Store(true)
+		if websocket.CloseStatus(evt.Err) == dgw.CloseStatusUnauthorized {
+			m.metaState = status.BridgeState{
+				StateEvent: status.StateBadCredentials,
+				Error:      DGWConnectionUnauthorized,
+				Message:    evt.Err.Error(),
+			}
+		} else {
+			m.metaState = status.BridgeState{
+				StateEvent: status.StateUnknownError,
+				Error:      MetaPermanentError,
+				Message:    evt.Err.Error(),
+			}
+		}
+		m.UserLogin.BridgeState.Send(m.metaState)
+		if stopPeriodicReconnect := m.stopPeriodicReconnect.Swap(nil); stopPeriodicReconnect != nil {
+			(*stopPeriodicReconnect)()
+		}
+	default:
+		log.Warn().Type("event_type", evt).Msg("Unrecognized event type from messagix")
+	}
+}
+
+func (m *MetaClient) parseAndQueueTable(ctx context.Context, tbl *table.LSTable, isInitial bool) {
+	evts := m.parseTable(ctx, tbl)
+	wrapped := &parsedTable{
+		Table:     tbl,
+		Events:    evts,
+		IsInitial: isInitial,
+	}
+	if ctx.Err() != nil {
+		zerolog.Ctx(ctx).Warn().Err(ctx.Err()).Msg("Not dispatching parsed table, context is canceled")
+	}
+	select {
+	case m.parsedTables <- wrapped:
+	default:
+		zerolog.Ctx(ctx).Warn().Msg("Parsed table queue is full, events may get stuck")
+		select {
+		case m.parsedTables <- wrapped:
+		case <-ctx.Done():
+			zerolog.Ctx(ctx).Warn().Msg("Context was cancelled before stuck table was dispatched, dropping table")
+		}
+	}
+}
+
+type parsedTable struct {
+	Table     *table.LSTable
+	Events    []bridgev2.RemoteEvent
+	IsInitial bool
+}
+
+func (m *MetaClient) handleTableLoop(ctx context.Context) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if oldCancel := m.stopHandlingTables.Swap(&cancel); oldCancel != nil {
+		(*oldCancel)()
+	}
+	log := m.UserLogin.Log.With().Str("action", "handle parsed table").Logger()
+	ctx = log.WithContext(ctx)
+	for {
+		select {
+		case evt := <-m.parsedTables:
+			m.notifyBackgroundConnAboutEvent(true)
+			m.handleParsedTable(ctx, evt.IsInitial, evt.Table, evt.Events)
+			m.saveConnectionState(ctx, nil)
+			m.notifyBackgroundConnAboutEvent(false)
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+func (m *MetaClient) handleParsedTable(ctx context.Context, isInitial bool, tbl *table.LSTable, innerQueue []bridgev2.RemoteEvent) {
+	for _, contact := range tbl.LSDeleteThenInsertContact {
+		if ctx.Err() != nil {
+			return
+		}
+		m.syncGhost(ctx, contact)
+	}
+	for _, contact := range tbl.LSVerifyContactRowExists {
+		if ctx.Err() != nil {
+			return
+		}
+		m.syncGhost(ctx, contact)
+	}
+	if ctx.Err() != nil {
+		return
+	}
+	for _, evt := range innerQueue {
+		if ctx.Err() != nil {
+			return
+		}
+		res := m.UserLogin.QueueRemoteEvent(evt)
+		if !res.Success {
+			zerolog.Ctx(ctx).Warn().
+				Any("queue_result", res).
+				Msg("Queue remote event returned non-success status, cancelling table handling")
+			return
+		}
+	}
+	if ctx.Err() == nil {
+		if isInitial {
+			m.initialTableHandled.Store(true)
+		} else {
+			m.Client.PostHandlePublishResponse(tbl)
+		}
+	}
+}
+
+func (m *MetaClient) syncGhost(ctx context.Context, info types.UserInfo) {
+	log := zerolog.Ctx(ctx).With().Int64("ghost_id", info.GetFBID()).Logger()
+	ctx = log.WithContext(ctx)
+	ghost, err := m.Main.Bridge.GetGhostByID(ctx, metaid.MakeUserID(info.GetFBID()))
+	if err != nil {
+		log.Err(err).Msg("Failed to get ghost")
+		return
+	}
+	ghost.UpdateInfo(ctx, m.wrapUserInfo(info))
+}
+
+func (m *MetaClient) parseTable(ctx context.Context, tbl *table.LSTable) (innerQueue []bridgev2.RemoteEvent) {
+	threadExists := make(map[int64]*table.LSVerifyThreadExists, len(tbl.LSVerifyThreadExists))
+	threadResyncs := make(map[int64]*FBChatResync, len(tbl.LSDeleteThenInsertThread))
+	folderResyncs := make(map[int64]*FBFolderResync, len(tbl.LSUpsertFolder))
+	waThreadMap := make(map[int64]int64, len(tbl.LSVerifyHybridThreadExists))
+	activeThreads := make(exmaps.Set[int64])
+	for _, vte := range tbl.LSVerifyThreadExists {
+		activeThreads.Add(vte.ThreadKey)
+	}
+	for _, uoi := range tbl.LSUpdateOrInsertThread {
+		activeThreads.Add(uoi.ThreadKey)
+	}
+	for _, inr := range tbl.LSInsertNewMessageRange {
+		activeThreads.Add(inr.ThreadKey)
+	}
+	for _, dit := range tbl.LSDeleteThenInsertThread {
+		activeThreads.Add(dit.ThreadKey)
+	}
+	innerQueue = make([]bridgev2.RemoteEvent, 0, 8)
+	for _, jid := range tbl.LSUpdateThreadAuthorityAndMappingWithOTIDFromJID {
+		waThreadMap[jid.ThreadKey] = jid.ThreadJID
+		if err := m.Main.DB.PutHybridThreadMapping(ctx, m.UserLogin.ID, jid.ThreadKey, jid.ThreadJID, 0); err != nil {
+			zerolog.Ctx(ctx).Warn().Err(err).Msg("Failed to persist hybrid thread mapping")
+		}
+		activeThreads.Add(jid.ThreadJID)
+	}
+	for _, jid := range tbl.LSVerifyHybridThreadExists {
+		waThreadMap[jid.ThreadKey] = jid.ThreadJID
+		if err := m.Main.DB.PutHybridThreadMapping(ctx, m.UserLogin.ID, jid.ThreadKey, jid.ThreadJID, int64(jid.ThreadType)); err != nil {
+			zerolog.Ctx(ctx).Warn().Err(err).Msg("Failed to persist hybrid thread mapping")
+		}
+		activeThreads.Add(jid.ThreadJID)
+		innerQueue = append(innerQueue, &simplevent.ChatDelete{
+			EventMeta: simplevent.EventMeta{
+				Type:      bridgev2.RemoteEventChatDelete,
+				PortalKey: m.makeFBPortalKey(jid.ThreadKey, jid.ThreadType),
+				LogContext: func(c zerolog.Context) zerolog.Context {
+					return c.Str("delete_reason", "hybrid thread")
+				},
+			},
+		})
+	}
+	params := threadMaps{
+		ctx:           ctx,
+		m:             m,
+		vtes:          threadExists,
+		syncs:         threadResyncs,
+		activeThreads: activeThreads,
+		waThreadMap:   waThreadMap,
+	}
+
+	for _, thread := range tbl.LSVerifyThreadExists {
+		threadExists[thread.ThreadKey] = thread
+	}
+	for _, folder := range tbl.LSUpsertFolder {
+		rs := &FBFolderResync{
+			PortalKey:      m.makeFBPortalKey(folder.ThreadKey, table.FOLDER),
+			LSUpsertFolder: folder,
+			m:              m,
+		}
+		folderResyncs[folder.ThreadKey] = rs
+		innerQueue = append(innerQueue, rs)
+	}
+	blocks := make(map[int64]*bool)
+	for _, contact := range tbl.LSDeleteThenInsertContact {
+		blocks[contact.GetFBID()] = new(contact.BlockedByViewerStatus != 0)
+	}
+	for _, contact := range tbl.LSVerifyContactRowExists {
+		blocks[contact.GetFBID()] = new(contact.IsBlocked || contact.BlockedByViewerStatus != 0)
+	}
+	for _, thread := range tbl.LSDeleteThenInsertThread {
+		fbKey := thread.ThreadKey
+		thread.ThreadKey = params.MapWhatsAppThreadKey(thread.ThreadKey)
+		info := m.wrapChatInfo(thread)
+		if fbKey != thread.ThreadKey {
+			info.ExtraUpdates = bridgev2.MergeExtraUpdaters(info.ExtraUpdates, setFBThreadKey(fbKey))
+			if err := m.Main.DB.SetHybridThreadMessageRequest(ctx, m.UserLogin.ID, fbKey, thread.FolderName == folderPending); err != nil {
+				zerolog.Ctx(ctx).Warn().Err(err).Msg("Failed to persist hybrid message request status")
+			}
+		}
+		if info.UserBlocked == nil {
+			info.UserBlocked = blocks[thread.ThreadKey]
+		}
+		threadResyncs[thread.ThreadKey] = &FBChatResync{
+			PortalKey: m.makeFBPortalKey(thread.ThreadKey, thread.ThreadType),
+			Info:      info,
+			Raw:       thread,
+			Members:   make(map[int64]bridgev2.ChatMember, thread.MemberCount),
+			m:         m,
+
+			UncertainReceiver: thread.ThreadType == table.UNKNOWN_THREAD_TYPE,
+		}
+	}
+	for _, thread := range tbl.LSUpdateOrInsertThread {
+		fbKey := thread.ThreadKey
+		thread.ThreadKey = params.MapWhatsAppThreadKey(thread.ThreadKey)
+		if _, ok := threadResyncs[thread.ThreadKey]; ok {
+			continue
+		}
+		info := m.wrapChatInfo(thread)
+		if fbKey != thread.ThreadKey {
+			info.ExtraUpdates = bridgev2.MergeExtraUpdaters(info.ExtraUpdates, setFBThreadKey(fbKey))
+			if err := m.Main.DB.SetHybridThreadMessageRequest(ctx, m.UserLogin.ID, fbKey, thread.FolderName == folderPending); err != nil {
+				zerolog.Ctx(ctx).Warn().Err(err).Msg("Failed to persist hybrid message request status")
+			}
+		}
+		if info.UserBlocked == nil {
+			info.UserBlocked = blocks[thread.ThreadKey]
+		}
+		threadResyncs[thread.ThreadKey] = &FBChatResync{
+			PortalKey: m.makeFBPortalKey(thread.ThreadKey, thread.ThreadType),
+			Info:      info,
+			Update:    thread,
+			Members:   make(map[int64]bridgev2.ChatMember),
+			m:         m,
+
+			UncertainReceiver: thread.ThreadType == table.UNKNOWN_THREAD_TYPE,
+		}
+	}
+
+	// Deleting a thread will cancel all further events, so handle those first
+	collectPortalEvents(params, tbl.LSDeleteThread, m.handleDeleteThread, &innerQueue)
+	// Facebook's web client uses this procedure when deleting a chat for the current user.
+	collectPortalEvents(params, tbl.LSDeletePartialThread, m.handleDeletePartialThread, &innerQueue)
+	// Same as above, but for deleting/declining a pending message request
+	collectPortalEvents(params, tbl.LSDeleteMessageRequest, m.handleDeleteMessageRequest, &innerQueue)
+	// Similar to above - delete the thread when the user leaves it
+	collectPortalEvents(params, tbl.LSRemoveParticipantFromThread, m.handleSelfLeaveThread, &innerQueue)
+
+	for _, verifyExists := range threadExists {
+		if _, resyncing := threadResyncs[verifyExists.ThreadKey]; resyncing {
+			continue
+		} else if _, folder := folderResyncs[verifyExists.ThreadKey]; folder {
+			continue
+		}
+		innerQueue = append(innerQueue, &VerifyThreadExistsEvent{LSVerifyThreadExists: verifyExists, m: m})
+	}
+
+	// Handle events that are merged into thread resyncs before dispatching the resyncs
+	collectPortalEvents(params, tbl.LSAddParticipantIdToGroupThread, m.handleAddParticipant, &innerQueue)
+	collectPortalEvents(params, tbl.LSUpdateThreadMuteSetting, m.handleUpdateMuteSetting, &innerQueue)
+	collectPortalEvents(params, tbl.LSMoveThreadToE2EECutoverFolder, m.handleMoveThreadToE2EE, &innerQueue)
+	upsert, insert := tbl.WrapMessages()
+	collectPortalEvents(params, maps.Values(upsert), m.handleUpsertMessages, &innerQueue)
+	collectPortalEvents(params, tbl.LSUpdateExistingMessageRange, m.handleUpdateExistingMessageRange, &innerQueue)
+
+	for _, resync := range threadResyncs {
+		innerQueue = append(innerQueue, resync)
+	}
+
+	blockUpdates := make(map[int64]*simplevent.ChatInfoChange)
+	updateBlock := func(contactID int64, isBlocked bool, changeType string) {
+		blockUpdates[contactID] = m.wrapChatInfoChange(contactID, 0, table.UNKNOWN_THREAD_TYPE, &bridgev2.ChatInfoChange{
+			ChatInfo: &bridgev2.ChatInfo{
+				UserBlocked: new(isBlocked),
+			},
+		}, changeType)
+	}
+	for _, update := range tbl.LSChangeViewerStatus {
+		if update.CannotReplyReason != "" && update.CannotReplyReason != "blocked" {
+			continue
+		}
+		updateBlock(update.ThreadKey, update.CannotReplyReason == "blocked", "LSChangeViewerStatus")
+	}
+	for _, update := range tbl.LSUpdateCommunityMemberBlockStatus {
+		updateBlock(update.ContactID, update.IsBlocked, "LSUpdateCommunityMemberBlockStatus")
+	}
+	for _, update := range tbl.LSUpdatePublicChannelMemberBlockStatus {
+		updateBlock(update.ContactID, update.IsBlocked, "LSUpdatePublicChannelMemberBlockStatus")
+	}
+	for _, update := range blockUpdates {
+		innerQueue = append(innerQueue, update)
+	}
+
+	collectPortalEvents(params, insert, m.handleMessageInsert, &innerQueue)
+	// Edits are special snowflakes that don't include the thread key
+	for _, edit := range tbl.LSEditMessage {
+		m.handleEdit(ctx, edit, &innerQueue)
+	}
+	collectPortalEvents(params, tbl.LSSyncUpdateThreadName, m.handleUpdateThreadName, &innerQueue)
+	collectPortalEvents(params, tbl.LSSetThreadImageURL, m.handleSetThreadImage, &innerQueue)
+	collectPortalEvents(params, tbl.LSUpdateReadReceipt, m.handleUpdateReadReceipt, &innerQueue)
+	collectPortalEvents(params, tbl.LSMarkThreadReadV2, m.handleMarkThreadRead, &innerQueue)
+	collectPortalEvents(params, tbl.LSUpdateTypingIndicator, m.handleTypingIndicator, &innerQueue)
+	collectPortalEvents(params, tbl.LSDeleteMessage, m.handleDeleteMessage, &innerQueue)
+	collectPortalEvents(params, tbl.LSDeleteThenInsertMessage, m.handleDeleteThenInsertMessage, &innerQueue)
+	collectPortalEvents(params, tbl.LSDeleteThenInsertMessageRequest, m.handleDeleteThenInsertMessageRequest, &innerQueue)
+	collectPortalEvents(params, tbl.LSUpsertReaction, m.handleUpsertReaction, &innerQueue)
+	collectPortalEvents(params, tbl.LSDeleteReaction, m.handleDeleteReaction, &innerQueue)
+	collectPortalEvents(params, tbl.LSRemoveParticipantFromThread, m.handleRemoveParticipant, &innerQueue)
+	// TODO request more inbox if applicable
+
+	for _, igThread := range tbl.LSDeleteThenInsertIgThreadInfo {
+		err := m.Main.DB.PutFBIDForIGThread(ctx, igThread.IgThreadId, igThread.ThreadKey, m.UserLogin.ID)
+		if err != nil {
+			zerolog.Ctx(ctx).Warn().Err(err).Msg("Failed to save FBID for IG thread")
+		}
+	}
+
+	if tbl.LSUpdateThreadsRangesV2 != nil || tbl.LSUpsertInboxThreadsRange != nil || tbl.LSUpsertSyncGroupThreadsRange != nil {
+		zerolog.Ctx(ctx).Debug().
+			Any("updateThreadsRangesV2", tbl.LSUpdateThreadsRangesV2).
+			Any("upsertInboxThreadsRange", tbl.LSUpsertInboxThreadsRange).
+			Any("upsertSyncGroupThreadsRange", tbl.LSUpsertSyncGroupThreadsRange).
+			Msg("Thread range debug data in table")
+	}
+
+	return
+}
+
+func (m *MetaClient) handleMarkThreadRead(tk handlerParams, msg *table.LSMarkThreadReadV2) bridgev2.RemoteEvent {
+	return &simplevent.Receipt{
+		EventMeta: simplevent.EventMeta{
+			Type: bridgev2.RemoteEventReadReceipt,
+			LogContext: func(c zerolog.Context) zerolog.Context {
+				return c.Int64("read_up_to", msg.LastReadWatermarkTimestampMs)
+			},
+			PortalKey:         tk.Portal,
+			UncertainReceiver: tk.IsUncertainReceiver(),
+			Sender:            m.selfEventSender(),
+		},
+		ReadUpTo: time.UnixMilli(msg.LastReadWatermarkTimestampMs),
+	}
+}
+
+func (m *MetaClient) handleUpdateReadReceipt(tk handlerParams, msg *table.LSUpdateReadReceipt) bridgev2.RemoteEvent {
+	// Only set timestamp if Instagram provides a valid one
+	var timestamp time.Time
+	if msg.ReadActionTimestampMs > 0 {
+		timestamp = time.UnixMilli(msg.ReadActionTimestampMs)
+	}
+	return &simplevent.Receipt{
+		EventMeta: simplevent.EventMeta{
+			Type: bridgev2.RemoteEventReadReceipt,
+			LogContext: func(c zerolog.Context) zerolog.Context {
+				return c.Int64("read_up_to", msg.ReadWatermarkTimestampMs)
+			},
+			PortalKey:         tk.Portal,
+			UncertainReceiver: tk.IsUncertainReceiver(),
+			Sender:            m.makeEventSender(msg.ContactId),
+			Timestamp:         timestamp,
+		},
+		ReadUpTo: time.UnixMilli(msg.ReadWatermarkTimestampMs),
+	}
+}
+
+func (m *MetaClient) handleTypingIndicator(tk handlerParams, msg *table.LSUpdateTypingIndicator) bridgev2.RemoteEvent {
+	var timeout time.Duration
+	if msg.IsTyping {
+		// Timeout used by the web client is about 3 seconds,
+		// but adding a bit of buffer to debounce what with
+		// potential added latency from bridging, since the
+		// typing indicators sent from the server only arrive
+		// exactly 3 seconds apart
+		timeout = 5 * time.Second
+	}
+	return &simplevent.Typing{
+		EventMeta: simplevent.EventMeta{
+			Type:              bridgev2.RemoteEventTyping,
+			PortalKey:         tk.Portal,
+			UncertainReceiver: tk.IsUncertainReceiver(),
+			Sender:            m.makeEventSender(msg.SenderId),
+		},
+		Timeout: timeout,
+	}
+}
+
+func wrapMessageDelete(portal networkid.PortalKey, uncertain bool, messageID string) *simplevent.MessageRemove {
+	return &simplevent.MessageRemove{
+		EventMeta: simplevent.EventMeta{
+			Type: bridgev2.RemoteEventMessageRemove,
+			LogContext: func(c zerolog.Context) zerolog.Context {
+				return c.Str("message_id", messageID)
+			},
+			PortalKey:         portal,
+			UncertainReceiver: uncertain,
+		},
+		TargetMessage: metaid.MakeFBMessageID(messageID),
+	}
+}
+
+func (m *MetaClient) handleDeleteMessage(tk handlerParams, msg *table.LSDeleteMessage) bridgev2.RemoteEvent {
+	return wrapMessageDelete(tk.Portal, tk.IsUncertainReceiver(), msg.MessageId)
+}
+
+func (m *MetaClient) handleDeleteThenInsertMessage(tk handlerParams, msg *table.LSDeleteThenInsertMessage) bridgev2.RemoteEvent {
+	if !msg.IsUnsent {
+		zerolog.Ctx(tk.ctx).Warn().
+			Str("message_id", msg.MessageId).
+			Int64("edit_count", msg.EditCount).
+			Msg("Got unexpected non-unsend DeleteThenInsertMessage command")
+		return nil
+	}
+	return wrapMessageDelete(tk.Portal, tk.IsUncertainReceiver(), msg.MessageId)
+}
+
+func (m *MetaClient) handleDeleteThenInsertMessageRequest(tk handlerParams, msg *table.LSDeleteThenInsertMessageRequest) bridgev2.RemoteEvent {
+	// Status 1 means the thread is in the pending/message request folder.
+	isMessageRequest := msg.MessageRequestStatus == 1
+	if err := m.Main.DB.SetHybridThreadMessageRequest(tk.ctx, m.UserLogin.ID, msg.ThreadKey, isMessageRequest); err != nil {
+		zerolog.Ctx(tk.ctx).Warn().Err(err).Msg("Failed to persist hybrid message request status")
+	}
+	if tk.Sync != nil {
+		if tk.Sync.Raw != nil && tk.Sync.Raw.FolderName == folderSpam {
+			return nil
+		}
+		tk.Sync.Info.MessageRequest = ptr.Ptr(isMessageRequest)
+		return nil
+	}
+	return m.wrapChatInfoChange(tk.ID, 0, tk.Type, &bridgev2.ChatInfoChange{
+		ChatInfo: &bridgev2.ChatInfo{
+			MessageRequest: ptr.Ptr(isMessageRequest),
+		},
+	}, "LSDeleteThenInsertMessageRequest")
+}
+
+func (m *MetaClient) handleDeleteThreadKey(tk handlerParams, threadKey int64, onlyForMe bool) bridgev2.RemoteEvent {
+	// Only issue the delete if we're confident it's not a delete then insert combination
+	if tk.activeThreads.Has(threadKey) {
+		zerolog.Ctx(tk.ctx).Debug().
+			Int64("thread_key", threadKey).
+			Msg("Ignoring LSDeleteThread for thread that has active upserts in the same sync")
+		return nil
+	}
+	// Delete the thread from the sync maps to prevent future events finding it
+	delete(tk.vtes, threadKey)
+	return &simplevent.ChatDelete{
+		EventMeta: simplevent.EventMeta{
+			Type:              bridgev2.RemoteEventChatDelete,
+			PortalKey:         tk.Portal,
+			UncertainReceiver: tk.IsUncertainReceiver(),
+		},
+		OnlyForMe: onlyForMe,
+	}
+}
+
+func (m *MetaClient) handleDeleteThread(tk handlerParams, msg *table.LSDeleteThread) bridgev2.RemoteEvent {
+	return m.handleDeleteThreadKey(tk, tk.ID, false /* OnlyForMe */)
+}
+
+func (m *MetaClient) handleDeletePartialThread(tk handlerParams, msg *table.LSDeletePartialThread) bridgev2.RemoteEvent {
+	if tk.Type == table.UNKNOWN_THREAD_TYPE {
+		threadJID, threadType, err := m.Main.DB.GetHybridThreadJID(tk.ctx, m.UserLogin.ID, msg.ThreadKey)
+		if err != nil {
+			zerolog.Ctx(tk.ctx).Warn().Err(err).Int64("thread_key", msg.ThreadKey).
+				Msg("Failed to get persisted hybrid thread mapping")
+		} else if threadJID != 0 {
+			tk.ID = threadJID
+			tk.Type = table.ThreadType(threadType)
+			tk.Portal = m.makeFBPortalKey(threadJID, tk.Type)
+		}
+	}
+	return m.handleDeleteThreadKey(tk, tk.ID, true /* OnlyForMe */)
+}
+
+func (m *MetaClient) handleDeleteMessageRequest(tk handlerParams, msg *table.LSDeleteMessageRequest) bridgev2.RemoteEvent {
+	return m.handleDeleteThreadKey(tk, tk.ID, false /* OnlyForMe */)
+}
+
+func markPortalAsEncrypted(ctx context.Context, portal *bridgev2.Portal) bool {
+	meta := portal.Metadata.(*metaid.PortalMetadata)
+	if meta.ThreadType == table.ONE_TO_ONE {
+		meta.ThreadType = table.ENCRYPTED_OVER_WA_ONE_TO_ONE
+		return true
+	}
+	return false
+}
+
+// setFBThreadKey persists the original Facebook thread key on the portal (which is otherwise keyed
+// by the WhatsApp thread JID). Tasks like accepting a message request need this key.
+func setFBThreadKey(fbKey int64) func(context.Context, *bridgev2.Portal) bool {
+	return func(_ context.Context, portal *bridgev2.Portal) bool {
+		meta := portal.Metadata.(*metaid.PortalMetadata)
+		if meta.FBThreadKey != fbKey {
+			meta.FBThreadKey = fbKey
+			return true
+		}
+		return false
+	}
+}
+
+func (m *MetaClient) handleMoveThreadToE2EE(tk handlerParams, msg *table.LSMoveThreadToE2EECutoverFolder) bridgev2.RemoteEvent {
+	if tk.Sync != nil {
+		tk.Sync.Info.ExtraUpdates = bridgev2.MergeExtraUpdaters(tk.Sync.Info.ExtraUpdates, markPortalAsEncrypted)
+		return nil
+	}
+	return m.wrapChatInfoChange(tk.ID, 0, tk.Type, &bridgev2.ChatInfoChange{
+		ChatInfo: &bridgev2.ChatInfo{
+			ExtraUpdates: markPortalAsEncrypted,
+		},
+	}, "LSMoveThreadToE2EECutoverFolder")
+}
+
+func (m *MetaClient) wrapReaction(portalKey networkid.PortalKey, uncertainReceiver bool, sender int64, messageID, emoji string) *simplevent.Reaction {
+	evt := &simplevent.Reaction{
+		EventMeta: simplevent.EventMeta{
+			Type: bridgev2.RemoteEventReaction,
+			LogContext: func(c zerolog.Context) zerolog.Context {
+				return c.Str("target_message_id", messageID).Int64("sender_id", sender)
+			},
+			PortalKey:         portalKey,
+			UncertainReceiver: uncertainReceiver,
+			Sender:            m.makeEventSender(sender),
+		},
+		TargetMessage: metaid.MakeFBMessageID(messageID),
+		Emoji:         emoji,
+	}
+	if emoji == "" {
+		evt.Type = bridgev2.RemoteEventReactionRemove
+	}
+	return evt
+}
+
+func (m *MetaClient) handleUpsertReaction(tk handlerParams, evt *table.LSUpsertReaction) bridgev2.RemoteEvent {
+	return m.wrapReaction(tk.Portal, tk.IsUncertainReceiver(), evt.ActorId, evt.MessageId, evt.Reaction)
+}
+
+func (m *MetaClient) handleDeleteReaction(tk handlerParams, evt *table.LSDeleteReaction) bridgev2.RemoteEvent {
+	return m.wrapReaction(tk.Portal, tk.IsUncertainReceiver(), evt.ActorId, evt.MessageId, "")
+}
+
+func (m *MetaClient) handleUpdateThreadName(tk handlerParams, evt *table.LSSyncUpdateThreadName) bridgev2.RemoteEvent {
+	if tk.Type.IsOneToOne() && !m.Main.Bridge.Config.PrivateChatPortalMeta {
+		return nil
+	}
+	return m.wrapChatInfoChange(tk.ID, 0, tk.Type, &bridgev2.ChatInfoChange{
+		ChatInfo: &bridgev2.ChatInfo{
+			Name: &evt.ThreadName,
+		},
+	}, "LSSyncUpdateThreadName")
+}
+
+func (m *MetaClient) handleSetThreadImage(tk handlerParams, evt *table.LSSetThreadImageURL) bridgev2.RemoteEvent {
+	if tk.Type.IsOneToOne() && !m.Main.Bridge.Config.PrivateChatPortalMeta {
+		return nil
+	}
+	return m.wrapChatInfoChange(tk.ID, 0, tk.Type, &bridgev2.ChatInfoChange{
+		ChatInfo: &bridgev2.ChatInfo{
+			Avatar: wrapAvatar(evt.ImageURL),
+		},
+	}, "LSSetThreadImageURL")
+}
+
+func (m *MetaClient) handleUpdateMuteSetting(tk handlerParams, evt *table.LSUpdateThreadMuteSetting) bridgev2.RemoteEvent {
+	mutedUntil := time.UnixMilli(evt.MuteExpireTimeMS)
+	if evt.MuteExpireTimeMS < 0 {
+		mutedUntil = event.MutedForever
+	}
+	if tk.Sync != nil {
+		if tk.Sync.Info.UserLocal == nil {
+			tk.Sync.Info.UserLocal = &bridgev2.UserLocalPortalInfo{}
+		}
+		tk.Sync.Info.UserLocal.MutedUntil = &mutedUntil
+		return nil
+	}
+	return m.wrapChatInfoChange(tk.ID, 0, tk.Type, &bridgev2.ChatInfoChange{
+		ChatInfo: &bridgev2.ChatInfo{
+			UserLocal: &bridgev2.UserLocalPortalInfo{
+				MutedUntil: &mutedUntil,
+			},
+		},
+	}, "LSUpdateThreadMuteSetting")
+}
+
+func (m *MetaClient) handleAddParticipant(tk handlerParams, evt *table.LSAddParticipantIdToGroupThread) bridgev2.RemoteEvent {
+	if tk.Sync != nil {
+		tk.Sync.Members[evt.ContactId] = m.wrapChatMember(evt)
+		return nil
+	}
+	memberMap := make(bridgev2.ChatMemberMap, 1)
+	memberMap.Add(m.wrapChatMember(evt))
+	return m.wrapChatInfoChange(tk.ID, evt.ContactId, tk.Type, &bridgev2.ChatInfoChange{
+		MemberChanges: &bridgev2.ChatMemberList{
+			MemberMap: memberMap,
+		},
+	}, "LSAddParticipantIdToGroupThread")
+}
+
+func (m *MetaClient) handleSelfLeaveThread(tk handlerParams, evt *table.LSRemoveParticipantFromThread) bridgev2.RemoteEvent {
+	if metaid.MakeUserLoginID(evt.ParticipantId) != m.UserLogin.ID {
+		return nil
+	}
+
+	zerolog.Ctx(tk.ctx).Info().
+		Int64("thread_key", tk.ID).
+		Msg("Left thread ourselves, deleting")
+
+	return m.handleDeleteThreadKey(tk, tk.ID, true /* OnlyForMe */)
+}
+
+func (m *MetaClient) handleRemoveParticipant(tk handlerParams, evt *table.LSRemoveParticipantFromThread) bridgev2.RemoteEvent {
+	memberMap := make(bridgev2.ChatMemberMap, 1)
+	memberMap.Add(bridgev2.ChatMember{
+		EventSender:    m.makeEventSender(evt.ParticipantId),
+		Membership:     event.MembershipLeave,
+		PrevMembership: event.MembershipJoin,
+	})
+	return m.wrapChatInfoChange(tk.ID, evt.ParticipantId, tk.Type, &bridgev2.ChatInfoChange{
+		MemberChanges: &bridgev2.ChatMemberList{
+			MemberMap: memberMap,
+		},
+	}, "LSRemoveParticipantFromThread")
+}
+
+func (m *MetaClient) handleSubthread(ctx context.Context, msg *table.WrappedMessage) {
+	if msg.SubthreadKey != 0 {
+		err := m.Main.DB.PutThread(ctx, msg.ThreadKey, msg.SubthreadKey, msg.MessageId)
+		if err != nil {
+			zerolog.Ctx(ctx).Warn().
+				Err(err).
+				Int64("thread_key", msg.ThreadKey).
+				Int64("subthread_key", msg.SubthreadKey).
+				Str("message_id", msg.MessageId).
+				Msg("Failed to insert subthread")
+		}
+	} else if len(msg.XMAAttachments) == 1 {
+		xma := msg.XMAAttachments[0]
+		parsedURL, err := url.Parse(xma.ActionUrl)
+		if err != nil || parsedURL.Scheme != "fb-messenger" || parsedURL.Host != "community_subthread" {
+			return
+		}
+		msg.XMAAttachments = nil
+		msg.Text = xma.TitleText
+		msg.IsSubthreadStart = true
+		err = m.Main.DB.PutThread(ctx, msg.ThreadKey, xma.TargetId, msg.ReplySourceId)
+		if err != nil {
+			zerolog.Ctx(ctx).Warn().
+				Err(err).
+				Str("xma_url", xma.ActionUrl).
+				Int64("thread_key", msg.ThreadKey).
+				Int64("subthread_key", xma.TargetId).
+				Str("message_id", msg.ReplySourceId).
+				Msg("Failed to insert subthread")
+		}
+	}
+}
+
+func (m *MetaClient) handleMessageInsert(tk handlerParams, msg *table.WrappedMessage) bridgev2.RemoteEvent {
+	m.handleSubthread(tk.ctx, msg)
+	msg.ThreadID = tk.ThreadMsgID
+	return &FBMessageEvent{
+		WrappedMessage:    msg,
+		portalKey:         tk.Portal,
+		uncertainReceiver: tk.IsUncertainReceiver(),
+		m:                 m,
+	}
+}
+
+func (m *MetaClient) handleEdit(ctx context.Context, edit *table.LSEditMessage, innerQueue *[]bridgev2.RemoteEvent) {
+	editID := metaid.MakeFBMessageID(edit.MessageID)
+	originalMsg, err := m.Main.Bridge.DB.Message.GetFirstPartByID(ctx, m.UserLogin.ID, editID)
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Str("message_id", edit.MessageID).Msg("Failed to get edit target message")
+	} else if originalMsg == nil {
+		zerolog.Ctx(ctx).Warn().Str("message_id", edit.MessageID).Msg("Edit target message not found")
+	} else {
+		editEv := &FBEditEvent{
+			LSEditMessage: edit,
+			orig:          originalMsg,
+			m:             m,
+		}
+		*innerQueue = append(*innerQueue, editEv)
+		if ch, ok := m.editChannels.Get(editEv.MessageID); ok {
+			select {
+			case ch <- editEv:
+				return
+			default:
+				zerolog.Ctx(ctx).Warn().Msg("Dropped LSEditMessage from channel due to internal error")
+				return
+			}
+		}
+	}
+}
+
+type ThreadKeyable interface {
+	GetThreadKey() int64
+}
+
+type threadMaps struct {
+	ctx           context.Context
+	m             *MetaClient
+	vtes          map[int64]*table.LSVerifyThreadExists
+	syncs         map[int64]*FBChatResync
+	activeThreads exmaps.Set[int64]
+	waThreadMap   map[int64]int64
+}
+
+func (tm threadMaps) MapWhatsAppThreadKey(fbKey int64) int64 {
+	if waKey, ok := tm.waThreadMap[fbKey]; ok {
+		return waKey
+	}
+	return fbKey
+}
+
+type handlerParams struct {
+	ctx context.Context
+
+	ID     int64
+	Type   table.ThreadType
+	Portal networkid.PortalKey
+	Sync   *FBChatResync
+
+	ThreadMsgID string
+
+	vtes          map[int64]*table.LSVerifyThreadExists
+	syncs         map[int64]*FBChatResync
+	activeThreads exmaps.Set[int64]
+}
+
+func (tk handlerParams) IsUncertainReceiver() bool {
+	return tk.Type == table.UNKNOWN_THREAD_TYPE
+}
+
+func collectPortalEvents[T ThreadKeyable](
+	p threadMaps,
+	msgs []T,
+	fn func(tk handlerParams, msg T) bridgev2.RemoteEvent,
+	innerQueue *[]bridgev2.RemoteEvent,
+) {
+	for _, msg := range msgs {
+		threadKey := p.MapWhatsAppThreadKey(msg.GetThreadKey())
+		sync, syncOK := p.syncs[threadKey]
+		v, ok := p.vtes[threadKey]
+		var threadType table.ThreadType
+		if ok {
+			threadType = v.ThreadType
+		} else if syncOK {
+			if sync.Raw != nil {
+				threadType = sync.Raw.ThreadType
+			} else {
+				threadType = sync.Update.ThreadType
+			}
+		}
+		// TODO this check isn't needed for all types
+		parentKey, threadMsgID, err := p.m.Main.DB.GetThreadByKey(p.ctx, threadKey)
+		if err != nil {
+			zerolog.Ctx(p.ctx).Warn().Err(err).Int64("thread_key", threadKey).Msg("Failed to get subthread key")
+		} else if threadMsgID != "" {
+			threadType = table.UNKNOWN_THREAD_TYPE
+			threadKey = parentKey
+		}
+		if fn == nil {
+			zerolog.Ctx(p.ctx).Warn().Type("event_type", msg).Msg("No handler for event")
+			return
+		}
+		evt := fn(handlerParams{
+			ctx: p.ctx,
+
+			ID:          threadKey,
+			Type:        threadType,
+			Portal:      p.m.makeFBPortalKey(threadKey, threadType),
+			Sync:        sync,
+			ThreadMsgID: threadMsgID,
+
+			vtes:          p.vtes,
+			syncs:         p.syncs,
+			activeThreads: p.activeThreads,
+		}, msg)
+		if evt != nil {
+			*innerQueue = append(*innerQueue, evt)
+		}
+	}
+}

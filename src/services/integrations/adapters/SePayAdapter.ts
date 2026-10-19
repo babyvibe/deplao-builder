@@ -1,15 +1,32 @@
 import axios from 'axios';
 import { IntegrationAdapter, TestResult } from '../IntegrationAdapter';
+import {
+  ParsedPayment, WebhookAuthResult, WebhookCapableAdapter, WebhookRequest, parseSePayPayload, parseWebhookBody,
+  verifySePayWebhook,
+} from '../paymentWebhook';
 
 /**
  * SePay payment webhook adapter.
  * Credentials required: apiKey
- * Optional: webhookSecretKey
- * Docs: https://sepay.vn/tai-lieu-api.html
+ * Optional: webhookSecretKey = Secret Key (HMAC-SHA256, khuyên dùng) hoặc API Key chọn ở bước Bảo mật của webhook SePay.
+ * Có khoá → webhook phải có chữ ký / khoá hợp lệ.
+ * Docs: https://developer.sepay.vn/vi/sepay-webhooks/xac-thuc
  */
-export class SePayAdapter extends IntegrationAdapter {
+export class SePayAdapter extends IntegrationAdapter implements WebhookCapableAdapter {
   readonly type = 'sepay';
   readonly name = 'SePay';
+
+  hasWebhookSecret(): boolean {
+    return !!String(this.config.credentials.webhookSecretKey || '').trim();
+  }
+
+  verifyWebhook(req: WebhookRequest): WebhookAuthResult {
+    return verifySePayWebhook(req, this.config.credentials.webhookSecretKey);
+  }
+
+  parseWebhook(body: any): ParsedPayment[] {
+    return parseSePayPayload(body);
+  }
 
   private getHeaders() {
     return {
@@ -57,16 +74,12 @@ export class SePayAdapter extends IntegrationAdapter {
       }
 
       case 'handleWebhook': {
-        const { webhookSecretKey } = this.config.credentials;
-        if (webhookSecretKey && params.checksum) {
-          const crypto = require('crypto');
-          const dataStr = JSON.stringify(params.body);
-          const computed = crypto.createHmac('sha256', webhookSecretKey).update(dataStr).digest('hex');
-          if (computed !== params.checksum) {
-            throw new Error('SePay webhook checksum không hợp lệ');
-          }
-        }
-        return { valid: true, transaction: params.body };
+        // Như webhook server: params.headers + params.rawBody (chuỗi body gốc — chữ ký HMAC tính trên đúng bytes này).
+        const rawBody = Buffer.from(typeof params.rawBody === 'string' ? params.rawBody : JSON.stringify(params.body ?? {}), 'utf8');
+        const body = parseWebhookBody(rawBody);
+        const auth = this.verifyWebhook({ headers: params.headers || {}, rawBody, body });
+        if (auth.ok === false) throw new Error(`Webhook SePay không hợp lệ: ${auth.message}`);
+        return { valid: true, verified: auth.method !== 'none', transaction: body };
       }
 
       default:

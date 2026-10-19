@@ -1,39 +1,50 @@
+/**
+ * Cài đặt → Nhân viên → Kết nối: relay LAN (bật/tắt, cổng, tự bật), địa chỉ Internet cho nhân viên ở xa (CHỈ XEM —
+ * bật / tắt / đổi kiểu địa chỉ ở Cài đặt → Internet & Đám mây → Địa chỉ Internet), nhân viên đang online, đăng xuất tất cả.
+ */
 import React, { useState, useEffect, useCallback } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import ipc from '@/lib/ipc';
 import { useAppStore } from '@/store/appStore';
 import { useEmployeeStore } from '@/store/employeeStore';
-import { AlertIcon, ClipboardListIcon, CloseIcon, GlobeIcon, HomeIcon, PlayIcon, RocketIcon, UsersIcon } from '@/components/common/icons';
+import { Badge, Button, Switch } from '@/components/ui';
+import { AlertIcon, CloseIcon, CopyIcon, GlobeIcon, HomeIcon, PlayIcon, UsersIcon } from '@/components/common/icons';
 import { Spinner } from '@/components/common/PageLoading';
+import { showConfirm } from '../common/ConfirmDialog';
+import RelayAddressNotice, { copyWithToast } from './RelayAddressNotice';
+import PublicAddressCard, { usePublicAddresses } from '../common/PublicAddressCard';
+import {
+    STOPPED_RELAY_TUNNEL,
+    TUNNEL_KIND_LABEL,
+    type RelayTunnelStatus,
+} from '../../../shared/tunnelAddress';
 
+function normalizeTunnelStatus(data: Partial<RelayTunnelStatus> | null | undefined): RelayTunnelStatus {
+    return { ...STOPPED_RELAY_TUNNEL, ...(data || {}) };
+}
 
 export default function RelayStatusPanel() {
-    const { showNotification } = useAppStore();
-    const { relayRunning, setRelayRunning, relayPort, setRelayPort, connectedEmployees, setConnectedEmployees } = useEmployeeStore();
+    const showNotification = useAppStore(s => s.showNotification);
+    const { relayRunning, setRelayRunning, relayPort, setRelayPort, connectedEmployees, setConnectedEmployees } = useEmployeeStore(useShallow(s => ({
+        relayRunning: s.relayRunning,
+        setRelayRunning: s.setRelayRunning,
+        relayPort: s.relayPort,
+        setRelayPort: s.setRelayPort,
+        connectedEmployees: s.connectedEmployees,
+        setConnectedEmployees: s.setConnectedEmployees,
+    })));
     const [localIPs, setLocalIPs] = useState<string[]>([]);
     const [portInput, setPortInput] = useState(String(relayPort));
     const [starting, setStarting] = useState(false);
     const [autoStart, setAutoStart] = useState(false);
-    const [tunnelActive, setTunnelActive] = useState(false);
-    const [tunnelUrl, setTunnelUrl] = useState<string | null>(null);
-    const [tunnelLoading, setTunnelLoading] = useState(false);
-    // Tunnel provider config: cloudflare (URL random) | ngrok (static domain)
-    const [tunnelProvider, setTunnelProvider] = useState<'cloudflare' | 'ngrok'>('cloudflare');
-    const [ngrokToken, setNgrokToken] = useState('');
-    const [ngrokDomain, setNgrokDomain] = useState('');
 
-    useEffect(() => {
-        ipc.relay?.getTunnelConfig?.().then((res: any) => {
-            if (res?.success) {
-                setTunnelProvider(res.provider === 'ngrok' ? 'ngrok' : 'cloudflare');
-                setNgrokToken(res.authtoken || '');
-                setNgrokDomain(res.domain || '');
-            }
-        }).catch(() => {});
-    }, []);
+    // ── WAN: chỉ đọc trạng thái tunnel của relay (bật / tắt / đổi ở Cài đặt → Internet & Đám mây → Địa chỉ Internet) ──
+    const [tunnel, setTunnel] = useState<RelayTunnelStatus>(STOPPED_RELAY_TUNNEL);
+    const [now, setNow] = useState(() => Date.now());
 
-    const saveTunnelConfig = useCallback(async (cfg: { provider?: string; authtoken?: string; domain?: string }) => {
-        try { await ipc.relay?.setTunnelConfig?.(cfg); } catch { /* */ }
-    }, []);
+    const tunnelOn = tunnel.state !== 'stopped';
+    const tunnelUrl = tunnel.tunnelUrl;
+    const pub = usePublicAddresses();
 
     useEffect(() => {
         ipc.workspace?.getActive().then((res: any) => {
@@ -49,8 +60,12 @@ export default function RelayStatusPanel() {
                 if (res.port) setRelayPort(res.port);
                 setConnectedEmployees(res.connectedEmployees || []);
                 setLocalIPs(res.localIPs || []);
-                setTunnelActive(res.tunnelActive || false);
-                setTunnelUrl(res.tunnelUrl || null);
+                const legacy: Partial<RelayTunnelStatus> = {
+                    active: !!res.tunnelActive,
+                    tunnelUrl: res.tunnelUrl ?? null,
+                    state: res.tunnelActive ? 'active' : 'stopped',
+                };
+                setTunnel(normalizeTunnelStatus(res.tunnel ?? legacy));
             }
         } catch { /* */ }
     }, [setRelayRunning, setRelayPort, setConnectedEmployees]);
@@ -69,12 +84,18 @@ export default function RelayStatusPanel() {
     }, [setConnectedEmployees]);
 
     useEffect(() => {
-        const unsub = ipc.on?.('relay:tunnelStatusUpdate', (data: { active: boolean; tunnelUrl: string | null }) => {
-            setTunnelActive(data.active);
-            setTunnelUrl(data.tunnelUrl);
+        const unsub = ipc.on?.('relay:tunnelStatusUpdate', (data) => {
+            setTunnel(normalizeTunnelStatus(data));
         });
         return () => unsub?.();
     }, []);
+
+    // Đếm ngược "thử lại sau Xs" chỉ khi tunnel đang tự chạy lại
+    useEffect(() => {
+        if (tunnel.state !== 'restarting') return;
+        const timer = setInterval(() => setNow(Date.now()), 1000);
+        return () => clearInterval(timer);
+    }, [tunnel.state]);
 
     const handleStart = async () => {
         setStarting(true);
@@ -96,10 +117,10 @@ export default function RelayStatusPanel() {
     };
 
     const handleStop = async () => {
-        if (tunnelActive) {
+        // Tắt relay thì tắt luôn địa chỉ Internet của relay (không để địa chỉ trỏ vào cổng không còn phục vụ)
+        if (tunnelOn) {
             await ipc.relay?.stopTunnel();
-            setTunnelActive(false);
-            setTunnelUrl(null);
+            setTunnel(STOPPED_RELAY_TUNNEL);
         }
         const res = await ipc.relay?.stopServer();
         if (res?.success) {
@@ -107,6 +128,33 @@ export default function RelayStatusPanel() {
             setRelayRunning(false);
             setConnectedEmployees([]);
         }
+    };
+
+    // ── Đăng xuất tất cả nhân viên: đổi khoá ký token → ai cũng phải đăng nhập lại bằng mật khẩu ──
+    const [loggingOutAll, setLoggingOutAll] = useState(false);
+    const handleLogoutAll = async () => {
+        const ok = await showConfirm({
+            title: 'Đăng xuất tất cả nhân viên?',
+            message: 'Mọi phiên đăng nhập của nhân viên hết hiệu lực: nhân viên đang online bị ngắt ngay, mọi máy nhân viên (kể cả đang offline) phải đăng nhập lại bằng mật khẩu.',
+            confirmText: 'Đăng xuất tất cả',
+            variant: 'danger',
+        });
+        if (!ok) return;
+        setLoggingOutAll(true);
+        try {
+            const res = await ipc.employee?.logoutAll();
+            if (res?.success) {
+                showNotification(res.notified
+                    ? `Đã đăng xuất tất cả nhân viên (${res.notified} nhân viên đang online bị ngắt)`
+                    : 'Đã đăng xuất tất cả nhân viên', 'success');
+                refreshStatus();
+            } else {
+                showNotification(res?.error || 'Không đăng xuất được nhân viên', 'error');
+            }
+        } catch (err: any) {
+            showNotification(err?.message || 'Không đăng xuất được nhân viên', 'error');
+        }
+        setLoggingOutAll(false);
     };
 
     const handleToggleAutoStart = async () => {
@@ -122,62 +170,38 @@ export default function RelayStatusPanel() {
         } catch {}
     };
 
-    const handleToggleTunnel = async () => {
-        setTunnelLoading(true);
-        try {
-            if (tunnelActive) {
-                await ipc.relay?.stopTunnel();
-                setTunnelActive(false);
-                setTunnelUrl(null);
-                showNotification('Đã tắt tunnel', 'info');
-            } else {
-                const res = await ipc.relay?.startTunnel();
-                if (res?.success && res.tunnelUrl) {
-                    setTunnelActive(true);
-                    setTunnelUrl(res.tunnelUrl);
-                    showNotification('Tunnel đã bật! Nhân viên kết nối từ bất kỳ đâu.', 'success');
-                } else {
-                    showNotification(res?.error || 'Không thể bật tunnel', 'error');
-                }
-            }
-        } catch (err: any) {
-            showNotification(err.message, 'error');
-        }
-        setTunnelLoading(false);
-    };
+    const runningKind = tunnel.kind;
+    const retryInSec = tunnel.nextRetryAt ? Math.max(0, Math.ceil((tunnel.nextRetryAt - now) / 1000)) : null;
 
     return (
         <div className="space-y-4">
             {/* ── Header ──────────────────────────────────── */}
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider"><GlobeIcon className="w-4 h-4 inline" /> Kết nối nhân viên từ xa</p>
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider"><GlobeIcon className="w-4 h-4 inline" /> Kết nối nhân viên từ xa</p>
+
+            {/* ── Địa chỉ cho nhân viên đã đổi ("Thiết lập địa chỉ cố định" → Cài đặt → Internet & Đám mây) ── */}
+            <RelayAddressNotice status={tunnel} />
 
             {/* ── Two equal-level option cards ─────────────────────────── */}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-3 items-start">
 
                 {/* ── Card 1: LAN ──────────────────────────── */}
                 <div className={`rounded-xl border p-3.5 space-y-3 transition-colors ${
-                    relayRunning
-                        ? 'bg-green-900/10 border-green-600/40'
-                        : 'bg-gray-800/80 border-gray-700'
+                    relayRunning ? 'bg-success/5 border-success/40' : 'bg-card border-border'
                 }`}>
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1.5">
                             <span className="text-base"><HomeIcon className="w-4 h-4" /></span>
-                            <span className="text-xs font-semibold text-gray-200">Kết nối LAN</span>
+                            <span className="text-xs font-semibold text-foreground">Kết nối LAN</span>
                         </div>
-                        <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
-                            relayRunning ? 'bg-green-500/20 text-green-400' : 'bg-gray-700 text-gray-400'
-                        }`}>
-                            {relayRunning ? '● Đang chạy' : '○ Tắt'}
-                        </span>
+                        <Badge size="sm" variant={relayRunning ? 'success' : 'default'} dot>{relayRunning ? 'Đang chạy' : 'Tắt'}</Badge>
                     </div>
 
                     {/* Pros / Cons */}
                     <div className="space-y-0.5">
-                        <p className="text-[10px] text-green-400">✓ Tốc độ cao, ổn định</p>
-                        <p className="text-[10px] text-green-400">✓ Bảo mật - không qua internet</p>
-                        <p className="text-[10px] text-gray-400">✗ Phải cùng mạng nội bộ (LAN / VPN)</p>
-                        <p className="text-[10px] text-gray-400">✗ IP có thể thay đổi nếu dùng DHCP</p>
+                        <p className="text-[10px] text-success">✓ Tốc độ cao, ổn định</p>
+                        <p className="text-[10px] text-success">✓ Bảo mật - không qua internet</p>
+                        <p className="text-[10px] text-muted-foreground">✗ Phải cùng mạng nội bộ (LAN / VPN)</p>
+                        <p className="text-[10px] text-muted-foreground">✗ IP có thể thay đổi nếu dùng DHCP</p>
                     </div>
 
                     {/* Port input + Start/Stop */}
@@ -188,153 +212,101 @@ export default function RelayStatusPanel() {
                             disabled={relayRunning}
                             type="number"
                             placeholder="Port"
-                            className="w-20 px-2 py-1 bg-gray-700 border border-gray-600 rounded-lg text-xs text-gray-200 disabled:opacity-50"
+                            className="w-20 px-2 py-1 bg-muted border border-input rounded-lg text-xs text-foreground disabled:opacity-50"
                         />
                         {relayRunning ? (
-                            <button onClick={handleStop} className="flex-1 py-1 text-xs bg-red-600/80 hover:bg-red-600 text-white-important rounded-lg transition-colors">
-                                <CloseIcon className="w-4 h-4 inline" /> Tắt
-                            </button>
+                            <Button size="sm" variant="destructive" className="flex-1" onClick={handleStop} leftIcon={<CloseIcon className="w-4 h-4" />}>Tắt</Button>
                         ) : (
-                            <button onClick={handleStart} disabled={starting} className="flex-1 py-1 text-xs bg-green-600 hover:bg-green-500 text-white rounded-lg transition-colors disabled:opacity-50">
-                                {starting ? <><Spinner size={3} />...</> : <><PlayIcon className="w-4 h-4 inline" /> Bật</>}
-                            </button>
+                            <Button size="sm" className="flex-1" onClick={handleStart} disabled={starting} leftIcon={starting ? <Spinner size={3} /> : <PlayIcon className="w-4 h-4" />}>Bật</Button>
                         )}
                     </div>
 
                     {/* Auto-start */}
-                    <button onClick={handleToggleAutoStart} className="flex items-center gap-2 w-full">
-                        <div className={`relative w-7 h-4 rounded-full transition-colors flex-shrink-0 ${autoStart ? 'bg-green-600' : 'bg-gray-600'}`}>
-                            <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform ${autoStart ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
-                        </div>
-                        <span className="text-[10px] text-gray-400">Tự động bật khi mở app</span>
-                    </button>
+                    <Switch size="sm" checked={autoStart} onCheckedChange={() => { void handleToggleAutoStart(); }} label={<span className="text-[11px] font-normal text-muted-foreground">Tự động bật khi mở app</span>} />
 
                     {/* LAN addresses */}
                     {relayRunning && localIPs.length > 0 && (
-                        <div className="space-y-1 pt-1 border-t border-gray-700/50">
-                            <p className="text-[10px] text-gray-400">Địa chỉ kết nối:</p>
+                        <div className="space-y-1 pt-1 border-t border-border/50">
+                            <p className="text-[10px] text-muted-foreground">Địa chỉ kết nối:</p>
                             {localIPs.map(ip => (
                                 <div key={ip} className="flex items-center gap-1.5">
-                                    <code className="flex-1 text-[10px] text-green-300 bg-gray-700 px-1.5 py-0.5 rounded font-mono truncate">{ip}:{relayPort}</code>
+                                    <code className="flex-1 text-[10px] text-success bg-muted px-1.5 py-0.5 rounded font-mono truncate">{ip}:{relayPort}</code>
                                     <button
-                                        onClick={() => { navigator.clipboard.writeText(`${ip}:${relayPort}`); showNotification('Đã copy', 'info'); }}
-                                        className="text-gray-400 hover:text-blue-400 flex-shrink-0" title="Copy"
-                                    ><ClipboardListIcon className="w-4 h-4" /></button>
+                                        onClick={() => copyWithToast(`${ip}:${relayPort}`, 'Đã copy')}
+                                        className="text-muted-foreground hover:text-primary flex-shrink-0" title="Copy"
+                                    ><CopyIcon className="w-4 h-4" /></button>
                                 </div>
                             ))}
                         </div>
                     )}
                 </div>
 
-                {/* ── Card 2: WAN / Tunnel ─────────────────── */}
+                {/* ── Card 2: WAN — chỉ xem; bật / tắt / đổi địa chỉ ở Cài đặt → Internet & Đám mây → Địa chỉ Internet ── */}
                 <div className={`rounded-xl border p-3.5 space-y-3 transition-colors ${
-                    tunnelActive
-                        ? 'bg-blue-900/10 border-blue-500/40'
-                        : relayRunning
-                            ? 'bg-gray-800/80 border-gray-700'
-                            : 'bg-gray-800/40 border-gray-700/50 opacity-60'
+                    tunnel.active
+                        ? 'bg-primary/5 border-primary/40'
+                        : tunnel.state === 'restarting'
+                            ? 'bg-warning/5 border-warning/40'
+                            : relayRunning ? 'bg-card border-border' : 'bg-card border-border/50'
                 }`}>
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1.5">
                             <span className="text-base"><GlobeIcon className="w-4 h-4" /></span>
-                            <span className="text-xs font-semibold text-gray-200">Kết nối WAN</span>
+                            <span className="text-xs font-semibold text-foreground">Kết nối WAN</span>
                         </div>
-                        <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
-                            tunnelActive ? 'bg-blue-500/20 text-blue-400' : 'bg-gray-700 text-gray-400'
-                        }`}>
-                            {tunnelActive ? '● Đang chạy' : '○ Tắt'}
-                        </span>
+                        <Badge size="sm" dot variant={tunnel.active ? 'primary' : tunnel.state === 'restarting' ? 'warning' : tunnel.state === 'starting' ? 'info' : 'default'}>
+                            {tunnel.active ? 'Đang chạy' : tunnel.state === 'restarting' ? 'Đang chạy lại' : tunnel.state === 'starting' ? 'Đang bật' : 'Tắt'}
+                        </Badge>
                     </div>
 
-                    {/* Pros / Cons */}
-                    <div className="space-y-0.5">
-                        <p className="text-[10px] text-green-400">✓ Kết nối từ bất kỳ đâu qua internet</p>
-                        <p className="text-[10px] text-green-400">✓ Không cần IP tĩnh hay port forward</p>
-                        {tunnelProvider === 'ngrok'
-                            ? <p className="text-[10px] text-green-400">✓ URL cố định (ngrok static domain)</p>
-                            : <p className="text-[10px] text-gray-400">✗ URL thay đổi mỗi lần bật tunnel</p>}
-                    </div>
-
-                    {/* Provider selector — đổi được khi tunnel đang tắt */}
-                    <div className="space-y-1.5 pt-1 border-t border-gray-700/50">
-                        <div className="flex gap-1.5">
-                            {(['cloudflare', 'ngrok'] as const).map(p => (
-                                <button
-                                    key={p}
-                                    disabled={tunnelActive}
-                                    onClick={() => { setTunnelProvider(p); saveTunnelConfig({ provider: p }); }}
-                                    className={`flex-1 py-1 text-[10px] rounded-lg transition-colors disabled:opacity-50 ${
-                                        tunnelProvider === p ? 'bg-blue-600 text-white-important' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                                    }`}
-                                >{p === 'cloudflare' ? 'Cloudflare (random)' : 'ngrok (cố định)'}</button>
-                            ))}
-                        </div>
-                        {tunnelProvider === 'ngrok' && (
-                            <div className="space-y-1">
-                                <input
-                                    value={ngrokToken}
-                                    onChange={e => setNgrokToken(e.target.value)}
-                                    onBlur={() => saveTunnelConfig({ authtoken: ngrokToken })}
-                                    disabled={tunnelActive}
-                                    type="password"
-                                    placeholder="ngrok authtoken"
-                                    className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded-lg text-[10px] text-gray-200 disabled:opacity-50"
-                                />
-                                <input
-                                    value={ngrokDomain}
-                                    onChange={e => setNgrokDomain(e.target.value)}
-                                    onBlur={() => saveTunnelConfig({ domain: ngrokDomain })}
-                                    disabled={tunnelActive}
-                                    placeholder="static domain (vd: abc.ngrok-free.app)"
-                                    className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded-lg text-[10px] text-gray-200 disabled:opacity-50"
-                                />
-                                <p className="text-[10px] text-gray-400">Lấy token + tạo domain free tại dashboard.ngrok.com</p>
+                    {/* Địa chỉ đang dùng (mọi cách tạo địa chỉ). Bản app không có module Cloudflare: hiện địa chỉ relay báo về. */}
+                    {pub.available ? (
+                        <PublicAddressCard service="relay" title="Địa chỉ cho nhân viên" anyMode compact statusNote="dùng chung với API" />
+                    ) : tunnelUrl && (
+                        <div className="space-y-1">
+                            <div className="flex items-center justify-between gap-2">
+                                <p className="text-[10px] text-muted-foreground">Địa chỉ cho nhân viên:</p>
+                                {runningKind && (
+                                    <Badge size="sm" variant={runningKind === 'fixed' ? 'success' : 'warning'}>{TUNNEL_KIND_LABEL[runningKind]}</Badge>
+                                )}
                             </div>
-                        )}
-                    </div>
-
-                    {/* Toggle button */}
-                    {!relayRunning ? (
-                        <div className="text-[10px] text-yellow-500/80 bg-yellow-500/8 border border-yellow-500/20 rounded-lg px-2.5 py-2 leading-relaxed">
-                            <AlertIcon className="w-4 h-4 inline" /> Cần bật <span className="text-yellow-300 font-medium">LAN server</span> trước khi sử dụng WAN Tunnel
-                        </div>
-                    ) : (
-                        <button
-                            onClick={handleToggleTunnel}
-                            disabled={tunnelLoading}
-                            className={`w-full py-1 text-xs rounded-lg transition-colors disabled:opacity-50 ${
-                                tunnelActive
-                                    ? 'bg-red-600/80 hover:bg-red-600 text-white-important'
-                                    : 'bg-blue-600 hover:bg-blue-500 text-white-important'
-                            }`}
-                        >
-                            {tunnelLoading ? <><Spinner size={3} /> Đang xử lý...</> : tunnelActive ? <><CloseIcon className="w-4 h-4 inline" /> Tắt tunnel</> : <><RocketIcon className="w-4 h-4 inline" /> Bật tunnel</>}
-                        </button>
-                    )}
-
-                    {/* Tunnel URL */}
-                    {tunnelActive && tunnelUrl && (
-                        <div className="space-y-1 pt-1 border-t border-gray-700/50">
-                            <p className="text-[10px] text-gray-400">Địa chỉ kết nối:</p>
                             <div className="flex items-center gap-1.5">
-                                <code className="flex-1 text-[10px] text-blue-300 bg-gray-700 px-1.5 py-0.5 rounded font-mono truncate">{tunnelUrl}</code>
+                                <code className="flex-1 min-w-0 text-[10px] text-primary bg-muted px-1.5 py-0.5 rounded font-mono truncate select-all" title={tunnelUrl}>{tunnelUrl}</code>
                                 <button
-                                    onClick={() => { navigator.clipboard.writeText(tunnelUrl); showNotification('Đã copy tunnel URL', 'info'); }}
-                                    className="text-gray-400 hover:text-blue-400 flex-shrink-0" title="Copy"
-                                ><ClipboardListIcon className="w-4 h-4" /></button>
+                                    onClick={() => copyWithToast(tunnelUrl, 'Đã copy địa chỉ cho nhân viên')}
+                                    className="text-muted-foreground hover:text-primary flex-shrink-0" title="Copy"
+                                ><CopyIcon className="w-4 h-4" /></button>
                             </div>
-                            {tunnelProvider === 'ngrok'
-                                ? <p className="text-[10px] text-green-400/80">✓ URL cố định, không đổi khi bật lại</p>
-                                : <p className="text-[10px] text-yellow-500/70"><AlertIcon className="w-4 h-4 inline" /> URL thay đổi mỗi lần bật lại</p>}
                         </div>
                     )}
 
-                    {/* Hint when idle */}
-                    {relayRunning && !tunnelActive && (
-                        <p className="text-[10px] text-gray-400 leading-relaxed pt-1 border-t border-gray-700/50">
-                            {tunnelProvider === 'ngrok'
-                                ? 'Dùng ngrok static domain - URL cố định, nhân viên không cần cập nhật lại mỗi lần bật.'
-                                : 'Dùng Cloudflare tunnel - miễn phí, URL random mỗi lần. Chuyển sang ngrok nếu muốn URL cố định.'}
+                    {/* Trạng thái tự chạy lại / cảnh báo */}
+                    {tunnel.state === 'restarting' && (
+                        <p className="text-[10px] text-warning leading-relaxed">
+                            <AlertIcon className="w-3.5 h-3.5 inline" /> Tunnel bị ngắt — đang tự chạy lại
+                            {tunnel.attempt > 0 ? ` (lần ${tunnel.attempt}` : ' ('}
+                            {retryInSec !== null ? `${tunnel.attempt > 0 ? ', ' : ''}thử lại sau ${retryInSec}s)` : ')'}
+                            {tunnel.lastError ? <span className="block text-muted-foreground break-words">{tunnel.lastError}</span> : null}
+                            {tunnel.kind === 'temporary' && <span className="block text-muted-foreground">Địa chỉ tạm sẽ đổi sau khi chạy lại.</span>}
+                        </p>
+                    )}
+                    {tunnel.active && tunnel.restarts > 0 && (
+                        <p className="text-[10px] text-muted-foreground">Đã tự chạy lại {tunnel.restarts} lần trong phiên này.</p>
+                    )}
+                    {tunnel.warning && tunnel.warning !== pub.get('relay')?.error && (
+                        <p className="text-[10px] text-warning leading-relaxed"><AlertIcon className="w-3.5 h-3.5 inline" /> {tunnel.warning}</p>
+                    )}
+
+                    {/* LAN tắt thì địa chỉ Internet không có gì phía sau */}
+                    {!relayRunning && (
+                        <div className="text-[10px] text-warning bg-warning/10 border border-warning/30 rounded-lg px-2.5 py-2 leading-relaxed">
+                            <AlertIcon className="w-4 h-4 inline" /> Cần bật <span className="font-medium">LAN server</span> để nhân viên vào được qua địa chỉ Internet.
+                        </div>
+                    )}
+
+                    {pub.canConfigure && (
+                        <p className="text-[10px] text-muted-foreground leading-relaxed pt-1 border-t border-border/50">
+                            Bật, tắt hoặc đổi kiểu địa chỉ ở <span className="font-medium text-foreground">Cài đặt → Internet &amp; Đám mây → Địa chỉ Internet</span>.
                         </p>
                     )}
                 </div>
@@ -342,27 +314,27 @@ export default function RelayStatusPanel() {
 
             {/* ── Connected employees ─────────────────────────────────── */}
             {relayRunning && (
-                <div className="bg-gray-800 rounded-xl p-3.5 space-y-2">
-                    <p className="text-[11px] text-gray-400 font-medium"><UsersIcon className="w-4 h-4 inline" /> Nhân viên đang online
-                        <span className="ml-1.5 text-[10px] bg-gray-700 text-gray-300 px-1.5 py-0.5 rounded-full">{connectedEmployees.length}</span>
+                <div className="bg-card rounded-xl p-3.5 space-y-2">
+                    <p className="text-[11px] text-muted-foreground font-medium"><UsersIcon className="w-4 h-4 inline" /> Nhân viên đang online
+                        <span className="ml-1.5 text-[10px] bg-muted text-foreground/80 px-1.5 py-0.5 rounded-full">{connectedEmployees.length}</span>
                     </p>
                     {connectedEmployees.length === 0 ? (
-                        <p className="text-xs text-gray-400 py-1">Chưa có nhân viên nào kết nối</p>
+                        <p className="text-xs text-muted-foreground py-1">Chưa có nhân viên nào kết nối</p>
                     ) : (
                         <div className="space-y-1">
                             {connectedEmployees.map((emp: any, idx: number) => (
-                                <div key={`${emp.employee_id}-${idx}`} className="flex items-center gap-2 p-2 bg-gray-700/40 rounded-lg">
-                                    <div className="w-7 h-7 rounded-full bg-gray-600 flex items-center justify-center text-xs flex-shrink-0">
+                                <div key={`${emp.employee_id}-${idx}`} className="flex items-center gap-2 p-2 bg-card border border-border/60 rounded-lg">
+                                    <div className="w-7 h-7 rounded-full bg-accent flex items-center justify-center text-xs flex-shrink-0">
                                         {emp.avatar_url
                                             ? <img src={emp.avatar_url} className="w-full h-full rounded-full object-cover" alt="" />
                                             : emp.display_name?.charAt(0)?.toUpperCase() || '?'
                                         }
                                     </div>
                                     <div className="flex-1 min-w-0">
-                                        <p className="text-xs text-gray-200 font-medium truncate">{emp.display_name}</p>
-                                        <p className="text-[10px] text-gray-400 flex items-center gap-1.5">
+                                        <p className="text-xs text-foreground font-medium truncate">{emp.display_name}</p>
+                                        <p className="text-[10px] text-muted-foreground flex items-center gap-1.5">
                                             <span>{emp.ip_address} · {timeSince(emp.connected_at)}</span>
-                                            {emp.sseConnected && <span className="text-blue-400">● SSE</span>}
+                                            {emp.sseConnected && <span className="text-primary">● SSE</span>}
                                         </p>
                                     </div>
                                 </div>
@@ -372,14 +344,33 @@ export default function RelayStatusPanel() {
                 </div>
             )}
 
+            {/* ── Đăng xuất tất cả nhân viên ──────────────────────────── */}
+            <div className="bg-card rounded-xl p-3.5 flex items-center gap-3">
+                <div className="flex-1 min-w-0">
+                    <p className="text-[11px] text-foreground font-medium">Đăng xuất tất cả nhân viên</p>
+                    <p className="text-[10px] text-muted-foreground leading-relaxed mt-0.5">
+                        Thu hồi mọi phiên đăng nhập (vd nghi lộ tài khoản): nhân viên đang online bị ngắt ngay, mọi máy nhân viên phải đăng nhập lại.
+                    </p>
+                </div>
+                <Button
+                    variant="outline"
+                    size="sm"
+                    loading={loggingOutAll}
+                    onClick={handleLogoutAll}
+                    className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                >
+                    Đăng xuất tất cả
+                </Button>
+            </div>
+
             {/* ── Notes ──────────────────────────────────────────────── */}
-            <div className="bg-yellow-500/8 border border-yellow-500/20 rounded-xl p-3 space-y-2">
-                <p className="text-[11px] font-semibold text-yellow-400"><AlertIcon className="w-4 h-4 inline" /> Lưu ý quan trọng</p>
-                <ul className="text-[11px] text-gray-400 space-y-1.5 leading-relaxed">
-                    <li><span className="text-gray-300 font-medium">Server tắt khi đóng app</span> - nhân viên bị ngắt kết nối, cần bật lại và đăng nhập lại sau mỗi lần restart.</li>
-                    <li><span className="text-gray-300 font-medium">LAN - IP động</span>: Khuyến nghị đặt IP tĩnh để nhân viên không cần đổi địa chỉ sau mỗi lần restart.</li>
-                    <li><span className="text-gray-300 font-medium">WAN - URL tunnel thay đổi</span>: Nhân viên cần cập nhật URL mới mỗi khi Boss bật lại tunnel.</li>
-                    <li><span className="text-gray-300 font-medium">Kết nối SSE</span>: Không cần mở port trên máy nhân viên - hoạt động cả LAN lẫn WAN.</li>
+            <div className="bg-warning/5 border border-warning/30 rounded-xl p-3 space-y-2">
+                <p className="text-[11px] font-semibold text-warning"><AlertIcon className="w-4 h-4 inline" /> Lưu ý quan trọng</p>
+                <ul className="text-[11px] text-muted-foreground space-y-1.5 leading-relaxed">
+                    <li><span className="text-foreground/80 font-medium">Server tắt khi đóng app</span> - nhân viên bị ngắt kết nối và tự kết nối lại khi bạn mở app (bật "Tự động bật khi mở app").</li>
+                    <li><span className="text-foreground/80 font-medium">LAN - IP động</span>: Khuyến nghị đặt IP tĩnh để nhân viên không cần đổi địa chỉ sau mỗi lần restart.</li>
+                    <li><span className="text-foreground/80 font-medium">WAN - Địa chỉ tạm</span> đổi mỗi lần tunnel bật lại (khởi động lại app, mất mạng lâu). Nhân viên còn kết nối được báo tự động; nhân viên ở xa phải nhập địa chỉ mới. Dùng <span className="text-foreground/80 font-medium">Địa chỉ cố định</span> để tránh việc này.</li>
+                    <li><span className="text-foreground/80 font-medium">Tunnel tự chạy lại</span> khi bị ngắt ngoài ý muốn. Bật, tắt hay đổi kiểu địa chỉ ở <span className="text-foreground/80 font-medium">Cài đặt → Internet &amp; Đám mây → Địa chỉ Internet</span>.</li>
                 </ul>
             </div>
         </div>

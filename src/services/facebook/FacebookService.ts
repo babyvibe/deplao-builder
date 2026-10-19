@@ -7,14 +7,14 @@
 import {
   FBSessionData, FBAccountStatus, FBSendOptions, FBSendResult,
   FBReactionAction, FBAttachmentUploadResult, FBThread, FBMQTTMessage,
-  FBE2EEStatus, FBE2EEMessageRaw,
+  FBE2EEStatus, FBE2EEMessageRaw, FBE2EESendResult,
 } from './FacebookTypes';
 import { getFacebookAvatarById, initSession } from './FacebookSession';
 import { getFacebookUserInfo } from './FacebookUserInfo';
 import { sendMessage as sendMessageREST, unsendMessage, addReaction, editMessage, forwardMessage, pinMessage, unpinMessage, createPoll, votePoll } from './FacebookMessageSender';
 import { uploadAttachment } from './FacebookAttachment';
 import {
-  getThreadList, parseThreadNodes, fetchThreadMessages,
+  getThreadList, getThreadListPage, parseThreadNodes, fetchThreadMessages,
   changeThreadName, changeThreadEmoji, changeNickname,
   addGroupAdmin, removeGroupAdmin, changeApprovalMode,
   approvePendingMember, getGroupLink, setGroupLink,
@@ -23,8 +23,15 @@ import { blockUser, unblockUser } from './FacebookBlock';
 import { changeThreadTheme } from './FacebookChangeTheme';
 import { createNote } from './FacebookCreateNotes';
 import { FacebookMQTTListener } from './FacebookMQTTListener';
-import { FacebookE2EEBridge, BridgeInitialData } from './FacebookE2EEBridge';
-import { FacebookE2EESender } from './FacebookE2EESender';
+import { FacebookE2EEBridge, BridgeInitialData, type BridgeHistoryPage } from './FacebookE2EEBridge';
+import {
+  activityMs, isLightSpeedMessageId, messageInRange, nextHistoryAnchor, type FbHistorySyncRange,
+} from '../../shared/facebookHistorySync';
+import { FacebookHumanPacer, sleepUnlessStopped, type PacerWait } from './FacebookHumanPacer';
+import {
+  FB_TEMPLATE_MSG_TYPE, fbTemplateText, fbUnsupportedText, templateFromBridgeAttachment, type FbTemplate,
+} from '../../shared/facebookTemplate';
+import { FacebookE2EESender, e2eeSendOutcome } from './FacebookE2EESender';
 import { parseE2EECookies, resolveE2EEBinaryPath, normalizeChatJid } from './FacebookUtils';
 import { FacebookE2EEStateStore } from './FacebookE2EEStateStore';
 import { resolveThreadKind } from './FacebookThreadKind';
@@ -59,6 +66,17 @@ function isSameFacebookAvatar(left?: string, right?: string): boolean {
   }
 }
 
+/** Trang GraphQL khi hội thoại chưa có tin Messenger nào trong máy làm mốc cho FetchMessagesTask (~1 trang Messenger web). */
+const HISTORY_GRAPHQL_PAGE = 20;
+/** Tin mới nhất trong máy cũ hơn hoạt động mới nhất của hội thoại quá mức này → máy còn thiếu tin ở đầu hội thoại. */
+const HISTORY_TOP_GAP_MS = 60_000;
+const HISTORY_RISK_TEXT = 'Facebook có dấu hiệu hạn chế / yêu cầu xác minh — đã tạm dừng tải lịch sử 30 phút để bảo vệ tài khoản';
+/** Trang lịch sử đến từ đâu: LightSpeed FetchMessagesTask (bridge) hay GraphQL (khi chưa có tin làm mốc). */
+type FbHistorySource = 'lightspeed' | 'graphql';
+type FbHistoryPageResult =
+  | { success: true; saved: number; received: number; stored: number; count: number; hasMoreBefore: boolean; minTimestampMs: number; minMessageId?: string; source: FbHistorySource }
+  | { success: false; code: 'BRIDGE_DOWN' | 'BRIDGE_OLD' | 'E2EE' | 'FETCH' | 'RISK' | 'COOLDOWN' | 'BUSY' | 'CANCELLED'; error: string; source?: FbHistorySource };
+
 export class FacebookService {
   private static instances = new Map<string, FacebookService>();
   /** In-flight getInstance/connect per account — see FB-03 (no zombie instance). */
@@ -92,6 +110,8 @@ export class FacebookService {
   private e2eeEnabled: boolean = true; // Có thể disable nếu không tìm thấy binary
   /** Track thread IDs known to be E2EE-encrypted (auto-populated on error) */
   private e2eeThreads: Set<string> = new Set();
+  /** Nhịp tải lịch sử "giống người dùng thật" — chung cho đồng bộ nền và tải khi cuộn của tài khoản này. */
+  private readonly historyPacer = new FacebookHumanPacer();
   /** Track thread IDs known to be NON-E2EE (gửi qua bridge sendMessage/MQTT thành công) */
   private _nonE2EEThreads: Set<string> = new Set();
   /** Debounce avatar refresh - chỉ 1 lần mỗi user/session */
@@ -628,6 +648,16 @@ export class FacebookService {
       msg.body = msg.attachments.url;
       Logger.log(`[FacebookService:${this.accountId}] [LINK] body was empty, using attachment URL: ${msg.body.slice(0, 100)}`);
     }
+    // ── Tin mẫu của Page (thẻ + nút): nội dung = chữ của thẻ ──────────────────
+    // Danh sách hội thoại, tìm kiếm, thông báo, workflow đọc `body`; thẻ đầy đủ nằm trong attachments.
+    const primaryTemplate = msg.attachments?.attachmentType === 'template' ? msg.attachments.template : undefined;
+    if (!msg.body && primaryTemplate) {
+      msg.body = fbTemplateText(primaryTemplate) || null;
+    }
+    // Bridge không hiển thị được nội dung (E2EE xem một lần, thanh toán…) → chữ thay thế, không lưu bong bóng rỗng
+    if (!msg.body && !msg.attachments?.attachmentType && msg.unsupported) {
+      msg.body = fbUnsupportedText(msg.unsupported);
+    }
     // ──────────────────────────────────────────────────────────────────────────
 
     // ── Pre-fetch contact info for unknown users ──────────────────────────────
@@ -664,7 +694,8 @@ export class FacebookService {
         } else {
           rawType = msg.attachments.attachmentType || 'image';
         }
-        const msgType = rawType;
+        // Tin mẫu của Page → `fb.template` (renderer vẽ thẻ + nút từ attachments)
+        const msgType = rawType === 'template' ? FB_TEMPLATE_MSG_TYPE : rawType;
 
         // Build attachment payload - support multiple attachments (batch image send)
         let attachmentPayload: string | undefined;
@@ -681,6 +712,7 @@ export class FacebookService {
             ...(a.mediaKey ? { mediaKey: a.mediaKey } : {}),
             ...(a.mediaSha256 ? { mediaSha256: a.mediaSha256 } : {}),
             ...(a.mediaEncSha256 ? { mediaEncSha256: a.mediaEncSha256 } : {}),
+            ...(a.template ? { ...a.template, type: 'template' } : {}),
           })));
         } else if (hasAttachment) {
           attachmentPayload = JSON.stringify([{
@@ -695,6 +727,7 @@ export class FacebookService {
             ...(msg.attachments.mediaKey ? { mediaKey: msg.attachments.mediaKey } : {}),
             ...(msg.attachments.mediaSha256 ? { mediaSha256: msg.attachments.mediaSha256 } : {}),
             ...(msg.attachments.mediaEncSha256 ? { mediaEncSha256: msg.attachments.mediaEncSha256 } : {}),
+            ...(msg.attachments.template ? { ...msg.attachments.template, type: 'template' } : {}),
           }]);
         }
 
@@ -751,7 +784,7 @@ export class FacebookService {
       // Fire-and-forget download non-E2EE attachments to local storage (like Zalo pattern)
       // Check primary AND allAttachments - batch sends may have URL only in allAttachments
       // Skip link type attachments - URL links don't need local download
-      const isLinkType = (a: any) => a?.attachmentType === 'link';
+      const isLinkType = (a: any) => a?.attachmentType === 'link' || a?.attachmentType === 'template';
       const hasDownloadableUrl = msg.attachments?.url
         ? !msg.attachments.directPath && !isLinkType(msg.attachments)
         : msg.allAttachments?.some(a => a.url && !a.directPath && !isLinkType(a)) ?? false;
@@ -1271,6 +1304,149 @@ export class FacebookService {
   }
 
   /**
+   * Lưu tin lịch sử từ bridge (trang hộp thư / trang lịch sử một hội thoại) như lịch sử: không phát fb:onMessage, không
+   * tăng chưa đọc. `range` (nếu có) bỏ tin ngoài khoảng thời gian. Trả: stored = số tin đã ghi, fresh = tin mới (chưa có
+   * trong máy), received = tin trong khoảng.
+   */
+  private persistBridgeMessages(
+    messages: NonNullable<BridgeInitialData['messages']>,
+    range?: FbHistorySyncRange,
+  ): { stored: number; fresh: number; received: number } {
+    const db = DatabaseService.getInstance();
+    const ownFacebookId = String(this.getFacebookId());
+    let stored = 0;
+    let fresh = 0;
+    let received = 0;
+    for (const message of messages) {
+      const id = String(message?.id || '');
+      const threadId = String(message?.threadId ?? '').replace(/@.*$/, '');
+      if (!id || !threadId) continue;
+      const timestamp = Number(message.timestampMs || Date.now());
+      if (range && !messageInRange(timestamp, range)) continue;
+      received += 1;
+      let exists = false;
+      try {
+        exists = !!db.queryOne?.(
+          `SELECT 1 AS found FROM messages WHERE msg_id = ? AND owner_zalo_id = ? AND channel = 'facebook' LIMIT 1`,
+          [id, ownFacebookId],
+        );
+      } catch { /* chỉ để đếm tin mới */ }
+      const senderId = String(message.senderId ?? '');
+      const { attachments, type, body } = this.bridgeHistoryContent(message);
+      db.saveFBMessage({
+        id,
+        account_id: this.accountId,
+        thread_id: threadId,
+        sender_id: senderId,
+        body,
+        timestamp,
+        type,
+        attachments: JSON.stringify(attachments),
+        reply_to_id: message.replyTo?.messageId || '',
+        is_self: senderId !== '' && senderId === ownFacebookId ? 1 : 0,
+        is_unsent: message.isUnsent ? 1 : 0,
+        is_history: true,
+      });
+      stored += 1;
+      if (!exists) fresh += 1;
+    }
+    return { stored, fresh, received };
+  }
+
+  /**
+   * Nội dung một tin lịch sử từ bridge, cùng quy tắc với tin realtime (handleIncomingMessage): thẻ tin mẫu lưu dạng
+   * chuẩn (nút đã phân loại), body = chữ của thẻ / URL của link / chữ thay thế; tin hệ thống → `system`.
+   */
+  private bridgeHistoryContent(message: NonNullable<BridgeInitialData['messages']>[number]): {
+    attachments: any[]; type: string; body: string | null;
+  } {
+    const attachments = (Array.isArray(message.attachments) ? message.attachments : []).flatMap((a: any) => {
+      if (a?.type !== 'template') return a ? [a] : [];
+      const template = templateFromBridgeAttachment(a);
+      return template ? [template] : [];
+    });
+    const primary = attachments[0];
+    const primaryType = String(primary?.type || 'text');
+    const template: FbTemplate | null = primaryType === 'template' ? primary : null;
+    const type = message.isAdminMsg ? 'system' : template ? FB_TEMPLATE_MSG_TYPE : primaryType;
+    const body = message.text
+      || (template ? fbTemplateText(template) : '')
+      || (primaryType === 'link' && primary?.url ? String(primary.url) : '')
+      || (message.unsupported && !primary ? fbUnsupportedText(message.unsupported) : '')
+      || null;
+    return { attachments, type, body };
+  }
+
+  /**
+   * Lưu một trang tin GraphQL (fetchThreadMessages) như lịch sử — dùng chung cho fb:fetchThreadMessages và trang đầu của
+   * tải lịch sử khi hội thoại chưa có tin làm mốc: loại tin theo đính kèm đầu tiên, tin mẫu → fb.template; hàng đã có thì
+   * sửa lại người gửi / chiều tin (bản cũ có thể lưu sai). `range` (nếu có) bỏ tin ngoài khoảng. Trả như persistBridgeMessages.
+   */
+  public persistGraphQLHistory(threadId: string, messages: any[], range?: FbHistorySyncRange): { stored: number; fresh: number; received: number } {
+    const db = DatabaseService.getInstance();
+    const ownFacebookId = String(this.getRealFacebookId() || this.getFacebookId()).replace(/@.*$/, '');
+    let stored = 0;
+    let fresh = 0;
+    let received = 0;
+    for (const msg of Array.isArray(messages) ? messages : []) {
+      if (!msg?.id) continue;
+      if (range && !messageInRange(msg.timestampMs, range)) continue;
+      received += 1;
+      let exists = false;
+      try {
+        exists = !!db.queryOne?.(
+          `SELECT 1 AS found FROM messages WHERE msg_id = ? AND owner_zalo_id = ? AND channel = 'facebook' LIMIT 1`,
+          [String(msg.id), ownFacebookId],
+        );
+      } catch { /* chỉ để đếm tin mới */ }
+      const senderId = String(msg.senderId || '').replace(/@.*$/, '');
+      const isSelf = senderId !== '' && senderId === ownFacebookId ? 1 : 0;
+      // Loại tin theo đính kèm đầu tiên (trước đây mọi đính kèm thành `file`); tin mẫu → fb.template
+      const primary = msg.attachments?.[0];
+      const msgType = msg.isAdmin ? 'system'
+        : primary?.type === 'template' ? FB_TEMPLATE_MSG_TYPE
+        : primary?.type || 'text';
+      db.saveFBMessage({
+        id: msg.id,
+        account_id: this.accountId,
+        thread_id: threadId,
+        sender_id: senderId,
+        sender_name: msg.senderName || '',
+        body: msg.body || (primary?.type === 'template' ? fbTemplateText(primary) : null) || null,
+        timestamp: msg.timestampMs,
+        type: msgType,
+        attachments: msg.attachments?.length ? JSON.stringify(msg.attachments) : '[]',
+        reply_to_id: msg.replyToMessageId || '',
+        is_self: isSelf,
+        is_unsent: msg.isUnsent ? 1 : 0,
+        reactions: msg.reactions?.length ? JSON.stringify(msg.reactions) : '{}',
+        is_history: true,
+      });
+
+      if (senderId) {
+        // saveFBMessage is intentionally insert-only for duplicate events.
+        // Reconcile existing rows while the history API still has the
+        // canonical participant id, so messages stored by an older client
+        // immediately regain the correct sender and direction on refresh.
+        db.run(
+          `UPDATE fb_messages
+           SET sender_id = ?, sender_name = CASE WHEN ? != '' THEN ? ELSE sender_name END, is_self = ?
+           WHERE id = ? AND account_id = ?`,
+          [senderId, msg.senderName || '', msg.senderName || '', isSelf, msg.id, this.accountId],
+        );
+        db.run(
+          `UPDATE messages SET sender_id = ?, is_sent = ?, status = ?
+           WHERE msg_id = ? AND owner_zalo_id = ? AND channel = 'facebook'`,
+          [senderId, isSelf, isSelf ? 'sent' : 'received', msg.id, ownFacebookId],
+        );
+      }
+      stored += 1;
+      if (!exists) fresh += 1;
+    }
+    return { stored, fresh, received };
+  }
+
+  /**
    * Persist data from the bridge inbox page without emitting fb:onMessage.
    * These rows are history, so they must not replay automations after a restart
    * or when the user explicitly reloads Facebook.
@@ -1307,31 +1483,7 @@ export class FacebookService {
         }), { preserveUnread: true });
     }
 
-    const ownFacebookId = String(this.getFacebookId());
-    let savedMessages = 0;
-    for (const message of messages) {
-      const id = String(message?.id || '');
-      const threadId = String(message?.threadId ?? '');
-      if (!id || !threadId) continue;
-      const senderId = String(message.senderId ?? '');
-      const attachments = Array.isArray(message.attachments) ? message.attachments : [];
-      const type = String(attachments[0]?.type || 'text');
-      db.saveFBMessage({
-        id,
-        account_id: this.accountId,
-        thread_id: threadId,
-        sender_id: senderId,
-        body: message.text || null,
-        timestamp: Number(message.timestampMs || Date.now()),
-        type,
-        attachments: JSON.stringify(attachments),
-        reply_to_id: message.replyTo?.messageId || '',
-        is_self: senderId !== '' && senderId === ownFacebookId ? 1 : 0,
-        is_unsent: 0,
-        is_history: true,
-      });
-      savedMessages += 1;
-    }
+    const savedMessages = this.persistBridgeMessages(messages).stored;
 
     if (threads.length || savedMessages) {
       Logger.log(`[FacebookService:${this.accountId}] Persisted bridge history: ${threads.length} threads, ${savedMessages} messages`);
@@ -1613,6 +1765,7 @@ export class FacebookService {
       // Extract replyTo info from bridge data - tin nhắn trả lời tin nhắn khác
       replyToMessageId: data.replyTo?.messageId,
       replyToSenderId: data.replyTo?.senderId != null ? String(data.replyTo.senderId) : undefined,
+      ...(data.unsupported ? { unsupported: String(data.unsupported) } : {}),
     };
 
     // Parse attachments nếu có
@@ -1635,6 +1788,7 @@ export class FacebookService {
         mediaKey: a.mediaKey,
         mediaSha256: a.mediaSha256,
         mediaEncSha256: a.mediaEncSha256,
+        ...(a?.type === 'template' && templateFromBridgeAttachment(a) ? { template: templateFromBridgeAttachment(a)! } : {}),
       }));
 
       msg.attachments = mapped[0];
@@ -1696,23 +1850,32 @@ export class FacebookService {
       replyToMessageId: data.replyTo?.messageId,
       type: 'group',
       attachments: { id: 0, url: null },
+      ...(data.unsupported ? { unsupported: String(data.unsupported) } : {}),
     };
 
     // Parse attachments tu bridge data (non-E2EE group messages)
     // Bridge gui attachments array: [{ type, url, fileName, mimeType, fileSize, ... }]
+    // Thẻ tin mẫu ("template": tiêu đề, mô tả, ảnh, nút, carousel) giữ trong `template`.
     if (data.attachments?.length) {
       const raw = data.attachments as any[];
-      const mapped = raw.map((a: any, idx: number) => ({
-        id: idx + 1,
-        url: a.url || null,
-        attachmentType: a.type || a.attachmentType || 'file',
-        name: a.fileName || a.name || '',
-        fileSize: a.fileSize,
-        mimeType: a.mimeType,
-      }));
-      msg.attachments = mapped[0];
-      if (mapped.length > 1) {
-        msg.allAttachments = mapped;
+      const mapped = raw.flatMap((a: any, idx: number) => {
+        const template = a?.type === 'template' ? templateFromBridgeAttachment(a) : null;
+        if (a?.type === 'template' && !template) return [];
+        return [{
+          id: idx + 1,
+          url: (template ? template.url : a.url) || null,
+          attachmentType: a.type || a.attachmentType || 'file',
+          name: a.fileName || a.name || '',
+          fileSize: a.fileSize,
+          mimeType: a.mimeType,
+          ...(template ? { template } : {}),
+        }];
+      });
+      if (mapped.length) {
+        msg.attachments = mapped[0];
+        if (mapped.length > 1) {
+          msg.allAttachments = mapped;
+        }
       }
     }
 
@@ -2085,7 +2248,7 @@ export class FacebookService {
     text: string,
     replyToMessageId: string = '',
     replyToSenderJid: string = '',
-  ): Promise<{ messageId?: string; timestampMs?: number }> {
+  ): Promise<FBE2EESendResult> {
     if (!this.isE2EEConnected() || !this.e2eeBridge?.isAlive()) {
       throw new Error('E2EE send failed: not connected');
     }
@@ -2119,8 +2282,7 @@ export class FacebookService {
     );
 
     try {
-      const result = await sendOnce();
-      return { success: true, messageId: result.messageId, timestamp: result.timestampMs || Date.now() };
+      return e2eeSendOutcome(await sendOnce());
     } catch (err: any) {
       if (!this.isSafeE2EEReconnectError(err)) {
         return { success: false, error: String(err?.message || err || 'Unknown E2EE send error') };
@@ -2133,8 +2295,7 @@ export class FacebookService {
       }
 
       try {
-        const result = await sendOnce();
-        return { success: true, messageId: result.messageId, timestamp: result.timestampMs || Date.now() };
+        return e2eeSendOutcome(await sendOnce());
       } catch (retryErr: any) {
         return { success: false, error: `E2EE send failed after reconnect: ${String(retryErr?.message || retryErr || 'unknown error')}` };
       }
@@ -2315,6 +2476,52 @@ export class FacebookService {
     }
   }
 
+  /**
+   * Tạo nhóm Messenger (thao tác nhanh "Tạo nhóm") qua bridge. Nhóm Messenger cần ít nhất 2 người
+   * ngoài tài khoản. Hội thoại được ghi ngay là `group` — định tuyến gửi tin (resolveThreadKind)
+   * đọc loại hội thoại từ DB.
+   */
+  public async createGroup(
+    participants: string[],
+    name: string,
+  ): Promise<{ success: boolean; threadId?: string; renameError?: string; error?: string }> {
+    const ids = Array.from(new Set((participants || []).map(String).filter(id => /^\d+$/.test(id))));
+    if (ids.length < 2) return { success: false, error: 'Chọn ít nhất 2 người — nhóm Messenger cần từ 3 người trở lên' };
+    if (!this.e2eeBridge?.isAlive()) {
+      return { success: false, error: 'Bridge Messenger chưa kết nối — kết nối lại tài khoản Facebook rồi thử lại' };
+    }
+    if (!this.e2eeBridge.supportsCapability('createGroup')) {
+      return { success: false, error: 'Bản bridge Messenger hiện tại chưa hỗ trợ tạo nhóm — hãy cập nhật ứng dụng' };
+    }
+    try {
+      const result = await this.e2eeBridge.createGroup({ participants: ids, name: String(name || '').trim() });
+      const threadId = String(result?.threadId || '');
+      if (!/^\d+$/.test(threadId) || threadId === '0') {
+        return { success: false, error: 'Facebook không trả về nhóm vừa tạo' };
+      }
+      const fbId = this.getFacebookId();
+      const db = DatabaseService.getInstance();
+      if (fbId && db) {
+        const title = String(name || '').trim() || 'Nhóm mới';
+        db.run?.(
+          `INSERT INTO contacts (owner_zalo_id, contact_id, display_name, avatar_url, is_friend, contact_type, unread_count, last_message, last_message_time, channel)
+           VALUES (?, ?, ?, '', 0, 'group', 0, ?, ?, 'facebook')
+           ON CONFLICT(owner_zalo_id, contact_id) DO UPDATE SET
+             contact_type = 'group',
+             display_name = CASE WHEN COALESCE(contacts.display_name, '') = '' THEN excluded.display_name ELSE contacts.display_name END,
+             last_message_time = MAX(COALESCE(contacts.last_message_time, 0), excluded.last_message_time)`,
+          [fbId, threadId, title, 'Bạn đã tạo nhóm', Date.now()],
+        );
+        EventBroadcaster.emit('db:unreadChanged', { zaloId: fbId, source: 'facebook_create_group' });
+      }
+      Logger.log(`[FacebookService:${this.accountId}] Created group ${threadId} with ${ids.length} people`);
+      return { success: true, threadId, ...(result?.renameError ? { renameError: result.renameError } : {}) };
+    } catch (err: any) {
+      Logger.warn(`[FacebookService:${this.accountId}] createGroup failed: ${err.message}`);
+      return { success: false, error: err.message };
+    }
+  }
+
   /** Gửi tin nhắn vào group qua bridge (non-E2EE) */
   public async sendBridgeMessage(
     threadId: string,
@@ -2451,6 +2658,13 @@ export class FacebookService {
         if (e2eeReady) {
           try {
             const r = await this.sendE2EEMessage(normalizeChatJid(threadId), body, opts);
+            if (r.uncertain) {
+              // The message may have been delivered. It is neither marked as
+              // locally sent (a delivered echo must still reach the chat) nor
+              // retried through REST.
+              Logger.warn(`[FacebookService:${this.accountId}] 1:1 E2EE send unacknowledged: msgId=${r.messageId}`);
+              return r;
+            }
             if (r.success && r.messageId) {
               // E2EE success → mark thread as E2EE
               if (!this.e2eeThreads.has(threadId)) {
@@ -2770,6 +2984,278 @@ export class FacebookService {
   }
 
   /** Reload the bridge inbox page, including conversations absent from web GraphQL. */
+  /** Hội thoại mã hoá đầu cuối (Facebook không cho thiết bị mới đọc tin cũ). */
+  public isE2EEThread(threadId: string): boolean {
+    const id = String(threadId || '').replace(/@.*$/, '');
+    if (this.e2eeThreads.has(id)) return true;
+    try {
+      const row = DatabaseService.getInstance().queryOne?.(
+        `SELECT is_e2ee FROM fb_threads WHERE id = ? AND account_id = ?`, [id, this.accountId],
+      ) as { is_e2ee?: number } | undefined;
+      return Number(row?.is_e2ee) === 1;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Một trang danh sách hội thoại (để đồng bộ theo khoảng thời gian quá 50 hội thoại mới nhất). */
+  public async getThreadListPage(before: number | null) {
+    const session = this.requireSession();
+    return getThreadListPage(session, this.accountId, before, 50, this.httpsAgent);
+  }
+
+  /**
+   * Socket LightSpeed (Messenger thường) của bridge đã đồng bộ xong — cần cho tải lịch sử. Khác socket E2EE: E2EE có thể
+   * chạy trong khi LightSpeed kẹt ở bước đồng bộ ban đầu (messagix tự kết nối lại).
+   */
+  public async isBridgeLightSpeedReady(): Promise<boolean> {
+    const bridge = this.e2eeBridge;
+    if (!bridge?.isAlive()) return false;
+    try {
+      const state = await bridge.call('isConnected', {}, 5_000) as { connected?: boolean } | undefined;
+      return state?.connected === true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Bộ điều tốc tải lịch sử của tài khoản (đồng bộ nền dùng để nghỉ khi chuyển hội thoại / trang danh sách). */
+  public historyPacing(): FacebookHumanPacer {
+    return this.historyPacer;
+  }
+
+  /**
+   * Mốc cho FetchMessagesTask: mã tin Messenger (`mid.$…`) của người gọi; không có (đầu đồng bộ, mở hội thoại, tin cũ
+   * nhất đang hiện là tin E2EE) → tin Messenger mới nhất trong máy ≤ mốc thời gian. null = không có mốc dùng được → GraphQL.
+   * `latestKnownMs`: hoạt động mới nhất của hội thoại — tin mới nhất trong máy cũ hơn hẳn thì máy thiếu tin ở đầu, lùi từ
+   * mốc đó sẽ bỏ sót chúng → cũng trả null.
+   */
+  private resolveHistoryAnchor(
+    threadId: string,
+    anchor: { timestampMs: number; messageId: string },
+    latestKnownMs?: number,
+  ): { timestampMs: number; messageId: string } | null {
+    if (isLightSpeedMessageId(anchor.messageId) && anchor.timestampMs > 0) {
+      return { timestampMs: anchor.timestampMs, messageId: anchor.messageId };
+    }
+    let row: { msg_id?: string; timestamp?: number } | undefined;
+    try {
+      row = DatabaseService.getInstance().queryOne?.(
+        `SELECT msg_id, timestamp FROM messages
+         WHERE owner_zalo_id = ? AND channel = 'facebook' AND thread_id = ? AND msg_id LIKE 'mid.$%' AND timestamp <= ?
+         ORDER BY timestamp DESC LIMIT 1`,
+        [String(this.getFacebookId()), threadId, anchor.timestampMs > 0 ? anchor.timestampMs : Number.MAX_SAFE_INTEGER],
+      ) as { msg_id?: string; timestamp?: number } | undefined;
+    } catch {
+      return null;
+    }
+    const timestampMs = activityMs(row?.timestamp);
+    if (!row || !timestampMs || !isLightSpeedMessageId(row.msg_id)) return null;
+    const latest = activityMs(latestKnownMs);
+    if (latest && timestampMs < latest - HISTORY_TOP_GAP_MS) return null;
+    return { timestampMs, messageId: String(row.msg_id) };
+  }
+
+  /**
+   * Trang mới nhất của hội thoại qua GraphQL — khi máy chưa có tin Messenger nào làm mốc cho FetchMessagesTask. Các trang
+   * sau neo vào tin cũ nhất của trang này (mã `mid.$…` dùng chung GraphQL / LightSpeed). Gọi sau khi bộ điều tốc đã cho đi.
+   */
+  private async fetchGraphQLHistoryPage(threadId: string, range?: FbHistorySyncRange): Promise<FbHistoryPageResult> {
+    this.historyPacer.recordRequest();
+    const startedAt = Date.now();
+    let res: Awaited<ReturnType<FacebookService['fetchThreadMessages']>>;
+    try {
+      res = await this.fetchThreadMessages(threadId, HISTORY_GRAPHQL_PAGE);
+    } catch (err: any) {
+      res = { success: false, error: err?.message || String(err) };
+    }
+    if (!res.success) {
+      const message = res.error || 'Facebook không trả lời';
+      if (this.historyPacer.recordResult(false, Date.now() - startedAt, message) === 'risk') {
+        Logger.warn(`[FacebookService:${this.accountId}] history paused 30 min after a risk signal: ${message}`);
+        return { success: false, code: 'RISK', error: HISTORY_RISK_TEXT, source: 'graphql' };
+      }
+      return { success: false, code: 'FETCH', error: message, source: 'graphql' };
+    }
+    this.historyPacer.recordResult(true, Date.now() - startedAt);
+    const messages = Array.isArray(res.messages) ? res.messages : [];
+    const { stored, fresh, received } = this.persistGraphQLHistory(threadId, messages, range);
+    let oldest: { id: string; ts: number } | null = null;
+    for (const m of messages) {
+      const ts = activityMs(m?.timestampMs);
+      if (ts && isLightSpeedMessageId(m?.id) && (!oldest || ts < oldest.ts)) oldest = { id: String(m.id), ts };
+    }
+    Logger.log(`[FacebookService:${this.accountId}] history page via GraphQL thread=${threadId}: ${messages.length} messages`);
+    return {
+      success: true,
+      saved: fresh,
+      received,
+      stored,
+      count: messages.length,
+      // Trang chưa đầy = hội thoại chỉ có bấy nhiêu tin; đầy → đi tiếp bằng FetchMessagesTask từ tin cũ nhất
+      hasMoreBefore: !!oldest && (messages.length >= HISTORY_GRAPHQL_PAGE || !!res.cursor?.hasMore),
+      minTimestampMs: oldest?.ts || 0,
+      minMessageId: oldest?.id,
+      source: 'graphql',
+    };
+  }
+
+  /**
+   * Một trang tin cũ hơn `anchor` của một hội thoại — lưu ngay như lịch sử. anchor.timestampMs = 0 → trang mới nhất.
+   * Đi qua bridge (LightSpeed FetchMessagesTask, như Messenger web), neo vào một tin có thật: Messenger web / mautrix-meta
+   * luôn gửi mã + thời điểm của tin cũ nhất đang có (mautrix-meta không tải lịch sử hội thoại chưa có tin nào); neo rỗng
+   * ("tin trước thời điểm X" không kèm mã) Facebook trả về trống — trước đây đồng bộ / mở hội thoại ra 0 tin. Chưa có tin
+   * nào làm mốc → trang mới nhất qua GraphQL (resolveHistoryAnchor / fetchGraphQLHistoryPage).
+   * Mọi yêu cầu đi qua bộ điều tốc của tài khoản: `background` (đồng bộ nền) nghỉ như người đọc + nghỉ giải lao;
+   * `interactive` (cuộn / mở hội thoại) chỉ giãn vài giây, hết ngân sách thì báo BUSY. Lỗi có mã: BRIDGE_DOWN /
+   * BRIDGE_OLD / E2EE / FETCH / RISK (dấu hiệu bị chặn → tạm dừng 30 phút) / COOLDOWN / BUSY / CANCELLED.
+   */
+  public async fetchHistoryPage(
+    threadId: string,
+    anchor: { timestampMs: number; messageId: string },
+    range?: FbHistorySyncRange,
+    opts: {
+      mode?: 'background' | 'interactive';
+      shouldStop?: () => boolean;
+      onWait?: (wait: PacerWait) => void;
+      /** Hoạt động mới nhất đã biết của hội thoại (trang đầu của đồng bộ) — phát hiện máy thiếu tin ở đầu hội thoại. */
+      latestKnownMs?: number;
+    } = {},
+  ): Promise<FbHistoryPageResult> {
+    const cooldown = this.historyPacer.cooldownRemaining();
+    if (cooldown > 0) {
+      return {
+        success: false,
+        code: 'COOLDOWN',
+        error: `Đang tạm dừng tải lịch sử Facebook để bảo vệ tài khoản (còn ${Math.ceil(cooldown / 60_000)} phút)`,
+      };
+    }
+    const id = String(threadId || '').replace(/@.*$/, '');
+    if (!/^\d+$/.test(id)) return { success: false, code: 'FETCH', error: 'Mã hội thoại không hợp lệ' };
+    if (this.isE2EEThread(id)) {
+      return { success: false, code: 'E2EE', error: 'Hội thoại mã hoá đầu cuối: Facebook không cho thiết bị mới tải tin cũ' };
+    }
+    const ref = this.resolveHistoryAnchor(id, anchor, opts.latestKnownMs);
+    if (ref) {
+      const bridge = this.e2eeBridge;
+      if (!bridge?.isAlive()) {
+        return { success: false, code: 'BRIDGE_DOWN', error: 'Bridge Facebook chưa chạy (đang kết nối lại) — thử lại sau ít phút' };
+      }
+      if (!bridge.supportsCapability('fetchMessages')) {
+        return { success: false, code: 'BRIDGE_OLD', error: 'Bridge Facebook bản cũ chưa hỗ trợ tải lịch sử — khởi động lại Deplao sau khi cập nhật' };
+      }
+    }
+    // Nhịp người dùng thật trước khi hỏi Facebook
+    if (opts.mode === 'interactive') {
+      const plan = this.historyPacer.planInteractivePage();
+      if ('busy' in plan) return { success: false, code: 'BUSY', error: 'Đang tải nhiều tin cũ — thử lại sau ít phút' };
+      if (plan.ms > 0 && !(await sleepUnlessStopped(plan.ms, opts.shouldStop))) {
+        return { success: false, code: 'CANCELLED', error: 'Đã huỷ' };
+      }
+    } else {
+      const plan = this.historyPacer.planBackgroundPage();
+      if (plan.ms > 0) {
+        opts.onWait?.(plan);
+        if (!(await sleepUnlessStopped(plan.ms, opts.shouldStop))) return { success: false, code: 'CANCELLED', error: 'Đã huỷ' };
+      }
+    }
+    if (!ref) return this.fetchGraphQLHistoryPage(id, range);
+    // Bridge có thể đã được dựng lại trong lúc nghỉ → dùng bản đang chạy
+    const liveBridge = this.e2eeBridge;
+    if (!liveBridge?.isAlive()) {
+      return { success: false, code: 'BRIDGE_DOWN', error: 'Bridge Facebook chưa chạy (đang kết nối lại) — thử lại sau ít phút' };
+    }
+    this.historyPacer.recordRequest();
+    const startedAt = Date.now();
+    let page: BridgeHistoryPage;
+    try {
+      page = await liveBridge.fetchMessages({
+        threadId: id,
+        beforeTimestampMs: ref.timestampMs,
+        beforeMessageId: ref.messageId,
+      });
+    } catch (err: any) {
+      const message = err?.message || String(err);
+      if (this.historyPacer.recordResult(false, Date.now() - startedAt, message) === 'risk') {
+        Logger.warn(`[FacebookService:${this.accountId}] history paused 30 min after a risk signal: ${message}`);
+        return { success: false, code: 'RISK', error: HISTORY_RISK_TEXT, source: 'lightspeed' };
+      }
+      // Socket LightSpeed của bridge chưa nối (có thể xảy ra khi socket mã hoá vẫn chạy): không hội thoại nào tải được
+      if (/LightSpeed socket is not connected|client not initiali[sz]ed|Messenger client is not initiali[sz]ed/i.test(message)) {
+        return { success: false, code: 'BRIDGE_DOWN', error: 'Kết nối Messenger thường của bridge (dùng để tải lịch sử, khác kết nối E2EE) chưa sẵn sàng — Facebook chưa trả lời bước đồng bộ ban đầu. Tin nhắn và E2EE vẫn hoạt động; thử lại sau ít phút', source: 'lightspeed' };
+      }
+      return { success: false, code: 'FETCH', error: message, source: 'lightspeed' };
+    }
+    this.historyPacer.recordResult(true, Date.now() - startedAt);
+    const messages = Array.isArray(page?.messages) ? page.messages : [];
+    const { stored, fresh, received } = this.persistBridgeMessages(messages, range);
+    return {
+      success: true,
+      saved: fresh,
+      received,
+      stored,
+      count: messages.length,
+      hasMoreBefore: !!page?.hasMoreBefore,
+      minTimestampMs: activityMs(page?.minTimestampMs) || (messages.length ? Math.min(...messages.map(m => activityMs(m.timestampMs) || Infinity)) : 0),
+      minMessageId: page?.minMessageId || undefined,
+      source: 'lightspeed',
+    };
+  }
+
+  /**
+   * Lịch sử một hội thoại trong khoảng thời gian: tải lùi từng trang (lưu ngay) tới khi Facebook báo hết hoặc tin cũ
+   * nhất đã trước đầu khoảng — không giới hạn số tin. `shouldStop` cho phép huỷ giữa chừng.
+   */
+  public async syncThreadHistory(
+    threadId: string,
+    range: FbHistorySyncRange,
+    opts: {
+      shouldStop?: () => boolean;
+      onPage?: (page: { saved: number; received: number }) => void;
+      onWait?: (wait: PacerWait) => void;
+      /** Hoạt động mới nhất đã biết của hội thoại (danh sách hội thoại) — trang đầu phát hiện máy thiếu tin ở đầu. */
+      latestKnownMs?: number;
+    } = {},
+  ): Promise<{ saved: number; received: number; pages: number; complete: boolean; error?: string; code?: string }> {
+    let anchor = { timestampMs: range.toTs ?? 0, messageId: '' };
+    let saved = 0;
+    let received = 0;
+    let pages = 0;
+    let retried = false;
+    for (;;) {
+      if (opts.shouldStop?.()) return { saved, received, pages, complete: false };
+      const res = await this.fetchHistoryPage(threadId, anchor, range, {
+        mode: 'background',
+        shouldStop: opts.shouldStop,
+        onWait: opts.onWait,
+        // Khoảng tới hiện tại: so tin mới nhất trong máy với hoạt động mới nhất (khoảng kết thúc trong quá khứ thì không)
+        latestKnownMs: pages === 0 && range.toTs == null ? opts.latestKnownMs : undefined,
+      });
+      // tsconfig strict:false không thu hẹp union theo `success` → dùng 'error' in res
+      if ('error' in res) {
+        if (res.code === 'CANCELLED') return { saved, received, pages, complete: false };
+        // Facebook chậm trả lời một lần: thử lại một lần (bộ điều tốc đã giãn thêm sau lỗi)
+        if (res.code === 'FETCH' && !retried) {
+          retried = true;
+          continue;
+        }
+        return { saved, received, pages, complete: false, error: res.error, code: res.code };
+      }
+      retried = false;
+      pages += 1;
+      saved += res.saved;
+      received += res.received;
+      opts.onPage?.({ saved: res.saved, received: res.received });
+      const next = nextHistoryAnchor(
+        { count: res.count, hasMoreBefore: res.hasMoreBefore, minTimestampMs: res.minTimestampMs, minMessageId: res.minMessageId },
+        anchor,
+        range,
+      );
+      if (!next) return { saved, received, pages, complete: true };
+      anchor = next;
+    }
+  }
+
   public async syncBridgeHistory(): Promise<{ threads: number; messages: number }> {
     if (!this.e2eeBridge?.isAlive()) return { threads: 0, messages: 0 };
     try {
@@ -2972,9 +3458,9 @@ export class FacebookService {
     return changeThreadTheme(this.requireSession(), threadId, theme, this.httpsAgent);
   }
 
-  /** Tạo Messenger Note (N2) */
-  public async createNote(text: string, backgroundColor?: string, textColor?: string): Promise<{ success: boolean; noteId?: string; error?: string }> {
-    return createNote(this.requireSession(), text, backgroundColor, textColor, this.httpsAgent);
+  /** Tạo Messenger Note (N2); privacy mặc định FRIENDS như fbchat-v2. */
+  public async createNote(text: string, privacy?: string): Promise<{ success: boolean; noteId?: string; error?: string }> {
+    return createNote(this.requireSession(), text, privacy, this.httpsAgent);
   }
 
   /** Thêm admin nhóm (N3) */

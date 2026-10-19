@@ -68,17 +68,17 @@ export function registerErpNoteIpc(): void {
     return { tag: svc().createTag(input.name, input.color) };
   }));
 
-  ipcMain.handle('erp:note:addTag', withErpAuth('note.update', async (input: any) => {
+  ipcMain.handle('erp:note:addTag', withErpAuth('note.update', async (input: any, ctx) => {
     erpValidate.string(input?.noteId, 'noteId');
     erpValidate.int(input?.tagId, 'tagId');
-    svc().addTagToNote(input.noteId, Number(input.tagId));
+    svc().addTagToNoteForEmployee(input.noteId, Number(input.tagId), ctx.employeeId);
     return {};
   }));
 
-  ipcMain.handle('erp:note:removeTag', withErpAuth('note.update', async (input: any) => {
+  ipcMain.handle('erp:note:removeTag', withErpAuth('note.update', async (input: any, ctx) => {
     erpValidate.string(input?.noteId, 'noteId');
     erpValidate.int(input?.tagId, 'tagId');
-    svc().removeTagFromNote(input.noteId, Number(input.tagId));
+    svc().removeTagFromNoteForEmployee(input.noteId, Number(input.tagId), ctx.employeeId);
     return {};
   }));
 

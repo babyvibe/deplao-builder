@@ -775,6 +775,101 @@ func TestMutableDeviceFieldsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPrivacyTokensAndNCTSaltRoundTrip(t *testing.T) {
+	ds, err := NewDeviceStoreMemoryOnly()
+	if err != nil {
+		t.Fatalf("NewDeviceStoreMemoryOnly() error = %v", err)
+	}
+	ctx := context.Background()
+	user := waTypes.JID{User: "15551234567", Device: 9, Server: waTypes.DefaultUserServer}
+	timestamp := time.Unix(1_723_456_789, 0)
+	senderTimestamp := time.Unix(1_723_456_700, 0)
+	tokenBytes := []byte("private-token")
+	if err := ds.PutPrivacyTokens(ctx, store.PrivacyToken{
+		User: user, Token: tokenBytes, Timestamp: timestamp, SenderTimestamp: senderTimestamp,
+	}); err != nil {
+		t.Fatalf("PutPrivacyTokens() error = %v", err)
+	}
+	tokenBytes[0] = 'X'
+	salt := []byte("nct-salt")
+	if err := ds.PutNCTSalt(ctx, salt); err != nil {
+		t.Fatalf("PutNCTSalt() error = %v", err)
+	}
+	salt[0] = 'X'
+
+	data, err := ds.GetDeviceData()
+	if err != nil {
+		t.Fatalf("GetDeviceData() error = %v", err)
+	}
+	reloaded, err := NewDeviceStoreFromData(data)
+	if err != nil {
+		t.Fatalf("NewDeviceStoreFromData() error = %v", err)
+	}
+	gotToken, err := reloaded.GetPrivacyToken(ctx, user.ToNonAD())
+	if err != nil {
+		t.Fatalf("GetPrivacyToken() error = %v", err)
+	}
+	if gotToken == nil || string(gotToken.Token) != "private-token" || !gotToken.Timestamp.Equal(timestamp) || !gotToken.SenderTimestamp.Equal(senderTimestamp) {
+		t.Fatalf("privacy token = %#v, want persisted token and timestamps", gotToken)
+	}
+	gotSalt, err := reloaded.GetNCTSalt(ctx)
+	if err != nil {
+		t.Fatalf("GetNCTSalt() error = %v", err)
+	}
+	if string(gotSalt) != "nct-salt" {
+		t.Fatalf("NCT salt = %q, want nct-salt", gotSalt)
+	}
+	gotToken.Token[0] = 'X'
+	gotSalt[0] = 'X'
+	again, _ := reloaded.GetPrivacyToken(ctx, user)
+	againSalt, _ := reloaded.GetNCTSalt(ctx)
+	if string(again.Token) != "private-token" || string(againSalt) != "nct-salt" {
+		t.Fatal("store returned mutable aliases for privacy token or NCT salt")
+	}
+}
+
+func TestPrivacyTokenUpdateAndExpirySemantics(t *testing.T) {
+	ds, err := NewDeviceStoreMemoryOnly()
+	if err != nil {
+		t.Fatalf("NewDeviceStoreMemoryOnly() error = %v", err)
+	}
+	ctx := context.Background()
+	user := waTypes.JID{User: "15550001111", Server: waTypes.DefaultUserServer}
+	base := time.Unix(1_700_000_000, 0)
+	if err := ds.PutPrivacyTokens(ctx, store.PrivacyToken{
+		User: user, Token: []byte("newer"), Timestamp: base.Add(time.Minute), SenderTimestamp: base,
+	}); err != nil {
+		t.Fatalf("PutPrivacyTokens(newer) error = %v", err)
+	}
+	if err := ds.PutPrivacyTokens(ctx, store.PrivacyToken{
+		User: user, Token: []byte("stale"), Timestamp: base,
+	}); err != nil {
+		t.Fatalf("PutPrivacyTokens(stale) error = %v", err)
+	}
+	got, _ := ds.GetPrivacyToken(ctx, user)
+	if got == nil || string(got.Token) != "newer" || !got.SenderTimestamp.Equal(base) {
+		t.Fatalf("stale update replaced token: %#v", got)
+	}
+
+	deleted, err := ds.DeleteExpiredPrivacyTokens(ctx, base.Add(time.Minute))
+	if err != nil || deleted != 0 {
+		t.Fatalf("DeleteExpiredPrivacyTokens(equal cutoff) = (%d, %v), want (0, nil)", deleted, err)
+	}
+	deleted, err = ds.DeleteExpiredPrivacyTokens(ctx, base.Add(2*time.Minute))
+	if err != nil || deleted != 1 {
+		t.Fatalf("DeleteExpiredPrivacyTokens() = (%d, %v), want (1, nil)", deleted, err)
+	}
+	if got, _ = ds.GetPrivacyToken(ctx, user); got != nil {
+		t.Fatalf("expired privacy token still exists: %#v", got)
+	}
+	if err := ds.DeleteNCTSalt(ctx); err != nil {
+		t.Fatalf("DeleteNCTSalt() error = %v", err)
+	}
+	if gotSalt, _ := ds.GetNCTSalt(ctx); gotSalt != nil {
+		t.Fatalf("NCT salt after delete = %q, want nil", gotSalt)
+	}
+}
+
 func TestDeleteDeviceRemovesPersistedState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "device.json")
 	ds, err := NewDeviceStore(path)

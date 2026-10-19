@@ -171,16 +171,16 @@ export function UpdateNotification() {
         .release-notes code { background: rgba(255,255,255,0.1); padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.95em; }
         .release-notes hr { border: none; border-top: 1px solid rgba(255,255,255,0.15); margin: 0.75em 0; }
       `}</style>
-      <div className={`w-[420px] rounded-2xl shadow-2xl p-6 ${isLight ? 'bg-white border border-gray-200 text-gray-800' : 'bg-gray-800 border border-gray-600 text-white'}`} onClick={e => e.stopPropagation()}>
+      <div className={`w-[420px] rounded-2xl shadow-2xl p-6 ${isLight ? 'bg-white border border-gray-200 text-gray-800' : 'bg-card border border-input text-foreground'}`} onClick={e => e.stopPropagation()}>
         <div className="flex items-start justify-between mb-4">
           <div>
             <h3 className="text-lg font-bold flex items-center gap-2">
               Bản cập nhật mới
             </h3>
-            <p className={`text-sm mt-0.5 ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>Phiên bản {APP_VERSION} → <span className="font-semibold text-white">{updateInfo.version}</span></p>
+            <p className={`text-sm mt-0.5 ${isLight ? 'text-subtle-foreground' : 'text-muted-foreground'}`}>Phiên bản {APP_VERSION} → <span className="font-semibold text-foreground">{updateInfo.version}</span></p>
           </div>
           {status !== 'downloading' && (
-            <button onClick={dismiss} className={`w-7 h-7 flex items-center justify-center rounded-full transition-colors ${isLight ? 'text-gray-400 hover:bg-gray-100' : 'text-gray-400 hover:bg-gray-700'}`}>
+            <button onClick={dismiss} className={`w-7 h-7 flex items-center justify-center rounded-full transition-colors ${isLight ? 'text-muted-foreground hover:bg-gray-100' : 'text-muted-foreground hover:bg-muted'}`}>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             </button>
           )}
@@ -188,11 +188,11 @@ export function UpdateNotification() {
 
         {/* Release notes - aggregated across skipped versions */}
         {notesLoading ? (
-          <div className={`mb-4 p-3 rounded-xl text-xs ${isLight ? 'bg-gray-50 text-gray-400' : 'bg-gray-900/50 text-gray-400'}`}>
+          <div className={`mb-4 p-3 rounded-xl text-xs ${isLight ? 'bg-gray-50 text-muted-foreground' : 'bg-card text-muted-foreground'}`}>
             <span className="animate-pulse">Đang tải danh sách thay đổi...</span>
           </div>
         ) : aggregatedNotes ? (
-          <div className={`release-notes mb-4 p-3 rounded-xl text-xs leading-relaxed max-h-48 overflow-y-auto ${isLight ? 'bg-gray-50 text-gray-600' : 'bg-gray-900/50 text-gray-300'}`}
+          <div className={`release-notes mb-4 p-3 rounded-xl text-xs leading-relaxed max-h-48 overflow-y-auto ${isLight ? 'bg-gray-50 text-subtle-foreground' : 'bg-card text-foreground/80'}`}
             dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(aggregatedNotes) }} />
         ) : null}
 
@@ -200,7 +200,7 @@ export function UpdateNotification() {
           <>
             {isMac ? (
               <div className="space-y-3">
-                <p className={`text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
+                <p className={`text-xs ${isLight ? 'text-subtle-foreground' : 'text-muted-foreground'}`}>
                   macOS không hỗ trợ cập nhật tự động. Vui lòng tải bản mới nhất về cài đặt:
                 </p>
                 <div className="flex gap-2">
@@ -209,23 +209,23 @@ export function UpdateNotification() {
                     Apple Silicon (M)
                   </a>
                   <a href={`https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-${updateInfo.version}.dmg`} target="_blank" rel="noopener noreferrer" onClick={dismiss}
-                    className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-gray-600 hover:bg-gray-500 text-white text-sm font-medium transition-colors no-underline">
+                    className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-accent hover:bg-accent text-foreground text-sm font-medium transition-colors no-underline">
                     Intel Mac
                   </a>
                 </div>
                 <button onClick={() => { startDownload(); }}
-                  className={`w-full py-2 rounded-xl text-xs transition-colors ${isLight ? 'bg-gray-100 hover:bg-gray-200 text-gray-600' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'}`}>
+                  className={`w-full py-2 rounded-xl text-xs transition-colors ${isLight ? 'bg-gray-100 hover:bg-gray-200 text-subtle-foreground' : 'bg-muted hover:bg-accent text-foreground/80'}`}>
                   Thử cập nhật tự động (có thể không hoạt động)
                 </button>
               </div>
             ) : (
               <div className="space-y-3">
-                <p className={`text-xs ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>
+                <p className={`text-xs ${isLight ? 'text-subtle-foreground' : 'text-muted-foreground'}`}>
                   Nhấn "Cập nhật ngay" để tải và cài đặt bản mới. Ứng dụng sẽ khởi động lại sau khi cài xong.
                 </p>
                 <div className="flex gap-2">
                   <button onClick={dismiss}
-                    className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-colors ${isLight ? 'bg-gray-100 hover:bg-gray-200 text-gray-600' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'}`}>
+                    className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-colors ${isLight ? 'bg-gray-100 hover:bg-gray-200 text-subtle-foreground' : 'bg-muted hover:bg-accent text-foreground/80'}`}>
                     Để sau
                   </button>
                   <button onClick={handleConfirmDownload}
@@ -241,14 +241,14 @@ export function UpdateNotification() {
         {status === 'downloading' && (
           <div className="space-y-3">
             <div className="flex justify-between text-xs">
-              <span className={isLight ? 'text-gray-500' : 'text-gray-400'}>Đang tải...</span>
+              <span className={isLight ? 'text-subtle-foreground' : 'text-muted-foreground'}>Đang tải...</span>
               <span className="text-blue-400 font-medium">{progress?.percent ?? 0}%</span>
             </div>
-            <div className={`h-2 rounded-full overflow-hidden ${isLight ? 'bg-gray-200' : 'bg-gray-700'}`}>
+            <div className={`h-2 rounded-full overflow-hidden ${isLight ? 'bg-gray-200' : 'bg-muted'}`}>
               <div className="h-full bg-blue-500 rounded-full transition-all duration-300" style={{ width: `${progress?.percent ?? 0}%` }} />
             </div>
             {progress && (
-              <div className={`flex justify-between text-xs ${isLight ? 'text-gray-400' : 'text-gray-500'}`}>
+              <div className={`flex justify-between text-xs ${isLight ? 'text-muted-foreground' : 'text-subtle-foreground'}`}>
                 <span>{formatBytes(progress.transferred)} / {formatBytes(progress.total)}</span>
                 <span>{formatBytes(progress.bytesPerSecond)}/s</span>
               </div>
@@ -275,7 +275,7 @@ export function UpdateNotification() {
             </p>
             <div className="flex gap-2">
               <button onClick={() => { setStatus('available'); setError(null); }}
-                className={`flex-1 py-2 rounded-xl text-xs font-medium transition-colors ${isLight ? 'bg-gray-100 hover:bg-gray-200 text-gray-600' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'}`}>
+                className={`flex-1 py-2 rounded-xl text-xs font-medium transition-colors ${isLight ? 'bg-gray-100 hover:bg-gray-200 text-subtle-foreground' : 'bg-muted hover:bg-accent text-foreground/80'}`}>
                 Thử lại
               </button>
               {isMac ? (
@@ -283,7 +283,7 @@ export function UpdateNotification() {
                   <a href={`https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-${updateInfo.version}-arm64.dmg`} target="_blank" rel="noopener noreferrer" onClick={dismiss}
                     className="flex-1 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium text-center no-underline">ARM (chip M+)</a>
                   <a href={`https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-${updateInfo.version}.dmg`} target="_blank" rel="noopener noreferrer" onClick={dismiss}
-                    className="flex-1 py-2 rounded-xl bg-gray-600 hover:bg-gray-500 text-white text-xs font-medium text-center no-underline">Intel</a>
+                    className="flex-1 py-2 rounded-xl bg-accent hover:bg-accent text-foreground text-xs font-medium text-center no-underline">Intel</a>
                 </div>
               ) : (
                 <a href={`https://github.com/babyvibe/deplao-builder/releases/tag/v${updateInfo.version}`} target="_blank" rel="noopener noreferrer"

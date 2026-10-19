@@ -1,5 +1,6 @@
 import { IpcMainInvokeEvent } from 'electron';
 import ErpAuthContext, { ErpAuthCtx, ErpPermissionError } from '../../src/services/erp/ErpAuthContext';
+import { erpCanWithOverrides } from '../../src/services/erp/permissions';
 import Logger from '../../src/utils/Logger';
 
 export interface ErpHandlerResult<T = any> {
@@ -46,11 +47,31 @@ export function withErpAuth<TInput = any, TOutput extends object = any>(
       const out = await handler(input ?? ({} as TInput), ctx, event);
       return { success: true, ...out };
     } catch (err: any) {
+      // Quyền phụ thuộc tham số kiểm tra trong handler (requireErpPermission: giao việc cho người khác, sửa hồ sơ người
+      // khác…) → cùng mã như action của withErpAuth (REST nhân viên trả 403, UI hiện hộp thoại quyền ERP)
+      if (err instanceof ErpPermissionError) {
+        Logger.warn(`[erpIpc] ${err.message}`);
+        return { success: false, error: err.message, code: 'permission_denied' };
+      }
       const msg = err?.message || String(err);
       Logger.warn(`[erpIpc] handler error: ${msg}`);
       return { success: false, error: msg, code: 'internal_error' };
     }
   };
+}
+
+/**
+ * Quyền phụ thuộc tham số, kiểm tra trong handler — tính cả quyền riêng (allow / deny) của hồ sơ ERP như withErpAuth.
+ * Ném ErpPermissionError → `{ success: false, code: 'permission_denied' }`. (Trước đây handler dùng `erpCan(role)` bỏ qua
+ * quyền riêng và ném Error thường → `internal_error`.)
+ */
+export function requireErpPermission(action: string, ctx: ErpAuthCtx): void {
+  ErpAuthContext.requirePermission(action, ctx);
+}
+
+/** Có quyền `action` không (tính cả quyền riêng của hồ sơ ERP) — không ném. */
+export function erpAllowed(action: string, ctx: ErpAuthCtx): boolean {
+  return erpCanWithOverrides(ctx.role, action, ctx.permissionOverrides);
 }
 
 /** Lightweight runtime validators - throw on mismatch. */

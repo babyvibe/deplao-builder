@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import DataAccessor from '@/lib/data/DataAccessor';
-import ipc from '@/lib/ipc';
+import DataAccessor, { isReadFailure, readFailureMessage } from '@/lib/data/DataAccessor';
+import { useEmployeeResync } from '@/hooks/useEmployeeResync';
+import { relayEventAccount } from '@/lib/chat/relayUiEvents';
+import ipc, { buildZaloAuth } from '@/lib/ipc';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
 import { callApi, extractApiError } from '@/utils/apiError';
@@ -69,6 +71,9 @@ export function invalidateZaloQuickMessageCache(accountId: string) {
 // ─── Local DB helpers ─────────────────────────────────────────────────────────
 async function fetchLocalQuickMessages(zaloId: string): Promise<QuickMessage[]> {
   const res = await DataAccessor.getLocalQuickMessages({ zaloId });
+  // Lỗi đọc (nhân viên mất kết nối BOSS) ≠ "không có tin nhắn nhanh": ném lỗi → người gọi giữ danh sách đang có
+  // (trước đây trả [] → lần tải lại do event / kết nối lại xoá trắng danh sách trong ô soạn tin)
+  if (isReadFailure(res)) throw new Error(readFailureMessage(res));
   if (!res?.success) return [];
   return (res.items || []).map((r: any) => {
     const mediaObj = r.media || null;
@@ -200,42 +205,42 @@ function QuickMessageDialog({
     <div ref={overlayRef} onClick={handleOverlayClick} data-qm-overlay
       className="fixed inset-0 bg-black/60 flex items-center justify-center"
       style={{ zIndex: 10000 }}>
-      <div className="bg-gray-800 rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden flex flex-col" style={{ maxHeight: '90vh' }}>
+      <div className="bg-card rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden flex flex-col" style={{ maxHeight: '90vh' }}>
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700 flex-shrink-0">
-          <h2 className="text-white font-semibold text-base">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border flex-shrink-0">
+          <h2 className="text-foreground font-semibold text-base">
             {initial ? 'Chỉnh sửa tin nhắn nhanh' : 'Tạo tin nhắn nhanh'}
           </h2>
           <button onClick={onClose}
-            className="text-gray-400 hover:text-white w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-700 transition-colors text-lg">✕</button>
+            className="text-muted-foreground hover:text-foreground w-8 h-8 flex items-center justify-center rounded-lg hover:bg-muted transition-colors text-lg">✕</button>
         </div>
         {/* Body */}
         <div className="px-6 py-5 flex flex-col gap-4 overflow-y-auto flex-1">
           {/* Keyword */}
-          <div className="flex items-center gap-3 bg-gray-700 rounded-xl px-4 py-3 border border-gray-600 focus-within:border-blue-500 transition-colors">
-            <div className="w-8 h-8 bg-gray-600 rounded-lg flex items-center justify-center text-gray-300 font-bold text-sm flex-shrink-0">/</div>
+          <div className="flex items-center gap-3 bg-muted rounded-xl px-4 py-3 border border-input focus-within:border-blue-500 transition-colors">
+            <div className="w-8 h-8 bg-accent rounded-lg flex items-center justify-center text-foreground/80 font-bold text-sm flex-shrink-0">/</div>
             <input autoFocus type="text" value={keyword}
               onChange={e => setKeyword(e.target.value.replace(/\s/g, '').slice(0, 20))}
               placeholder="ten_phim_tat"
-              className="flex-1 bg-transparent text-white placeholder-gray-400 text-sm focus:outline-none" />
-            <span className="text-xs text-gray-400 flex-shrink-0">{keyword.length}/20</span>
+              className="flex-1 bg-transparent text-foreground placeholder-subtle-foreground text-sm focus:outline-none" />
+            <span className="text-xs text-muted-foreground flex-shrink-0">{keyword.length}/20</span>
           </div>
           {/* Title */}
           <textarea value={title} onChange={e => setTitle(e.target.value)}
             placeholder="Nội dung tin nhắn nhanh..." rows={4}
-            className="w-full bg-gray-700 border border-gray-600 focus:border-blue-500 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-400 resize-none focus:outline-none transition-colors" />
+            className="w-full bg-muted border border-input focus:border-blue-500 rounded-xl px-4 py-3 text-sm text-foreground placeholder-subtle-foreground resize-none focus:outline-none transition-colors" />
 
           {/* ── Zalo mode: single image ── */}
           {mode === CHANNEL.ZALO && (
             mediaPreview ? (
               <div className="relative inline-block">
-                <img src={mediaPreview} alt="preview" className="w-24 h-24 rounded-xl object-cover border border-gray-600" />
+                <img src={mediaPreview} alt="preview" className="w-24 h-24 rounded-xl object-cover border border-input" />
                 <button onClick={handleRemoveImage}
                   className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 hover:bg-red-600 rounded-full flex items-center justify-center text-white text-xs font-bold shadow transition-colors">✕</button>
               </div>
             ) : (
               <button onClick={handlePickImage}
-                className="self-start flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-xl text-sm text-gray-300 hover:text-white transition-colors">
+                className="self-start flex items-center gap-2 px-4 py-2 bg-muted hover:bg-accent border border-input rounded-xl text-sm text-foreground/80 hover:text-foreground transition-colors">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
                 </svg>
@@ -248,8 +253,8 @@ function QuickMessageDialog({
           {mode === 'local' && (
             <div className="flex flex-col gap-2">
               <div className="flex items-center gap-2">
-                <span className="text-xs text-gray-400 font-medium">Media đính kèm</span>
-                <span className="text-xs text-gray-400">({localMediaFiles.length} file)</span>
+                <span className="text-xs text-muted-foreground font-medium">Media đính kèm</span>
+                <span className="text-xs text-muted-foreground">({localMediaFiles.length} file)</span>
               </div>
               {/* Previews grid */}
               {localMediaFiles.length > 0 && (
@@ -260,9 +265,9 @@ function QuickMessageDialog({
                       <div key={f.path} className="relative group flex-shrink-0">
                         {f.type === 'image' ? (
                           <img src={fileUrl} alt=""
-                            className="w-20 h-20 rounded-xl object-cover border border-gray-600" />
+                            className="w-20 h-20 rounded-xl object-cover border border-input" />
                         ) : (
-                          <div className="w-20 h-20 rounded-xl border border-gray-600 bg-gray-700 flex flex-col items-center justify-center gap-1 overflow-hidden relative">
+                          <div className="w-20 h-20 rounded-xl border border-input bg-muted flex flex-col items-center justify-center gap-1 overflow-hidden relative">
                             <video src={fileUrl} className="absolute inset-0 w-full h-full object-cover opacity-60" muted />
                             <div className="relative z-10 w-8 h-8 bg-black/60 rounded-full flex items-center justify-center">
                               <svg width="14" height="14" viewBox="0 0 24 24" fill="white">
@@ -287,14 +292,14 @@ function QuickMessageDialog({
               {/* Pick buttons */}
               <div className="flex items-center gap-2 flex-wrap">
                 <button onClick={handlePickLocalImages}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg text-xs text-gray-300 hover:text-white transition-colors">
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-muted hover:bg-accent border border-input rounded-lg text-xs text-foreground/80 hover:text-foreground transition-colors">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
                   </svg>
                   Thêm ảnh
                 </button>
                 <button onClick={handlePickLocalVideos}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg text-xs text-gray-300 hover:text-white transition-colors">
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-muted hover:bg-accent border border-input rounded-lg text-xs text-foreground/80 hover:text-foreground transition-colors">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
                   </svg>
@@ -307,7 +312,7 @@ function QuickMessageDialog({
                   </button>
                 )}
               </div>
-              <p className="text-[11px] text-gray-400 leading-relaxed">
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
                 Khi chọn tin nhắn nhanh này, ảnh/video sẽ được gửi tự động kèm theo nội dung.
                 <br/>
                 Thứ tự: Ảnh/video sẽ được gửi trước text
@@ -316,7 +321,7 @@ function QuickMessageDialog({
           )}
         </div>
         {/* Footer */}
-        <div className="flex flex-col gap-2 px-6 py-4 border-t border-gray-700 flex-shrink-0">
+        <div className="flex flex-col gap-2 px-6 py-4 border-t border-border flex-shrink-0">
           {saveError && (
             <p className="text-xs text-red-400 bg-red-900/20 border border-red-700/40 rounded-lg px-3 py-2 leading-relaxed">
               ⚠ {saveError}
@@ -324,7 +329,7 @@ function QuickMessageDialog({
           )}
           <div className="flex items-center justify-end gap-3">
             <button onClick={onClose}
-              className="px-5 py-2 rounded-xl text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700 transition-colors">Hủy</button>
+              className="px-5 py-2 rounded-xl text-sm font-medium text-foreground/80 hover:text-foreground hover:bg-muted transition-colors">Hủy</button>
             <button onClick={handleSave} disabled={saving || !keyword.trim() || !title.trim()}
               className="px-6 py-2 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white transition-colors flex items-center gap-2">
               {saving && <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
@@ -365,10 +370,10 @@ function SyncDropdown({ onSync, syncing, anchorRef }: {
         disabled={syncing}
         onClick={() => setOpen(p => !p)}
         title="Đồng bộ từ Zalo về Local"
-        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-gray-300 hover:text-white bg-gray-700 hover:bg-gray-600 border border-gray-600/60 transition-colors disabled:opacity-50"
+        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-foreground/80 hover:text-foreground bg-muted hover:bg-accent border border-input/60 transition-colors disabled:opacity-50"
       >
         {syncing
-          ? <div className="w-3 h-3 border border-gray-400 border-t-transparent rounded-full animate-spin" />
+          ? <div className="w-3 h-3 border border-border-strong border-t-transparent rounded-full animate-spin" />
           : <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0115-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 01-15 6.7L3 16"/>
             </svg>
@@ -379,34 +384,34 @@ function SyncDropdown({ onSync, syncing, anchorRef }: {
         </svg>
       </button>
       {open && !syncing && (
-        <div className="absolute top-full left-0 mb-1.5 bg-gray-800 border border-gray-600 rounded-xl shadow-2xl overflow-hidden min-w-[200px]"
+        <div className="absolute top-full left-0 mb-1.5 bg-card border border-input rounded-xl shadow-2xl overflow-hidden min-w-[200px]"
           style={{ zIndex: 10001 }}>
-          <div className="px-3 py-2 border-b border-gray-700">
-            <p className="text-xs text-gray-400 font-medium">Đồng bộ từ Zalo → Local</p>
+          <div className="px-3 py-2 border-b border-border">
+            <p className="text-xs text-muted-foreground font-medium">Đồng bộ từ Zalo → Local</p>
           </div>
           <button
             onClick={() => { setOpen(false); onSync('replace'); }}
-            className="w-full flex items-start gap-2.5 px-3 py-2.5 hover:bg-gray-700 transition-colors text-left"
+            className="w-full flex items-start gap-2.5 px-3 py-2.5 hover:bg-muted transition-colors text-left"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-orange-400 mt-0.5 flex-shrink-0">
               <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
               <path d="M10 11v6"/><path d="M14 11v6"/>
             </svg>
             <div>
-              <p className="text-xs text-white font-medium">Thay thế</p>
-              <p className="text-[11px] text-gray-400 leading-snug">Xóa local cũ, dùng dữ liệu Zalo</p>
+              <p className="text-xs text-foreground font-medium">Thay thế</p>
+              <p className="text-[11px] text-muted-foreground leading-snug">Xóa local cũ, dùng dữ liệu Zalo</p>
             </div>
           </button>
           <button
             onClick={() => { setOpen(false); onSync('merge'); }}
-            className="w-full flex items-start gap-2.5 px-3 py-2.5 hover:bg-gray-700 transition-colors text-left"
+            className="w-full flex items-start gap-2.5 px-3 py-2.5 hover:bg-muted transition-colors text-left"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-green-400 mt-0.5 flex-shrink-0">
               <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
             </svg>
             <div>
-              <p className="text-xs text-white font-medium">Thêm vào</p>
-              <p className="text-[11px] text-gray-400 leading-snug">Giữ local, bổ sung từ Zalo</p>
+              <p className="text-xs text-foreground font-medium">Thêm vào</p>
+              <p className="text-[11px] text-muted-foreground leading-snug">Giữ local, bổ sung từ Zalo</p>
             </div>
           </button>
         </div>
@@ -458,7 +463,7 @@ export function QuickMessageManagerPanel({ onClose, onSelect }: { onClose: () =>
   const getAuth = useCallback(() => {
     const account = getActiveAccount();
     if (!account) return null;
-    return { cookies: account.cookies, imei: account.imei, userAgent: account.user_agent };
+    return buildZaloAuth(account);
   }, [getActiveAccount]);
 
   const load = useCallback(async (force = false) => {
@@ -481,6 +486,26 @@ export function QuickMessageManagerPanel({ onClose, onSelect }: { onClose: () =>
   }, [activeAccountId, canUseZaloQuickMessages, getAuth, mode, showNotification]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Tải lại lặng lẽ (không spinner, lỗi giữ danh sách) khi Boss / nhân viên khác đổi tin nhắn nhanh (relay
+  // db:localQuickMessageChanged → 'ui:quickMessagesChanged') hoặc kết nối BOSS phục hồi. Chế độ Zalo: danh sách lấy
+  // từ Zalo, không theo event local.
+  const refreshLocalSilently = useCallback(async () => {
+    if (!activeAccountId || mode !== 'local') return;
+    try {
+      setItems(await fetchQuickMessages(null, activeAccountId, 'local'));
+    } catch { /* giữ danh sách đang có */ }
+  }, [activeAccountId, mode]);
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const owner = relayEventAccount((e as CustomEvent).detail);
+      if (owner && owner !== activeAccountId) return;
+      void refreshLocalSilently();
+    };
+    window.addEventListener('ui:quickMessagesChanged', handler);
+    return () => window.removeEventListener('ui:quickMessagesChanged', handler);
+  }, [activeAccountId, refreshLocalSilently]);
+  useEmployeeResync(refreshLocalSilently);
 
   const switchMode = (m: QuickMessageMode) => {
     if (m === CHANNEL.ZALO && !canUseZaloQuickMessages) return;
@@ -605,7 +630,7 @@ export function QuickMessageManagerPanel({ onClose, onSelect }: { onClose: () =>
       <div
         ref={panelRef}
         data-qm-panel
-        className="fixed w-[360px] max-h-[520px] bg-gray-800 border border-gray-600 rounded-2xl shadow-2xl overflow-hidden flex flex-col z-[9999]"
+        className="fixed w-[360px] max-h-[520px] bg-card border border-input rounded-2xl shadow-2xl overflow-hidden flex flex-col z-[9999]"
         style={{
           left: '50%',
           bottom: '80px',
@@ -617,16 +642,16 @@ export function QuickMessageManagerPanel({ onClose, onSelect }: { onClose: () =>
         }}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700 flex-shrink-0">
-          <span className="text-sm font-semibold text-white">Tin nhắn nhanh</span>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border flex-shrink-0">
+          <span className="text-sm font-semibold text-foreground">Tin nhắn nhanh</span>
           <div className="flex items-center gap-2">
             {/* Mode toggle - hide Zalo tab for Facebook channel */}
             {canUseZaloQuickMessages && (
-            <div className="flex items-center gap-0.5 p-0.5 bg-gray-700 rounded-lg">
+            <div className="flex items-center gap-0.5 p-0.5 bg-muted rounded-lg">
               <button
                 onClick={() => switchMode('local')}
                 title="Local (không bị chặn)"
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-all ${mode === 'local' ? 'bg-green-600 text-white' : 'text-gray-400 hover:text-white'}`}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-all ${mode === 'local' ? 'bg-green-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}
               >
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
@@ -636,7 +661,7 @@ export function QuickMessageManagerPanel({ onClose, onSelect }: { onClose: () =>
               <button
                 onClick={() => switchMode('zalo')}
                 title="Zalo API"
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-all ${mode === CHANNEL.ZALO ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-all ${mode === CHANNEL.ZALO ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}
               >
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
@@ -646,19 +671,19 @@ export function QuickMessageManagerPanel({ onClose, onSelect }: { onClose: () =>
             </div>
             )}
             <button onClick={onClose}
-              className="text-gray-400 hover:text-white w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-700 transition-colors text-sm">✕</button>
+              className="text-muted-foreground hover:text-foreground w-7 h-7 flex items-center justify-center rounded-lg hover:bg-muted transition-colors text-sm">✕</button>
           </div>
         </div>
 
         {/* Toolbar */}
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-700/60 flex-shrink-0 bg-gray-800/80">
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-border/60 flex-shrink-0 bg-card/80">
           <div className="flex items-center gap-2">
             {/* Sync button - only on Zalo tab, not for Facebook channel */}
             {mode === CHANNEL.ZALO && canUseZaloQuickMessages && (
               <SyncDropdown onSync={handleSync} syncing={syncing} anchorRef={syncBtnRef} />
             )}
             <button onClick={() => load(true)} disabled={loading} title="Làm mới"
-              className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-white hover:bg-gray-700 transition-colors disabled:opacity-40">
+              className="w-7 h-7 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-40">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={loading ? 'animate-spin' : ''}>
                 <path d="M23 4v6h-6"/><path d="M1 20v-6h6"/>
                 <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
@@ -683,31 +708,31 @@ export function QuickMessageManagerPanel({ onClose, onSelect }: { onClose: () =>
               <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
             </div>
           ) : items.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-10 text-gray-400 text-xs gap-2 px-4 text-center">
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-400">
+            <div className="flex flex-col items-center justify-center py-10 text-muted-foreground text-xs gap-2 px-4 text-center">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-muted-foreground">
                 <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
               </svg>
               Chưa có tin nhắn nhanh nào.
               {mode === 'local' && canUseZaloQuickMessages && (
-                <span className="text-gray-400">
-                  Chuyển sang tab <strong className="text-gray-400">Zalo</strong> và nhấn <strong className="text-gray-400">Đồng bộ</strong> để import
+                <span className="text-muted-foreground">
+                  Chuyển sang tab <strong className="text-muted-foreground">Zalo</strong> và nhấn <strong className="text-muted-foreground">Đồng bộ</strong> để import
                 </span>
               )}
             </div>
           ) : (
-            <div className="divide-y divide-gray-700/50">
+            <div className="divide-y divide-border/50">
               {items.map(item => (
                 <div
                   key={item.id}
                   onClick={() => { onSelect?.(item); onClose(); }}
-                  className="flex items-start gap-3 px-4 py-3 hover:bg-gray-700/50 group transition-colors cursor-pointer"
+                  className="flex items-start gap-3 px-4 py-3 hover:bg-muted/50 group transition-colors cursor-pointer"
                 >
                   <div className="flex-1 min-w-0">
-                    <span className="inline-block bg-gray-700 text-white text-xs font-semibold px-2 py-0.5 rounded-md mb-1.5">/{item.keyword}</span>
+                    <span className="inline-block bg-muted text-foreground text-xs font-semibold px-2 py-0.5 rounded-md mb-1.5">/{item.keyword}</span>
                     {/* Zalo-style media thumbnail */}
                     {item.media?.items?.[0] && (
                       <img src={item.media.items[0].thumbUrl || item.media.items[0].normalUrl}
-                        alt="" className="w-14 h-14 rounded-lg object-cover border border-gray-600 mb-1.5 block" />
+                        alt="" className="w-14 h-14 rounded-lg object-cover border border-input mb-1.5 block" />
                     )}
                     {/* Local media thumbnails */}
                     {item._localMedia && item._localMedia.length > 0 && (
@@ -715,7 +740,7 @@ export function QuickMessageManagerPanel({ onClose, onSelect }: { onClose: () =>
                         {item._localMedia.slice(0, 4).map((f, fi) => {
                           const fileUrl = toLocalMediaUrl(f.path);
                           return (
-                            <div key={fi} className="relative w-12 h-12 rounded-lg overflow-hidden border border-gray-600 flex-shrink-0 bg-gray-700">
+                            <div key={fi} className="relative w-12 h-12 rounded-lg overflow-hidden border border-input flex-shrink-0 bg-muted">
                               {f.type === 'image'
                                 ? <img src={fileUrl} alt="" className="w-full h-full object-cover" />
                                 : <div className="w-full h-full flex items-center justify-center">
@@ -734,13 +759,13 @@ export function QuickMessageManagerPanel({ onClose, onSelect }: { onClose: () =>
                         })}
                       </div>
                     )}
-                    <p className="text-sm text-gray-300 leading-relaxed line-clamp-2">{item.message.title}</p>
+                    <p className="text-sm text-foreground/80 leading-relaxed line-clamp-2">{item.message.title}</p>
                   </div>
                   <div className="flex items-center gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity pt-0.5">
                     <button
                       onClick={(e) => { e.stopPropagation(); setEditItem(item); setShowDialog(true); }}
                       title="Chỉnh sửa"
-                      className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-white hover:bg-gray-700 transition-colors">
+                      className="w-8 h-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
                         <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
@@ -749,7 +774,7 @@ export function QuickMessageManagerPanel({ onClose, onSelect }: { onClose: () =>
                     <button
                       onClick={(e) => { e.stopPropagation(); handleDelete(item); }}
                       title="Xóa"
-                      className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-red-400 hover:bg-gray-700 transition-colors">
+                      className="w-8 h-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-red-400 hover:bg-muted transition-colors">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
                         <path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/>
@@ -763,7 +788,7 @@ export function QuickMessageManagerPanel({ onClose, onSelect }: { onClose: () =>
         </div>
 
         {/* Mode hint footer */}
-        <div className={`px-4 py-2.5 border-t border-gray-700/60 flex-shrink-0 text-xs ${mode === 'local' ? 'text-green-400/70' : 'text-yellow-400/70'}`}>
+        <div className={`px-4 py-2.5 border-t border-border/60 flex-shrink-0 text-xs ${mode === 'local' ? 'text-green-400/70' : 'text-yellow-400/70'}`}>
           {!canUseZaloQuickMessages
             ? '✓ Local - tin nhắn nhanh nội bộ cho kênh này'
             : mode === 'local'
@@ -821,11 +846,11 @@ export function QuickMessageDropdown({
 
 
   return (
-    <div className="bg-gray-800 border border-gray-600 rounded-2xl shadow-2xl overflow-hidden"
+    <div className="bg-card border border-input rounded-2xl shadow-2xl overflow-hidden"
       style={{ maxHeight: '20rem', display: 'flex', flexDirection: 'column' }}>
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-700 flex-shrink-0">
-        <span className="text-xs font-semibold text-white">Tin nhắn nhanh ({filtered.length})</span>
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-border flex-shrink-0">
+        <span className="text-xs font-semibold text-foreground">Tin nhắn nhanh ({filtered.length})</span>
         <button onMouseDown={e => { e.preventDefault(); onManage(); }}
           className="text-xs text-blue-400 hover:text-blue-300 font-semibold transition-colors">Quản lý</button>
       </div>
@@ -833,15 +858,15 @@ export function QuickMessageDropdown({
       {/* Items */}
       <div className="overflow-y-auto flex-1">
         {filtered.length === 0 ? (
-          <p className="text-xs text-gray-400 text-center py-4">Không tìm thấy tin nhắn nhanh</p>
+          <p className="text-xs text-muted-foreground text-center py-4">Không tìm thấy tin nhắn nhanh</p>
         ) : (
           filtered.map((item, idx) => (
             <button key={item.id} onMouseDown={e => { e.preventDefault(); onSelect(item); }}
-              className={`w-full text-left px-4 py-3 transition-colors border-b border-gray-700/40 last:border-0 ${idx === selectedIdx ? 'bg-gray-700' : 'hover:bg-gray-700/60'}`}>
+              className={`w-full text-left px-4 py-3 transition-colors border-b border-border/40 last:border-0 ${idx === selectedIdx ? 'bg-muted' : 'hover:bg-muted/60'}`}>
               <div className="flex items-start gap-3">
                 <div className="flex-1 min-w-0">
-                  <span className="inline-block bg-gray-700 text-white text-xs font-semibold px-2 py-0.5 rounded-md mb-1">/{item.keyword}</span>
-                  <p className="text-sm text-gray-300 truncate leading-snug">{item.message.title}</p>
+                  <span className="inline-block bg-muted text-foreground text-xs font-semibold px-2 py-0.5 rounded-md mb-1">/{item.keyword}</span>
+                  <p className="text-sm text-foreground/80 truncate leading-snug">{item.message.title}</p>
                   {/* Local media badge */}
                   {item._localMedia && item._localMedia.length > 0 && (
                     <div className="flex items-center gap-1 mt-1">
@@ -867,15 +892,15 @@ export function QuickMessageDropdown({
                 {/* Zalo media thumb */}
                 {item.media?.items?.[0] && (
                   <img src={item.media.items[0].thumbUrl || item.media.items[0].normalUrl}
-                    alt="" className="w-10 h-10 rounded-lg object-cover border border-gray-600 flex-shrink-0" />
+                    alt="" className="w-10 h-10 rounded-lg object-cover border border-input flex-shrink-0" />
                 )}
                 {/* Local media first thumb */}
                 {!item.media?.items?.[0] && item._localMedia?.[0]?.type === 'image' && (
                   <img src={toLocalMediaUrl(item._localMedia[0].path)}
-                    alt="" className="w-10 h-10 rounded-lg object-cover border border-gray-600 flex-shrink-0" />
+                    alt="" className="w-10 h-10 rounded-lg object-cover border border-input flex-shrink-0" />
                 )}
                 {!item.media?.items?.[0] && item._localMedia?.[0]?.type === 'video' && (
-                  <div className="w-10 h-10 rounded-lg border border-gray-600 bg-gray-700 flex items-center justify-center flex-shrink-0">
+                  <div className="w-10 h-10 rounded-lg border border-input bg-muted flex items-center justify-center flex-shrink-0">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="white" className="opacity-80">
                       <polygon points="5 3 19 12 5 21 5 3"/>
                     </svg>
@@ -888,9 +913,9 @@ export function QuickMessageDropdown({
       </div>
 
       {/* Hint */}
-      <div className="px-4 py-2 border-t border-gray-700 flex-shrink-0 bg-gray-800/80">
-        <p className="text-xs text-gray-400">
-          Gợi ý: Nhập <kbd className="bg-gray-700 text-gray-300 text-xs px-1.5 py-0.5 rounded">/</kbd> ở đầu ô chat để hiển thị danh sách tin nhắn nhanh.
+      <div className="px-4 py-2 border-t border-border flex-shrink-0 bg-card/80">
+        <p className="text-xs text-muted-foreground">
+          Gợi ý: Nhập <kbd className="bg-muted text-foreground/80 text-xs px-1.5 py-0.5 rounded">/</kbd> ở đầu ô chat để hiển thị danh sách tin nhắn nhanh.
         </p>
       </div>
     </div>

@@ -15,6 +15,8 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import Logger from '../../utils/Logger';
 import FileStorageService from '../file/FileStorageService';
+import { bossAuthHeaders } from '../http/bossSessionAuth';
+import { isPathInside } from '../http/bossFileAccess';
 
 interface CacheEntry {
   key: string;
@@ -96,17 +98,9 @@ class MediaCacheService {
 
     // Cache miss → kiểm tra structured media folder (có thể đã download từ lần trước)
     try {
-      const mediaRelPath = this.extractMediaRelPath(bossUrl);
-      if (mediaRelPath) {
-        let mediaBaseDir = FileStorageService.getBaseDir?.() || '';
-        if (!mediaBaseDir) {
-          const { app } = require('electron');
-          mediaBaseDir = path.join(app.getPath('userData'), 'media');
-        }
-        const structuredPath = path.resolve(mediaBaseDir, mediaRelPath);
-        if (fs.existsSync(structuredPath)) {
-          return { displayUrl: `file:///${structuredPath.replace(/\\/g, '/').replace(/^\//, '')}`, fromCache: true };
-        }
+      const structuredPath = this.getLocalCopyPath(bossUrl);
+      if (structuredPath) {
+        return { displayUrl: `file:///${structuredPath.replace(/\\/g, '/').replace(/^\//, '')}`, fromCache: true };
       }
     } catch {}
 
@@ -194,13 +188,17 @@ class MediaCacheService {
 
       Logger.log(`[MediaCacheService] Downloading: ${bossUrl.slice(0, 80)}...`);
 
+      // Boss bắt buộc phiên nhân viên cho /api/media, /api/library (bossSessionAuth: Boss URL → token).
+      // Video / file: người dùng bấm mở → tải hết rồi mở (không mở URL Boss bằng trình duyệt ngoài được) → cho lâu hơn.
       const response = await fetch(bossUrl, {
-        signal: AbortSignal.timeout(30000),
+        headers: bossAuthHeaders(bossUrl),
+        signal: AbortSignal.timeout(mediaType === 'video' || mediaType === 'file' ? 10 * 60_000 : 30_000),
       });
 
       if (!response.ok) {
         Logger.warn(`[MediaCacheService] Download failed: HTTP ${response.status}`);
-        this.failedUrls.set(bossUrl, Date.now());
+        // 401 = chưa có / hết phiên (đang kết nối, đăng nhập lại) → thử lại được ngay khi có token, không ghim 5 phút
+        if (response.status !== 401) this.failedUrls.set(bossUrl, Date.now());
         return;
       }
 
@@ -230,14 +228,8 @@ class MediaCacheService {
       // Đồng thời lưu vào structured media folder nếu boss URL chứa đường dẫn đúng
       // VD: https://boss/api/media/zaloId/2024-06-27/video.mp4
       try {
-        const mediaRelPath = this.extractMediaRelPath(bossUrl);
-        if (mediaRelPath) {
-          let mediaBaseDir = FileStorageService.getBaseDir?.() || '';
-          if (!mediaBaseDir) {
-            const { app } = require('electron');
-            mediaBaseDir = path.join(app.getPath('userData'), 'media');
-          }
-          const structuredPath = path.resolve(mediaBaseDir, mediaRelPath);
+        const structuredPath = this.structuredPathFor(bossUrl);
+        if (structuredPath) {
           const structuredDir = path.dirname(structuredPath);
           if (!fs.existsSync(structuredDir)) fs.mkdirSync(structuredDir, { recursive: true });
           if (!fs.existsSync(structuredPath)) fs.writeFileSync(structuredPath, buffer);
@@ -353,6 +345,35 @@ class MediaCacheService {
       '.pdf': 'application/pdf', '.mp3': 'audio/mpeg',
     };
     return mimeMap[ext] || 'application/octet-stream';
+  }
+
+  /**
+   * Bản sao giữ đúng tên + đuôi file trong thư mục media của workspace (downloadToCache ghi song song với cache hash)
+   * — đã có trên máy thì trả đường dẫn, không thì ''. Dùng khi mở / hiện file trong thư mục (file cache hash không đuôi).
+   */
+  public getLocalCopyPath(bossUrl: string): string {
+    try {
+      const structuredPath = this.structuredPathFor(bossUrl);
+      return structuredPath && fs.statSync(structuredPath).isFile() ? structuredPath : '';
+    } catch {
+      return '';
+    }
+  }
+
+  /** Đường dẫn trong thư mục media của workspace ứng với boss URL ('' nếu không suy ra được / thoát khỏi thư mục media). */
+  private structuredPathFor(bossUrl: string): string {
+    const mediaRelPath = this.extractMediaRelPath(bossUrl);
+    if (!mediaRelPath) return '';
+    let mediaBaseDir = FileStorageService.getBaseDir?.() || '';
+    if (!mediaBaseDir) {
+      const { app } = require('electron');
+      mediaBaseDir = path.join(app.getPath('userData'), 'media');
+    }
+    const structuredPath = path.resolve(mediaBaseDir, mediaRelPath);
+    // URL lạ (../, đường dẫn tuyệt đối) không được ghi / đọc ra ngoài thư mục media
+    return isPathInside(path.resolve(mediaBaseDir), structuredPath) && structuredPath !== path.resolve(mediaBaseDir)
+      ? structuredPath
+      : '';
   }
 
   /** Trích xuất relative path từ boss URL để lưu đúng folder media/zaloId/date/

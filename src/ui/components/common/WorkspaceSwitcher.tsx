@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useWorkspaceStore, WorkspaceInfo } from '@/store/workspaceStore';
 import ipc from '@/lib/ipc';
 import { useAppStore } from '@/store/appStore';
+import { useShallow } from 'zustand/react/shallow';
 import { Spinner } from '@/components/common/PageLoading';
 import { HomeIcon, UserIcon, SettingsIcon } from '@/components/common/icons';
 
@@ -24,7 +25,9 @@ export default function WorkspaceSwitcher() {
         workspaces, activeWorkspaceId, setWorkspaces, setActiveWorkspaceId,
         connectionStatuses, unreadCounts, isSwitching, setIsSwitching,
     } = useWorkspaceStore();
-    const { showNotification } = useAppStore();
+    const { showNotification } = useAppStore(useShallow(s => ({
+      showNotification: s.showNotification,
+    })));
     const [open, setOpen] = useState(false);
     const [showCreateForm, setShowCreateForm] = useState(false);
     const dropdownRef = useRef<HTMLDivElement>(null);
@@ -101,8 +104,8 @@ export default function WorkspaceSwitcher() {
                 disabled={isSwitching}
                 className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all
                     ${isSwitching
-                        ? 'bg-gray-700/50 text-gray-400 cursor-wait'
-                        : 'bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-600/50'
+                        ? 'bg-muted/50 text-muted-foreground cursor-wait'
+                        : 'bg-card hover:bg-muted text-foreground border border-input/50'
                     }`}
             >
                 {isSwitching ? (
@@ -131,7 +134,7 @@ export default function WorkspaceSwitcher() {
 
             {/* Dropdown */}
             {open && (
-                <div className="absolute top-full left-0 mt-1.5 w-64 bg-gray-800 border border-gray-600/60 rounded-xl shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150">
+                <div className="absolute top-full left-0 mt-1.5 w-64 bg-card border border-input/60 rounded-xl shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150">
                     {/* Workspace list */}
                     <div className="py-1.5 max-h-64 overflow-y-auto">
                         {workspaces.map(ws => (
@@ -147,7 +150,7 @@ export default function WorkspaceSwitcher() {
                     </div>
 
                     {/* Footer actions */}
-                    <div className="border-t border-gray-700 px-2 py-1.5 space-y-0.5">
+                    <div className="border-t border-border px-2 py-1.5 space-y-0.5">
                         {showCreateForm ? (
                             <CreateWorkspaceInline
                                 onCreated={() => { setShowCreateForm(false); loadWorkspaces(); }}
@@ -157,7 +160,7 @@ export default function WorkspaceSwitcher() {
                             <>
                                 <button
                                     onClick={() => setShowCreateForm(true)}
-                                    className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-gray-400 hover:text-gray-200 hover:bg-gray-700/50 rounded-lg transition-colors"
+                                    className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-lg transition-colors"
                                 >
                                     <span>➕</span>
                                     <span>Thêm workspace...</span>
@@ -168,7 +171,7 @@ export default function WorkspaceSwitcher() {
                                         window.dispatchEvent(new CustomEvent('nav:view', { detail: { view: 'settings' } }));
                                         setTimeout(() => window.dispatchEvent(new CustomEvent('nav:settings', { detail: { tab: 'workspace' } })), 80);
                                     }}
-                                    className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-gray-400 hover:text-gray-200 hover:bg-gray-700/50 rounded-lg transition-colors"
+                                    className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-lg transition-colors"
                                 >
                                     <SettingsIcon className="w-4 h-4" />
                                     <span>Quản lý workspace</span>
@@ -198,13 +201,13 @@ function WorkspaceRow({ workspace, isActive, connectionStatus, unreadCount, onCl
             className={`w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors
                 ${isActive
                     ? 'bg-blue-600/10 border-l-2 border-blue-500'
-                    : 'hover:bg-gray-700/40 border-l-2 border-transparent'
+                    : 'hover:bg-muted/40 border-l-2 border-transparent'
                 }`}
         >
             <span className="text-base flex-shrink-0">{workspace.icon || (workspace.type === 'local' ? <HomeIcon className="w-4 h-4" /> : <UserIcon className="w-4 h-4" />)}</span>
             <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5">
-                    <span className={`text-xs font-medium truncate ${isActive ? 'text-blue-300' : 'text-gray-200'}`}>
+                    <span className={`text-xs font-medium truncate ${isActive ? 'text-blue-300' : 'text-foreground'}`}>
                         {workspace.name}
                     </span>
                     {isActive && (
@@ -212,14 +215,14 @@ function WorkspaceRow({ workspace, isActive, connectionStatus, unreadCount, onCl
                     )}
                 </div>
                 <div className="flex items-center gap-2 mt-0.5">
-                    <span className="text-[10px] text-gray-400">
+                    <span className="text-[10px] text-muted-foreground">
                         {workspace.type === 'local' ? 'Boss' : `Nhân viên`}
                     </span>
                     {workspace.type === 'remote' && connectionStatus && (
                         <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${connectionStatus.connected ? 'bg-green-400' : 'bg-red-400'}`} />
                     )}
                     {workspace.type === 'remote' && workspace.employeeName && (
-                        <span className="text-[10px] text-gray-400 truncate">→ {workspace.employeeName}</span>
+                        <span className="text-[10px] text-muted-foreground truncate">→ {workspace.employeeName}</span>
                     )}
                 </div>
             </div>
@@ -236,7 +239,9 @@ function WorkspaceRow({ workspace, isActive, connectionStatus, unreadCount, onCl
 // ── Inline Create Form ────────────────────────────────────────────────────────
 
 function CreateWorkspaceInline({ onCreated, onCancel }: { onCreated: () => void; onCancel: () => void }) {
-    const { showNotification } = useAppStore();
+    const { showNotification } = useAppStore(useShallow(s => ({
+      showNotification: s.showNotification,
+    })));
     const [name, setName] = useState('');
     const [type, setType] = useState<'local' | 'remote'>('local');
     const [ip, setIp] = useState('');
@@ -313,13 +318,13 @@ function CreateWorkspaceInline({ onCreated, onCancel }: { onCreated: () => void;
                 onChange={e => setName(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Escape') onCancel(); }}
                 placeholder="Tên workspace..."
-                className="w-full text-xs bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-1.5 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                className="w-full text-xs bg-muted border border-input rounded-lg px-2.5 py-1.5 text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
             />
             <div className="flex items-center gap-2">
                 <select
                     value={type}
                     onChange={e => setType(e.target.value as any)}
-                    className="text-[11px] bg-gray-700 border border-gray-600 rounded-lg px-2 py-1 text-gray-300 focus:outline-none"
+                    className="text-[11px] bg-muted border border-input rounded-lg px-2 py-1 text-foreground/80 focus:outline-none"
                 >
                     <option value="local"><HomeIcon className="w-4 h-4 inline" /> Local (Boss)</option>
                     <option value="remote"><UserIcon className="w-4 h-4 inline" /> Remote (Nhân viên)</option>
@@ -332,14 +337,14 @@ function CreateWorkspaceInline({ onCreated, onCancel }: { onCreated: () => void;
                             value={ip}
                             onChange={e => setIp(e.target.value)}
                             placeholder="IP:Port hoặc https://xxxx.loca.lt"
-                            className="flex-1 text-xs bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-1.5 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                            className="flex-1 text-xs bg-muted border border-input rounded-lg px-2.5 py-1.5 text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
                         />
                         {!ip.startsWith('http') && (
                         <input
                             value={port}
                             onChange={e => setPort(e.target.value)}
                             placeholder="Port"
-                            className="w-14 text-xs bg-gray-700 border border-gray-600 rounded-lg px-2 py-1.5 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                            className="w-14 text-xs bg-muted border border-input rounded-lg px-2 py-1.5 text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
                         />
                         )}
                     </div>
@@ -347,7 +352,7 @@ function CreateWorkspaceInline({ onCreated, onCancel }: { onCreated: () => void;
                         value={username}
                         onChange={e => setUsername(e.target.value)}
                         placeholder="Tên đăng nhập"
-                        className="w-full text-xs bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-1.5 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                        className="w-full text-xs bg-muted border border-input rounded-lg px-2.5 py-1.5 text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
                     />
                     <input
                         value={password}
@@ -355,14 +360,14 @@ function CreateWorkspaceInline({ onCreated, onCancel }: { onCreated: () => void;
                         placeholder="Mật khẩu"
                         type="password"
                         onKeyDown={e => { if (e.key === 'Enter') handleCreate(); }}
-                        className="w-full text-xs bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-1.5 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                        className="w-full text-xs bg-muted border border-input rounded-lg px-2.5 py-1.5 text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
                     />
                 </>
             )}
             <div className="flex items-center gap-2 justify-end">
                 <button
                     onClick={onCancel}
-                    className="text-[11px] text-gray-400 hover:text-gray-200 px-2 py-1 rounded transition-colors"
+                    className="text-[11px] text-muted-foreground hover:text-foreground px-2 py-1 rounded transition-colors"
                 >
                     Hủy
                 </button>

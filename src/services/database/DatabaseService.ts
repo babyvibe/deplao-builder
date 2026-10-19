@@ -2,11 +2,21 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { app, safeStorage } from 'electron';
 import Logger from '../../utils/Logger';
+import { FB_TEMPLATE_MSG_TYPE, fbTemplateFromAttachments, fbTemplateText } from '../../shared/facebookTemplate';
 import BetterSqlite3 from 'better-sqlite3';
 import type { Account, Message, Contact, CRMNote, CRMCampaign, CRMCampaignContact, CRMSendLog, CRMCampaignStatus, CRMContactStatus } from '../../models';
 import type { TelegramPeer } from '../../models/telegram';
 import { CHANNEL } from '../../ui/lib/channelHelper';
 import { getTelegramMessagePreview } from '../telegram/TelegramMessagePreview';
+import { normalizeZaloPhotoContent, toZaloJpgUrl } from '../../utils/zaloImageUrl';
+import FileStorageService from '../file/FileStorageService';
+import { searchPickerContacts, PickerContactRow, PickerSearchOptions, PickerSearchResult } from '../../shared/contactPickerSearch';
+import { addLocalDays, localDayBuckets, localDayDiff, localDayKey, localHourBuckets, sqlLocalDay, sqlLocalHour } from '../../shared/localTimeBuckets';
+import { MEDIA_MESSAGE_COLUMNS, MEDIA_MESSAGE_FILTER, buildMediaCursorQuery, type MediaCursor } from './mediaMessagesQuery';
+import { escapeLikePattern, foldSearchText } from '../../shared/searchFold';
+import { createCRMContactFilter, hasCRMContactFilters, type CRMContactFilters } from '../../shared/crmContactFilters';
+import { mergeZaloReactionAliases, normalizeZaloReactionEmoji } from '../../shared/zaloReactions';
+import { zinstantPreviewText } from '../../shared/zaloZinstant';
 
 // better-sqlite3: native SQLite - no WASM heap, memory-mapped I/O
 let db: BetterSqlite3.Database | null = null;
@@ -16,6 +26,10 @@ let _cachedSecondaryDb: BetterSqlite3.Database | null = null;
 let _cachedSecondaryPath: string | null = null;
 let _cachedSecondaryTimer: ReturnType<typeof setTimeout> | null = null;
 const SECONDARY_DB_TTL_MS = 30_000; // auto-close after 30s idle
+/** markAsRead: số tin mới nhất của hội thoại được đánh dấu 'read' (giữ lệnh mở hội thoại ở mức vài ms). */
+const MARK_READ_SCOPE = 200;
+/** getLinks: hội thoại (theo DB) đã bù link từ tin cũ trong phiên này. */
+const linksBackfilledThreads = new Set<string>();
 
 function getCachedSecondaryDb(targetDbPath: string): BetterSqlite3.Database {
     if (_cachedSecondaryPath === targetDbPath && _cachedSecondaryDb) {
@@ -40,6 +54,31 @@ function closeCachedSecondaryDb(): void {
         _cachedSecondaryDb = null;
         _cachedSecondaryPath = null;
     }
+}
+
+/**
+ * Accounts of an analytics query: one zaloId (every existing caller) or several (Reports with a
+ * multi-account selection). Trimmed, empty ids dropped, de-duplicated, order kept.
+ */
+function analyticsAccountIds(zaloIds: string | string[] | null | undefined): string[] {
+    const list = Array.isArray(zaloIds) ? zaloIds : [zaloIds];
+    return Array.from(new Set(list.map(id => String(id ?? '').trim()).filter(Boolean)));
+}
+
+/** `column = ?` for one account (the single-account SQL, unchanged), `column IN (?, ...)` for several. */
+function sqlAccountFilter(column: string, ids: string[]): string {
+    return ids.length === 1 ? `${column} = ?` : `${column} IN (${ids.map(() => '?').join(', ')})`;
+}
+
+/**
+ * Optional account filter on employee_message_log.zalo_id (Reports → Nhân viên).
+ * null/undefined = every account (the report before the filter existed); [] = no account.
+ */
+function employeeLogAccountFilter(zaloIds?: string[] | null): { sql: string; params: string[] } {
+    if (!Array.isArray(zaloIds)) return { sql: '', params: [] };
+    const ids = analyticsAccountIds(zaloIds);
+    if (ids.length === 0) return { sql: ' AND 1 = 0', params: [] };
+    return { sql: ` AND ${sqlAccountFilter('zalo_id', ids)}`, params: ids };
 }
 
 
@@ -133,6 +172,9 @@ class DatabaseService {
             this.migrateMediaLibrary();
             this.initErpSchema();
             this.initialized = true;
+            this.encryptStoredCredentials();
+            this.repairZaloZinstantPreviewsOnce();
+            this.scheduleJxlImageRepair();
             Logger.log(`[DatabaseService] Initialized at ${this.dbPath} (better-sqlite3, WAL mode)`);
         } catch (error: any) {
             Logger.error(`[DatabaseService] Failed to initialize: ${error.message}`);
@@ -323,6 +365,9 @@ class DatabaseService {
             this.migrateMediaLibrary();
             this.initErpSchema();
             this.initialized = true;
+            this.encryptStoredCredentials();
+            this.repairZaloZinstantPreviewsOnce();
+            this.scheduleJxlImageRepair();
 
             Logger.log(`[DatabaseService] Workspace DB ready at ${this.dbPath}`);
         } catch (err: any) {
@@ -443,6 +488,11 @@ class DatabaseService {
         return Number(result.lastInsertRowid) || 0;
     }
 
+    /** Run a statement and return how many rows it changed. */
+    public runChanges(sql: string, params: any[] = []): number {
+        return Number(db!.prepare(sql).run(...params).changes) || 0;
+    }
+
     /**
      * Run `fn` inside a SQLite transaction. Returns whatever `fn` returns.
      * Uses better-sqlite3 native transaction → automatic ROLLBACK on throw.
@@ -535,6 +585,7 @@ class DatabaseService {
             CREATE INDEX IF NOT EXISTS idx_messages_owner_timestamp ON messages(owner_zalo_id, timestamp);
             CREATE INDEX IF NOT EXISTS idx_messages_owner_type_timestamp ON messages(owner_zalo_id, thread_type, timestamp);
             CREATE INDEX IF NOT EXISTS idx_messages_thread_cursor ON messages(owner_zalo_id, thread_id, timestamp DESC, msg_id DESC);
+            CREATE INDEX IF NOT EXISTS idx_messages_cli ON messages(owner_zalo_id, cli_msg_id) WHERE cli_msg_id IS NOT NULL;
         `);
 
         this.exec(`
@@ -795,6 +846,20 @@ class DatabaseService {
                 UNIQUE(owner_zalo_id, thread_id)
             );
             CREATE INDEX IF NOT EXISTS idx_lpc_owner ON local_pinned_conversations(owner_zalo_id, pinned_at DESC);
+        `);
+
+        // "Tin đánh dấu" (starred messages, local to the app, every channel)
+        this.exec(`
+            CREATE TABLE IF NOT EXISTS starred_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_zalo_id TEXT NOT NULL,
+                thread_id TEXT NOT NULL,
+                msg_id TEXT NOT NULL,
+                starred_at INTEGER NOT NULL DEFAULT 0,
+                snapshot TEXT DEFAULT NULL,
+                UNIQUE(owner_zalo_id, thread_id, msg_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_starred_owner ON starred_messages(owner_zalo_id, starred_at DESC);
         `);
 
         // ─── CRM tables ──────────────────────────────────────────────────────
@@ -2061,6 +2126,12 @@ class DatabaseService {
                 this.save();
                 Logger.log('[DatabaseService] Migration: added username column to accounts');
             }
+            // Zalo "My Documents": hội thoại riêng có sẵn của Zalo (loginInfo.send2me_id), KHÔNG phải hội thoại với chính mình
+            if (!cols.some((c: any) => c.name === 'send2me_id')) {
+                db!.exec(`ALTER TABLE accounts ADD COLUMN send2me_id TEXT DEFAULT ''`);
+                this.save();
+                Logger.log('[DatabaseService] Migration: added send2me_id column to accounts');
+            }
         } catch (err: any) {
             Logger.warn(`[DatabaseService] accounts migration warning: ${err.message}`);
         }
@@ -2103,6 +2174,12 @@ class DatabaseService {
             if (!names.includes('birthday')) {
                 db!.exec(`ALTER TABLE contacts ADD COLUMN birthday TEXT DEFAULT NULL`);
                 Logger.log('[DatabaseService] Migration: added birthday to contacts');
+                needSave = true;
+            }
+            // Lần cuối tên/avatar được làm mới hàng loạt từ API (unix ms). 0/NULL = chưa bao giờ.
+            if (!names.includes('info_refreshed_at')) {
+                db!.exec(`ALTER TABLE contacts ADD COLUMN info_refreshed_at INTEGER DEFAULT 0`);
+                Logger.log('[DatabaseService] Migration: added info_refreshed_at to contacts');
                 needSave = true;
             }
             const telegramColumns: Array<[string, string]> = [
@@ -2367,6 +2444,29 @@ class DatabaseService {
             }
         } catch (err: any) {
             Logger.warn(`[DatabaseService] local_pinned_conversations migration: ${err.message}`);
+        }
+
+        // Migration: create starred_messages table if missing ("Tin đánh dấu")
+        try {
+            const starred = this.query<any>(`SELECT name FROM sqlite_master WHERE type='table' AND name='starred_messages'`);
+            if (starred.length === 0) {
+                db!.exec(`
+            CREATE TABLE IF NOT EXISTS starred_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_zalo_id TEXT NOT NULL,
+                thread_id TEXT NOT NULL,
+                msg_id TEXT NOT NULL,
+                starred_at INTEGER NOT NULL DEFAULT 0,
+                snapshot TEXT DEFAULT NULL,
+                UNIQUE(owner_zalo_id, thread_id, msg_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_starred_owner ON starred_messages(owner_zalo_id, starred_at DESC);
+                `);
+                this.save();
+                Logger.log('[DatabaseService] Migration: created starred_messages table');
+            }
+        } catch (err: any) {
+            Logger.warn(`[DatabaseService] starred_messages migration: ${err.message}`);
         }
 
         // Migration: add topic_id and contact_type to crm_notes if missing
@@ -2682,6 +2782,41 @@ class DatabaseService {
         } catch (err: any) {
             Logger.warn(`[DatabaseService] messages.topic_id migration: ${err.message}`);
         }
+
+        try {
+            this.ensurePlainIdMapTable();
+        } catch (err: any) {
+            Logger.warn(`[DatabaseService] zalo_plain_id_map migration: ${err.message}`);
+        }
+
+        // Media Zalo hết hạn (CDN không còn file) → UI hiện "Ảnh/Video đã hết hạn", không thử tải lại.
+        try {
+            const messageCols = this.query<any>(`PRAGMA table_info(messages)`);
+            if (messageCols.length > 0 && !messageCols.some((column: any) => column.name === 'media_expired')) {
+                db!.exec(`ALTER TABLE messages ADD COLUMN media_expired INTEGER DEFAULT 0`);
+                Logger.log('[DatabaseService] Migration: added messages.media_expired');
+            }
+        } catch (err: any) {
+            Logger.warn(`[DatabaseService] messages.media_expired migration: ${err.message}`);
+        }
+    }
+
+    /**
+     * Đồng bộ từ điện thoại: cache ánh xạ ID mobile (plain, 9-10 số) → ID web (noise) theo từng
+     * tài khoản (ID noise khác nhau giữa các tài khoản xem) — lấy từ API znoise.
+     * Gọi lại ở accessor vì DB phụ (runOnBossDb/withDbPath) không chạy migrate().
+     */
+    private ensurePlainIdMapTable(): void {
+        db!.exec(`
+            CREATE TABLE IF NOT EXISTS zalo_plain_id_map (
+                owner_zalo_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                plain_id TEXT NOT NULL,
+                noise_id TEXT NOT NULL,
+                updated_at INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (owner_zalo_id, kind, plain_id)
+            )
+        `);
     }
 
     // ─── Account Operations ───────────────────────────────────────────────
@@ -2833,6 +2968,10 @@ class DatabaseService {
         };
         const normalizedPts = Math.max(0, Math.floor(toFiniteNumber(pts, 0)));
         const normalizedPriority = Math.max(0, Math.floor(toFiniteNumber(priority, 0)));
+        // A row parked as `not_member` (see reconcileChannelRecoveryMembership)
+        // reopens only once the account is a verified member again; otherwise
+        // every re-enqueue would flip it back to an undequeueable `pending`.
+        const reopenParked = this.isVerifiedTelegramChannelMember(String(ownerZaloId), String(channelId));
         // The final value binds `updated_at = ?` in the conflict-update
         // branch, in addition to created_at/updated_at used on INSERT.
         this.run(`
@@ -2846,14 +2985,18 @@ class DatabaseService {
                 -- A fresh socket PTS gap is authoritative evidence that a
                 -- previously failed recovery must be tried again. Keeping a
                 -- failed row terminal made a supergroup/channel permanently
-                -- ignore every subsequent realtime update.
-                status = CASE WHEN telegram_channel_recovery_queue.status IN ('complete', 'unavailable', 'failed')
-                    THEN 'pending' ELSE telegram_channel_recovery_queue.status END,
+                -- ignore every subsequent realtime update. A parked row
+                -- reopens once the account is a member again.
+                status = CASE
+                    WHEN telegram_channel_recovery_queue.status IN ('complete', 'unavailable', 'failed') THEN 'pending'
+                    WHEN telegram_channel_recovery_queue.status = 'not_member' AND ? = 1 THEN 'pending'
+                    ELSE telegram_channel_recovery_queue.status END,
                 history_start_msg_id = CASE WHEN telegram_channel_recovery_queue.status IN ('complete', 'unavailable', 'failed')
+                      OR (telegram_channel_recovery_queue.status = 'not_member' AND ? = 1)
                     THEN NULL ELSE telegram_channel_recovery_queue.history_start_msg_id END,
                 priority = CASE WHEN excluded.priority > telegram_channel_recovery_queue.priority
                     THEN excluded.priority ELSE telegram_channel_recovery_queue.priority END,
-                retry_at = CASE WHEN telegram_channel_recovery_queue.status IN ('complete', 'unavailable', 'failed')
+                retry_at = CASE WHEN telegram_channel_recovery_queue.status IN ('complete', 'unavailable', 'failed', 'not_member')
                     THEN 0 ELSE telegram_channel_recovery_queue.retry_at END,
                 -- TG-05: updated_at is the lease clock used by
                 -- requeueStaleChannelRecoveries. A live PTS-gap hint is not a
@@ -2863,8 +3006,90 @@ class DatabaseService {
                 -- updateChannelRecoveryStatus) renews the lease.
                 updated_at = CASE WHEN telegram_channel_recovery_queue.status = 'draining'
                     THEN telegram_channel_recovery_queue.updated_at ELSE ? END
-        `, [String(ownerZaloId), String(channelId), normalizedAccessHash, normalizedPts, normalizedPriority, now, now, now]);
+        `, [String(ownerZaloId), String(channelId), normalizedAccessHash, normalizedPts, normalizedPriority, now, now,
+            reopenParked ? 1 : 0, reopenParked ? 1 : 0, now]);
         this.preserveChannelRecoveryHistoryStart(String(ownerZaloId), String(channelId));
+    }
+
+    /** Membership verified from a dialog/entity reconciliation (the condition dequeue applies). */
+    private isVerifiedTelegramChannelMember(ownerZaloId: string, channelId: string): boolean {
+        return !!this.queryOne<{ member: number }>(
+            `SELECT 1 AS member FROM contacts
+             WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'telegram_user'
+               AND telegram_membership_state = 'member' AND COALESCE(telegram_state_updated_at, 0) > 0`,
+            [ownerZaloId, channelId],
+        )?.member;
+    }
+
+    /**
+     * Keep the recovery queue consistent with membership. Rows are kept but
+     * parked as `not_member` when the conversation says the account is not a
+     * member (left, never joined, pending request, forbidden), or when no
+     * conversation exists a day after the row was queued (rows left behind by
+     * older builds). Dequeue never takes such rows, and left `pending` they
+     * kept the poller rescheduling itself. A parked row reopens once the
+     * account is a verified member again. `draining` rows belong to a worker;
+     * a fresh row whose conversation is not verified yet stays pending.
+     */
+    public reconcileChannelRecoveryMembership(ownerZaloId: string, orphanAfterMs = 24 * 60 * 60 * 1000): { parked: number; reopened: number } {
+        if (!this.initialized || !ownerZaloId) return { parked: 0, reopened: 0 };
+        const now = Date.now();
+        const sameConversation = `contact.owner_zalo_id = telegram_channel_recovery_queue.owner_zalo_id
+              AND contact.contact_id = telegram_channel_recovery_queue.channel_id
+              AND contact.channel = 'telegram_user'`;
+        const verifiedMember = `EXISTS (
+            SELECT 1 FROM contacts AS contact
+            WHERE ${sameConversation}
+              AND contact.telegram_membership_state = 'member'
+              AND COALESCE(contact.telegram_state_updated_at, 0) > 0)`;
+        const parked = this.runChanges(`
+            UPDATE telegram_channel_recovery_queue
+            SET status = 'not_member', priority = 0, retry_at = 0, history_start_msg_id = NULL,
+                last_error = 'not_member', updated_at = ?
+            WHERE owner_zalo_id = ? AND status IN ('pending', 'failed') AND (
+              EXISTS (
+                SELECT 1 FROM contacts AS contact
+                WHERE ${sameConversation}
+                  AND COALESCE(contact.telegram_membership_state, 'member') != 'member')
+              OR (
+                NOT EXISTS (SELECT 1 FROM contacts AS contact WHERE ${sameConversation})
+                AND COALESCE(created_at, 0) < ?)
+            )
+        `, [now, ownerZaloId, now - Math.max(0, orphanAfterMs)]);
+        const reopened = this.runChanges(`
+            UPDATE telegram_channel_recovery_queue
+            SET status = 'pending', retry_at = 0, last_error = NULL, updated_at = ?
+            WHERE owner_zalo_id = ? AND status = 'not_member' AND ${verifiedMember}
+        `, [now, ownerZaloId]);
+        return { parked, reopened };
+    }
+
+    /**
+     * When the next recovery the workers can actually take becomes due:
+     * `null` when there is none, `now` when one is due already, otherwise the
+     * earliest flood/backoff retry time. Uses the same eligibility as
+     * dequeueChannelRecovery, so unrecoverable rows never schedule a poll.
+     */
+    public getNextChannelRecoveryRunAt(ownerZaloId: string): number | null {
+        if (!this.initialized || !ownerZaloId) return null;
+        const now = Date.now();
+        const row = this.queryOne<{ due: number; next_at: number | null }>(
+            `SELECT
+               SUM(CASE WHEN queue.retry_at = 0 OR queue.retry_at <= ? THEN 1 ELSE 0 END) AS due,
+               MIN(CASE WHEN queue.retry_at > ? THEN queue.retry_at END) AS next_at
+             FROM telegram_channel_recovery_queue AS queue
+             INNER JOIN contacts AS contact
+               ON contact.owner_zalo_id = queue.owner_zalo_id
+              AND contact.contact_id = queue.channel_id
+              AND contact.channel = 'telegram_user'
+             WHERE queue.owner_zalo_id = ?
+               AND queue.status = 'pending'
+               AND contact.telegram_membership_state = 'member'
+               AND COALESCE(contact.telegram_state_updated_at, 0) > 0`,
+            [now, now, ownerZaloId],
+        );
+        if (Number(row?.due || 0) > 0) return now;
+        return row?.next_at ? Number(row.next_at) : null;
     }
 
     /** Freeze the history lower bound BEFORE a live message raises MAX(msg_id).
@@ -3008,7 +3233,7 @@ class DatabaseService {
     public updateChannelRecoveryStatus(
         ownerZaloId: string,
         channelId: string,
-        status: 'pending' | 'draining' | 'complete' | 'failed' | 'unavailable',
+        status: 'pending' | 'draining' | 'complete' | 'failed' | 'unavailable' | 'not_member',
         opts?: { retryAt?: number; lastError?: string; lastMsgId?: number; pts?: number },
     ): void {
         if (!this.initialized || !ownerZaloId || !channelId) return;
@@ -3035,15 +3260,15 @@ class DatabaseService {
 
     /** Get recovery stats for UI progress display. */
     public getChannelRecoveryStats(ownerZaloId: string): {
-        pending: number; draining: number; complete: number; failed: number; unavailable: number;
+        pending: number; draining: number; complete: number; failed: number; unavailable: number; not_member: number;
     } {
-        if (!this.initialized || !ownerZaloId) return { pending: 0, draining: 0, complete: 0, failed: 0, unavailable: 0 };
+        if (!this.initialized || !ownerZaloId) return { pending: 0, draining: 0, complete: 0, failed: 0, unavailable: 0, not_member: 0 };
         const rows = this.query<any>(
             `SELECT status, COUNT(*) as count FROM telegram_channel_recovery_queue
              WHERE owner_zalo_id = ? GROUP BY status`,
             [ownerZaloId],
         );
-        const stats = { pending: 0, draining: 0, complete: 0, failed: 0, unavailable: 0 };
+        const stats = { pending: 0, draining: 0, complete: 0, failed: 0, unavailable: 0, not_member: 0 };
         for (const row of rows) {
             if (row.status in stats) (stats as any)[row.status] = row.count;
         }
@@ -3068,28 +3293,31 @@ class DatabaseService {
      * ChannelDifference requests and starves channels the account still uses. */
     public getTelegramChannelIdsWithMessages(ownerZaloId: string): string[] {
         if (!this.initialized || !ownerZaloId) return [];
+        // Đi từ bảng contacts (nhỏ) và dò EXISTS trong messages qua idx_messages_channel,
+        // thay vì quét toàn bộ messages rồi DISTINCT thread_id (chậm khi nhiều tin).
         return this.query<{ thread_id: string }>(
-            `SELECT DISTINCT message.thread_id
-             FROM messages AS message
-             INNER JOIN contacts AS contact
-               ON contact.owner_zalo_id = message.owner_zalo_id
-              AND contact.contact_id = message.thread_id
-              AND contact.channel = 'telegram_user'
-             WHERE message.owner_zalo_id = ? AND message.channel = 'telegram_user'
-               AND message.thread_id LIKE '-100%'
+            `SELECT contact.contact_id AS thread_id
+             FROM contacts AS contact
+             WHERE contact.owner_zalo_id = ? AND contact.channel = 'telegram_user'
                AND contact.telegram_membership_state = 'member'
                AND COALESCE(contact.telegram_state_updated_at, 0) > 0
+               AND contact.contact_id LIKE '-100%'
+               AND EXISTS (
+                 SELECT 1 FROM messages AS m
+                 WHERE m.owner_zalo_id = ? AND m.channel = 'telegram_user'
+                   AND m.thread_id = contact.contact_id
+                 LIMIT 1
+               )
              UNION
-             SELECT cursor.channel_id AS thread_id
-             FROM telegram_channel_pts AS cursor
-             INNER JOIN contacts AS contact
-               ON contact.owner_zalo_id = cursor.owner_zalo_id
-              AND contact.contact_id = cursor.channel_id
-              AND contact.channel = 'telegram_user'
-             WHERE cursor.owner_zalo_id = ?
+             SELECT contact.contact_id AS thread_id
+             FROM contacts AS contact
+             INNER JOIN telegram_channel_pts AS cursor
+               ON cursor.owner_zalo_id = contact.owner_zalo_id
+              AND cursor.channel_id = contact.contact_id
+             WHERE contact.owner_zalo_id = ? AND contact.channel = 'telegram_user'
                AND contact.telegram_membership_state = 'member'
                AND COALESCE(contact.telegram_state_updated_at, 0) > 0`,
-            [ownerZaloId, ownerZaloId],
+            [ownerZaloId, ownerZaloId, ownerZaloId],
         ).map(r => r.thread_id);
     }
 
@@ -3125,15 +3353,8 @@ class DatabaseService {
     public saveAccount(account: Omit<Account, 'id'>): void {
         if (!this.initialized) return;
         const normalizedPhone = this.normalizeVietnamPhone(account.phone || '');
-        let cookiesToStore = account.cookies;
-        try {
-            // Chỉ encrypt cookies dạng JSON (Zalo/FB).
-            // Telegram sessions (GramJS base64) KHÔNG encrypt — tránh DPAPI mismatch khi restart.
-            if (safeStorage.isEncryptionAvailable() && cookiesToStore &&
-                (cookiesToStore.trimStart().startsWith('[') || cookiesToStore.trimStart().startsWith('{'))) {
-                cookiesToStore = safeStorage.encryptString(cookiesToStore).toString('base64');
-            }
-        } catch {}
+        // Mọi kênh: cookie Zalo, phiên GramJS, token bot Telegram (trước đây chỉ mã hoá chuỗi dạng JSON)
+        const cookiesToStore = this.encryptCookiesForStorage(account.cookies);
 
         const isBusiness = account.is_business ?? 0;
         const channel = (account as any).channel || CHANNEL.ZALO;
@@ -3163,8 +3384,151 @@ class DatabaseService {
         return accounts.map((acc) => ({ ...acc, cookies: this.decryptCookies(acc.cookies) }));
     }
 
+    /** Ghi phiên Zalo mới nhất của một kết nối (đồng bộ khi đổi workspace) — mã hoá như saveAccount. */
+    public updateAccountAuth(zaloId: string, cookies: string, imei: string, userAgent: string): void {
+        this.run(
+            `UPDATE accounts SET cookies = ?, imei = ?, user_agent = ? WHERE zalo_id = ?`,
+            [this.encryptCookiesForStorage(cookies), imei, userAgent, zaloId],
+        );
+    }
+
+    /**
+     * Mã hoá phiên đăng nhập trước khi ghi accounts.cookies bằng safeStorage — chỉ máy + tài khoản Windows này giải mã
+     * được (dev và bản cài dùng chung userData %APPDATA%\Deplao nên chung khoá). Giá trị đã mã hoá (giải mã được) giữ
+     * nguyên, không mã hoá hai lần; safeStorage chưa sẵn sàng → lưu nguyên, encryptStoredCredentials mã hoá ở lần mở DB sau.
+     */
+    private encryptCookiesForStorage(value: string | null | undefined): string {
+        const plain = value ?? '';
+        if (!plain) return plain;
+        try {
+            if (!safeStorage.isEncryptionAvailable()) return plain;
+            if (this.tryDecryptStored(plain) !== null) return plain;
+            return safeStorage.encryptString(plain).toString('base64');
+        } catch {
+            return plain;
+        }
+    }
+
+    /** Giải mã một giá trị safeStorage (base64); null = không phải bản mã hoá của máy này. */
+    private tryDecryptStored(value: string): string | null {
+        try {
+            return safeStorage.decryptString(Buffer.from(value, 'base64'));
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Mã hoá phiên đăng nhập còn nằm thô trong DB — chạy mỗi lần mở DB (idempotent, chỉ khi safeStorage sẵn sàng):
+     *  - accounts.cookies: phiên Telegram / token bot (trước đây không mã hoá), cookie Zalo ghi thô (safeStorage chưa
+     *    sẵn sàng, đồng bộ khi đổi workspace). Hàng Facebook: bản sao cookie thô của migration B3, không nơi nào đọc → xoá.
+     *  - fb_accounts.cookie_encrypted (tên cột nhầm — cookie THÔ, dự phòng khi khoá safeStorage đổi): chuyển vào secure
+     *    storage (fb_cookie_<id>, mã hoá) nếu chưa có bản đọc được rồi xoá; tài khoản đã gỡ (accounts.is_active = 0) chỉ xoá.
+     */
+    private encryptStoredCredentials(): void {
+        try {
+            if (!safeStorage.isEncryptionAvailable()) return;
+        } catch {
+            return;
+        }
+        let encrypted = 0;
+        let cleared = 0;
+        try {
+            const rows = this.query<{ zalo_id: string; cookies: string; channel: string | null }>(
+                `SELECT zalo_id, cookies, channel FROM accounts WHERE cookies IS NOT NULL AND cookies <> ''`,
+            );
+            for (const row of rows) {
+                if (row.channel === 'facebook') {
+                    this.run(`UPDATE accounts SET cookies = '' WHERE zalo_id = ?`, [row.zalo_id]);
+                    cleared++;
+                    continue;
+                }
+                const stored = this.encryptCookiesForStorage(row.cookies);
+                if (stored !== row.cookies) {
+                    this.run(`UPDATE accounts SET cookies = ? WHERE zalo_id = ?`, [stored, row.zalo_id]);
+                    encrypted++;
+                }
+            }
+        } catch (err: any) {
+            Logger.warn(`[DatabaseService] encryptStoredCredentials (accounts): ${err.message}`);
+        }
+        try {
+            const fbRows = this.query<{ id: string; facebook_id: string | null; cookie_encrypted: string }>(
+                `SELECT id, facebook_id, cookie_encrypted FROM fb_accounts WHERE cookie_encrypted IS NOT NULL AND cookie_encrypted <> ''`,
+            );
+            if (fbRows.length) {
+                // Lazy require: SecureSettingsService import DatabaseService
+                const { secureGet, secureSet } = require('../secure/SecureSettingsService');
+                for (const fb of fbRows) {
+                    const unified = fb.facebook_id
+                        ? this.queryOne<{ is_active: number }>('SELECT is_active FROM accounts WHERE zalo_id = ?', [fb.facebook_id])
+                        : undefined;
+                    if (unified && Number(unified.is_active) === 0) {
+                        this.clearFBAccountSession(fb.id);
+                        cleared++;
+                        continue;
+                    }
+                    const key = `fb_cookie_${fb.id}`;
+                    if (!secureGet(key)) {
+                        secureSet(key, fb.cookie_encrypted);
+                        if (secureGet(key) !== fb.cookie_encrypted) continue; // không lưu được bản mã hoá → giữ dự phòng thô
+                    }
+                    this.run(`UPDATE fb_accounts SET cookie_encrypted = '' WHERE id = ?`, [fb.id]);
+                    cleared++;
+                }
+            }
+        } catch (err: any) {
+            Logger.warn(`[DatabaseService] encryptStoredCredentials (fb_accounts): ${err.message}`);
+        }
+        if (encrypted || cleared) {
+            Logger.log(`[DatabaseService] Credentials at rest: encrypted ${encrypted} session(s), removed ${cleared} raw cookie copy(ies)`);
+        }
+    }
+
     public deleteAccount(zaloId: string): void {
         this.run('UPDATE accounts SET is_active = 0 WHERE zalo_id = ?', [zaloId]);
+    }
+
+    /**
+     * Hội thoại "My Documents" của tài khoản Zalo đã có trong DB: hồ sơ Zalo trả ảnh thư mục riêng
+     * (`zds_cic_my_documents_*`) — dùng khi chưa biết `send2me_id` (chưa kết nối từ bản này) và để đối chiếu.
+     */
+    public findMyDocumentsContactId(ownerZaloId: string): string {
+        if (!this.initialized || !ownerZaloId) return '';
+        const row = this.queryOne<{ contact_id: string }>(
+            `SELECT contact_id FROM contacts
+             WHERE owner_zalo_id = ? AND avatar_url LIKE '%zds_cic_my_documents%'
+             ORDER BY COALESCE(last_message_time, 0) DESC LIMIT 1`,
+            [ownerZaloId],
+        );
+        return row?.contact_id ? String(row.contact_id) : '';
+    }
+
+    /** ID hội thoại My Documents của một tài khoản (đọc từ getAccounts): send2me_id đã lưu, chưa có thì tìm theo ảnh. */
+    public resolveMyDocumentsId(account: { zalo_id: string; channel?: string | null; send2me_id?: string | null }): string {
+        if (!account?.zalo_id || (account.channel && account.channel !== 'zalo')) return '';
+        if (account.send2me_id) return String(account.send2me_id);
+        try { return this.findMyDocumentsContactId(account.zalo_id); } catch { return ''; }
+    }
+
+    /** resolveMyDocumentsId theo zalo_id (SELECT * — không lỗi với DB chưa có cột send2me_id). */
+    public getMyDocumentsId(zaloId: string): string {
+        if (!this.initialized || !zaloId) return '';
+        try {
+            const acc = this.queryOne<any>('SELECT * FROM accounts WHERE zalo_id = ?', [zaloId]);
+            return acc ? this.resolveMyDocumentsId(acc) : '';
+        } catch {
+            return '';
+        }
+    }
+
+    /** Lưu ID hội thoại My Documents của tài khoản Zalo (chỉ ghi khi đổi). */
+    public setAccountSend2MeId(zaloId: string, send2meId: string): void {
+        if (!this.initialized || !zaloId || !send2meId) return;
+        this.run(
+            `UPDATE accounts SET send2me_id = ? WHERE zalo_id = ? AND COALESCE(send2me_id, '') != ?`,
+            [send2meId, zaloId, send2meId],
+        );
     }
 
     /**
@@ -3384,7 +3748,8 @@ class DatabaseService {
         ) || null;
     }
 
-    private decryptCookies(encrypted: string): string {
+    /** Giải mã accounts.cookies đọc bằng SQL trực tiếp (getAccounts đã tự giải mã). */
+    public decryptCookies(encrypted: string): string {
         // Fast-path: empty → nothing to decrypt (e.g., Facebook accounts in unified table)
         if (!encrypted) return encrypted;
         // Fast-path: already plain JSON (saved before encryption was added, or safeStorage was unavailable)
@@ -3434,8 +3799,6 @@ class DatabaseService {
     public async saveMessage(ownerZaloId: string, rawMessage: any): Promise<void> {
         if (!this.initialized) return;
         try {
-            const isGroup = rawMessage.type === 1;
-
             // zca-js đã tính sẵn isSelf và threadId đúng:
             // - isSelf = true khi uidFrom == "0" (mình gửi, selfListen)
             // - threadId = data.idTo (nếu mình gửi) hoặc data.uidFrom (nhận từ người khác)
@@ -3445,99 +3808,215 @@ class DatabaseService {
             // DEBUG: log toàn bộ raw fields để phát hiện lỗi
             Logger.log(`[DB.saveMessage] 📩 raw: isSelf=${rawMessage.isSelf} | type=${rawMessage.type} | threadId="${rawMessage.threadId}" | computed isSent=${isSent} | computed threadId="${threadId}" | data.uidFrom="${rawMessage.data?.uidFrom}" | data.idTo="${rawMessage.data?.idTo}" | data.msgId="${rawMessage.data?.msgId}" | top_keys=[${Object.keys(rawMessage).join(',')}]`);
 
+            const row = this.buildZaloMessageRow(ownerZaloId, rawMessage);
             // Guard: bỏ qua nếu threadId không hợp lệ
-            if (!threadId || threadId === 'undefined') {
+            if (!row) {
                 Logger.warn(`[DB.saveMessage] ⚠️ SKIPPED - invalid threadId="${threadId}". rawMessage.isSelf=${rawMessage.isSelf}, rawMessage.threadId=${rawMessage.threadId}. Có thể main process chưa được rebuild với code mới!`);
                 return;
             }
-
-            const contentRaw = rawMessage.data?.content;
-            // typeof null === 'object' trong JS - check null/undefined trước khi check typeof object
-            const content = contentRaw == null
-                ? String(rawMessage.data?.message || '')
-                : typeof contentRaw === 'object'
-                    ? JSON.stringify(contentRaw)
-                    : String(contentRaw || rawMessage.data?.message || '');
-
-            // Tất cả metadata nằm trong rawMessage.data (không có ở top-level)
-            const msgId = rawMessage.data?.msgId || String(Date.now());
-            const cliMsgId = rawMessage.data?.cliMsgId || null;
-            const uidFrom = rawMessage.data?.uidFrom || ownerZaloId;
-            const msgType = rawMessage.data?.msgType || 'text';
-            // data.ts là string timestamp ms từ server
-            const timestamp = parseInt(rawMessage.data?.ts) || Date.now();
-
-            // Trích dẫn (quote) - lưu nếu có
-            let quoteData: string | null = null;
-            const rawQuote = rawMessage.data?.quote;
-            if (rawQuote && rawQuote.globalMsgId) {
-                const quoteImageUrl = this.extractImageUrlFromQuote(rawQuote);
-                // TQuote không có msgType - chỉ có cliMsgType (number), cần convert sang string
-                const quoteMsgType = DatabaseService.clientMsgTypeToMsgType(rawQuote.cliMsgType ?? 0);
-                quoteData = JSON.stringify({
-                    msg: rawQuote.msg ?? '',
-                    fromD: rawQuote.fromD || '',
-                    attach: rawQuote.attach ?? '',
-                    msgType: quoteMsgType,
-                    msgId: String(rawQuote.globalMsgId),
-                    cliMsgId: String(rawQuote.cliMsgId ?? ''),
-                    ownerId: String(rawQuote.ownerId ?? ''),
-                    imageUrl: quoteImageUrl,
-                });
-            }
-
-            const rawAttachments = Array.isArray(rawMessage.data?.attachments)
-                ? rawMessage.data.attachments
-                : [];
-            const rawMentions = Array.isArray(rawMessage.data?.mentions)
-                ? rawMessage.data.mentions
-                : [];
-            // Zalo supplies authoritative uid/position/length data for group
-            // mentions. Keep it with the message so every bubble type can use
-            // the same renderer instead of guessing from visible names.
-            const mentionAttachments = rawMentions
-                .map((mention: any) => ({
-                    type: 'zalo_mention',
-                    offset: Math.max(0, Number(mention?.pos || 0)),
-                    length: Math.max(0, Number(mention?.len || 0)),
-                    user_id: String(mention?.uid || ''),
-                    kind: String(mention?.uid || '') === '-1' || Number(mention?.type) === 1 ? 'all' : 'user',
-                }))
-                .filter((mention: any) => mention.user_id && mention.length > 0);
 
             this.run(
                 `INSERT OR IGNORE INTO messages
                  (msg_id, cli_msg_id, owner_zalo_id, thread_id, thread_type, sender_id, content, msg_type, timestamp, is_sent, attachments, local_paths, status, quote_data)
                  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-                [
-                    msgId,
-                    cliMsgId,
-                    ownerZaloId,
-                    threadId,
-                    isGroup ? 1 : 0,
-                    String(uidFrom),
-                    content,
-                    msgType,
-                    timestamp,
-                    isSent ? 1 : 0,
-                    JSON.stringify([...rawAttachments, ...mentionAttachments]),
-                    '{}',
-                    'received',
-                    quoteData,
-                ]
+                row.params
             );
 
             this.updateContactLastMessage(
-                ownerZaloId, threadId,
-                isGroup ? 1 : 0,
-                content,
-                msgType,
-                timestamp,
-                !isSent
+                ownerZaloId, row.threadId,
+                row.isGroup ? 1 : 0,
+                row.content,
+                row.msgType,
+                row.timestamp,
+                !row.isSent
             );
         } catch (err: any) {
             Logger.error(`[DatabaseService] saveMessage error: ${err.message}`);
         }
+    }
+
+    /**
+     * Map 1 message dạng zca-js (UserMessage/GroupMessage) → tham số INSERT bảng messages.
+     * Dùng chung cho saveMessage (realtime) và saveHistoryMessagesBulk (đồng bộ từ điện thoại).
+     * Trả null nếu threadId không hợp lệ.
+     */
+    private buildZaloMessageRow(ownerZaloId: string, rawMessage: any): {
+        threadId: string; isGroup: boolean; isSent: boolean;
+        content: string; msgType: string; timestamp: number; params: any[];
+    } | null {
+        const isGroup = rawMessage.type === 1;
+        const isSent: boolean = rawMessage.isSelf === true;
+        const threadId: string = rawMessage.threadId || '';
+        if (!threadId || threadId === 'undefined') return null;
+
+        // Ảnh JPEG XL (Zalo điện thoại bản mới) → lưu URL bản JPG (đã làm ở EventBroadcaster cho tin realtime;
+        // ở đây để phủ cả tin đồng bộ từ điện thoại / các đường lưu trực tiếp).
+        const contentRaw = normalizeZaloPhotoContent(rawMessage.data?.content);
+        // typeof null === 'object' trong JS - check null/undefined trước khi check typeof object
+        const content = contentRaw == null
+            ? String(rawMessage.data?.message || '')
+            : typeof contentRaw === 'object'
+                ? JSON.stringify(contentRaw)
+                : String(contentRaw || rawMessage.data?.message || '');
+
+        // Tất cả metadata nằm trong rawMessage.data (không có ở top-level)
+        const msgId = rawMessage.data?.msgId || String(Date.now());
+        const cliMsgId = rawMessage.data?.cliMsgId || null;
+        const uidFrom = rawMessage.data?.uidFrom || ownerZaloId;
+        const msgType = rawMessage.data?.msgType || 'text';
+        // data.ts là string timestamp ms từ server
+        const timestamp = parseInt(rawMessage.data?.ts) || Date.now();
+
+        // Trích dẫn (quote) - lưu nếu có
+        let quoteData: string | null = null;
+        const rawQuote = rawMessage.data?.quote;
+        if (rawQuote && rawQuote.globalMsgId) {
+            const quoteImageUrl = toZaloJpgUrl(this.extractImageUrlFromQuote(rawQuote));
+            // TQuote không có msgType - chỉ có cliMsgType (number), cần convert sang string
+            const quoteMsgType = DatabaseService.clientMsgTypeToMsgType(rawQuote.cliMsgType ?? 0);
+            quoteData = JSON.stringify({
+                msg: rawQuote.msg ?? '',
+                fromD: rawQuote.fromD || '',
+                attach: normalizeZaloPhotoContent(rawQuote.attach ?? ''),
+                msgType: quoteMsgType,
+                msgId: String(rawQuote.globalMsgId),
+                cliMsgId: String(rawQuote.cliMsgId ?? ''),
+                ownerId: String(rawQuote.ownerId ?? ''),
+                imageUrl: quoteImageUrl,
+            });
+        }
+
+        const rawAttachments = Array.isArray(rawMessage.data?.attachments)
+            ? rawMessage.data.attachments
+            : [];
+        const rawMentions = Array.isArray(rawMessage.data?.mentions)
+            ? rawMessage.data.mentions
+            : [];
+        // Zalo supplies authoritative uid/position/length data for group
+        // mentions. Keep it with the message so every bubble type can use
+        // the same renderer instead of guessing from visible names.
+        const mentionAttachments = rawMentions
+            .map((mention: any) => ({
+                type: 'zalo_mention',
+                offset: Math.max(0, Number(mention?.pos || 0)),
+                length: Math.max(0, Number(mention?.len || 0)),
+                user_id: String(mention?.uid || ''),
+                kind: String(mention?.uid || '') === '-1' || Number(mention?.type) === 1 ? 'all' : 'user',
+            }))
+            .filter((mention: any) => mention.user_id && mention.length > 0);
+
+        return {
+            threadId, isGroup, isSent, content, msgType, timestamp,
+            params: [
+                msgId,
+                cliMsgId,
+                ownerZaloId,
+                threadId,
+                isGroup ? 1 : 0,
+                String(uidFrom),
+                content,
+                msgType,
+                timestamp,
+                isSent ? 1 : 0,
+                JSON.stringify([...rawAttachments, ...mentionAttachments]),
+                '{}',
+                'received',
+                quoteData,
+            ],
+        };
+    }
+
+    /**
+     * Lưu hàng loạt tin nhắn lịch sử (đồng bộ từ điện thoại) trong 1 transaction.
+     * Map cột giống hệt saveMessage, nhưng KHÔNG tăng unread và chỉ cập nhật preview hội thoại
+     * bằng tin mới nhất vừa thêm (updateContactLastMessage tự giữ preview nếu DB đã có tin mới hơn).
+     * `isRecalled` (tin đã thu hồi trên điện thoại) → is_recalled = 1.
+     */
+    public saveHistoryMessagesBulk(ownerZaloId: string, messages: any[]): { inserted: number; ignored: number; threads: string[] } {
+        if (!this.initialized || messages.length === 0) return { inserted: 0, ignored: 0, threads: [] };
+        const insert = db!.prepare(
+            `INSERT OR IGNORE INTO messages
+             (msg_id, cli_msg_id, owner_zalo_id, thread_id, thread_type, sender_id, content, msg_type, timestamp, is_sent, attachments, local_paths, status, quote_data, is_recalled)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        );
+        let inserted = 0;
+        let ignored = 0;
+        const touched = new Set<string>();
+        const latest = new Map<string, NonNullable<ReturnType<DatabaseService['buildZaloMessageRow']>>>();
+
+        db!.transaction(() => {
+            for (const message of messages) {
+                let row: ReturnType<DatabaseService['buildZaloMessageRow']> = null;
+                try {
+                    row = this.buildZaloMessageRow(ownerZaloId, message);
+                } catch (err: any) {
+                    Logger.warn(`[DatabaseService] saveHistoryMessagesBulk: bỏ 1 tin lỗi (${err?.message})`);
+                }
+                if (!row) {
+                    ignored++;
+                    continue;
+                }
+                const isRecalled = message.isRecalled === true;
+                if (insert.run(...row.params, isRecalled ? 1 : 0).changes === 0) {
+                    ignored++;
+                    continue;
+                }
+                inserted++;
+                touched.add(row.threadId);
+                const prev = latest.get(row.threadId);
+                if (!isRecalled && (!prev || row.timestamp >= prev.timestamp)) latest.set(row.threadId, row);
+            }
+            for (const row of latest.values()) {
+                this.updateContactLastMessage(
+                    ownerZaloId, row.threadId, row.isGroup ? 1 : 0,
+                    row.content, row.msgType, row.timestamp, false,
+                );
+            }
+        })();
+        return { inserted, ignored, threads: Array.from(touched) };
+    }
+
+    // ─── Ánh xạ ID mobile (plain) ↔ web (noise) — dùng cho đồng bộ từ điện thoại ──
+
+    public getPlainIdMappings(ownerZaloId: string, kind: 'user' | 'group'): Map<string, string> {
+        if (!this.initialized) return new Map();
+        this.ensurePlainIdMapTable();
+        const rows = this.query<{ plain_id: string; noise_id: string }>(
+            `SELECT plain_id, noise_id FROM zalo_plain_id_map WHERE owner_zalo_id = ? AND kind = ?`,
+            [ownerZaloId, kind]
+        );
+        return new Map(rows.map(r => [r.plain_id, r.noise_id]));
+    }
+
+    public savePlainIdMappings(ownerZaloId: string, kind: 'user' | 'group', pairs: Array<[string, string]>): void {
+        if (!this.initialized || pairs.length === 0) return;
+        this.ensurePlainIdMapTable();
+        const stmt = db!.prepare(
+            `INSERT INTO zalo_plain_id_map (owner_zalo_id, kind, plain_id, noise_id, updated_at)
+             VALUES (?,?,?,?,?)
+             ON CONFLICT(owner_zalo_id, kind, plain_id) DO UPDATE SET noise_id = excluded.noise_id, updated_at = excluded.updated_at`
+        );
+        const now = Date.now();
+        db!.transaction(() => {
+            for (const [plainId, noiseId] of pairs) stmt.run(ownerZaloId, kind, plainId, noiseId, now);
+        })();
+    }
+
+    /** Lọc các contact_id chưa có tên thật (display_name rỗng hoặc vẫn là chính ID). */
+    public getContactIdsWithoutProfile(ownerZaloId: string, contactIds: string[]): string[] {
+        if (!this.initialized || contactIds.length === 0) return [];
+        const result: string[] = [];
+        for (let i = 0; i < contactIds.length; i += 500) {
+            const chunk = contactIds.slice(i, i + 500);
+            const rows = this.query<{ contact_id: string }>(
+                `SELECT contact_id FROM contacts
+                 WHERE owner_zalo_id = ? AND contact_id IN (${chunk.map(() => '?').join(',')})
+                   AND (display_name IS NULL OR display_name = '' OR display_name = contact_id)`,
+                [ownerZaloId, ...chunk]
+            );
+            for (const r of rows) result.push(r.contact_id);
+        }
+        return result;
     }
 
     /** Mark a message as handled by a specific employee */
@@ -3557,9 +4036,16 @@ class DatabaseService {
     public setMessageHandledByEmployeeFlexible(ownerZaloId: string, msgId: string, employeeId: string): void {
         if (!this.initialized || !msgId || !employeeId) return;
         try {
+            // OR `(msg_id = ? OR cli_msg_id = ?)` vô hiệu index → quét toàn bộ tin.
+            // Tách 2 UPDATE theo index (tương đương: dòng trùng cả 2 id chỉ bị ghi 2 lần
+            // cùng một giá trị, vô hại).
             this.run(
-                `UPDATE messages SET handled_by_employee = ? WHERE owner_zalo_id = ? AND (msg_id = ? OR cli_msg_id = ?)`,
-                [employeeId, ownerZaloId, msgId, msgId]
+                `UPDATE messages SET handled_by_employee = ? WHERE owner_zalo_id = ? AND msg_id = ?`,
+                [employeeId, ownerZaloId, msgId]
+            );
+            this.run(
+                `UPDATE messages SET handled_by_employee = ? WHERE owner_zalo_id = ? AND cli_msg_id = ?`,
+                [employeeId, ownerZaloId, msgId]
             );
         } catch (err: any) {
             Logger.warn(`[DatabaseService] setMessageHandledByEmployeeFlexible error: ${err.message}`);
@@ -3656,27 +4142,25 @@ class DatabaseService {
             [ownerZaloId, threadId, limit, offset]
         );
     }
-    public getMediaMessages(ownerZaloId: string, threadId: string, limit = 50, offset = 0): Message[] {
+    /**
+     * Ảnh/video của một hội thoại, mới → cũ.
+     * - Không có `cursor`: trang LIMIT/OFFSET như cũ (panel Ảnh/Video, Public API) — SQL và thứ tự giữ nguyên.
+     * - Có `cursor` (bộ sưu tập của trình xem ảnh): trang keyset theo (timestamp, msg_id) trên
+     *   idx_messages_thread_cursor — không temp B-tree, chi phí theo trang chứ không theo OFFSET.
+     *   Xem mediaMessagesQuery.ts.
+     */
+    public getMediaMessages(ownerZaloId: string, threadId: string, limit = 50, offset = 0, cursor?: MediaCursor | null): Message[] {
         if (!this.initialized) return [];
+        if (cursor && (cursor.beforeTs !== undefined || cursor.afterTs !== undefined)) {
+            const page = buildMediaCursorQuery(ownerZaloId, threadId, cursor, limit);
+            const rows = this.query<Message>(page.sql, page.params);
+            return page.ascending ? rows.reverse() : rows;
+        }
         return this.query<Message>(
-            `SELECT msg_id, owner_zalo_id, thread_id, sender_id, content, msg_type, timestamp, local_paths, attachments, channel
+            `SELECT ${MEDIA_MESSAGE_COLUMNS}
              FROM messages
              WHERE owner_zalo_id = ? AND thread_id = ?
-               AND (
-                 (
-                   msg_type NOT IN ('share.file', 'share.link', 'file', 'chat.recommended', 'chat.recommend',
-                                    'webchat', 'text', 'group.poll', 'chat.sticker',
-                                    'system.msg', 'notify.unread', 'chat.voice.msg', 'chat.gif')
-                   AND (
-                     msg_type IN ('photo', 'image', 'chat.photo', 'chat.video.msg')
-                     OR (local_paths IS NOT NULL AND local_paths != '{}' AND local_paths != '' AND local_paths != 'null'
-                         AND msg_type NOT IN ('share.file','share.link','file'))
-                     OR content LIKE '%"rawUrl"%'
-                   )
-                 )
-                 OR (channel = 'facebook' AND msg_type IN ('image', 'photo', 'video', 'sticker', 'animated_image')
-                     AND attachments IS NOT NULL AND attachments != '[]' AND attachments != '')
-               )
+               AND ${MEDIA_MESSAGE_FILTER}
              ORDER BY timestamp DESC
              LIMIT ? OFFSET ?`,
             [ownerZaloId, threadId, limit, offset]
@@ -3757,6 +4241,20 @@ class DatabaseService {
         );
     }
 
+    /**
+     * Ô chọn liên hệ của workflow: tìm (không dấu) + lọc loại + phân trang ngay ở main process,
+     * chỉ trả 1 trang qua IPC thay vì toàn bộ danh bạ (vài nghìn dòng / tài khoản).
+     */
+    public searchContactsForPicker(ownerZaloId: string, opts: PickerSearchOptions = {}): PickerSearchResult {
+        if (!this.initialized || !ownerZaloId) return { items: [], total: 0, counts: { all: 0, user: 0, group: 0 } };
+        const rows = this.query<PickerContactRow>(
+            `SELECT contact_id, display_name, alias, avatar_url, phone, contact_type, is_friend, last_message_time
+             FROM contacts WHERE owner_zalo_id = ?`,
+            [ownerZaloId]
+        );
+        return searchPickerContacts(rows, opts);
+    }
+
     /** getContacts với filter channel, search, others — filter ở DB level cho nhanh */
     public getContactsFiltered(ownerZaloId: string, opts?: {
         channel?: string;
@@ -3764,6 +4262,10 @@ class DatabaseService {
         othersOnly?: boolean;
         excludeOthers?: boolean;
         unreadOnly?: boolean;
+        /** Lọc theo loại hội thoại (Public API v1 dùng để liệt kê nhóm). */
+        contactType?: 'user' | 'group';
+        /** Chỉ các hội thoại này (vd. hội thoại ghim nằm ở trang sau, chưa tải) — tối đa 200. */
+        contactIds?: string[];
         limit?: number;
         offset?: number;
     }): Contact[] {
@@ -3788,6 +4290,17 @@ class DatabaseService {
         }
         if (opts?.unreadOnly) {
             conditions.push('unread_count > 0');
+        }
+        if (opts?.contactType === 'group') {
+            conditions.push("contact_type = 'group'");
+        } else if (opts?.contactType === 'user') {
+            conditions.push("(contact_type IS NULL OR contact_type != 'group')");
+        }
+        if (Array.isArray(opts?.contactIds)) {
+            const ids = [...new Set(opts!.contactIds.map(String).filter(Boolean))].slice(0, 200);
+            if (ids.length === 0) return [];
+            conditions.push(`contact_id IN (${ids.map(() => '?').join(', ')})`);
+            params.push(...ids);
         }
 
         const where = conditions.join(' AND ');
@@ -3931,6 +4444,62 @@ class DatabaseService {
         }
     }
 
+    /**
+     * Ghi kết quả làm mới hàng loạt (zalo:getUserInfo) vào DB theo UID.
+     * - Chỉ UPDATE dòng đã có (contacts + friends), không tạo dòng mới.
+     * - Tên chỉ ghi khi API trả về tên khác rỗng; avatar chỉ ghi khi có URL.
+     * - Mọi UID đã hỏi API (`checkedIds`, kể cả không có profile) đều được đóng dấu
+     *   `info_refreshed_at` để không hỏi lại liên tục những tài khoản không còn tồn tại.
+     * @returns số dòng contacts được cập nhật tên/avatar
+     */
+    public applyContactInfoRefresh(
+        ownerZaloId: string,
+        profiles: Array<{ contactId: string; displayName?: string; avatarUrl?: string }>,
+        checkedIds: string[] = [],
+        refreshedAt: number = Date.now(),
+    ): number {
+        if (!this.initialized || !ownerZaloId) return 0;
+        let updated = 0;
+        try {
+            this.transaction(() => {
+                const updateContact = db!.prepare(
+                    `UPDATE contacts SET
+                        display_name = CASE WHEN ? != '' THEN ? ELSE display_name END,
+                        avatar_url = CASE WHEN ? != '' THEN ? ELSE avatar_url END,
+                        info_refreshed_at = ?
+                     WHERE owner_zalo_id = ? AND contact_id = ?`
+                );
+                const updateFriend = db!.prepare(
+                    `UPDATE friends SET
+                        display_name = CASE WHEN ? != '' THEN ? ELSE display_name END,
+                        avatar = CASE WHEN ? != '' THEN ? ELSE avatar END
+                     WHERE owner_zalo_id = ? AND user_id = ?`
+                );
+                const stamp = db!.prepare(
+                    `UPDATE contacts SET info_refreshed_at = ?
+                     WHERE owner_zalo_id = ? AND contact_id = ? AND COALESCE(info_refreshed_at, 0) < ?`
+                );
+                for (const p of profiles) {
+                    const contactId = String(p?.contactId || '').trim();
+                    if (!contactId || contactId === 'undefined') continue;
+                    const name = String(p.displayName || '').trim();
+                    const avatar = String(p.avatarUrl || '').trim();
+                    if (!name && !avatar) continue;
+                    const res = updateContact.run(name, name, avatar, avatar, refreshedAt, ownerZaloId, contactId);
+                    if (Number(res.changes) > 0) updated++;
+                    updateFriend.run(name, name, avatar, avatar, ownerZaloId, contactId);
+                }
+                for (const id of checkedIds) {
+                    const contactId = String(id || '').trim();
+                    if (contactId) stamp.run(refreshedAt, ownerZaloId, contactId, refreshedAt);
+                }
+            });
+        } catch (err: any) {
+            Logger.error(`[DatabaseService] applyContactInfoRefresh error: ${err.message}`);
+        }
+        return updated;
+    }
+
     /** Chuyển content thô (JSON) thành chuỗi hiển thị cho last_message */
     private formatLastMessageContent(content: string, msgType: string): string {
         const mt = (msgType || '').toLowerCase();
@@ -3984,6 +4553,22 @@ class DatabaseService {
                 if (p?.action === 'zinstant.bankcard') return '🏦 Tài khoản ngân hàng';
                 if (p?.title) return p.title;
             } catch {}
+        }
+        // ── Bản tin / thông báo của Official Account (zinstant) ─────────────────
+        if (mt === 'chat.webcontent' || mt === 'chat.webcontent.v2') {
+            const zinstant = zinstantPreviewText(content, mt);
+            if (zinstant) return zinstant;
+        }
+
+        // ── Bản tin Official Account (chat.list.action): content là mảng bài viết ──
+        if (mt === 'chat.list.action') {
+            try {
+                const p = JSON.parse(content);
+                const items = Array.isArray(p) ? p : [p];
+                const first = items.find((it: any) => it && typeof it === 'object' && String(it.title || '').trim());
+                if (first) return `📰 ${String(first.title).trim()}`;
+            } catch {}
+            return '📰 Bản tin';
         }
 
         // ── Poll ───────────────────────────────────────────────────────────────
@@ -4219,17 +4804,33 @@ class DatabaseService {
      * Cập nhật reaction của 1 user lên 1 tin nhắn (PHP-like accumulation format)
      * Reactions stored as: { total, lastReact, emoji: { emojiChar: { total, users: { userId: count } } } }
      */
-    public updateMessageReaction(ownerZaloId: string, msgId: string, userId: string, icon: string): void {
+    public updateMessageReaction(ownerZaloId: string, msgId: string, userId: string, rawIcon: string, threadId?: string): void {
         if (!this.initialized || !msgId) return;
         try {
-            const row = this.queryOne<{ reactions: string }>(
-                'SELECT reactions FROM messages WHERE owner_zalo_id = ? AND msg_id = ?',
-                [ownerZaloId, String(msgId)]
-            );
+            // Chỉ sửa ĐÚNG 1 dòng, ưu tiên khớp cả hội thoại: msg_id không duy nhất trong 1 tài khoản (Telegram: mỗi
+            // kênh / nhóm có dãy ID riêng). Trước đây đọc + ghi theo (owner, msg_id) → reaction của 1 bài kênh trùng ID
+            // (vd 💩17 🌚9) bị cộng thêm rồi ghi vào MỌI tin trùng ID ở các hội thoại khác.
+            type ReactionRow = { id: number; reactions: string; channel: string | null };
+            const row = (threadId
+                ? this.queryOne<ReactionRow>(
+                    'SELECT id, reactions, channel FROM messages WHERE owner_zalo_id = ? AND msg_id = ? AND thread_id = ? LIMIT 1',
+                    [ownerZaloId, String(msgId), String(threadId)]
+                )
+                : undefined)
+                ?? this.queryOne<ReactionRow>(
+                    'SELECT id, reactions, channel FROM messages WHERE owner_zalo_id = ? AND msg_id = ? LIMIT 1',
+                    [ownerZaloId, String(msgId)]
+                );
             if (!row) {
                 Logger.warn(`[DatabaseService] updateMessageReaction: msg_id=${msgId} not found`);
                 return;
             }
+            // Telegram: số đếm là tổng hợp do Telegram trả (UpdateMessageReactions / kết quả SendReaction) — không
+            // cộng dồn kiểu Zalo
+            if (row.channel === 'telegram_user') return;
+            // Zalo: "haha" từng được lưu 2 kiểu (😄 lúc thả, 😆 từ echo) → chuẩn hoá + gộp bản ghi cũ bị tách đôi
+            const isZaloRow = !row.channel || row.channel === 'zalo';
+            const icon = isZaloRow && rawIcon ? normalizeZaloReactionEmoji(rawIcon) : rawIcon;
 
             let parsed: any = {};
             try { parsed = JSON.parse(row.reactions || '{}'); } catch {}
@@ -4237,7 +4838,7 @@ class DatabaseService {
             // Migrate old format { userId: emojiChar } → new format
             let reactions: { total: number; lastReact: string; emoji: Record<string, { total: number; users: Record<string, number> }> };
             if (parsed && parsed.emoji && typeof parsed.emoji === 'object') {
-                reactions = parsed;
+                reactions = isZaloRow ? mergeZaloReactionAliases(parsed) : parsed;
             } else {
                 reactions = { total: 0, lastReact: '', emoji: {} };
                 for (const [uid, emo] of Object.entries(parsed as Record<string, string>)) {
@@ -4273,10 +4874,7 @@ class DatabaseService {
                 reactions.lastReact = icon;
             }
 
-            this.run(
-                'UPDATE messages SET reactions = ? WHERE owner_zalo_id = ? AND msg_id = ?',
-                [JSON.stringify(reactions), ownerZaloId, String(msgId)]
-            );
+            this.run('UPDATE messages SET reactions = ? WHERE id = ?', [JSON.stringify(reactions), row.id]);
         } catch (err: any) {
             Logger.error(`[DatabaseService] updateMessageReaction error: ${err.message}`);
         }
@@ -4302,6 +4900,186 @@ class DatabaseService {
             );
         } catch (err: any) {
             Logger.error(`[DatabaseService] updateLocalPaths error: ${err.message}`);
+        }
+    }
+
+    /** Đánh dấu media (ảnh/video) của tin đã hết hạn trên CDN Zalo — UI hiện "đã hết hạn", không tải lại. */
+    public setMediaExpired(ownerZaloId: string, msgId: string, expired: boolean): void {
+        if (!this.initialized || !msgId) return;
+        try {
+            this.run(
+                'UPDATE messages SET media_expired = ? WHERE owner_zalo_id = ? AND msg_id = ?',
+                [expired ? 1 : 0, ownerZaloId, String(msgId)]
+            );
+        } catch (err: any) {
+            Logger.warn(`[DatabaseService] setMediaExpired error: ${err.message}`);
+        }
+    }
+
+    public isMediaExpired(ownerZaloId: string, msgId: string): boolean {
+        if (!this.initialized || !msgId) return false;
+        try {
+            const row = this.queryOne<{ media_expired: number }>(
+                'SELECT media_expired FROM messages WHERE owner_zalo_id = ? AND msg_id = ? LIMIT 1',
+                [ownerZaloId, String(msgId)]
+            );
+            return Number(row?.media_expired) === 1;
+        } catch {
+            return false;
+        }
+    }
+
+    // ─── Ảnh JPEG XL đã lưu → URL bản JPG (chạy nền 1 lần cho mỗi DB) ────────────
+
+    // v2: v1 chỉ dò "/jxl/" nên sót URL trong chuỗi JSON escape "\/" (params.hd, quote.attach) và tin định dạng
+    // cũ để URL ở cột attachments → chạy lại 1 lần cho mọi DB.
+    private static readonly JXL_REPAIR_SETTING = 'zalo_jxl_to_jpg_v2';
+    private jxlRepairTimer: NodeJS.Timeout | null = null;
+
+    /**
+     * Tin đã lưu trước khi có `normalizeZaloPhotoContent` còn URL ảnh `.jxl` (Chromium không hiển thị) →
+     * đổi sang URL bản JPG và bỏ file `.jxl` đã tải. Chạy nền sau khi mở DB, theo từng khoảng id.
+     */
+    /**
+     * Hội thoại Official Account có tin cuối là bản tin / thông báo zinstant (chat.webcontent / .v2): bản cũ lưu
+     * last_message "[Đính kèm]" → chữ của OA ("📢 …"). Chạy 1 lần / DB; tin mới đã có xem trước đúng khi lưu.
+     */
+    private repairZaloZinstantPreviewsOnce(): void {
+        const key = 'repair_zalo_zinstant_preview_v1';
+        try {
+            if (this.getSetting(key) === '1') return;
+            const rows = this.query<{ owner_zalo_id: string; contact_id: string; last_message: string | null; content: string; msg_type: string }>(`
+                SELECT c.owner_zalo_id, c.contact_id, c.last_message, m.content, m.msg_type
+                FROM contacts c
+                JOIN messages m ON m.rowid = (
+                    SELECT m2.rowid FROM messages m2
+                    WHERE m2.owner_zalo_id = c.owner_zalo_id AND m2.thread_id = c.contact_id
+                    ORDER BY m2.timestamp DESC, m2.rowid DESC
+                    LIMIT 1
+                )
+                WHERE COALESCE(c.channel, 'zalo') = 'zalo'
+                  AND COALESCE(c.last_message, '') IN ('[Đính kèm]', '')
+                  AND m.msg_type IN ('chat.webcontent', 'chat.webcontent.v2')
+            `);
+            let repaired = 0;
+            for (const row of rows) {
+                const preview = zinstantPreviewText(row.content, row.msg_type);
+                if (!preview || preview === row.last_message) continue;
+                this.run('UPDATE contacts SET last_message = ? WHERE owner_zalo_id = ? AND contact_id = ?', [preview, row.owner_zalo_id, row.contact_id]);
+                repaired++;
+            }
+            this.setSetting(key, '1');
+            if (repaired) Logger.log(`[DatabaseService] Zalo OA zinstant previews repaired: ${repaired}`);
+        } catch (err: any) {
+            Logger.warn(`[DatabaseService] repairZaloZinstantPreviewsOnce: ${err?.message}`);
+        }
+    }
+
+    private scheduleJxlImageRepair(): void {
+        if (this.jxlRepairTimer) clearTimeout(this.jxlRepairTimer);
+        this.jxlRepairTimer = setTimeout(() => {
+            this.jxlRepairTimer = null;
+            this.repairStoredJxlImages().catch(err => Logger.warn(`[DatabaseService] repairStoredJxlImages: ${err?.message}`));
+        }, 15000);
+        this.jxlRepairTimer.unref?.();
+    }
+
+    private async repairStoredJxlImages(): Promise<void> {
+        const target = db;
+        if (!target || !this.initialized) return;
+        if (this.getSetting(DatabaseService.JXL_REPAIR_SETTING) === '1') return;
+        const maxRow = target.prepare('SELECT MAX(id) AS maxId FROM messages').get() as { maxId: number | null } | undefined;
+        const maxId = Number(maxRow?.maxId) || 0;
+        // Dò "jxl" (không phải "/jxl/"): URL trong chuỗi JSON lồng bị escape thành "\/jxl\/".
+        const select = target.prepare(
+            `SELECT id, content, local_paths, quote_data, attachments FROM messages
+             WHERE id > ? AND id <= ?
+               AND (content LIKE '%jxl%' OR quote_data LIKE '%jxl%' OR attachments LIKE '%jxl%' OR local_paths LIKE '%.jxl%')`
+        );
+        const update = target.prepare('UPDATE messages SET content = ?, local_paths = ?, quote_data = ?, attachments = ? WHERE id = ?');
+        // Mỗi lần quét 10.000 dòng (đo trên DB 2,7 triệu tin: ≤ ~140ms/lần, cả DB ~10s), nhường event loop
+        // giữa các lần để không chặn main process.
+        const CHUNK = 10000;
+        const staleFiles: string[] = [];
+        let fixed = 0;
+        for (let from = 0; from < maxId; from += CHUNK) {
+            if (db !== target) return; // đổi workspace giữa chừng → lần mở DB sau chạy lại
+            const rows = select.all(from, from + CHUNK) as Array<{
+                id: number; content: string; local_paths: string | null; quote_data: string | null; attachments: string | null;
+            }>;
+            if (rows.length) {
+                target.transaction(() => {
+                    for (const row of rows) {
+                        const content = normalizeZaloPhotoContent(row.content);
+                        const quoteData = this.normalizeQuoteDataJxl(row.quote_data);
+                        const attachments = this.normalizeAttachmentsJxl(row.attachments);
+                        const localPaths = this.dropJxlLocalPaths(row.local_paths, staleFiles);
+                        if (content === row.content && quoteData === row.quote_data
+                            && attachments === row.attachments && localPaths === row.local_paths) continue;
+                        update.run(content, localPaths, quoteData, attachments, row.id);
+                        fixed++;
+                    }
+                })();
+            }
+            await new Promise(resolve => setImmediate(resolve));
+        }
+        if (db !== target) return;
+        this.setSetting(DatabaseService.JXL_REPAIR_SETTING, '1');
+        for (const file of staleFiles) {
+            try { fs.unlinkSync(FileStorageService.resolveAbsolutePath(file)); } catch { /* đã xoá */ }
+        }
+        Logger.log(`[DatabaseService] Ảnh JPEG XL → JPG: sửa ${fixed} tin, xoá ${staleFiles.length} file .jxl`);
+    }
+
+    private normalizeQuoteDataJxl(quoteData: string | null): string | null {
+        if (!quoteData || !/jxl/i.test(quoteData)) return quoteData;
+        try {
+            const parsed = JSON.parse(quoteData);
+            if (!parsed || typeof parsed !== 'object') return quoteData;
+            const attach = normalizeZaloPhotoContent(parsed.attach);
+            const imageUrl = typeof parsed.imageUrl === 'string' ? toZaloJpgUrl(parsed.imageUrl) : parsed.imageUrl;
+            if (attach === parsed.attach && imageUrl === parsed.imageUrl) return quoteData;
+            return JSON.stringify({ ...parsed, attach, imageUrl });
+        } catch {
+            return quoteData;
+        }
+    }
+
+    /** Tin Zalo định dạng cũ (content "[Photo]") để URL ảnh trong cột attachments: mảng object có hd/href/thumb. */
+    private normalizeAttachmentsJxl(attachments: string | null): string | null {
+        if (!attachments || !/jxl/i.test(attachments)) return attachments;
+        try {
+            const parsed = JSON.parse(attachments);
+            if (!Array.isArray(parsed)) return attachments;
+            let changed = false;
+            const next = parsed.map(item => {
+                const fixed = normalizeZaloPhotoContent(item);
+                if (fixed !== item) changed = true;
+                return fixed;
+            });
+            return changed ? JSON.stringify(next) : attachments;
+        } catch {
+            return attachments;
+        }
+    }
+
+    /** Bỏ đường dẫn file `.jxl` khỏi local_paths (ghi lại để xoá file); bubble sẽ hiện bản JPG từ CDN rồi tải lại. */
+    private dropJxlLocalPaths(localPaths: string | null, staleFiles: string[]): string | null {
+        if (!localPaths || !/\.jxl"/i.test(localPaths)) return localPaths;
+        try {
+            const parsed = JSON.parse(localPaths);
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return localPaths;
+            let changed = false;
+            for (const [key, value] of Object.entries(parsed)) {
+                if (typeof value === 'string' && /\.jxl$/i.test(value)) {
+                    staleFiles.push(value);
+                    delete parsed[key];
+                    changed = true;
+                }
+            }
+            return changed ? JSON.stringify(parsed) : localPaths;
+        } catch {
+            return localPaths;
         }
     }
 
@@ -4470,12 +5248,18 @@ class DatabaseService {
     /**
      * Xóa nhiều tin nhắn theo danh sách msgId
      */
-    public deleteMessages(ownerZaloId: string, msgIds: string[]): void {
+    public deleteMessages(ownerZaloId: string, msgIds: string[], threadId?: string): void {
         if (!this.initialized || !msgIds.length) return;
         try {
-            const stmt = db!.prepare('DELETE FROM messages WHERE owner_zalo_id = ? AND msg_id = ?');
+            // Telegram: msg_id chỉ duy nhất trong 1 hội thoại → xoá đúng hội thoại, không bao giờ xoá theo msg_id trần
+            const scoped = db!.prepare('DELETE FROM messages WHERE owner_zalo_id = ? AND msg_id = ? AND thread_id = ?');
+            const unscoped = db!.prepare(
+                `DELETE FROM messages WHERE owner_zalo_id = ? AND msg_id = ? AND COALESCE(channel, 'zalo') NOT IN ('telegram_user', 'telegram_bot')`,
+            );
             for (const msgId of msgIds) {
-                stmt.run(ownerZaloId, String(msgId));
+                const scope = this.messageIdScope(ownerZaloId, String(msgId), threadId);
+                if (scope.params.length) scoped.run(ownerZaloId, String(msgId), scope.params[0]);
+                else unscoped.run(ownerZaloId, String(msgId));
             }
             this.save();
             Logger.log(`[DatabaseService] Deleted ${msgIds.length} messages for ${ownerZaloId}`);
@@ -4796,26 +5580,53 @@ class DatabaseService {
 
     public markAsRead(ownerZaloId: string, contactId: string): void {
         if (!this.initialized) return;
-        this.runNoSave('UPDATE contacts SET unread_count = 0 WHERE owner_zalo_id = ? AND contact_id = ?', [ownerZaloId, contactId]);
-        this.runNoSave('UPDATE messages SET status = \'read\' WHERE owner_zalo_id = ? AND thread_id = ? AND is_sent = 0', [ownerZaloId, contactId]);
+        this.runNoSave('UPDATE contacts SET unread_count = 0 WHERE owner_zalo_id = ? AND contact_id = ? AND unread_count != 0', [ownerZaloId, contactId]);
+        // Chỉ xét MARK_READ_SCOPE tin mới nhất (chỉ mục thread, tra theo rowid): tin chưa đọc luôn là tin mới nhất, và
+        // trạng thái 'read' của tin NHẬN không dùng để hiển thị. Trước đây lọc is_sent/status trên cả hội thoại → quét
+        // hết tin mỗi lần mở (113k tin ≈ 0,9–2 s khi đĩa nguội), chặn main nên db:getMessages phải xếp hàng chờ.
+        this.runNoSave(
+            `UPDATE messages SET status = 'read'
+             WHERE id IN (SELECT id FROM messages WHERE owner_zalo_id = ? AND thread_id = ? ORDER BY timestamp DESC LIMIT ?)
+               AND is_sent = 0 AND status != 'read'`,
+            [ownerZaloId, contactId, MARK_READ_SCOPE],
+        );
         this.save();
     }
 
+    /**
+     * Phạm vi hàng cho thao tác theo msg_id. Telegram: msg_id chỉ duy nhất trong 1 hội thoại (mỗi kênh / siêu nhóm một dãy
+     * số) → có `threadId` và tin nằm trong hội thoại đó thì chỉ đụng hội thoại đó; ngoài ra không bao giờ đụng hàng
+     * Telegram theo msg_id trần (bài kênh trùng số bị ghi đè / xoá mất). Zalo / Facebook: msg_id duy nhất — giữ cách cũ
+     * khi threadId không khớp.
+     */
+    private messageIdScope(ownerZaloId: string, msgId: string, threadId?: string): { sql: string; params: string[] } {
+        if (threadId && this.queryOne<any>(
+            'SELECT 1 FROM messages WHERE owner_zalo_id = ? AND thread_id = ? AND (msg_id = ? OR cli_msg_id = ?) LIMIT 1',
+            [ownerZaloId, String(threadId), String(msgId), String(msgId)],
+        )) {
+            return { sql: ' AND thread_id = ?', params: [String(threadId)] };
+        }
+        return { sql: ` AND COALESCE(channel, 'zalo') NOT IN ('telegram_user', 'telegram_bot')`, params: [] };
+    }
+
     /** Đánh dấu tin nhắn là đã thu hồi, giữ cả nội dung lẫn loại media gốc để có thể xem lại. */
-    public markMessageRecalled(ownerZaloId: string, msgId: string): void {
+    public markMessageRecalled(ownerZaloId: string, msgId: string, threadId?: string): void {
         if (!this.initialized || !msgId) return;
         const recalledContent = JSON.stringify({ msg: 'Tin nhắn đã bị thu hồi' });
+        const scope = this.messageIdScope(ownerZaloId, String(msgId), threadId);
 
         // Keep the original content/type on the first recall event. Zalo can
         // deliver duplicate undo events; a duplicate must never overwrite the
         // preserved media metadata with the recalled placeholder.
         const existing = this.queryOne<any>(
-            'SELECT msg_id, content, msg_type, recalled_content, recalled_msg_type FROM messages WHERE owner_zalo_id = ? AND msg_id = ?',
-            [ownerZaloId, String(msgId)]
+            `SELECT msg_id, content, msg_type, recalled_content, recalled_msg_type FROM messages WHERE owner_zalo_id = ? AND msg_id = ?${scope.sql}`,
+            [ownerZaloId, String(msgId), ...scope.params]
         ) || this.queryOne<any>(
-            'SELECT msg_id, content, msg_type, recalled_content, recalled_msg_type FROM messages WHERE owner_zalo_id = ? AND cli_msg_id = ? AND msg_type != \'recalled\'',
-            [ownerZaloId, String(msgId)]
+            `SELECT msg_id, content, msg_type, recalled_content, recalled_msg_type FROM messages WHERE owner_zalo_id = ? AND cli_msg_id = ? AND msg_type != 'recalled'${scope.sql}`,
+            [ownerZaloId, String(msgId), ...scope.params]
         );
+        // Không có tin (chưa lưu / ngoài phạm vi) → không có gì để đánh dấu (UPDATE bên dưới cũng không khớp hàng nào)
+        if (!existing) return;
         const originalContent = existing?.recalled_content ?? existing?.content ?? null;
         const originalMsgType = existing?.recalled_msg_type || (existing?.msg_type !== 'recalled' ? existing?.msg_type : null);
 
@@ -4827,10 +5638,10 @@ class DatabaseService {
             recalled_content = CASE WHEN recalled_content IS NULL OR recalled_content = '' THEN ? ELSE recalled_content END,
             recalled_msg_type = CASE WHEN recalled_msg_type IS NULL OR recalled_msg_type = '' THEN ? ELSE recalled_msg_type END
             WHERE owner_zalo_id = ? AND `;
-        if (this.queryOne<any>('SELECT 1 FROM messages WHERE owner_zalo_id = ? AND msg_id = ?', [ownerZaloId, String(msgId)])) {
-            this.run(SQL + `msg_id = ?`, [recalledContent, originalContent, originalMsgType, ownerZaloId, String(msgId)]);
+        if (this.queryOne<any>(`SELECT 1 FROM messages WHERE owner_zalo_id = ? AND msg_id = ?${scope.sql}`, [ownerZaloId, String(msgId), ...scope.params])) {
+            this.run(SQL + `msg_id = ?${scope.sql}`, [recalledContent, originalContent, originalMsgType, ownerZaloId, String(msgId), ...scope.params]);
         } else {
-            this.run(SQL + `cli_msg_id = ? AND msg_type != 'recalled'`, [recalledContent, originalContent, originalMsgType, ownerZaloId, String(msgId)]);
+            this.run(SQL + `cli_msg_id = ? AND msg_type != 'recalled'${scope.sql}`, [recalledContent, originalContent, originalMsgType, ownerZaloId, String(msgId), ...scope.params]);
         }
     }
 
@@ -4857,27 +5668,45 @@ class DatabaseService {
 
     public getMessageById(ownerZaloId: string, msgId: string, threadId?: string): Message | undefined {
         if (!this.initialized || !msgId) return undefined;
-        // Zalo TQuote points at globalMsgId.  Media events may have been
-        // persisted with a distinct cli_msg_id, while ordinary text commonly
-        // has both IDs equal.  Match both identifiers, always preferring the
-        // canonical msg_id and keeping the lookup thread-scoped where known.
-        if (threadId) {
-            return this.queryOne<Message>(
+        const m = String(msgId);
+        // Zalo TQuote points at globalMsgId; media events may have been persisted
+        // with a distinct cli_msg_id, while ordinary text commonly has both IDs
+        // equal. The old `(msg_id = ? OR cli_msg_id = ?)` OR defeats the
+        // (msg_id, owner, channel, thread_id) unique index → full scan (đo ~28s
+        // trên tài khoản 1.3M tin). Tách thành 2 lần tra index thay vì OR.
+        //
+        // 1) Tra msg_id trước (unique index). msg_id chỉ unique theo (owner,
+        //    channel, thread); với Telegram msg_id có thể lặp giữa các chat nên
+        //    chốt deterministic bằng `id DESC` (dòng mới nhất thắng).
+        const byMsgId = threadId
+            ? this.queryOne<Message>(
                 `SELECT * FROM messages
-                 WHERE owner_zalo_id = ? AND thread_id = ?
-                   AND (msg_id = ? OR cli_msg_id = ?)
-                 ORDER BY CASE WHEN msg_id = ? THEN 0 ELSE 1 END
-                 LIMIT 1`,
-                [ownerZaloId, threadId, String(msgId), String(msgId), String(msgId)]
+                 WHERE owner_zalo_id = ? AND msg_id = ? AND thread_id = ?
+                 ORDER BY id DESC LIMIT 1`,
+                [ownerZaloId, m, threadId]
+            )
+            : this.queryOne<Message>(
+                `SELECT * FROM messages
+                 WHERE owner_zalo_id = ? AND msg_id = ?
+                 ORDER BY id DESC LIMIT 1`,
+                [ownerZaloId, m]
             );
-        }
-        return this.queryOne<Message>(
-            `SELECT * FROM messages
-             WHERE owner_zalo_id = ? AND (msg_id = ? OR cli_msg_id = ?)
-             ORDER BY CASE WHEN msg_id = ? THEN 0 ELSE 1 END
-             LIMIT 1`,
-            [ownerZaloId, String(msgId), String(msgId), String(msgId)]
-        );
+        if (byMsgId) return byMsgId;
+        // 2) Fallback sang cli_msg_id (idx_messages_cli) cho tin media/quote
+        //    chỉ lưu client id.
+        return threadId
+            ? this.queryOne<Message>(
+                `SELECT * FROM messages
+                 WHERE owner_zalo_id = ? AND cli_msg_id = ? AND thread_id = ?
+                 ORDER BY id DESC LIMIT 1`,
+                [ownerZaloId, m, threadId]
+            )
+            : this.queryOne<Message>(
+                `SELECT * FROM messages
+                 WHERE owner_zalo_id = ? AND cli_msg_id = ?
+                 ORDER BY id DESC LIMIT 1`,
+                [ownerZaloId, m]
+            );
     }
 
     /** Batch lookup: lấy nhiều messages theo IDs trong 1 query */
@@ -5027,6 +5856,23 @@ class DatabaseService {
             }
         } catch {}
 
+        // Bù link từ tin cũ (dữ liệu có trước bảng links): 1 lần / hội thoại / phiên — tin mới lưu link ngay lúc nhận
+        // (saveLink, saveFBMessage). Trước đây chạy mỗi lần mở tab Link: hội thoại chưa có link quét lại cả hội thoại, và
+        // truy vấn tin Facebook quét hết tin của hội thoại Zalo / Telegram (không bao giờ khớp) — 113k tin ≈ 0,7 s.
+        const backfillKey = `${this.dbPath}|${ownerZaloId}|${threadId}`;
+        if (!linksBackfilledThreads.has(backfillKey)) {
+            linksBackfilledThreads.add(backfillKey);
+            this.backfillThreadLinks(ownerZaloId, threadId);
+        }
+
+        return this.query(
+            'SELECT * FROM links WHERE owner_zalo_id = ? AND thread_id = ? ORDER BY timestamp DESC LIMIT ? OFFSET ?',
+            [ownerZaloId, threadId, limit, offset]
+        );
+    }
+
+    /** getLinks: bù bảng links từ tin đã lưu trước khi có bảng (link Zalo chưa có trong bảng; URL trong tin Facebook). */
+    private backfillThreadLinks(ownerZaloId: string, threadId: string): void {
         // Backfill from messages table - only if no links exist yet for this thread
         try {
             const existing = this.queryOne<any>(
@@ -5063,8 +5909,13 @@ class DatabaseService {
             }
         } catch {}
 
-        // Also backfill from FB text messages containing URLs
+        // Bù từ tin Facebook có URL — chỉ hội thoại Facebook (tin mới nhất là tin Facebook)
         try {
+            const newest = this.queryOne<{ channel: string | null }>(
+                'SELECT channel FROM messages WHERE owner_zalo_id = ? AND thread_id = ? ORDER BY timestamp DESC LIMIT 1',
+                [ownerZaloId, threadId]
+            );
+            if (newest?.channel !== 'facebook') return;
             const fbMsgs = this.query<any>(
                 `SELECT msg_id, content, timestamp FROM messages
                  WHERE owner_zalo_id = ? AND thread_id = ? AND channel = 'facebook'
@@ -5093,11 +5944,6 @@ class DatabaseService {
                 if (backfilled > 0) this.save();
             }
         } catch {}
-
-        return this.query(
-            'SELECT * FROM links WHERE owner_zalo_id = ? AND thread_id = ? ORDER BY timestamp DESC LIMIT ? OFFSET ?',
-            [ownerZaloId, threadId, limit, offset]
-        );
     }
 
     // ─── Group Member Cache ───────────────────────────────────────────────
@@ -5114,9 +5960,12 @@ class DatabaseService {
                 (owner_zalo_id, group_id, member_id, display_name, avatar, role, username, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `);
-        for (const m of members) {
-            stmt.run(ownerZaloId, groupId, m.memberId, m.displayName || '', m.avatar || '', m.role || 0, m.username || '', now);
-        }
+        // 1 transaction cho cả danh sách (nhóm vài nghìn thành viên: mỗi lệnh tự commit chặn main lâu hơn nhiều lần)
+        db!.transaction(() => {
+            for (const m of members) {
+                stmt.run(ownerZaloId, groupId, m.memberId, m.displayName || '', m.avatar || '', m.role || 0, m.username || '', now);
+            }
+        })();
         this.save();
         Logger.log(`[DB] Saved ${members.length} group members for group ${groupId}`);
     }
@@ -5165,6 +6014,59 @@ class DatabaseService {
              ORDER BY role DESC`,
             [ownerZaloId, groupId]
         );
+    }
+
+    /** Kết nối đã có hàm SQL `deplao_fold` (DB chính và DB phụ của withDbPath là các kết nối khác nhau). */
+    private static readonly foldFunctionDbs = new WeakSet<object>();
+
+    /** Hàm SQL `deplao_fold(text)`: bỏ dấu tiếng Việt + chữ thường (foldSearchText) — tìm / sắp xếp tên thành viên. */
+    private ensureFoldFunction(): void {
+        if (!db || DatabaseService.foldFunctionDbs.has(db)) return;
+        db.function('deplao_fold', { deterministic: true }, (value: unknown) => foldSearchText(value));
+        DatabaseService.foldFunctionDbs.add(db);
+    }
+
+    /**
+     * Một trang thành viên nhóm (panel "Thành viên" của khung chat) — đủ mọi thành viên đã có trong DB: quét thành viên
+     * ẩn, thu thập từ lịch sử tin Telegram, đồng bộ API. Tìm theo tên / @username / id, không phân biệt dấu và hoa /
+     * thường. Thứ tự cố định để phân trang: chủ nhóm, phó nhóm / quản trị, thành viên; người có tên trước người chỉ có
+     * id; rồi theo tên. `ownerRole` = giá trị role của chủ nhóm theo kênh (Zalo 2, Telegram 1 — shared/groupMemberRoles).
+     */
+    public getGroupMembersPage(
+        ownerZaloId: string,
+        groupId: string,
+        options: { query?: string; limit?: number; offset?: number; ownerRole?: number } = {},
+    ): {
+        members: Array<{ member_id: string; display_name: string; avatar: string; role: number; username: string; updated_at: number }>;
+        total: number;
+    } {
+        if (!this.initialized || !ownerZaloId || !groupId) return { members: [], total: 0 };
+        this.ensureFoldFunction();
+        const limit = Math.min(Math.max(Math.floor(Number(options.limit) || 50), 1), 500);
+        const offset = Math.max(Math.floor(Number(options.offset) || 0), 0);
+        const ownerRole = Number(options.ownerRole) === 1 ? 1 : 2;
+        // Id thành viên chỉ gồm chữ số (bỏ rác của các lần parse lỗi cũ như "profiles") — như CRM Nhóm
+        const conditions = [`owner_zalo_id = ?`, `group_id = ?`, `member_id GLOB '[0-9]*'`, `member_id NOT GLOB '*[^0-9]*'`];
+        const params: unknown[] = [ownerZaloId, groupId];
+        const query = foldSearchText(options.query);
+        if (query) {
+            const like = `%${escapeLikePattern(query)}%`;
+            conditions.push(`(deplao_fold(display_name) LIKE ? ESCAPE '\\' OR deplao_fold(username) LIKE ? ESCAPE '\\' OR member_id LIKE ? ESCAPE '\\')`);
+            params.push(like, like, like);
+        }
+        const where = conditions.join(' AND ');
+        const total = Number(this.queryOne<{ n: number }>(`SELECT COUNT(*) AS n FROM page_group_member WHERE ${where}`, params)?.n || 0);
+        const members = this.query<any>(
+            `SELECT member_id, display_name, avatar, role, username, updated_at
+             FROM page_group_member
+             WHERE ${where}
+             ORDER BY CASE WHEN role = ? THEN 0 WHEN role > 0 THEN 1 ELSE 2 END,
+                      CASE WHEN TRIM(COALESCE(display_name, '')) = '' OR display_name = member_id THEN 1 ELSE 0 END,
+                      deplao_fold(display_name), member_id
+             LIMIT ? OFFSET ?`,
+            [...params, ownerRole, limit, offset],
+        );
+        return { members, total };
     }
 
     /** Lấy tất cả thành viên nhóm cho tất cả các nhóm của một tài khoản (bulk load) */
@@ -6233,10 +7135,12 @@ class DatabaseService {
         contactTypes?: ('friend' | 'group' | 'non_friend')[];
         sortBy?: 'name' | 'last_message'; sortDir?: 'asc' | 'desc';
         limit?: number; offset?: number;
+        /** Nhãn / Có SĐT / Có ghi chú / Giới tính / Sinh nhật — lọc trước khi cắt trang (shared/crmContactFilters) */
+        filters?: CRMContactFilters;
     } = {}): { contacts: any[]; total: number } {
         if (!this.initialized) return { contacts: [], total: 0 };
         try {
-            const { search, isFriendOnly, contactType = 'all', contactTypes, sortBy = 'name', sortDir = 'asc', limit = 50, offset = 0 } = opts;
+            const { search, isFriendOnly, contactType = 'all', contactTypes, sortBy = 'name', sortDir = 'asc', limit = 50, offset = 0, filters } = opts;
 
             let all: any[] = [];
 
@@ -6252,7 +7156,7 @@ class DatabaseService {
                     `SELECT contact_id, COALESCE(alias,'') as alias, COALESCE(display_name,'') as display_name,
                         COALESCE(avatar_url,'') as avatar, '' as phone,
                         0 as is_friend, COALESCE(last_message_time,0) as last_message_time, 'group' as contact_type,
-                        gender, birthday
+                        gender, birthday, COALESCE(info_refreshed_at,0) as info_refreshed_at
                      FROM contacts WHERE owner_zalo_id=? AND contact_type='group'
                      AND contact_id IS NOT NULL AND contact_id != ''`,
                     [ownerZaloId]
@@ -6266,7 +7170,7 @@ class DatabaseService {
                         COALESCE(c.phone, f.phone,'') as phone,
                         1 as is_friend,
                         COALESCE(c.last_message_time, 0) as last_message_time, 'user' as contact_type,
-                        c.gender, c.birthday
+                        c.gender, c.birthday, COALESCE(c.info_refreshed_at,0) as info_refreshed_at
                      FROM friends f
                      LEFT JOIN contacts c ON c.owner_zalo_id=f.owner_zalo_id AND c.contact_id=f.user_id
                      WHERE f.owner_zalo_id=?`,
@@ -6281,7 +7185,7 @@ class DatabaseService {
                         COALESCE(c.phone, f.phone,'') as phone,
                         1 as is_friend,
                         COALESCE(c.last_message_time, 0) as last_message_time, 'user' as contact_type,
-                        c.gender, c.birthday
+                        c.gender, c.birthday, COALESCE(c.info_refreshed_at,0) as info_refreshed_at
                      FROM friends f
                      LEFT JOIN contacts c ON c.owner_zalo_id=f.owner_zalo_id AND c.contact_id=f.user_id
                      WHERE f.owner_zalo_id=?`,
@@ -6293,7 +7197,7 @@ class DatabaseService {
                         COALESCE(avatar_url,'') as avatar, COALESCE(phone,'') as phone,
                         is_friend, COALESCE(last_message_time,0) as last_message_time,
                         COALESCE(contact_type,'user') as contact_type,
-                        gender, birthday
+                        gender, birthday, COALESCE(info_refreshed_at,0) as info_refreshed_at
                      FROM contacts WHERE owner_zalo_id=?
                      AND contact_id IS NOT NULL AND contact_id != ''`,
                     [ownerZaloId]
@@ -6329,6 +7233,29 @@ class DatabaseService {
                 );
             }
 
+            // Bộ lọc của trang Liên hệ — trên TOÀN BỘ danh sách (trước đây CRMPage chỉ lọc trang đang tải)
+            let allNoteCounts: Map<string, number> | null = null;
+            if (hasCRMContactFilters(filters)) {
+                const localIds = (filters!.localLabelIds || []).map(Number).filter(Number.isFinite);
+                const localByThread = new Map<string, Set<number>>();
+                if (localIds.length > 0) {
+                    this.query<any>(
+                        `SELECT thread_id, label_id FROM local_label_threads WHERE owner_zalo_id=? AND label_id IN (${localIds.map(() => '?').join(',')})`,
+                        [ownerZaloId, ...localIds]
+                    ).forEach((r: any) => {
+                        const key = String(r.thread_id);
+                        if (!localByThread.has(key)) localByThread.set(key, new Set());
+                        localByThread.get(key)!.add(Number(r.label_id));
+                    });
+                }
+                if (filters!.hasNotes) allNoteCounts = this.getCRMNoteCounts(ownerZaloId);
+                const matches = createCRMContactFilter(filters, {
+                    localLabelsOf: (id) => localByThread.get(id),
+                    noteCountOf: (id) => allNoteCounts?.get(id) ?? 0,
+                });
+                if (matches) all = all.filter(matches);
+            }
+
             // Sort
             all.sort((a, b) => {
                 let va: any, vb: any;
@@ -6347,23 +7274,32 @@ class DatabaseService {
 
             // Paginate + note counts
             const page = all.slice(offset, offset + limit);
-            const pageIds = page.map((c: any) => c.contact_id);
-            const noteCountMap: Record<string, number> = {};
-            if (pageIds.length > 0) {
-                const placeholders = pageIds.map(() => '?').join(',');
-                this.query<any>(
-                    `SELECT contact_id, COUNT(*) as n FROM crm_notes WHERE owner_zalo_id=? AND contact_id IN (${placeholders}) GROUP BY contact_id`,
-                    [ownerZaloId, ...pageIds]
-                ).forEach((r: any) => { noteCountMap[r.contact_id] = r.n; });
-            }
+            const noteCounts = allNoteCounts ?? this.getCRMNoteCounts(ownerZaloId, page.map((c: any) => String(c.contact_id)));
 
             const contacts = page.map((c: any) => ({
                 ...c,
-                note_count: noteCountMap[c.contact_id] || 0,
+                note_count: noteCounts.get(String(c.contact_id)) || 0,
             }));
 
             return { contacts, total };
         } catch (err: any) { Logger.error(`[DB] getCRMContacts: ${err.message}`); return { contacts: [], total: 0 }; }
+    }
+
+    /**
+     * Số ghi chú CRM theo liên hệ. Trang lớn (Xuất CSV lấy tới 100.000 dòng) đếm cả tài khoản bằng một GROUP BY —
+     * danh sách `IN (?, …)` dài vượt giới hạn tham số của SQLite làm cả truy vấn lỗi (danh sách xuất ra rỗng).
+     */
+    private getCRMNoteCounts(ownerZaloId: string, contactIds?: string[]): Map<string, number> {
+        const counts = new Map<string, number>();
+        if (contactIds && contactIds.length === 0) return counts;
+        const byIds = !!contactIds && contactIds.length <= 500;
+        this.query<any>(
+            byIds
+                ? `SELECT contact_id, COUNT(*) as n FROM crm_notes WHERE owner_zalo_id=? AND contact_id IN (${contactIds!.map(() => '?').join(',')}) GROUP BY contact_id`
+                : `SELECT contact_id, COUNT(*) as n FROM crm_notes WHERE owner_zalo_id=? GROUP BY contact_id`,
+            byIds ? [ownerZaloId, ...contactIds!] : [ownerZaloId]
+        ).forEach((r: any) => { counts.set(String(r.contact_id), Number(r.n) || 0); });
+        return counts;
     }
 
     /** Activity stats for a given time window - used by CRM Dashboard */
@@ -6498,8 +7434,10 @@ class DatabaseService {
     }
 
     /**
-     * Message volume timeline: messages per hour or per day
-     * granularity: 'hour' (24 data points for a day) or 'day' (N data points for a range)
+     * Message volume timeline: messages per local clock hour ('hour') or local calendar day ('day').
+     * Buckets follow the calendar whatever sinceTs is (see shared/localTimeBuckets): bucketing by
+     * (timestamp - sinceTs) / 86400000 shifted every day by the time of day of sinceTs and left
+     * the last bucket ("today") always empty.
      */
     public getMessageVolume(zaloId: string, sinceTs: number, untilTs: number, granularity: 'hour' | 'day', threadType?: number): Array<{
         bucket: string; sent: number; received: number; total: number;
@@ -6508,52 +7446,24 @@ class DatabaseService {
         try {
             const threadFilter = threadType !== undefined && threadType !== -1 ? ' AND thread_type = ?' : '';
             const threadParams = threadType !== undefined && threadType !== -1 ? [threadType] : [];
-            let sql: string;
-            if (granularity === 'hour') {
-                sql = `SELECT
-                    CAST((timestamp - ?) / 3600000 AS INTEGER) as hour_idx,
+            const bucketExpr = granularity === 'hour' ? sqlLocalHour('timestamp') : sqlLocalDay('timestamp');
+            const rows = this.query<any>(
+                `SELECT ${bucketExpr} as bucket_key,
                     COUNT(*) as total,
                     COALESCE(SUM(CASE WHEN is_sent=1 THEN 1 ELSE 0 END),0) as sent
                 FROM messages
                 WHERE owner_zalo_id = ? AND timestamp >= ? AND timestamp <= ?${threadFilter}
-                GROUP BY hour_idx
-                ORDER BY hour_idx`;
-                const rows = this.query<any>(sql, [sinceTs, zaloId, sinceTs, untilTs, ...threadParams]);
-                const totalHours = Math.ceil((untilTs - sinceTs) / 3600000);
-                const result: Array<{ bucket: string; sent: number; received: number; total: number }> = [];
-                const rowMap = new Map(rows.map((r: any) => [r.hour_idx, r]));
-                for (let i = 0; i < totalHours; i++) {
-                    const d = new Date(sinceTs + i * 3600000);
-                    const label = `${d.getHours().toString().padStart(2, '0')}:00`;
-                    const r = rowMap.get(i);
-                    const total = r?.total || 0;
-                    const sent = r?.sent || 0;
-                    result.push({ bucket: label, sent, received: total - sent, total });
-                }
-                return result;
-            } else {
-                sql = `SELECT
-                    CAST((timestamp - ?) / 86400000 AS INTEGER) as day_idx,
-                    COUNT(*) as total,
-                    COALESCE(SUM(CASE WHEN is_sent=1 THEN 1 ELSE 0 END),0) as sent
-                FROM messages
-                WHERE owner_zalo_id = ? AND timestamp >= ? AND timestamp <= ?${threadFilter}
-                GROUP BY day_idx
-                ORDER BY day_idx`;
-                const rows = this.query<any>(sql, [sinceTs, zaloId, sinceTs, untilTs, ...threadParams]);
-                const totalDays = Math.ceil((untilTs - sinceTs) / 86400000) + 1;
-                const result: Array<{ bucket: string; sent: number; received: number; total: number }> = [];
-                const rowMap = new Map(rows.map((r: any) => [r.day_idx, r]));
-                for (let i = 0; i < totalDays; i++) {
-                    const d = new Date(sinceTs + i * 86400000);
-                    const label = `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}`;
-                    const r = rowMap.get(i);
-                    const total = r?.total || 0;
-                    const sent = r?.sent || 0;
-                    result.push({ bucket: label, sent, received: total - sent, total });
-                }
-                return result;
-            }
+                GROUP BY bucket_key`,
+                [zaloId, sinceTs, untilTs, ...threadParams]
+            );
+            const rowMap = new Map(rows.map((r: any) => [r.bucket_key, r]));
+            const buckets = granularity === 'hour' ? localHourBuckets(sinceTs, untilTs) : localDayBuckets(sinceTs, untilTs);
+            return buckets.map(b => {
+                const r = rowMap.get(b.key);
+                const total = Number(r?.total || 0);
+                const sent = Number(r?.sent || 0);
+                return { bucket: b.label, sent, received: total - sent, total };
+            });
         } catch (err: any) {
             Logger.error(`[DB] getMessageVolume: ${err.message}`);
             return [];
@@ -6571,8 +7481,12 @@ class DatabaseService {
      *          totalConversations (threads with at least 1 reply pair),
      *          totalReplies, distribution (bucketed histogram),
      *          byHour (avg response time by hour of day)
+     *
+     * Several accounts (Reports multi-select) are measured in one query, so the median / min / max
+     * cover all their replies; a thread is keyed by (owner, thread) there — the same customer chatting
+     * with two accounts stays two conversations. One account keeps the original single-owner SQL.
      */
-    public getResponseTimeStats(zaloId: string, sinceTs: number, untilTs: number, threadType?: number): {
+    public getResponseTimeStats(zaloIds: string | string[], sinceTs: number, untilTs: number, threadType?: number): {
         avgSeconds: number;
         medianSeconds: number;
         minSeconds: number;
@@ -6583,40 +7497,44 @@ class DatabaseService {
         byHour: Array<{ hour: number; avgSeconds: number; count: number }>;
     } {
         const empty = { avgSeconds: 0, medianSeconds: 0, minSeconds: 0, maxSeconds: 0, totalConversations: 0, totalReplies: 0, distribution: [], byHour: [] };
-        if (!this.initialized || !zaloId) return empty;
+        const accountIds = analyticsAccountIds(zaloIds);
+        if (!this.initialized || accountIds.length === 0) return empty;
         try {
             const ttFilter = threadType !== undefined && threadType !== -1 ? threadType : 0;
+            const multi = accountIds.length > 1;
+            const owner = multi ? 'owner_zalo_id, ' : '';
+            const threadKey = multi ? 'owner_zalo_id || char(31) || thread_id' : 'thread_id';
             // Keep aggregation inside SQLite.  The former implementation copied
             // every message in the selected period into V8 and built large JS
             // arrays before returning a small summary.  At millions of messages
             // that can exhaust Electron's main-process heap.
             const repliesCte = `
                 WITH ordered AS (
-                    SELECT thread_id, is_sent, timestamp, id,
+                    SELECT ${owner}thread_id, is_sent, timestamp, id,
                         COALESCE(SUM(CASE WHEN is_sent = 1 THEN 1 ELSE 0 END) OVER (
-                            PARTITION BY thread_id ORDER BY timestamp ASC, id ASC
+                            PARTITION BY ${owner}thread_id ORDER BY timestamp ASC, id ASC
                             ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
                         ), 0) AS sent_before
                     FROM messages
-                    WHERE owner_zalo_id = ? AND thread_type = ?
+                    WHERE ${sqlAccountFilter('owner_zalo_id', accountIds)} AND thread_type = ?
                       AND timestamp >= ? AND timestamp <= ?
                 ), matched AS (
-                    SELECT thread_id, is_sent, timestamp AS reply_ts,
+                    SELECT ${owner}thread_id, is_sent, timestamp AS reply_ts,
                         MAX(CASE WHEN is_sent = 0 THEN timestamp END) OVER (
-                            PARTITION BY thread_id, sent_before
+                            PARTITION BY ${owner}thread_id, sent_before
                         ) AS incoming_ts
                     FROM ordered
                 ), replies AS (
-                    SELECT thread_id, reply_ts, incoming_ts, reply_ts - incoming_ts AS gap_ms
+                    SELECT ${owner}thread_id, reply_ts, incoming_ts, reply_ts - incoming_ts AS gap_ms
                     FROM matched
                     WHERE is_sent = 1 AND incoming_ts IS NOT NULL
                       AND reply_ts >= incoming_ts
                       AND reply_ts - incoming_ts < 604800000
                 )`;
-            const queryParams = [zaloId, ttFilter, sinceTs, untilTs];
+            const queryParams = [...accountIds, ttFilter, sinceTs, untilTs];
             const stats = this.queryOne<any>(`${repliesCte}
                 SELECT COUNT(*) AS total_replies,
-                    COUNT(DISTINCT thread_id) AS total_threads,
+                    COUNT(DISTINCT ${threadKey}) AS total_threads,
                     COALESCE(AVG(gap_ms), 0) AS avg_ms,
                     COALESCE(MIN(gap_ms), 0) AS min_ms,
                     COALESCE(MAX(gap_ms), 0) AS max_ms,
@@ -6699,26 +7617,19 @@ class DatabaseService {
             );
             const totalLabelsUsed = labelsUsedRow?.cnt || 0;
 
-            // Avg per day
-            const days = Math.max(1, Math.ceil((untilTs - sinceTs) / 86400000));
+            // Timeline: assignments per local calendar day; avg over the calendar days of the range
+            const dayBuckets = localDayBuckets(sinceTs, untilTs);
+            const days = Math.max(1, dayBuckets.length);
             const avgPerDay = Math.round((totalAssignments / days) * 10) / 10;
-
-            // Timeline: assignments per day
             const timelineRows = this.query<any>(
-                `SELECT CAST((created_at - ?) / 86400000 AS INTEGER) as day_idx, COUNT(*) as cnt
+                `SELECT ${sqlLocalDay('created_at')} as day_key, COUNT(*) as cnt
                  FROM local_label_threads
                  WHERE owner_zalo_id = ? AND created_at >= ? AND created_at <= ?
-                 GROUP BY day_idx
-                 ORDER BY day_idx`,
-                [sinceTs, zaloId, sinceTs, untilTs]
+                 GROUP BY day_key`,
+                [zaloId, sinceTs, untilTs]
             );
-            const timelineMap = new Map(timelineRows.map((r: any) => [r.day_idx, r.cnt]));
-            const timeline: Array<{ bucket: string; count: number }> = [];
-            for (let i = 0; i < days; i++) {
-                const d = new Date(sinceTs + i * 86400000);
-                const label = `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}`;
-                timeline.push({ bucket: label, count: (timelineMap.get(i) as number) || 0 });
-            }
+            const timelineMap = new Map<string, number>(timelineRows.map((r: any) => [r.day_key, Number(r.cnt) || 0]));
+            const timeline: Array<{ bucket: string; count: number }> = dayBuckets.map(b => ({ bucket: b.label, count: timelineMap.get(b.key) || 0 }));
 
             // By label breakdown
             const byLabel = this.query<any>(
@@ -6821,25 +7732,19 @@ class DatabaseService {
             );
             for (const f of friendRows) friendSet.add(`${f.owner_zalo_id}_${f.user_id}`);
 
-            const totalDays = Math.ceil((untilTs - sinceTs) / 86400000) + 1;
-            const buckets: Array<{ bucket: string; newContacts: number; newFriends: number }> = [];
-            const dayMap = new Map<number, { contacts: number; friends: number }>();
-
+            // Bucket by the local calendar day of the first message.
+            const dayMap = new Map<string, { contacts: number; friends: number }>();
             for (const r of rows) {
-                const dayIdx = Math.floor((r.first_ts - sinceTs) / 86400000);
-                const entry = dayMap.get(dayIdx) || { contacts: 0, friends: 0 };
+                const dayKey = localDayKey(Number(r.first_ts));
+                const entry = dayMap.get(dayKey) || { contacts: 0, friends: 0 };
                 entry.contacts++;
                 if (friendSet.has(`${r.owner_zalo_id}_${r.thread_id}`)) entry.friends++;
-                dayMap.set(dayIdx, entry);
+                dayMap.set(dayKey, entry);
             }
-
-            for (let i = 0; i < totalDays; i++) {
-                const d = new Date(sinceTs + i * 86400000);
-                const label = `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}`;
-                const entry = dayMap.get(i) || { contacts: 0, friends: 0 };
-                buckets.push({ bucket: label, newContacts: entry.contacts, newFriends: entry.friends });
-            }
-            return buckets;
+            return localDayBuckets(sinceTs, untilTs).map(b => {
+                const entry = dayMap.get(b.key);
+                return { bucket: b.label, newContacts: entry?.contacts || 0, newFriends: entry?.friends || 0 };
+            });
         } catch (err: any) {
             Logger.error(`[DB] getContactGrowth: ${err.message}`);
             return [];
@@ -6984,28 +7889,23 @@ class DatabaseService {
                 [zaloId, sinceTs, untilTs]
             )?.cnt || 0;
 
-            const totalDays = Math.ceil((untilTs - sinceTs) / 86400000) + 1;
             const sentRows = this.query<any>(
-                `SELECT CAST((created_at - ?) / 86400000 AS INTEGER) as day_idx, COUNT(*) as cnt
+                `SELECT ${sqlLocalDay('created_at')} as day_key, COUNT(*) as cnt
                  FROM friend_requests WHERE owner_zalo_id = ? AND direction='sent' AND created_at >= ? AND created_at <= ?
-                 GROUP BY day_idx`,
-                [sinceTs, zaloId, sinceTs, untilTs]
+                 GROUP BY day_key`,
+                [zaloId, sinceTs, untilTs]
             );
             const recvRows = this.query<any>(
-                `SELECT CAST((created_at - ?) / 86400000 AS INTEGER) as day_idx, COUNT(*) as cnt
+                `SELECT ${sqlLocalDay('created_at')} as day_key, COUNT(*) as cnt
                  FROM friend_requests WHERE owner_zalo_id = ? AND direction='received' AND created_at >= ? AND created_at <= ?
-                 GROUP BY day_idx`,
-                [sinceTs, zaloId, sinceTs, untilTs]
+                 GROUP BY day_key`,
+                [zaloId, sinceTs, untilTs]
             );
-            const sentMap = new Map(sentRows.map((r: any) => [r.day_idx, r.cnt]));
-            const recvMap = new Map(recvRows.map((r: any) => [r.day_idx, r.cnt]));
+            const sentMap = new Map<string, number>(sentRows.map((r: any) => [r.day_key, Number(r.cnt) || 0]));
+            const recvMap = new Map<string, number>(recvRows.map((r: any) => [r.day_key, Number(r.cnt) || 0]));
 
-            const timeline: Array<{ bucket: string; sent: number; received: number }> = [];
-            for (let i = 0; i < totalDays; i++) {
-                const d = new Date(sinceTs + i * 86400000);
-                const label = `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}`;
-                timeline.push({ bucket: label, sent: sentMap.get(i) || 0, received: recvMap.get(i) || 0 });
-            }
+            const timeline: Array<{ bucket: string; sent: number; received: number }> = localDayBuckets(sinceTs, untilTs)
+                .map(b => ({ bucket: b.label, sent: sentMap.get(b.key) || 0, received: recvMap.get(b.key) || 0 }));
 
             return { totalSent: sentCount, totalReceived: receivedCount, timeline };
         } catch (err: any) {
@@ -7017,21 +7917,26 @@ class DatabaseService {
     // ─── Workflow Analytics ─────────────────────────────────────────────────
 
     /**
-     * Workflow analytics for a specific account: run counts, success/error rate, top workflows
+     * Workflow analytics for an account: run counts, success/error rate, top workflows.
+     * Several accounts (Reports multi-select): workflows attached to ANY of them, each run counted
+     * once — runs carry no account, so summing per-account reports would count a workflow shared by
+     * two selected accounts (page_ids) twice.
      */
-    public getWorkflowAnalytics(zaloId: string, sinceTs: number, untilTs: number): {
+    public getWorkflowAnalytics(zaloIds: string | string[], sinceTs: number, untilTs: number): {
         totalRuns: number; successRuns: number; errorRuns: number; successRate: number;
         avgDuration: number;
         topWorkflows: Array<{ workflowName: string; runs: number; successRate: number }>;
         timeline: Array<{ bucket: string; success: number; error: number }>;
     } {
         const empty = { totalRuns: 0, successRuns: 0, errorRuns: 0, successRate: 0, avgDuration: 0, topWorkflows: [], timeline: [] };
-        if (!this.initialized || !zaloId) return empty;
+        const accountIds = analyticsAccountIds(zaloIds);
+        if (!this.initialized || accountIds.length === 0) return empty;
         try {
-            // Get workflows that belong to this account
+            // Get workflows that belong to these accounts
+            const wanted = new Set(accountIds);
             const allWfs = this.query<any>(`SELECT id, name, page_ids FROM workflows`);
             const accountWfIds = allWfs
-                .filter((w: any) => (w.page_ids || '').split(',').filter(Boolean).includes(zaloId))
+                .filter((w: any) => (w.page_ids || '').split(',').filter(Boolean).some((id: string) => wanted.has(id)))
                 .map((w: any) => w.id);
             if (accountWfIds.length === 0) return empty;
 
@@ -7068,25 +7973,21 @@ class DatabaseService {
                 successRate: r.runs > 0 ? Math.round(r.success_cnt / r.runs * 100) : 0,
             }));
 
-            // Timeline by day
-            const totalDays = Math.ceil((untilTs - sinceTs) / 86400000) + 1;
+            // Timeline by local calendar day
             const tlRows = this.query<any>(
-                `SELECT CAST((started_at - ?) / 86400000 AS INTEGER) as day_idx,
+                `SELECT ${sqlLocalDay('started_at')} as day_key,
                     COALESCE(SUM(CASE WHEN status='success' THEN 1 ELSE 0 END),0) as s,
                     COALESCE(SUM(CASE WHEN status='error' THEN 1 ELSE 0 END),0) as e
                  FROM workflow_run_logs
                  WHERE workflow_id IN (${ph}) AND started_at >= ? AND started_at <= ?
-                 GROUP BY day_idx ORDER BY day_idx`,
-                [sinceTs, ...accountWfIds, sinceTs, untilTs]
+                 GROUP BY day_key`,
+                [...accountWfIds, sinceTs, untilTs]
             );
-            const tlMap = new Map(tlRows.map((r: any) => [r.day_idx, r]));
-            const timeline: Array<{ bucket: string; success: number; error: number }> = [];
-            for (let i = 0; i < totalDays; i++) {
-                const d = new Date(sinceTs + i * 86400000);
-                const label = `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}`;
-                const r = tlMap.get(i);
-                timeline.push({ bucket: label, success: r?.s || 0, error: r?.e || 0 });
-            }
+            const tlMap = new Map(tlRows.map((r: any) => [r.day_key, r]));
+            const timeline: Array<{ bucket: string; success: number; error: number }> = localDayBuckets(sinceTs, untilTs).map(b => {
+                const r = tlMap.get(b.key);
+                return { bucket: b.label, success: Number(r?.s || 0), error: Number(r?.e || 0) };
+            });
 
             return {
                 totalRuns, successRuns, errorRuns,
@@ -7141,23 +8042,19 @@ class DatabaseService {
                 [sinceTs, untilTs]
             );
 
-            // Timeline by day
-            const totalDays = Math.ceil((untilTs - sinceTs) / 86400000) + 1;
+            // Timeline by local calendar day
             const tlRows = this.query<any>(
-                `SELECT CAST((created_at - ?) / 86400000 AS INTEGER) as day_idx,
+                `SELECT ${sqlLocalDay('created_at')} as day_key,
                     COUNT(*) as requests, COALESCE(SUM(total_tokens),0) as tokens
                  FROM ai_usage_logs WHERE created_at >= ? AND created_at <= ?
-                 GROUP BY day_idx ORDER BY day_idx`,
-                [sinceTs, sinceTs, untilTs]
+                 GROUP BY day_key`,
+                [sinceTs, untilTs]
             );
-            const tlMap = new Map(tlRows.map((r: any) => [r.day_idx, r]));
-            const timeline: Array<{ bucket: string; requests: number; tokens: number }> = [];
-            for (let i = 0; i < totalDays; i++) {
-                const d = new Date(sinceTs + i * 86400000);
-                const label = `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}`;
-                const r = tlMap.get(i);
-                timeline.push({ bucket: label, requests: r?.requests || 0, tokens: r?.tokens || 0 });
-            }
+            const tlMap = new Map(tlRows.map((r: any) => [r.day_key, r]));
+            const timeline: Array<{ bucket: string; requests: number; tokens: number }> = localDayBuckets(sinceTs, untilTs).map(b => {
+                const r = tlMap.get(b.key);
+                return { bucket: b.label, requests: Number(r?.requests || 0), tokens: Number(r?.tokens || 0) };
+            });
 
             return {
                 totalRequests: statsRow?.total || 0,
@@ -7564,6 +8461,125 @@ class DatabaseService {
         }
     }
 
+    // ─── Tự động đánh dấu đã đọc ─────────────────────────────────────────
+
+    /**
+     * Hội thoại chưa đọc (còn tin chưa đọc hoặc còn dấu @) của 1 tài khoản, lọc theo thời gian tin cuối
+     * (ms, bao gồm 2 đầu), mới nhất trước. Dùng cho "Tự động đánh dấu đã đọc".
+     */
+    public getUnreadConversations(ownerZaloId: string, opts: {
+        from?: number; to?: number; includeOthers?: boolean; channel?: string;
+    } = {}): Array<{
+        contact_id: string; contact_type: string; channel: string; display_name: string; alias: string;
+        unread_count: number; has_mention: number; last_message_time: number; is_in_others: number;
+        telegram_membership_state: string | null;
+    }> {
+        if (!this.initialized || !ownerZaloId) return [];
+        try {
+            const conditions = ['owner_zalo_id = ?', '(unread_count > 0 OR IFNULL(has_mention, 0) = 1)'];
+            const params: any[] = [ownerZaloId];
+            if (!opts.includeOthers) conditions.push('IFNULL(is_in_others, 0) = 0');
+            if (Number.isFinite(opts.from)) { conditions.push('IFNULL(last_message_time, 0) >= ?'); params.push(Number(opts.from)); }
+            if (Number.isFinite(opts.to)) { conditions.push('IFNULL(last_message_time, 0) <= ?'); params.push(Number(opts.to)); }
+            if (opts.channel && opts.channel !== 'all') { conditions.push("IFNULL(channel, 'zalo') = ?"); params.push(opts.channel); }
+            return this.query<any>(
+                `SELECT contact_id, contact_type, channel, display_name, alias, unread_count, has_mention,
+                        last_message_time, is_in_others, telegram_membership_state
+                 FROM contacts WHERE ${conditions.join(' AND ')}
+                 ORDER BY last_message_time DESC
+                 LIMIT 20000`,
+                params,
+            );
+        } catch (err: any) {
+            Logger.error(`[DB] getUnreadConversations error: ${err.message}`);
+            return [];
+        }
+    }
+
+    // ─── Starred messages ("Tin đánh dấu") ───────────────────────────────
+
+    /** (thread_id, msg_id) các tin đang được đánh dấu của 1 tài khoản. */
+    public getStarredMessageKeys(ownerZaloId: string): Array<{ thread_id: string; msg_id: string }> {
+        if (!this.initialized || !ownerZaloId) return [];
+        try {
+            return this.query<{ thread_id: string; msg_id: string }>(
+                `SELECT thread_id, msg_id FROM starred_messages WHERE owner_zalo_id = ?`,
+                [ownerZaloId],
+            );
+        } catch (err: any) {
+            Logger.error(`[DB] getStarredMessageKeys error: ${err.message}`);
+            return [];
+        }
+    }
+
+    /**
+     * Tin đánh dấu của các tài khoản, mới đánh dấu trước. Kèm tin nhắn hiện tại (LEFT JOIN - null khi tin đã bị
+     * xoá khỏi app, khi đó renderer dùng snapshot), tên/ảnh người gửi và hội thoại.
+     */
+    public getStarredMessages(ownerZaloIds: string[], limit = 50, offset = 0): any[] {
+        const owners = [...new Set((ownerZaloIds || []).map(String).filter(Boolean))].slice(0, 50);
+        if (!this.initialized || owners.length === 0) return [];
+        try {
+            const placeholders = owners.map(() => '?').join(',');
+            return this.query<any>(
+                `SELECT s.owner_zalo_id, s.thread_id, s.msg_id, s.starred_at, s.snapshot,
+                        m.sender_id, m.content, m.msg_type, m.timestamp, m.attachments, m.local_paths,
+                        m.thread_type, m.channel, m.is_sent, m.is_recalled,
+                        COALESCE(NULLIF(gm.display_name, ''), NULLIF(sc.alias, ''), NULLIF(sc.display_name, '')) AS sender_name,
+                        COALESCE(NULLIF(gm.avatar, ''), NULLIF(sc.avatar_url, '')) AS sender_avatar,
+                        c.display_name AS thread_name, c.alias AS thread_alias, c.avatar_url AS thread_avatar,
+                        c.contact_type AS thread_contact_type, c.channel AS thread_channel
+                 FROM starred_messages s
+                 LEFT JOIN messages m ON m.msg_id = s.msg_id AND m.owner_zalo_id = s.owner_zalo_id AND m.thread_id = s.thread_id
+                 LEFT JOIN contacts c ON c.owner_zalo_id = s.owner_zalo_id AND c.contact_id = s.thread_id
+                 LEFT JOIN page_group_member gm ON gm.owner_zalo_id = s.owner_zalo_id AND gm.group_id = s.thread_id AND gm.member_id = m.sender_id
+                 LEFT JOIN contacts sc ON sc.owner_zalo_id = s.owner_zalo_id AND sc.contact_id = m.sender_id
+                 WHERE s.owner_zalo_id IN (${placeholders})
+                 ORDER BY s.starred_at DESC
+                 LIMIT ? OFFSET ?`,
+                [...owners, Math.max(1, Math.min(500, Number(limit) || 50)), Math.max(0, Number(offset) || 0)],
+            );
+        } catch (err: any) {
+            Logger.error(`[DB] getStarredMessages error: ${err.message}`);
+            return [];
+        }
+    }
+
+    /** Đánh dấu / bỏ đánh dấu 1 tin. `snapshot` (JSON) giữ nội dung để vẫn xem được khi tin bị xoá khỏi app. */
+    public setMessageStarred(ownerZaloId: string, threadId: string, msgId: string, starred: boolean, snapshot?: unknown): void {
+        if (!this.initialized || !ownerZaloId || !threadId || !msgId) return;
+        try {
+            if (starred) {
+                let snap: string | null = null;
+                if (snapshot && typeof snapshot === 'object') {
+                    snap = JSON.stringify(snapshot);
+                    // Giữ bảng gọn: nội dung quá lớn → bỏ phần nặng, giữ tên / loại / thời gian
+                    if (snap.length > 32_000) {
+                        const { content, attachments, localPaths, ...light } = snapshot as Record<string, unknown>;
+                        void content; void attachments; void localPaths;
+                        snap = JSON.stringify(light);
+                    }
+                } else if (typeof snapshot === 'string' && snapshot.length <= 32_000) {
+                    snap = snapshot;
+                }
+                this.run(
+                    `INSERT INTO starred_messages (owner_zalo_id, thread_id, msg_id, starred_at, snapshot) VALUES (?,?,?,?,?)
+                     ON CONFLICT(owner_zalo_id, thread_id, msg_id) DO UPDATE SET
+                       starred_at = excluded.starred_at,
+                       snapshot = COALESCE(excluded.snapshot, starred_messages.snapshot)`,
+                    [ownerZaloId, threadId, msgId, Date.now(), snap],
+                );
+            } else {
+                this.run(
+                    `DELETE FROM starred_messages WHERE owner_zalo_id = ? AND thread_id = ? AND msg_id = ?`,
+                    [ownerZaloId, threadId, msgId],
+                );
+            }
+        } catch (err: any) {
+            Logger.error(`[DB] setMessageStarred error: ${err.message}`);
+        }
+    }
+
     // ─── Local Pinned Conversations ──────────────────────────────────────
 
     /** Trả về danh sách threadId đang được ghim cục bộ, sắp xếp mới nhất trước. */
@@ -7802,25 +8818,30 @@ class DatabaseService {
         }
     }
 
-    public getEmployeeStats(employeeId: string, sinceTs?: number, untilTs?: number): any {
+    /**
+     * @param zaloIds only activity on these accounts (Reports account filter); omitted = every account.
+     *                Online hours come from login sessions, which are not per account, and ignore it.
+     */
+    public getEmployeeStats(employeeId: string, sinceTs?: number, untilTs?: number, zaloIds?: string[] | null): any {
         if (!this.initialized) return {};
         try {
             const since = sinceTs || 0;
             const until = untilTs || Date.now();
+            const acc = employeeLogAccountFilter(zaloIds);
             const sent = this.queryOne<any>(
-                `SELECT COUNT(*) as count FROM employee_message_log WHERE employee_id = ? AND action = 'sent' AND timestamp >= ? AND timestamp <= ?`,
-                [employeeId, since, until]
+                `SELECT COUNT(*) as count FROM employee_message_log WHERE employee_id = ? AND action = 'sent' AND timestamp >= ? AND timestamp <= ?${acc.sql}`,
+                [employeeId, since, until, ...acc.params]
             );
             const conversations = this.queryOne<any>(
-                `SELECT COUNT(DISTINCT thread_id) as count FROM employee_message_log WHERE employee_id = ? AND timestamp >= ? AND timestamp <= ?`,
-                [employeeId, since, until]
+                `SELECT COUNT(DISTINCT thread_id) as count FROM employee_message_log WHERE employee_id = ? AND timestamp >= ? AND timestamp <= ?${acc.sql}`,
+                [employeeId, since, until, ...acc.params]
             );
             const avgResponse = this.queryOne<any>(
                 `SELECT AVG(CAST(json_extract(metadata, '$.response_time_ms') AS REAL)) as avg_ms
                  FROM employee_message_log WHERE employee_id = ? AND action = 'replied'
                  AND json_extract(metadata, '$.response_time_ms') IS NOT NULL
-                 AND timestamp >= ? AND timestamp <= ?`,
-                [employeeId, since, until]
+                 AND timestamp >= ? AND timestamp <= ?${acc.sql}`,
+                [employeeId, since, until, ...acc.params]
             );
             // Include sessions that OVERLAP with the [since, until] window
             // (not just sessions that started within the window)
@@ -7915,22 +8936,26 @@ class DatabaseService {
 
     /**
      * Get message volume per employee per day (for timeline charts)
+     * @param zaloIds only activity on these accounts; omitted = every account.
      */
-    public getEmployeeMessageTimeline(sinceTs: number, untilTs: number): any[] {
+    public getEmployeeMessageTimeline(sinceTs: number, untilTs: number, zaloIds?: string[] | null): any[] {
         if (!this.initialized) return [];
         try {
+            const acc = employeeLogAccountFilter(zaloIds);
+            // day_index = local calendar days since the day of sinceTs
+            // (EmployeeAnalyticsTab labels it with addLocalDays(sinceTs, day_index)).
             return this.query<any>(
                 `SELECT
                     employee_id,
-                    CAST((timestamp - ?) / 86400000 AS INTEGER) as day_index,
+                    CAST(julianday(${sqlLocalDay('timestamp')}) - julianday(?) AS INTEGER) as day_index,
                     COUNT(*) as count,
                     SUM(CASE WHEN action = 'sent' THEN 1 ELSE 0 END) as sent,
                     SUM(CASE WHEN action = 'received' THEN 1 ELSE 0 END) as received
                  FROM employee_message_log
-                 WHERE timestamp >= ? AND timestamp <= ?
+                 WHERE timestamp >= ? AND timestamp <= ?${acc.sql}
                  GROUP BY employee_id, day_index
                  ORDER BY day_index ASC`,
-                [sinceTs, sinceTs, untilTs]
+                [localDayKey(sinceTs), sinceTs, untilTs, ...acc.params]
             );
         } catch (err: any) {
             Logger.error(`[DB] getEmployeeMessageTimeline error: ${err.message}`);
@@ -7952,8 +8977,7 @@ class DatabaseService {
                 [untilTs, sinceTs]
             );
 
-            // Build per-employee per-day hours
-            const dayMs = 86400000;
+            // Build per-employee per-day hours (day 0 = the local calendar day of sinceTs)
             const result: any[] = [];
             const map = new Map<string, Map<number, number>>(); // employeeId -> dayIndex -> ms
 
@@ -7965,14 +8989,12 @@ class DatabaseService {
                 if (!map.has(s.employee_id)) map.set(s.employee_id, new Map());
                 const empMap = map.get(s.employee_id)!;
 
-                // Split across days
+                // Split at local midnights
                 let cursor = start;
                 while (cursor < end) {
-                    const dayIdx = Math.floor((cursor - sinceTs) / dayMs);
-                    const dayEnd = sinceTs + (dayIdx + 1) * dayMs;
-                    const segmentEnd = Math.min(end, dayEnd);
-                    const ms = segmentEnd - cursor;
-                    empMap.set(dayIdx, (empMap.get(dayIdx) || 0) + ms);
+                    const dayIdx = localDayDiff(sinceTs, cursor);
+                    const segmentEnd = Math.min(end, addLocalDays(cursor, 1));
+                    empMap.set(dayIdx, (empMap.get(dayIdx) || 0) + (segmentEnd - cursor));
                     cursor = segmentEnd;
                 }
             }
@@ -7995,18 +9017,20 @@ class DatabaseService {
 
     /**
      * Get response time distribution for all employees (buckets: <1m, 1-5m, 5-15m, 15-30m, 30-60m, 1-4h, 4-24h, >24h)
+     * @param zaloIds only replies on these accounts; omitted = every account.
      */
-    public getEmployeeResponseDistribution(sinceTs: number, untilTs: number): any[] {
+    public getEmployeeResponseDistribution(sinceTs: number, untilTs: number, zaloIds?: string[] | null): any[] {
         if (!this.initialized) return [];
         try {
+            const acc = employeeLogAccountFilter(zaloIds);
             const rows = this.query<any>(
                 `SELECT employee_id,
                     CAST(json_extract(metadata, '$.response_time_ms') AS REAL) as rt_ms
                  FROM employee_message_log
                  WHERE action = 'replied'
                    AND json_extract(metadata, '$.response_time_ms') IS NOT NULL
-                   AND timestamp >= ? AND timestamp <= ?`,
-                [sinceTs, untilTs]
+                   AND timestamp >= ? AND timestamp <= ?${acc.sql}`,
+                [sinceTs, untilTs, ...acc.params]
             );
 
             const buckets = ['<1m', '1-5m', '5-15m', '15-30m', '30-60m', '1-4h', '4-24h', '>24h'];
@@ -8043,20 +9067,22 @@ class DatabaseService {
 
     /**
      * Get hourly activity pattern for employees (which hours they are most active)
+     * @param zaloIds only activity on these accounts; omitted = every account.
      */
-    public getEmployeeHourlyActivity(sinceTs: number, untilTs: number): any[] {
+    public getEmployeeHourlyActivity(sinceTs: number, untilTs: number, zaloIds?: string[] | null): any[] {
         if (!this.initialized) return [];
         try {
+            const acc = employeeLogAccountFilter(zaloIds);
             return this.query<any>(
                 `SELECT
                     employee_id,
                     CAST(strftime('%H', timestamp / 1000, 'unixepoch', 'localtime') AS INTEGER) as hour,
                     COUNT(*) as count
                  FROM employee_message_log
-                 WHERE timestamp >= ? AND timestamp <= ?
+                 WHERE timestamp >= ? AND timestamp <= ?${acc.sql}
                  GROUP BY employee_id, hour
                  ORDER BY hour ASC`,
-                [sinceTs, untilTs]
+                [sinceTs, untilTs, ...acc.params]
             );
         } catch (err: any) {
             Logger.error(`[DB] getEmployeeHourlyActivity error: ${err.message}`);
@@ -8066,8 +9092,9 @@ class DatabaseService {
 
     /**
      * Comprehensive all-employees comparison for a date range
+     * @param zaloIds only activity on these accounts (online hours stay per session); omitted = every account.
      */
-    public getEmployeeComparison(sinceTs: number, untilTs: number): any[] {
+    public getEmployeeComparison(sinceTs: number, untilTs: number, zaloIds?: string[] | null): any[] {
         if (!this.initialized) return [];
         try {
             const employees = this.query<any>(
@@ -8075,7 +9102,7 @@ class DatabaseService {
             );
 
             return employees.map((emp: any) => {
-                const stats = this.getEmployeeStats(emp.employee_id, sinceTs, untilTs);
+                const stats = this.getEmployeeStats(emp.employee_id, sinceTs, untilTs, zaloIds);
                 return {
                     employee_id: emp.employee_id,
                     display_name: emp.display_name,
@@ -8141,11 +9168,16 @@ class DatabaseService {
             [name, avatarUrl, facebookId, Date.now(), id]);
     }
 
-    public deleteFBAccount(id: string): void {
-        this.run(`DELETE FROM fb_messages WHERE account_id = ?`, [id]);
-        this.run(`DELETE FROM fb_threads WHERE account_id = ?`, [id]);
-        this.run(`DELETE FROM fb_crm_contacts WHERE fb_account_id = ?`, [id]);
-        this.run(`DELETE FROM fb_accounts WHERE id = ?`, [id]);
+    /**
+     * Gỡ tài khoản Facebook nhưng GIỮ dữ liệu (như Zalo / Telegram): chỉ xoá phiên đăng nhập của hàng fb_accounts —
+     * cookie thô (cookie_encrypted) và session_data. Kết nối lại (reconnectAllFBAccounts, getFBServiceOrReconnect) lấy
+     * cookie thô làm dự phòng, nên còn cookie là tài khoản đã gỡ tự kết nối lại. Hàng fb_accounts ở lại: hội thoại /
+     * tin nhắn / liên hệ CRM gắn theo ID nội bộ, đăng nhập lại đúng tài khoản thì _addFBAccountCommon (tìm theo
+     * facebook_id) dùng lại ID đó. Xoá cả dữ liệu: deleteAccountData (Cài đặt → Tài khoản → "Xoá tất cả dữ liệu").
+     */
+    public clearFBAccountSession(id: string): void {
+        this.run(`UPDATE fb_accounts SET cookie_encrypted = '', session_data = '', status = 'disconnected', updated_at = ? WHERE id = ?`,
+            [Date.now(), id]);
     }
 
     // ── FB Threads ──
@@ -8342,6 +9374,10 @@ class DatabaseService {
             if (msg.type === 'video') return '🎬 Video';
             if (msg.type === 'audio') return '🎵 Audio';
             if (msg.type === 'sticker') return '🎨 Sticker';
+            // Tin mẫu của Page: chữ của thẻ (tiêu đề, mô tả…) — không bao giờ để rỗng
+            if (msg.type === FB_TEMPLATE_MSG_TYPE) {
+                return fbTemplateText(fbTemplateFromAttachments(msg.attachments)) || '📎 Tin nhắn mẫu';
+            }
             if (msg.type !== 'text') {
                 try {
                     const atts = JSON.parse(msg.attachments || '[]');
@@ -8360,12 +9396,50 @@ class DatabaseService {
             msg.is_self, msg.attachments || '[]', msg.is_self ? 'sent' : 'received',
             msg.reply_to_id || null, quoteData || null]);
 
+        // Hàng đã có nhưng còn rỗng (tin mẫu / đính kèm mà bản cũ chưa đọc được; MQTT và bridge cùng nhận một tin, bên
+        // ghi trước thắng) → lần nhận / đồng bộ sau có dữ liệu thì sửa lại. Chỉ đụng hàng còn rỗng, chưa thu hồi; hàng
+        // vừa chèn hoặc đã có nội dung không đổi (điều kiện WHERE).
+        const newAttachments = msg.attachments || '[]';
+        const hasNewAttachments = !['', '[]', 'null'].includes(newAttachments);
+        if (!msg.is_unsent && (displayContent || hasNewAttachments)) {
+            try {
+                this.run(`
+                    UPDATE messages SET content = ?, msg_type = ?, attachments = ?
+                    WHERE msg_id = ? AND owner_zalo_id = ? AND thread_id = ? AND channel = 'facebook'
+                      AND COALESCE(is_recalled, 0) = 0 AND COALESCE(content, '') = ''
+                      AND COALESCE(attachments, '[]') IN ('', '[]', 'null')
+                `, [displayContent, msg.type || 'text', newAttachments, msg.id, ownerZaloId, msg.thread_id]);
+                this.run(`
+                    UPDATE fb_messages SET body = ?, type = ?, attachments = ?
+                    WHERE id = ? AND account_id = ? AND COALESCE(is_unsent, 0) = 0 AND COALESCE(body, '') = ''
+                      AND COALESCE(attachments, '[]') IN ('', '[]', 'null')
+                `, [msg.body || null, msg.type, newAttachments, msg.id, msg.account_id]);
+                // Xem trước của hội thoại lấy từ chính tin này mà đang "[Tệp đính kèm]" / rỗng → chữ thật
+                if (displayContent) {
+                    this.run(`
+                        UPDATE contacts SET last_message = ?
+                        WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'facebook'
+                          AND last_message_time <= ? AND COALESCE(last_message, '') IN ('', '[Tệp đính kèm]')
+                    `, [displayContent.slice(0, 200), ownerZaloId, msg.thread_id, msg.timestamp]);
+                }
+            } catch (err: any) {
+                Logger.warn(`[DB:saveFBMessage] repair empty row error: ${err.message}`);
+            }
+        }
+        // Tin đã thu hồi trong lịch sử (bridge / GraphQL): hiện "đã thu hồi" thay vì bong bóng rỗng
+        if (msg.is_unsent) {
+            this.run(`
+                UPDATE messages SET is_recalled = 1, content = ''
+                WHERE msg_id = ? AND owner_zalo_id = ? AND thread_id = ? AND channel = 'facebook' AND COALESCE(is_recalled, 0) = 0
+            `, [msg.id, ownerZaloId, msg.thread_id]);
+        }
+
         // Update thread preview + contacts (unified conversation list).
         // A bridge/API history sync calls this method to persist old rows too;
         // those rows are not new notifications and must not re-increment unread
         // counts every time the application starts.
         if (!msg.is_unsent && !msg.is_history && isNewMessage) {
-            const lastMsgPreview = msg.body?.slice(0, 200) || (msg.type === 'image' ? '🖼️ Hình ảnh' : msg.type === 'video' ? '🎬 Video' : msg.type === 'audio' ? '🎵 Audio' : msg.type === 'sticker' ? '🎨 Sticker' : '[Tệp đính kèm]');
+            const lastMsgPreview = msg.body?.slice(0, 200) || (msg.type === FB_TEMPLATE_MSG_TYPE && displayContent ? displayContent.slice(0, 200) : msg.type === 'image' ? '🖼️ Hình ảnh' : msg.type === 'video' ? '🎬 Video' : msg.type === 'audio' ? '🎵 Audio' : msg.type === 'sticker' ? '🎨 Sticker' : '[Tệp đính kèm]');
             this.run(`
                 UPDATE fb_threads SET last_message_preview = ?, last_message_at = ?,
                   unread_count = unread_count + ?

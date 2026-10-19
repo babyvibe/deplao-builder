@@ -1,0 +1,17 @@
+.idea
+
+*.yaml
+!.pre-commit-config.yaml
+!example-config.yaml
+
+*.json
+!**/bloks/minify.json
+*.db
+*.db-shm
+*.db-wal
+*.log
+*.bak
+
+/mautrix-meta
+/mautrix-meta-v2
+/start

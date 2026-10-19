@@ -8,6 +8,7 @@ export type FeatureVisibilityKey =
   | 'integration'
   | 'analytics'
   | 'erp'
+  | 'plugins'
   | 'settings';
 
 const STORAGE_KEY = 'deplao:sidebar-feature-visibility';
@@ -20,6 +21,7 @@ const DEFAULT_VISIBILITY: Record<FeatureVisibilityKey, boolean> = {
   integration: true,
   analytics: true,
   erp: true,
+  plugins: true,
   settings: true,
 };
 

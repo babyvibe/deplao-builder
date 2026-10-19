@@ -1,0 +1,9 @@
+{
+  "name": "@deplao/plugin-cli",
+  "version": "1.0.0",
+  "description": "Tạo, kiểm tra, đóng gói plugin Deplao",
+  "bin": { "deplao-plugin": "bin/deplao-plugin.js" },
+  "files": ["bin", "lib"],
+  "license": "UNLICENSED",
+  "private": true
+}

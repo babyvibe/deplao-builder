@@ -11,6 +11,30 @@ import Logger from '../../src/utils/Logger';
 
 const lib = () => LibraryService.getInstance();
 
+/**
+ * URL local-media:// cho file trên chính máy Boss (handler trong electron/main.ts nhận đường dẫn tuyệt đối).
+ * UI Boss không đi qua HTTP /api/library/* nữa: route đó cần token phiên nhân viên, và cổng relay không cố định 9900.
+ */
+function localMediaUrl(filePath: string | null | undefined): string | null {
+  if (!filePath) return null;
+  const normalized = String(filePath).replace(/\\/g, '/');
+  const withSlash = normalized.startsWith('/') ? normalized : `/${normalized}`;
+  return `local-media://${withSlash.split('/').map(encodeURIComponent).join('/')}`;
+}
+
+/** Item thư viện cho UI Boss: ẩn file_path/thumb_path, URL hiển thị local-media://, giữ _localPath để gửi file. */
+function toBossUiItem(item: any): any {
+  return {
+    ...item,
+    file_path: undefined,
+    thumb_path: undefined,
+    fileUrl: localMediaUrl(item.file_path) || '',
+    thumbUrl: localMediaUrl(item.thumb_path),
+    _localPath: item.file_path,
+    _thumbLocalPath: item.thumb_path,
+  };
+}
+
 
 function isEmployeeMode(): boolean {
     try {
@@ -39,19 +63,23 @@ export function registerLibraryIpc(): void {
       });
       return {
         success: true,
-        items: result.items.map((item: any) => ({
-          ...item,
-          file_path: undefined,
-          thumb_path: undefined,
-          fileUrl: `/api/library/file/${item.uuid}`,
-          thumbUrl: item.thumb_path ? `http://localhost:9900/api/library/thumb/${item.uuid}` : null,
-          _localPath: item.file_path,
-          _thumbLocalPath: item.thumb_path,
-        })),
+        items: result.items.map(toBossUiItem),
         total: result.total,
       };
     } catch (err: any) {
       return { success: false, error: err.message, items: [], total: 0 };
+    }
+  });
+
+  // ── Get one item ───────────────────────────────────────────
+  ipcMain.handle('library:getItem', async (_event, params: { uuid: string }) => {
+    try {
+      if (isEmployeeMode()) return { success: true, item: null };
+      const item: any = lib().getItem(String(params?.uuid || ''));
+      if (!item) return { success: true, item: null };
+      return { success: true, item: toBossUiItem(item) };
+    } catch (err: any) {
+      return { success: false, error: err.message };
     }
   });
 
@@ -73,18 +101,7 @@ export function registerLibraryIpc(): void {
         tags: params.tags || '',
         folderId: params.folderId ?? null,
       });
-      return {
-        success: true,
-        data: {
-          ...item,
-          file_path: undefined,
-          thumb_path: undefined,
-          fileUrl: `/api/library/file/${item.uuid}`,
-          thumbUrl: item.thumb_path ? `/api/library/thumb/${item.uuid}` : null,
-          _localPath: item.file_path,
-          _thumbLocalPath: item.thumb_path,
-        },
-      };
+      return { success: true, data: toBossUiItem(item) };
     } catch (err: any) {
       return { success: false, error: err.message };
     }

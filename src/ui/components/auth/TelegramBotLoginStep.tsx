@@ -122,20 +122,20 @@ export default function TelegramBotLoginStep({ onSuccess, onBack }: Props) {
         <ol className="text-blue-400 text-[11px] space-y-1.5 list-decimal list-inside leading-relaxed">
           <li>Mở Telegram, tìm <strong>@BotFather</strong></li>
           <li>Gửi lệnh <strong>/newbot</strong> và làm theo hướng dẫn</li>
-          <li>Copy <strong>Bot Token</strong> (dạng: <code className="bg-gray-800 px-1 rounded">123456:ABC-DEF...</code>)</li>
+          <li>Copy <strong>Bot Token</strong> (dạng: <code className="bg-card px-1 rounded">123456:ABC-DEF...</code>)</li>
           <li>Dán vào bên dưới và nhấn "Kiểm tra"</li>
         </ol>
       </div>
 
       {/* Token input */}
       <div>
-        <label className="text-gray-300 text-xs font-medium mb-1.5 block">Bot Token</label>
+        <label className="text-foreground/80 text-xs font-medium mb-1.5 block">Bot Token</label>
         <input
           type="text"
           value={botToken}
           onChange={e => { setBotToken(e.target.value); setError(''); setBotInfo(null); }}
           placeholder="7123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
-          className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-colors"
+          className="w-full bg-muted border border-input rounded-lg px-3 py-2.5 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 transition-colors"
           disabled={validating || saving}
         />
       </div>
@@ -180,7 +180,7 @@ export default function TelegramBotLoginStep({ onSuccess, onBack }: Props) {
       <div className="flex gap-3 pt-2">
         <button
           onClick={onBack}
-          className="flex-1 px-4 py-2.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded-lg transition-colors"
+          className="flex-1 px-4 py-2.5 bg-muted hover:bg-accent text-foreground/80 text-sm rounded-lg transition-colors"
         >
           Quay lại
         </button>

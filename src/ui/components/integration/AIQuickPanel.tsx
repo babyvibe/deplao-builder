@@ -292,14 +292,14 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
   }, [contextCountInput, effectiveContextMsgCount, setAiQuickPanelContextCountOverride]);
 
   return (
-    <div className="w-[330px] h-full flex flex-col bg-gray-800 border-l border-gray-700">
+    <div className="w-[330px] h-full flex flex-col bg-card border-l border-border">
       {/* Header */}
-      <div className="px-4 py-3 border-b border-gray-700 flex-shrink-0">
+      <div className="px-4 py-3 border-b border-border flex-shrink-0">
         <div className="flex items-center justify-between mb-2">
-          <h2 className="text-sm font-semibold text-white flex items-center gap-1.5"><BotIcon className="w-4 h-4 inline" /> Trợ lý AI
+          <h2 className="text-sm font-semibold text-foreground flex items-center gap-1.5"><BotIcon className="w-4 h-4 inline" /> Trợ lý AI
           </h2>
           <button onClick={onClose}
-            className="w-7 h-7 rounded-lg hover:bg-gray-700 flex items-center justify-center text-gray-400 hover:text-white transition-colors">
+            className="w-7 h-7 rounded-lg hover:bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
@@ -308,11 +308,11 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
 
         {/* Assistant selector */}
         {loadingAssistants ? (
-          <div className="text-xs text-gray-400">Đang tải...</div>
+          <div className="text-xs text-muted-foreground">Đang tải...</div>
         ) : assistants.length === 0 ? (
           <div className="flex flex-col items-center gap-3 py-2">
             <div className="text-3xl"><BotIcon className="w-4 h-4" /></div>
-            <p className="text-xs text-gray-400 text-center leading-relaxed">
+            <p className="text-xs text-muted-foreground text-center leading-relaxed">
               Chưa có trợ lý AI nào.<br/>Tạo trợ lý để bắt đầu hỗ trợ chat thông minh.
             </p>
             <button
@@ -326,15 +326,15 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
             >
               <SparklesIcon className="w-4 h-4" /> Tạo trợ lý AI ngay
             </button>
-            <div className="w-full pt-1 border-t border-gray-700/60">
-              <p className="text-[10px] text-gray-400 text-center mb-2">Nền tảng hỗ trợ</p>
+            <div className="w-full pt-1 border-t border-border/60">
+              <p className="text-[10px] text-muted-foreground text-center mb-2">Nền tảng hỗ trợ</p>
               <div className="flex justify-center gap-3">
                 {[<BotIcon className="w-4 h-4" />,<SparklesIcon className="w-4 h-4" />,<HelpCircleIcon className="w-4 h-4" />,<LightningIcon className="w-4 h-4" />].map((icon, idx) => {
                   const names = ['OpenAI','Gemini','DeepSeek','Grok'];
                   return (
                   <div key={names[idx]} className="flex flex-col items-center gap-0.5">
                     <span className="text-base">{icon}</span>
-                    <span className="text-[9px] text-gray-400">{names[idx]}</span>
+                    <span className="text-[9px] text-muted-foreground">{names[idx]}</span>
                   </div>
                   );
                 })}
@@ -343,7 +343,7 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
           </div>
         ) : (
           <select value={activeId} onChange={e => setActiveId(e.target.value)}
-            className="w-full bg-gray-800 border border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500">
+            className="w-full bg-card border border-input rounded-lg px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:border-blue-500">
             {assistants.map(a => (
               <option key={a.id} value={a.id}>
                 {PLATFORM_ICON_TEXTS[a.platform] || '[AI]'} {a.name} - {a.model}
@@ -356,16 +356,16 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
 
       {/* Auto-context indicator + quick actions */}
       {activeId && canUseZaloContext && (
-        <div className="px-3 py-2 border-b border-gray-700/50 flex-shrink-0 space-y-2">
+        <div className="px-3 py-2 border-b border-border/50 flex-shrink-0 space-y-2">
           <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1 text-sm text-gray-400 min-w-0">
+            <div className="flex items-center gap-1 text-sm text-muted-foreground min-w-0">
               <span>{hasZaloContext ? 'Ngữ cảnh bật' : 'Ngữ cảnh tắt'}</span>
               <button
                 type="button"
                 role="switch"
                 aria-checked={hasZaloContext}
                 onClick={() => setAiAutoInjectZaloContext(!aiAutoInjectZaloContext)}
-                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors flex-shrink-0 ${hasZaloContext ? 'bg-green-600' : 'bg-gray-600 hover:bg-gray-500'}`}
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors flex-shrink-0 ${hasZaloContext ? 'bg-green-600' : 'bg-accent hover:bg-accent'}`}
                 title={hasZaloContext ? 'Tắt tự động gửi ngữ cảnh Zalo' : 'Bật tự động gửi ngữ cảnh Zalo'}
               >
                 <span
@@ -384,7 +384,7 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
 
           {hasZaloContext && (
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[11px] uppercase tracking-wide text-gray-400">Số ngữ cảnh</span>
+              <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Số ngữ cảnh</span>
               <input
                 type="number"
                 min={1}
@@ -399,10 +399,10 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
                     applyContextCountInput();
                   }
                 }}
-                className="w-16 bg-gray-800 border border-gray-600 rounded-md px-2 py-1 text-[11px] text-white focus:outline-none focus:border-blue-500"
+                className="w-16 bg-card border border-input rounded-md px-2 py-1 text-[11px] text-foreground focus:outline-none focus:border-blue-500"
                 title="Số lượng tin nhắn dùng làm ngữ cảnh"
               />
-              <span className="text-[11px] text-gray-400">Tối đa 1000 tin</span>
+              <span className="text-[11px] text-muted-foreground">Tối đa 1000 tin</span>
             </div>
           )}
         </div>
@@ -412,7 +412,7 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-3">
         {messages.length === 0 && activeId && (
           <div className="text-center py-10">
-            <p className="text-xs text-gray-400">
+            <p className="text-xs text-muted-foreground">
               {canUseZaloContext
                 ? (hasZaloContext
                     ? 'Hỏi bất kỳ điều gì - trợ lý AI sẽ tự động nắm ngữ cảnh hội thoại Zalo hiện tại'
@@ -426,7 +426,7 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
             <div className={`max-w-[85%] rounded-xl px-3 py-2 text-sm leading-relaxed ${
               msg.role === 'user'
                 ? 'bg-blue-600 text-white'
-                : 'bg-gray-800 text-gray-200 border border-gray-700'
+                : 'bg-card text-foreground border border-border'
             }`}>
               {/* Render structured segments (text + images) or plain text */}
               {msg.segments && msg.segments.length > 0 ? (
@@ -435,7 +435,7 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
                     seg.type === 'image' && Array.isArray(seg.content) ? (
                       <div key={si} className="flex flex-wrap gap-1.5">
                         {seg.content.map((url: string, ui: number) => (
-                          <img key={ui} src={url} alt="" className="max-w-full max-h-32 rounded-lg object-cover border border-gray-600/30"
+                          <img key={ui} src={url} alt="" className="max-w-full max-h-32 rounded-lg object-cover border border-input/30"
                             onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                         ))}
                       </div>
@@ -448,7 +448,7 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
                 <div className="whitespace-pre-wrap break-words">{msg.content}</div>
               )}
               {msg.role === 'assistant' && !msg.content.startsWith('Error:') && (
-                <div className="flex items-center gap-1.5 mt-2 pt-1.5 border-t border-gray-700/50">
+                <div className="flex items-center gap-1.5 mt-2 pt-1.5 border-t border-border/50">
                   <button onClick={() => {
                     const textToInsert = msg.segments
                       ? msg.segments.filter(s => s.type === 'text').map(s => s.content).join('\n')
@@ -465,7 +465,7 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
                       : msg.content;
                     navigator.clipboard.writeText(textToCopy);
                   }}
-                    className="text-[10px] px-2 py-0.5 rounded bg-gray-700 text-gray-400 hover:text-white transition-colors"
+                    className="text-[10px] px-2 py-0.5 rounded bg-muted text-muted-foreground hover:text-foreground transition-colors"
                     title="Copy"><ClipboardListIcon className="w-4 h-4 inline" /> Copy
                   </button>
                 </div>
@@ -475,7 +475,7 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
         ))}
         {loading && (
           <div className="flex justify-start">
-            <div className="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2">
+            <div className="bg-card border border-border rounded-xl px-3 py-2">
               <div className="flex items-center gap-1">
                 <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}/>
                 <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}/>
@@ -489,14 +489,14 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
       {/* Input */}
       {activeId && (
         <div className="px-3 pb-3 pt-1 flex-shrink-0">
-          <div className="flex items-end gap-2 bg-gray-800 border border-gray-700 rounded-xl px-3 py-2">
+          <div className="flex items-end gap-2 bg-card border border-border rounded-xl px-3 py-2">
             <textarea ref={inputRef}
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Nhập câu hỏi..."
               rows={1}
-              className="flex-1 bg-transparent text-sm text-white placeholder-gray-500 resize-none outline-none max-h-24 overflow-y-auto"
+              className="flex-1 bg-transparent text-sm text-foreground placeholder-subtle-foreground resize-none outline-none max-h-24 overflow-y-auto"
               style={{ minHeight: '1.5rem' }}
             />
             <button onClick={handleSend} disabled={loading || !input.trim()}

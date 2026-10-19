@@ -142,14 +142,14 @@ export default function EmployeeKPIPanel() {
     if (employees.length === 0) return null;
 
     return (
-        <div className="bg-gray-800 rounded-xl p-4 space-y-3">
+        <div className="bg-card rounded-xl p-4 space-y-3">
             {/* Header */}
             <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-white flex items-center gap-2"><ChartIcon className="w-4 h-4 inline" /> Thống kê nhân viên
+                <h3 className="text-sm font-semibold text-foreground flex items-center gap-2"><ChartIcon className="w-4 h-4 inline" /> Thống kê nhân viên
                 </h3>
                 <div className="flex items-center gap-2">
                     {/* Date range selector */}
-                    <div className="flex items-center bg-gray-700 rounded-lg overflow-hidden">
+                    <div className="flex items-center bg-muted rounded-lg overflow-hidden">
                         {([
                             { key: 'today', label: 'Hôm nay' },
                             { key: '7d', label: '7 ngày' },
@@ -161,7 +161,7 @@ export default function EmployeeKPIPanel() {
                                 className={`text-[11px] px-2.5 py-1 transition-colors ${
                                     dateRange === key
                                         ? 'bg-blue-600 text-white font-medium'
-                                        : 'text-gray-400 hover:text-gray-200'
+                                        : 'text-muted-foreground hover:text-foreground'
                                 }`}
                             >
                                 {label}
@@ -171,7 +171,7 @@ export default function EmployeeKPIPanel() {
                     {/* Export */}
                     <button
                         onClick={handleExportCSV}
-                        className="text-[11px] text-gray-400 hover:text-gray-200 px-2 py-1 rounded-lg hover:bg-gray-700 transition-colors"
+                        className="text-[11px] text-muted-foreground hover:text-foreground px-2 py-1 rounded-lg hover:bg-muted transition-colors"
                         title="Xuất CSV"
                     ><InboxIcon className="w-4 h-4 inline" /> Export
                     </button>
@@ -179,7 +179,7 @@ export default function EmployeeKPIPanel() {
                     <button
                         onClick={loadStats}
                         disabled={loading}
-                        className="text-[11px] text-gray-400 hover:text-gray-200 px-1.5 py-1 rounded-lg hover:bg-gray-700 transition-colors"
+                        className="text-[11px] text-muted-foreground hover:text-foreground px-1.5 py-1 rounded-lg hover:bg-muted transition-colors"
                         title="Làm mới"
                     >
                         {loading ? <Spinner size={3} /> : <RefreshIcon className="w-4 h-4" />}
@@ -189,17 +189,17 @@ export default function EmployeeKPIPanel() {
 
             {/* Summary cards */}
             <div className="grid grid-cols-3 gap-2">
-                <div className="bg-gray-700/50 rounded-lg p-2.5 text-center">
+                <div className="bg-muted rounded-lg p-2.5 text-center">
                     <p className="text-lg font-bold text-blue-400">{totals.messages_sent}</p>
-                    <p className="text-[10px] text-gray-400">Tổng tin gửi</p>
+                    <p className="text-[10px] text-muted-foreground">Tổng tin gửi</p>
                 </div>
-                <div className="bg-gray-700/50 rounded-lg p-2.5 text-center">
+                <div className="bg-muted rounded-lg p-2.5 text-center">
                     <p className="text-lg font-bold text-green-400">{totals.conversations_handled}</p>
-                    <p className="text-[10px] text-gray-400">Hội thoại xử lý</p>
+                    <p className="text-[10px] text-muted-foreground">Hội thoại xử lý</p>
                 </div>
-                <div className="bg-gray-700/50 rounded-lg p-2.5 text-center">
+                <div className="bg-muted rounded-lg p-2.5 text-center">
                     <p className="text-lg font-bold text-amber-400">{totals.total_online_hours}h</p>
-                    <p className="text-[10px] text-gray-400">Tổng giờ online</p>
+                    <p className="text-[10px] text-muted-foreground">Tổng giờ online</p>
                 </div>
             </div>
 
@@ -207,7 +207,7 @@ export default function EmployeeKPIPanel() {
             <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                     <thead>
-                        <tr className="text-gray-400 border-b border-gray-700">
+                        <tr className="text-muted-foreground border-b border-border">
                             <th className="text-left py-2 px-2 font-medium">Nhân viên</th>
                             <th className="text-right py-2 px-2 font-medium">Tin gửi</th>
                             <th className="text-right py-2 px-2 font-medium">TB phản hồi</th>
@@ -219,37 +219,37 @@ export default function EmployeeKPIPanel() {
                     <tbody>
                         {loading ? (
                             <tr>
-                                <td colSpan={6} className="text-center py-6 text-gray-400">Đang tải...</td>
+                                <td colSpan={6} className="text-center py-6 text-muted-foreground">Đang tải...</td>
                             </tr>
                         ) : stats.length === 0 ? (
                             <tr>
-                                <td colSpan={6} className="text-center py-6 text-gray-400">Không có dữ liệu</td>
+                                <td colSpan={6} className="text-center py-6 text-muted-foreground">Không có dữ liệu</td>
                             </tr>
                         ) : (
                             <>
                                 {stats.map((s) => (
                                     <React.Fragment key={s.employee_id}>
-                                        <tr className="border-b border-gray-700/50 hover:bg-gray-700/30 transition-colors">
+                                        <tr className="border-b border-border/50 hover:bg-muted transition-colors">
                                             <td className="py-2 px-2">
                                                 <div className="flex items-center gap-2">
-                                                    <div className="w-6 h-6 rounded-full bg-gray-600 flex items-center justify-center text-[10px] flex-shrink-0 overflow-hidden">
+                                                    <div className="w-6 h-6 rounded-full bg-accent flex items-center justify-center text-[10px] flex-shrink-0 overflow-hidden">
                                                         {s.avatar_url ? (
                                                             <img src={s.avatar_url} className="w-full h-full object-cover" alt="" />
                                                         ) : (
                                                             s.display_name?.charAt(0)?.toUpperCase() || '?'
                                                         )}
                                                     </div>
-                                                    <span className="text-gray-200 font-medium truncate">{s.display_name}</span>
+                                                    <span className="text-foreground font-medium truncate">{s.display_name}</span>
                                                 </div>
                                             </td>
-                                            <td className="text-right py-2 px-2 text-gray-300 font-mono">{s.messages_sent}</td>
-                                            <td className="text-right py-2 px-2 text-gray-300">
+                                            <td className="text-right py-2 px-2 text-foreground/80 font-mono">{s.messages_sent}</td>
+                                            <td className="text-right py-2 px-2 text-foreground/80">
                                                 <span className={`${s.avg_response_time_ms > 300_000 ? 'text-red-400' : s.avg_response_time_ms > 120_000 ? 'text-amber-400' : 'text-green-400'}`}>
                                                     {formatResponseTime(s.avg_response_time_ms)}
                                                 </span>
                                             </td>
-                                            <td className="text-right py-2 px-2 text-gray-300 font-mono">{s.conversations_handled}</td>
-                                            <td className="text-right py-2 px-2 text-gray-300">{s.total_online_hours}h</td>
+                                            <td className="text-right py-2 px-2 text-foreground/80 font-mono">{s.conversations_handled}</td>
+                                            <td className="text-right py-2 px-2 text-foreground/80">{s.total_online_hours}h</td>
                                             <td className="text-right py-2 px-2">
                                                 <button
                                                     onClick={() => handleExpandSessions(s.employee_id)}
@@ -265,28 +265,28 @@ export default function EmployeeKPIPanel() {
                                         {expandedId === s.employee_id && (
                                             <tr>
                                                 <td colSpan={6} className="px-2 pb-2">
-                                                    <div className="bg-gray-700/40 rounded-lg p-2 mt-1">
-                                                        <p className="text-[10px] text-gray-400 font-semibold mb-1.5"><ClipboardListIcon className="w-4 h-4 inline" /> Lịch sử phiên đăng nhập gần nhất</p>
+                                                    <div className="bg-muted rounded-lg p-2 mt-1">
+                                                        <p className="text-[10px] text-muted-foreground font-semibold mb-1.5"><ClipboardListIcon className="w-4 h-4 inline" /> Lịch sử phiên đăng nhập gần nhất</p>
                                                         {sessionsLoading ? (
-                                                            <p className="text-[10px] text-gray-400">Đang tải...</p>
+                                                            <p className="text-[10px] text-muted-foreground">Đang tải...</p>
                                                         ) : sessions.length === 0 ? (
-                                                            <p className="text-[10px] text-gray-400">Chưa có phiên nào</p>
+                                                            <p className="text-[10px] text-muted-foreground">Chưa có phiên nào</p>
                                                         ) : (
                                                             <div className="space-y-1 max-h-40 overflow-y-auto">
                                                                 {sessions.map((sess: any, i: number) => (
                                                                     <div key={i} className="flex items-center gap-3 text-[10px]">
-                                                                        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${sess.disconnected_at ? 'bg-gray-500' : 'bg-green-400'}`} />
-                                                                        <span className="text-gray-400">
+                                                                        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${sess.disconnected_at ? 'bg-accent' : 'bg-green-400'}`} />
+                                                                        <span className="text-muted-foreground">
                                                                             {new Date(sess.connected_at).toLocaleString('vi-VN')}
                                                                         </span>
-                                                                        <span className="text-gray-400">→</span>
-                                                                        <span className="text-gray-400">
+                                                                        <span className="text-muted-foreground">→</span>
+                                                                        <span className="text-muted-foreground">
                                                                             {sess.disconnected_at
                                                                                 ? new Date(sess.disconnected_at).toLocaleString('vi-VN')
                                                                                 : <><span className="w-2 h-2 rounded-full bg-green-400 inline-block" /> Đang online</>}
                                                                         </span>
                                                                         {sess.ip_address && (
-                                                                            <span className="text-gray-400 ml-auto">{sess.ip_address}</span>
+                                                                            <span className="text-muted-foreground ml-auto">{sess.ip_address}</span>
                                                                         )}
                                                                     </div>
                                                                 ))}
@@ -300,10 +300,10 @@ export default function EmployeeKPIPanel() {
                                 ))}
 
                                 {/* Totals row */}
-                                <tr className="border-t border-gray-600 font-semibold">
-                                    <td className="py-2 px-2 text-gray-300">Tổng ({stats.length} NV)</td>
+                                <tr className="border-t border-input font-semibold">
+                                    <td className="py-2 px-2 text-foreground/80">Tổng ({stats.length} NV)</td>
                                     <td className="text-right py-2 px-2 text-blue-400 font-mono">{totals.messages_sent}</td>
-                                    <td className="text-right py-2 px-2 text-gray-400">-</td>
+                                    <td className="text-right py-2 px-2 text-muted-foreground">-</td>
                                     <td className="text-right py-2 px-2 text-green-400 font-mono">{totals.conversations_handled}</td>
                                     <td className="text-right py-2 px-2 text-amber-400">{totals.total_online_hours}h</td>
                                     <td></td>

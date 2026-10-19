@@ -1,15 +1,26 @@
 import { create } from 'zustand';
-import ipc from '@/lib/ipc';
 import DataAccessor from '@/lib/data/DataAccessor';
-import { useEmployeeStore } from '@/store/employeeStore';
 import type {
   ErpDepartment, ErpPosition, ErpEmployeeProfile,
   ErpAttendance, ErpLeaveRequest,
 } from '../../../models/erp';
+import { isErpModuleOff, withErpDeniedNotice } from './erpStoreHelpers';
 
-function isEmployee(): boolean {
-  try { return useEmployeeStore.getState().mode === 'employee'; } catch { return false; }
+type AttendanceFilter = { employeeId?: string; from?: string; to?: string; all?: boolean };
+
+/** Dòng chấm công thuộc bảng đang hiện (cùng người / mọi người, trong khoảng ngày). */
+function attendanceMatches(filter: AttendanceFilter | null, a: ErpAttendance): boolean {
+  if (!filter) return false;
+  const employeeId = (a as any).employee_id;
+  if (!filter.all && filter.employeeId !== employeeId) return false;
+  if (filter.from && a.date < filter.from) return false;
+  if (filter.to && a.date > filter.to) return false;
+  return true;
 }
+
+// Nhân sự / chấm công / nghỉ phép nằm trên DB Boss: mọi lệnh qua DataAccessor (nhân viên → REST, Boss lấy người làm
+// từ token). Trước đây check-in, đơn nghỉ phép, duyệt đơn… ở máy nhân viên đi IPC cục bộ → Boss không bao giờ thấy.
+// Đọc lỗi → giữ dữ liệu đang hiện; ghi lỗi → không đổi state, bị từ chối quyền → hộp thoại quyền ERP.
 
 interface ErpEmployeeState {
   departments: ErpDepartment[];
@@ -17,8 +28,12 @@ interface ErpEmployeeState {
   profiles: ErpEmployeeProfile[];
   myLeaves: ErpLeaveRequest[];
   pendingLeaves: ErpLeaveRequest[];
+  /** Đã tải đơn chờ duyệt (người có quyền duyệt mở trang nghỉ phép / báo cáo) → event nghỉ phép thì tải lại. */
+  pendingLeavesLoaded: boolean;
   todayAttendance: ErpAttendance | null;
   attendanceList: ErpAttendance[];
+  /** Bộ lọc của bảng chấm công đang hiện — event chấm công khớp bộ lọc thì thêm dòng (vd quản lý thấy check-in mới). */
+  attendanceFilter: AttendanceFilter | null;
   seat: { limit: number; used: number; remaining: number } | null;
 
   loadDepartments: () => Promise<void>;
@@ -27,7 +42,7 @@ interface ErpEmployeeState {
   loadMyLeaves: () => Promise<void>;
   loadPendingLeaves: () => Promise<void>;
   loadTodayAttendance: () => Promise<void>;
-  loadAttendance: (filter: { employeeId?: string; from?: string; to?: string }) => Promise<void>;
+  loadAttendance: (filter: AttendanceFilter) => Promise<void>;
   loadSeat: () => Promise<void>;
   loadProfile: (employeeId: string) => Promise<ErpEmployeeProfile | undefined>;
 
@@ -45,11 +60,14 @@ interface ErpEmployeeState {
   decideLeave: (id: number, status: 'approved' | 'rejected', note?: string) => Promise<void>;
   cancelLeave: (id: number) => Promise<void>;
 
-  upsertProfile: (employeeId: string, patch: any) => Promise<void>;
+  /** Kết quả lưu (Boss / handler từ chối → success:false + error) — người gọi báo lỗi thay vì đóng form. */
+  upsertProfile: (employeeId: string, patch: any) => Promise<{ success: boolean; error?: string }>;
 
   _onLeaveChanged: (leave: ErpLeaveRequest) => void;
   _onAttendanceUpdated: (a: ErpAttendance) => void;
   _onProfileUpdated: (p: ErpEmployeeProfile) => void;
+  /** erp:event:employeeProfileDeleted — bỏ hồ sơ khỏi danh sách (Boss xoá ở máy khác). */
+  _onProfileDeleted: (employeeId: string) => void;
 }
 
 export const useErpEmployeeStore = create<ErpEmployeeState>((set, get) => ({
@@ -58,156 +76,141 @@ export const useErpEmployeeStore = create<ErpEmployeeState>((set, get) => ({
   profiles: [],
   myLeaves: [],
   pendingLeaves: [],
+  pendingLeavesLoaded: false,
   todayAttendance: null,
   attendanceList: [],
+  attendanceFilter: null,
   seat: null,
 
   loadDepartments: async () => {
-    try {
-      if (isEmployee()) {
-        const res: any = await DataAccessor.erpDepartments();
-        if (res?.success) set({ departments: res.data?.departments || res.departments || [] });
-      } else {
-        const res = await ipc.erp?.departmentList?.();
-        if (res?.success) set({ departments: res.departments });
-      }
-    } catch {}
+    const res: any = await DataAccessor.erpDepartments();
+    if (res?.success && Array.isArray(res.departments)) set({ departments: res.departments });
   },
   loadPositions: async () => {
-    try {
-      if (isEmployee()) {
-        const res: any = await DataAccessor.erpPositions();
-        if (res?.success) set({ positions: res.data?.positions || res.positions || [] });
-      } else {
-        const res = await ipc.erp?.positionList?.();
-        if (res?.success) set({ positions: res.positions });
-      }
-    } catch {}
+    const res: any = await DataAccessor.erpPositions();
+    if (res?.success && Array.isArray(res.positions)) set({ positions: res.positions });
   },
   loadProfiles: async (departmentId) => {
-    try {
-      if (isEmployee()) {
-        const res: any = await DataAccessor.erpProfiles(departmentId);
-        if (res?.success) set({ profiles: res.data?.profiles || res.profiles || [] });
-      } else {
-        const res = await ipc.erp?.employeeListByDepartment?.({ departmentId });
-        if (res?.success) set({ profiles: res.profiles });
-      }
-    } catch {}
+    const res: any = await DataAccessor.erpProfiles(departmentId);
+    if (res?.success && Array.isArray(res.profiles)) set({ profiles: res.profiles });
   },
   loadMyLeaves: async () => {
-    const res = await ipc.erp?.leaveListMy?.();
-    if (res?.success) set({ myLeaves: res.leaves });
+    const res: any = await DataAccessor.erpMyLeaves();
+    if (res?.success && Array.isArray(res.leaves)) set({ myLeaves: res.leaves });
   },
   loadPendingLeaves: async () => {
-    const res = await ipc.erp?.leaveListPending?.();
-    if (res?.success) set({ pendingLeaves: res.leaves });
+    const res: any = await DataAccessor.erpPendingLeaves();
+    if (res?.success && Array.isArray(res.leaves)) set({ pendingLeaves: res.leaves, pendingLeavesLoaded: true });
   },
   loadTodayAttendance: async () => {
-    const res = await ipc.erp?.attendanceToday?.();
+    if (isErpModuleOff()) return;
+    const res: any = await DataAccessor.erpAttendanceToday();
     if (res?.success) set({ todayAttendance: res.attendance ?? null });
   },
   loadAttendance: async (filter) => {
-    const res = await ipc.erp?.attendanceList?.(filter);
-    if (res?.success) set({ attendanceList: res.list });
+    set({ attendanceFilter: filter });
+    const res: any = await DataAccessor.erpAttendanceList(filter);
+    if (res?.success && Array.isArray(res.list)) set({ attendanceList: res.list });
   },
   loadSeat: async () => {
-    const res = await ipc.erp?.licenseSeatStatus?.();
-    if (res?.success) set({ seat: res.seat });
+    const res: any = await DataAccessor.erpSeatStatus();
+    if (res?.success && res.seat) set({ seat: res.seat });
   },
   loadProfile: async (employeeId) => {
-    try {
-      if (isEmployee()) {
-        const res: any = await DataAccessor.erpProfile(employeeId);
-        const profile = res?.data?.profile || res?.profile;
-        if (res?.success && profile) {
-          set(s => ({
-            profiles: upsert(s.profiles, profile, (p: any) => p.employee_id === employeeId),
-          }));
-          return profile;
-        }
-      } else {
-        const res = await ipc.erp?.employeeGetProfile?.({ employeeId });
-        if (res?.success && res.profile) {
-          set(s => ({
-            profiles: upsert(s.profiles, res.profile, (p: any) => p.employee_id === employeeId),
-          }));
-          return res.profile;
-        }
-      }
-    } catch {}
+    const res: any = await DataAccessor.erpProfile(employeeId);
+    if (res?.success && res.profile) {
+      set(s => ({
+        profiles: upsert(s.profiles, res.profile, (p: any) => p.employee_id === employeeId),
+      }));
+      return res.profile;
+    }
     return undefined;
   },
 
   createDepartment: async (input) => {
-    await ipc.erp?.departmentCreate?.(input);
+    withErpDeniedNotice(await DataAccessor.erpCreateDepartment(input));
     await get().loadDepartments();
   },
   updateDepartment: async (id, patch) => {
-    await ipc.erp?.departmentUpdate?.({ id, patch });
+    withErpDeniedNotice(await DataAccessor.erpUpdateDepartment(id, patch));
     await get().loadDepartments();
   },
   deleteDepartment: async (id) => {
-    await ipc.erp?.departmentDelete?.({ id });
+    withErpDeniedNotice(await DataAccessor.erpDeleteDepartment(id));
     await get().loadDepartments();
   },
   createPosition: async (input) => {
-    await ipc.erp?.positionCreate?.(input);
+    withErpDeniedNotice(await DataAccessor.erpCreatePosition(input));
     await get().loadPositions();
   },
   updatePosition: async (id, patch) => {
-    await ipc.erp?.positionUpdate?.({ id, patch });
+    withErpDeniedNotice(await DataAccessor.erpUpdatePosition(id, patch));
     await get().loadPositions();
   },
   deletePosition: async (id) => {
-    await ipc.erp?.positionDelete?.({ id });
+    withErpDeniedNotice(await DataAccessor.erpDeletePosition(id));
     await get().loadPositions();
   },
 
   checkIn: async (note) => {
-    const res = await ipc.erp?.attendanceCheckIn?.({ note });
-    if (res?.success) set({ todayAttendance: res.attendance });
+    const res: any = withErpDeniedNotice(await DataAccessor.erpCheckIn(note));
+    if (res?.success && res.attendance) set({ todayAttendance: res.attendance });
   },
   checkOut: async (note) => {
-    const res = await ipc.erp?.attendanceCheckOut?.({ note });
-    if (res?.success) set({ todayAttendance: res.attendance });
+    const res: any = withErpDeniedNotice(await DataAccessor.erpCheckOut(note));
+    if (res?.success && res.attendance) set({ todayAttendance: res.attendance });
   },
 
   createLeave: async (input) => {
-    await ipc.erp?.leaveCreate?.({ input });
+    withErpDeniedNotice(await DataAccessor.erpCreateLeave(input));
     await get().loadMyLeaves();
   },
   decideLeave: async (id, status, note) => {
-    await ipc.erp?.leaveDecide?.({ id, status, note });
+    withErpDeniedNotice(await DataAccessor.erpDecideLeave(id, status, note));
     await get().loadPendingLeaves();
     await get().loadMyLeaves();
   },
   cancelLeave: async (id) => {
-    await ipc.erp?.leaveCancel?.({ id });
+    withErpDeniedNotice(await DataAccessor.erpCancelLeave(id));
     await get().loadMyLeaves();
   },
 
   upsertProfile: async (employeeId, patch) => {
-    const res = await ipc.erp?.employeeUpdateProfile?.({ employeeId, patch });
+    const res: any = withErpDeniedNotice(await DataAccessor.erpUpdateProfile(employeeId, patch));
     if (res?.success && res.profile) {
       set(s => ({
         profiles: upsert(s.profiles, res.profile, (p: any) => p.employee_id === employeeId),
       }));
     }
+    return { success: !!res?.success, error: res?.error };
   },
 
   _onLeaveChanged: (leave) => set(s => ({
     myLeaves: s.myLeaves.map(l => l.id === leave.id ? leave : l),
     pendingLeaves: s.pendingLeaves.filter(l => l.id !== leave.id),
   })),
-  _onAttendanceUpdated: (a) => set(s =>
-    s.todayAttendance && (s.todayAttendance as any).employee_id === a.employee_id && s.todayAttendance.date === a.date
-      ? { todayAttendance: a }
-      : s
-  ),
+  // Chấm công của chính mình hôm nay + bảng chấm công đang hiện: dòng đã có thì thay, dòng mới khớp bộ lọc của bảng thì
+  // thêm (quản lý xem "mọi người" thấy check-in mới ngay). Event tới mọi nhân viên — bảng "của tôi" không thêm người khác.
+  _onAttendanceUpdated: (a) => set(s => {
+    if (!a) return s;
+    const sameDay = (x: ErpAttendance | null | undefined) => !!x && (x as any).employee_id === (a as any).employee_id && x.date === a.date;
+    const today = sameDay(s.todayAttendance) ? a : s.todayAttendance;
+    const inList = s.attendanceList.some(sameDay);
+    const add = !inList && attendanceMatches(s.attendanceFilter, a);
+    if (today === s.todayAttendance && !inList && !add) return s;
+    return {
+      todayAttendance: today,
+      attendanceList: inList ? s.attendanceList.map(x => sameDay(x) ? a : x) : add ? [a, ...s.attendanceList] : s.attendanceList,
+    };
+  }),
   _onProfileUpdated: (p) => set(s => ({
     profiles: upsert(s.profiles, p, (x: any) => x.employee_id === p.employee_id),
   })),
+  _onProfileDeleted: (employeeId) => set(s =>
+    employeeId && s.profiles.some((x: any) => x.employee_id === employeeId)
+      ? { profiles: s.profiles.filter((x: any) => x.employee_id !== employeeId) }
+      : s
+  ),
 }));
 
 function upsert<T>(arr: T[], item: T, match: (x: T) => boolean): T[] {

@@ -312,34 +312,35 @@ export function parseE2EECookies(cookieString: string): Record<string, string> {
 }
 
 /**
- * Resolve đường dẫn đến Go bridge binary.
- * Thứ tự: FBCHAT_E2EE_BIN env → process.resourcesPath → error
+ * Tìm một binary Go trong src/bridge-e2ee/build/ (cùng chỗ với E2EE bridge).
+ * Thứ tự: biến môi trường `envVar` → process.resourcesPath → build/ khi dev.
  */
-export function resolveE2EEBinaryPath(): string {
+function findBridgeBinary(baseName: string, envVar: string): string | null {
   // 1. Environment variable override
-  if (process.env.FBCHAT_E2EE_BIN) {
-    return process.env.FBCHAT_E2EE_BIN;
+  const override = process.env[envVar];
+  if (override) {
+    return override;
   }
 
   // 2. Bundled with Electron app (production)
   const path = require('path');
-  const isWindows = process.platform === 'win32';
-  const binaryName = isWindows ? 'fbchat-bridge-e2ee.exe' : 'fbchat-bridge-e2ee';
+  const fs = require('fs');
+  const binaryName = process.platform === 'win32' ? `${baseName}.exe` : baseName;
 
   if ((process as any).resourcesPath) {
     const rp = (process as any).resourcesPath;
     // 2a. Direct file in resources/
     const bundled = path.join(rp, binaryName);
-    if (require('fs').existsSync(bundled)) {
+    if (fs.existsSync(bundled)) {
       return bundled;
     }
     // 2b. Fallback: search subdirectories (electron-builder may nest extraResources)
     try {
-      const entries = require('fs').readdirSync(rp, { withFileTypes: true });
+      const entries = fs.readdirSync(rp, { withFileTypes: true });
       for (const entry of entries) {
         if (entry.isDirectory()) {
           const nested = path.join(rp, entry.name, binaryName);
-          if (require('fs').existsSync(nested)) {
+          if (fs.existsSync(nested)) {
             return nested;
           }
         }
@@ -360,15 +361,40 @@ export function resolveE2EEBinaryPath(): string {
     path.join(__dirname, '..', '..', '..', '..', 'bridge-e2ee', 'build', binaryName),
   ];
   for (const candidate of candidates) {
-    if (require('fs').existsSync(candidate)) {
+    if (fs.existsSync(candidate)) {
       return candidate;
     }
   }
+  return null;
+}
 
+/**
+ * Resolve đường dẫn đến Go bridge binary.
+ * Thứ tự: FBCHAT_E2EE_BIN env → process.resourcesPath → error
+ */
+export function resolveE2EEBinaryPath(): string {
+  const found = findBridgeBinary('fbchat-bridge-e2ee', 'FBCHAT_E2EE_BIN');
+  if (found) return found;
+  const binaryName = process.platform === 'win32' ? 'fbchat-bridge-e2ee.exe' : 'fbchat-bridge-e2ee';
   throw new Error(
     `Không tìm thấy E2EE bridge binary (${binaryName}). ` +
     `Đặt biến môi trường FBCHAT_E2EE_BIN hoặc build bridge từ bridge-e2ee/. ` +
     `Xem docs: bridge-e2ee/README.md`,
+  );
+}
+
+/**
+ * Resolve đường dẫn đến trình đăng nhập Facebook (fbchat-login-bridge, build
+ * từ src/bridge-e2ee/login cùng lúc với E2EE bridge).
+ * Thứ tự: FBCHAT_LOGIN_BIN env → process.resourcesPath → build/ khi dev
+ */
+export function resolveNativeLoginBinaryPath(): string {
+  const found = findBridgeBinary('fbchat-login-bridge', 'FBCHAT_LOGIN_BIN');
+  if (found) return found;
+  const binaryName = process.platform === 'win32' ? 'fbchat-login-bridge.exe' : 'fbchat-login-bridge';
+  throw new Error(
+    `Thiếu trình đăng nhập Facebook (${binaryName}). ` +
+    `Bản cài đặt cần được cập nhật; khi phát triển, chạy lại "npm run dev" hoặc "npm run build:bridge-e2ee" để build.`,
   );
 }
 

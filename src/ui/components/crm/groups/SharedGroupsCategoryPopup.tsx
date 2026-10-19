@@ -154,18 +154,18 @@ export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGrou
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-gray-800 border border-gray-600 rounded-2xl w-[720px] h-[540px] shadow-2xl flex overflow-hidden"
+      <div className="bg-card border border-input rounded-2xl w-[720px] h-[540px] shadow-2xl flex overflow-hidden"
         onClick={e => e.stopPropagation()}>
 
         {/* ── Left: Category List ─────────────────────────────────────── */}
-        <div className="w-52 flex-shrink-0 border-r border-gray-700 flex flex-col">
+        <div className="w-52 flex-shrink-0 border-r border-border flex flex-col">
           {/* Header */}
-          <div className="px-4 py-3 border-b border-gray-700 flex items-center justify-between">
+          <div className="px-4 py-3 border-b border-border flex items-center justify-between">
             <div>
-              <h3 className="text-sm font-semibold text-white">Nhóm chung</h3>
-              <p className="text-[11px] text-gray-400 mt-0.5">{totalGroups} nhóm</p>
+              <h3 className="text-sm font-semibold text-foreground">Nhóm chung</h3>
+              <p className="text-[11px] text-muted-foreground mt-0.5">{totalGroups} nhóm</p>
             </div>
-            <button onClick={onClose} className="text-gray-500 hover:text-gray-300 transition-colors p-1">
+            <button onClick={onClose} className="text-subtle-foreground hover:text-foreground/80 transition-colors p-1">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
               </svg>
@@ -178,23 +178,23 @@ export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGrou
             <button onClick={() => handleCategoryChange(null)}
               className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors
                 ${selectedCategoryId === null
-                  ? 'bg-green-500/10 border-r-2 border-green-500 text-white'
-                  : 'text-gray-200 hover:bg-gray-700 hover:text-gray-200'}`}>
+                  ? 'bg-green-500/10 border-r-2 border-green-500 text-foreground'
+                  : 'text-foreground hover:bg-muted hover:text-foreground'}`}>
               <span className="text-lg flex-shrink-0">📋</span>
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-medium">Tất cả</p>
               </div>
               <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full
-                ${selectedCategoryId === null ? 'bg-green-500/10 text-green-400' : 'bg-gray-700 text-gray-200'}`}>
+                ${selectedCategoryId === null ? 'bg-green-500/10 text-green-400' : 'bg-muted text-foreground'}`}>
                 {totalGroups}
               </span>
             </button>
 
             {/* Divider */}
-            <div className="mx-4 my-1 border-t border-gray-700/50" />
+            <div className="mx-4 my-1 border-t border-border/50" />
 
             {loading && !selectedCategoryId && (
-              <div className="flex items-center justify-center py-6 text-gray-400 text-xs gap-2">
+              <div className="flex items-center justify-center py-6 text-muted-foreground text-xs gap-2">
                 {SpinIcon}
               </div>
             )}
@@ -204,14 +204,14 @@ export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGrou
                 <button key={cat.id} onClick={() => handleCategoryChange(cat.id)}
                   className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors
                     ${isActive
-                      ? 'bg-green-500/10 border-r-2 border-green-500 text-white'
-                      : 'text-gray-400 hover:bg-gray-700/50 hover:text-gray-200'}`}>
+                      ? 'bg-green-500/10 border-r-2 border-green-500 text-foreground'
+                      : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'}`}>
                   <span className="text-lg flex-shrink-0">{cat.icon}</span>
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-medium truncate">{cat.name}</p>
                   </div>
                   <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full
-                    ${isActive ? 'bg-green-500/20 text-green-400' : 'bg-gray-700 text-gray-300'}`}>
+                    ${isActive ? 'bg-green-500/20 text-green-400' : 'bg-muted text-foreground/80'}`}>
                     {cat.count ?? 0}
                   </span>
                 </button>
@@ -220,7 +220,7 @@ export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGrou
           </div>
 
           {/* Share group button */}
-          <div className="px-3 py-3 border-t border-gray-700 flex gap-2">
+          <div className="px-3 py-3 border-t border-border flex gap-2">
             {/*{onBulkImport && (*/}
             {/*  <button onClick={onBulkImport}*/}
             {/*    className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-1.5">*/}
@@ -241,25 +241,25 @@ export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGrou
         {/* ── Right: Group List ───────────────────────────────────────── */}
         <div className="flex-1 flex flex-col min-w-0">
           {/* Header + Search */}
-          <div className="px-4 py-3 border-b border-gray-700 space-y-2.5">
+          <div className="px-4 py-3 border-b border-border space-y-2.5">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-white">
+              <h3 className="text-sm font-semibold text-foreground">
                 {selectedCategory ? `${selectedCategory.icon} ${selectedCategory.name}` : '📋 Tất cả nhóm'}
               </h3>
-              <span className="text-[11px] text-gray-400">{filteredGroups.length} kết quả</span>
+              <span className="text-[11px] text-muted-foreground">{filteredGroups.length} kết quả</span>
             </div>
             <div className="relative">
-              <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">{SearchIcon}</div>
+              <div className="absolute left-3 top-1/2 -translate-y-1/2 text-subtle-foreground">{SearchIcon}</div>
               <input type="text" value={searchText} onChange={e => setSearchText(e.target.value)}
                 placeholder="Tìm theo tên nhóm, ID, người chia sẻ..."
-                className="w-full bg-gray-700 border border-gray-600 rounded-lg pl-9 pr-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-green-500" />
+                className="w-full bg-muted border border-input rounded-lg pl-9 pr-3 py-1.5 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-green-500" />
             </div>
           </div>
 
           {/* Group list */}
           <div className="flex-1 overflow-y-auto">
             {loading && (
-              <div className="flex items-center justify-center py-12 text-gray-400 text-sm gap-2">
+              <div className="flex items-center justify-center py-12 text-muted-foreground text-sm gap-2">
                 {SpinIcon} Đang tải...
               </div>
             )}
@@ -267,7 +267,7 @@ export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGrou
             {!loading && pagedGroups.length === 0 && (
               <div className="flex flex-col items-center justify-center h-full px-6 text-center">
                 <div className="text-3xl mb-2">{searchText ? '🔍' : '📭'}</div>
-                <p className="text-sm text-gray-400">
+                <p className="text-sm text-muted-foreground">
                   {searchText ? 'Không tìm thấy nhóm' : 'Chưa có nhóm nào'}
                 </p>
                 {!searchText && (
@@ -283,7 +283,7 @@ export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGrou
               <div className="p-2 space-y-1">
                 {pagedGroups.map(group => (
                   <div key={group.shareId}
-                    className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-gray-700/50 transition-colors">
+                    className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-muted/50 transition-colors">
 
                     {/* Avatar */}
                     {group.groupAvatar ? (
@@ -297,8 +297,8 @@ export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGrou
 
                     {/* Info */}
                     <div className="flex-1 min-w-0">
-                      <p className="text-[13px] text-white font-medium truncate">{group.groupName}</p>
-                      <p className="text-[11px] text-gray-400 mt-0.5">
+                      <p className="text-[13px] text-foreground font-medium truncate">{group.groupName}</p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
                         {group.memberCount.toLocaleString('vi-VN')} thành viên
                       </p>
                       <div className="flex items-center gap-1.5 mt-0.5">
@@ -306,13 +306,13 @@ export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGrou
                           <img src={group.submittedByAvatar} alt={group.submittedBy}
                             className="w-3.5 h-3.5 rounded-full object-cover flex-shrink-0" />
                         ) : (
-                          <div className="w-3.5 h-3.5 rounded-full bg-gray-600 flex items-center justify-center text-[7px] text-gray-300 flex-shrink-0">
+                          <div className="w-3.5 h-3.5 rounded-full bg-accent flex items-center justify-center text-[7px] text-foreground/80 flex-shrink-0">
                             {(group.submittedBy || '?').charAt(0).toUpperCase()}
                           </div>
                         )}
-                        <span className="text-[10px] text-gray-500 truncate">{group.submittedBy}</span>
+                        <span className="text-[10px] text-subtle-foreground truncate">{group.submittedBy}</span>
                         {group.submittedByUid && (
-                          <span className="text-[10px] text-gray-600">· {group.submittedByUid}</span>
+                          <span className="text-[10px] text-subtle-foreground">· {group.submittedByUid}</span>
                         )}
                       </div>
                     </div>
@@ -335,14 +335,14 @@ export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGrou
 
           {/* Pagination */}
           {totalPages > 1 && (
-            <div className="px-4 py-2.5 border-t border-gray-700 flex items-center justify-between">
-              <span className="text-[11px] text-gray-500">
+            <div className="px-4 py-2.5 border-t border-border flex items-center justify-between">
+              <span className="text-[11px] text-subtle-foreground">
                 Trang {currentPage}/{totalPages} · {totalCount} nhóm
               </span>
               <div className="flex items-center gap-1">
                 <button onClick={() => handlePageChange(Math.max(1, currentPage - 1))}
                   disabled={currentPage <= 1}
-                  className="w-7 h-7 rounded-md bg-gray-700 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center text-gray-300 transition-colors">
+                  className="w-7 h-7 rounded-md bg-muted hover:bg-accent disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center text-foreground/80 transition-colors">
                   {PrevIcon}
                 </button>
                 {/* Page numbers */}
@@ -362,14 +362,14 @@ export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGrou
                       className={`w-7 h-7 rounded-md text-[11px] font-medium transition-colors
                         ${currentPage === page
                           ? 'bg-green-600 text-white'
-                          : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
+                          : 'bg-muted text-muted-foreground hover:bg-accent'}`}>
                       {page}
                     </button>
                   );
                 })}
                 <button onClick={() => handlePageChange(Math.min(totalPages, currentPage + 1))}
                   disabled={currentPage >= totalPages}
-                  className="w-7 h-7 rounded-md bg-gray-700 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center text-gray-300 transition-colors">
+                  className="w-7 h-7 rounded-md bg-muted hover:bg-accent disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center text-foreground/80 transition-colors">
                   {NextIcon}
                 </button>
               </div>

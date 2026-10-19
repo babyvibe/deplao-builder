@@ -37,11 +37,11 @@ export default function MergedInboxModal({ onClose }: Props) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
       <div
-        className="bg-gray-800 border border-gray-700 rounded-2xl w-[420px] shadow-2xl"
+        className="bg-card border border-border rounded-2xl w-[420px] shadow-2xl"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="px-6 pt-5 pb-4 border-b border-gray-700">
+        <div className="px-6 pt-5 pb-4 border-b border-border">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-blue-600/20 border border-blue-600/40 flex items-center justify-center">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" strokeWidth="2">
@@ -52,10 +52,10 @@ export default function MergedInboxModal({ onClose }: Props) {
               </svg>
             </div>
             <div>
-              <h2 className="text-base font-semibold text-white">Chế độ Gộp tài khoản</h2>
-              <p className="text-xs text-gray-400 mt-0.5">Xem tất cả hội thoại từ nhiều tài khoản trong 1 nơi</p>
+              <h2 className="text-base font-semibold text-foreground">Chế độ Gộp tài khoản</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">Xem tất cả hội thoại từ nhiều tài khoản trong 1 nơi</p>
             </div>
-            <button onClick={onClose} className="ml-auto text-gray-400 hover:text-gray-300 transition-colors">
+            <button onClick={onClose} className="ml-auto text-muted-foreground hover:text-foreground/80 transition-colors">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
               </svg>
@@ -66,7 +66,7 @@ export default function MergedInboxModal({ onClose }: Props) {
         {/* Account list */}
         <div className="px-6 py-4">
           <div className="flex items-center justify-between mb-3">
-            <span className="text-xs text-gray-400 font-medium">Chọn tài khoản ({selected.length}/{accounts.length})</span>
+            <span className="text-xs text-muted-foreground font-medium">Chọn tài khoản ({selected.length}/{accounts.length})</span>
             <button onClick={toggleAll} className="text-xs text-blue-400 hover:text-blue-300 transition-colors">
               {allSelected ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
             </button>
@@ -79,7 +79,7 @@ export default function MergedInboxModal({ onClose }: Props) {
                 <label
                   key={acc.zalo_id}
                   className={`flex items-center gap-3 p-2.5 rounded-xl cursor-pointer transition-colors ${
-                    isSelected ? 'bg-blue-600/15 border border-blue-600/40' : 'bg-gray-750 border border-transparent hover:bg-gray-700'
+                    isSelected ? 'bg-blue-600/15 border border-blue-600/40' : 'bg-muted border border-transparent hover:bg-muted'
                   }`}
                 >
                   <input
@@ -97,19 +97,19 @@ export default function MergedInboxModal({ onClose }: Props) {
                     }
                     {/* Online indicator */}
                     {acc.isConnected && (
-                      <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 rounded-full border-2 border-gray-800" />
+                      <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 rounded-full border-2 border-border" />
                     )}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-200 truncate">{acc.full_name || acc.zalo_id}</p>
-                    <p className="text-[11px] text-gray-400 truncate">
+                    <p className="text-sm font-medium text-foreground truncate">{acc.full_name || acc.zalo_id}</p>
+                    <p className="text-[11px] text-muted-foreground truncate">
                       {acc.phone || acc.zalo_id}
                       {acc.is_business ? ' • 💼 Business' : ''}
                     </p>
                   </div>
                   {/* Connected status */}
                   <span className={`text-[11px] px-1.5 py-0.5 rounded-full flex-shrink-0 ${
-                    acc.isConnected ? 'bg-green-900/50 text-green-400' : 'bg-gray-700 text-gray-400'
+                    acc.isConnected ? 'bg-green-900/50 text-green-400' : 'bg-muted text-muted-foreground'
                   }`}>
                     {acc.isConnected ? 'Online' : 'Offline'}
                   </span>
@@ -134,7 +134,7 @@ export default function MergedInboxModal({ onClose }: Props) {
         <div className="px-6 pb-5 flex gap-2">
           <button
             onClick={onClose}
-            className="flex-1 px-4 py-2.5 text-sm rounded-xl bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors font-medium"
+            className="flex-1 px-4 py-2.5 text-sm rounded-xl bg-muted text-foreground/80 hover:bg-accent transition-colors font-medium"
           >
             Huỷ
           </button>

@@ -6,11 +6,17 @@
 /** Kiểm tra tin nhắn danh thiếp (chat.recommended) */
 export function isCardType(msgType: string, content: string): boolean {
   if (['chat.recommended', 'chat.recommend'].includes(msgType)) return true;
+  if (isOaListType(msgType)) return true;
   try {
     const parsed = JSON.parse(content);
     if (parsed?.action && String(parsed.action).includes('recommened')) return true;
   } catch {}
   return false;
+}
+
+/** Bản tin của Official Account Zalo (content là mảng bài viết) — hiển thị bằng OaListBubble */
+export function isOaListType(msgType: string): boolean {
+  return msgType === 'chat.list.action';
 }
 
 /** Kiểm tra tin nhắn ecard (thông báo hệ thống dạng thẻ, vd: trở thành phó nhóm) */

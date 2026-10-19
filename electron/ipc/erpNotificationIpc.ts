@@ -12,9 +12,10 @@ export function registerErpNotificationIpc(): void {
     }),
   })));
 
-  ipcMain.handle('erp:notify:markRead', withErpAuth('erp.access', async (input: any) => {
+  // Chỉ thông báo của người gọi (id thông báo của người khác bị bỏ qua)
+  ipcMain.handle('erp:notify:markRead', withErpAuth('erp.access', async (input: any, ctx) => {
     const ids: number[] = Array.isArray(input?.ids) ? input.ids.map(Number).filter(Number.isFinite) : [];
-    svc().markRead(ids);
+    svc().markRead(ids, ctx.employeeId);
     return {};
   }));
 
@@ -27,9 +28,9 @@ export function registerErpNotificationIpc(): void {
     count: svc().getUnreadCount(ctx.employeeId),
   })));
 
-  ipcMain.handle('erp:notify:delete', withErpAuth('erp.access', async (input: any) => {
+  ipcMain.handle('erp:notify:delete', withErpAuth('erp.access', async (input: any, ctx) => {
     const ids: number[] = Array.isArray(input?.ids) ? input.ids.map(Number).filter(Number.isFinite) : [];
-    svc().delete(ids);
+    svc().delete(ids, ctx.employeeId);
     return {};
   }));
 

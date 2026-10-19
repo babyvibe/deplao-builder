@@ -4,13 +4,14 @@
  * Style khớp với ChatWindow.tsx
  */
 import React from 'react';
+import { formatBubbleTime, MediaTimeBadge } from './MessageTime';
 import { MessageItem } from '@/store/chatStore';
 import { useChatStore } from '@/store/chatStore';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
 import { useEmployeeStore } from '@/store/employeeStore';
 import { getCachedBankCard } from '@/lib/bankCardCache';
-import ipc from '@/lib/ipc';
+import ipc, { buildZaloAuth } from '@/lib/ipc';
 import DataAccessor from '@/lib/data/DataAccessor';
 import { toLocalMediaUrl } from '@/lib/localMedia';
 import { ensureMediaLocal } from '@/lib/employeeMediaSync';
@@ -21,8 +22,12 @@ import { parseTxt, linkifyText } from '@/lib/chat/messageParser';
 import { getFileMetadata, getLocalMediaPath, getStatusDisplay, extractAttachments, getFirstAttachment, getTelegramStickerMedia } from '@/lib/mediaResolver';
 import {
   isCardType, isEcardType, isFileType, isStickerType, isRtfMsg,
-  isBankCardType, isMediaType, isVideoType, isVoiceType, isLocationType,
+  isBankCardType, isMediaType, isVideoType, isVoiceType, isLocationType, isOaListType,
 } from '@/lib/chat/messageTypeUtils';
+import OaListBubble from './OaListBubble';
+import ZaloOaCard from './ZaloOaCard';
+import { isZinstantMsgType } from '../../../shared/zaloZinstant';
+import { toZaloJpgUrl } from '../../../utils/zaloImageUrl';
 import { isFacebook, isNonZalo, isTelegram, isTelegramUser } from '@/lib/channelHelper';
 
 // ── RTF style constants ───────────────────────────────────────────────────────
@@ -72,8 +77,40 @@ function inferRecallMediaType(msg: MessageItem): string | null {
   return 'file';
 }
 
+/** attachment media Telegram → msg_type tương ứng (như normalizeTelegramMessageMedia ở main). */
+const TELEGRAM_MEDIA_MSG_TYPE: Record<string, string> = {
+  photo: 'photo', sticker: 'sticker', video_note: 'video_note', voice: 'audio', audio: 'audio',
+  gif: 'video', video: 'video', file: 'file',
+};
+
+/**
+ * Loại xem lại của tin Telegram theo dữ liệu thật của chính hàng đó: attachment media (bỏ thẻ trình bày @tên, emoji,
+ * chuyển tiếp…), hoặc 'text' khi loại lưu là media nhưng hàng không có media nào mà có chữ. Bản ghi thu hồi cũ có thể
+ * mang loại của tin khác trùng msg_id (tin chữ thành "photo", bài video thành "photo"). null = giữ cách suy luận chung.
+ */
+function getTelegramRecalledType(msg: MessageItem, storedType: string, originalContent: string): string | null {
+  let attachments: any[] = [];
+  try {
+    const parsed = typeof msg.attachments === 'string' ? JSON.parse(msg.attachments || '[]') : (msg.attachments || []);
+    attachments = Array.isArray(parsed) ? parsed : [];
+  } catch {}
+  const media = attachments.find((attachment) => TELEGRAM_MEDIA_MSG_TYPE[String(attachment?.type || '')]);
+  if (media) return TELEGRAM_MEDIA_MSG_TYPE[String(media.type)];
+  const isMediaStored = Object.values(TELEGRAM_MEDIA_MSG_TYPE).includes(storedType) || storedType === 'image';
+  let hasLocalFile = false;
+  try {
+    const paths = typeof msg.local_paths === 'string' ? JSON.parse(msg.local_paths || '{}') : (msg.local_paths || {});
+    hasLocalFile = Object.values(paths || {}).some(Boolean);
+  } catch {}
+  return isMediaStored && !hasLocalFile && String(originalContent || '').trim() ? 'text' : null;
+}
+
 function getRecalledPreviewType(msg: MessageItem, originalContent: string): string {
   const storedType = String(msg.recalled_msg_type || '');
+  if (isTelegram(msg.channel)) {
+    const telegramType = getTelegramRecalledType(msg, storedType, originalContent);
+    if (telegramType) return telegramType;
+  }
   const inferredType = inferRecallMediaType(msg);
 
   // Image documents frequently come as `file`; use their actual media shape.
@@ -84,13 +121,13 @@ function getRecalledPreviewType(msg: MessageItem, originalContent: string): stri
   return inferredType || 'webchat';
 }
 
-function canPreviewRecalled(msg: MessageItem, originalContent: string): boolean {
+export function canPreviewRecalled(msg: MessageItem, originalContent: string): boolean {
   const content = String(originalContent || '').trim();
   if (content && content !== 'null' && content !== '{}' && content !== RECALL_PLACEHOLDER) return true;
   return getRecalledPreviewType(msg, content) !== 'webchat';
 }
 
-function getRecalledPreviewMessage(msg: MessageItem, originalContent: string): MessageItem {
+export function getRecalledPreviewMessage(msg: MessageItem, originalContent: string): MessageItem {
   return {
     ...msg,
     is_recalled: 0,
@@ -247,7 +284,7 @@ function StickerBubble({ msg }: { msg: any }) {
         const accounts: any[] = accountsRes?.accounts || [];
         const active = accounts.find((a: any) => a.is_active) || accounts[0];
         if (!active) { if (!cancelled) setFailed(true); return; }
-        const auth = { cookies: active.cookies, imei: active.imei, userAgent: active.user_agent };
+        const auth = buildZaloAuth(active);
         const detailRes = await ipc.zalo?.getStickersDetail({ auth, stickerIds: [stickerId] });
         if (!detailRes?.success) {
           // API call failed (e.g. disconnected) - mark unsupported
@@ -275,16 +312,16 @@ function StickerBubble({ msg }: { msg: any }) {
 
   if (unsupported) {
     return (
-      <div className="w-28 h-28 rounded-xl bg-gray-700/30 border border-gray-600/30 flex flex-col items-center justify-center gap-1">
+      <div className="w-28 h-28 rounded-xl bg-muted/30 border border-input/30 flex flex-col items-center justify-center gap-1">
         <span className="text-2xl opacity-40">🎭</span>
-        <span className="text-[10px] text-gray-400 text-center px-1 leading-tight">Sticker chưa hỗ trợ</span>
+        <span className="text-[10px] text-muted-foreground text-center px-1 leading-tight">Sticker chưa hỗ trợ</span>
       </div>
     );
   }
-  if (failed) return <span className="text-xs text-gray-400 px-2 py-1">[Sticker]</span>;
+  if (failed) return <span className="text-xs text-muted-foreground px-2 py-1">[Sticker]</span>;
   if (!stickerUrl) {
     return (
-      <div className="w-28 h-28 rounded-xl bg-gray-700/50 flex items-center justify-center animate-pulse">
+      <div className="w-28 h-28 rounded-xl bg-muted/50 flex items-center justify-center animate-pulse">
         <span className="text-2xl">🎭</span>
       </div>
     );
@@ -386,9 +423,9 @@ export function TgsBubble({ filePath }: { filePath: string }) {
 
   if (failed) {
     return (
-      <div className="w-28 h-28 rounded-xl bg-gray-700/30 border border-gray-600/30 flex flex-col items-center justify-center gap-1">
+      <div className="w-28 h-28 rounded-xl bg-muted/30 border border-input/30 flex flex-col items-center justify-center gap-1">
         <span className="text-2xl opacity-40">🎭</span>
-        <span className="text-[10px] text-gray-400 text-center px-1 leading-tight">Animated sticker</span>
+        <span className="text-[10px] text-muted-foreground text-center px-1 leading-tight">Animated sticker</span>
       </div>
     );
   }
@@ -420,7 +457,7 @@ function GifBubble({ msg, onView }: { msg: any; onView?: (src: string) => void }
   }, [msg.local_paths, msg.attachments]);
 
   if (failed || !mediaUrl) {
-    return <span className="text-xs text-gray-400 px-2 py-1">🎞️ [GIF]</span>;
+    return <span className="text-xs text-muted-foreground px-2 py-1">🎞️ [GIF]</span>;
   }
   return (
     <div className="max-w-[280px] max-h-[280px] rounded-xl overflow-hidden cursor-pointer"
@@ -450,7 +487,7 @@ function VideoNoteBubble({ msg }: { msg: any }) {
 
   if (failed || !mediaUrl) {
     return (
-      <div className="w-20 h-20 rounded-full bg-gray-700/50 flex items-center justify-center">
+      <div className="w-20 h-20 rounded-full bg-muted/50 flex items-center justify-center">
         <span className="text-xl">🎬</span>
       </div>
     );
@@ -499,13 +536,18 @@ function MediaBubble({ msg, isSelf, onView }: { msg: any; isSelf: boolean; onVie
     if (parsed && typeof parsed === 'object') {
       let paramsObj: any = parsed.params;
       if (typeof paramsObj === 'string') { try { paramsObj = JSON.parse(paramsObj); } catch { paramsObj = null; } }
-      remoteUrl = paramsObj?.hd || paramsObj?.rawUrl || parsed.href || parsed.thumb || '';
+      remoteUrl = toZaloJpgUrl(paramsObj?.hd || paramsObj?.rawUrl || parsed.href || parsed.thumb || '');
       if (parsed.title && typeof parsed.title === 'string') {
         const t = parsed.title.trim();
         if (t && !t.startsWith('http')) caption = t;
       }
     }
   } catch {}
+  // Telegram: chú thích ảnh là chữ thường trong content (không phải JSON của Zalo)
+  if (!caption && isTelegram(msg.channel)) {
+    const text = String(msg.content || '').trim();
+    if (text && !text.startsWith('{') && !text.startsWith('[')) caption = text;
+  }
   if (!remoteUrl) {
     try {
       const atts = JSON.parse(msg.attachments || '[]');
@@ -538,8 +580,17 @@ function MediaBubble({ msg, isSelf, onView }: { msg: any; isSelf: boolean; onVie
   const displayUrl = mode === 'employee' ? currentSrc : (localUrl || remoteUrl);
   const viewUrl = remoteUrl || displayUrl;
 
-  if (loadFailed && !allUrls) return <span className="text-xs opacity-60">[Không tải được ảnh]</span>;
-  if (!displayUrl && !allUrls) return <span className="text-xs opacity-60">[Hình ảnh]</span>;
+  if ((loadFailed || !displayUrl) && !allUrls) {
+    const label = <span className="text-xs opacity-60">{loadFailed ? '[Không tải được ảnh]' : '[Hình ảnh]'}</span>;
+    if (!caption) return label;
+    // Không có ảnh (vd. tin đã bị xoá trước khi ảnh được tải về) → vẫn giữ chú thích
+    return (
+      <div className={`flex flex-col gap-1 rounded-lg px-3 py-2 border max-w-xs text-sm break-words${isSelf ? ' bg-bubble-out border-bubble-out-border' : ' bg-bubble-in border-bubble-in-border'} text-foreground`}>
+        {label}
+        <div>{linkifyText(caption)}</div>
+      </div>
+    );
+  }
 
   // Multi-image grid
   if (allUrls && allUrls.length > 1) {
@@ -548,7 +599,7 @@ function MediaBubble({ msg, isSelf, onView }: { msg: any; isSelf: boolean; onVie
       <div className={`grid gap-1 rounded-xl overflow-hidden`} style={{ gridTemplateColumns: `repeat(${cols}, 1fr)`, maxWidth: 240 }}>
         {allUrls.map((src, i) => (
           <img key={i} src={src} alt="" onClick={() => onView?.(src)}
-            className="w-full aspect-square object-cover cursor-pointer hover:opacity-90 transition-opacity bg-gray-700/30" />
+            className="w-full aspect-square object-cover cursor-pointer hover:opacity-90 transition-opacity bg-muted/30" />
         ))}
       </div>
     );
@@ -557,7 +608,7 @@ function MediaBubble({ msg, isSelf, onView }: { msg: any; isSelf: boolean; onVie
   const imgNode = (
     <div className="relative max-w-xs">
       {/* aspect-ratio container giữ khung cố định trước khi ảnh load → không layout shift */}
-      <div className="w-full aspect-[4/3] bg-gray-700/30 rounded-xl overflow-hidden">
+      <div className="w-full aspect-[4/3] bg-muted/30 rounded-xl overflow-hidden">
         <img
           src={displayUrl}
           alt=""
@@ -604,9 +655,9 @@ function MediaBubble({ msg, isSelf, onView }: { msg: any; isSelf: boolean; onVie
 
   if (!caption) return imgNode;
   return (
-    <div className={`flex flex-col rounded-2xl overflow-hidden ring-1 ring-black/[0.12] max-w-xs${isSelf ? ' rounded-br-sm' : ' rounded-bl-sm'}`}>
+    <div className={`flex flex-col rounded-lg overflow-hidden border max-w-xs${isSelf ? ' border-bubble-out-border' : ' border-bubble-in-border'}`}>
       {imgNode}
-      <div className={`px-3 py-2 text-sm break-words${isSelf ? ' bg-blue-400/40 text-white' : ' bg-gray-700 text-gray-200'}`}>
+      <div className={`px-3 py-2 text-sm break-words${isSelf ? ' bg-bubble-out text-foreground' : ' bg-bubble-in text-foreground'}`}>
         {linkifyText(caption)}
       </div>
     </div>
@@ -652,15 +703,11 @@ function ZaloVideoBubble({ msg }: { msg: any }) {
   const handlePlay = async (e: React.MouseEvent) => {
     e.stopPropagation();
     const mode = useEmployeeStore.getState().mode;
-    // Employee mode: mở boss URL trực tiếp (stream video qua Range request,
-    // không cần download hết mới xem). Boss MediaHandler hỗ trợ Range.
+    // Employee mode: /api/media của Boss cần token phiên nhân viên — trình duyệt ngoài không có → không mở thẳng
+    // URL Boss nữa; tải về máy qua main (MediaCacheService gắn token) rồi mở bằng trình phát mặc định.
     if (mode === 'employee' && videoUrl && videoUrl.startsWith('http')) {
-      ipc.shell?.openExternal(videoUrl);
-      // Background cache cho lần sau (fire & forget)
-      if (videoLocalPath) {
-        const bossUrl = toLocalMediaUrl(videoLocalPath);
-        if (bossUrl) ensureMediaLocal(bossUrl, 'video').catch(() => {});
-      }
+      const { localPath } = await ensureMediaLocal(videoUrl, 'video');
+      if (localPath) await ipc.file?.openPath(localPath);
       return;
     }
     // Boss/standalone: open in external player (VLC, etc.)
@@ -668,13 +715,13 @@ function ZaloVideoBubble({ msg }: { msg: any }) {
   };
 
   return (
-    <div className="relative group/video cursor-pointer rounded-xl overflow-hidden bg-black ring-1 ring-black/[0.12]"
+    <div className="relative group/video cursor-pointer rounded-xl overflow-hidden bg-black"
       style={{ width: '17.5rem', height: displayHeight || 160 }} onClick={handlePlay}>
       {thumbUrl
         ? <img src={thumbUrl} alt="video" className="w-full h-full object-cover"
             onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-        : <div className="w-full h-full bg-gray-800 flex items-center justify-center">
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-400">
+        : <div className="w-full h-full bg-card flex items-center justify-center">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-muted-foreground">
               <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
             </svg>
           </div>
@@ -736,7 +783,7 @@ function FacebookVideoBubble({ msg }: { msg: any }) {
   // Inline player mode
   if (showPlayer && videoUrl) {
     return (
-      <div className="rounded-xl overflow-hidden bg-black ring-1 ring-black/[0.12]"
+      <div className="rounded-xl overflow-hidden bg-black"
         style={{ width: '17.5rem', maxHeight: '25rem' }}>
         <video src={videoUrl} controls autoPlay
           className="w-full" style={{ maxHeight: '25rem' }}
@@ -746,11 +793,11 @@ function FacebookVideoBubble({ msg }: { msg: any }) {
   }
 
   return (
-    <div className="relative group/video cursor-pointer rounded-xl overflow-hidden bg-black ring-1 ring-black/[0.12]"
+    <div className="relative group/video cursor-pointer rounded-xl overflow-hidden bg-black"
       style={{ width: '17.5rem', height: 160 }} onClick={() => { if (videoUrl) setShowPlayer(true); }}>
       {/* No thumbnail for FB - always show video placeholder */}
-      <div className="w-full h-full bg-gray-800 flex items-center justify-center">
-        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-400">
+      <div className="w-full h-full bg-card flex items-center justify-center">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-muted-foreground">
           <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
         </svg>
       </div>
@@ -880,7 +927,7 @@ function VoiceBubble({ msg, isSelf }: { msg: any; isSelf: boolean }) {
 
   return (
     <div className={`flex items-center gap-2.5 px-3 py-2 rounded-2xl min-w-[200px] max-w-[280px] ${
-      isSelf ? 'bg-blue-600' : 'bg-gray-700'
+      isSelf ? 'bg-blue-600' : 'bg-muted'
     }`}>
       <audio
         ref={audioRef}
@@ -894,7 +941,7 @@ function VoiceBubble({ msg, isSelf }: { msg: any; isSelf: boolean }) {
       />
 
       {/* Play/Pause button */}
-      <button onClick={togglePlay} className="w-9 h-9 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center flex-shrink-0 transition-colors">
+      <button onClick={togglePlay} className="w-9 h-9 rounded-full bg-foreground/20 hover:bg-foreground/30 flex items-center justify-center flex-shrink-0 transition-colors">
         {isPlaying ? (
           <svg width="14" height="14" viewBox="0 0 24 24" fill="white">
             <rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>
@@ -917,20 +964,20 @@ function VoiceBubble({ msg, isSelf }: { msg: any; isSelf: boolean }) {
               return (
                 <div
                   key={i}
-                  className={`rounded-full transition-colors duration-100 ${filled ? 'bg-white' : 'bg-white/30'}`}
+                  className={`rounded-full transition-colors duration-100 ${filled ? 'bg-white' : 'bg-foreground/30'}`}
                   style={{ width: '0.125rem', height: h * 1.5, minHeight: '0.1875rem' }}
                 />
               );
             })}
           </div>
         </div>
-        <span className="text-[10px] text-white/70 font-mono tabular-nums leading-none">
+        <span className="text-[10px] text-foreground/70 font-mono tabular-nums leading-none">
           {isPlaying ? formatDur(currentTime) : formatDur(duration)}
         </span>
       </div>
 
       {/* Mic icon */}
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/50 flex-shrink-0">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-foreground/50 flex-shrink-0">
         <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/>
         <path d="M19 10v2a7 7 0 01-14 0v-2"/>
       </svg>
@@ -965,7 +1012,7 @@ function LocationBubble({ msg, isSelf }: { msg: any; isSelf: boolean }) {
     <div className={`flex ${isSelf ? 'justify-end' : 'justify-start'} mb-0.5`}>
       <button
         onClick={handleOpen}
-        className={`rounded-2xl max-w-[260px] text-left ${isSelf ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-200'} hover:opacity-85 transition-opacity cursor-pointer`}
+        className="rounded-lg max-w-[260px] text-left text-foreground hover:opacity-85 transition-opacity cursor-pointer"
       >
         <div className="px-3 py-2.5 flex items-center gap-2">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-red-400 flex-shrink-0">
@@ -1047,11 +1094,12 @@ function FileBubble({ msg, isSelf }: { msg: any; isSelf: boolean }) {
       const mode = useEmployeeStore.getState().mode;
       if (mode === 'employee' && localFilePath) {
         const bossUrl = toLocalMediaUrl(localFilePath);
-        // Employee: mở boss URL trực tiếp để download/stream
+        // Employee: /api/media của Boss cần token phiên nhân viên (trình duyệt ngoài không có) → tải về máy qua main
+        // rồi mở bằng app mặc định; không được thì thử link gốc (CDN) nếu có.
         if (bossUrl && bossUrl.startsWith('http')) {
-          ipc.shell?.openExternal(bossUrl);
-          // Background cache cho lần sau
-          ensureMediaLocal(bossUrl, 'file').catch(() => {});
+          const { localPath } = await ensureMediaLocal(bossUrl, 'file');
+          if (localPath) await ipc.file?.openPath(localPath);
+          else if (fileHref) ipc.shell?.openExternal(fileHref);
           return;
         }
       }
@@ -1078,8 +1126,8 @@ function FileBubble({ msg, isSelf }: { msg: any; isSelf: boolean }) {
     if (['mp4', 'avi', 'mov', 'mkv', 'webm'].includes(e)) return { icon: 'VID', bg: 'bg-purple-600' };
     if (['mp3', 'wav', 'ogg', 'flac', 'm4a'].includes(e)) return { icon: 'AUD', bg: 'bg-pink-600' };
     if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(e)) return { icon: 'IMG', bg: 'bg-teal-600' };
-    if (['txt', 'log'].includes(e)) return { icon: 'TXT', bg: 'bg-gray-500' };
-    return { icon: e.toUpperCase().slice(0, 3) || '...', bg: 'bg-gray-500' };
+    if (['txt', 'log'].includes(e)) return { icon: 'TXT', bg: 'bg-accent' };
+    return { icon: e.toUpperCase().slice(0, 3) || '...', bg: 'bg-accent' };
   };
 
   const sizeText = fmtSize(fileSize);
@@ -1087,14 +1135,14 @@ function FileBubble({ msg, isSelf }: { msg: any; isSelf: boolean }) {
   const { icon, bg } = getIcon(fileExt);
 
   return (
-    <div className={`flex items-center gap-3 px-3 py-2.5 rounded-2xl min-w-[200px] max-w-xs ${isSelf ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-200'}`}>
+    <div className={`flex items-center gap-3 px-3 py-2.5 rounded-lg min-w-[200px] max-w-xs ${isSelf ? 'bg-bubble-out text-foreground border border-bubble-out-border' : 'bg-bubble-in text-foreground border border-bubble-in-border'}`}>
       <button onClick={handleOpen} disabled={opening || !canOpen}
         className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 font-bold text-[11px] ${bg} text-white ${canOpen ? 'hover:opacity-80 cursor-pointer' : 'opacity-60'} transition-opacity`}>
         {icon}
       </button>
       <button onClick={handleOpen} disabled={opening || !canOpen} className="flex-1 min-w-0 text-left">
         <p className="text-sm font-medium truncate">{fileTitle}</p>
-        <p className={`text-xs mt-0.5 ${isSelf ? 'text-blue-200' : 'text-gray-400'}`}>
+        <p className={`text-xs mt-0.5 text-muted-foreground`}>
           {sizeText && <>{sizeText} · </>}
           {opening ? 'Đang mở...'
             : localFilePath ? '✓ Đã có trên máy'
@@ -1103,7 +1151,7 @@ function FileBubble({ msg, isSelf }: { msg: any; isSelf: boolean }) {
         </p>
       </button>
       <button onClick={handleOpen} disabled={opening || !canOpen}
-        className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors disabled:opacity-40 flex-shrink-0 ${isSelf ? 'text-blue-200 hover:text-white hover:bg-blue-500' : 'text-gray-400 hover:text-white hover:bg-gray-600'}`}>
+        className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors disabled:opacity-40 flex-shrink-0 text-muted-foreground hover:text-foreground hover:bg-foreground/5`}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
         </svg>
@@ -1164,20 +1212,20 @@ function EcardBubble({ msg, onManage }: { msg: any; onManage?: () => void }) {
 
     return (
       <div className="flex justify-center w-full my-1">
-        <div className="bg-gray-800 border border-gray-700 rounded-2xl overflow-hidden max-w-[300px] w-full shadow-lg">
+        <div className="bg-bubble-in rounded-2xl overflow-hidden max-w-[300px] w-full shadow-sm">
           <div className="flex gap-3 p-4">
             {startTime > 0 && (
-              <div className="flex-shrink-0 w-14 rounded-xl overflow-hidden border border-gray-600 flex flex-col items-center">
+              <div className="flex-shrink-0 w-14 rounded-xl overflow-hidden border border-input flex flex-col items-center">
                 <div className="w-full bg-blue-600 py-0.5 text-center text-white text-[11px] font-bold tracking-wide">{fmtWeekDay(startTime)}</div>
                 <div className="flex-1 flex flex-col items-center justify-center py-1">
-                  <span className="text-white text-2xl font-bold leading-none">{fmtDay(startTime)}</span>
-                  <span className="text-gray-400 text-[11px] mt-0.5">{fmtMonth(startTime)}</span>
+                  <span className="text-foreground text-2xl font-bold leading-none">{fmtDay(startTime)}</span>
+                  <span className="text-muted-foreground text-[11px] mt-0.5">{fmtMonth(startTime)}</span>
                 </div>
               </div>
             )}
             <div className="flex-1 min-w-0">
-              <p className="text-white font-semibold text-sm truncate">{emoji} {reminderTitle}</p>
-              <div className="flex items-center gap-1 mt-1 text-xs text-gray-400">
+              <p className="text-foreground font-semibold text-sm truncate">{emoji} {reminderTitle}</p>
+              <div className="flex items-center gap-1 mt-1 text-xs text-muted-foreground">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
                 </svg>
@@ -1203,22 +1251,22 @@ function EcardBubble({ msg, onManage }: { msg: any; onManage?: () => void }) {
 
   return (
     <div className="flex justify-center w-full my-1">
-      <div className="bg-gray-800 border border-gray-700 rounded-2xl overflow-hidden max-w-[280px] w-full shadow-lg">
+      <div className="bg-bubble-in rounded-2xl overflow-hidden max-w-[280px] w-full shadow-sm">
         {imageHref && (
-          <div className="w-full h-28 overflow-hidden bg-gray-700">
+          <div className="w-full h-28 overflow-hidden bg-muted">
             <img src={imageHref} alt={title} className="w-full h-full object-cover"
               onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
           </div>
         )}
         <div className="px-4 py-3 space-y-1">
-          {title && <p className="text-white font-semibold text-sm leading-snug">{linkifyText(title)}</p>}
-          {description && <p className="text-gray-400 text-xs leading-relaxed">{linkifyText(description)}</p>}
+          {title && <p className="text-foreground font-semibold text-sm leading-snug">{linkifyText(title)}</p>}
+          {description && <p className="text-muted-foreground text-xs leading-relaxed">{linkifyText(description)}</p>}
         </div>
         {actions.length > 0 && onManage && (
-          <div className="border-t border-gray-700">
+          <div className="border-t border-border">
             {actions.map((a: any, i: number) => (
               <button key={i} onClick={onManage}
-                className="w-full px-4 py-2.5 text-sm text-blue-400 hover:bg-gray-700 hover:text-blue-300 transition-colors font-medium text-center">
+                className="w-full px-4 py-2.5 text-sm text-blue-400 hover:bg-muted hover:text-blue-300 transition-colors font-medium text-center">
                 {a.name || 'Quản lý nhóm'}
               </button>
             ))}
@@ -1238,13 +1286,13 @@ function LinkBubble({ parsed, isSelf }: { parsed: any; isSelf: boolean }) {
   const thumb = String(parsed.thumb || '');
 
   return (
-    <div className={`rounded-2xl min-w-[220px] max-w-xs overflow-hidden ${isSelf ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-200'}`}>
+    <div className={`rounded-lg min-w-[220px] max-w-xs overflow-hidden ${isSelf ? 'bg-bubble-out text-foreground border border-bubble-out-border' : 'bg-bubble-in text-foreground border border-bubble-in-border'}`}>
       {/* Top area: selectable/copyable text - NOT clickable */}
       <div className="flex items-center gap-3 px-3 py-2.5 select-text cursor-text">
-        <div className={`w-11 h-11 rounded-xl flex-shrink-0 overflow-hidden flex items-center justify-center ${isSelf ? 'bg-blue-500' : 'bg-gray-600'}`}>
+        <div className="w-11 h-11 rounded-xl flex-shrink-0 overflow-hidden flex items-center justify-center bg-foreground/5">
           {thumb
             ? <img src={thumb} alt="" className="w-full h-full object-cover pointer-events-none" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-            : <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className={isSelf ? 'text-blue-200' : 'text-gray-400'}>
+            : <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-muted-foreground">
                 <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/>
                 <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>
               </svg>
@@ -1252,7 +1300,7 @@ function LinkBubble({ parsed, isSelf }: { parsed: any; isSelf: boolean }) {
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium leading-tight break-words">{title}</p>
-          {domain && <p className={`text-xs mt-0.5 truncate ${isSelf ? 'text-blue-200' : 'text-gray-400'}`}>{domain}</p>}
+          {domain && <p className={`text-xs mt-0.5 truncate text-muted-foreground`}>{domain}</p>}
         </div>
       </div>
       {/* Bottom area: clickable link */}
@@ -1260,9 +1308,7 @@ function LinkBubble({ parsed, isSelf }: { parsed: any; isSelf: boolean }) {
         <button
           onClick={() => ipc.shell?.openExternal(href)}
           className={`w-full flex items-center gap-2 px-3 py-2 text-left text-xs truncate border-t transition-colors ${
-            isSelf
-              ? 'border-blue-500/30 text-blue-200 hover:bg-blue-500/30'
-              : 'border-gray-600/50 text-blue-400 hover:bg-gray-600/40'
+            'border-foreground/10 text-primary hover:bg-foreground/5'
           }`}
           title={href}
         >
@@ -1303,9 +1349,9 @@ function CallBubble({ parsed, isSelf }: { parsed: any; isSelf: boolean }) {
   }
 
   return (
-    <div className={`flex flex-col px-3 py-2.5 rounded-2xl min-w-[200px] max-w-xs ${isSelf ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-200'}`}>
+    <div className={`flex flex-col px-3 py-2.5 rounded-lg min-w-[200px] max-w-xs ${isSelf ? 'bg-bubble-out text-foreground border border-bubble-out-border' : 'bg-bubble-in text-foreground border border-bubble-in-border'}`}>
       <div className="flex items-center gap-3">
-        <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${isSelf ? 'bg-blue-500' : 'bg-gray-600'}`}>
+        <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 bg-foreground/5">
           {isVideo
             ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>
@@ -1316,13 +1362,15 @@ function CallBubble({ parsed, isSelf }: { parsed: any; isSelf: boolean }) {
           }
         </div>
         <div className="flex-1 min-w-0">
-          <p className={`text-sm font-semibold ${statusRed ? 'text-red-400' : isSelf ? 'text-white' : 'text-gray-200'}`}>{statusLabel}</p>
+          <p className={`text-sm font-semibold ${statusRed ? 'text-red-400' : isSelf ? 'text-foreground' : 'text-foreground'}`}>{statusLabel}</p>
           <p className={`text-xs mt-0.5`}>{isVideo ? 'Cuộc gọi video' : 'Cuộc gọi thoại'}</p>
         </div>
       </div>
     </div>
   );
 }
+
+const EMPTY_CARD_CONTACTS: any[] = [];
 
 // ── ContactCardBubble ─────────────────────────────────────────────────────────
 function ContactCardBubble({ parsed, isSelf, onOpenProfile }: { parsed: any; isSelf: boolean; onOpenProfile?: (userId: string, e: React.MouseEvent) => void }) {
@@ -1334,9 +1382,10 @@ function ContactCardBubble({ parsed, isSelf, onOpenProfile }: { parsed: any; isS
   const phone = formatPhone(String(desc.phone || ''));
   const qrCodeUrl = String(desc.qrCodeUrl || '');
 
-  const { contacts } = useChatStore();
-  const { activeAccountId, getActiveAccount } = useAccountStore();
-  const contactList = activeAccountId ? (contacts[activeAccountId] || []) : [];
+  // Selector: mỗi danh thiếp không render lại với mọi thay đổi của store (nhân theo số hàng tin)
+  const activeAccountId = useAccountStore(s => s.activeAccountId);
+  const getActiveAccount = useAccountStore(s => s.getActiveAccount);
+  const contactList = useChatStore(s => (activeAccountId ? s.contacts[activeAccountId] : undefined)) ?? EMPTY_CARD_CONTACTS;
 
   const directUid = String(desc.uid || desc.userId || desc.id || parsed.userId || parsed.uid || parsed.id || '').trim();
   const paramsUid = typeof parsed.params === 'string' ? parsed.params.trim() : '';
@@ -1406,7 +1455,7 @@ function ContactCardBubble({ parsed, isSelf, onOpenProfile }: { parsed: any; isS
     }
     setSendingReq(true);
     try {
-      const auth = { cookies: account.cookies, imei: account.imei, userAgent: account.user_agent };
+      const auth = buildZaloAuth(account);
       const res = await ipc.zalo?.sendFriendRequest({ auth, userId: resolvedUserId, msg: 'Làm quen qua danh thiếp Zalo' });
       if (res?.success || res?.response?.success) {
         useAppStore.getState().showNotification('Đã gửi lời mời kết bạn', 'success');
@@ -1422,23 +1471,23 @@ function ContactCardBubble({ parsed, isSelf, onOpenProfile }: { parsed: any; isS
 
   return (
     <div
-      className={`rounded-2xl max-w-[340px] ${isSelf ? 'bg-blue-600/70 text-white' : 'bg-gray-700 text-gray-200'}`}
+      className={`rounded-2xl max-w-[340px] ${isSelf ? 'bg-blue-600/70 text-white' : 'bg-muted text-foreground'}`}
     >
       <div className="flex items-center gap-3.5 px-4 py-3.5 select-text">
         {/* Avatar - click mở profile */}
         <div
-          className={`card-avatar-area w-14 h-14 rounded-full overflow-hidden flex-shrink-0 bg-gray-600 ${resolvedUserId && onOpenProfile ? 'cursor-pointer hover:opacity-85 transition-opacity' : ''}`}
+          className={`card-avatar-area w-14 h-14 rounded-full overflow-hidden flex-shrink-0 bg-accent ${resolvedUserId && onOpenProfile ? 'cursor-pointer hover:opacity-85 transition-opacity' : ''}`}
           onClick={handleOpenProfile}
         >
           {thumbUrl
             ? <img src={thumbUrl} alt={title} className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-            : <div className="w-full h-full flex items-center justify-center text-white text-xl font-bold">{(title || 'U').charAt(0).toUpperCase()}</div>
+            : <div className="w-full h-full flex items-center justify-center text-foreground text-xl font-bold">{(title || 'U').charAt(0).toUpperCase()}</div>
           }
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-base font-semibold truncate select-text cursor-text">{title || 'Danh thiếp'}</p>
-          {phone && <PhoneDisplay phone={phone} className={`text-sm ${isSelf ? 'text-blue-100' : 'text-gray-300'}`} />}
-          <p className={`text-xs mt-1 ${isSelf ? 'text-blue-200' : 'text-gray-400'}`}>Danh thiếp Zalo</p>
+          {phone && <PhoneDisplay phone={phone} className={`text-sm ${isSelf ? 'text-blue-100' : 'text-foreground/80'}`} />}
+          <p className={`text-xs mt-1 text-muted-foreground`}>Danh thiếp Zalo</p>
         </div>
         {qrCodeUrl && (
           <div className="w-12 h-12 flex-shrink-0">
@@ -1449,7 +1498,7 @@ function ContactCardBubble({ parsed, isSelf, onOpenProfile }: { parsed: any; isS
       </div>
 
       {resolvedUserId && (
-        <div className={`px-4 pb-3.5 ${isSelf ? 'bg-blue-700/40' : 'bg-gray-800/50'} border-t ${isSelf ? 'border-blue-400/25' : 'border-gray-600/70'}`}>
+        <div className={`px-4 pb-3.5 ${isSelf ? 'bg-blue-700/40' : 'bg-card/50'} border-t ${isSelf ? 'border-blue-400/25' : 'border-input/70'}`}>
           <button
             onClick={handleOpenQuickChat}
             className={`mt-2 w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors ${
@@ -1470,8 +1519,8 @@ function ContactCardBubble({ parsed, isSelf, onOpenProfile }: { parsed: any; isS
               className={`mt-1.5 w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors border border-dashed ${
                 sendingReq
                   ? 'opacity-50 cursor-not-allowed'
-                  : 'hover:bg-white/10'
-              } ${isSelf ? 'border-blue-400/30 text-blue-200' : 'border-gray-500/40 text-gray-300'}`}
+                  : 'hover:bg-foreground/10'
+              } ${isSelf ? 'border-blue-400/30 text-blue-200' : 'border-border-strong/40 text-foreground/80'}`}
               title="Gửi lời mời kết bạn"
             >
               {sendingReq ? (
@@ -1495,6 +1544,7 @@ function ContactCardBubble({ parsed, isSelf, onOpenProfile }: { parsed: any; isS
 
 // ── CardBubble ────────────────────────────────────────────────────────────────
 function CardBubble({ msg, isSelf, onOpenProfile }: { msg: any; isSelf: boolean; onOpenProfile?: (userId: string, e: React.MouseEvent) => void }) {
+  if (isOaListType(msg.msg_type)) return <OaListBubble msg={msg} />;
   let parsed: any = {};
   try { parsed = JSON.parse(msg.content || '{}'); } catch {}
   const action = String(parsed.action || '');
@@ -1767,6 +1817,7 @@ export function BankCardBubble({ msg }: { msg: any }) {
         <div className="flex items-center gap-2.5 px-4 pt-3.5 pb-2">
           <div className="w-9 h-9 rounded-lg bg-white flex items-center justify-center flex-shrink-0 shadow-sm"><span className="text-lg">🏦</span></div>
           <span className="text-white text-sm font-semibold">{info.name}</span>
+          <span className="ml-auto text-[11px] leading-none text-white/70 select-none">{formatBubbleTime(msg.timestamp)}</span>
         </div>
         <div className="flex items-end justify-between px-4 pt-1 pb-3">
           <div className="flex-1 min-w-0">
@@ -1790,12 +1841,12 @@ export function BankCardBubble({ msg }: { msg: any }) {
   // ── Case 2: Đang tải HTML blob ──
   if (templateLoading) {
     return (
-      <div className="rounded-2xl overflow-hidden shadow-lg max-w-[300px] bg-gray-800 animate-pulse">
+      <div className="rounded-2xl overflow-hidden shadow-lg max-w-[300px] bg-card animate-pulse">
         <div className="flex items-center gap-2.5 px-4 pt-3.5 pb-2">
-          <div className="w-9 h-9 rounded-lg bg-white/10 flex items-center justify-center flex-shrink-0"><span className="text-lg">🏦</span></div>
-          <span className="text-white/60 text-sm font-semibold">Đang tải thẻ ngân hàng...</span>
+          <div className="w-9 h-9 rounded-lg bg-foreground/10 flex items-center justify-center flex-shrink-0"><span className="text-lg">🏦</span></div>
+          <span className="text-foreground/60 text-sm font-semibold">Đang tải thẻ ngân hàng...</span>
         </div>
-        <div className="h-[200px] bg-gray-700/50 mx-4 mb-3 rounded-lg" />
+        <div className="h-[200px] bg-muted/50 mx-4 mb-3 rounded-lg" />
       </div>
     );
   }
@@ -1803,7 +1854,8 @@ export function BankCardBubble({ msg }: { msg: any }) {
   // ── Case 3: Có blob URL → render iframe ──
   if (blobUrl) {
     return (
-      <div className="rounded-2xl overflow-hidden shadow-lg max-w-[300px]">
+      <div className="relative rounded-2xl overflow-hidden shadow-lg max-w-[300px]">
+        <MediaTimeBadge timestamp={msg.timestamp} />
         <iframe
           src={blobUrl}
           title="Tài khoản ngân hàng"
@@ -1821,6 +1873,7 @@ export function BankCardBubble({ msg }: { msg: any }) {
       <div className="flex items-center gap-2.5 px-4 pt-3.5 pb-2">
         <div className="w-9 h-9 rounded-lg bg-white/10 flex items-center justify-center flex-shrink-0"><span className="text-lg">🏦</span></div>
         <span className="text-white/90 text-sm font-semibold">Tài khoản ngân hàng</span>
+        <span className="ml-auto text-[11px] leading-none text-white/70 select-none">{formatBubbleTime(msg.timestamp)}</span>
       </div>
       <div className="px-4 pb-3.5 pt-1">
         <p className="text-white/50 text-xs">Mở Zalo để xem thông tin thẻ</p>
@@ -1838,8 +1891,8 @@ export function MessageBubble({ msg, isSelf, senderName, onManage, onView, onOpe
   const mc = msg.content || '';
   console.log(`[MESSAGE_RENDER] msg_id=${msg.msg_id} msg_type=${mt} channel=${msg.channel} isSelf=${isSelf} sender_id=${msg.sender_id} content="${(mc||'').slice(0,30)}" local_paths=${typeof msg.local_paths === 'string' ? msg.local_paths.slice(0,80) : typeof msg.local_paths}`); // DEBUG FULL MSG
   const cls = isSelf
-    ? 'bg-blue-600 text-white rounded-br-sm'
-    : 'bg-gray-700 text-gray-200 rounded-bl-sm';
+    ? 'bg-bubble-out text-foreground border border-bubble-out-border'
+    : 'bg-bubble-in text-foreground border border-bubble-in-border';
 
   // ── Recalled ──
   const isRecalled = msg.is_recalled === 1 || msg.status === 'recalled' || mt === 'recalled';
@@ -1848,7 +1901,7 @@ export function MessageBubble({ msg, isSelf, senderName, onManage, onView, onOpe
     const hasOriginal = canPreviewRecalled(msg, originalContent);
     return (
       <div className={`flex flex-col ${isSelf ? 'items-end' : 'items-start'} gap-1 mb-0.5`}>
-        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-2xl bg-gray-700/50 border border-gray-600/50 text-gray-400 text-xs italic select-none">
+        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-2xl bg-muted/50 border border-input/50 text-muted-foreground text-xs italic select-none">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0 opacity-60">
             <polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 00-4-4H4"/>
           </svg>
@@ -1865,7 +1918,7 @@ export function MessageBubble({ msg, isSelf, senderName, onManage, onView, onOpe
           )}
         </div>
         {showRecalledOriginal && hasOriginal && (
-          <div className="opacity-50 pointer-events-none select-none">
+          <div className="select-text">
             <MessageBubble
               msg={getRecalledPreviewMessage(msg, originalContent)}
               isSelf={isSelf}
@@ -1884,7 +1937,7 @@ export function MessageBubble({ msg, isSelf, senderName, onManage, onView, onOpe
   if (mt === 'system') {
     return (
       <div className="flex justify-center my-2 px-4">
-        <span className="text-xs text-gray-400 bg-gray-700/60 px-3 py-1.5 rounded-full text-center max-w-sm leading-relaxed">
+        <span className="text-xs text-muted-foreground bg-muted/60 px-3 py-1.5 rounded-full text-center max-w-sm leading-relaxed">
           {msg.content ? linkifyText(msg.content) : ''}
         </span>
       </div>
@@ -1927,7 +1980,7 @@ export function MessageBubble({ msg, isSelf, senderName, onManage, onView, onOpe
   if (isRtfMsg(mt, mc)) {
     return (
       <div className={`flex ${isSelf ? 'justify-end' : 'justify-start'} mb-0.5`}>
-        <div className={`px-3 py-2 rounded-2xl text-sm max-w-[280px] break-words ${cls}`}>
+        <div className={`px-3 py-2 rounded-lg text-sm max-w-[280px] break-words ${cls}`}>
           <RtfBubble msg={msg} />
         </div>
       </div>
@@ -1948,9 +2001,9 @@ export function MessageBubble({ msg, isSelf, senderName, onManage, onView, onOpe
     return (
       <div className={`flex ${isSelf ? 'justify-end' : 'justify-start'} mb-0.5`}>
         {caption ? (
-          <div className={`flex flex-col rounded-2xl overflow-hidden ring-1 ring-black/[0.12] max-w-xs${isSelf ? ' rounded-br-sm' : ' rounded-bl-sm'}`}>
+          <div className={`flex flex-col rounded-lg overflow-hidden border max-w-xs${isSelf ? ' border-bubble-out-border' : ' border-bubble-in-border'}`}>
             <VideoBubble msg={msg} />
-            <div className={`px-3 py-2 text-sm break-words${isSelf ? ' bg-blue-400/40 text-white' : ' bg-gray-700 text-gray-200'}`}>
+            <div className={`px-3 py-2 text-sm break-words${isSelf ? ' bg-bubble-out text-foreground' : ' bg-bubble-in text-foreground'}`}>
               {linkifyText(caption)}
             </div>
           </div>
@@ -1975,6 +2028,15 @@ export function MessageBubble({ msg, isSelf, senderName, onManage, onView, onOpe
     return (
       <div className={`flex ${isSelf ? 'justify-end' : 'justify-start'} mb-0.5`}>
         <BankCardBubble msg={msg} />
+      </div>
+    );
+  }
+
+  // ── Bản tin / thông báo của Official Account (zinstant) ──
+  if (isZinstantMsgType(mt, mc)) {
+    return (
+      <div className={`flex ${isSelf ? 'justify-end' : 'justify-start'} mb-0.5`}>
+        <ZaloOaCard msg={msg} isSent={isSelf} />
       </div>
     );
   }
@@ -2025,7 +2087,7 @@ export function MessageBubble({ msg, isSelf, senderName, onManage, onView, onOpe
   }
   return (
     <div className={`flex ${isSelf ? 'justify-end' : 'justify-start'} mb-0.5`}>
-      <div className={`px-3 py-2 rounded-2xl text-sm max-w-[280px] break-words whitespace-pre-wrap ${cls}`} style={{ overflowWrap: 'break-word', wordBreak: 'normal' }}>
+      <div className={`px-3 py-2 rounded-lg text-sm max-w-[280px] break-words whitespace-pre-wrap ${cls}`} style={{ overflowWrap: 'break-word', wordBreak: 'normal' }}>
         {text ? linkifyText(text) : '(Không có nội dung)'}
         {isEdited && editHistoryEntries.length > 0 && (
           <>
@@ -2046,7 +2108,7 @@ export function MessageBubble({ msg, isSelf, senderName, onManage, onView, onOpe
           {editHistoryEntries.map((entry, i) => (
             <div
               key={i}
-              className={`px-3 py-1.5 rounded-lg text-xs opacity-60 ${isSelf ? 'bg-blue-700/30 mr-8' : 'bg-gray-600/30 ml-8'}`}
+              className={`px-3 py-1.5 rounded-lg text-xs opacity-60 ${isSelf ? 'bg-blue-700/30 mr-8' : 'bg-accent/30 ml-8'}`}
             >
               <div className="text-[10px] opacity-50 mb-0.5">
                 {new Date(entry.editedAt).toLocaleString('vi-VN')}
@@ -2070,20 +2132,37 @@ export function RecalledBubble({
   displayName,
   isRevealed,
   onToggleReveal,
+  onView,
+  onOpenProfile,
+  onContextMenu,
 }: {
   msg: MessageItem;
   isSelf: boolean;
   displayName: string;
   isRevealed: boolean;
   onToggleReveal: () => void;
+  /** Mở ảnh trong viewer (nội dung gốc vẫn xem/thao tác được như tin thường). */
+  onView?: (src: string) => void;
+  onOpenProfile?: (userId: string, e: React.MouseEvent) => void;
+  /** Chuột phải: menu chỉ gồm thao tác cục bộ (sao chép, lưu ảnh/file, đánh dấu, xoá khỏi app). */
+  onContextMenu?: (e: React.MouseEvent, previewMsg: MessageItem) => void;
 }) {
-  const originalContent = msg.recalled_content || '';
+  // Telegram giữ nguyên `content` khi thu hồi; bản ghi cũ có thể mất recalled_content (Zalo: content là placeholder)
+  const originalContent = msg.recalled_content || msg.content || '';
   const hasContent = canPreviewRecalled(msg, originalContent);
+  const previewMsg = React.useMemo(
+    () => getRecalledPreviewMessage(msg, originalContent),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [msg.msg_id, msg.msg_type, msg.content, msg.attachments, msg.local_paths, originalContent],
+  );
 
   return (
-    <div className="flex flex-col gap-1 max-w-[320px]">
+    <div
+      className={`flex flex-col gap-1 max-w-[320px] ${isSelf ? 'items-end' : 'items-start'}`}
+      onContextMenu={onContextMenu ? (e) => onContextMenu(e, previewMsg) : undefined}
+    >
       {/* Recalled indicator */}
-      <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-2xl bg-gray-700/50 border border-gray-600/50 text-gray-400 text-xs italic select-none">
+      <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-card/80 border border-border text-muted-foreground text-xs italic select-none">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0 opacity-60">
           <polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 00-4-4H4"/>
         </svg>
@@ -2095,7 +2174,7 @@ export function RecalledBubble({
         {hasContent && (
           <button
             onClick={onToggleReveal}
-            className="ml-1 not-italic font-medium text-blue-400/80 hover:text-blue-400 underline underline-offset-2 flex-shrink-0 transition-colors"
+            className="ml-1 not-italic font-medium text-primary/80 hover:text-primary underline underline-offset-2 flex-shrink-0 transition-colors"
             title={isRevealed ? 'Ẩn nội dung' : 'Xem nội dung gốc'}
           >
             {isRevealed ? 'Ẩn' : 'Xem lại'}
@@ -2103,15 +2182,15 @@ export function RecalledBubble({
         )}
       </div>
 
-      {/* Original content preview (mờ, không tương tác) */}
+      {/* Nội dung gốc: hiển thị và thao tác như tin thường (chọn chữ, mở ảnh, chuột phải để sao chép/lưu) */}
       {hasContent && isRevealed && (
-        <div className="opacity-50 pointer-events-none select-none">
+        <div className="select-text">
           <MessageBubble
-            msg={{
-              ...getRecalledPreviewMessage(msg, originalContent),
-            }}
+            msg={previewMsg}
             isSelf={isSelf}
             senderName={displayName}
+            onView={onView}
+            onOpenProfile={onOpenProfile}
           />
         </div>
       )}

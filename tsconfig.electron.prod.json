@@ -5,7 +5,10 @@
     "declarationMap": false,
     "removeComments": true,
     "inlineSourceMap": false,
-    "inlineSources": false
+    "inlineSources": false,
+    // Bản production luôn biên dịch lại TOÀN BỘ: dist-electron dùng chung với `npm run dev` (incremental). Biên dịch
+    // tăng dần sẽ bỏ qua file nguồn không đổi → đóng gói luôn file cũ (bản dev, hoặc bản strip-console đã sửa hỏng).
+    "incremental": false,
+    "tsBuildInfoFile": null
   }
 }
-

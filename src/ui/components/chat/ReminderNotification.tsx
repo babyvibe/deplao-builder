@@ -144,7 +144,7 @@ export default function ReminderNotification({ data, onClose, onOpenThread }: Pr
         <div className={`rounded-3xl shadow-2xl overflow-hidden max-w-lg mx-4 ${
           isLight
             ? 'bg-white border border-gray-200/80 shadow-gray-300/40'
-            : 'bg-gradient-to-br from-gray-800 to-gray-900 border border-gray-700'
+            : 'bg-gradient-to-br from-card to-background border border-border'
         }`}>
           {/* Content */}
           <div className="p-8">
@@ -167,10 +167,10 @@ export default function ReminderNotification({ data, onClose, onOpenThread }: Pr
                   </svg>
                   <span className={`text-sm font-medium ${isLight ? 'text-blue-600' : 'text-blue-400'}`}>Nhắc hẹn đã đến!</span>
                 </div>
-                <h2 className={`text-2xl font-bold mb-1 leading-tight break-words ${isLight ? 'text-gray-900' : 'text-white'}`}>
+                <h2 className={`text-2xl font-bold mb-1 leading-tight break-words ${isLight ? 'text-gray-900' : 'text-foreground'}`}>
                   {data.title}
                 </h2>
-                <p className={`text-sm ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
+                <p className={`text-sm ${isLight ? 'text-muted-foreground' : 'text-muted-foreground'}`}>
                   {data.description}
                 </p>
               </div>
@@ -178,7 +178,7 @@ export default function ReminderNotification({ data, onClose, onOpenThread }: Pr
 
             {/* Info Section */}
             <div className={`space-y-3 mb-6 rounded-xl p-4 ${
-              isLight ? 'bg-gray-50 border border-gray-100' : 'bg-gray-800/50'
+              isLight ? 'bg-gray-50 border border-gray-100' : 'bg-card/50'
             }`}>
               <div className="flex items-center gap-3">
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
@@ -190,8 +190,8 @@ export default function ReminderNotification({ data, onClose, onOpenThread }: Pr
                   </svg>
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className={`text-xs mb-0.5 ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>Tài khoản</p>
-                  <p className={`text-sm font-medium truncate ${isLight ? 'text-gray-800' : 'text-white'}`}>{data.accountName}</p>
+                  <p className={`text-xs mb-0.5 ${isLight ? 'text-muted-foreground' : 'text-muted-foreground'}`}>Tài khoản</p>
+                  <p className={`text-sm font-medium truncate ${isLight ? 'text-gray-800' : 'text-foreground'}`}>{data.accountName}</p>
                 </div>
               </div>
 
@@ -204,8 +204,8 @@ export default function ReminderNotification({ data, onClose, onOpenThread }: Pr
                   </svg>
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className={`text-xs mb-0.5 ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>Hội thoại</p>
-                  <p className={`text-sm font-medium truncate ${isLight ? 'text-gray-800' : 'text-white'}`}>{data.conversationName}</p>
+                  <p className={`text-xs mb-0.5 ${isLight ? 'text-muted-foreground' : 'text-muted-foreground'}`}>Hội thoại</p>
+                  <p className={`text-sm font-medium truncate ${isLight ? 'text-gray-800' : 'text-foreground'}`}>{data.conversationName}</p>
                 </div>
               </div>
             </div>

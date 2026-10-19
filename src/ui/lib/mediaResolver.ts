@@ -8,6 +8,7 @@
  */
 
 import { isFacebook, isTelegram } from '@/lib/channelHelper';
+import { isTelegramMetaAttachment } from '../../shared/telegramAttachmentTypes';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -104,7 +105,7 @@ export function getFirstAttachment(msg: MsgLike, type?: string): MediaAttachment
   if (type) return atts.find(a => a.type === type) || null;
   // Presentation-only Telegram metadata is stored alongside media but must
   // never shadow the actual photo/video/file attachment.
-  return atts.find(a => a.type !== 'telegram_post' && a.type !== 'telegram_grouped_media' && a.type !== 'custom_emoji') || null;
+  return atts.find(a => !isTelegramMetaAttachment(a)) || null;
 }
 
 /**
@@ -130,7 +131,7 @@ export function getLocalMediaPath(msg: MsgLike, mediaType?: string): string {
       const typed = atts.find(a => a.type === mediaType);
       if (typed?.localPath) return typed.localPath;
     }
-    const firstMedia = atts.find(a => a.type !== 'telegram_post' && a.type !== 'telegram_grouped_media' && a.type !== 'custom_emoji');
+    const firstMedia = atts.find(a => !isTelegramMetaAttachment(a));
     if (firstMedia?.localPath) return firstMedia.localPath;
 
     // Fallback: check local_paths column (Telegram stores paths here after download)
@@ -290,6 +291,33 @@ export function getTelegramPostMeta(msg: MsgLike): {
     forwards: Math.max(0, Number(attachment.forwards || 0)),
     comments: Math.max(0, Number(attachment.comments || 0)),
     discussionChannelId: String(attachment.discussion_channel_id || ''),
+  };
+}
+
+export interface TelegramForwardMeta {
+  /** user / channel / chat; hidden = người gốc ẩn tài khoản khi chuyển tiếp (chỉ có tên) */
+  fromType: 'user' | 'channel' | 'chat' | 'hidden';
+  fromId: string;
+  fromName: string;
+  fromUsername: string;
+  /** Chữ ký người đăng của bài kênh gốc */
+  postAuthor: string;
+}
+
+/** Tin Telegram được chuyển tiếp (attachments type telegram_forward, TelegramUserListener) → nguồn gốc; không phải → null. */
+export function getTelegramForwardMeta(msg: MsgLike): TelegramForwardMeta | null {
+  if (!isTelegram(msg.channel)) return null;
+  const attachment = extractAttachments(msg).find((item) => item.type === 'telegram_forward') as Record<string, any> | undefined;
+  if (!attachment) return null;
+  const fromType = ['user', 'channel', 'chat', 'hidden'].includes(String(attachment.from_type))
+    ? attachment.from_type as TelegramForwardMeta['fromType']
+    : 'user';
+  return {
+    fromType,
+    fromId: String(attachment.from_id || ''),
+    fromName: String(attachment.from_name || ''),
+    fromUsername: String(attachment.from_username || ''),
+    postAuthor: String(attachment.post_author || ''),
   };
 }
 

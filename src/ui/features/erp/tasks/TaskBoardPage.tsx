@@ -11,15 +11,15 @@ import { AlertIcon, ChatIcon, CircleIcon, CloseIcon, TargetIcon } from '@/compon
 
 
 const STATUS_COLS: { id: ErpTaskStatus; label: string; color: string }[] = [
-  { id: 'todo',      label: 'Cần làm',    color: 'bg-gray-700/50 border-gray-600' },
+  { id: 'todo',      label: 'Cần làm',    color: 'bg-muted/50 border-input' },
   { id: 'doing',     label: 'Đang làm',   color: 'bg-blue-900/30 border-blue-700/40' },
   { id: 'review',    label: 'Xem xét',    color: 'bg-yellow-900/30 border-yellow-700/40' },
   { id: 'done',      label: 'Hoàn thành', color: 'bg-green-900/30 border-green-700/40' },
-  { id: 'cancelled', label: 'Huỷ',        color: 'bg-gray-800/50 border-gray-700' },
+  { id: 'cancelled', label: 'Huỷ',        color: 'bg-card/50 border-border' },
 ];
 
 const PRIORITY_META: Record<string, { color: string; label: string; icon: React.ReactNode }> = {
-  low: { color: 'text-gray-400', label: 'Thấp', icon: <CircleIcon className="w-4 h-4" /> },
+  low: { color: 'text-muted-foreground', label: 'Thấp', icon: <CircleIcon className="w-4 h-4" /> },
   normal: { color: 'text-blue-400', label: 'Bình thường', icon: <TargetIcon className="w-4 h-4" /> },
   high: { color: 'text-orange-400', label: 'Cao', icon: <AlertIcon className="w-4 h-4" /> },
   urgent: { color: 'text-red-400', label: 'Khẩn cấp', icon: <CloseIcon className="w-4 h-4" /> },
@@ -110,12 +110,12 @@ export default function TaskBoardPage() {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Filters */}
-      <div className="flex items-center gap-3 px-4 py-2 border-b border-gray-700/60 flex-shrink-0 flex-wrap">
+      <div className="flex items-center gap-3 px-4 py-2 border-b border-border/60 flex-shrink-0 flex-wrap">
         <div className="flex items-center gap-2 flex-wrap">
           <select
             value={activeProjectId ?? ''}
             onChange={e => setActiveProject(e.target.value || null)}
-            className="min-w-[180px] bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-gray-200"
+            className="min-w-[180px] bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground"
           >
             <option value="">Tất cả dự án</option>
             {projects.map(project => (
@@ -123,13 +123,13 @@ export default function TaskBoardPage() {
             ))}
           </select>
 
-          <select value={assigneeFilter} onChange={e => setAssigneeFilter(e.target.value)} className="min-w-[160px] bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-gray-200">
+          <select value={assigneeFilter} onChange={e => setAssigneeFilter(e.target.value)} className="min-w-[160px] bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground">
             <option value="">Tất cả nhân viên</option>
             <option value="boss">Boss</option>
             {employees.map((employee: any) => <option key={employee.employee_id} value={employee.employee_id}>{employee.display_name}</option>)}
           </select>
 
-          <select value={priorityFilter} onChange={e => setPriorityFilter(e.target.value as '' | ErpTaskPriority)} className="min-w-[140px] bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-gray-200">
+          <select value={priorityFilter} onChange={e => setPriorityFilter(e.target.value as '' | ErpTaskPriority)} className="min-w-[140px] bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground">
             <option value="">Mọi mức ưu tiên</option>
             <option value="low">Thấp</option>
             <option value="normal">Bình thường</option>
@@ -137,7 +137,7 @@ export default function TaskBoardPage() {
             <option value="urgent">Khẩn cấp</option>
           </select>
 
-          <select value={dateFilter} onChange={e => setDateFilter(e.target.value as '' | ErpDateFilterPreset)} className="min-w-[160px] bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-gray-200">
+          <select value={dateFilter} onChange={e => setDateFilter(e.target.value as '' | ErpDateFilterPreset)} className="min-w-[160px] bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground">
             <option value="">Tất cả hạn chót</option>
             {ERP_DATE_FILTER_OPTIONS.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
           </select>
@@ -148,13 +148,13 @@ export default function TaskBoardPage() {
                 type="date"
                 value={customDateRange.from}
                 onChange={e => setCustomDateRange(current => ({ ...current, from: e.target.value }))}
-                className="bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-gray-200"
+                className="bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground"
               />
               <input
                 type="date"
                 value={customDateRange.to}
                 onChange={e => setCustomDateRange(current => ({ ...current, to: e.target.value }))}
-                className="bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-gray-200"
+                className="bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground"
               />
             </>
           )}
@@ -169,7 +169,7 @@ export default function TaskBoardPage() {
                 setDateFilter('');
                 setCustomDateRange(getDefaultCustomRange());
               }}
-              className="px-2.5 py-1.5 rounded-lg text-xs text-gray-400 hover:text-white hover:bg-gray-700"
+              className="px-2.5 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted"
             >
               Xóa lọc
             </button>
@@ -204,9 +204,9 @@ export default function TaskBoardPage() {
                 onDrop={() => handleDrop(col.id)}
               >
                 {/* Column header */}
-                <div className="flex items-center justify-between px-3 py-2 border-b border-gray-700/40">
-                  <span className="text-sm font-semibold text-gray-300">{col.label}</span>
-                  <span className="text-xs font-semibold bg-gray-700/60 rounded-full px-1.5 py-0.5">{colTasks.length}</span>
+                <div className="flex items-center justify-between px-3 py-2 border-b border-border/40">
+                  <span className="text-sm font-semibold text-foreground/80">{col.label}</span>
+                  <span className="text-xs font-semibold bg-muted/60 rounded-full px-1.5 py-0.5">{colTasks.length}</span>
                 </div>
 
                 {/* Task cards */}
@@ -218,31 +218,31 @@ export default function TaskBoardPage() {
                       onDragStart={() => setDraggingTaskId(task.id)}
                       onDragEnd={() => { setDraggingTaskId(null); setDragOverCol(null); }}
                       onClick={() => setEditorState({ taskId: task.id })}
-                      className="group relative bg-gray-800 border border-gray-700/60 rounded-lg p-2.5 cursor-pointer hover:border-gray-500 transition-colors"
+                      className="group relative bg-card border border-border/60 rounded-lg p-2.5 cursor-pointer hover:border-border-strong transition-colors"
                     >
                       {/* Delete button */}
                       <button
                         onClick={(e) => { e.stopPropagation(); setDeleteTarget(task); }}
                         title="Xoá task"
-                        className="absolute top-1 right-1 w-5 h-5 flex items-center justify-center rounded text-[11px] text-gray-400 hover:text-red-400 hover:bg-gray-700/80 opacity-0 group-hover:opacity-100 transition-opacity"
+                        className="absolute top-1 right-1 w-5 h-5 flex items-center justify-center rounded text-[11px] text-muted-foreground hover:text-red-400 hover:bg-muted/80 opacity-0 group-hover:opacity-100 transition-opacity"
                       >✕</button>
 
-                      <p className="text-xs text-gray-200 font-medium leading-snug mb-1 pr-5">{task.title}</p>
+                      <p className="text-xs text-foreground font-medium leading-snug mb-1 pr-5">{task.title}</p>
                       {task.description?.trim() && (
-                        <div className="mb-1.5 rounded-lg border border-gray-700/50 bg-gray-900/30 px-2 py-1.5">
-                          <RichContentPreview source={task.description} compact className="text-[11px] text-gray-400" />
+                        <div className="mb-1.5 rounded-lg border border-border/50 bg-card px-2 py-1.5">
+                          <RichContentPreview source={task.description} compact className="text-[11px] text-muted-foreground" />
                         </div>
                       )}
-                      <p className="text-[10px] text-gray-400">{STATUS_LABELS[task.status]}</p>
+                      <p className="text-[10px] text-muted-foreground">{STATUS_LABELS[task.status]}</p>
                       <div className="flex items-center gap-2 mt-1.5">
-                        <span className={`text-[10px] font-medium ${PRIORITY_META[task.priority]?.color || 'text-gray-400'}`}>
+                        <span className={`text-[10px] font-medium ${PRIORITY_META[task.priority]?.color || 'text-muted-foreground'}`}>
                           {(PRIORITY_META[task.priority]?.icon || '⚪')} {PRIORITY_META[task.priority]?.label || task.priority}
                         </span>
                         {!!task.comment_count && (
-                          <span className="text-[10px] text-gray-400"><ChatIcon className="w-4 h-4 inline" /> {task.comment_count}</span>
+                          <span className="text-[10px] text-muted-foreground"><ChatIcon className="w-4 h-4 inline" /> {task.comment_count}</span>
                         )}
                         {task.due_date && (
-                          <span className={`text-[10px] ml-auto ${task.due_date < Date.now() ? 'text-red-400' : 'text-gray-400'}`}>
+                          <span className={`text-[10px] ml-auto ${task.due_date < Date.now() ? 'text-red-400' : 'text-muted-foreground'}`}>
                             {new Date(task.due_date).toLocaleDateString('vi-VN', { month: 'short', day: 'numeric' })}
                           </span>
                         )}
@@ -252,7 +252,7 @@ export default function TaskBoardPage() {
                           {task.assignees.slice(0, 3).map((employeeId: string) => (
                             <EmployeeAvatar key={employeeId} employeeId={employeeId} size={18} showName />
                           ))}
-                          {task.assignees.length > 3 && <span className="text-[10px] text-gray-400">+{task.assignees.length - 3}</span>}
+                          {task.assignees.length > 3 && <span className="text-[10px] text-muted-foreground">+{task.assignees.length - 3}</span>}
                         </div>
                       )}
                       {!!task.watchers?.length && (
@@ -266,13 +266,13 @@ export default function TaskBoardPage() {
                       )}
                       {task.checklist_total ? (
                         <div className="mt-1.5">
-                          <div className="h-1 bg-gray-700 rounded-full overflow-hidden">
+                          <div className="h-1 bg-muted rounded-full overflow-hidden">
                             <div
                               className="h-full bg-green-500 rounded-full"
                               style={{ width: `${((task.checklist_done || 0) / task.checklist_total) * 100}%` }}
                             />
                           </div>
-                          <span className="text-[9px] text-gray-400">{task.checklist_done}/{task.checklist_total}</span>
+                          <span className="text-[9px] text-muted-foreground">{task.checklist_done}/{task.checklist_total}</span>
                         </div>
                       ) : null}
                     </div>
@@ -281,7 +281,7 @@ export default function TaskBoardPage() {
                   {/* Quick add button */}
                   <button
                     onClick={() => setEditorState({ status: col.id })}
-                    className="w-full text-left text-xs text-gray-400 hover:text-gray-400 hover:bg-gray-700/40 px-2 py-1.5 rounded-lg transition-colors"
+                    className="w-full text-left text-xs text-muted-foreground hover:text-muted-foreground hover:bg-muted/40 px-2 py-1.5 rounded-lg transition-colors"
                   >
                     + Thêm task
                   </button>
@@ -326,7 +326,7 @@ export default function TaskBoardPage() {
       {newProjectModal && (
         <ErpOverlay onClose={() => setNewProjectModal(false)} className="z-50" backdropClassName="bg-black/50">
           <ErpModalCard className="w-80 p-5">
-            <h3 className="text-sm font-semibold text-white mb-3">Tạo project mới</h3>
+            <h3 className="text-sm font-semibold text-foreground mb-3">Tạo project mới</h3>
             <input
               ref={newProjectInputRef}
               value={newProjectName}
@@ -341,7 +341,7 @@ export default function TaskBoardPage() {
                 if (e.key === 'Escape') setNewProjectModal(false);
               }}
               placeholder="Tên project..."
-              className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500 mb-3"
+              className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 mb-3"
             />
             <div className="flex gap-2">
               <button
@@ -360,7 +360,7 @@ export default function TaskBoardPage() {
               </button>
               <button
                 onClick={() => setNewProjectModal(false)}
-                className="px-4 py-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg text-sm transition-colors"
+                className="px-4 py-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg text-sm transition-colors"
               >
                 Huỷ
               </button>

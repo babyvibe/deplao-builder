@@ -192,11 +192,11 @@ export default function PhoneLoginTab({ onSuccess, onBack }: Props) {
             <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${
               step === s ? 'bg-blue-600 text-white' :
               (step === 'done' || ['phone', 'code', 'password'].indexOf(step) > i) ? 'bg-green-600 text-white' :
-              'bg-gray-700 text-gray-400'
+              'bg-muted text-muted-foreground'
             }`}>
               {(['phone', 'code', 'password'].indexOf(step) > i || step === 'done') ? <CheckIcon className="w-4 h-4" /> : i + 1}
             </div>
-            {i < 2 && <div className={`flex-1 h-0.5 ${(['phone', 'code', 'password'].indexOf(step) > i || step === 'done') ? 'bg-green-600' : 'bg-gray-700'}`} />}
+            {i < 2 && <div className={`flex-1 h-0.5 ${(['phone', 'code', 'password'].indexOf(step) > i || step === 'done') ? 'bg-green-600' : 'bg-muted'}`} />}
           </React.Fragment>
         ))}
       </div>
@@ -212,12 +212,12 @@ export default function PhoneLoginTab({ onSuccess, onBack }: Props) {
           </div>
 
           <div>
-            <label className="text-gray-300 text-xs font-medium mb-1.5 block">Số điện thoại</label>
+            <label className="text-foreground/80 text-xs font-medium mb-1.5 block">Số điện thoại</label>
             <div className="relative">
               <select
                 value={countryCode}
                 onChange={e => setCountryCode(e.target.value)}
-                className="absolute left-0 top-0 bottom-0 bg-gray-600 border-r border-gray-500 rounded-l-lg px-2 text-sm text-white focus:outline-none"
+                className="absolute left-0 top-0 bottom-0 bg-accent border-r border-border-strong rounded-l-lg px-2 text-sm text-foreground focus:outline-none"
               >
                 <option value="+84">+84</option>
                 <option value="+1">+1</option>
@@ -231,7 +231,7 @@ export default function PhoneLoginTab({ onSuccess, onBack }: Props) {
                 value={phoneNumber}
                 onChange={e => setPhoneNumber(e.target.value.replace(/[^0-9]/g, ''))}
                 placeholder="901234567"
-                className="w-full bg-gray-700 border border-gray-600 rounded-lg pl-16 pr-3 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-colors"
+                className="w-full bg-muted border border-input rounded-lg pl-16 pr-3 py-2.5 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 transition-colors"
                 disabled={loading}
               />
             </div>
@@ -250,14 +250,14 @@ export default function PhoneLoginTab({ onSuccess, onBack }: Props) {
           </div>
 
           <div>
-            <label className="text-gray-300 text-xs font-medium mb-1.5 block">Mã OTP</label>
+            <label className="text-foreground/80 text-xs font-medium mb-1.5 block">Mã OTP</label>
             <input
               type="text"
               value={code}
               onChange={e => setCode(e.target.value.replace(/[^0-9]/g, '').slice(0, 5))}
               placeholder="12345"
               maxLength={5}
-              className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-colors text-center text-lg tracking-widest"
+              className="w-full bg-muted border border-input rounded-lg px-3 py-2.5 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 transition-colors text-center text-lg tracking-widest"
               disabled={loading}
               autoFocus
             />
@@ -276,13 +276,13 @@ export default function PhoneLoginTab({ onSuccess, onBack }: Props) {
           </div>
 
           <div>
-            <label className="text-gray-300 text-xs font-medium mb-1.5 block">Mật khẩu</label>
+            <label className="text-foreground/80 text-xs font-medium mb-1.5 block">Mật khẩu</label>
             <input
               type="password"
               value={password}
               onChange={e => setPassword(e.target.value)}
               placeholder="Nhập mật khẩu 2FA"
-              className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-colors"
+              className="w-full bg-muted border border-input rounded-lg px-3 py-2.5 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 transition-colors"
               disabled={loading}
               autoFocus
             />
@@ -297,7 +297,7 @@ export default function PhoneLoginTab({ onSuccess, onBack }: Props) {
             <CheckIcon className="w-8 h-8 text-green-400" />
           </div>
           <p className="text-green-300 text-sm font-semibold">Đăng nhập thành công!</p>
-          <p className="text-gray-400 text-xs">Đang khởi động listener...</p>
+          <p className="text-muted-foreground text-xs">Đang khởi động listener...</p>
         </div>
       )}
 
@@ -313,7 +313,7 @@ export default function PhoneLoginTab({ onSuccess, onBack }: Props) {
       <div className="flex gap-3 pt-2">
         <button
           onClick={step === 'phone' ? onBack : () => { setStep('phone'); setError(''); }}
-          className="flex-1 px-4 py-2.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded-lg transition-colors"
+          className="flex-1 px-4 py-2.5 bg-muted hover:bg-accent text-foreground/80 text-sm rounded-lg transition-colors"
         >
           {step === 'phone' ? 'Quay lại' : 'Sửa SĐT'}
         </button>

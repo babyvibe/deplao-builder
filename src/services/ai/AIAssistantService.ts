@@ -326,9 +326,12 @@ VÍ DỤ ĐẦU RA ĐÚNG:
     assistant: AIAssistant,
     messages: ChatMessage[],
     maxTokensOverride?: number,
+    temperatureOverride?: number,
   ): Promise<{ result: string; totalTokens: number; promptTokens: number; completionTokens: number }> {
     const maxTokens = maxTokensOverride || assistant.maxTokens || 1000;
-    const temperature = assistant.temperature ?? 0.7;
+    const temperature = typeof temperatureOverride === 'number' && Number.isFinite(temperatureOverride)
+      ? temperatureOverride
+      : (assistant.temperature ?? 0.7);
     const model = assistant.model;
 
     // Debug: log request info
@@ -472,6 +475,24 @@ YÊU CẦU BẮT BUỘC:
     ];
 
     return await this.callLLM(assistant, messages, maxTokensOverride);
+  }
+
+  /**
+   * Chat with the assistant's model/API key but ONLY the caller's messages (no persona / knowledge
+   * system prompt) - for tools that bring their own detailed system prompt (AI Workflow Builder).
+   */
+  public async chatRaw(
+    assistantId: string,
+    messages: Array<{ role: string; content: string }>,
+    opts: { maxTokens?: number; temperature?: number } = {},
+  ): Promise<{ result: string; totalTokens: number; promptTokens: number; completionTokens: number }> {
+    const assistant = this.getAssistant(assistantId);
+    if (!assistant) throw new Error('Trợ lý AI không tồn tại');
+    if (!assistant.enabled) throw new Error('Trợ lý AI đã bị tắt');
+    const chatMessages: ChatMessage[] = messages
+      .filter(m => m && typeof m.content === 'string' && m.content.trim())
+      .map(m => ({ role: (m.role === 'system' || m.role === 'assistant' ? m.role : 'user') as ChatMessage['role'], content: m.content }));
+    return await this.callLLM(assistant, chatMessages, opts.maxTokens, opts.temperature);
   }
 
   /**

@@ -1,8 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useChatStore } from '@/store/chatStore';
+import { useShallow } from 'zustand/react/shallow';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
-import DataAccessor from '@/lib/data/DataAccessor';
+import DataAccessor, { isReadFailure } from '@/lib/data/DataAccessor';
+import { LOCAL_PIN_CHANGED_EVENT } from '@/lib/chat/relayUiEvents';
+import { useEmployeeResync } from '@/hooks/useEmployeeResync';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
 import PhoneDisplay from '../common/PhoneDisplay';
 import { CreateGroupModal } from './GroupModals';
@@ -32,8 +35,12 @@ function muteUntilToDuration(until: number): number | string {
 
 
 export default function ConversationInfo() {
-  const { activeThreadId, activeThreadType, contacts } = useChatStore();
-  const { activeAccountId } = useAccountStore();
+  const { activeThreadId, activeThreadType, contacts } = useChatStore(useShallow(s => ({
+    activeThreadId: s.activeThreadId, activeThreadType: s.activeThreadType, contacts: s.contacts,
+  })));
+  const { activeAccountId } = useAccountStore(useShallow(s => ({
+    activeAccountId: s.activeAccountId,
+  })));
 
   const contactList = activeAccountId ? (contacts[activeAccountId] || []) : [];
   const contact = contactList.find((c) => c.contact_id === activeThreadId);
@@ -45,9 +52,17 @@ export default function ConversationInfo() {
 
 // ─── UserConversationInfo ─────────────────────────────────────────────────────
 function UserConversationInfo() {
-  const { activeThreadId, activeThreadType, contacts, updateContact } = useChatStore();
-  const { activeAccountId, getActiveAccount } = useAccountStore();
-  const { showNotification, setMuted, clearMuted, isMuted: isMutedFn } = useAppStore();
+  const { activeThreadId, activeThreadType, contacts, updateContact } = useChatStore(useShallow(s => ({
+    activeThreadId: s.activeThreadId, activeThreadType: s.activeThreadType, contacts: s.contacts,
+    updateContact: s.updateContact,
+  })));
+  const { activeAccountId, getActiveAccount } = useAccountStore(useShallow(s => ({
+    activeAccountId: s.activeAccountId, getActiveAccount: s.getActiveAccount, accounts: s.accounts,
+  })));
+  const { showNotification, setMuted, clearMuted, isMuted: isMutedFn } = useAppStore(useShallow(s => ({
+    showNotification: s.showNotification, setMuted: s.setMuted, clearMuted: s.clearMuted, isMuted: s.isMuted,
+    mutedThreads: s.mutedThreads,
+  })));
 
   const [isPinned, setIsPinned] = useState(false);
   const [isLocalPinned, setIsLocalPinned] = useState(false);
@@ -91,7 +106,8 @@ function UserConversationInfo() {
     setIsFriendDB(null);
     if (!activeAccountId || !activeThreadId) return;
     DataAccessor.isFriend({ zaloId: activeAccountId, userId: activeThreadId })
-      .then((res: any) => setIsFriendDB(!!res?.isFriend))
+      // Lỗi đọc (employee: mất kết nối BOSS) ≠ "không phải bạn bè": dùng cờ trên hội thoại như khi lỗi IPC
+      .then((res: any) => setIsFriendDB(isReadFailure(res) ? !!(contact?.is_friend) : !!res?.isFriend))
       .catch(() => setIsFriendDB(!!(contact?.is_friend)));
   }, [activeAccountId, activeThreadId]);
   // Init aliasValue từ alias (không phải display_name) khi thread thay đổi
@@ -114,6 +130,32 @@ function UserConversationInfo() {
       .then((res: any) => setIsLocalPinned((res?.threadIds || []).includes(activeThreadId)))
       .catch(() => {});
   }, [activeAccountId, activeThreadId]);
+
+  // Ghim trong app của hội thoại đang mở đổi ở nơi khác (Boss / nhân viên khác / ConversationList — relay
+  // db:pinnedConversationChanged → 'local-pin-changed' có threadId + isPinned)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (!detail || typeof detail.isPinned !== 'boolean') return;
+      if (String(detail.zaloId || '') !== String(activeAccountId || '') || String(detail.threadId || '') !== String(activeThreadId || '')) return;
+      setIsLocalPinned(detail.isPinned);
+    };
+    window.addEventListener(LOCAL_PIN_CHANGED_EVENT, handler);
+    return () => window.removeEventListener(LOCAL_PIN_CHANGED_EVENT, handler);
+  }, [activeAccountId, activeThreadId]);
+
+  // Chế độ nhân viên: kết nối BOSS phục hồi → đọc lại cờ ghim trong app (đổi trong lúc mất kết nối không có event).
+  // Lỗi đọc / đã đổi hội thoại → giữ cờ đang hiện.
+  useEmployeeResync(() => {
+    const accountId = useAccountStore.getState().activeAccountId;
+    const threadId = useChatStore.getState().activeThreadId;
+    if (!accountId || !threadId) return;
+    return DataAccessor.getLocalPinnedConversations({ zaloId: accountId }).then((res: any) => {
+      if (isReadFailure(res)) return;
+      if (useAccountStore.getState().activeAccountId !== accountId || useChatStore.getState().activeThreadId !== threadId) return;
+      setIsLocalPinned((res?.threadIds || []).map(String).includes(String(threadId)));
+    }).catch(() => {});
+  });
 
   // Close mute dropdown on outside click
   useEffect(() => {
@@ -274,7 +316,12 @@ function UserConversationInfo() {
       // FB / non-Zalo: use local pin only
       if (!activeAccountId) return;
       const newVal = !isLocalPinned;
-      await DataAccessor.setLocalPinnedConversation({ zaloId: activeAccountId, threadId: activeThreadId, isPinned: newVal });
+      const pinRes: any = await DataAccessor.setLocalPinnedConversation({ zaloId: activeAccountId, threadId: activeThreadId, isPinned: newVal });
+      // Nhân viên: Boss từ chối / mất kết nối → báo lỗi, giữ trạng thái cũ
+      if (pinRes?.success === false) {
+        showNotification(`Không ${newVal ? 'ghim' : 'bỏ ghim'} được: ${pinRes.error || 'lỗi không xác định'}`, 'error');
+        return;
+      }
       setIsLocalPinned(newVal);
       showNotification(newVal ? 'Đã ghim trong app' : 'Đã bỏ ghim khỏi app', 'success');
       return;
@@ -507,15 +554,15 @@ function UserConversationInfo() {
   // Mutual groups sub-panel
   if (showMutualGroups && activeThreadId) {
     return (
-      <div className="w-72 h-full flex-shrink-0 bg-gray-800 border-l border-gray-700 flex flex-col overflow-hidden">
-        <div className="flex items-center gap-2 px-3 py-3 border-b border-gray-700">
+      <div className="w-72 h-full flex-shrink-0 bg-card border-l border-border flex flex-col overflow-hidden">
+        <div className="flex items-center gap-2 px-3 py-3 border-b border-border">
           <button onClick={() => setShowMutualGroups(false)}
-            className="p-1 rounded-lg hover:bg-gray-700 text-gray-400 hover:text-white transition-colors">
+            className="p-1 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <polyline points="15 18 9 12 15 6"/>
             </svg>
           </button>
-          <span className="text-sm font-semibold text-white flex-1 text-center pr-6">
+          <span className="text-sm font-semibold text-foreground flex-1 text-center pr-6">
             Nhóm chung ({mutualGroups.length})
           </span>
         </div>
@@ -528,21 +575,21 @@ function UserConversationInfo() {
           {mutualGroups.map(g => (
             <button key={g.groupId}
               onClick={() => { useChatStore.getState().setActiveThread(g.groupId, 1); setShowMutualGroups(false); }}
-              className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-700/50 transition-colors text-left">
+              className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-muted/50 transition-colors text-left">
               <GroupAvatar
                 name={g.name || g.groupId}
                 avatarUrl={g.avatar}
                 groupInfo={useAppStore.getState().groupInfoCache?.[activeAccountId || '']?.[g.groupId] || null}
                 size="sm"
               />
-              <span className="text-sm text-gray-200 truncate flex-1">{g.name || g.groupId}</span>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-400 flex-shrink-0">
+              <span className="text-sm text-foreground truncate flex-1">{g.name || g.groupId}</span>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted-foreground flex-shrink-0">
                 <polyline points="9 18 15 12 9 6"/>
               </svg>
             </button>
           ))}
           {!mutualGroupsLoading && mutualGroups.length === 0 && (
-            <p className="text-xs text-gray-400 text-center py-8">Không có nhóm chung</p>
+            <p className="text-xs text-muted-foreground text-center py-8">Không có nhóm chung</p>
           )}
         </div>
       </div>
@@ -569,13 +616,13 @@ function UserConversationInfo() {
   // @ts-ignore
   return (
     <>
-    <div className="w-72 h-full flex-shrink-0 bg-gray-800 border-l border-gray-700 flex flex-col overflow-y-auto">
+    <div className="w-72 h-full flex-shrink-0 bg-card border-l border-border flex flex-col overflow-y-auto">
       {/* Header */}
-      <div className="flex items-center px-4 py-3 border-b border-gray-700">
-        <span className="flex-1 text-sm font-semibold text-white text-center">Thông tin liên hệ</span>
+      <div className="flex items-center px-4 py-3 border-b border-border">
+        <span className="flex-1 text-sm font-semibold text-foreground text-center">Thông tin liên hệ</span>
         {(channelCap.supportsAlias || channelCap.supportsPinConversation) && (
         <button title="Cập nhật thông tin" onClick={handleRefresh} disabled={loading}
-          className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors hover:bg-gray-700 text-gray-400 hover:text-white disabled:opacity-50 flex-shrink-0">
+          className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors hover:bg-muted text-muted-foreground hover:text-foreground disabled:opacity-50 flex-shrink-0">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
             className={loading ? 'animate-spin' : ''}>
             <path d="M23 4v6h-6"/><path d="M1 20v-6h6"/>
@@ -590,7 +637,7 @@ function UserConversationInfo() {
         <div className="flex-1 flex items-center justify-center py-20">
           <div className="flex flex-col items-center gap-3">
             <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-            <span className="text-xs text-gray-400">Đang tải thông tin...</span>
+            <span className="text-xs text-muted-foreground">Đang tải thông tin...</span>
           </div>
         </div>
       )}
@@ -598,7 +645,7 @@ function UserConversationInfo() {
       {!loading && (
       <>
       {/* Avatar + name */}
-      <div className="flex flex-col items-center py-6 px-4 border-b border-gray-700">
+      <div className="flex flex-col items-center py-6 px-4 border-b border-border">
         {avatarUrl ? (
           <img src={toLocalMediaUrl(avatarUrl)} alt={displayName} className="w-16 h-16 rounded-full object-cover mb-3" />
         ) : (
@@ -609,22 +656,22 @@ function UserConversationInfo() {
         {editingAlias ? (
           <div className="flex items-center gap-2 mt-2 w-full px-2">
             <input value={aliasValue} onChange={e => setAliasValue(e.target.value)}
-              className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-2 py-1 text-sm text-white focus:outline-none focus:border-blue-500 text-center"
+              className="flex-1 bg-muted border border-input rounded-lg px-2 py-1 text-sm text-foreground focus:outline-none focus:border-blue-500 text-center"
               placeholder="Nhập biệt danh..." autoFocus
               onKeyDown={e => { if (e.key === 'Enter') handleSaveAlias(); if (e.key === 'Escape') setEditingAlias(false); }} />
             <button onClick={handleSaveAlias} className="px-2 py-1 bg-blue-600 rounded-lg text-xs text-white hover:bg-blue-700 flex-shrink-0">Lưu</button>
-            <button onClick={() => setEditingAlias(false)} className="px-2 py-1 bg-gray-700 rounded-lg text-xs text-gray-300 hover:bg-gray-600 flex-shrink-0">✕</button>
+            <button onClick={() => setEditingAlias(false)} className="px-2 py-1 bg-muted rounded-lg text-xs text-foreground/80 hover:bg-accent flex-shrink-0">✕</button>
           </div>
         ) : (
           <div className={`group flex items-center gap-1.5 mt-1 ${channelCap.supportsAlias ? 'cursor-pointer' : ''}`}
             onMouseEnter={() => channelCap.supportsAlias && setHovering(true)} onMouseLeave={() => setHovering(false)}
             onClick={() => { if (!channelCap.supportsAlias) return; setAliasValue(contact?.alias || ''); setEditingAlias(true); }}>
-            <p className="text-white font-semibold text-base text-center">{displayName}</p>
+            <p className="text-foreground font-semibold text-base text-center">{displayName}</p>
             {channelCap.supportsAlias && isZaloCh(effectiveChannel) && (
               <button
                 title="Cập nhật thông tin + tên gợi nhớ"
                 onClick={(e) => { e.stopPropagation(); handleRefreshAlias(); }}
-                className="text-gray-400 hover:text-white transition-colors flex-shrink-0"
+                className="text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
                 disabled={aliasRefreshing}
               >
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
@@ -636,7 +683,7 @@ function UserConversationInfo() {
             )}
             {channelCap.supportsAlias && (
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-              className={`text-gray-300 transition-opacity flex-shrink-0 ${hovering ? 'opacity-100' : 'opacity-0'}`}>
+              className={`text-foreground/80 transition-opacity flex-shrink-0 ${hovering ? 'opacity-100' : 'opacity-0'}`}>
               <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
               <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
             </svg>
@@ -644,17 +691,17 @@ function UserConversationInfo() {
           </div>
         )}
         {contact?.alias && contact?.display_name && contact.alias !== contact.display_name && (
-          <p className="text-gray-400 text-xs mt-0.5 text-center">({contact.display_name})</p>
+          <p className="text-muted-foreground text-xs mt-0.5 text-center">({contact.display_name})</p>
         )}
         {contact?.phone && (
-          <p className="text-gray-400 text-xs mt-0.5">
-            <PhoneDisplay phone={contact.phone} className="text-gray-400 text-xs" showIcon={true} />
+          <p className="text-muted-foreground text-xs mt-0.5">
+            <PhoneDisplay phone={contact.phone} className="text-muted-foreground text-xs" showIcon={true} />
           </p>
         )}
       </div>
 
       {/* Contact detail info - editable phone, birthday, gender */}
-      <div className="border-b border-gray-700 divide-y divide-gray-700/50">
+      <div className="border-b border-border divide-y divide-border/50">
         <ContactInfoRow
           icon={<PhoneIcon className="w-4 h-4" />}
           label="Số điện thoại"
@@ -701,7 +748,7 @@ function UserConversationInfo() {
       </div>
 
       {/* Action buttons */}
-      <div className="flex justify-around py-3 border-b border-gray-700 relative">
+      <div className="flex justify-around py-3 border-b border-border relative">
         {/* Mute with time picker dropdown */}
         <div className="relative" ref={muteRef}>
           <UserActionBtn
@@ -717,7 +764,7 @@ function UserConversationInfo() {
             active={isMuted}
           />
           {muteDropdownOpen && !isMuted && muteDropdownPos && (
-            <div className="fixed z-50 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl min-w-[210px] py-1"
+            <div className="fixed z-50 bg-card border border-border rounded-xl shadow-2xl min-w-[210px] py-1"
               style={{ top: muteDropdownPos.top, left: muteDropdownPos.left }}>
               {[
                 { label: 'Trong 1 giờ',             until: () => Date.now() + 60 * 60 * 1000 },
@@ -726,7 +773,7 @@ function UserConversationInfo() {
                 { label: 'Cho đến khi được mở lại', until: () => 0 },
               ].map(opt => (
                 <button key={opt.label} onClick={() => handleMuteWithTime(opt.until())}
-                  className="w-full flex items-center px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-700 hover:text-white text-left transition-colors">
+                  className="w-full flex items-center px-4 py-2.5 text-sm text-foreground/80 hover:bg-muted hover:text-foreground text-left transition-colors">
                   {opt.label}
                 </button>
               ))}
@@ -785,11 +832,11 @@ function UserConversationInfo() {
 function UserActionBtn({ icon, label, onClick, active }: { icon: React.ReactNode; label: string; onClick: () => void; active?: boolean }) {
   return (
     <button onClick={onClick}
-      className="flex flex-col items-center gap-1 py-2 px-1 rounded-xl hover:bg-gray-700 transition-colors text-center"
+      className="flex flex-col items-center gap-1 py-2 px-1 rounded-xl hover:bg-muted transition-colors text-center"
       title={label}
     >
-      <div className={`w-9 h-9 rounded-full flex items-center justify-center text-lg ${active ? 'bg-blue-600' : 'bg-gray-700'}`}>{icon}</div>
-      <span className={`text-[9px] leading-tight ${active ? 'text-blue-400' : 'text-gray-400'}`}>{label}</span>
+      <div className={`w-9 h-9 rounded-full flex items-center justify-center text-lg ${active ? 'bg-blue-600' : 'bg-muted'}`}>{icon}</div>
+      <span className={`text-[9px] leading-tight ${active ? 'text-blue-400' : 'text-muted-foreground'}`}>{label}</span>
     </button>
   );
 }
@@ -822,18 +869,18 @@ function ContactInfoRow({ icon, label, value, placeholder, editing, editValue, o
   const inputVal = isDate ? toDateInputValue(editValue || '') : (editValue || '');
 
   return (
-    <div className="flex items-center justify-between px-4 py-2.5 hover:bg-gray-700/20 transition-colors min-h-[44px]">
+    <div className="flex items-center justify-between px-4 py-2.5 hover:bg-muted/20 transition-colors min-h-[44px]">
       <div className="flex items-center gap-2.5 min-w-0 flex-1">
         <span className="text-base flex-shrink-0 leading-none">{icon}</span>
         <div className="min-w-0 flex-1">
-          <p className="text-[10px] text-gray-400 font-medium uppercase tracking-[0.08em]">{label}</p>
+          <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-[0.08em]">{label}</p>
           {editing && onEditChange ? (
             <div className="flex items-center gap-1 mt-1">
               {isDate ? (
                 <input type="date"
                   value={inputVal}
                   onChange={e => onEditChange(fromDateInputValue(e.target.value))}
-                  className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-2 py-1 text-sm text-white w-28 focus:outline-none focus:border-blue-500 [color-scheme:dark]"
+                  className="flex-1 bg-muted border border-input rounded-lg px-2 py-1 text-sm text-foreground w-28 focus:outline-none focus:border-blue-500 [color-scheme:dark]"
                   autoFocus
                   onKeyDown={e => { if (e.key === 'Enter') onSave?.(); if (e.key === 'Escape') onCancelEdit?.(); }}
                 />
@@ -841,18 +888,18 @@ function ContactInfoRow({ icon, label, value, placeholder, editing, editValue, o
                 <input
                   value={editValue || ''}
                   onChange={e => onEditChange(e.target.value)}
-                  className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-2 py-1 text-sm text-white w-24 focus:outline-none focus:border-blue-500"
+                  className="flex-1 bg-muted border border-input rounded-lg px-2 py-1 text-sm text-foreground w-24 focus:outline-none focus:border-blue-500"
                   placeholder={placeholder}
                   autoFocus
                   onKeyDown={e => { if (e.key === 'Enter') onSave?.(); if (e.key === 'Escape') onCancelEdit?.(); }}
                 />
               )}
               <button onClick={onSave}
-                className="px-2 py-1 text-xs font-medium text-green-400 hover:text-green-300 bg-gray-700/50 hover:bg-gray-700 rounded-lg transition-colors flex-shrink-0">
+                className="px-2 py-1 text-xs font-medium text-green-400 hover:text-green-300 bg-muted/50 hover:bg-muted rounded-lg transition-colors flex-shrink-0">
                 Lưu
               </button>
               <button onClick={onCancelEdit}
-                className="px-2 py-1 text-xs text-gray-400 hover:text-white bg-gray-700/50 hover:bg-gray-700 rounded-lg transition-colors flex-shrink-0">
+                className="px-2 py-1 text-xs text-muted-foreground hover:text-foreground bg-muted/50 hover:bg-muted rounded-lg transition-colors flex-shrink-0">
                 ✕
               </button>
             </div>
@@ -863,13 +910,13 @@ function ContactInfoRow({ icon, label, value, placeholder, editing, editValue, o
               title={isClickable ? 'Nhấn để chọn' : 'Nhấn để sửa'}
             >
               {value ? (
-                <span className={`text-sm ${isClickable ? 'text-blue-400 hover:text-blue-300 cursor-pointer' : 'text-gray-200'}`}>
+                <span className={`text-sm ${isClickable ? 'text-blue-400 hover:text-blue-300 cursor-pointer' : 'text-foreground'}`}>
                   {isClickable && value === 'Nam' && '♂ '}
                   {isClickable && value === 'Nữ' && '♀ '}
                   {value}
                 </span>
               ) : (
-                <span className="text-sm text-gray-400 italic">{placeholder || 'Chưa cập nhật'}</span>
+                <span className="text-sm text-muted-foreground italic">{placeholder || 'Chưa cập nhật'}</span>
               )}
             </button>
           )}
@@ -877,7 +924,7 @@ function ContactInfoRow({ icon, label, value, placeholder, editing, editValue, o
       </div>
       {!editing && !isClickable && (
         <button onClick={onStartEdit}
-          className="text-gray-400 hover:text-gray-300 transition-colors flex-shrink-0 ml-2"
+          className="text-muted-foreground hover:text-foreground/80 transition-colors flex-shrink-0 ml-2"
           title="Sửa">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
@@ -920,12 +967,12 @@ function GenderPickerPopup({ current, onSelect, onClose }: {
 
   return (
     <div ref={ref}
-      className="absolute left-12 bottom-0 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl z-50 w-44 py-1"
+      className="absolute left-12 bottom-0 bg-card border border-border rounded-xl shadow-2xl z-50 w-44 py-1"
     >
       {OPTIONS.map(opt => (
         <button key={String(opt.value)} onClick={() => onSelect(opt.value)}
-          className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-gray-700 ${
-            current === opt.value ? 'bg-blue-600/20 text-blue-400' : 'text-gray-200'
+          className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-muted ${
+            current === opt.value ? 'bg-blue-600/20 text-blue-400' : 'text-foreground'
           }`}
         >
           <span className="text-sm flex-1">{opt.label}</span>

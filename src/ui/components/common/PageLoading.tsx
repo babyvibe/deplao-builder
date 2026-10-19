@@ -83,7 +83,7 @@ function SkeletonBars({ variant }: { variant: SkeletonVariant }) {
       {bars.map((bar, i) => (
         <div
           key={i}
-          className={`bg-gray-700/50 rounded animate-pulse ${bar.height || 'h-3'}`}
+          className={`bg-muted/50 rounded animate-pulse ${bar.height || 'h-3'}`}
           style={{ width: bar.width }}
         />
       ))}
@@ -107,7 +107,7 @@ export default function PageLoading({
     return (
       <div className={`flex flex-col items-center justify-center w-full ${sizeClasses[size]} px-4`}>
         <Spinner size={spinnerSizes[size]} />
-        <p className={`${textSizes[size]} text-gray-400`}>{text}</p>
+        <p className={`${textSizes[size]} text-muted-foreground`}>{text}</p>
       </div>
     );
   }
@@ -124,10 +124,10 @@ export default function PageLoading({
   // ── overlay variant ─────────────────────────────────────────────────
   if (variant === 'overlay') {
     return (
-      <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900/60 backdrop-blur-sm z-50 rounded-2xl">
+      <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/60 backdrop-blur-sm z-50 rounded-2xl">
         <div className="flex flex-col items-center gap-3 px-4">
           <Spinner size={6} />
-          <p className="text-sm text-gray-400">{text}</p>
+          <p className="text-sm text-muted-foreground">{text}</p>
         </div>
       </div>
     );
@@ -137,7 +137,7 @@ export default function PageLoading({
   return (
     <div className="flex flex-col items-center justify-center h-full w-full min-h-[200px] gap-4 px-4">
       <Spinner size={6} />
-      <p className="text-sm text-gray-400">{text}</p>
+      <p className="text-sm text-muted-foreground">{text}</p>
       <SkeletonBars variant={skeletonVariant} />
     </div>
   );

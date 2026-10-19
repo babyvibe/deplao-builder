@@ -17,15 +17,15 @@ import { TelegramUserProfilePopup } from './TelegramUserProfilePopup';
 import { Spinner } from '@/components/common/PageLoading';
 
 // ─── ActionRow ────────────────────────────────────────────────────────────────
-export function ActionRow({ icon, label, onClick, textColor = 'text-gray-300' }: {
+export function ActionRow({ icon, label, onClick, textColor = 'text-foreground/80' }: {
   icon: React.ReactNode; label: string; onClick: () => void; textColor?: string;
 }) {
   return (
     <button onClick={onClick}
-      className={`w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-700/50 transition-colors text-left ${textColor}`}>
-      <span className="flex-shrink-0 text-gray-400">{icon}</span>
+      className={`w-full flex items-center gap-3 px-4 py-2.5 hover:bg-muted/50 transition-colors text-left ${textColor}`}>
+      <span className="flex-shrink-0 text-muted-foreground">{icon}</span>
       <span className="text-sm">{label}</span>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="ml-auto text-gray-400 flex-shrink-0">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="ml-auto text-muted-foreground flex-shrink-0">
         <polyline points="9 18 15 12 9 6"/>
       </svg>
     </button>
@@ -433,13 +433,13 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
       <div ref={overlayRef} className="fixed inset-0 z-[200]"
         onClick={(e) => { if (e.target === overlayRef.current) setShowGroups(false); }}>
         <div style={{ position: 'absolute', left, top: topPos, width: modalW }}
-          className="bg-[#1e2535] rounded-2xl shadow-2xl border border-gray-700/60 overflow-hidden flex flex-col max-h-[70vh]"
+          className="bg-popover rounded-2xl shadow-2xl border border-border/60 overflow-hidden flex flex-col max-h-[70vh]"
           onClick={e => e.stopPropagation()}>
-          <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-700/60">
-            <button onClick={() => setShowGroups(false)} className="text-gray-400 hover:text-white transition-colors">
+          <div className="flex items-center gap-2 px-4 py-3 border-b border-border/60">
+            <button onClick={() => setShowGroups(false)} className="text-muted-foreground hover:text-foreground transition-colors">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6"/></svg>
             </button>
-            <h3 className="text-white font-semibold text-sm">Nhóm chung ({mutualGroups.length})</h3>
+            <h3 className="text-foreground font-semibold text-sm">Nhóm chung ({mutualGroups.length})</h3>
           </div>
           <div className="flex-1 overflow-y-auto">
             {mutualGroupsLoading && mutualGroups.length === 0 && (
@@ -449,16 +449,16 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
             )}
             {mutualGroups.map(g => (
               <button key={g.groupId} onClick={() => { setActiveThread(g.groupId, 1); setView('chat'); onClose(); }}
-                className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-700/50 transition-colors text-left">
+                className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-muted/50 transition-colors text-left">
                 <GroupAvatarCommon name={g.name || g.groupId} avatarUrl={g.avatar} size="sm" />
-                <span className="text-sm text-gray-200 truncate flex-1">{g.name || g.groupId}</span>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-400 flex-shrink-0">
+                <span className="text-sm text-foreground truncate flex-1">{g.name || g.groupId}</span>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted-foreground flex-shrink-0">
                   <polyline points="9 18 15 12 9 6"/>
                 </svg>
               </button>
             ))}
             {!mutualGroupsLoading && mutualGroups.length === 0 && (
-              <p className="text-xs text-gray-400 text-center py-8">Không có nhóm chung</p>
+              <p className="text-xs text-muted-foreground text-center py-8">Không có nhóm chung</p>
             )}
           </div>
         </div>
@@ -470,7 +470,7 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
     <div ref={overlayRef} className="fixed inset-0 z-[200]"
       onClick={(e) => { if (e.target === overlayRef.current) onClose(); }}>
       <div style={{ position: 'absolute', left, top: topPos, width: modalW }}
-        className="bg-[#1e2535] rounded-2xl shadow-2xl border border-gray-700/60 overflow-hidden flex flex-col max-h-[90vh] overflow-y-auto"
+        className="bg-popover rounded-2xl shadow-2xl border border-border/60 overflow-hidden flex flex-col max-h-[90vh] overflow-y-auto"
         onClick={e => e.stopPropagation()}>
 
         {/* Cover */}
@@ -511,7 +511,7 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
                 onClick={() => setImageViewer({ url: avatar, label: 'Ảnh đại diện' })}
                 title="Xem ảnh đại diện"
               >
-                <img src={avatar} alt={name} className="w-20 h-20 rounded-full object-cover border-4 border-[#1e2535] group-hover:brightness-90 transition-all" />
+                <img src={avatar} alt={name} className="w-20 h-20 rounded-full object-cover border-4 border-border group-hover:brightness-90 transition-all" />
                 <span className="absolute inset-0 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                   <span className="bg-black/50 rounded-full p-1">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
@@ -522,7 +522,7 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
                 </span>
               </button>
             ) : (
-              <div className="w-20 h-20 rounded-full bg-blue-600 border-4 border-[#1e2535] flex items-center justify-center text-white text-2xl font-bold">
+              <div className="w-20 h-20 rounded-full bg-blue-600 border-4 border-border flex items-center justify-center text-white text-2xl font-bold">
                 {(name || 'U').charAt(0).toUpperCase()}
               </div>
             )}
@@ -537,23 +537,23 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
                 <input ref={aliasInputRef} value={aliasValue}
                   onChange={e => setAliasValue(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') handleSaveAlias(); if (e.key === 'Escape') setEditingAlias(false); }}
-                  className="flex-1 bg-gray-700 text-white text-sm px-2 py-1 rounded-lg border border-blue-500 focus:outline-none min-w-0"
+                  className="flex-1 bg-muted text-foreground text-sm px-2 py-1 rounded-lg border border-blue-500 focus:outline-none min-w-0"
                   autoFocus
                 />
                 <button onClick={handleSaveAlias} className="text-blue-400 hover:text-blue-300 p-1">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
                 </button>
-                <button onClick={() => setEditingAlias(false)} className="text-gray-400 hover:text-gray-300 p-1">
+                <button onClick={() => setEditingAlias(false)} className="text-muted-foreground hover:text-foreground/80 p-1">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                 </button>
               </div>
             ) : (
               <div className="flex items-center gap-1.5 min-w-0">
-                <p className="text-white font-bold text-base leading-tight truncate">{name}</p>
+                <p className="text-foreground font-bold text-base leading-tight truncate">{name}</p>
                 {!isMe && (
                   <button onClick={() => { setEditingAlias(true); setTimeout(() => aliasInputRef.current?.select(), 50); }}
                     title="Đặt tên gợi nhớ"
-                    className="text-gray-400 hover:text-blue-400 transition-colors flex-shrink-0">
+                    className="text-muted-foreground hover:text-blue-400 transition-colors flex-shrink-0">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
                       <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
@@ -563,10 +563,10 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
               </div>
             )}
             {userInfo?.alias && realName && userInfo.alias !== realName && (
-              <p className="text-gray-400 text-xs truncate mt-0.5">({realName})</p>
+              <p className="text-muted-foreground text-xs truncate mt-0.5">({realName})</p>
             )}
             {userInfo?.zaloName && userInfo.zaloName !== name && userInfo.zaloName !== realName && (
-              <p className="text-gray-400 text-xs truncate mt-0.5">{userInfo.zaloName}</p>
+              <p className="text-muted-foreground text-xs truncate mt-0.5">{userInfo.zaloName}</p>
             )}
           </div>
         </div>
@@ -575,8 +575,8 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
         {!isMe && (
           <div className="px-4 pb-3">
             {friendCompose ? (
-              <div className="bg-gray-700/60 border border-gray-600 rounded-xl p-3">
-                <p className="text-xs text-gray-400 mb-2">Soạn lời mời kết bạn gửi đến <span className="text-white font-medium">{name}</span></p>
+              <div className="bg-muted/60 border border-input rounded-xl p-3">
+                <p className="text-xs text-muted-foreground mb-2">Soạn lời mời kết bạn gửi đến <span className="text-foreground font-medium">{name}</span></p>
                 <textarea
                   value={friendMsg}
                   onChange={e => setFriendMsg(e.target.value)}
@@ -584,12 +584,12 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
                   rows={2}
                   maxLength={200}
                   autoFocus
-                  className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 resize-none mb-2"
+                  className="w-full bg-card border border-input rounded-lg px-3 py-2 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 resize-none mb-2"
                   placeholder="Lời nhắn kết bạn..."
                 />
                 <div className="flex gap-2">
                   <button onClick={() => setFriendCompose(false)} disabled={sendingFriendReq}
-                    className="flex-1 py-1.5 rounded-lg bg-gray-600 text-gray-300 text-xs hover:bg-gray-500 transition-colors disabled:opacity-50">
+                    className="flex-1 py-1.5 rounded-lg bg-accent text-foreground/80 text-xs hover:bg-accent transition-colors disabled:opacity-50">
                     Hủy
                   </button>
                   <button onClick={doSendFriendRequest} disabled={sendingFriendReq}
@@ -604,7 +604,7 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
               <div className="flex gap-2">
                 {!isFriend && channelCap.supportsFriendRequest && (
                   <button onClick={handleAddFriend}
-                    className="flex-1 bg-gray-700 hover:bg-gray-600 text-gray-200 text-xs py-2 rounded-xl font-semibold transition-colors flex items-center justify-center gap-1.5">
+                    className="flex-1 bg-muted hover:bg-accent text-foreground text-xs py-2 rounded-xl font-semibold transition-colors flex items-center justify-center gap-1.5">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="8.5" cy="7" r="4"/>
                       <line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/>
@@ -624,29 +624,29 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
           </div>
         )}
 
-        <div className="h-px bg-gray-700/60" />
+        <div className="h-px bg-muted/60" />
 
         {/* Personal info */}
         <div className="px-4 py-3">
-          <p className="text-xs font-semibold text-gray-300 mb-2">Thông tin cá nhân</p>
+          <p className="text-xs font-semibold text-foreground/80 mb-2">Thông tin cá nhân</p>
           <div className="space-y-2">
             {bio && (
               <div className="flex gap-3 text-xs">
-                <span className="text-gray-400 w-20 flex-shrink-0">Bio</span>
-                <span className="text-gray-300 break-words flex-1">{bio}</span>
+                <span className="text-muted-foreground w-20 flex-shrink-0">Bio</span>
+                <span className="text-foreground/80 break-words flex-1">{bio}</span>
               </div>
             )}
             <div className="flex gap-3 text-xs">
-              <span className="text-gray-400 w-20 flex-shrink-0">Giới tính</span>
-              <span className="text-gray-300">{formatGender(userInfo?.gender) ?? '**'}</span>
+              <span className="text-muted-foreground w-20 flex-shrink-0">Giới tính</span>
+              <span className="text-foreground/80">{formatGender(userInfo?.gender) ?? '**'}</span>
             </div>
             <div className="flex gap-3 text-xs">
-              <span className="text-gray-400 w-20 flex-shrink-0">Ngày sinh</span>
-              <span className="text-gray-300">{formatDob()}</span>
+              <span className="text-muted-foreground w-20 flex-shrink-0">Ngày sinh</span>
+              <span className="text-foreground/80">{formatDob()}</span>
             </div>
             <div className="flex gap-3 text-xs">
-              <span className="text-gray-400 w-20 flex-shrink-0">Điện thoại</span>
-              <span className={userInfo?.phone ? 'text-blue-400' : 'text-gray-400'}>
+              <span className="text-muted-foreground w-20 flex-shrink-0">Điện thoại</span>
+              <span className={userInfo?.phone ? 'text-blue-400' : 'text-muted-foreground'}>
                 {userInfo?.phone
                   ? <PhoneDisplay phone={userInfo.phone} className="text-xs text-blue-400" />
                   : '**********'}
@@ -655,7 +655,7 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
           </div>
         </div>
 
-        <div className="h-px bg-gray-700/60" />
+        <div className="h-px bg-muted/60" />
 
         {/* Action list */}
         <div className="py-1">
@@ -664,7 +664,7 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
               icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>}
               label={mutualGroupsLoading ? 'Nhóm chung (đang tải...)' : `Nhóm chung${mutualGroups.length > 0 ? ` (${mutualGroups.length})` : ' (0)'}`}
               onClick={() => !mutualGroupsLoading && setShowGroups(true)}
-              textColor={mutualGroupsLoading ? 'text-gray-400' : 'text-gray-300'}
+              textColor={mutualGroupsLoading ? 'text-muted-foreground' : 'text-foreground/80'}
             />
           )}
           {!isInGroup && activeThreadId && !isMe && channelCap.supportsBusinessCard && (
@@ -679,7 +679,7 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
               icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>}
               label={isBlocked ? 'Bỏ chặn tin nhắn và cuộc gọi' : 'Chặn tin nhắn và cuộc gọi'}
               onClick={handleToggleBlock}
-              textColor={isBlocked ? 'text-orange-400' : 'text-gray-300'}
+              textColor={isBlocked ? 'text-orange-400' : 'text-foreground/80'}
             />
           )}
           {!isMe && channelCap.supportsReport && (
@@ -704,13 +704,13 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
       {confirmAction === 'unfriend' && (
         <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/70"
           onClick={() => setConfirmAction(null)}>
-          <div className="bg-gray-800 rounded-2xl p-5 w-72 border border-gray-700 shadow-2xl"
+          <div className="bg-card rounded-2xl p-5 w-72 border border-border shadow-2xl"
             onClick={e => e.stopPropagation()}>
-            <h3 className="text-white font-semibold text-base mb-2">Xoá bạn bè?</h3>
-            <p className="text-gray-400 text-sm mb-4">Bạn có chắc muốn xoá <span className="text-white font-medium">{name}</span> khỏi danh sách bạn bè?</p>
+            <h3 className="text-foreground font-semibold text-base mb-2">Xoá bạn bè?</h3>
+            <p className="text-muted-foreground text-sm mb-4">Bạn có chắc muốn xoá <span className="text-foreground font-medium">{name}</span> khỏi danh sách bạn bè?</p>
             <div className="flex gap-2">
               <button onClick={() => setConfirmAction(null)}
-                className="flex-1 bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm py-2 rounded-xl font-medium transition-colors">Huỷ</button>
+                className="flex-1 bg-muted hover:bg-accent text-foreground text-sm py-2 rounded-xl font-medium transition-colors">Huỷ</button>
               <button onClick={handleUnfriend}
                 className="flex-1 bg-red-600 hover:bg-red-700 text-white text-sm py-2 rounded-xl font-medium transition-colors">Xoá</button>
             </div>
@@ -743,7 +743,7 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
             onClick={e => e.stopPropagation()}
           />
           {/* Hint */}
-          <p className="absolute bottom-4 text-white/40 text-xs">Nhấn bên ngoài hoặc Esc để đóng</p>
+          <p className="absolute bottom-4 text-foreground/40 text-xs">Nhấn bên ngoài hoặc Esc để đóng</p>
         </div>
       )}
     </div>

@@ -7,6 +7,7 @@ import { handleAvatarError } from '@/lib/avatarRetry'
 import DataAccessor from '@/lib/data/DataAccessor';;
 import { formatPhone } from '@/utils/phoneUtils';
 import PhoneDisplay from '../common/PhoneDisplay';
+import CopyableText from '../common/CopyableText';
 import { showConfirm } from '../common/ConfirmDialog';
 import { extractApiError } from '@/utils/apiError';
 import ChannelBadge from '../common/ChannelBadge';
@@ -24,63 +25,11 @@ interface AccountCardProps {
   employeeChatOnly?: boolean;
 }
 
-// ─── FB Cookie Update Modal ───────────────────────────────────────────────────
-function FBUpdateCookieModal({ accountId, onClose }: { accountId: string; onClose: () => void }) {
-  const [cookie, setCookie] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const { showNotification } = useAppStore();
-
-  const handleSave = async () => {
-    if (!cookie.trim()) { setError('Vui lòng dán cookie mới'); return; }
-    setLoading(true);
-    setError('');
-    try {
-      const res = await ipc.fb?.updateCookie({ accountId, cookie: cookie.trim() });
-      if (res?.success) {
-        showNotification('Cập nhật cookie Facebook thành công!', 'success');
-        ipc.fb?.connect({ accountId }).catch(() => {});
-        onClose();
-      } else {
-        setError(res?.error || 'Cập nhật thất bại');
-      }
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[200]" onClick={onClose}>
-      <div className="bg-gray-800 rounded-xl w-full max-w-sm p-5 border border-gray-700 shadow-2xl" onClick={e => e.stopPropagation()}>
-        <h3 className="text-white font-semibold mb-3">Cập nhật Cookie Facebook</h3>
-        <textarea
-          value={cookie}
-          onChange={e => { setCookie(e.target.value); setError(''); }}
-          placeholder="c_user=...; xs=...; datr=..."
-          rows={5}
-          className="input-field text-xs resize-none font-mono w-full"
-          disabled={loading}
-        />
-        {error && <p className="text-red-400 text-xs mt-1">{error}</p>}
-        <div className="flex gap-2 mt-3">
-          <button onClick={onClose} className="flex-1 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs py-2 rounded-lg">Hủy</button>
-          <button onClick={handleSave} disabled={loading || !cookie.trim()} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-xs py-2 rounded-lg disabled:opacity-50">
-            {loading ? 'Đang lưu...' : 'Lưu'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export default function AccountCard({ account: acc, onReconnect, employeeChatOnly = false }: AccountCardProps) {
   const { setActiveAccount, updateAccountStatus, updateListenerActive } = useAccountStore();
   const { setView, showNotification, setAddAccountModalOpen } = useAppStore();
   const [menuOpen, setMenuOpen] = useState(false);
   const [updatingInfo, setUpdatingInfo] = useState(false);
-  const [fbCookieModalOpen, setFbCookieModalOpen] = useState(false);
   const [avatarFailed, setAvatarFailed] = useState(false);
   const avatarRetryDone = useRef(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -159,7 +108,8 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
     setMenuOpen(false);
     const ok = await showConfirm({
       title: 'Xóa tài khoản này?',
-      message: `Tài khoản "${acc.full_name || acc.zalo_id}" sẽ bị xóa khỏi ứng dụng. Bạn cần đăng nhập lại để thêm lại.`,
+      // Mọi kênh (cả Facebook) giữ dữ liệu; xoá cả dữ liệu chỉ ở Cài đặt → Tài khoản
+      message: `Tài khoản "${acc.full_name || acc.zalo_id}" sẽ bị xóa khỏi ứng dụng. Tin nhắn, hội thoại và dữ liệu CRM vẫn được giữ — đăng nhập lại đúng tài khoản này để dùng tiếp. Muốn xóa cả dữ liệu, dùng Cài đặt → Tài khoản → "Xoá tất cả dữ liệu".`,
       confirmText: 'Xóa',
       variant: 'danger',
     });
@@ -287,12 +237,12 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
     if (acc.isConnected) {
       return { label: 'Đang kết nối', cls: 'bg-yellow-900/40 text-yellow-400 border border-yellow-700/50', dot: 'bg-yellow-400 animate-pulse' };
     }
-    return { label: 'Offline', cls: 'bg-gray-700/50 text-gray-400 border border-gray-600/50', dot: 'bg-gray-500' };
+    return { label: 'Offline', cls: 'bg-muted/50 text-muted-foreground border border-input/50', dot: 'bg-accent' };
   })();
 
   return (
     <>
-    <div className={`bg-gray-800 rounded-xl p-4 border transition-colors ${listenerDead ? 'border-red-700/60' : 'border-gray-700 hover:border-gray-600'}`}>
+    <div className={`bg-card rounded-xl p-4 border transition-colors ${listenerDead ? 'border-red-700/60' : 'border-border hover:border-input'}`}>
       {/* Header */}
       <div className="flex items-center gap-3 mb-3">
         <div className="relative flex-shrink-0">
@@ -322,14 +272,14 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
             </div>
           )}
           {/* Status dot */}
-          <span className={`absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-gray-800 ${statusBadge.dot}`} />
+          <span className={`absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-border ${statusBadge.dot}`} />
           {/* Channel badge */}
           <div className="absolute -top-0.5 -left-0.5 z-10">
             <ChannelBadge channel={accountChannel} size="md" />
           </div>
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-gray-200 truncate flex items-center gap-1.5">
+          <p className="text-sm font-medium text-foreground truncate flex items-center gap-1.5">
             {acc.full_name || `${getChannelLabel(accountChannel)} Account`}
             {listenerDead && (
               <span className="relative group flex-shrink-0">
@@ -337,21 +287,21 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
                   <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
                   <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
                 </svg>
-                <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-gray-900 border border-gray-600 rounded-lg text-[10px] text-red-300 whitespace-nowrap z-50 hidden group-hover:block shadow-lg">
+                <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-card border border-input rounded-lg text-[10px] text-red-300 whitespace-nowrap z-50 hidden group-hover:block shadow-lg">
                   Listener bị ngắt - Thử kết nối lại hoặc quét QR mới
                 </span>
               </span>
             )}
           </p>
-          <p className="text-xs text-gray-400 truncate">
-            {isFacebookAcc ? `${acc.facebook_id || acc.zalo_id}` : acc.zalo_id}
+          <p className="text-xs text-muted-foreground truncate">
+            <CopyableText value={isFacebookAcc ? `${acc.facebook_id || acc.zalo_id}` : acc.zalo_id} title="Click để copy UID" />
           </p>
           {acc.phone ? (
-            <p className="text-xs text-gray-400 truncate mt-0.5">
-              <PhoneIcon className="w-3 h-3 inline" /> <PhoneDisplay phone={acc.phone} className="text-xs text-gray-400" />
+            <p className="text-xs text-muted-foreground truncate mt-0.5">
+              <PhoneIcon className="w-3 h-3 inline" /> <PhoneDisplay phone={acc.phone} className="text-xs text-muted-foreground" />
             </p>
           ) : acc.username ? (
-            <p className="text-xs text-gray-400 truncate mt-0.5">@{acc.username}</p>
+            <p className="text-xs text-muted-foreground truncate mt-0.5">@{acc.username}</p>
           ) : null}
         </div>
 
@@ -360,7 +310,7 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
         <div className="relative flex-shrink-0" ref={menuRef}>
           <button
             onClick={() => setMenuOpen(v => !v)}
-            className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-200 hover:bg-gray-700 transition-colors"
+            className="w-7 h-7 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
             title="Tùy chọn"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
@@ -369,13 +319,12 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
           </button>
 
           {menuOpen && (
-            <div className="absolute right-0 top-8 w-52 bg-gray-800 border border-gray-600 rounded-xl shadow-xl z-50 py-1 overflow-hidden">
+            <div className="absolute right-0 top-8 w-52 bg-card border border-input rounded-xl shadow-xl z-50 py-1 overflow-hidden">
               {isFacebookAcc ? (
-                <>
                 <button
                   onClick={handleUpdateFBInfo}
                   disabled={updatingInfo}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-200 hover:bg-gray-700 transition-colors disabled:opacity-50"
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-foreground hover:bg-muted transition-colors disabled:opacity-50"
                 >
                   {updatingInfo ? (
                     <Spinner size={4} />
@@ -386,22 +335,11 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
                   )}
                   {updatingInfo ? 'Đang cập nhật...' : 'Cập nhật thông tin'}
                 </button>
-                <button
-                  onClick={() => { setMenuOpen(false); setFbCookieModalOpen(true); }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-200 hover:bg-gray-700 transition-colors"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
-                    <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                  </svg>
-                  Cập nhật Cookie FB
-                </button>
-                </>
               ) : (
               <button
                 onClick={handleUpdateInfo}
                 disabled={updatingInfo}
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-200 hover:bg-gray-700 transition-colors disabled:opacity-50"
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-foreground hover:bg-muted transition-colors disabled:opacity-50"
               >
                 {updatingInfo ? (
                   <Spinner size={4} />
@@ -414,11 +352,11 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
               </button>
               )}
 
-              <div className="border-t border-gray-700 my-1" />
+              <div className="border-t border-border my-1" />
 
               <button
                 onClick={() => { setMenuOpen(false); setActiveAccount(acc.zalo_id); setView('chat'); }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-200 hover:bg-gray-700 transition-colors"
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-foreground hover:bg-muted transition-colors"
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
@@ -436,7 +374,7 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
                     showNotification('Không thể sao chép UID', 'error');
                   });
                 }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-200 hover:bg-gray-700 transition-colors"
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-foreground hover:bg-muted transition-colors"
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
@@ -445,7 +383,7 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
                 Copy UID
               </button>
 
-              <div className="border-t border-gray-700 my-1" />
+              <div className="border-t border-border my-1" />
 
               <button
                 onClick={handleDeleteAccount}
@@ -481,7 +419,7 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
             <button
               title="Ngắt kết nối sẽ dừng nghe tin nhắn và đánh dấu tài khoản offline."
               onClick={handleDisconnect}
-              className="flex-1 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs py-1.5 rounded-lg transition-colors font-medium"
+              className="flex-1 bg-muted hover:bg-accent text-foreground/80 text-xs py-1.5 rounded-lg transition-colors font-medium"
             >
               Ngắt kết nối
             </button>
@@ -489,14 +427,14 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
             <button
               title="Kết nối lại để tiếp tục nhận tin nhắn."
               onClick={handleReconnect}
-              className="flex-1 bg-orange-700 text-white-important hover:bg-gray-600 text-gray-300 text-xs py-1.5 rounded-lg transition-colors font-medium"
+              className="flex-1 bg-orange-700 text-white-important hover:bg-accent text-foreground/80 text-xs py-1.5 rounded-lg transition-colors font-medium"
             >
               Kết nối lại
             </button>
           ))}
         </div>
 
-        {/* Row 2: chỉ hiện khi listener chết - 2 nút Reconnect + QR/Cookie */}
+        {/* Row 2: chỉ hiện khi listener chết - 2 nút Reconnect + Quét QR mới (Zalo) / Đăng nhập lại (FB, Telegram) */}
         {!employeeChatOnly && listenerDead && (
           <div className="flex gap-2">
             <button
@@ -511,35 +449,29 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
             </button>
             <button
               onClick={() => {
-                if (isFacebookAcc) {
-                  setFbCookieModalOpen(true);
-                } else if (isTelegram(accountChannel)) {
-                  // Telegram: mở popup đăng nhập lại (giống thêm tài khoản mới)
-                  setAddAccountModalOpen(true, accountChannel);
-                } else {
+                if (isZaloAcc) {
                   setAddAccountModalOpen(true);
+                } else {
+                  // Facebook / Telegram hết phiên: mở popup đăng nhập lại từ đầu (như thêm tài khoản mới).
+                  // Facebook chọn sẵn proxy đang dùng; đăng nhập đúng tài khoản cũ thì hội thoại/tin nhắn được giữ.
+                  setAddAccountModalOpen(true, accountChannel, isFacebookAcc ? acc.proxy_id ?? null : null);
                 }
               }}
               className="flex-1 bg-blue-800 hover:bg-blue-700 text-white text-xs py-1.5 rounded-lg transition-colors font-medium flex items-center justify-center gap-1"
             >
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                {isFacebookAcc ? (
-                  <><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></>
-                ) : isTelegram(accountChannel) ? (
-                  <><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></>
-                ) : (
+                {isZaloAcc ? (
                   <><rect x="3" y="3" width="5" height="5" /><rect x="16" y="3" width="5" height="5" /><rect x="3" y="16" width="5" height="5" /><path d="M21 16h-3v3M21 21h-3v-3M16 21h-3v-3M13 16h3" /></>
+                ) : (
+                  <><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></>
                 )}
               </svg>
-              {isFacebookAcc ? 'Cập nhật Cookie' : isTelegram(accountChannel) ? 'Đăng nhập lại' : 'Quét QR mới'}
+              {isZaloAcc ? 'Quét QR mới' : 'Đăng nhập lại'}
             </button>
           </div>
         )}
       </div>
     </div>
-    {fbCookieModalOpen && (
-      <FBUpdateCookieModal accountId={acc.zalo_id} onClose={() => setFbCookieModalOpen(false)} />
-    )}
     </>
   );
 }

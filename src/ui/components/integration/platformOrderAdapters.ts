@@ -155,53 +155,66 @@ function toHaravan(data: GenericOrderData) {
 }
 
 // ─── Sapo ───────────────────────────────────────────────────────────────────
-// Docs: https://developers.sapo.vn/
-// POST /admin/orders.json - body: { order: { line_items[], customer_id?, shipping_address{}, ... } }
+// Docs: support.sapo.vn/phuong-thuc-post-cua-order-phan-2 — POST /admin/orders.json { order: {...} }
+// - line_items: { variant_id, quantity } (id PHIÊN BẢN — POS lấy variation_id do SapoAdapter trả) hoặc dòng tự do
+//   { title, price, quantity } khi không có id
+// - địa chỉ: first_name / last_name / name (không có full_name); trạng thái thanh toán: financial_status
+// - giảm giá: discount_codes (không có discount_amount trên dòng / total_discount khi tạo)
+
+/** "Nguyễn Văn An" → họ "Nguyễn Văn" (last_name), tên "An" (first_name) — như khách Sapo. */
+function splitVietnameseName(full: string): { first_name: string; last_name: string } {
+  const parts = String(full || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length <= 1) return { first_name: parts[0] || '', last_name: '' };
+  return { first_name: parts[parts.length - 1], last_name: parts.slice(0, -1).join(' ') };
+}
 
 function toSapo(data: GenericOrderData) {
   const provinceName = data.customer.provinceName || getProvinceName(data.customer.provinceId);
   const districtName = data.customer.districtName || getDistrictName(data.customer.provinceId, data.customer.districtId);
   const wardName = data.customer.wardName || getWardName(data.customer.provinceId, data.customer.districtId, data.customer.wardId);
-  const fullAddress = [data.customer.address, wardName, districtName, provinceName].filter(Boolean).join(', ');
+  const name = data.customer.name || 'Khách vãng lai';
+  const { first_name, last_name } = splitVietnameseName(name);
+  const address = {
+    first_name,
+    last_name: last_name || undefined,
+    name,
+    phone: data.customer.phone || undefined,
+    address1: data.customer.address || undefined,
+    ward: wardName || undefined,
+    district: districtName || undefined,
+    province: provinceName || undefined,
+    city: provinceName || undefined,
+    country: 'Vietnam',
+    country_code: 'VN',
+  };
+  const totalDiscount = data.items.reduce((sum, item) => sum + (Number(item.discount) || 0), 0) + (Number(data.discount) || 0);
+  const hasCustomer = !!(data.customer.phone || data.customer.email);
 
   return {
     order: {
-      line_items: data.items.map(item => ({
-        product_id: item.productId,
-        variant_id: item.productId,
-        title: item.productName,
-        quantity: item.quantity,
-        price: item.price,
-        discount_amount: item.discount,
-      })),
-      billing_address: {
-        full_name: data.customer.name || 'Khách vãng lai',
+      line_items: data.items.map(item => {
+        const variantId = Number(item.productId);
+        return Number.isFinite(variantId) && variantId > 0
+          ? { variant_id: variantId, quantity: item.quantity, price: item.price, title: item.productName }
+          : { title: item.productName || item.productCode || 'Sản phẩm', price: item.price, quantity: item.quantity };
+      }),
+      // Gắn đơn với khách (Sapo khớp / tạo khách theo SĐT, email) — trước đây đơn không có khách
+      customer: hasCustomer ? {
+        first_name,
+        last_name: last_name || undefined,
         phone: data.customer.phone || undefined,
         email: data.customer.email || undefined,
-        address1: data.customer.address || undefined,
-        ward: wardName || undefined,
-        district: districtName || undefined,
-        province: provinceName || undefined,
-        country: 'Việt Nam',
-      },
-      shipping_address: {
-        full_name: data.customer.name || 'Khách vãng lai',
-        phone: data.customer.phone || undefined,
-        address1: data.customer.address || undefined,
-        full_address: fullAddress || undefined,
-        ward: wardName || undefined,
-        district: districtName || undefined,
-        province: provinceName || undefined,
-        country: 'Việt Nam',
-      },
-      total_discount: data.discount,
+      } : undefined,
+      email: data.customer.email || undefined,
+      billing_address: address,
+      shipping_address: address,
+      discount_codes: totalDiscount > 0 ? [{ code: 'DEPLAO', amount: totalDiscount, type: 'fixed_amount' }] : undefined,
       note: data.note || undefined,
+      tags: 'deplaoapp',
       source_name: 'deplaoapp',
-      // Sapo payment: payment_status pending|paid
-      payment_status: data.paymentMethod === 'cod' ? 'pending' : 'paid',
-      fulfillment_status: null, // chưa giao
+      financial_status: data.paymentMethod === 'cod' ? 'pending' : 'paid',
       shipping_lines: data.shippingFee > 0 ? [{
-        title: 'Phí ship',
+        title: 'Phí vận chuyển',
         price: data.shippingFee,
       }] : undefined,
     },

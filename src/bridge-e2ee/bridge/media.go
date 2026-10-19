@@ -3,10 +3,12 @@ package bridge
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -19,11 +21,81 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"go.mau.fi/mautrix-meta/pkg/messagix"
+	"go.mau.fi/mautrix-meta/pkg/messagix/httpclient"
 	"go.mau.fi/mautrix-meta/pkg/messagix/socket"
 	"go.mau.fi/mautrix-meta/pkg/messagix/table"
 )
 
-const maxDownloadedMediaSize int64 = 100 * 1024 * 1024
+const (
+	maxDownloadedMediaSize    int64 = 100 * 1024 * 1024
+	maxEncryptedMediaOverhead int64 = 64
+	mediaKeyDecodedSize             = 32
+	mediaDigestDecodedSize          = 32
+)
+
+var errDownloadedMediaTooLarge = errors.New("media exceeds the 100 MiB limit")
+
+type boundedMediaFile struct {
+	*os.File
+	maxSize int64
+}
+
+func createE2EEMediaTempFile(maxSize int64) (*boundedMediaFile, error) {
+	file, err := createPrivateTempFile(os.TempDir(), "fbchat-e2ee-media-*", 0600)
+	if err != nil {
+		return nil, fmt.Errorf("create bounded E2EE media file: %w", err)
+	}
+	return &boundedMediaFile{File: file, maxSize: maxSize}, nil
+}
+
+func (file *boundedMediaFile) validateWrite(offset int64, length int) error {
+	if offset < 0 || offset > file.maxSize || int64(length) > file.maxSize-offset {
+		return errDownloadedMediaTooLarge
+	}
+	return nil
+}
+
+func (file *boundedMediaFile) Write(data []byte) (int, error) {
+	offset, err := file.File.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return 0, err
+	}
+	if err = file.validateWrite(offset, len(data)); err != nil {
+		return 0, err
+	}
+	return file.File.Write(data)
+}
+
+func (file *boundedMediaFile) WriteString(data string) (int, error) {
+	offset, err := file.File.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return 0, err
+	}
+	if err = file.validateWrite(offset, len(data)); err != nil {
+		return 0, err
+	}
+	return file.File.WriteString(data)
+}
+
+func (file *boundedMediaFile) WriteAt(data []byte, offset int64) (int, error) {
+	if err := file.validateWrite(offset, len(data)); err != nil {
+		return 0, err
+	}
+	return file.File.WriteAt(data, offset)
+}
+
+func (file *boundedMediaFile) ReadFrom(source io.Reader) (int64, error) {
+	// *os.File implements io.ReaderFrom. Without this override, method promotion
+	// lets io.Copy bypass Write and therefore bypass the hard size limit.
+	return io.Copy(struct{ io.Writer }{file}, source)
+}
+
+func (file *boundedMediaFile) Truncate(size int64) error {
+	if size < 0 || size > file.maxSize {
+		return errDownloadedMediaTooLarge
+	}
+	return file.File.Truncate(size)
+}
 
 var allowedMediaHosts = []string{
 	"facebook.com",
@@ -69,14 +141,14 @@ type UploadMediaResult struct {
 
 // UploadMedia uploads media to Messenger
 func (c *Client) UploadMedia(opts *UploadMediaOptions) (*UploadMediaResult, error) {
-	media := &messagix.MercuryUploadMedia{
+	media := &httpclient.MercuryUploadMedia{
 		Filename:    opts.Filename,
 		MimeType:    opts.MimeType,
 		MediaData:   opts.Data,
 		IsVoiceClip: opts.IsVoice,
 	}
 
-	resp, err := c.Messagix.SendMercuryUploadRequest(c.ctx, opts.ThreadID, media)
+	resp, err := c.Messagix.GetHTTP().SendMercuryUploadRequest(c.ctx, opts.ThreadID, media)
 	if err != nil {
 		return nil, err
 	}
@@ -279,14 +351,14 @@ func (c *Client) DownloadMedia(rawURL string) ([]byte, error) {
 		return nil, fmt.Errorf("media download returned HTTP %d", resp.StatusCode)
 	}
 	if resp.ContentLength > maxDownloadedMediaSize {
-		return nil, fmt.Errorf("media exceeds the 100 MiB limit")
+		return nil, errDownloadedMediaTooLarge
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxDownloadedMediaSize+1))
 	if err != nil {
 		return nil, err
 	}
 	if int64(len(data)) > maxDownloadedMediaSize {
-		return nil, fmt.Errorf("media exceeds the 100 MiB limit")
+		return nil, errDownloadedMediaTooLarge
 	}
 	return data, nil
 }
@@ -370,13 +442,13 @@ type SetGroupPhotoOptions struct {
 // SetGroupPhoto sets the group photo/avatar
 func (c *Client) SetGroupPhoto(opts *SetGroupPhotoOptions) error {
 	// Upload the image first
-	media := &messagix.MercuryUploadMedia{
+	media := &httpclient.MercuryUploadMedia{
 		Filename:  "group_photo.jpg",
 		MimeType:  opts.MimeType,
 		MediaData: opts.Data,
 	}
 
-	resp, err := c.Messagix.SendMercuryUploadRequest(c.ctx, opts.ThreadID, media)
+	resp, err := c.Messagix.GetHTTP().SendMercuryUploadRequest(c.ctx, opts.ThreadID, media)
 	if err != nil {
 		return fmt.Errorf("failed to upload group photo: %w", err)
 	}
@@ -1158,21 +1230,24 @@ func (c *Client) DownloadE2EEMedia(opts *DownloadE2EEMediaOptions) (*DownloadE2E
 	if e2eeClient == nil || !e2eeClient.IsConnected() {
 		return nil, ErrE2EENotConnected
 	}
+	if err := validateDownloadE2EEMediaOptions(opts); err != nil {
+		return nil, err
+	}
 
 	// Decode base64 keys
-	mediaKey, err := decodeBase64(opts.MediaKey)
+	mediaKey, err := decodeBase64Field("mediaKey", opts.MediaKey, mediaKeyDecodedSize)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode mediaKey: %w", err)
+		return nil, err
 	}
-	mediaSHA256, err := decodeBase64(opts.MediaSHA256)
+	mediaSHA256, err := decodeBase64Field("mediaSha256", opts.MediaSHA256, mediaDigestDecodedSize)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode mediaSha256: %w", err)
+		return nil, err
 	}
 	var mediaEncSHA256 []byte
 	if opts.MediaEncSHA256 != "" {
-		mediaEncSHA256, err = decodeBase64(opts.MediaEncSHA256)
+		mediaEncSHA256, err = decodeBase64Field("mediaEncSha256", opts.MediaEncSHA256, mediaDigestDecodedSize)
 		if err != nil {
-			return nil, fmt.Errorf("failed to decode mediaEncSha256: %w", err)
+			return nil, err
 		}
 	}
 
@@ -1193,19 +1268,53 @@ func (c *Client) DownloadE2EEMedia(opts *DownloadE2EEMediaOptions) (*DownloadE2E
 		waMediaType = whatsmeow.MediaDocument
 	}
 
-	// Create WAMediaTransport Integral for download
-	directPath := opts.DirectPath
-	integral := &waMediaTransport.WAMediaTransport_Integral{
-		MediaKey:      mediaKey,
-		FileSHA256:    mediaSHA256,
-		FileEncSHA256: mediaEncSHA256,
-		DirectPath:    &directPath,
+	maxTemporarySize := maxDownloadedMediaSize + maxEncryptedMediaOverhead
+	if opts.FileSize > 0 {
+		maxTemporarySize = opts.FileSize + maxEncryptedMediaOverhead
 	}
 
-	// Download and decrypt
-	data, err := e2eeClient.DownloadFB(c.ctx, integral, waMediaType)
+	boundedFile, err := createE2EEMediaTempFile(maxTemporarySize)
+	if err != nil {
+		return nil, err
+	}
+	temporaryPath := boundedFile.Name()
+	defer func() {
+		_ = boundedFile.Close()
+		_ = os.Remove(temporaryPath)
+	}()
+
+	// Stream encrypted bytes into a hard-capped file, decrypt in place, then
+	// allocate the returned byte slice only after the plaintext size is known.
+	err = e2eeClient.DownloadMediaWithPathToFile(
+		c.ctx,
+		opts.DirectPath,
+		mediaEncSHA256,
+		mediaSHA256,
+		mediaKey,
+		waMediaType,
+		"",
+		false,
+		boundedFile,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download E2EE media: %w", err)
+	}
+	fileInfo, err := boundedFile.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("stat downloaded E2EE media: %w", err)
+	}
+	if fileInfo.Size() > maxDownloadedMediaSize {
+		return nil, errDownloadedMediaTooLarge
+	}
+	if _, err = boundedFile.Seek(0, io.SeekStart); err != nil {
+		return nil, fmt.Errorf("rewind downloaded E2EE media: %w", err)
+	}
+	data, err := io.ReadAll(io.LimitReader(boundedFile, maxDownloadedMediaSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("read downloaded E2EE media: %w", err)
+	}
+	if int64(len(data)) > maxDownloadedMediaSize {
+		return nil, errDownloadedMediaTooLarge
 	}
 
 	return &DownloadE2EEMediaResult{
@@ -1215,9 +1324,31 @@ func (c *Client) DownloadE2EEMedia(opts *DownloadE2EEMediaOptions) (*DownloadE2E
 	}, nil
 }
 
-// decodeBase64 decodes a base64 string
-func decodeBase64(s string) ([]byte, error) {
-	return base64.StdEncoding.DecodeString(s)
+func validateDownloadE2EEMediaOptions(opts *DownloadE2EEMediaOptions) error {
+	if opts == nil {
+		return errors.New("download E2EE media options are required")
+	}
+	if opts.FileSize < 0 {
+		return errors.New("E2EE media fileSize must not be negative")
+	}
+	if opts.FileSize > maxDownloadedMediaSize {
+		return errDownloadedMediaTooLarge
+	}
+	return nil
+}
+
+func decodeBase64Field(fieldName, encoded string, expectedSize int) ([]byte, error) {
+	if len(encoded) > base64.StdEncoding.EncodedLen(expectedSize) {
+		return nil, fmt.Errorf("invalid %s length", fieldName)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode %s: %w", fieldName, err)
+	}
+	if len(decoded) != expectedSize {
+		return nil, fmt.Errorf("invalid %s length: got %d, want %d", fieldName, len(decoded), expectedSize)
+	}
+	return decoded, nil
 }
 
 // Unused imports fix

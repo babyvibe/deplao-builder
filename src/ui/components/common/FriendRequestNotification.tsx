@@ -73,7 +73,7 @@ export default function FriendRequestNotification({ data, onAccept, onReject, on
         transition-all duration-350 transform ${show ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0'}
         ${isLight
           ? 'bg-white border border-gray-200 shadow-gray-200/60'
-          : 'bg-gradient-to-br from-gray-800 to-gray-900 border border-gray-700'
+          : 'bg-gradient-to-br from-card to-background border border-border'
         }`}
     >
       {/* Top accent bar */}
@@ -84,14 +84,14 @@ export default function FriendRequestNotification({ data, onAccept, onReject, on
         <div className="flex items-start justify-between gap-2 mb-3">
           <div className="flex items-center gap-2">
             <span className="text-lg"><UserCheckIcon className="w-4 h-4" /></span>
-            <p className={`font-bold text-sm ${isLight ? 'text-gray-800' : 'text-white'}`}>
+            <p className={`font-bold text-sm ${isLight ? 'text-gray-800' : 'text-foreground'}`}>
               Lời mời kết bạn
             </p>
           </div>
           <button
             onClick={handleDismiss}
             className={`text-lg leading-none p-0.5 rounded-full transition-colors
-              ${isLight ? 'text-gray-400 hover:text-gray-400 hover:bg-gray-100' : 'text-gray-400 hover:text-gray-300 hover:bg-gray-700'}`}
+              ${isLight ? 'text-muted-foreground hover:text-muted-foreground hover:bg-gray-100' : 'text-muted-foreground hover:text-foreground/80 hover:bg-muted'}`}
             title="Đóng"
           >
             ×
@@ -114,16 +114,16 @@ export default function FriendRequestNotification({ data, onAccept, onReject, on
             </div>
           )}
           <div className="flex-1 min-w-0">
-            <p className={`font-semibold text-sm truncate ${isLight ? 'text-gray-900' : 'text-white'}`}>
+            <p className={`font-semibold text-sm truncate ${isLight ? 'text-gray-900' : 'text-foreground'}`}>
               {data.displayName || data.userId}
             </p>
             {data.msg && (
-              <p className={`text-xs mt-0.5 line-clamp-2 ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
+              <p className={`text-xs mt-0.5 line-clamp-2 ${isLight ? 'text-muted-foreground' : 'text-muted-foreground'}`}>
                 "{data.msg}"
               </p>
             )}
             {!data.msg && (
-              <p className={`text-xs mt-0.5 ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
+              <p className={`text-xs mt-0.5 ${isLight ? 'text-muted-foreground' : 'text-muted-foreground'}`}>
                 muốn kết bạn với bạn
               </p>
             )}
@@ -135,7 +135,7 @@ export default function FriendRequestNotification({ data, onAccept, onReject, on
           <div className={`text-center py-2 text-sm font-medium rounded-lg mb-2
             ${result === 'accepted'
               ? (isLight ? 'bg-green-50 text-green-600' : 'bg-green-900/30 text-green-400')
-              : (isLight ? 'bg-gray-50 text-gray-400' : 'bg-gray-800/50 text-gray-400')
+              : (isLight ? 'bg-gray-50 text-muted-foreground' : 'bg-card/50 text-muted-foreground')
             }`}>
             {result === 'accepted' ? <><CheckIcon className="w-4 h-4 inline" /> Đã chấp nhận kết bạn</> : <><CloseIcon className="w-4 h-4 inline" /> Đã từ chối lời mời</>}
           </div>
@@ -166,12 +166,12 @@ export default function FriendRequestNotification({ data, onAccept, onReject, on
               className={`flex-1 py-2 rounded-xl text-sm font-semibold transition-all duration-200 flex items-center justify-center gap-1.5
                 ${acting === 'reject' ? 'opacity-70 cursor-wait' : ''}
                 ${isLight
-                  ? 'bg-gray-100 text-gray-400 hover:bg-gray-200'
-                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                  ? 'bg-gray-100 text-muted-foreground hover:bg-gray-200'
+                  : 'bg-muted text-foreground/80 hover:bg-accent'
                 }`}
             >
               {acting === 'reject' ? (
-                <span className="inline-block w-4 h-4 border-2 border-gray-400/30 border-t-gray-400 rounded-full animate-spin" />
+                <span className="inline-block w-4 h-4 border-2 border-border-strong/30 border-t-gray-400 rounded-full animate-spin" />
               ) : (
                 <><CloseIcon className="w-4 h-4 inline" /> Từ chối</>
               )}

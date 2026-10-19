@@ -9,6 +9,7 @@
  *  - Boss / standalone mode → actor = 'boss', role = 'owner'.
  */
 
+import { AsyncLocalStorage } from 'async_hooks';
 import AppModeManager from '../../utils/AppModeManager';
 import WorkspaceManager from '../../utils/WorkspaceManager';
 import DatabaseService from '../database/DatabaseService';
@@ -35,9 +36,17 @@ export class ErpPermissionError extends Error {
   }
 }
 
+/**
+ * Danh tính ERP do Public API / plugin đặt cho một lời gọi IPC (ApiPlatform → IpcInvoker).
+ * Không có override → hành vi cũ (AppMode) giữ nguyên.
+ */
+const actorOverride = new AsyncLocalStorage<ErpAuthCtx>();
+
 export default class ErpAuthContext {
   /** Resolve current ERP actor from AppMode + (optional) DB profile. */
   public static resolve(): ErpAuthCtx {
+    const override = actorOverride.getStore();
+    if (override) return override;
     const mode = AppModeManager.getInstance().getMode();
     if (mode === 'employee') {
       const empId = this._resolveEmployeeId() || 'unknown_employee';
@@ -65,6 +74,22 @@ export default class ErpAuthContext {
       // Ignore workspace lookup failures and fall back below.
     }
     return null;
+  }
+
+  /** Chạy `fn` (kể cả phần async bên trong) với danh tính ERP cố định — dùng cho API/plugin. */
+  public static runAs<T>(ctx: ErpAuthCtx, fn: () => T): T {
+    return actorOverride.run(ctx, fn);
+  }
+
+  /** Danh tính ERP của một nhân viên theo hồ sơ ERP (role + override), dùng khi nhân viên gọi API v1. */
+  public static forEmployee(employeeId: string): ErpAuthCtx {
+    const access = this._lookupAccess(employeeId);
+    return {
+      employeeId,
+      role: access.role ?? 'member',
+      permissionOverrides: access.permissionOverrides,
+      mode: AppModeManager.getInstance().getMode(),
+    };
   }
 
   /** Throw `ErpPermissionError` if actor cannot perform `action`. */

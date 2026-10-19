@@ -1,6 +1,6 @@
 <svg width="1200" height="1040" viewBox="0 0 1200 1040" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
   <title id="title">Sơ đồ tổng quan Deplao</title>
-  <desc id="desc">Bản đồ trực quan mô tả Deplao là workspace desktop tập trung cho bán hàng và chăm sóc khách hàng trên Zalo, kết nối các module đa tài khoản, inbox, CRM, workflow, AI, tích hợp, báo cáo và team nội bộ.</desc>
+  <desc id="desc">Bản đồ trực quan mô tả Deplao là workspace desktop tập trung cho bán hàng và chăm sóc khách hàng trên Zalo, Facebook, Telegram, kết nối các module đa tài khoản, inbox, CRM, workflow, AI, tích hợp, báo cáo và team nội bộ.</desc>
   <defs>
     <linearGradient id="bg" x1="150" y1="80" x2="1050" y2="860" gradientUnits="userSpaceOnUse">
       <stop stop-color="#F8FBFF"/>
@@ -65,8 +65,8 @@
   <circle cx="600" cy="390" r="16" fill="url(#sun)"/>
   <circle cx="600" cy="390" r="28" fill="#FDECC8" opacity="0.65"/>
   <text x="600" y="465" text-anchor="middle" class="core-title">Deplao</text>
-  <text x="600" y="515" text-anchor="middle" class="core-body">Workspace desktop tập trung</text>
-  <text x="600" y="550" text-anchor="middle" class="core-body">cho bán hàng &amp; CSKH trên Zalo</text>
+  <text x="600" y="515" text-anchor="middle" class="core-body">Bán hàng &amp; CSKH tập trung</text>
+  <text x="600" y="550" text-anchor="middle" class="core-body">trên Zalo · Facebook · Telegram</text>
 
   <!-- Đa tài khoản -->
   <g filter="url(#nodeGlow)">

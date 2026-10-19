@@ -1,4 +1,4 @@
-import ipc from '@/lib/ipc'
+import ipc, { buildZaloAuth } from '@/lib/ipc'
 import DataAccessor from '@/lib/data/DataAccessor';;
 import { useAccountStore } from '@/store/accountStore';
 import { channelSupports, type Channel } from '@/../configs/channelConfig';
@@ -33,7 +33,7 @@ export function sendSeenForThread(
     // Resolve auth
     let auth = authOverride;
     if (!auth) {
-      auth = { cookies: accObj.cookies, imei: accObj.imei, userAgent: accObj.user_agent };
+      auth = buildZaloAuth(accObj);
     }
     if (!auth) return;
 

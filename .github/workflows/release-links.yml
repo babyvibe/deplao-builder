@@ -1,0 +1,126 @@
+# ─── Gắn link vào ghi chú Release ────────────────────────────────────────────
+# Thêm vào cuối ghi chú mỗi Release (vX.Y.Z) một khối:
+#   - Commit đã build (commit mà tag trỏ tới)
+#   - Thay đổi so với bản trước (compare vTrước...vNày)
+#   - Danh sách commit đến bản này
+# Ghi chú bạn viết giữ nguyên; khối có marker ẩn nên chạy lại chỉ thay khối cũ, không nhân đôi.
+#
+# Chạy khi:
+#   - Build All Platforms publish xong (gọi qua workflow_call, kèm tag vừa phát hành)
+#   - Release được phát hành / sửa bằng tay trên GitHub (sửa ghi chú lỡ xoá khối link → tự gắn lại)
+#   - Chạy tay (Actions → Release links → Run workflow): nhập tag, bỏ trống = mọi Release
+# Sửa Release bằng GITHUB_TOKEN nên không tự kích hoạt lại workflow này.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Release links
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+on:
+  release:
+    types: [published, edited]
+
+  workflow_call:
+    inputs:
+      tag:
+        description: 'Tag của Release cần gắn link (vd: v26.10.0)'
+        required: true
+        type: string
+
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag cần gắn link (vd: v26.10.0). Bỏ trống = mọi Release'
+        required: false
+        default: ''
+        type: string
+
+jobs:
+  links:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Gắn link commit / so sánh vào ghi chú Release
+        uses: actions/github-script@v7
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        with:
+          script: |
+            const START = '<!-- deplao-release-links:start -->';
+            const END = '<!-- deplao-release-links:end -->';
+            const { owner, repo } = context.repo;
+            const base = `https://github.com/${owner}/${repo}`;
+
+            const parse = (tag) => {
+              const m = /^v(\d+)\.(\d+)\.(\d+)$/.exec(tag || '');
+              return m ? m.slice(1).map(Number) : null;
+            };
+            const byVersion = (a, b) => {
+              const x = parse(a.tag_name), y = parse(b.tag_name);
+              for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] - y[i];
+              return 0;
+            };
+
+            const releases = (await github.paginate(github.rest.repos.listReleases, { owner, repo, per_page: 100 }))
+              .filter(r => !r.draft && parse(r.tag_name))
+              .sort(byVersion);
+
+            const inputTag = (process.env.INPUT_TAG || '').trim();
+            const wanted = context.eventName === 'release'
+              ? [context.payload.release.tag_name]
+              : (inputTag ? [inputTag] : releases.map(r => r.tag_name));
+
+            for (const tag of wanted) {
+              const i = releases.findIndex(r => r.tag_name === tag);
+              if (i < 0) {
+                core.info(`${tag}: bỏ qua (không phải Release vX.Y.Z đã phát hành)`);
+                continue;
+              }
+              const rel = releases[i];
+              const prev = i > 0 ? releases[i - 1] : null;
+
+              // tag → commit (tag thường hoặc tag có chú thích)
+              const ref = await github.rest.git.getRef({ owner, repo, ref: `tags/${tag}` });
+              let sha = ref.data.object.sha;
+              if (ref.data.object.type === 'tag') {
+                sha = (await github.rest.git.getTag({ owner, repo, tag_sha: sha })).data.object.sha;
+              }
+              const commit = await github.rest.repos.getCommit({ owner, repo, ref: sha });
+              const subject = commit.data.commit.message.split('\n')[0].replace(/[[\]]/g, '');
+
+              const lines = [
+                START,
+                '---',
+                `- **Commit đã build:** [\`${sha.slice(0, 7)}\`](${base}/commit/${sha}) — ${subject}`,
+              ];
+              if (prev) {
+                lines.push(`- **Thay đổi so với ${prev.tag_name}:** [${prev.tag_name}...${tag}](${base}/compare/${prev.tag_name}...${tag})`);
+                // Commit thuộc bản này (bản trước → tag), mới nhất trước; tối đa 8 dòng, còn lại xem link so sánh.
+                const cmp = await github.rest.repos.compareCommitsWithBasehead({ owner, repo, basehead: `${prev.tag_name}...${tag}` });
+                const commits = (cmp.data.commits || []).slice().reverse()
+                  .map(c => ({ h: c.sha, s: c.commit.message.split('\n')[0].replace(/[[\]]/g, '') }));
+                const total = cmp.data.total_commits ?? commits.length;
+                if (total > 0) {
+                  lines.push(`- **Commit của bản này (${total}):**`);
+                  for (const c of commits.slice(0, 8)) lines.push(`  - [\`${c.h.slice(0, 7)}\`](${base}/commit/${c.h}) ${c.s}`);
+                  if (total > 8) lines.push(`  - … và ${total - 8} commit nữa — xem link so sánh`);
+                }
+              }
+              lines.push(`- **Danh sách commit đến bản này:** [commits/${tag}](${base}/commits/${tag})`, END);
+
+              let body = rel.body || '';
+              const s = body.indexOf(START);
+              const e = body.indexOf(END);
+              if (s >= 0 && e > s) body = body.slice(0, s) + body.slice(e + END.length);
+              const next = `${body.replace(/\s+$/, '')}\n\n${lines.join('\n')}\n`;
+              if (next === (rel.body || '')) {
+                core.info(`${tag}: đã đủ link`);
+                continue;
+              }
+              await github.rest.repos.updateRelease({ owner, repo, release_id: rel.id, body: next });
+              core.info(`${tag}: đã gắn link`);
+            }

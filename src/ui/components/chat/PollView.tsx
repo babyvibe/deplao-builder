@@ -64,7 +64,7 @@ function VoterMiniAvatar({ uid, contacts, theme }: { uid: string; contacts: any[
   if (avatar) {
     return (
       <img src={avatar} alt={name} title={name || uid}
-        className="w-5 h-5 rounded-full object-cover border border-gray-700 flex-shrink-0"
+        className="w-5 h-5 rounded-full object-cover border border-border flex-shrink-0"
         onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
       />
     );
@@ -72,7 +72,7 @@ function VoterMiniAvatar({ uid, contacts, theme }: { uid: string; contacts: any[
   return (
     <div title={name || uid}
       className={`w-5 h-5 rounded-full border flex items-center justify-center text-[8px] text-white font-bold flex-shrink-0 ${
-        theme === 'blue' ? 'bg-blue-800 border-blue-600' : 'bg-purple-700 border-gray-700'
+        theme === 'blue' ? 'bg-blue-800 border-blue-600' : 'bg-purple-700 border-border'
       }`}
     >
       {initials}
@@ -90,15 +90,15 @@ export function VoterListModal({ option, contacts, onClose }: {
   const voters = option.voters || [];
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
-      <div className="bg-gray-800 border border-gray-700 rounded-2xl w-72 max-h-96 flex flex-col shadow-2xl"
+      <div className="bg-card border border-border rounded-2xl w-72 max-h-96 flex flex-col shadow-2xl"
         onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700 flex-shrink-0">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border flex-shrink-0">
           <div className="flex-1 min-w-0 pr-2">
-            <p className="text-sm font-semibold text-gray-100 truncate">{option.content}</p>
-            <p className="text-xs text-gray-400">{voters.length} người bình chọn</p>
+            <p className="text-sm font-semibold text-foreground truncate">{option.content}</p>
+            <p className="text-xs text-muted-foreground">{voters.length} người bình chọn</p>
           </div>
           <button onClick={onClose}
-            className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-white hover:bg-gray-700 transition-colors">
+            className="w-7 h-7 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
@@ -106,14 +106,14 @@ export function VoterListModal({ option, contacts, onClose }: {
         </div>
         <div className="overflow-y-auto flex-1">
           {voters.length === 0 ? (
-            <p className="text-xs text-gray-400 text-center py-6">Chưa có ai bình chọn</p>
+            <p className="text-xs text-muted-foreground text-center py-6">Chưa có ai bình chọn</p>
           ) : voters.map(uid => {
             const c = contacts.find((x: any) => String(x.contact_id) === String(uid));
             const name: string = c?.alias || c?.display_name || '';
             const avatar: string = c?.avatar_url || '';
             const initials = name ? name.charAt(0).toUpperCase() : String(uid).slice(-2);
             return (
-              <div key={uid} className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-700/50 transition-colors">
+              <div key={uid} className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/50 transition-colors">
                 {avatar ? (
                   <img src={avatar} alt={name} className="w-8 h-8 rounded-full object-cover flex-shrink-0"
                     onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
@@ -123,8 +123,8 @@ export function VoterListModal({ option, contacts, onClose }: {
                   </div>
                 )}
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm text-gray-100 truncate">{name || uid}</p>
-                  {name && <p className="text-[11px] text-gray-400 truncate">{uid}</p>}
+                  <p className="text-sm text-foreground truncate">{name || uid}</p>
+                  {name && <p className="text-[11px] text-muted-foreground truncate">{uid}</p>}
                 </div>
               </div>
             );
@@ -253,21 +253,21 @@ export function PollDetailView({
 
   const t = theme;
   const clr = {
-    border: t === 'blue' ? 'border-blue-500' : 'border-gray-600',
-    text: t === 'blue' ? 'text-white' : 'text-gray-100',
-    subtext: t === 'blue' ? 'text-blue-200' : 'text-gray-400',
+    border: t === 'blue' ? 'border-blue-500' : 'border-input',
+    text: t === 'blue' ? 'text-foreground' : 'text-foreground',
+    subtext: t === 'blue' ? 'text-blue-200' : 'text-muted-foreground',
     voteCount: t === 'blue' ? 'text-blue-200' : 'text-blue-400',
     optChecked: t === 'blue' ? 'bg-blue-400/40 border border-blue-300' : 'bg-blue-600/30 border border-blue-500',
-    optUnchecked: t === 'blue' ? 'bg-blue-700/40 hover:bg-blue-700/60 border border-transparent' : 'bg-gray-600/50 hover:bg-gray-600 border border-transparent',
-    radio: t === 'blue' ? 'border-blue-300' : 'border-gray-500',
-    bar: t === 'blue' ? 'bg-blue-800' : 'bg-gray-600',
+    optUnchecked: t === 'blue' ? 'bg-blue-700/40 hover:bg-blue-700/60 border border-transparent' : 'bg-accent/50 hover:bg-accent border border-transparent',
+    radio: t === 'blue' ? 'border-blue-300' : 'border-border-strong',
+    bar: t === 'blue' ? 'bg-blue-800' : 'bg-accent',
     barVoted: t === 'blue' ? 'bg-blue-200' : 'bg-blue-400',
     barOther: t === 'blue' ? 'bg-blue-400' : 'bg-purple-500',
     saveBtn: t === 'blue' ? 'bg-white text-blue-600 hover:bg-blue-50' : 'bg-blue-600 hover:bg-blue-700 text-white',
-    inputBorder: t === 'blue' ? 'border-blue-400 text-white placeholder-blue-300 focus:border-blue-200' : 'border-gray-600 text-gray-200 placeholder-gray-500 focus:border-blue-500',
+    inputBorder: t === 'blue' ? 'border-blue-400 text-foreground placeholder-blue-300 focus:border-blue-200' : 'border-input text-foreground placeholder-subtle-foreground focus:border-blue-500',
     addBtn: t === 'blue' ? 'bg-blue-400 hover:bg-blue-300 text-white' : 'bg-blue-600 hover:bg-blue-700 text-white',
-    lockBtn: t === 'blue' ? 'bg-blue-800 hover:bg-blue-900 text-blue-200' : 'bg-gray-600 hover:bg-gray-500 text-gray-300',
-    badge: t === 'blue' ? 'bg-blue-800 text-blue-200' : 'bg-gray-600 text-gray-300',
+    lockBtn: t === 'blue' ? 'bg-blue-800 hover:bg-blue-900 text-blue-200' : 'bg-accent hover:bg-accent text-foreground/80',
+    badge: t === 'blue' ? 'bg-blue-800 text-blue-200' : 'bg-accent text-foreground/80',
   };
 
   return (
@@ -320,7 +320,7 @@ export function PollDetailView({
                       <VoterMiniAvatar key={uid} uid={uid} contacts={contacts} theme={t} />
                     ))}
                     {voters.length > 3 && (
-                      <div className="w-5 h-5 rounded-full bg-gray-600 border border-gray-700 flex items-center justify-center text-[8px] text-white flex-shrink-0">
+                      <div className="w-5 h-5 rounded-full bg-accent border border-border flex items-center justify-center text-[8px] text-foreground flex-shrink-0">
                         +{voters.length - 3}
                       </div>
                     )}

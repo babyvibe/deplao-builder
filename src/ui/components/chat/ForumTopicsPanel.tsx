@@ -6,6 +6,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAppStore } from '@/store/appStore';
+import { useShallow } from 'zustand/react/shallow';
 import { useChatStore } from '@/store/chatStore';
 import { getAdapter } from '@/lib/adapters/registry';
 import { Spinner } from '@/components/common/PageLoading';
@@ -61,7 +62,9 @@ const topicKeyOf = (topic: { rootMessageId?: string; id?: string }): string =>
 
 export default function ForumTopicsPanel({ accountId, chatId, chatName, activeTopicId, onSelectTopic, onBack }: ForumTopicsPanelProps) {
   const cacheKey = `${accountId}_${chatId}`;
-  const { forumTopics, setForumTopics } = useChatStore();
+  const { forumTopics, setForumTopics } = useChatStore(useShallow(s => ({
+    forumTopics: s.forumTopics, setForumTopics: s.setForumTopics,
+  })));
   const cached = forumTopics[cacheKey];
   const groupInfoCache = useAppStore(state => state.groupInfoCache);
   const cachedCanManageTopics = groupInfoCache?.[accountId]?.[chatId]?.canManageTopics === true;
@@ -71,7 +74,9 @@ export default function ForumTopicsPanel({ accountId, chatId, chatName, activeTo
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [canManageTopics, setCanManageTopics] = useState(cachedCanManageTopics);
-  const { showNotification } = useAppStore();
+  const { showNotification } = useAppStore(useShallow(s => ({
+    showNotification: s.showNotification,
+  })));
   const mountedRef = useRef(true);
 
   const sortTopics = useCallback((list: ForumTopic[]) => {
@@ -181,21 +186,21 @@ export default function ForumTopicsPanel({ accountId, chatId, chatName, activeTo
   };
 
   return (
-    <div className="flex flex-col h-full bg-gray-900">
+    <div className="flex flex-col h-full bg-background">
       {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-700/80 bg-gray-800/50">
-        <button onClick={onBack} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-700 transition-colors text-gray-400 hover:text-gray-200">
+      <div className="flex items-center gap-3 px-4 py-3 border-b border-border/80 bg-card/50">
+        <button onClick={onBack} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6" /></svg>
         </button>
         <div className="flex-1 min-w-0">
-          <h3 className="text-[13px] font-semibold text-gray-200 truncate">{chatName}</h3>
-          <p className="text-[11px] text-gray-500">
+          <h3 className="text-[13px] font-semibold text-foreground truncate">{chatName}</h3>
+          <p className="text-[11px] text-subtle-foreground">
             {topics.length} chủ đề{totalUnread > 0 ? ` · ${totalUnread} chưa đọc` : ''}
-            {refreshing && <span className="ml-1 text-gray-600">· Đang cập nhật...</span>}
+            {refreshing && <span className="ml-1 text-subtle-foreground">· Đang cập nhật...</span>}
           </p>
         </div>
         {canManageTopics && (
-          <button onClick={handleCreateTopic} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-700 transition-colors text-gray-400 hover:text-blue-400" title="Tạo chủ đề mới">
+          <button onClick={handleCreateTopic} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-blue-400" title="Tạo chủ đề mới">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
           </button>
         )}
@@ -212,7 +217,7 @@ export default function ForumTopicsPanel({ accountId, chatId, chatName, activeTo
           </div>
         ) : topics.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-40 gap-2">
-            <p className="text-gray-500 text-sm">Chưa có chủ đề nào</p>
+            <p className="text-subtle-foreground text-sm">Chưa có chủ đề nào</p>
             {canManageTopics && <button onClick={handleCreateTopic} className="text-blue-400 text-xs hover:underline">Tạo chủ đề đầu tiên</button>}
           </div>
         ) : (
@@ -234,7 +239,7 @@ export default function ForumTopicsPanel({ accountId, chatId, chatName, activeTo
                   className={`w-full flex items-center gap-3 px-3 py-2.5 text-left rounded-xl border transition-colors
                     ${isSelected
                       ? 'bg-blue-500/15 border-blue-500/40'
-                      : 'border-transparent hover:bg-gray-800/50'}`}
+                      : 'border-transparent hover:bg-card/50'}`}
                 >
                   {/* Selection accent */}
                   <span className={`w-1 self-stretch rounded-full flex-shrink-0 transition-colors
@@ -244,26 +249,26 @@ export default function ForumTopicsPanel({ accountId, chatId, chatName, activeTo
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       {topic.isPinned && (
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" className={`flex-shrink-0 ${isSelected ? 'text-blue-400' : 'text-gray-500'}`}>
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" className={`flex-shrink-0 ${isSelected ? 'text-blue-400' : 'text-subtle-foreground'}`}>
                           <path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z" />
                         </svg>
                       )}
-                      <span className={`text-[13px] truncate ${isSelected ? 'text-blue-300 font-semibold' : hasUnread ? 'text-gray-100 font-medium' : 'text-gray-400'}`}>
+                      <span className={`text-[13px] truncate ${isSelected ? 'text-blue-300 font-semibold' : hasUnread ? 'text-foreground font-medium' : 'text-muted-foreground'}`}>
                         {topic.title}
                       </span>
                       {topic.isClosed && (
-                        <span className="text-[9px] text-gray-500 bg-gray-700/80 px-1.5 py-0.5 rounded-full flex-shrink-0">Đóng</span>
+                        <span className="text-[9px] text-subtle-foreground bg-muted/80 px-1.5 py-0.5 rounded-full flex-shrink-0">Đóng</span>
                       )}
                     </div>
                     {topic.creatorName && (
-                      <p className="text-[11px] text-gray-500 truncate mt-0.5">{topic.creatorName}</p>
+                      <p className="text-[11px] text-subtle-foreground truncate mt-0.5">{topic.creatorName}</p>
                     )}
                   </div>
 
                   {/* Right side: time + badge */}
                   <div className="flex flex-col items-end gap-1 flex-shrink-0">
                     {topic.topMessageDate > 0 && (
-                      <span className={`text-[11px] ${hasUnread ? 'text-blue-400' : 'text-gray-500'}`}>
+                      <span className={`text-[11px] ${hasUnread ? 'text-blue-400' : 'text-subtle-foreground'}`}>
                         {formatTopicDate(topic.topMessageDate)}
                       </span>
                     )}

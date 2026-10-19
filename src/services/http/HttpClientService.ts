@@ -1,7 +1,43 @@
 import * as http from 'http';
 import Logger from '../../utils/Logger';
+import { BOSS_URL_CHANGED_EVENT } from '../../shared/tunnelAddress';
+import { zaloReactionIconToEmoji } from '../../shared/zaloReactions';
+import { applyBossUrlAnnouncement } from '../tunnel/BossUrlAnnouncement';
 import EventBroadcaster from '../event/EventBroadcaster';
-import SocketIOClient from '../socket/SocketIOClient';
+import SocketIOClient, { type SocketStatusInfo } from '../socket/SocketIOClient';
+import { EMPLOYEE_FORWARD_CHANNELS } from '../socket/relayChannels';
+import {
+    AUTH_EXPIRED_MESSAGE,
+    heartbeatResyncReason,
+    socketResyncNeeded,
+    type EmployeeResyncReason,
+} from '../../shared/employeeConnection';
+
+/** Thông tin kèm theo khi trạng thái kết nối đổi (main → HttpConnectionManager → renderer). */
+export interface ServiceStatusInfo {
+    /** Boss từ chối token (heartbeat 401 / Socket.IO auth) → đã dừng heartbeat + socket, cần đăng nhập lại. */
+    authExpired?: boolean;
+    /** Bị Boss ngắt (relay:kicked) → đã disconnect, không tự kết nối lại. */
+    kicked?: boolean;
+    reason?: string;
+}
+
+export interface ConnectResult {
+    success: boolean;
+    error?: string;
+    /** Boss trả 401 lúc đăng ký → token hết hạn / sai, thử lại vô ích. */
+    authExpired?: boolean;
+    /** disconnect() được gọi trong lúc đang kết nối. */
+    cancelled?: boolean;
+}
+
+export interface SnapshotMeta {
+    /** Renderer phải áp dụng ngay (bỏ qua throttle 60 s của workspace:initialState). */
+    forced?: boolean;
+    reason?: string;
+}
+
+export type WakeKind = 'resume' | 'unlock-screen' | 'network-online';
 
 /**
  * HttpClientService - Employee side only.
@@ -9,7 +45,10 @@ import SocketIOClient from '../socket/SocketIOClient';
  *
  * - Runs a lightweight HTTP server to receive pushed events from Boss
  * - Sends proxy actions to Boss via HTTP POST
- * - Heartbeat every 15s to keep registration alive
+ * - Heartbeat every 15s to keep registration alive (tự hồi phục: vẫn chạy khi đang mất kết nối)
+ * - Phát hiện token hết hạn (heartbeat 401 x2 / Socket.IO auth) → dừng, báo authExpired
+ * - Báo onResync khi Socket.IO / heartbeat hồi phục sau khoảng mất > 10 s, sau khi máy ngủ dậy, hoặc khi catch-up
+ *   Socket.IO không phát lại được phần đã lỡ (Boss khởi động lại / buffer không đủ / Boss bản cũ)
  */
 class HttpClientService {
     private static instance: HttpClientService;
@@ -24,76 +63,37 @@ class HttpClientService {
 
     private consecutiveHeartbeatFailures = 0;
     private static MAX_HEARTBEAT_FAILURES = 5;
+    private static HEARTBEAT_INTERVAL_MS = 15_000;
+    /** 401 liên tiếp trước khi kết luận token hết hạn (1 lần lẻ có thể do Boss đang khởi động lại). */
+    private static AUTH_FAILURES_BEFORE_EXPIRED = 2;
     private callbackUrl = '';
 
-    private onStatusChange: ((connected: boolean, latency: number) => void) | null = null;
-    private onInitialState: ((data: any) => void) | null = null;
+    /** Tăng mỗi lần connect()/disconnect() → bỏ qua kết quả của lần kết nối / heartbeat cũ. */
+    private generation = 0;
+    private heartbeatInFlight = false;
+    private consecutiveAuthFailures = 0;
+    private authExpired = false;
+    /** Thời điểm bắt đầu chuỗi heartbeat lỗi hiện tại (0 = đang khoẻ). */
+    private firstHeartbeatFailureAt = 0;
+    /** Máy vừa ngủ dậy → resync ngay khi heartbeat kế tiếp thành công. */
+    private pendingWakeResync = false;
+    private lastSocketConnected: boolean | null = null;
+
+    private onStatusChange: ((connected: boolean, latency: number, info?: ServiceStatusInfo) => void) | null = null;
+    private onInitialState: ((data: any, meta?: SnapshotMeta) => void) | null = null;
     private onAccountAccessUpdate: ((data: any) => void) | null = null;
     private onPermissionUpdate: ((data: any) => void) | null = null;
+    private onResync: ((reason: EmployeeResyncReason, gapMs: number) => void) | null = null;
 
     /** Socket.IO client - transport duy nhất cho real-time event */
     private socketIOClient = new SocketIOClient();
 
-    /** Channels to forward to local EventBroadcaster */
-    private static FORWARD_CHANNELS = [
-        'event:message',
-        'event:reaction',
-        'event:groupEvent',
-        'event:groupInfoUpdate',
-        'event:pollVote',
-        'event:pinsUpdated',
-        'event:connected',
-        'event:disconnected',
-        'event:friendRequest',
-        'event:friendAccepted',
-        'event:typing',
-        'event:seen',
-        'event:undo',
-        'event:delete',
-        'event:reminder',
-        'event:localPath',
-        'event:listenerDead',
-        'relay:messageSentByEmployee',
-        'erp:event:taskCreated',
-        'erp:event:taskUpdated',
-        'erp:event:taskDeleted',
-        'erp:event:commentAdded',
-        'erp:event:projectCreated',
-        'erp:event:projectUpdated',
-        'erp:event:projectDeleted',
-        'erp:event:calendarEventCreated',
-        'erp:event:calendarEventUpdated',
-        'erp:event:calendarEventDeleted',
-        'erp:event:notification',
-        'erp:event:reminder',
-        'erp:event:noteCreated',
-        'erp:event:noteUpdated',
-        'erp:event:noteDeleted',
-        'erp:event:noteShared',
-        'erp:event:leaveCreated',
-        'erp:event:leaveDecided',
-        'erp:event:attendanceUpdated',
-        'erp:event:departmentUpdated',
-        'erp:event:employeeProfileUpdated',
-        // ─── CRM / Settings real-time sync ────────────────────────────
-        'db:localLabelChanged',
-        'db:localLabelThreadChanged',
-        'db:pinnedMessageChanged',
-        'db:localQuickMessageChanged',
-        'crm:campaignChanged',
-        'crm:noteChanged',
-        'db:pinnedConversationChanged',
-        'db:contactFlagsChanged',
-        'db:contactAliasChanged',
-        'event:friendRequestSent',
-        'event:friendRequestRemoved',
-        'crm:queueUpdate',
-        'crm:queueStatus',
-        'crm:campaignDone',
-        'workflow:executed',
-        'integration:payment',
-        'integration:webhook',
-    ];
+    /**
+     * Channels to forward to local EventBroadcaster — CÙNG danh sách Boss relay (relayChannels.ts). Trước đây là danh
+     * sách riêng: Boss relay db:unreadChanged, db:conversationDeleted, db:contactProfileUpdated, library:*,
+     * erp:event:employeeProfileDeleted… nhưng nhân viên bỏ qua → không bao giờ tới renderer.
+     */
+    private static FORWARD_CHANNELS: ReadonlySet<string> = EMPLOYEE_FORWARD_CHANNELS;
 
     public static getInstance(): HttpClientService {
         if (!HttpClientService.instance) {
@@ -104,12 +104,20 @@ class HttpClientService {
 
     // ─── Lifecycle ────────────────────────────────────────────────────
 
-    public async connect(bossUrl: string, token: string): Promise<{ success: boolean; error?: string }> {
+    public async connect(bossUrl: string, token: string): Promise<ConnectResult> {
         if (this.connected) {
             this.disconnect();
         }
 
+        const gen = ++this.generation;
+        const cancelled: ConnectResult = { success: false, error: 'Đã huỷ kết nối', cancelled: true };
         this.token = token;
+        this.authExpired = false;
+        this.consecutiveAuthFailures = 0;
+        this.consecutiveHeartbeatFailures = 0;
+        this.firstHeartbeatFailureAt = 0;
+        this.pendingWakeResync = false;
+        this.lastSocketConnected = null;
 
         // Normalize URL
         let url = bossUrl;
@@ -124,6 +132,7 @@ class HttpClientService {
         try {
             // 1. Verify Boss is reachable via health check
             const health = await this.httpGet(`${this.bossUrl}/api/health`, {}, 8000).catch(() => null);
+            if (gen !== this.generation) return cancelled;
             if (!health?.status) {
                 return { success: false, error: 'Không thể kết nối tới Boss. Kiểm tra địa chỉ và relay server đã bật chưa.' };
             }
@@ -132,9 +141,11 @@ class HttpClientService {
             this.callbackUrl = '';
             try {
                 await this.startLocalServer();
+                if (gen !== this.generation) return cancelled;
                 this.callbackUrl = `http://${this.getLocalIP()}:${this.localPort}`;
                 Logger.log(`[HttpClientService] LAN callback server ready at ${this.callbackUrl}`);
             } catch {
+                if (gen !== this.generation) return cancelled;
                 // WAN-only mode - local server not needed, SSE is the only channel
                 Logger.log('[HttpClientService] Local server not available (WAN-only mode)');
             }
@@ -145,9 +156,15 @@ class HttpClientService {
                 { callbackUrl: this.callbackUrl },
                 { Authorization: `Bearer ${token}` }
             );
+            if (gen !== this.generation) return cancelled;
 
             if (!hbResult.success) {
                 this.stopLocalServer(); // Clean up local server before returning
+                if (this.isAuthFailure(hbResult)) {
+                    this.authExpired = true;
+                    Logger.warn('[HttpClientService] Boss từ chối token (HTTP 401) — phiên đăng nhập hết hạn');
+                    return { success: false, error: AUTH_EXPIRED_MESSAGE, authExpired: true };
+                }
                 return { success: false, error: hbResult.error || 'Không thể kết nối tới Boss' };
             }
 
@@ -161,10 +178,18 @@ class HttpClientService {
             this.socketIOClient.setOnEvent((channel, eventData) => {
                 this.handlePushedEvent(channel, eventData);
             });
-            this.socketIOClient.setOnStatusChange((connected) => {
-                Logger.log(`[HttpClientService] Socket.IO ${connected ? '🟢' : '🔴'} (workspace=${this.workspaceId})`);
+            this.socketIOClient.setOnStatusChange((sioConnected, info) => this.handleSocketStatus(gen, sioConnected, info));
+            this.socketIOClient.setOnAuthRejected((message) => {
+                if (gen === this.generation) this.handleAuthExpired('Socket.IO', message);
             });
-            this.socketIOClient.connect(this.bossUrl, this.token);
+            // Catch-up không phát lại được phần đã lỡ (Boss khởi động lại / buffer không đủ / Boss cũ) → employee:resync
+            this.socketIOClient.setOnResync((reason, gapMs) => {
+                if (gen === this.generation) this.onResync?.(reason, gapMs);
+            });
+            // ts (giờ Boss) của heartbeat đăng ký: lần nối đầu chỉ xin phát lại event từ thời điểm này
+            this.socketIOClient.connect(this.bossUrl, this.token, {
+                sinceTs: typeof hbResult?.ts === 'number' ? hbResult.ts : undefined,
+            });
 
             // 5. Fetch initial snapshot
             try {
@@ -172,6 +197,7 @@ class HttpClientService {
                     `${this.bossUrl}/api/sync/snapshot`,
                     { Authorization: `Bearer ${token}` }
                 );
+                if (gen !== this.generation) return cancelled;
                 if (snapshot?.success && snapshot?.snapshot) {
                     this.onInitialState?.(snapshot.snapshot);
                 }
@@ -181,6 +207,7 @@ class HttpClientService {
 
             return { success: true };
         } catch (err: any) {
+            if (gen !== this.generation) return cancelled;
             Logger.error(`[HttpClientService] Connect error: ${err.message}`);
             this.stopLocalServer();
             return { success: false, error: err.message };
@@ -188,14 +215,19 @@ class HttpClientService {
     }
 
     public disconnect(): void {
+        this.generation++;
         this.stopHeartbeat();
+        this.heartbeatInFlight = false;
         this.stopLocalServer();
         this.socketIOClient.disconnect();
         this.onStatusChange = null;
         this.onInitialState = null;
         this.onAccountAccessUpdate = null;
+        this.onPermissionUpdate = null;
+        this.onResync = null;
         this.connected = false;
         this.callbackUrl = '';
+        this.pendingWakeResync = false;
         Logger.log('[HttpClientService] Disconnected');
     }
 
@@ -203,13 +235,69 @@ class HttpClientService {
         return this.connected;
     }
 
-    public getStatus(): { connected: boolean; bossUrl: string; latency: number } {
-        return { connected: this.connected, bossUrl: this.bossUrl, latency: this.latencyMs };
+    public getStatus(): { connected: boolean; bossUrl: string; latency: number; authExpired: boolean } {
+        return { connected: this.connected, bossUrl: this.bossUrl, latency: this.latencyMs, authExpired: this.authExpired };
+    }
+
+    // ─── Wake / health (gọi từ HttpConnectionManager) ─────────────────
+
+    /**
+     * Máy ngủ dậy / mở khoá / mạng có lại: heartbeat ngay thay vì chờ chu kỳ 15 s.
+     * resume: luôn mở lại Socket.IO (socket cũ có thể đã chết mà chưa biết) và resync khi heartbeat OK.
+     */
+    public handleWake(kind: WakeKind): void {
+        if (!this.heartbeatTimer || this.authExpired) return; // chưa chạy / đã dừng
+        if (kind === 'resume') {
+            this.pendingWakeResync = true;
+            this.socketIOClient.reconnectNow('máy vừa ngủ dậy');
+        } else if (!this.socketIOClient.isConnected()) {
+            this.socketIOClient.reconnectNow(kind);
+        }
+        void this.runHeartbeat();
+    }
+
+    /** Lưới an toàn (health check 60 s): heartbeat OK mà Socket.IO đã bỏ cuộc → mở lại. */
+    public ensureRealtime(): void {
+        if (!this.connected || this.authExpired || !this.heartbeatTimer) return;
+        if (this.socketIOClient.isConnected() || this.socketIOClient.isRecovering()) return;
+        Logger.warn(`[HttpClientService] Socket.IO không chạy trong khi heartbeat OK (workspace=${this.workspaceId}) — kết nối lại`);
+        this.socketIOClient.reconnectNow('health check');
+    }
+
+    private handleSocketStatus(gen: number, sioConnected: boolean, info?: SocketStatusInfo): void {
+        if (gen !== this.generation) return;
+        if (this.lastSocketConnected !== sioConnected) {
+            this.lastSocketConnected = sioConnected;
+            Logger.log(`[HttpClientService] Socket.IO ${sioConnected ? '🟢' : '🔴'} (workspace=${this.workspaceId}${info?.reason ? `, ${info.reason}` : ''})`);
+        }
+        if (sioConnected && socketResyncNeeded(info?.gapMs)) {
+            this.onResync?.('socket-reconnect', info!.gapMs!);
+        }
+    }
+
+    /** Token bị Boss từ chối → dừng heartbeat + socket (thử lại vô ích), báo authExpired. */
+    private handleAuthExpired(source: string, message: string): void {
+        if (this.authExpired) return;
+        this.authExpired = true;
+        this.connected = false;
+        this.latencyMs = 0;
+        this.pendingWakeResync = false;
+        this.stopHeartbeat();
+        this.socketIOClient.stop();
+        Logger.warn(`[HttpClientService] Phiên đăng nhập hết hạn (${source}: ${message}) — dừng heartbeat + Socket.IO, chờ đăng nhập lại (workspace=${this.workspaceId})`);
+        this.onStatusChange?.(false, 0, { authExpired: true, reason: message });
+    }
+
+    /** Heartbeat / đăng ký trả 401 (Boss: authenticateRequest() = null). */
+    private isAuthFailure(result: any): boolean {
+        if (!result || result.success) return false;
+        if (result.__httpStatus === 401) return true;
+        return /^unauthori[sz]ed$/i.test(String(result.error || '').trim());
     }
 
     // ─── Proxy actions through Boss ──────────────────────────────────
 
-    public async proxyAction(channel: string, params: any): Promise<any> {
+    public async proxyAction(channel: string, params: any, timeoutMs = 30000): Promise<any> {
         if (!this.connected) {
             throw new Error('Chưa kết nối tới BOSS');
         }
@@ -218,7 +306,7 @@ class HttpClientService {
             `${this.bossUrl}/api/proxy/action`,
             { channel, params },
             { Authorization: `Bearer ${this.token}` },
-            30000
+            timeoutMs > 0 ? timeoutMs : 30000
         );
     }
 
@@ -251,10 +339,10 @@ class HttpClientService {
 
     // ─── Callbacks ────────────────────────────────────────────────────
 
-    public setOnStatusChange(cb: (connected: boolean, latency: number) => void): void {
+    public setOnStatusChange(cb: (connected: boolean, latency: number, info?: ServiceStatusInfo) => void): void {
         this.onStatusChange = cb;
     }
-    public setOnInitialState(cb: (data: any) => void): void {
+    public setOnInitialState(cb: (data: any, meta?: SnapshotMeta) => void): void {
         this.onInitialState = cb;
     }
     public setOnAccountAccessUpdate(cb: (data: any) => void): void {
@@ -263,28 +351,36 @@ class HttpClientService {
     public setOnPermissionUpdate(cb: (data: any) => void): void {
         this.onPermissionUpdate = cb;
     }
+    /** Kết nối vừa hồi phục sau khoảng mất > RESYNC_GAP_MS, máy ngủ dậy, hoặc catch-up không đủ → renderer tải lại dữ liệu. */
+    public setOnResync(cb: (reason: EmployeeResyncReason, gapMs: number) => void): void {
+        this.onResync = cb;
+    }
     public setWorkspaceId(id: string): void {
         this.workspaceId = id;
     }
 
     // ─── Snapshot ─────────────────────────────────────────────────────
 
-    /** Request fresh account/employee snapshot from Boss (for SSE reconnect recovery) */
-    public async requestSnapshot(): Promise<{ success: boolean; snapshot?: any; error?: string }> {
+    /** Request fresh account/employee snapshot from Boss (reconnect recovery / 403 ACCOUNT_FORBIDDEN) */
+    public async requestSnapshot(meta?: SnapshotMeta): Promise<{ success: boolean; snapshot?: any; error?: string }> {
         if (!this.connected) {
             return { success: false, error: 'Chưa kết nối tới BOSS' };
         }
+        const gen = this.generation;
         try {
             const result = await this.httpGet(
                 `${this.bossUrl}/api/sync/snapshot`,
                 { Authorization: `Bearer ${this.token}` },
                 15000
             );
+            if (gen !== this.generation) {
+                return { success: false, error: 'Đã huỷ kết nối' };
+            }
             if (!result?.success || !result?.snapshot) {
                 return { success: false, error: result?.error || 'Snapshot failed' };
             }
             // Forward snapshot to renderer as initialState (refreshes account status)
-            this.onInitialState?.(result.snapshot);
+            this.onInitialState?.(result.snapshot, meta);
             Logger.log(`[HttpClientService] Snapshot refreshed: assigned=${result.snapshot.assignedAccounts?.length || 0}, online=${result.snapshot.onlineAccounts?.length || 0}`);
             return { success: true, snapshot: result.snapshot };
         } catch (err: any) {
@@ -378,8 +474,16 @@ class HttpClientService {
         }
         if (channel === 'relay:kicked') {
             Logger.log(`[HttpClientService] Kicked by boss: ${data?.reason}`);
+            // disconnect() xoá callback → giữ lại trước để còn báo được cho manager/renderer
+            const notify = this.onStatusChange;
             this.disconnect();
-            this.onStatusChange?.(false, 0);
+            notify?.(false, 0, { kicked: true, reason: data?.reason || 'Bị ngắt kết nối bởi quản lý' });
+            return;
+        }
+
+        // Boss báo địa chỉ (tunnel) đổi: tự chuyển nếu địa chỉ đang lưu đúng là địa chỉ cũ, luôn báo renderer
+        if (channel === BOSS_URL_CHANGED_EVENT) {
+            applyBossUrlAnnouncement(this.workspaceId, data);
             return;
         }
 
@@ -402,6 +506,13 @@ class HttpClientService {
         // must be updated separately on the employee side.
         if (channel === 'event:undo' && data?.zaloId && data?.msgId) {
             this.saveRelayRecallToWorkspaceDb('event:undo', data, data.zaloId, [String(data.msgId)], data.threadId);
+            return;
+        }
+
+        // "Xoá khỏi app" ở Boss / nhân viên khác (scope 'app'): xoá hẳn khỏi DB nhân viên, chuyển nguyên event cho renderer
+        // (nhánh dưới đổi 1 tin thành event:undo → hiện "đã thu hồi", sai với xoá khỏi app).
+        if (channel === 'event:delete' && data?.scope === 'app' && data?.zaloId && Array.isArray(data?.msgIds) && data.msgIds.length) {
+            this.saveRelayAppDeleteToWorkspaceDb(String(data.zaloId), data.msgIds.map(String), data);
             return;
         }
 
@@ -504,8 +615,11 @@ class HttpClientService {
         }
 
         // Persist conversation-level events from Boss to employee's local DB
-        // (labels, pins, quick messages, CRM, pinned conversations, contact settings)
-        if (HttpClientService.FORWARD_CHANNELS.includes(channel)) {
+        // (labels, pins, quick messages, CRM, pinned conversations, contact settings).
+        // UI nhân viên đọc dữ liệu qua REST (DataAccessor) — DB cục bộ chỉ là bản đệm; kênh mới (Telegram sửa / xoá
+        // tin, Facebook, thư viện, đánh dấu…) chỉ cần chuyển tiếp, renderer cập nhật store từ payload.
+        // Gửi renderer kể cả khi workspace này đang chạy nền (store theo zaloId, không lẫn tài khoản).
+        if (HttpClientService.FORWARD_CHANNELS.has(channel)) {
             this.persistRelayConversationEvent(channel, data);
             // Forward to renderer always. Data was persisted to correct DB via withDbPath above.
             EventBroadcaster.sendDirect(channel, data);
@@ -632,9 +746,11 @@ class HttpClientService {
 
             // ── Contact flags ──
             if (channel === 'db:contactFlagsChanged' && data) {
+                // Lệnh REST của nhân viên phát { zaloId, … }, IPC của Boss phát { ownerZaloId, … }
+                const ownerZaloId = data.ownerZaloId || data.zaloId;
                 runOnWsDb(() => {
-                    if (data.ownerZaloId && data.contactId && data.flags) {
-                        db.setContactFlags(data.ownerZaloId, data.contactId, data.flags);
+                    if (ownerZaloId && data.contactId && data.flags) {
+                        db.setContactFlags(ownerZaloId, data.contactId, data.flags);
                     }
                 });
                 return;
@@ -688,16 +804,8 @@ class HttpClientService {
                 ? String(rMsg[0].gMsgID || rMsg[0].cMsgID || '')
                 : String(rData.msgId || reaction.msgId || '');
             const rawIcon: string = rData.content?.rIcon || reaction.content?.rIcon || reaction.rIcon || rData.rIcon || '';
-            const ICON_MAP: Record<string, string> = {
-                '/-heart': '❤️', '/-strong': '👍', ':>': '😆', ':o': '😮',
-                ':-((':  '😢', ':-h': '😡', ':-*': '😘', ":')": '😂',
-                '/-shit': '💩', '/-rose': '🌹', '/-break': '💔', '/-weak': '👎',
-                ';xx': '😍', ';-/': '😕', ';-)': '😉', '/-fade': '🥱',
-                '_()_': '🙏', '/-no': '🙅', '/-ok': '👌', '/-v': '✌️',
-                '/-thanks': '🙏', '/-punch': '👊', ':-bye': '👋', ':((': '😭',
-                ':))': '😁', '$-)': '🤑',
-            };
-            const emoji = ICON_MAP[rawIcon] || rawIcon;
+            const emoji = zaloReactionIconToEmoji(rawIcon);
+            const threadId = String(reaction.threadId || rData.idTo || rData.threadId || '') || undefined;
 
             if (!userId || !targetMsgId) {
                 Logger.warn(`[HttpClientService] saveRelayReaction: missing userId or targetMsgId`);
@@ -718,11 +826,11 @@ class HttpClientService {
 
             if (needSwitch) {
                 db.withDbPath(targetDbPath!, () => {
-                    db.updateMessageReaction(zaloId, targetMsgId, userId, emoji);
+                    db.updateMessageReaction(zaloId, targetMsgId, userId, emoji, threadId);
                 });
                 Logger.log(`[HttpClientService] Saved relay reaction to ${targetDbPath} via withDbPath`);
             } else {
-                db.updateMessageReaction(zaloId, targetMsgId, userId, emoji);
+                db.updateMessageReaction(zaloId, targetMsgId, userId, emoji, threadId);
                 Logger.log(`[HttpClientService] Saved relay reaction to active DB (our workspace)`);
             }
 
@@ -738,6 +846,23 @@ class HttpClientService {
      * Called for event:undo and event:delete - both just mark messages as recalled.
      * Uses withDbPath to target the correct DB when another workspace is active.
      */
+    /** "Xoá khỏi app" từ Boss: xoá tin khỏi DB của workspace nhân viên (đúng DB kể cả khi workspace khác đang mở) rồi báo renderer. */
+    private saveRelayAppDeleteToWorkspaceDb(zaloId: string, msgIds: string[], data: any): void {
+        try {
+            const DatabaseService = require('../database/DatabaseService').default;
+            const WorkspaceManager = require('../../utils/WorkspaceManager').default;
+            const db = DatabaseService.getInstance();
+            const ws = this.workspaceId ? WorkspaceManager.getInstance().getWorkspaceById(this.workspaceId) : null;
+            const targetDbPath = ws ? WorkspaceManager.getInstance().resolveDbPath(ws.dbPath || 'deplao-tool.db') : null;
+            const doDelete = () => db.deleteMessages(zaloId, msgIds, data?.threadId ? String(data.threadId) : undefined);
+            if (targetDbPath && targetDbPath !== db.getDbPath()) db.withDbPath(targetDbPath, doDelete);
+            else doDelete();
+        } catch (err: any) {
+            Logger.warn(`[HttpClientService] saveRelayAppDelete error: ${err.message}`);
+        }
+        EventBroadcaster.sendDirect('event:delete', data);
+    }
+
     private saveRelayRecallToWorkspaceDb(_channel: string, _originalData: any, zaloId: string, msgIds: string[], threadId?: string): void {
         try {
             const DatabaseService = require('../database/DatabaseService').default;
@@ -758,7 +883,7 @@ class HttpClientService {
 
             const doRecall = () => {
                 for (const msgId of msgIds) {
-                    db.markMessageRecalled(zaloId, msgId);
+                    db.markMessageRecalled(zaloId, msgId, threadId || undefined);
                     if (threadId) {
                         try { db.updateLastMessageIfRecalled(zaloId, threadId, msgId); } catch {}
                     }
@@ -852,51 +977,79 @@ class HttpClientService {
     private startHeartbeat(): void {
         this.stopHeartbeat();
         this.consecutiveHeartbeatFailures = 0;
-        this.heartbeatTimer = setInterval(async () => {
-            // Kể cả khi đã disconnected → vẫn thử heartbeat để tự reconnect
-            const start = Date.now();
-            try {
-                const sioConnected = this.socketIOClient.isConnected();
-                const result = await this.httpPost(
-                    `${this.bossUrl}/api/auth/heartbeat`,
-                    { callbackUrl: this.callbackUrl, sioConnected },
-                    { Authorization: `Bearer ${this.token}` },
-                    10000
-                );
+        this.firstHeartbeatFailureAt = 0;
+        // Kể cả khi đã disconnected → vẫn thử heartbeat để tự reconnect
+        this.heartbeatTimer = setInterval(() => { void this.runHeartbeat(); }, HttpClientService.HEARTBEAT_INTERVAL_MS);
+    }
 
-                if (result.success) {
-                    this.latencyMs = Date.now() - start;
-                    // Nếu trước đó đang disconnected mà heartbeat thành công → reconnect!
-                    if (!this.connected) {
-                        this.connected = true;
-                        Logger.log('[HttpClientService] ✅ Reconnected via heartbeat');
-                    }
-                    this.consecutiveHeartbeatFailures = 0;
-                    this.onStatusChange?.(true, this.latencyMs);
-                } else {
-                    this.consecutiveHeartbeatFailures++;
-                    if (this.connected) this.onStatusChange?.(false, 0);
-                    if (this.consecutiveHeartbeatFailures >= HttpClientService.MAX_HEARTBEAT_FAILURES) {
-                        if (this.connected) {
-                            Logger.warn(`[HttpClientService] ${this.consecutiveHeartbeatFailures} consecutive heartbeat failures - marking disconnected`);
-                            this.connected = false;
-                            this.onStatusChange?.(false, 0);
-                        }
-                    }
-                }
-            } catch (err) {
-                this.latencyMs = 0;
-                this.consecutiveHeartbeatFailures++;
-                if (this.connected) this.onStatusChange?.(false, 0);
-                if (this.consecutiveHeartbeatFailures >= HttpClientService.MAX_HEARTBEAT_FAILURES) {
-                    if (this.connected) {
-                        Logger.warn(`[HttpClientService] ${this.consecutiveHeartbeatFailures} consecutive heartbeat failures (error) - marking disconnected`);
-                        this.connected = false;
-                        this.onStatusChange?.(false, 0);
-                    }
-                }
+    /** Một nhịp heartbeat (chu kỳ 15 s hoặc gọi ngay khi máy ngủ dậy) — không chạy chồng. */
+    private async runHeartbeat(): Promise<void> {
+        if (this.heartbeatInFlight || this.authExpired || !this.bossUrl) return;
+        const gen = this.generation;
+        this.heartbeatInFlight = true;
+        const start = Date.now();
+        try {
+            const sioConnected = this.socketIOClient.isConnected();
+            const result = await this.httpPost(
+                `${this.bossUrl}/api/auth/heartbeat`,
+                { callbackUrl: this.callbackUrl, sioConnected },
+                { Authorization: `Bearer ${this.token}` },
+                10000
+            );
+            if (gen !== this.generation) return;
+            if (result?.success) {
+                this.onHeartbeatOk(Date.now() - start);
+            } else {
+                this.onHeartbeatFailure(start, result?.error || 'heartbeat failed', this.isAuthFailure(result));
             }
-        }, 15_000);
+        } catch (err: any) {
+            if (gen !== this.generation) return;
+            this.onHeartbeatFailure(start, err?.message || 'heartbeat error', false);
+        } finally {
+            if (gen === this.generation) this.heartbeatInFlight = false;
+        }
+    }
+
+    private onHeartbeatOk(latency: number): void {
+        const now = Date.now();
+        const failuresBefore = this.consecutiveHeartbeatFailures;
+        const gapMs = this.firstHeartbeatFailureAt ? now - this.firstHeartbeatFailureAt : 0;
+        const resyncReason = heartbeatResyncReason({ failuresBefore, gapMs, pendingWake: this.pendingWakeResync });
+
+        this.latencyMs = latency;
+        this.consecutiveHeartbeatFailures = 0;
+        this.consecutiveAuthFailures = 0;
+        this.firstHeartbeatFailureAt = 0;
+        this.pendingWakeResync = false;
+        // Nếu trước đó đang disconnected mà heartbeat thành công → reconnect!
+        if (!this.connected) {
+            this.connected = true;
+            Logger.log(`[HttpClientService] ✅ Reconnected via heartbeat (sau ${failuresBefore} lần lỗi, ${Math.round(gapMs / 1000)}s)`);
+        }
+        this.onStatusChange?.(true, latency);
+
+        // Boss vừa không tới được: Socket.IO có thể đang chờ backoff dài → mở lại ngay
+        if (failuresBefore > 0 && !this.socketIOClient.isConnected()) {
+            this.socketIOClient.reconnectNow('heartbeat hồi phục');
+        }
+        if (resyncReason) this.onResync?.(resyncReason, gapMs);
+    }
+
+    private onHeartbeatFailure(start: number, error: string, authFailure: boolean): void {
+        this.latencyMs = 0;
+        if (!this.firstHeartbeatFailureAt) this.firstHeartbeatFailureAt = start;
+        this.consecutiveHeartbeatFailures++;
+        this.consecutiveAuthFailures = authFailure ? this.consecutiveAuthFailures + 1 : 0;
+        if (authFailure && this.consecutiveAuthFailures >= HttpClientService.AUTH_FAILURES_BEFORE_EXPIRED) {
+            this.handleAuthExpired('heartbeat 401', error);
+            return;
+        }
+        if (this.connected) this.onStatusChange?.(false, 0);
+        if (this.consecutiveHeartbeatFailures >= HttpClientService.MAX_HEARTBEAT_FAILURES && this.connected) {
+            Logger.warn(`[HttpClientService] ${this.consecutiveHeartbeatFailures} consecutive heartbeat failures - marking disconnected (${error})`);
+            this.connected = false;
+            this.onStatusChange?.(false, 0);
+        }
     }
 
     private stopHeartbeat(): void {
@@ -950,6 +1103,19 @@ class HttpClientService {
         }
     }
 
+    /**
+     * Gắn HTTP status vào kết quả đã parse dưới dạng thuộc tính KHÔNG enumerable (`__httpStatus`)
+     * → nhận ra 401 mà không lọt ra IPC / JSON (structured clone bỏ qua thuộc tính không enumerable).
+     */
+    private withHttpStatus(parsed: any, statusCode?: number): any {
+        if (parsed && typeof parsed === 'object' && statusCode) {
+            try {
+                Object.defineProperty(parsed, '__httpStatus', { value: statusCode, enumerable: false, configurable: true });
+            } catch { /* ignore */ }
+        }
+        return parsed;
+    }
+
     private httpPost(url: string, body: any, headers: Record<string, string> = {}, timeout = 15000): Promise<any> {
         return new Promise((resolve, reject) => {
             try {
@@ -975,7 +1141,7 @@ class HttpClientService {
                     (res: http.IncomingMessage) => {
                         let data = '';
                         res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
-                        res.on('end', () => resolve(this.parseJsonResponse(data)));
+                        res.on('end', () => resolve(this.withHttpStatus(this.parseJsonResponse(data), res.statusCode)));
                     }
                 );
 
@@ -1049,7 +1215,7 @@ class HttpClientService {
                     (res: http.IncomingMessage) => {
                         let data = '';
                         res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
-                        res.on('end', () => resolve(this.parseJsonResponse(data)));
+                        res.on('end', () => resolve(this.withHttpStatus(this.parseJsonResponse(data), res.statusCode)));
                     }
                 );
 

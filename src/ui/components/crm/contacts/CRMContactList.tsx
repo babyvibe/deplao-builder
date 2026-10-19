@@ -1,4 +1,5 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
+import { reportBrokenAvatar } from '@/lib/contactRefresh';
 import type { CRMContact } from '@/store/crmStore';
 import type { ContactTypeFilter, GenderFilter, BirthdayFilter } from '@/store/crmStore';
 import type { LabelData } from '@/store/appStore';
@@ -47,14 +48,14 @@ function PaginationBar({ page, totalPages, total, pageSize, onPageChange, onPage
   };
 
   return (
-    <div className="flex items-center justify-between px-4 py-2 border-t border-gray-700 flex-shrink-0">
+    <div className="flex items-center justify-between px-4 py-2 border-t border-border flex-shrink-0">
       <div className="flex items-center gap-2">
-        <span className="text-[11px] text-gray-500">{total.toLocaleString('vi-VN')} liên hệ</span>
+        <span className="text-[11px] text-subtle-foreground">{total.toLocaleString('vi-VN')} liên hệ</span>
         {onPageSizeChange && (
           <select
             value={pageSize}
             onChange={e => onPageSizeChange(Number(e.target.value))}
-            className="bg-gray-800 border border-gray-600 rounded px-1.5 py-0.5 text-[11px] text-gray-300 focus:outline-none focus:border-blue-500 cursor-pointer">
+            className="bg-card border border-input rounded px-1.5 py-0.5 text-[11px] text-foreground/80 focus:outline-none focus:border-blue-500 cursor-pointer">
             {[50, 100, 200, 500].map(s => (
               <option key={s} value={s}>{s}/trang</option>
             ))}
@@ -63,28 +64,28 @@ function PaginationBar({ page, totalPages, total, pageSize, onPageChange, onPage
       </div>
       <div className="flex items-center gap-1">
         <button disabled={page === 0} onClick={() => onPageChange(0)}
-          className="px-1.5 py-1 rounded bg-gray-700 text-xs text-gray-300 hover:bg-gray-600 disabled:opacity-30">«</button>
+          className="px-1.5 py-1 rounded bg-muted text-xs text-foreground/80 hover:bg-accent disabled:opacity-30">«</button>
         <button disabled={page === 0} onClick={() => onPageChange(page - 1)}
-          className="px-1.5 py-1 rounded bg-gray-700 text-xs text-gray-300 hover:bg-gray-600 disabled:opacity-30">‹</button>
+          className="px-1.5 py-1 rounded bg-muted text-xs text-foreground/80 hover:bg-accent disabled:opacity-30">‹</button>
 
         {getPageNumbers().map((p, i) =>
           p === '...' ? (
             <button key={`e${i}`} onClick={() => setShowJump(v => !v)}
-              className="px-1.5 py-1 text-xs text-gray-500 hover:text-gray-300 cursor-pointer">…</button>
+              className="px-1.5 py-1 text-xs text-subtle-foreground hover:text-foreground/80 cursor-pointer">…</button>
           ) : (
             <button key={p} onClick={() => onPageChange(p)}
               className={`min-w-[28px] px-1.5 py-1 rounded text-xs font-medium transition-colors ${
                 p === page
                   ? 'bg-blue-600 text-white'
-                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                  : 'bg-muted text-foreground/80 hover:bg-accent'
               }`}>{p + 1}</button>
           )
         )}
 
         <button disabled={page >= totalPages - 1} onClick={() => onPageChange(page + 1)}
-          className="px-1.5 py-1 rounded bg-gray-700 text-xs text-gray-300 hover:bg-gray-600 disabled:opacity-30">›</button>
+          className="px-1.5 py-1 rounded bg-muted text-xs text-foreground/80 hover:bg-accent disabled:opacity-30">›</button>
         <button disabled={page >= totalPages - 1} onClick={() => onPageChange(totalPages - 1)}
-          className="px-1.5 py-1 rounded bg-gray-700 text-xs text-gray-300 hover:bg-gray-600 disabled:opacity-30">»</button>
+          className="px-1.5 py-1 rounded bg-muted text-xs text-foreground/80 hover:bg-accent disabled:opacity-30">»</button>
 
         {showJump && (
           <div className="flex items-center gap-1 ml-2">
@@ -93,7 +94,7 @@ function PaginationBar({ page, totalPages, total, pageSize, onPageChange, onPage
               onChange={e => setJumpInput(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') handleJump(); }}
               placeholder="Trang..."
-              className="w-14 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 text-center"
+              className="w-14 bg-card border border-input rounded px-1.5 py-1 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 text-center"
               autoFocus
             />
             <button onClick={handleJump}
@@ -101,7 +102,7 @@ function PaginationBar({ page, totalPages, total, pageSize, onPageChange, onPage
           </div>
         )}
       </div>
-      <span className="text-[11px] text-gray-500">Trang {page + 1}/{totalPages}</span>
+      <span className="text-[11px] text-subtle-foreground">Trang {page + 1}/{totalPages}</span>
     </div>
   );
 }
@@ -175,32 +176,32 @@ function LabelFilterDropdown({ allLabels, filterLabelIds, filterLocalLabelIds, o
     <div ref={ref} className="relative flex-shrink-0">
       <button onClick={() => setOpen(v => !v)}
         className={`flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border transition-colors ${
-          activeCount > 0 ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-600 text-gray-400 hover:border-gray-500'
+          activeCount > 0 ? 'bg-blue-600 border-blue-600 text-white' : 'border-input text-muted-foreground hover:border-border-strong'
         }`}><TagIcon className="w-4 h-4 inline" /> {activeCount > 0 ? `${activeCount} nhãn` : 'Nhãn'}
       </button>
       {open && (
-        <div className="absolute top-full left-0 mt-1 bg-gray-800 border border-gray-600 rounded-xl shadow-xl z-50 min-w-[180px] max-h-64 overflow-hidden flex flex-col">
+        <div className="absolute top-full left-0 mt-1 bg-card border border-input rounded-xl shadow-xl z-50 min-w-[180px] max-h-64 overflow-hidden flex flex-col">
           {/* Local / Zalo tabs */}
-          <div className="px-2 pt-1.5 pb-1 border-b border-gray-700/60 flex-shrink-0">
-            <div className="flex bg-gray-700/60 rounded-md p-0.5 gap-0.5">
+          <div className="px-2 pt-1.5 pb-1 border-b border-border/60 flex-shrink-0">
+            <div className="flex bg-muted/60 rounded-md p-0.5 gap-0.5">
               <button onClick={() => setTab('local')}
                 className={`flex-1 px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
-                  tab === 'local' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'
+                  tab === 'local' ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'
                 }`}><HardDriveIcon className="w-4 h-4 inline" /> Local</button>
               {supportsZaloLabels && <button onClick={() => setTab('zalo')}
                 className={`flex-1 px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
-                  tab === CHANNEL.ZALO ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'
+                  tab === CHANNEL.ZALO ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'
                 }`}><CloudIcon className="w-4 h-4 inline" /> Zalo</button>}
             </div>
           </div>
           <div className="overflow-y-auto">
             {tab === 'local' ? (
               !localLabels?.length
-                ? <p className="text-xs text-gray-400 px-3 py-2">Chưa có Nhãn Local</p>
+                ? <p className="text-xs text-muted-foreground px-3 py-2">Chưa có Nhãn Local</p>
                 : localLabels.map(label => (
                     <button key={`local-${label.id}`} onClick={() => toggleLocal(label.id)}
-                      className="w-full flex items-center gap-2 px-3 py-2 hover:bg-gray-700 text-left transition-colors">
-                      <span className={`w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center text-[11px] ${filterLocalLabelIds.includes(label.id) ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-500'}`}>
+                      className="w-full flex items-center gap-2 px-3 py-2 hover:bg-muted text-left transition-colors">
+                      <span className={`w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center text-[11px] ${filterLocalLabelIds.includes(label.id) ? 'bg-blue-600 border-blue-600 text-white' : 'border-border-strong'}`}>
                         {filterLocalLabelIds.includes(label.id) && '✓'}
                       </span>
                       <span className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium"
@@ -212,11 +213,11 @@ function LabelFilterDropdown({ allLabels, filterLabelIds, filterLocalLabelIds, o
                   ))
             ) : (
               !allLabels.length
-                ? <p className="text-xs text-gray-400 px-3 py-2">Chưa có nhãn Zalo</p>
+                ? <p className="text-xs text-muted-foreground px-3 py-2">Chưa có nhãn Zalo</p>
                 : allLabels.map(label => (
                     <button key={label.id} onClick={() => toggleZalo(label.id)}
-                      className="w-full flex items-center gap-2 px-3 py-2 hover:bg-gray-700 text-left transition-colors">
-                      <span className={`w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center text-[11px] ${filterLabelIds.includes(label.id) ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-500'}`}>
+                      className="w-full flex items-center gap-2 px-3 py-2 hover:bg-muted text-left transition-colors">
+                      <span className={`w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center text-[11px] ${filterLabelIds.includes(label.id) ? 'bg-blue-600 border-blue-600 text-white' : 'border-border-strong'}`}>
                         {filterLabelIds.includes(label.id) && '✓'}
                       </span>
                       <ZaloLabelBadge label={label} size="xs" />
@@ -226,7 +227,7 @@ function LabelFilterDropdown({ allLabels, filterLabelIds, filterLocalLabelIds, o
           </div>
           {activeCount > 0 && (
             <button onClick={() => onChange({ filterLabelIds: [], filterLocalLabelIds: [] })}
-              className="w-full text-xs text-gray-400 hover:text-white px-3 py-2 border-t border-gray-700 text-left flex-shrink-0">
+              className="w-full text-xs text-muted-foreground hover:text-foreground px-3 py-2 border-t border-border text-left flex-shrink-0">
               Xóa bộ lọc
             </button>
           )}
@@ -278,27 +279,27 @@ function ContactTypeFilterDropdown({ filterContactTypes, onChange, supportsFrien
     <div ref={ref} className="relative flex-shrink-0">
       <button onClick={() => setOpen(v => !v)}
         className={`flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border transition-colors ${
-          activeCount > 0 ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-600 text-gray-400 hover:border-gray-500'
+          activeCount > 0 ? 'bg-blue-600 border-blue-600 text-white' : 'border-input text-muted-foreground hover:border-border-strong'
         }`}><FolderIcon className="w-4 h-4 inline" /> {label}
         <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="ml-0.5">
           <polyline points="6 9 12 15 18 9"/>
         </svg>
       </button>
       {open && (
-        <div className="absolute top-full left-0 mt-1 bg-gray-800 border border-gray-600 rounded-xl shadow-xl z-50 min-w-[180px] overflow-hidden">
+        <div className="absolute top-full left-0 mt-1 bg-card border border-input rounded-xl shadow-xl z-50 min-w-[180px] overflow-hidden">
           {OPTIONS.map(opt => (
             <button key={opt.key} onClick={() => toggle(opt.key)}
-              className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-gray-700 text-left transition-colors">
-              <span className={`w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center text-[11px] ${filterContactTypes.includes(opt.key) ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-500'}`}>
+              className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-muted text-left transition-colors">
+              <span className={`w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center text-[11px] ${filterContactTypes.includes(opt.key) ? 'bg-blue-600 border-blue-600 text-white' : 'border-border-strong'}`}>
                 {filterContactTypes.includes(opt.key) && '✓'}
               </span>
               <span className="text-xs">{opt.icon}</span>
-              <span className="text-xs text-gray-200">{opt.label}</span>
+              <span className="text-xs text-foreground">{opt.label}</span>
             </button>
           ))}
           {activeCount > 0 && (
             <button onClick={() => onChange([])}
-              className="w-full text-xs text-gray-400 hover:text-white px-3 py-2 border-t border-gray-700 text-left">
+              className="w-full text-xs text-muted-foreground hover:text-foreground px-3 py-2 border-t border-border text-left">
               Xóa bộ lọc
             </button>
           )}
@@ -335,7 +336,7 @@ function GenderFilterDropdown({ value, onChange }: {
     <div ref={ref} className="relative flex-shrink-0">
       <button onClick={() => setOpen(v => !v)}
         className={`flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border transition-colors ${
-          isActive ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-600 text-gray-400 hover:border-gray-500'
+          isActive ? 'bg-blue-600 border-blue-600 text-white' : 'border-input text-muted-foreground hover:border-border-strong'
         }`}>
         {isActive ? `${current?.icon} ${current?.label}` : '⚧ Giới tính'}
         <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="ml-0.5">
@@ -343,14 +344,14 @@ function GenderFilterDropdown({ value, onChange }: {
         </svg>
       </button>
       {open && (
-        <div className="absolute top-full left-0 mt-1 bg-gray-800 border border-gray-600 rounded-xl shadow-xl z-50 min-w-[140px] overflow-hidden">
+        <div className="absolute top-full left-0 mt-1 bg-card border border-input rounded-xl shadow-xl z-50 min-w-[140px] overflow-hidden">
           {OPTIONS.map(opt => (
             <button key={opt.key} onClick={() => { onChange(opt.key); setOpen(false); }}
-              className={`w-full flex items-center gap-2 px-3 py-2.5 hover:bg-gray-700 text-left transition-colors ${
-                value === opt.key ? 'bg-gray-700/60' : ''
+              className={`w-full flex items-center gap-2 px-3 py-2.5 hover:bg-muted text-left transition-colors ${
+                value === opt.key ? 'bg-muted/60' : ''
               }`}>
               <span className="text-xs">{opt.icon}</span>
-              <span className="text-xs text-gray-200">{opt.label}</span>
+              <span className="text-xs text-foreground">{opt.label}</span>
               {value === opt.key && <span className="ml-auto text-blue-400 text-[11px]">✓</span>}
             </button>
           ))}
@@ -388,7 +389,7 @@ function BirthdayFilterDropdown({ value, onChange }: {
     <div ref={ref} className="relative flex-shrink-0">
       <button onClick={() => setOpen(v => !v)}
         className={`flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border transition-colors ${
-          isActive ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-600 text-gray-400 hover:border-gray-500'
+          isActive ? 'bg-blue-600 border-blue-600 text-white' : 'border-input text-muted-foreground hover:border-border-strong'
         }`}>
         {isActive ? `${current?.icon} ${current?.label}` : 'Sinh nhật'}
         <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="ml-0.5">
@@ -396,14 +397,14 @@ function BirthdayFilterDropdown({ value, onChange }: {
         </svg>
       </button>
       {open && (
-        <div className="absolute top-full left-0 mt-1 bg-gray-800 border border-gray-600 rounded-xl shadow-xl z-50 min-w-[180px] overflow-hidden">
+        <div className="absolute top-full left-0 mt-1 bg-card border border-input rounded-xl shadow-xl z-50 min-w-[180px] overflow-hidden">
           {OPTIONS.map(opt => (
             <button key={opt.key} onClick={() => { onChange(opt.key); setOpen(false); }}
-              className={`w-full flex items-center gap-2 px-3 py-2.5 hover:bg-gray-700 text-left transition-colors ${
-                value === opt.key ? 'bg-gray-700/60' : ''
+              className={`w-full flex items-center gap-2 px-3 py-2.5 hover:bg-muted text-left transition-colors ${
+                value === opt.key ? 'bg-muted/60' : ''
               }`}>
               <span className="text-xs">{opt.icon}</span>
-              <span className="text-xs text-gray-200">{opt.label}</span>
+              <span className="text-xs text-foreground">{opt.label}</span>
               {value === opt.key && <span className="ml-auto text-blue-400 text-[11px]">✓</span>}
             </button>
           ))}
@@ -437,24 +438,24 @@ function SortDropdown({ sortBy, sortDir, onChange }: {
   return (
     <div ref={ref} className="relative flex-shrink-0">
       <button onClick={() => setOpen(v => !v)}
-        className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border border-gray-600 text-gray-400 hover:border-gray-500 transition-colors">
+        className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border border-input text-muted-foreground hover:border-border-strong transition-colors">
         {currentLabel}
         <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="ml-0.5">
           <polyline points="6 9 12 15 18 9"/>
         </svg>
       </button>
       {open && (
-        <div className="absolute top-full left-0 mt-1 bg-gray-800 border border-gray-600 rounded-xl shadow-xl z-50 min-w-[180px] overflow-hidden">
+        <div className="absolute top-full left-0 mt-1 bg-card border border-input rounded-xl shadow-xl z-50 min-w-[180px] overflow-hidden">
           {OPTIONS.map(opt => {
             const isActive = current === opt.key;
             return (
               <button key={opt.key} onClick={() => { const [sb, sd] = opt.key.split(':'); onChange(sb, sd); setOpen(false); }}
-                className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-gray-700 text-left transition-colors">
-                <span className={`w-3.5 h-3.5 rounded-full border flex-shrink-0 flex items-center justify-center text-[11px] ${isActive ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-500'}`}>
+                className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-muted text-left transition-colors">
+                <span className={`w-3.5 h-3.5 rounded-full border flex-shrink-0 flex items-center justify-center text-[11px] ${isActive ? 'bg-blue-600 border-blue-600 text-white' : 'border-border-strong'}`}>
                   {isActive && '●'}
                 </span>
                 <span className="text-xs">{opt.icon}</span>
-                <span className="text-xs text-gray-200">{opt.label}</span>
+                <span className="text-xs text-foreground">{opt.label}</span>
               </button>
             );
           })}
@@ -482,7 +483,7 @@ function ActionsDropdown({ total, exportingCSV, onExportCSV, onImportPhones }: {
   return (
     <div ref={ref} className="relative flex-shrink-0">
       <button onClick={() => setOpen(v => !v)}
-        className="flex items-center gap-1.5 text-xs text-gray-300 hover:text-white bg-gray-700 hover:bg-gray-600 px-2.5 py-1.5 rounded-lg transition-colors border border-gray-600 hover:border-gray-500">
+        className="flex items-center gap-1.5 text-xs text-foreground/80 hover:text-foreground bg-muted hover:bg-accent px-2.5 py-1.5 rounded-lg transition-colors border border-input hover:border-border-strong">
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
           <circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/>
         </svg>
@@ -492,12 +493,12 @@ function ActionsDropdown({ total, exportingCSV, onExportCSV, onImportPhones }: {
         </svg>
       </button>
       {open && (
-        <div className="absolute top-full right-0 mt-1 bg-gray-800 border border-gray-600 rounded-xl shadow-xl z-50 min-w-[200px] overflow-hidden py-1">
+        <div className="absolute top-full right-0 mt-1 bg-card border border-input rounded-xl shadow-xl z-50 min-w-[200px] overflow-hidden py-1">
           {/* Export CSV */}
           <button
             onClick={() => { onExportCSV(); setOpen(false); }}
             disabled={total === 0 || exportingCSV}
-            className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-gray-200 hover:bg-gray-700 transition-colors text-left disabled:opacity-40">
+            className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-foreground hover:bg-muted transition-colors text-left disabled:opacity-40">
             {exportingCSV ? (
               <svg className="animate-spin flex-shrink-0" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
@@ -515,7 +516,7 @@ function ActionsDropdown({ total, exportingCSV, onExportCSV, onImportPhones }: {
           {onImportPhones && (
             <button
               onClick={() => { onImportPhones(); setOpen(false); }}
-              className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-gray-200 hover:bg-gray-700 transition-colors text-left">
+              className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-foreground hover:bg-muted transition-colors text-left">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0 text-green-400">
                 <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/>
                 <line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/>
@@ -624,9 +625,9 @@ export default function CRMContactList({
   }));
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full bg-card">
       {/* Toolbar */}
-      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-gray-700 flex-shrink-0">
+      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border flex-shrink-0">
         {/* Label dropdown filter (Local + Zalo) */}
         <LabelFilterDropdown
           allLabels={allLabels}
@@ -662,13 +663,13 @@ export default function CRMContactList({
 
         {/* Search */}
         <div className="relative flex-1 max-w-xs">
-          <svg width="13" height="13" className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
+          <svg width="13" height="13" className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none"
                viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
           </svg>
           <input value={searchText} onChange={e => onFilterChange({ searchText: e.target.value, page: 0 })}
                  placeholder="Tên, SĐT, UID..."
-                 className="w-full bg-gray-800 border border-gray-600 rounded-lg pl-7 pr-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-colors" />
+                 className="w-full bg-card border border-input rounded-lg pl-7 pr-3 py-1.5 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 transition-colors" />
         </div>
 
         <div className="flex-1"></div>
@@ -683,13 +684,13 @@ export default function CRMContactList({
       </div>
 
       {/* Table header */}
-      <div className="flex items-center px-4 py-2 border-b border-gray-700 bg-gray-800/50 text-xs text-gray-400 flex-shrink-0">
+      <div className="flex items-center px-4 py-2 border-b border-border bg-muted/60 text-xs text-muted-foreground flex-shrink-0">
         {/* Per-page select button */}
         <button onClick={allSelected ? onClearAll : onSelectAll}
           className={`flex items-center gap-1 mr-3 px-2 py-0.5 rounded-md text-[11px] font-medium whitespace-nowrap flex-shrink-0 transition-colors border
             ${allSelected
-              ? 'bg-blue-600/20 border-blue-500/50 text-blue-300 hover:bg-blue-600/30'
-              : 'border-gray-600 text-gray-400 hover:border-gray-400 hover:text-gray-300'}`}>
+              ? 'bg-selected border-primary/40 text-primary hover:bg-primary/20'
+              : 'border-input text-muted-foreground hover:border-border-strong hover:text-foreground/80'}`}>
           {allSelected ? (
             <>
               <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
@@ -716,7 +717,7 @@ export default function CRMContactList({
         {loading ? (
           <PageLoading variant="skeleton" skeletonVariant="table" />
         ) : contacts.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-gray-400">
+          <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mb-3 opacity-40">
               <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
             </svg>
@@ -731,12 +732,12 @@ export default function CRMContactList({
             return (
               <div key={contact.contact_id}
                 onClick={() => onActivateContact(contact.contact_id)}
-                className={`flex items-center px-4 py-2.5 border-b border-gray-700/50 cursor-pointer transition-colors group ${isActive ? 'bg-blue-600/15' : 'hover:bg-gray-700/40'}`}>
+                className={`flex items-center px-4 py-2.5 border-b border-border/50 cursor-pointer transition-colors group ${isActive ? 'bg-selected' : 'hover:bg-muted'}`}>
                 {/* Styled checkbox */}
                 <div
                   onClick={e => { e.stopPropagation(); onSelectContact(contact.contact_id); }}
                   className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 border transition-colors mr-3 cursor-pointer
-                    ${isSelected ? 'bg-blue-500 border-blue-500' : 'border-gray-600 bg-gray-800 group-hover:border-gray-400'}`}>
+                    ${isSelected ? 'bg-blue-500 border-blue-500' : 'border-input bg-card group-hover:border-border-strong'}`}>
                   {isSelected && (
                     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3">
                       <polyline points="20 6 9 17 4 12"/>
@@ -758,7 +759,8 @@ export default function CRMContactList({
                       size="xs"
                     />
                   ) : contact.avatar
-                    ? <img src={contact.avatar} alt="" className="w-full h-full object-cover" />
+                    ? <img key={contact.avatar} src={contact.avatar} alt="" className="w-full h-full object-cover"
+                        onError={(e) => { e.currentTarget.style.display = 'none'; reportBrokenAvatar(activeAccountId, contact.contact_id); }} />
                     : <div className="w-full h-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-xs font-bold">
                         {(name || 'U').charAt(0).toUpperCase()}
                       </div>}
@@ -772,14 +774,14 @@ export default function CRMContactList({
                 {/* Name + Labels underneath */}
                 <div className="flex-1 ml-2 min-w-0">
                   <div className="flex items-center gap-1.5">
-                    <span className="text-sm text-gray-200 truncate font-medium">{name}</span>
+                    <span className="text-sm text-foreground truncate font-medium">{name}</span>
                     {contact.contact_type === 'group'
                       ? <span className="text-[9px] text-purple-400 flex-shrink-0 bg-purple-400/10 px-1 rounded">nhóm</span>
                       : contact.is_friend === 1 && <span className="text-[9px] text-green-500 flex-shrink-0">●</span>}
                     {contact.note_count > 0 && <span className="text-[12px] text-yellow-500 flex-shrink-0"><EditIcon className="w-4 h-4" /></span>}
                   </div>
                   {contact.alias && contact.alias !== contact.display_name &&
-                    <p className="text-[11px] text-gray-400 truncate">{contact.display_name}</p>}
+                    <p className="text-[11px] text-muted-foreground truncate">{contact.display_name}</p>}
                   {/* Labels (Local + Zalo) under name */}
                   {(() => {
                     const threadLIds = localLabelThreadMap?.[contact.contact_id] || [];
@@ -801,7 +803,7 @@ export default function CRMContactList({
                         })}
                         {contactLabels.slice(0, 3).map(l => <ZaloLabelBadge key={l.id} label={l} size="xs" />)}
                         {(threadLIds.length + contactLabels.length) > 3 && (
-                          <span className="text-[10px] text-gray-400">+{threadLIds.length + contactLabels.length - 3}</span>
+                          <span className="text-[10px] text-muted-foreground">+{threadLIds.length + contactLabels.length - 3}</span>
                         )}
                       </div>
                     );
@@ -813,12 +815,12 @@ export default function CRMContactList({
                   {contact.gender === 1 && <span className="text-[11px] text-pink-400">♀ Nữ</span>}
                 </span>
                 {/* Birthday column */}
-                <span className="w-24 flex-shrink-0 hidden lg:block text-center text-[11px] text-gray-400">
+                <span className="w-24 flex-shrink-0 hidden lg:block text-center text-[11px] text-muted-foreground">
                   {contact.birthday || ''}
                 </span>
                 {/* Phone */}
                 <span className="w-28 flex-shrink-0 hidden md:block">
-                  <PhoneDisplay phone={contact.phone} className="text-xs text-gray-400" />
+                  <PhoneDisplay phone={contact.phone} className="text-xs text-muted-foreground" />
                 </span>
                 {/* Message button + last message time */}
                 <div className="w-20 flex-shrink-0 flex items-center justify-end gap-1">
@@ -826,13 +828,13 @@ export default function CRMContactList({
                     <button
                       onClick={e => { e.stopPropagation(); onMessage(contact); }}
                       title="Nhắn tin"
-                      className="p-1 rounded-md text-gray-400 hover:text-blue-400 hover:bg-blue-500/10 transition-colors opacity-0 group-hover:opacity-100">
+                      className="p-1 rounded-md text-muted-foreground hover:text-blue-400 hover:bg-blue-500/10 transition-colors opacity-0 group-hover:opacity-100">
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
                       </svg>
                     </button>
                   )}
-                  <span className="text-[11px] text-gray-400">{fmt(contact.last_message_time)}</span>
+                  <span className="text-[11px] text-muted-foreground">{fmt(contact.last_message_time)}</span>
                 </div>
               </div>
             );

@@ -1,0 +1,323 @@
+package httpclient
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
+
+	"github.com/google/go-querystring/query"
+	"github.com/google/uuid"
+	"github.com/rs/zerolog"
+
+	"go.mau.fi/util/random"
+
+	"go.mau.fi/mautrix-meta/pkg/messagix/bloks"
+	"go.mau.fi/mautrix-meta/pkg/messagix/graphql"
+	"go.mau.fi/mautrix-meta/pkg/messagix/lightspeed"
+	"go.mau.fi/mautrix-meta/pkg/messagix/table"
+	"go.mau.fi/mautrix-meta/pkg/messagix/types"
+	"go.mau.fi/mautrix-meta/pkg/messagix/useragent"
+)
+
+// This has some overlap with makeGraphQLRequest but it's really a
+// completely different API that takes a ton of different parameters
+// and is used by a different client, despite also being called
+// "graphql" in the url.
+func (c *HTTPClient) MakeBloksRequest(ctx context.Context, doc *bloks.BloksDoc, appID string, inner bloks.BloksParamsInner, deviceID string, familyDeviceID string) (*bloks.BloksBundle, error) {
+	c.log.Debug().Str("bloks_app", appID).Msg("Making Bloks request")
+
+	variables := bloks.NewBloksRequest(doc, appID, inner)
+
+	vBytes, err := json.Marshal(variables)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal bloks variables to json string: %w", err)
+	}
+	c.log.Trace().Str("bloks_app", appID).Bytes("req", vBytes).Msg("Logging raw Bloks request")
+
+	payload := &HTTPQuery{}
+	payload.Method = "post"
+	payload.Pretty = "false"
+	payload.Format = "json"
+	payload.ServerTimestamps = "true"
+	payload.Locale = "en_US"
+	payload.FbAPIReqFriendlyName = doc.Name + "-" + appID
+	payload.ClientDocID = doc.ClientDocID
+	payload.Variables = string(vBytes)
+
+	headers := http.Header{}
+	headers.Set("priority", "u=3, i")
+	headers.Set("x-fb-friendly-name", doc.Name+"-"+appID)
+	headers.Set("x-fb-client-ip", "True")
+	headers.Set("x-fb-server-cluster", "True")
+
+	var clientAppID string
+	switch c.GetPlatform() {
+	case types.MessengerLiteIOS:
+		clientAppID = useragent.MessengerLiteIOSAppID
+		payload.Purpose = "fetch"
+		payload.EnableCanonicalNaming = "true"
+		payload.EnableCanonicalVariableOverrides = "true"
+		payload.EnableCanonicalNamingAmbiguousTypePrefixing = "true"
+		headers.Set("user-agent", useragent.MessengerLiteIOSUserAgent)
+		headers.Set("x-fb-http-engine", "Tigon/MNS/TCP")
+		headers.Set("authorization", "OAuth "+useragent.MessengerLiteIOSAccessToken)
+		headers.Set("x-fb-device-id", deviceID)
+		headers.Set("x-fb-family-device-id", familyDeviceID)
+		headers.Set("x-graphql-request-purpose", "fetch")
+		headers.Set("x-root-field-name", doc.RootField)
+		headers.Set("x-fb-conn-uuid-client", strings.Replace(uuid.New().String(), "-", "", -1))
+		headers.Set("x-fb-rmd", "fail=Server:INVALID_MAP,Default:INVALID_MAP;v=;ip=;tkn=;reqTime=0;recvTime=0")
+		headers.Set("x-graphql-client-library", "pando")
+
+		// Not clear if this needs to be remembered
+		headers.Set("x-meta-usdid-uuid", strings.ToUpper(uuid.New().String()))
+
+		// Skip setting encoding headers since it messes up
+		// our own http library
+		//
+		// headers.Set("accept-encoding", "zstd")
+	case types.MessengerLiteAndroid:
+		clientAppID = useragent.MessengerLiteAndroidAppID
+		payload.FbAPICallerClass = "graphservice"
+		payload.FbAPIClientContext = `{"is_background":false}`
+		payload.FbAPIAnalyticsTags = `["GraphServices"]`
+		payload.ClientTraceID = uuid.New().String()
+		headers.Set("user-agent", useragent.MessengerLiteAndroidUserAgent)
+		headers.Set("x-fb-http-engine", "Tigon/Liger")
+		headers.Set("authorization", "OAuth "+useragent.MessengerLiteAndroidAccessToken)
+		headers.Set("x-fb-conn-uuid-client", base64.StdEncoding.EncodeToString(random.Bytes(16)))
+		headers.Set("x-graphql-client-library", "graphservice")
+		headers.Set("x-fb-connection-type", "WIFI")
+		headers.Set("x-tigon-is-retry", "False")
+
+		// https://en.wikipedia.org/wiki/Mobile_network_codes_in_ITU_region_3xx_(North_America)#U
+		headers.Set("x-fb-net-hni", "310260")
+		headers.Set("x-fb-sim-hni", "310240")
+
+		// This probably needs to come from somewhere
+		headers.Set("x-fb-integrity-machine-id", string(random.StringBytes(24)))
+
+		// Meaning unclear
+		did := uuid.New().String()
+		headers.Set("x-zero-f-device-id", did)
+		headers.Set("x-zero-eh", hex.EncodeToString(random.Bytes(16)))
+		headers.Set("x-zero-state", "unknown")
+		headers.Set("app-scope-id-header", did)
+
+		// Skip setting encoding headers since it messes up
+		// our own http library
+		//
+		// headers.Set("accept-encoding", "gzip, deflate")
+		// headers.Set("content-encoding", "gzip")
+	default:
+		return nil, fmt.Errorf("platform %s does not support bloks", c.GetPlatform().String())
+	}
+
+	analyticsTags, err := MakeRequestAnalyticsHeader(clientAppID)
+	if err != nil {
+		return nil, err
+	}
+	headers.Set("x-fb-request-analytics-tags", analyticsTags)
+
+	form, err := query.Values(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	payloadBytes := []byte(form.Encode())
+
+	reqUrl := c.parent.GetEndpoint("graph_graphql") // graph.facebook.com vs /api/graphql
+	_, respData, err := c.MakeRequest(ctx, reqUrl, "POST", headers, payloadBytes, types.FORM)
+
+	if err != nil {
+		return nil, err
+	}
+
+	c.log.Trace().Str("bloks_app", appID).Bytes("resp", respData).Msg("Logging raw Bloks response")
+
+	var respOuter bloks.BloksResponse
+	err = json.Unmarshal(respData, &respOuter)
+	if err != nil {
+		return nil, fmt.Errorf("parsing outer bloks payload: %w", err)
+	}
+
+	if len(respOuter.Errors) > 0 {
+		errors := []string{}
+		for _, e := range respOuter.Errors {
+			errors = append(errors, e.Summary)
+		}
+		return nil, fmt.Errorf("bloks error: %s", strings.Join(errors, "; "))
+	}
+
+	innerData := ""
+	if respOuter.Data.BloksApp != nil {
+		innerData = respOuter.Data.BloksApp.Screen.Component.Bundle.Tree
+	}
+	if respOuter.Data.BloksAppFB != nil {
+		innerData = respOuter.Data.BloksAppFB.RootComponent.Bundle.Tree
+	}
+	if respOuter.Data.BloksAction != nil {
+		innerData = respOuter.Data.BloksAction.Action.Bundle.BundleAction
+	}
+	if respOuter.Data.BloksActionFB != nil {
+		innerData = respOuter.Data.BloksActionFB.RootAction.Action.Bundle.BundleAction
+	}
+
+	if innerData == "" {
+		c.log.Trace().Bytes("response", respData).Msg("failed to find inner bloks payload")
+		return nil, fmt.Errorf("couldn't find inner bloks payload")
+	}
+
+	var respInner bloks.BloksBundle
+	err = json.Unmarshal([]byte(innerData), &respInner)
+	if err != nil {
+		c.log.Trace().Bytes("response", respData).Msg("failed to parse inner bloks payload")
+		return nil, fmt.Errorf("parsing inner bloks payload: %w", err)
+	}
+
+	if c.LogRedactedLoginResponses {
+		if err = bloks.LogRedactedBundle(c.log, appID, []byte(innerData)); err != nil {
+			return nil, err
+		}
+	}
+
+	return &respInner, nil
+}
+
+var AntiJSPrefix = []byte("for (;;);")
+
+func (c *HTTPClient) MakeGraphQLRequest(ctx context.Context, name string, variables interface{}) (*http.Response, []byte, error) {
+	graphQLDoc, ok := graphql.GraphQLDocs[name]
+	if !ok {
+		return nil, nil, fmt.Errorf("could not find graphql doc by the name of: %s", name)
+	}
+
+	vBytes, err := json.Marshal(variables)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to marshal graphql variables to json string: %w", err)
+	}
+
+	payload := c.NewHTTPQuery()
+	payload.FbAPICallerClass = graphQLDoc.CallerClass
+	if payload.FbAPICallerClass == "" {
+		payload.FbAPICallerClass = "RelayModern"
+	}
+	payload.FbAPIReqFriendlyName = graphQLDoc.FriendlyName
+	payload.Variables = string(vBytes)
+	payload.ServerTimestamps = "true"
+	payload.DocID = graphQLDoc.DocID
+	if graphQLDoc.ClientDocID != "" {
+		payload.ClientDocID = graphQLDoc.ClientDocID
+		payload.DocID = ""
+	}
+	payload.Jssesw = graphQLDoc.Jsessw
+
+	form, err := query.Values(payload)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	payloadBytes := []byte(form.Encode())
+
+	headers := c.BuildHeaders(true, false)
+	headers.Set("x-fb-friendly-name", graphQLDoc.FriendlyName)
+	headers.Set("sec-fetch-dest", "empty")
+	headers.Set("sec-fetch-mode", "cors")
+	headers.Set("sec-fetch-site", "same-origin")
+	headers.Set("origin", c.parent.GetEndpoint("base_url"))
+	headers.Set("referer", c.parent.GetEndpoint("messages")+"/")
+
+	reqUrl := c.parent.GetEndpoint("graphql")
+	//c.Logger.Info().Any("url", reqUrl).Any("payload", string(payloadBytes)).Any("headers", headers).Msg("Sending graphQL request.")
+	resp, respData, err := c.makeRequest(ctx, reqUrl, "POST", headers, payloadBytes, types.FORM, func(e *zerolog.Event) *zerolog.Event {
+		return e.Str("graphql_method", name)
+	})
+	if err == nil && resp != nil {
+		c.parent.GetCookies().UpdateFromResponse(resp)
+	}
+	respData = bytes.TrimPrefix(respData, AntiJSPrefix)
+	return resp, respData, err
+}
+
+func (c *HTTPClient) MakeLSRequest(ctx context.Context, variables *graphql.LSPlatformGraphQLLightspeedVariables, reqType int) (*table.LSTable, error) {
+	strPayload, err := json.Marshal(&variables)
+	if err != nil {
+		return nil, err
+	}
+
+	lsVariables := &graphql.LSPlatformGraphQLLightspeedRequestPayload{
+		DeviceID:              c.configs.BrowserConfigTable.MqttWebDeviceID.ClientID,
+		IncludeChatVisibility: false,
+		RequestID:             c.lsRequests,
+		RequestPayload:        string(strPayload),
+		RequestType:           reqType,
+	}
+	c.lsRequests++
+
+	var lsRequestQueryName string
+	if c.parent.GetPlatform().IsMessenger() {
+		lsRequestQueryName = "LSPlatformGraphQLLightspeedRequestQuery"
+	} else {
+		lsRequestQueryName = "LSPlatformGraphQLLightspeedRequestForIGDQuery"
+	}
+	_, respBody, err := c.MakeGraphQLRequest(ctx, lsRequestQueryName, &lsVariables)
+	if err != nil {
+		return nil, err
+	}
+
+	var graphQLData *graphql.LSPlatformGraphQLLightspeedRequestQuery
+	err = json.Unmarshal(respBody, &graphQLData)
+	if err != nil {
+		if len(respBody) < 4096 {
+			c.log.Debug().Str("respBody", base64.StdEncoding.EncodeToString(respBody)).Msg("Errored LS response bytes")
+		} else {
+			c.log.Debug().Str("respBody", base64.StdEncoding.EncodeToString(respBody[:4096])).Msg("Errored LS response bytes (truncated)")
+		}
+		return nil, fmt.Errorf("failed to unmarshal LSRequest response bytes into LSPlatformGraphQLLightspeedRequestQuery struct: %w", err)
+	}
+	if graphQLData.ErrorCode != 0 {
+		c.log.Warn().
+			Str("error_description", graphQLData.ErrorDescription).
+			Str("error_summary", graphQLData.ErrorSummary).
+			Int("error_code", graphQLData.ErrorCode).
+			Msg("GraphQL error in lightspeed request")
+		if graphQLData.Data == nil {
+			return nil, fmt.Errorf("graphql error %w", &graphQLData.ErrorResponse)
+		}
+	} else if graphQLData.Data == nil {
+		c.log.Debug().RawJSON("respBody", respBody).Msg("LS response with no data and no error")
+		return nil, fmt.Errorf("graphql request didn't return data")
+	}
+	var lightSpeedRes []byte
+	var deps lightspeed.DependencyList
+	if graphQLData.Data.LightspeedWebRequestForIG != nil {
+		lightSpeedRes = []byte(graphQLData.Data.LightspeedWebRequestForIG.Payload)
+		deps = graphQLData.Data.LightspeedWebRequestForIG.Dependencies
+	} else if graphQLData.Data.Viewer.LightspeedWebRequest != nil {
+		lightSpeedRes = []byte(graphQLData.Data.Viewer.LightspeedWebRequest.Payload)
+		deps = graphQLData.Data.Viewer.LightspeedWebRequest.Dependencies
+	} else {
+		if graphQLData.Errors != nil {
+			return nil, graphQLData.WrapGQLErrors()
+		}
+		c.log.Debug().RawJSON("respBody", respBody).Msg("LS response with no lightspeed response data and no error")
+		return nil, fmt.Errorf("graphql request didn't return LS data")
+	}
+	var lsData *lightspeed.LightSpeedData
+	err = json.Unmarshal(lightSpeedRes, &lsData)
+	if err != nil {
+		c.log.Debug().RawJSON("respBody", respBody).Msg("Response data for errored inner response")
+		return nil, fmt.Errorf("failed to unmarshal LSRequest lightspeed payload into lightspeed.LightSpeedData: %w", err)
+	}
+
+	lsTable := &table.LSTable{}
+	lsDecoder := lightspeed.NewLightSpeedDecoder(deps.ToMap(), lsTable)
+	lsDecoder.Decode(lsData.Steps)
+
+	return lsTable, nil
+}

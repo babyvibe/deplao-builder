@@ -30,8 +30,8 @@ func TestHandleSocketErrorsWithoutUnderlyingError(t *testing.T) {
 		event any
 		code  int
 	}{
-		{name: "socket disconnected", event: &messagix.Event_SocketError{}},
-		{name: "permanent failure", event: &messagix.Event_PermanentError{}, code: 1},
+		{name: "socket disconnected", event: &messagix.TransientDisconnectEvent{}},
+		{name: "permanent failure", event: &messagix.PermanentErrorEvent{}, code: 1},
 	}
 
 	for _, test := range tests {
@@ -231,7 +231,7 @@ func TestConvertThumbsUpDoesNotMutateWrappedMessage(t *testing.T) {
 		}},
 	}
 
-	converted := client.convertWrappedMessage(wrapped)
+	converted := client.convertWrappedMessage(wrapped, nil)
 
 	if converted.Text != "👍" || len(converted.Attachments) != 0 {
 		t.Fatalf("converted thumbs-up = %#v, want emoji without sticker", converted)

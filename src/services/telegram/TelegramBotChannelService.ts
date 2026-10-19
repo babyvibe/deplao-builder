@@ -20,6 +20,7 @@ import { shouldFetchAvatar, markAvatarFetched, markAvatarSuccess, resetAvatarCac
 import * as BotIngress from './TelegramBotIngressService';
 import type { BotAccount, NormalizedUpdate, BotUpdateConsumer } from './TelegramBotIngressService';
 import { getTelegramMessagePreview } from './TelegramMessagePreview';
+import { isTelegramBotToken } from '../../shared/storedCredential';
 
 const TELEGRAM_API = 'https://api.telegram.org';
 const REQUEST_TIMEOUT = 30000;
@@ -965,33 +966,10 @@ async function saveSentBotMessage(
 }
 
 /**
- * Gửi ảnh qua Telegram Bot
+ * Lưu + phát sự kiện cho một tin ảnh bot vừa gửi (sendPhoto hoặc một phần tử của sendMediaGroup).
+ * Trả về message_id ('' khi Telegram không trả id).
  */
-export async function sendPhoto(accountId: string, chatId: string, photoPath: string, caption?: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
-  const bot = registeredAccounts.get(accountId);
-  if (!bot) return { success: false, error: 'Bot not active' };
-  if (!bot.botToken) return { success: false, error: 'Bot token missing' };
-
-  try {
-    const fs = require('fs');
-    const FormDataNode = require('form-data');
-    const form = new FormDataNode();
-    form.append('chat_id', chatId);
-    appendBotUpload(form, 'photo', photoPath);
-    if (caption) form.append('caption', caption);
-
-    const res = await axios.post(`${TELEGRAM_API}/bot${bot.botToken}/sendPhoto`, form, {
-      headers: form.getHeaders(),
-      timeout: REQUEST_TIMEOUT,
-    });
-
-    Logger.log(`[TelegramBot] sendPhoto response: ok=${res.data?.ok}, message_id=${res.data?.result?.message_id}, result_keys=${Object.keys(res.data?.result || {}).join(',')}`);
-
-    if (!res.data?.ok) {
-      return { success: false, error: res.data?.description || 'Telegram API error' };
-    }
-
-    const result = res.data?.result;
+async function recordSentBotPhoto(accountId: string, chatId: string, bot: BotAccount, result: any, caption?: string): Promise<string> {
     // Telegram photo response: result.message_id exists at top level
     const msgId = result?.message_id ? String(result.message_id) : '';
     if (!msgId) {
@@ -1058,7 +1036,104 @@ export async function sendPhoto(accountId: string, chatId: string, photoPath: st
       }
     }
 
+    return msgId;
+}
+
+/**
+ * Gửi ảnh qua Telegram Bot
+ */
+export async function sendPhoto(accountId: string, chatId: string, photoPath: string, caption?: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  const bot = registeredAccounts.get(accountId);
+  if (!bot) return { success: false, error: 'Bot not active' };
+  if (!bot.botToken) return { success: false, error: 'Bot token missing' };
+
+  try {
+    const FormDataNode = require('form-data');
+    const form = new FormDataNode();
+    form.append('chat_id', chatId);
+    appendBotUpload(form, 'photo', photoPath);
+    if (caption) form.append('caption', caption);
+
+    const res = await axios.post(`${TELEGRAM_API}/bot${bot.botToken}/sendPhoto`, form, {
+      headers: form.getHeaders(),
+      timeout: REQUEST_TIMEOUT,
+    });
+
+    Logger.log(`[TelegramBot] sendPhoto response: ok=${res.data?.ok}, message_id=${res.data?.result?.message_id}, result_keys=${Object.keys(res.data?.result || {}).join(',')}`);
+
+    if (!res.data?.ok) {
+      return { success: false, error: res.data?.description || 'Telegram API error' };
+    }
+
+    const msgId = await recordSentBotPhoto(accountId, chatId, bot, res.data?.result, caption);
     return { success: true, messageId: msgId };
+  } catch (err: any) {
+    return { success: false, error: err.response?.data?.description || err.message };
+  }
+}
+
+/** Telegram media groups hold 2–10 items. */
+const BOT_ALBUM_MAX = 10;
+
+/**
+ * Gửi nhiều ảnh thành một album (sendMediaGroup), chú thích ở ảnh đầu — Telegram hiện chú thích
+ * dưới album. Mỗi ảnh của album là một tin riêng trong DB (như khi nhận album).
+ */
+export async function sendPhotoAlbum(
+  accountId: string,
+  chatId: string,
+  photoPaths: string[],
+  caption?: string,
+): Promise<{ success: boolean; messageId?: string; messageIds?: string[]; error?: string }> {
+  const photos = photoPaths.filter(Boolean);
+  if (photos.length === 0) return { success: false, error: 'Không có ảnh để gửi' };
+  if (photos.length === 1) return sendPhoto(accountId, chatId, photos[0], caption);
+  const bot = registeredAccounts.get(accountId);
+  if (!bot) return { success: false, error: 'Bot not active' };
+  if (!bot.botToken) return { success: false, error: 'Bot token missing' };
+
+  try {
+    const FormDataNode = require('form-data');
+    const messageIds: string[] = [];
+    for (let start = 0; start < photos.length; start += BOT_ALBUM_MAX) {
+      const chunk = photos.slice(start, start + BOT_ALBUM_MAX);
+      const chunkCaption = start === 0 ? caption : undefined;
+      if (chunk.length === 1) {
+        // sendMediaGroup needs at least 2 items.
+        const single = await sendPhoto(accountId, chatId, chunk[0], chunkCaption);
+        if (!single.success) return { success: false, error: single.error, messageIds };
+        if (single.messageId) messageIds.push(single.messageId);
+        continue;
+      }
+      const form = new FormDataNode();
+      form.append('chat_id', chatId);
+      const media = chunk.map((photoPath, index) => {
+        const item: Record<string, string> = { type: 'photo' };
+        if (photoPath.startsWith('http://') || photoPath.startsWith('https://')) {
+          item.media = photoPath;
+        } else {
+          const field = `photo${index}`;
+          appendBotUpload(form, field, photoPath);
+          item.media = `attach://${field}`;
+        }
+        if (index === 0 && chunkCaption) item.caption = chunkCaption;
+        return item;
+      });
+      form.append('media', JSON.stringify(media));
+      const res = await axios.post(`${TELEGRAM_API}/bot${bot.botToken}/sendMediaGroup`, form, {
+        headers: form.getHeaders(),
+        timeout: REQUEST_TIMEOUT,
+      });
+      if (!res.data?.ok) {
+        return { success: false, error: res.data?.description || 'Telegram API error', messageIds };
+      }
+      for (const message of (Array.isArray(res.data?.result) ? res.data.result : [])) {
+        const msgId = await recordSentBotPhoto(accountId, chatId, bot, message, message?.caption || undefined);
+        if (msgId) messageIds.push(msgId);
+      }
+    }
+    Logger.log(`[TelegramBot] sendPhotoAlbum chat=${chatId} items=${photos.length} messages=${messageIds.length}`);
+    return { success: true, messageId: messageIds[0], messageIds };
   } catch (err: any) {
     return { success: false, error: err.response?.data?.description || err.message };
   }
@@ -1571,6 +1646,11 @@ type ActionResult = { success: boolean; messageId?: string; error?: string };
  */
 export function startBot(account: TelegramBotAccount): void {
   if (registeredAccounts.has(account.accountId)) return;
+  // Token không đúng dạng — thường là bản mã hoá không giải mã được trên máy này: đừng đăng ký, health check sẽ thử
+  // kết nối lại mỗi phút mãi mãi
+  if (!isTelegramBotToken(account.botToken)) {
+    throw new Error('Token bot không hợp lệ hoặc không giải mã được trên máy này. Vui lòng kết nối lại bot bằng token.');
+  }
   registeredAccounts.set(account.accountId, account);
   DatabaseService.getInstance()?.repairTelegramLastMessagePreviews(account.accountId, 'telegram_bot');
 

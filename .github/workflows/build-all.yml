@@ -250,3 +250,15 @@ jobs:
           make_latest: false
           fail_on_unmatched_files: false
 
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Gắn link commit đã build / so sánh với bản trước vào ghi chú Release
+  # (release-links.yml) — chạy cả khi một nền tảng lỗi, miễn Release đã có
+  # ═══════════════════════════════════════════════════════════════════════════
+  release-links:
+    needs: [resolve-tag, build-windows, build-mac-arm64, build-ubuntu]
+    if: always() && needs.resolve-tag.outputs.should_publish == 'true'
+    uses: ./.github/workflows/release-links.yml
+    with:
+      tag: ${{ needs.resolve-tag.outputs.tag }}
+    permissions:
+      contents: write

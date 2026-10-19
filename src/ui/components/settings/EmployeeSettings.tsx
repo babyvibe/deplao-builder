@@ -1,12 +1,18 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import ipc from '@/lib/ipc';
 import { useAppStore } from '@/store/appStore';
 import { useAccountStore } from '@/store/accountStore';
 import { useEmployeeStore } from '@/store/employeeStore';
 import { showConfirm } from '../common/ConfirmDialog';
 import RelayStatusPanel from './RelayStatusPanel';
+import { copyWithToast } from './RelayAddressNotice';
+import { usePublicAddresses } from '../common/PublicAddressCard';
+import { navigateSettings } from './cloud/cloudUi';
+import { Badge, Button } from '@/components/ui';
+import { cn } from '@/lib/cn';
 import { toLocalMediaUrl } from '@/lib/localMedia';
-import { BookIcon, BotIcon, ChartIcon, ChatIcon, CheckCircleIcon, CheckIcon, ClipboardListIcon, ClockIcon, EditIcon, FolderIcon, GlobeIcon, ImageIcon, KeyIcon, LightningIcon, LinkIcon, PlusIcon, RefreshIcon, SearchIcon, SettingsIcon, SmartphoneIcon, SunIcon, TrendingUpIcon, UserIcon, UsersIcon } from '@/components/common/icons';
+import { BookIcon, BotIcon, ChartIcon, ChatIcon, CheckCircleIcon, CheckIcon, ClipboardListIcon, ClockIcon, CopyIcon, EditIcon, FolderIcon, GlobeIcon, ImageIcon, KeyIcon, LightningIcon, LinkIcon, PlusIcon, RefreshIcon, SearchIcon, SettingsIcon, SmartphoneIcon, SunIcon, TrendingUpIcon, UserIcon, UsersIcon } from '@/components/common/icons';
 
 const ALL_MODULES = [
     { key: 'chat', label: 'Chat', icon: <ChatIcon className="w-4 h-4" />, desc: 'Gửi/nhận tin nhắn', group: 'main' },
@@ -48,9 +54,19 @@ interface EmployeeData {
 type SettingsTab = 'employees' | 'relay';
 
 export default function EmployeeSettings() {
-    const { showNotification } = useAppStore();
-    const { accounts } = useAccountStore();
-    const { employees, setEmployees, previewEmployeeId, setPreviewEmployeeId, connectedEmployees, relayRunning, setRelayRunning, relayPort, setRelayPort } = useEmployeeStore();
+    const showNotification = useAppStore(s => s.showNotification);
+    const accounts = useAccountStore(s => s.accounts);
+    const { employees, setEmployees, previewEmployeeId, setPreviewEmployeeId, connectedEmployees, relayRunning, setRelayRunning, relayPort, setRelayPort } = useEmployeeStore(useShallow(s => ({
+        employees: s.employees,
+        setEmployees: s.setEmployees,
+        previewEmployeeId: s.previewEmployeeId,
+        setPreviewEmployeeId: s.setPreviewEmployeeId,
+        connectedEmployees: s.connectedEmployees,
+        relayRunning: s.relayRunning,
+        setRelayRunning: s.setRelayRunning,
+        relayPort: s.relayPort,
+        setRelayPort: s.setRelayPort,
+    })));
     const [loading, setLoading] = useState(true);
     const [activeTab, setActiveTab] = useState<SettingsTab>('employees');
     const [searchQuery, setSearchQuery] = useState('');
@@ -64,11 +80,12 @@ export default function EmployeeSettings() {
 
     // ─── Relay quick actions state ─────────────────────────────
     const [portInput, setPortInput] = useState(String(relayPort));
+    // WAN chỉ để xem: bật / tắt / đổi địa chỉ ở Cài đặt → Internet & Đám mây → Địa chỉ Internet
     const [tunnelActive, setTunnelActive] = useState(false);
     const [tunnelUrl, setTunnelUrl] = useState<string | null>(null);
-    const [tunnelLoading, setTunnelLoading] = useState(false);
     const [relayStarting, setRelayStarting] = useState(false);
     const [relayHost, setRelayHost] = useState<string | null>(null);
+    const publicAddresses = usePublicAddresses();
 
     const loadEmployees = useCallback(async () => {
         setLoading(true);
@@ -104,6 +121,7 @@ export default function EmployeeSettings() {
     };
 
     const handleQuickStopRelay = async () => {
+        // Tắt relay thì tắt luôn địa chỉ Internet của relay (không để địa chỉ trỏ vào cổng không còn phục vụ)
         if (tunnelActive) {
             await ipc.relay?.stopTunnel();
             setTunnelActive(false);
@@ -115,41 +133,6 @@ export default function EmployeeSettings() {
             setRelayRunning(false);
             setRelayHost(null);
         }
-    };
-
-    const handleQuickToggleTunnel = async () => {
-        if (tunnelActive) {
-            setTunnelLoading(true);
-            await ipc.relay?.stopTunnel();
-            setTunnelActive(false);
-            setTunnelUrl(null);
-            setTunnelLoading(false);
-            showNotification('Đã tắt tunnel', 'info');
-            return;
-        }
-        // Auto-start LAN if not running
-        if (!relayRunning) {
-            const port = parseInt(portInput) || 9900;
-            const startRes = await ipc.relay?.startServer(port);
-            if (!startRes?.success) {
-                showNotification(startRes?.error || 'Không thể bật LAN server', 'error');
-                return;
-            }
-            setRelayRunning(true);
-            if (startRes.port) { setRelayPort(startRes.port); setPortInput(String(startRes.port)); }
-        }
-        setTunnelLoading(true);
-        try {
-            const res = await ipc.relay?.startTunnel();
-            if (res?.success && res.tunnelUrl) {
-                setTunnelActive(true);
-                setTunnelUrl(res.tunnelUrl);
-                showNotification('Tunnel đã bật! Nhân viên kết nối từ bất kỳ đâu.', 'success');
-            } else {
-                showNotification(res?.error || 'Không thể bật tunnel', 'error');
-            }
-        } catch (err: any) { showNotification(err.message, 'error'); }
-        setTunnelLoading(false);
     };
 
     // ─── Refresh relay status on mount ─────────────────────────
@@ -277,20 +260,20 @@ export default function EmployeeSettings() {
 
     // ─── Render employee row ────────────────────────────────────
     const renderEmployeeRow = (emp: EmployeeData) => (
-        <div key={emp.employee_id} className="flex items-center gap-3 px-3.5 py-2.5 bg-gray-700/40 rounded-xl hover:bg-gray-700/70 transition-colors group">
+        <div key={emp.employee_id} className="flex items-center gap-3 px-3.5 py-2.5 bg-card border border-border/60 rounded-xl hover:bg-muted transition-colors group">
             {/* Avatar */}
-            <div className="w-9 h-9 rounded-full bg-gray-600 flex items-center justify-center text-base flex-shrink-0 overflow-hidden">
+            <div className="w-9 h-9 rounded-full bg-accent flex items-center justify-center text-base flex-shrink-0 overflow-hidden">
                 {emp.avatar_url ? (
                     <img src={toLocalMediaUrl(emp.avatar_url)} className="w-full h-full rounded-full object-cover" alt="" />
                 ) : (
-                    <span className="text-gray-300 font-semibold">{emp.display_name?.charAt(0)?.toUpperCase() || '?'}</span>
+                    <span className="text-foreground/80 font-semibold">{emp.display_name?.charAt(0)?.toUpperCase() || '?'}</span>
                 )}
             </div>
 
             {/* Info */}
             <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                    <p className="text-sm text-gray-200 font-medium truncate">{emp.display_name}</p>
+                    <p className="text-sm text-foreground font-medium truncate">{emp.display_name}</p>
                     {emp.role === 'boss' && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-600/25 text-amber-300 font-medium leading-none">Boss</span>
                     )}
@@ -298,7 +281,7 @@ export default function EmployeeSettings() {
                         <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-600/25 text-red-300 font-medium leading-none">Tắt</span>
                     )}
                 </div>
-                <div className="flex items-center gap-3 text-[11px] text-gray-400 mt-0.5">
+                <div className="flex items-center gap-3 text-[11px] text-muted-foreground mt-0.5">
                     <span>@{emp.username}</span>
                     <span><KeyIcon className="w-4 h-4 inline" /> {emp.permissions?.filter((p: any) => p.can_access).length || 0} modules</span>
                     <span><SmartphoneIcon className="w-4 h-4 inline" /> {emp.assigned_accounts?.length || 0} TK</span>
@@ -322,7 +305,7 @@ export default function EmployeeSettings() {
                     className={`p-1.5 rounded-lg transition-colors ${
                         previewEmployeeId === emp.employee_id
                             ? 'text-amber-300 bg-amber-600/20'
-                            : 'text-gray-400 hover:text-amber-400 hover:bg-amber-600/10'
+                            : 'text-muted-foreground hover:text-amber-400 hover:bg-amber-600/10'
                     }`}
                     title={previewEmployeeId === emp.employee_id ? 'Thoát giả lập' : 'Đăng nhập với tư cách nhân viên này'}
                 >
@@ -334,7 +317,7 @@ export default function EmployeeSettings() {
                 <button
                     onClick={() => handleToggleActive(emp)}
                     className={`p-1.5 rounded-lg transition-colors ${
-                        emp.is_active ? 'text-gray-400 hover:text-yellow-400 hover:bg-yellow-600/10' : 'text-gray-400 hover:text-green-400 hover:bg-green-600/10'
+                        emp.is_active ? 'text-muted-foreground hover:text-yellow-400 hover:bg-yellow-600/10' : 'text-muted-foreground hover:text-green-400 hover:bg-green-600/10'
                     }`}
                     title={emp.is_active ? 'Vô hiệu hóa' : 'Kích hoạt'}
                 >
@@ -348,7 +331,7 @@ export default function EmployeeSettings() {
                 </button>
                 <button
                     onClick={() => { setEditingEmployee(emp); setShowForm(true); }}
-                    className="p-1.5 rounded-lg text-gray-400 hover:text-blue-400 hover:bg-blue-600/10 transition-colors"
+                    className="p-1.5 rounded-lg text-muted-foreground hover:text-blue-400 hover:bg-blue-600/10 transition-colors"
                     title="Sửa"
                 >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -358,7 +341,7 @@ export default function EmployeeSettings() {
                 </button>
                 <button
                     onClick={() => handleDelete(emp)}
-                    className="p-1.5 rounded-lg text-gray-400 hover:text-red-400 hover:bg-red-600/10 transition-colors"
+                    className="p-1.5 rounded-lg text-muted-foreground hover:text-red-400 hover:bg-red-600/10 transition-colors"
                     title="Xóa"
                 >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -373,7 +356,7 @@ export default function EmployeeSettings() {
         <div className="space-y-4">
             {/* ─── Header ─────────────────────────────────────────── */}
             <div className="flex items-center justify-between">
-                <h2 className="text-base font-semibold text-white"><UsersIcon className="w-4 h-4 inline" /> Quản lý nhân viên</h2>
+                <h2 className="text-base font-semibold text-foreground"><UsersIcon className="w-4 h-4 inline" /> Quản lý nhân viên</h2>
                 <button
                     onClick={() => { setEditingEmployee(null); setShowForm(true); }}
                     className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition-colors"
@@ -397,7 +380,7 @@ export default function EmployeeSettings() {
                         <span className="text-lg leading-none">{stat.icon}</span>
                         <div>
                             <p className={`text-lg font-bold leading-tight ${stat.color}`}>{stat.value}</p>
-                            <p className="text-[10px] text-gray-400 leading-tight">{stat.label}</p>
+                            <p className="text-[10px] text-muted-foreground leading-tight">{stat.label}</p>
                         </div>
                     </div>
                 ))}
@@ -415,7 +398,7 @@ export default function EmployeeSettings() {
                                     {simEmp.display_name?.charAt(0)?.toUpperCase() || '?'}
                                 </div>
                             )}
-                            <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-amber-400 rounded-full border-2 border-gray-800 animate-pulse" />
+                            <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-amber-400 rounded-full border-2 border-border animate-pulse" />
                         </div>
                         <div className="flex-1 min-w-0">
                             <p className="text-sm font-semibold text-amber-100"><RefreshIcon className="w-4 h-4 inline" /> Đang giả lập: {simEmp.display_name}</p>
@@ -425,7 +408,7 @@ export default function EmployeeSettings() {
                         </div>
                         <button
                             onClick={() => setPreviewEmployeeId(null)}
-                            className="flex items-center gap-1.5 text-xs font-medium text-amber-200 hover:text-white px-2.5 py-1.5 bg-amber-700/40 rounded-lg hover:bg-amber-600/50 transition-colors border border-amber-600/30 flex-shrink-0"
+                            className="flex items-center gap-1.5 text-xs font-medium text-amber-200 hover:text-foreground px-2.5 py-1.5 bg-amber-700/40 rounded-lg hover:bg-amber-600/50 transition-colors border border-amber-600/30 flex-shrink-0"
                         >
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                                 <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -437,11 +420,11 @@ export default function EmployeeSettings() {
             )}
 
             {/* ─── Quick Relay Bar ─────────────────────────────────── */}
-            <div className="flex items-center gap-2 px-3.5 py-2 bg-gray-800/70 border border-gray-200 border-gray-700/60 rounded-xl shadow-sm">
-                <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider flex-shrink-0"><GlobeIcon className="w-4 h-4" /></span>
+            <div className="flex items-center gap-2 px-3.5 py-2 bg-card border border-border/60 rounded-xl shadow-sm">
+                <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider flex-shrink-0"><GlobeIcon className="w-4 h-4" /></span>
 
                 {/* LAN toggle */}
-                <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors select-none flex-shrink-0">
+                <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg cursor-pointer hover:bg-muted transition-colors select-none flex-shrink-0">
                     <button
                         type="button"
                         role="switch"
@@ -449,14 +432,14 @@ export default function EmployeeSettings() {
                         onClick={relayRunning ? handleQuickStopRelay : handleQuickStartRelay}
                         disabled={relayStarting}
                         className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors flex-shrink-0 disabled:opacity-40 ${
-                            relayRunning ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'
+                            relayRunning ? 'bg-green-500' : 'bg-accent'
                         }`}
                     >
                         <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${
                             relayRunning ? 'translate-x-[18px]' : 'translate-x-[3px]'
                         }`} />
                     </button>
-                    <span className={`text-xs font-medium ${relayRunning ? 'text-green-700 dark:text-green-400' : 'text-gray-400 dark:text-gray-400'}`}>
+                    <span className={`text-xs font-medium ${relayRunning ? 'text-green-700 dark:text-green-400' : 'text-muted-foreground'}`}>
                         LAN
                     </span>
                     {relayRunning && relayHost && (
@@ -464,7 +447,7 @@ export default function EmployeeSettings() {
                             <span className="text-[10px] text-green-600 dark:text-green-400 font-mono bg-green-100 dark:bg-green-600/15 px-1.5 py-0.5 rounded truncate font-medium">{relayHost}:{relayPort}</span>
                             <button
                                 onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(`${relayHost}:${relayPort}`); showNotification('Đã copy địa chỉ LAN', 'info'); }}
-                                className="text-gray-400 hover:text-green-500 transition-colors flex-shrink-0 p-0.5"
+                                className="text-muted-foreground hover:text-green-500 transition-colors flex-shrink-0 p-0.5"
                                 title="Copy địa chỉ LAN"
                             >
                                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -476,45 +459,36 @@ export default function EmployeeSettings() {
                 </div>
 
                 {/* Divider */}
-                <div className="w-px h-5 bg-gray-200 dark:bg-gray-700 flex-shrink-0" />
+                <div className="w-px h-5 bg-border flex-shrink-0" />
 
-                {/* WAN tunnel toggle */}
-                <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg transition-colors select-none flex-shrink-0 ${
-                    !relayRunning && !tunnelActive ? 'opacity-50' : 'hover:bg-gray-100 dark:hover:bg-gray-700/50'
-                }`}>
-                    <button
-                        type="button"
-                        role="switch"
-                        aria-checked={tunnelActive}
-                        onClick={handleQuickToggleTunnel}
-                        disabled={tunnelLoading || (!relayRunning && !tunnelActive)}
-                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors flex-shrink-0 disabled:opacity-40 ${
-                            tunnelActive ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'
-                        }`}
-                    >
-                        <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${
-                            tunnelActive ? 'translate-x-[18px]' : 'translate-x-[3px]'
-                        }`} />
-                    </button>
-                    <span className={`text-xs font-medium ${tunnelActive ? 'text-blue-700 dark:text-blue-400' : 'text-gray-400 dark:text-gray-400'}`}>
-                        WAN
-                    </span>
-                    {tunnelActive && tunnelUrl && (
-                        <div className="flex items-center gap-1 max-w-[160px]">
-                            <span className="text-[10px] text-blue-600 dark:text-blue-400 font-mono bg-blue-100 dark:bg-blue-600/15 px-1.5 py-0.5 rounded truncate font-medium">{tunnelUrl}</span>
+                {/* WAN — chỉ xem; bật / tắt / đổi địa chỉ ở Cài đặt → Internet & Đám mây → Địa chỉ Internet */}
+                <div className="flex min-w-0 items-center gap-1.5 px-2 py-1 select-none">
+                    <span className={cn('h-2 w-2 flex-shrink-0 rounded-full', tunnelActive && tunnelUrl ? 'bg-primary' : 'bg-accent')} aria-hidden="true" />
+                    <span className={cn('text-xs font-medium', tunnelActive && tunnelUrl ? 'text-primary' : 'text-muted-foreground')}>WAN</span>
+                    {tunnelActive && tunnelUrl ? (
+                        <div className="flex min-w-0 max-w-[220px] items-center gap-1">
+                            <span className="truncate rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] font-medium text-primary" title={tunnelUrl}>{tunnelUrl}</span>
                             <button
-                                onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(tunnelUrl); showNotification('Đã copy URL', 'info'); }}
-                                className="text-gray-400 hover:text-blue-500 transition-colors flex-shrink-0 p-0.5"
-                                title="Copy URL"
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); copyWithToast(tunnelUrl, 'Đã sao chép địa chỉ WAN'); }}
+                                className="flex-shrink-0 p-0.5 text-muted-foreground transition-colors hover:text-primary"
+                                title="Sao chép địa chỉ WAN"
+                                aria-label="Sao chép địa chỉ WAN"
                             >
-                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
-                                </svg>
+                                <CopyIcon className="h-3 w-3" />
                             </button>
+                            {publicAddresses.get('relay')?.kind === 'temporary' && <Badge size="sm" variant="warning">Địa chỉ tạm</Badge>}
                         </div>
+                    ) : (
+                        <span className="text-[10px] text-muted-foreground">chưa bật</span>
                     )}
-                    {!relayRunning && !tunnelActive && (
-                        <span className="text-[10px] text-gray-400 dark:text-gray-400 italic hidden sm:inline">cần LAN trước</span>
+                    {!relayRunning && tunnelActive && (
+                        <span className="hidden text-[10px] italic text-muted-foreground sm:inline">cần bật LAN</span>
+                    )}
+                    {publicAddresses.canConfigure && (
+                        <Button variant="link" size="sm" className="flex-shrink-0 text-[11px]" onClick={() => navigateSettings('cloud', 'address')}>
+                            {tunnelActive && tunnelUrl ? 'Đổi ở Cài đặt →' : 'Bật ở Cài đặt →'}
+                        </Button>
                     )}
                 </div>
 
@@ -529,23 +503,23 @@ export default function EmployeeSettings() {
                     </div>
                 )}
                 {!relayRunning && !tunnelActive && connectedEmployees.length === 0 && (
-                    <div className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 dark:bg-gray-700/40 border border-gray-200 dark:border-gray-600/40 rounded-lg flex-shrink-0">
-                        <span className="text-[11px] text-gray-400 dark:text-gray-400">Chưa kết nối</span>
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 bg-muted border border-border rounded-lg flex-shrink-0">
+                        <span className="text-[11px] text-muted-foreground">Chưa kết nối</span>
                     </div>
                 )}
             </div>
-            <div className="flex gap-1 bg-gray-800/60 rounded-xl p-1 w-fit">
+            <div className="flex gap-1 bg-card rounded-xl p-1 w-fit">
                 <button
                     onClick={() => setActiveTab('employees')}
                     className={`flex items-center gap-1.5 px-4 py-2 text-xs font-medium rounded-lg transition-all ${
                         activeTab === 'employees'
                             ? 'bg-blue-600 text-white shadow-sm'
-                            : 'text-gray-400 hover:text-gray-200'
+                            : 'text-muted-foreground hover:text-foreground'
                     }`}
                 ><UserIcon className="w-4 h-4 inline" /> Nhân viên
                     {filteredEmployees.length > 0 && (
                         <span className={`ml-1 text-[10px] px-1.5 py-0.5 rounded-full ${
-                            activeTab === 'employees' ? 'bg-blue-500' : 'bg-gray-600'
+                            activeTab === 'employees' ? 'bg-blue-500' : 'bg-accent'
                         }`}>{filteredEmployees.length}</span>
                     )}
                 </button>
@@ -554,7 +528,7 @@ export default function EmployeeSettings() {
                     className={`flex items-center gap-1.5 px-4 py-2 text-xs font-medium rounded-lg transition-all ${
                         activeTab === 'relay'
                             ? 'bg-blue-600 text-white shadow-sm'
-                            : 'text-gray-400 hover:text-gray-200'
+                            : 'text-muted-foreground hover:text-foreground'
                     }`}
                 >
                     <GlobeIcon className="w-4 h-4 inline" /> Kết nối
@@ -572,14 +546,14 @@ export default function EmployeeSettings() {
                     {/* Search + Group toggle */}
                     <div className="flex items-center gap-2">
                         <div className="relative flex-1">
-                            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                                 <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
                             </svg>
                             <input
                                 value={searchQuery}
                                 onChange={e => setSearchQuery(e.target.value)}
                                 placeholder="Tìm theo tên hoặc username..."
-                                className="w-full pl-8 pr-3 py-2 bg-gray-800 border border-gray-600 rounded-xl text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                className="w-full pl-8 pr-3 py-2 bg-card border border-input rounded-xl text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                             />
                         </div>
                         <button
@@ -587,7 +561,7 @@ export default function EmployeeSettings() {
                             className={`flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-xl border transition-colors ${
                                 showGroupPanel
                                     ? 'bg-blue-600/15 border-blue-500/30 text-blue-300'
-                                    : 'bg-gray-800 border-gray-600 text-gray-400 hover:bg-gray-700 hover:text-gray-200'
+                                    : 'bg-card border-input text-muted-foreground hover:bg-muted hover:text-foreground'
                             }`}
                         >
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -595,17 +569,17 @@ export default function EmployeeSettings() {
                             </svg>
                             Nhóm
                             {stats.groupCount > 0 && (
-                                <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${showGroupPanel ? 'bg-blue-600' : 'bg-gray-600'}`}>{stats.groupCount}</span>
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${showGroupPanel ? 'bg-blue-600' : 'bg-accent'}`}>{stats.groupCount}</span>
                             )}
                         </button>
                     </div>
 
                     {/* ─── Inline Group Management Panel ──────────── */}
                     {showGroupPanel && (
-                        <div className="bg-gray-800/80 border border-gray-600/60 rounded-xl overflow-hidden">
+                        <div className="bg-card border border-input/60 rounded-xl overflow-hidden">
                             {/* Header */}
-                            <div className="px-4 py-2.5 border-b border-gray-700/50 flex items-center justify-between">
-                                <h3 className="text-xs font-semibold text-gray-300"><FolderIcon className="w-4 h-4 inline" /> Quản lý nhóm</h3>
+                            <div className="px-4 py-2.5 border-b border-border/50 flex items-center justify-between">
+                                <h3 className="text-xs font-semibold text-foreground/80"><FolderIcon className="w-4 h-4 inline" /> Quản lý nhóm</h3>
                             </div>
 
                             {/* Body */}
@@ -613,7 +587,7 @@ export default function EmployeeSettings() {
                                 {groups.length > 0 ? (
                                     <div className="space-y-1.5">
                                         {groups.map(grp => (
-                                            <div key={grp.group_id} className="flex items-center gap-2.5 p-2.5 bg-gray-700/40 rounded-xl hover:bg-gray-700/70 transition-colors">
+                                            <div key={grp.group_id} className="flex items-center gap-2.5 p-2.5 bg-card border border-border/60 rounded-xl hover:bg-muted transition-colors">
                                                 {editingGroupId === grp.group_id ? (
                                                     <input
                                                         autoFocus
@@ -621,7 +595,7 @@ export default function EmployeeSettings() {
                                                         onChange={e => setEditingGroupName(e.target.value)}
                                                         onKeyDown={e => { if (e.key === 'Enter') handleUpdateGroup(grp.group_id); if (e.key === 'Escape') setEditingGroupId(null); }}
                                                         onBlur={() => handleUpdateGroup(grp.group_id)}
-                                                        className="flex-1 text-sm bg-gray-600 border border-blue-500 rounded-lg px-3 py-1.5 text-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                                        className="flex-1 text-sm bg-muted border border-blue-500 rounded-lg px-3 py-1.5 text-foreground focus:outline-none focus:ring-1 focus:ring-blue-500"
                                                     />
                                                 ) : (
                                                     <>
@@ -629,15 +603,15 @@ export default function EmployeeSettings() {
                                                             <span className="text-xs"><FolderIcon className="w-4 h-4" /></span>
                                                         </div>
                                                         <div className="flex-1 min-w-0">
-                                                            <p className="text-sm text-gray-200 font-medium truncate">{grp.name}</p>
-                                                            <p className="text-[10px] text-gray-400">
+                                                            <p className="text-sm text-foreground font-medium truncate">{grp.name}</p>
+                                                            <p className="text-[10px] text-muted-foreground">
                                                                 {employees.filter((e: EmployeeData) => e.group_id === grp.group_id).length} nhân viên
                                                             </p>
                                                         </div>
                                                         <div className="flex items-center gap-0.5 flex-shrink-0">
                                                             <button
                                                                 onClick={() => { setEditingGroupId(grp.group_id); setEditingGroupName(grp.name); }}
-                                                                className="p-1.5 rounded-lg text-gray-400 hover:text-blue-400 hover:bg-blue-600/10 transition-colors"
+                                                                className="p-1.5 rounded-lg text-muted-foreground hover:text-blue-400 hover:bg-blue-600/10 transition-colors"
                                                                 title="Sửa tên"
                                                             >
                                                                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -647,7 +621,7 @@ export default function EmployeeSettings() {
                                                             </button>
                                                             <button
                                                                 onClick={() => handleDeleteGroup(grp)}
-                                                                className="p-1.5 rounded-lg text-gray-400 hover:text-red-400 hover:bg-red-600/10 transition-colors"
+                                                                className="p-1.5 rounded-lg text-muted-foreground hover:text-red-400 hover:bg-red-600/10 transition-colors"
                                                                 title="Xóa nhóm"
                                                             >
                                                                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -663,21 +637,21 @@ export default function EmployeeSettings() {
                                 ) : (
                                     <div className="text-center py-4">
                                         <p className="text-2xl mb-1"><FolderIcon className="w-4 h-4" /></p>
-                                        <p className="text-sm text-gray-400">Chưa có nhóm nào</p>
-                                        <p className="text-xs text-gray-400 mt-0.5">Tạo nhóm để phân loại nhân viên</p>
+                                        <p className="text-sm text-muted-foreground">Chưa có nhóm nào</p>
+                                        <p className="text-xs text-muted-foreground mt-0.5">Tạo nhóm để phân loại nhân viên</p>
                                     </div>
                                 )}
 
                                 {/* Add new group */}
-                                <div className="pt-2 border-t border-gray-700/40">
-                                    <p className="text-[11px] text-gray-400 font-medium mb-2"><PlusIcon className="w-4 h-4 inline" /> Thêm nhóm mới</p>
+                                <div className="pt-2 border-t border-border/40">
+                                    <p className="text-[11px] text-muted-foreground font-medium mb-2"><PlusIcon className="w-4 h-4 inline" /> Thêm nhóm mới</p>
                                     <div className="flex items-center gap-2">
                                         <input
                                             value={newGroupName}
                                             onChange={e => setNewGroupName(e.target.value)}
                                             onKeyDown={e => { if (e.key === 'Enter') handleCreateGroup(); }}
                                             placeholder="Tên nhóm (VD: Marketing, Nhân sự...)"
-                                            className="flex-1 text-sm bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                            className="flex-1 text-sm bg-muted border border-input rounded-lg px-3 py-2 text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                                         />
                                         <button
                                             onClick={handleCreateGroup}
@@ -693,10 +667,10 @@ export default function EmployeeSettings() {
                     )}
 
                     {/* ─── Employee List ────────────────────────────── */}
-                    <div className="bg-gray-800/60 rounded-xl p-3.5 space-y-2">
+                    <div className="bg-card rounded-xl p-3.5 space-y-2">
                         {loading ? (
-                            <div className="flex items-center justify-center py-8 text-gray-400 text-sm gap-2">
-                                <div className="w-4 h-4 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />
+                            <div className="flex items-center justify-center py-8 text-muted-foreground text-sm gap-2">
+                                <div className="w-4 h-4 border-2 border-border-strong border-t-transparent rounded-full animate-spin" />
                                 Đang tải...
                             </div>
                         ) : filteredEmployees.length === 0 ? (
@@ -704,14 +678,14 @@ export default function EmployeeSettings() {
                                 {searchQuery ? (
                                     <>
                                         <p className="text-2xl mb-1"><SearchIcon className="w-4 h-4" /></p>
-                                        <p className="text-sm text-gray-400">Không tìm thấy nhân viên "{searchQuery}"</p>
+                                        <p className="text-sm text-muted-foreground">Không tìm thấy nhân viên "{searchQuery}"</p>
                                         <button onClick={() => setSearchQuery('')} className="text-xs text-blue-400 hover:text-blue-300 mt-1">Xóa bộ lọc</button>
                                     </>
                                 ) : (
                                     <>
                                         <p className="text-2xl mb-1"><UsersIcon className="w-4 h-4" /></p>
-                                        <p className="text-sm text-gray-400">Chưa có nhân viên nào</p>
-                                        <p className="text-xs text-gray-400 mt-0.5">Nhấn "Thêm nhân viên" để bắt đầu</p>
+                                        <p className="text-sm text-muted-foreground">Chưa có nhân viên nào</p>
+                                        <p className="text-xs text-muted-foreground mt-0.5">Nhấn "Thêm nhân viên" để bắt đầu</p>
                                     </>
                                 )}
                             </div>
@@ -721,11 +695,11 @@ export default function EmployeeSettings() {
                                     {/* Group header */}
                                     {groups.length > 0 && (
                                         <div className="flex items-center gap-2 mb-1.5 mt-2 first:mt-0">
-                                            <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
+                                            <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
                                                 {group ? `Nhóm: ${group.name}` : 'Chưa phân nhóm'}
                                             </span>
-                                            <span className="text-[10px] text-gray-400 bg-gray-700/40 px-1.5 py-0.5 rounded-full font-medium">{emps.length}</span>
-                                            <div className="flex-1 border-t border-gray-700/30" />
+                                            <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full font-medium">{emps.length}</span>
+                                            <div className="flex-1 border-t border-border/30" />
                                         </div>
                                     )}
                                     <div className="space-y-1.5">
@@ -884,10 +858,10 @@ function EmployeeFormModal({ employee, accounts, groups, onClose, onSaved }: {
 
     return (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={onClose}>
-            <div className="bg-gray-800 border border-gray-600 rounded-2xl w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="bg-card border border-input rounded-2xl w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
                 {/* Header */}
-                <div className="px-5 pt-5 pb-3 border-b border-gray-700 flex-shrink-0">
-                    <h3 className="text-base font-semibold text-white">
+                <div className="px-5 pt-5 pb-3 border-b border-border flex-shrink-0">
+                    <h3 className="text-base font-semibold text-foreground">
                         {isEdit ? `Sửa nhân viên: ${employee.display_name}` : 'Thêm nhân viên mới'}
                     </h3>
                 </div>
@@ -896,17 +870,17 @@ function EmployeeFormModal({ employee, accounts, groups, onClose, onSaved }: {
                 <div className="flex-1 overflow-y-auto p-5 space-y-5">
                     {/* Avatar + Basic info */}
                     <div className="space-y-3">
-                        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Thông tin cơ bản</p>
+                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Thông tin cơ bản</p>
 
                         {/* Avatar upload */}
                         <div className="flex items-center gap-4">
                             <div className="relative group flex-shrink-0">
-                                <div className="w-16 h-16 rounded-full bg-gray-700 flex items-center justify-center overflow-hidden border-2 border-gray-600">
+                                <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center overflow-hidden border-2 border-input">
                                     {avatarUrl ? (
                                         <img src={avatarUrl} className="w-full h-full object-cover" alt="Avatar"
                                              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                                     ) : (
-                                        <span className="text-2xl text-gray-400">{displayName?.charAt(0)?.toUpperCase() || <UserIcon className="w-6 h-6" />}</span>
+                                        <span className="text-2xl text-muted-foreground">{displayName?.charAt(0)?.toUpperCase() || <UserIcon className="w-6 h-6" />}</span>
                                     )}
                                 </div>
                                 <button
@@ -922,7 +896,7 @@ function EmployeeFormModal({ employee, accounts, groups, onClose, onSaved }: {
                                 </button>
                             </div>
                             <div className="flex-1 space-y-1">
-                                <p className="text-xs text-gray-400">Ảnh đại diện <span className="text-gray-400">(không bắt buộc)</span></p>
+                                <p className="text-xs text-muted-foreground">Ảnh đại diện <span className="text-muted-foreground">(không bắt buộc)</span></p>
                                 <div className="flex items-center gap-2">
                                     <button
                                         type="button"
@@ -946,37 +920,37 @@ function EmployeeFormModal({ employee, accounts, groups, onClose, onSaved }: {
 
                         <div className="grid grid-cols-2 gap-3">
                             <div>
-                                <label className="text-xs text-gray-400 mb-1 block">Tên đăng nhập</label>
+                                <label className="text-xs text-muted-foreground mb-1 block">Tên đăng nhập</label>
                                 <input
                                     value={username} onChange={e => setUsername(e.target.value)}
                                     disabled={isEdit}
                                     placeholder="nhanvien01"
-                                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-sm text-gray-200 placeholder-gray-500 disabled:opacity-50"
+                                    className="w-full px-3 py-2 bg-muted border border-input rounded-lg text-sm text-foreground placeholder-subtle-foreground disabled:opacity-50"
                                 />
                             </div>
                             <div>
-                                <label className="text-xs text-gray-400 mb-1 block">{isEdit ? 'Mật khẩu mới (bỏ trống = giữ nguyên)' : 'Mật khẩu'}</label>
+                                <label className="text-xs text-muted-foreground mb-1 block">{isEdit ? 'Mật khẩu mới (bỏ trống = giữ nguyên)' : 'Mật khẩu'}</label>
                                 <input
                                     type="password" value={password} onChange={e => setPassword(e.target.value)}
                                     placeholder={isEdit ? '••••' : 'Nhập mật khẩu'}
-                                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-sm text-gray-200 placeholder-gray-500"
+                                    className="w-full px-3 py-2 bg-muted border border-input rounded-lg text-sm text-foreground placeholder-subtle-foreground"
                                 />
                             </div>
                         </div>
                         <div className="grid grid-cols-2 gap-3">
                             <div>
-                                <label className="text-xs text-gray-400 mb-1 block">Tên hiển thị</label>
+                                <label className="text-xs text-muted-foreground mb-1 block">Tên hiển thị</label>
                                 <input
                                     value={displayName} onChange={e => setDisplayName(e.target.value)}
                                     placeholder="Nguyễn Văn A"
-                                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-sm text-gray-200 placeholder-gray-500"
+                                    className="w-full px-3 py-2 bg-muted border border-input rounded-lg text-sm text-foreground placeholder-subtle-foreground"
                                 />
                             </div>
                             <div>
-                                <label className="text-xs text-gray-400 mb-1 block">Vai trò</label>
+                                <label className="text-xs text-muted-foreground mb-1 block">Vai trò</label>
                                 <select
                                     value={role} onChange={e => setRole(e.target.value)}
-                                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-sm text-gray-200"
+                                    className="w-full px-3 py-2 bg-muted border border-input rounded-lg text-sm text-foreground"
                                 >
                                     <option value="employee">Nhân viên</option>
                                     <option value="boss">BOSS</option>
@@ -986,10 +960,10 @@ function EmployeeFormModal({ employee, accounts, groups, onClose, onSaved }: {
                         {/* Group selector */}
                         {groups.length > 0 && (
                             <div>
-                                <label className="text-xs text-gray-400 mb-1 block">Nhóm</label>
+                                <label className="text-xs text-muted-foreground mb-1 block">Nhóm</label>
                                 <select
                                     value={groupId} onChange={e => setGroupId(e.target.value)}
-                                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-sm text-gray-200"
+                                    className="w-full px-3 py-2 bg-muted border border-input rounded-lg text-sm text-foreground"
                                 >
                                     <option value="">- Không có nhóm -</option>
                                     {groups.map(g => (
@@ -1003,7 +977,7 @@ function EmployeeFormModal({ employee, accounts, groups, onClose, onSaved }: {
                     {/* Permissions - grouped */}
                     <div className="space-y-2">
                         <div className="flex items-center justify-between">
-                            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Quyền truy cập module</p>
+                            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Quyền truy cập module</p>
                             <button onClick={toggleAllPermissions} className="text-[11px] text-blue-400 hover:text-blue-300">
                                 {ALL_MODULES.every(m => permissions[m.key]) ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
                             </button>
@@ -1015,7 +989,7 @@ function EmployeeFormModal({ employee, accounts, groups, onClose, onSaved }: {
                                 <label
                                     key={m.key}
                                     className={`flex items-center gap-2.5 p-2 rounded-lg cursor-pointer transition-colors ${
-                                        permissions[m.key] ? 'bg-blue-600/15 border border-blue-500/30' : 'bg-gray-700/50 border border-transparent hover:bg-gray-700'
+                                        permissions[m.key] ? 'bg-selected border border-primary/30' : 'bg-card border border-border/60 hover:bg-muted'
                                     }`}
                                 >
                                     <input
@@ -1024,28 +998,28 @@ function EmployeeFormModal({ employee, accounts, groups, onClose, onSaved }: {
                                         className="sr-only"
                                     />
                                     <span className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 ${
-                                        permissions[m.key] ? 'bg-blue-600 border-blue-500' : 'border-gray-500'
+                                        permissions[m.key] ? 'bg-blue-600 border-blue-500' : 'border-border-strong'
                                     }`}>
                                         {permissions[m.key] && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><path d="M20 6L9 17l-5-5"/></svg>}
                                     </span>
                                     <span className="text-base">{m.icon}</span>
                                     <div className="min-w-0">
-                                        <p className="text-xs text-gray-200 font-medium">{m.label}</p>
-                                        <p className="text-[10px] text-gray-400 truncate">{m.desc}</p>
+                                        <p className="text-xs text-foreground font-medium">{m.label}</p>
+                                        <p className="text-[10px] text-muted-foreground truncate">{m.desc}</p>
                                     </div>
                                 </label>
                             ))}
                         </div>
 
                         {/* Settings sub-permissions */}
-                        <div className="mt-2 pt-2 border-t border-gray-700/50">
-                            <p className="text-[11px] font-medium text-gray-400 mb-1.5"><SettingsIcon className="w-4 h-4 inline" /> Cài đặt - phân quyền chi tiết</p>
+                        <div className="mt-2 pt-2 border-t border-border/50">
+                            <p className="text-[11px] font-medium text-muted-foreground mb-1.5"><SettingsIcon className="w-4 h-4 inline" /> Cài đặt - phân quyền chi tiết</p>
                             <div className="space-y-1">
                                 {settingsModules.map(m => (
                                     <label
                                         key={m.key}
                                         className={`flex items-center gap-2.5 p-2 rounded-lg cursor-pointer transition-colors ${
-                                            permissions[m.key] ? 'bg-blue-600/15 border border-blue-500/30' : 'bg-gray-700/50 border border-transparent hover:bg-gray-700'
+                                            permissions[m.key] ? 'bg-selected border border-primary/30' : 'bg-card border border-border/60 hover:bg-muted'
                                         }`}
                                     >
                                         <input
@@ -1054,24 +1028,24 @@ function EmployeeFormModal({ employee, accounts, groups, onClose, onSaved }: {
                                             className="sr-only"
                                         />
                                         <span className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 ${
-                                            permissions[m.key] ? 'bg-blue-600 border-blue-500' : 'border-gray-500'
+                                            permissions[m.key] ? 'bg-blue-600 border-blue-500' : 'border-border-strong'
                                         }`}>
                                             {permissions[m.key] && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><path d="M20 6L9 17l-5-5"/></svg>}
                                         </span>
                                         <span className="text-base">{m.icon}</span>
                                         <div className="min-w-0 flex-1">
                                             <div className="flex items-center gap-1.5">
-                                                <p className="text-xs text-gray-200 font-medium">{m.label}</p>
+                                                <p className="text-xs text-foreground font-medium">{m.label}</p>
                                                 {'bossOnly' in m && m.bossOnly && (
                                                     <span className="text-[9px] px-1 py-0.5 rounded bg-amber-600/25 text-amber-400 font-medium leading-none">Boss</span>
                                                 )}
                                             </div>
-                                            <p className="text-[10px] text-gray-400 truncate">{m.desc}</p>
+                                            <p className="text-[10px] text-muted-foreground truncate">{m.desc}</p>
                                         </div>
                                     </label>
                                 ))}
                             </div>
-                            <p className="text-[10px] text-gray-400 mt-1.5 italic"><SunIcon className="w-4 h-4 inline" /> Giao diện, Thông báo, Lưu trữ, Giới thiệu, Log phiên bản - luôn truy cập được. Chỉ Quản lý TK Zalo và Nhân viên cần phân quyền riêng.
+                            <p className="text-[10px] text-muted-foreground mt-1.5 italic"><SunIcon className="w-4 h-4 inline" /> Giao diện, Thông báo, Lưu trữ, Giới thiệu, Log phiên bản - luôn truy cập được. Chỉ Quản lý TK Zalo và Nhân viên cần phân quyền riêng.
                             </p>
                         </div>
                     </div>
@@ -1079,20 +1053,20 @@ function EmployeeFormModal({ employee, accounts, groups, onClose, onSaved }: {
                     {/* Account access - with avatar + phone */}
                     <div className="space-y-2">
                         <div className="flex items-center justify-between">
-                            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Tài khoản Zalo được quản lý</p>
+                            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Tài khoản Zalo được quản lý</p>
                             <button onClick={toggleAllAccounts} className="text-[11px] text-blue-400 hover:text-blue-300">
                                 {selectedAccounts.size === accounts.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
                             </button>
                         </div>
                         {accounts.length === 0 ? (
-                            <p className="text-xs text-gray-400 py-2">Chưa có tài khoản Zalo nào</p>
+                            <p className="text-xs text-muted-foreground py-2">Chưa có tài khoản Zalo nào</p>
                         ) : (
                             <div className="space-y-1 max-h-48 overflow-y-auto">
                                 {accounts.map(acc => (
                                     <label
                                         key={acc.zalo_id}
                                         className={`flex items-center gap-2.5 p-2 rounded-lg cursor-pointer transition-colors ${
-                                            selectedAccounts.has(acc.zalo_id) ? 'bg-green-600/15 border border-green-500/30' : 'bg-gray-700/50 border border-transparent hover:bg-gray-700'
+                                            selectedAccounts.has(acc.zalo_id) ? 'bg-green-600/15 border border-green-500/30' : 'bg-card border border-border/60 hover:bg-muted'
                                         }`}
                                     >
                                         <input
@@ -1101,29 +1075,29 @@ function EmployeeFormModal({ employee, accounts, groups, onClose, onSaved }: {
                                             className="sr-only"
                                         />
                                         <span className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 ${
-                                            selectedAccounts.has(acc.zalo_id) ? 'bg-green-600 border-green-500' : 'border-gray-500'
+                                            selectedAccounts.has(acc.zalo_id) ? 'bg-green-600 border-green-500' : 'border-border-strong'
                                         }`}>
                                             {selectedAccounts.has(acc.zalo_id) && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><path d="M20 6L9 17l-5-5"/></svg>}
                                         </span>
                                         {/* Account avatar */}
-                                        <div className="w-7 h-7 rounded-full overflow-hidden flex-shrink-0 bg-gray-600">
+                                        <div className="w-7 h-7 rounded-full overflow-hidden flex-shrink-0 bg-accent">
                                             {acc.avatar_url ? (
                                                 <img src={acc.avatar_url} className="w-full h-full object-cover" alt=""
                                                      onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                                             ) : (
-                                                <div className="w-full h-full flex items-center justify-center text-xs text-gray-400 font-bold">
+                                                <div className="w-full h-full flex items-center justify-center text-xs text-muted-foreground font-bold">
                                                     {(acc.full_name || acc.zalo_id).charAt(0).toUpperCase()}
                                                 </div>
                                             )}
                                         </div>
-                                        <div className={`w-2 h-2 rounded-full flex-shrink-0 ${acc.isOnline ? 'bg-green-400' : 'bg-gray-500'}`} />
+                                        <div className={`w-2 h-2 rounded-full flex-shrink-0 ${acc.isOnline ? 'bg-green-400' : 'bg-accent'}`} />
                                         <div className="min-w-0 flex-1">
-                                            <p className="text-xs text-gray-200 font-medium truncate">{acc.full_name || acc.zalo_id}</p>
+                                            <p className="text-xs text-foreground font-medium truncate">{acc.full_name || acc.zalo_id}</p>
                                             <div className="flex items-center gap-2">
                                                 {acc.phone && (
-                                                    <p className="text-[10px] text-gray-400">📞 {acc.phone}</p>
+                                                    <p className="text-[10px] text-muted-foreground">📞 {acc.phone}</p>
                                                 )}
-                                                <p className="text-[10px] text-gray-400">{acc.zalo_id}</p>
+                                                <p className="text-[10px] text-muted-foreground">{acc.zalo_id}</p>
                                             </div>
                                         </div>
                                     </label>
@@ -1134,8 +1108,8 @@ function EmployeeFormModal({ employee, accounts, groups, onClose, onSaved }: {
                 </div>
 
                 {/* Footer */}
-                <div className="px-5 py-3 border-t border-gray-700 flex items-center justify-end gap-2 flex-shrink-0">
-                    <button onClick={onClose} className="px-4 py-2 text-sm text-gray-400 hover:text-gray-200 hover:bg-gray-700 rounded-lg transition-colors">
+                <div className="px-5 py-3 border-t border-border flex items-center justify-end gap-2 flex-shrink-0">
+                    <button onClick={onClose} className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors">
                         Hủy
                     </button>
                     <button

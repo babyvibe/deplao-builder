@@ -2,7 +2,10 @@
  * Tracks which settings tabs the user has already visited.
  * Tabs in WATCHLIST show a red "new" dot until the user opens them.
  * State is persisted in localStorage (per-device, not per-account).
+ * Features outside Settings use the same idea via isFeatureSeen / markFeatureSeen / useFeatureSeen.
  */
+
+import { useEffect, useState } from 'react';
 
 declare const __APP_VERSION__: string;
 
@@ -83,5 +86,59 @@ export function markAffiliateSeen(): void {
     localStorage.setItem(LS_AFFILIATE_KEY, 'true');
     window.dispatchEvent(new CustomEvent('settings:tabSeen'));
   } catch {}
+}
+
+// ── Tính năng mới ngoài Cài đặt ─────────────────────────────────────────────
+// Chấm đỏ trên nút của một tính năng mới cho tới khi người dùng mở nó lần đầu.
+// Thêm tính năng: thêm key vào FeatureKey, hiện chấm khi !useFeatureSeen(key),
+// gọi markFeatureSeen(key) ở chỗ tính năng được mở.
+
+const LS_FEATURES_KEY = 'features_seen';
+
+/** Window event fired after a feature is marked seen (detail: { key }). */
+export const FEATURE_SEEN_EVENT = 'feature:seen';
+
+/**
+ * mobileSync: nút đồng bộ từ điện thoại · plugins: trang Ứng dụng, API & Webhook · api: phần API của trang đó ·
+ * webhooks: phần Webhook (chuyển từ Cài đặt → Webhooks; chấm đỏ để khách tìm thấy chỗ mới).
+ */
+export type FeatureKey = 'mobileSync' | 'plugins' | 'api' | 'webhooks';
+
+function loadSeenFeatures(): Set<string> {
+  try {
+    const raw = localStorage.getItem(LS_FEATURES_KEY);
+    const list: unknown = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(list) ? list.filter((k): k is string => typeof k === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+
+/** True once the user has opened the feature. */
+export function isFeatureSeen(key: FeatureKey): boolean {
+  return loadSeenFeatures().has(key);
+}
+
+/** Mark a feature as opened and fire FEATURE_SEEN_EVENT (no-op when already seen). */
+export function markFeatureSeen(key: FeatureKey): void {
+  try {
+    const seen = loadSeenFeatures();
+    if (seen.has(key)) return;
+    seen.add(key);
+    localStorage.setItem(LS_FEATURES_KEY, JSON.stringify([...seen]));
+    window.dispatchEvent(new CustomEvent(FEATURE_SEEN_EVENT, { detail: { key } }));
+  } catch {}
+}
+
+/** Live "seen" flag for a feature: re-renders when any feature is marked seen. */
+export function useFeatureSeen(key: FeatureKey): boolean {
+  const [seen, setSeen] = useState(() => isFeatureSeen(key));
+  useEffect(() => {
+    const sync = () => setSeen(isFeatureSeen(key));
+    window.addEventListener(FEATURE_SEEN_EVENT, sync);
+    sync(); // a mark between the first render and this subscription would be missed otherwise
+    return () => window.removeEventListener(FEATURE_SEEN_EVENT, sync);
+  }, [key]);
+  return seen;
 }
 

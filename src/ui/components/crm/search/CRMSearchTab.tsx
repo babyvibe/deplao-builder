@@ -1,12 +1,15 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
 import { useChatStore } from '@/store/chatStore';
-import DataAccessor from '@/lib/data/DataAccessor';
+import DataAccessor, { isReadFailure } from '@/lib/data/DataAccessor';
+import { useEmployeeResync } from '@/hooks/useEmployeeResync';
+import { readOutcome } from '@/lib/crm/loadFailure';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
 import { extractApiError } from '@/utils/apiError';
 import { UserProfilePopup } from '../../common/UserProfilePopup';
 import AddFriendModal from '../../common/AddFriendModal';
+import LoadFailedNotice from '../LoadFailedNotice';
 import { CloseIcon} from '@/components/common/icons';
 
 /**
@@ -24,10 +27,17 @@ export default function CRMSearchTab() {
   const [sendingFriendReq, setSendingFriendReq] = useState(false);
   const [profilePopup, setProfilePopup] = useState<{ userId: string; x: number; y: number } | null>(null);
   const [friends, setFriends] = useState<any[]>([]);
+  // Lần tải danh sách bạn bè gần nhất lỗi (employee: mất kết nối BOSS) — trạng thái "Đã là bạn bè" chưa chắc đúng
+  const [friendsFailed, setFriendsFailed] = useState(false);
+  const [friendsLoading, setFriendsLoading] = useState(false);
+  /** Tài khoản của `friends` đang giữ: danh sách của tài khoản khác không được dùng để báo "Đã là bạn bè". */
+  const friendsOwnerRef = useRef<string | null>(null);
+  const friendsSeqRef = useRef(0);
 
-  const { getActiveAccount } = useAccountStore();
+  const getActiveAccount = useAccountStore((s) => s.getActiveAccount);
   const activeAccountId = useAccountStore((s) => s.activeAccountId);
-  const { showNotification, openQuickChat } = useAppStore();
+  const showNotification = useAppStore((s) => s.showNotification);
+  const openQuickChat = useAppStore((s) => s.openQuickChat);
   // Không subscribe để tránh re-render khi contacts thay đổi
   // Đọc trực tiếp từ store khi cần (dòng 158)
 
@@ -50,15 +60,47 @@ export default function CRMSearchTab() {
   };
 
   // Load friends from DB to check if already friends
-  const friendsLoadedRef = useRef<string | null>(null);
+  const loadFriends = useCallback(async () => {
+    if (!activeAccountId) return;
+    const accountId = activeAccountId;
+    const seq = ++friendsSeqRef.current;
+    setFriendsLoading(true);
+    let res: any;
+    try {
+      res = await DataAccessor.getFriends({ zaloId: accountId });
+    } catch (err: any) {
+      res = { success: false, error: err?.message };
+    }
+    if (seq !== friendsSeqRef.current) return; // đã đổi tài khoản / có lần tải mới hơn
+    setFriendsLoading(false);
+    if (isReadFailure(res)) {
+      // Lỗi → giữ danh sách của đúng tài khoản; của tài khoản khác thì bỏ
+      if (readOutcome(true, friendsOwnerRef.current, accountId) === 'clear') {
+        friendsOwnerRef.current = accountId;
+        setFriends([]);
+      }
+      setFriendsFailed(true);
+      return;
+    }
+    if (res?.friends) setFriends(res.friends);
+    else if (friendsOwnerRef.current !== accountId) setFriends([]);
+    friendsOwnerRef.current = accountId;
+    setFriendsFailed(false);
+  }, [activeAccountId]);
+
   useEffect(() => {
     if (!activeAccountId) return;
-    if (friendsLoadedRef.current === activeAccountId) return;
-    friendsLoadedRef.current = activeAccountId;
-    DataAccessor.getFriends({ zaloId: activeAccountId }).then(res => {
-      if (res?.friends) setFriends(res.friends);
-    }).catch(() => {});
+    if (friendsOwnerRef.current !== activeAccountId) {
+      // Đổi tài khoản: bỏ ngay bạn bè của tài khoản trước (không dùng để báo "Đã là bạn bè" cho tài khoản này)
+      friendsOwnerRef.current = null;
+      setFriends([]);
+      setFriendsFailed(false);
+    }
+    loadFriends();
   }, [activeAccountId]);
+
+  // Chế độ nhân viên: kết nối BOSS phục hồi → tải lại danh sách bạn bè
+  useEmployeeResync(loadFriends);
 
   // Load recommendations on mount
   useEffect(() => {
@@ -136,12 +178,12 @@ export default function CRMSearchTab() {
           placeholder="Nhập số điện thoại..."
           autoFocus
           className="input-field text-sm flex-1" />
-        <button onClick={handleSearch} disabled={searching} className="btn-primary text-white px-3 py-2 text-sm">
+        <button onClick={handleSearch} disabled={searching} className="btn-primary text-foreground px-3 py-2 text-sm">
           {searching ? '...' : 'Tìm'}
         </button>
       </div>
       {searchResult && (
-        <div className="bg-gray-700 rounded-xl p-4">
+        <div className="bg-muted rounded-xl p-4">
           <div className="flex items-center gap-3 mb-4">
             <button
               onClick={(e) => setProfilePopup({ userId: searchResult.uid, x: e.clientX, y: e.clientY })}
@@ -162,11 +204,11 @@ export default function CRMSearchTab() {
                 const searchRealName = searchResult.display_name || searchResult.zalo_name || '';
                 const searchDisplayName = searchAlias || searchRealName;
                 return <>
-                  <p className="text-white font-medium truncate">{searchDisplayName}</p>
+                  <p className="text-foreground font-medium truncate">{searchDisplayName}</p>
                   {searchAlias && searchAlias !== searchRealName && (
-                    <p className="text-xs text-gray-400 truncate">({searchRealName})</p>
+                    <p className="text-xs text-muted-foreground truncate">({searchRealName})</p>
                   )}
-                  {!searchAlias && <p className="text-xs text-gray-400">{searchResult.uid}</p>}
+                  {!searchAlias && <p className="text-xs text-muted-foreground">{searchResult.uid}</p>}
                 </>;
               })()}
             </div>
@@ -176,25 +218,34 @@ export default function CRMSearchTab() {
               ? <span className="flex-1 text-center text-sm text-red-400 py-2 border border-red-700 rounded-lg"><CloseIcon className="w-4 h-4 inline" /> Đã chặn</span>
               : isAlreadyFriend
                 ? <span className="flex-1 text-center text-sm text-green-400 py-2 border border-green-700 rounded-lg">✓ Đã là bạn bè</span>
-                : <button onClick={() => openAddFriendModal(searchResult.uid, searchResult.display_name || searchResult.zalo_name, searchResult.avatar)} className="btn-primary text-white flex-1 text-sm">Kết bạn</button>}
+                : <button onClick={() => openAddFriendModal(searchResult.uid, searchResult.display_name || searchResult.zalo_name, searchResult.avatar)} className="btn-primary text-foreground flex-1 text-sm">Kết bạn</button>}
             <button onClick={() => handleMessage(searchResult.uid, { displayName: searchResult.display_name || searchResult.zalo_name, avatar: searchResult.avatar })}
-              className="btn-primary text-white flex-1 text-sm flex items-center justify-center gap-1">
+              className="btn-primary text-foreground flex-1 text-sm flex items-center justify-center gap-1">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
               </svg>
               Nhắn tin
             </button>
           </div>
+          {/* Không đọc được danh sách bạn bè → "Kết bạn" có thể hiện cho người đã là bạn: nói rõ thay vì im lặng */}
+          {friendsFailed && !isBlocked && !isAlreadyFriend && (
+            <LoadFailedNotice
+              className="justify-start px-0 pb-0 pt-2"
+              text="Không tải được danh sách bạn bè — chưa kiểm tra được đã là bạn bè hay chưa"
+              onRetry={loadFriends}
+              busy={friendsLoading}
+            />
+          )}
         </div>
       )}
       {!searching && searchPhone && searchResult === null && (
-        <p className="text-gray-400 text-sm text-center">Không tìm thấy người dùng</p>
+        <p className="text-muted-foreground text-sm text-center">Không tìm thấy người dùng</p>
       )}
 
       {/* ── Gợi ý kết bạn carousel ── */}
       <div className="mt-5">
         <div className="flex items-center justify-between mb-2.5">
-          <span className="text-xs font-semibold text-gray-300 uppercase tracking-wide">Gợi ý kết bạn</span>
+          <span className="text-xs font-semibold text-foreground/80 uppercase tracking-wide">Gợi ý kết bạn</span>
           <button onClick={loadRecommendations} disabled={recsLoading}
             className="flex items-center gap-1 text-[11px] text-blue-400 hover:text-blue-300 disabled:opacity-40 transition-colors">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
@@ -208,11 +259,11 @@ export default function CRMSearchTab() {
         {recsLoading ? (
           <div className="flex gap-3 overflow-hidden">
             {[1, 2, 3].map(i => (
-              <div key={i} className="flex-shrink-0 w-36 h-44 rounded-xl bg-gray-700/50 animate-pulse" />
+              <div key={i} className="flex-shrink-0 w-36 h-44 rounded-xl bg-muted/50 animate-pulse" />
             ))}
           </div>
         ) : recommendations.filter(r => !dismissedRecs.has(r.userId)).length === 0 ? (
-          <p className="text-xs text-gray-400 text-center py-4">Không có gợi ý nào</p>
+          <p className="text-xs text-muted-foreground text-center py-4">Không có gợi ý nào</p>
         ) : (
           <div className="flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory"
             style={{ scrollbarWidth: 'thin', scrollbarColor: '#4B5563 transparent' }}>
@@ -228,7 +279,7 @@ export default function CRMSearchTab() {
                 const phone = rec.phoneNumber || '';
                 return (
                   <div key={rec.userId}
-                    className="flex-shrink-0 w-36 snap-start flex flex-col items-center bg-gray-800 border border-gray-700 rounded-xl p-3 gap-2 transition-colors hover:border-gray-600">
+                    className="flex-shrink-0 w-36 snap-start flex flex-col items-center bg-card border border-border rounded-xl p-3 gap-2 transition-colors hover:border-input">
                     <button
                       onClick={(e) => setProfilePopup({ userId: rec.userId, x: e.clientX, y: e.clientY })}
                       className="focus:outline-none mt-1"
@@ -241,9 +292,9 @@ export default function CRMSearchTab() {
                           </div>}
                     </button>
                     <div className="text-center w-full min-w-0">
-                      <p className="text-xs font-semibold text-gray-100 truncate leading-tight">{name}</p>
-                      {phone && <p className="text-[11px] text-gray-400 truncate mt-0.5">{phone}</p>}
-                      <p className="text-[11px] text-gray-400 truncate mt-0.5 italic" title={reason}>{reason}</p>
+                      <p className="text-xs font-semibold text-foreground truncate leading-tight">{name}</p>
+                      {phone && <p className="text-[11px] text-muted-foreground truncate mt-0.5">{phone}</p>}
+                      <p className="text-[11px] text-muted-foreground truncate mt-0.5 italic" title={reason}>{reason}</p>
                     </div>
                     <div className="flex gap-1.5 w-full mt-auto">
                       <button onClick={() => openAddFriendModal(rec.userId, name, rec.avatar || '')}
@@ -253,7 +304,7 @@ export default function CRMSearchTab() {
                       <button
                         onClick={() => setDismissedRecs(prev => new Set([...prev, rec.userId]))}
                         title="Bỏ qua"
-                        className="w-7 flex-shrink-0 flex items-center justify-center bg-gray-700 hover:bg-gray-600 rounded-lg text-gray-400 hover:text-gray-200 transition-colors text-xs">
+                        className="w-7 flex-shrink-0 flex items-center justify-center bg-muted hover:bg-accent rounded-lg text-muted-foreground hover:text-foreground transition-colors text-xs">
                         ✕
                       </button>
                     </div>

@@ -29,7 +29,7 @@ export default function AddFriendModal({ displayName, avatar, sending, onConfirm
       onClick={onClose}
     >
       <div
-        className="bg-gray-800 border border-gray-600 rounded-2xl w-80 p-5 shadow-2xl"
+        className="bg-card border border-input rounded-2xl w-80 p-5 shadow-2xl"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
@@ -40,8 +40,8 @@ export default function AddFriendModal({ displayName, avatar, sending, onConfirm
                 {(displayName || '?').charAt(0).toUpperCase()}
               </div>}
           <div>
-            <p className="text-sm font-semibold text-white truncate max-w-[180px]">{displayName}</p>
-            <p className="text-xs text-gray-400 mt-0.5">Soạn lời mời kết bạn</p>
+            <p className="text-sm font-semibold text-foreground truncate max-w-[180px]">{displayName}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Soạn lời mời kết bạn</p>
           </div>
         </div>
 
@@ -53,17 +53,17 @@ export default function AddFriendModal({ displayName, avatar, sending, onConfirm
           rows={3}
           maxLength={200}
           autoFocus
-          className="w-full bg-gray-700 border border-gray-600 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 resize-none mb-1"
+          className="w-full bg-muted border border-input rounded-xl px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 resize-none mb-1"
           placeholder="Lời nhắn kết bạn..."
         />
-        <p className="text-[11px] text-gray-400 text-right mb-3">{msg.length}/200 · Ctrl+Enter để gửi</p>
+        <p className="text-[11px] text-muted-foreground text-right mb-3">{msg.length}/200 · Ctrl+Enter để gửi</p>
 
         {/* Actions */}
         <div className="flex gap-2">
           <button
             onClick={onClose}
             disabled={sending}
-            className="flex-1 py-2 rounded-xl bg-gray-700 text-gray-300 text-sm hover:bg-gray-600 transition-colors disabled:opacity-50"
+            className="flex-1 py-2 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent transition-colors disabled:opacity-50"
           >
             Hủy
           </button>

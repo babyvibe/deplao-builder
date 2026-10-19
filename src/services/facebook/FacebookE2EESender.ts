@@ -13,8 +13,25 @@ import {
   parseE2EECookies,
   resolveE2EEBinaryPath,
 } from './FacebookUtils';
-import { FBE2EESendResult } from './FacebookTypes';
+import { FBE2EESendResult, FBSendResult } from './FacebookTypes';
 import Logger from '../../utils/Logger';
+
+/** Error shown for an E2EE send the server did not acknowledge in time. */
+export const UNCERTAIN_E2EE_SEND_ERROR =
+  'Facebook chưa xác nhận tin nhắn E2EE - tin nhắn có thể đã được gửi. Hãy kiểm tra hội thoại trước khi gửi lại.';
+
+/**
+ * Map a bridge E2EE text send to FBSendResult. fbchat-v2 2.3.2 reports
+ * deliveryStatus 'unknown' when the server acknowledgement timed out: the
+ * message may have been delivered, so it is not a success and is not retried.
+ */
+export function e2eeSendOutcome(result: FBE2EESendResult): FBSendResult {
+  const timestamp = result.timestampMs || Date.now();
+  if (result.deliveryStatus === 'unknown') {
+    return { success: false, uncertain: true, messageId: result.messageId, timestamp, error: UNCERTAIN_E2EE_SEND_ERROR };
+  }
+  return { success: true, messageId: result.messageId, timestamp };
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -123,12 +140,7 @@ export class FacebookE2EESender {
     text: string,
     replyMessageId: string = '',
     replySenderJid: string | number = '',
-  ): Promise<{
-    success: boolean;
-    messageId?: string;
-    timestamp?: number;
-    error?: string;
-  }> {
+  ): Promise<FBSendResult> {
     try {
       const normalizedJid = normalizeChatJid(chatJid);
       const normalizedReplySenderJid = replySenderJid
@@ -143,11 +155,7 @@ export class FacebookE2EESender {
         replyToSenderJid: normalizedReplySenderJid,
       });
 
-      return {
-        success: true,
-        messageId: result.messageId,
-        timestamp: result.timestampMs || Date.now(),
-      };
+      return e2eeSendOutcome(result);
     } catch (err: any) {
       if (err instanceof BridgeError || err instanceof BridgeNotReadyError) {
         return { success: false, error: err.message };

@@ -42,13 +42,13 @@ function CreateWorkflowChannelModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="w-full max-w-xl rounded-2xl border border-gray-700 bg-gray-900 shadow-2xl overflow-hidden">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
+      <div className="w-full max-w-xl rounded-2xl border border-border bg-popover shadow-2xl overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
           <div>
-            <h2 className="text-white font-semibold">Chọn kênh cho workflow mới</h2>
-            <p className="text-gray-400 text-sm mt-0.5">Mỗi workflow hiện được cấu hình theo một kênh riêng để trigger và action đúng loại.</p>
+            <h2 className="text-foreground font-semibold">Chọn kênh cho workflow mới</h2>
+            <p className="text-muted-foreground text-sm mt-0.5">Mỗi workflow hiện được cấu hình theo một kênh riêng để trigger và action đúng loại.</p>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-white">
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
@@ -59,53 +59,53 @@ function CreateWorkflowChannelModal({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <button
               onClick={() => onSelect('zalo')}
-              className="flex flex-col items-center justify-center gap-3 p-6 rounded-2xl border-2 border-gray-600 hover:border-blue-500 hover:bg-blue-500/10 bg-gray-800/60 transition-all group"
+              className="flex flex-col items-center justify-center gap-3 p-6 rounded-2xl border-2 border-input hover:border-blue-500 hover:bg-blue-500/10 bg-card transition-all group"
             >
               <div className="w-14 h-14 rounded-full bg-[#2B6AFF]/20 flex items-center justify-center group-hover:bg-[#2B6AFF]/30 transition-colors">
                 <ZaloIcon size={32} />
               </div>
               <div className="text-center">
-                <p className="text-white font-semibold text-sm">Zalo</p>
-                <p className="text-gray-400 text-xs mt-0.5">Tạo workflow cho Zalo</p>
+                <p className="text-foreground font-semibold text-sm">Zalo</p>
+                <p className="text-muted-foreground text-xs mt-0.5">Tạo workflow cho Zalo</p>
               </div>
             </button>
 
             <button
               onClick={() => onSelect('facebook')}
-              className="flex flex-col items-center justify-center gap-3 p-6 rounded-2xl border-2 border-gray-600 hover:border-blue-500 hover:bg-blue-500/10 bg-gray-800/60 transition-all group"
+              className="flex flex-col items-center justify-center gap-3 p-6 rounded-2xl border-2 border-input hover:border-blue-500 hover:bg-blue-500/10 bg-card transition-all group"
             >
               <div className="w-14 h-14 rounded-full bg-[#1877F2]/20 flex items-center justify-center group-hover:bg-[#1877F2]/30 transition-colors">
                 <FacebookIcon size={32} />
               </div>
               <div className="text-center">
-                <p className="text-white font-semibold text-sm">Facebook</p>
-                <p className="text-gray-400 text-xs mt-0.5">Tạo workflow cho Facebook</p>
+                <p className="text-foreground font-semibold text-sm">Facebook</p>
+                <p className="text-muted-foreground text-xs mt-0.5">Tạo workflow cho Facebook</p>
               </div>
             </button>
 
             <button
               onClick={() => onSelect('telegram_user')}
-              className="flex flex-col items-center justify-center gap-3 p-6 rounded-2xl border-2 border-gray-600 hover:border-cyan-500 hover:bg-cyan-500/10 bg-gray-800/60 transition-all group"
+              className="flex flex-col items-center justify-center gap-3 p-6 rounded-2xl border-2 border-input hover:border-cyan-500 hover:bg-cyan-500/10 bg-card transition-all group"
             >
               <div className="w-14 h-14 rounded-full bg-[#0088CC]/20 flex items-center justify-center group-hover:bg-[#0088CC]/30 transition-colors">
                 <TelegramIcon size={32} />
               </div>
               <div className="text-center">
-                <p className="text-white font-semibold text-sm">Telegram (Cá nhân)</p>
-                <p className="text-gray-400 text-xs mt-0.5">MTProto — tài khoản cá nhân</p>
+                <p className="text-foreground font-semibold text-sm">Telegram (Cá nhân)</p>
+                <p className="text-muted-foreground text-xs mt-0.5">MTProto — tài khoản cá nhân</p>
               </div>
             </button>
 
             <button
               onClick={() => onSelect('telegram_bot')}
-              className="flex flex-col items-center justify-center gap-3 p-6 rounded-2xl border-2 border-gray-600 hover:border-cyan-500 hover:bg-cyan-500/10 bg-gray-800/60 transition-all group"
+              className="flex flex-col items-center justify-center gap-3 p-6 rounded-2xl border-2 border-input hover:border-cyan-500 hover:bg-cyan-500/10 bg-card transition-all group"
             >
               <div className="w-14 h-14 rounded-full bg-[#0088CC]/20 flex items-center justify-center group-hover:bg-[#0088CC]/30 transition-colors">
                 <TelegramIcon size={32} />
               </div>
               <div className="text-center">
-                <p className="text-white font-semibold text-sm">Telegram (Bot)</p>
-                <p className="text-gray-400 text-xs mt-0.5">Bot API — tài khoản bot</p>
+                <p className="text-foreground font-semibold text-sm">Telegram (Bot)</p>
+                <p className="text-muted-foreground text-xs mt-0.5">Bot API — tài khoản bot</p>
               </div>
             </button>
           </div>
@@ -155,7 +155,7 @@ function PageFilterButton({
         className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-colors border ${
           filterPages.length > 0
             ? 'bg-blue-600/20 border-blue-500/50 text-blue-300 hover:bg-blue-600/30'
-            : 'bg-gray-800 border-gray-700 text-gray-300 hover:border-gray-600 hover:text-white'
+            : 'bg-card border-border text-foreground/80 hover:border-input hover:text-foreground'
         }`}
       >
         {/* show avatar of selected account when exactly 1 */}
@@ -187,10 +187,10 @@ function PageFilterButton({
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-1.5 w-[270px] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 overflow-hidden">
+        <div className="absolute right-0 top-full mt-1.5 w-[270px] bg-popover border border-border rounded-xl shadow-2xl z-50 overflow-hidden">
           {/* Dropdown header */}
-          <div className="px-3 py-2 border-b border-gray-800 flex items-center justify-between">
-            <span className="text-gray-400 text-[11px] font-medium">Lọc theo tài khoản</span>
+          <div className="px-3 py-2 border-b border-border flex items-center justify-between">
+            <span className="text-muted-foreground text-[11px] font-medium">Lọc theo tài khoản</span>
             {filterPages.length > 0 && (
               <button onClick={() => onChange([])} className="text-blue-400 text-[11px] hover:text-blue-300 transition-colors">
                 Xóa lọc
@@ -199,12 +199,12 @@ function PageFilterButton({
           </div>
 
           {/* "Tất cả" option */}
-          <label className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer transition-colors hover:bg-gray-800/70 ${filterPages.length === 0 ? 'bg-gray-800/40' : ''}`}>
+          <label className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer transition-colors hover:bg-card/70 ${filterPages.length === 0 ? 'bg-card/40' : ''}`}>
             <input type="checkbox" checked={filterPages.length === 0} onChange={() => onChange([])} className="accent-blue-500 w-3.5 h-3.5" />
-            <span className="text-white text-xs font-medium">Tất cả tài khoản</span>
+            <span className="text-foreground text-xs font-medium">Tất cả tài khoản</span>
           </label>
 
-          <div className="h-px bg-gray-800 mx-3" />
+          <div className="h-px bg-card mx-3" />
 
           {/* Per-account options */}
           <div className="max-h-[240px] overflow-y-auto">
@@ -212,7 +212,7 @@ function PageFilterButton({
               const selected = filterPages.includes(acc.zalo_id);
               return (
                 <label key={acc.zalo_id}
-                  className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer transition-colors hover:bg-gray-800/70 ${selected ? 'bg-gray-800/40' : ''}`}>
+                  className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer transition-colors hover:bg-card/70 ${selected ? 'bg-card/40' : ''}`}>
                   <input type="checkbox" checked={selected} onChange={() => toggle(acc.zalo_id)} className="accent-blue-500 w-3.5 h-3.5 flex-shrink-0" />
                   {acc.avatar_url
                     ? <img src={acc.avatar_url} className="w-6 h-6 rounded-full object-cover flex-shrink-0" alt="" />
@@ -221,9 +221,9 @@ function PageFilterButton({
                       </div>
                   }
                   <div className="min-w-0 flex-1">
-                    <p className="text-white text-xs font-medium truncate">{acc.full_name || acc.zalo_id}</p>
-                    {acc.phone && <p className="text-gray-400 text-[11px]">{acc.phone}</p>}
-                    <p className="text-gray-400 text-[11px]">{acc.zalo_id}</p>
+                    <p className="text-foreground text-xs font-medium truncate">{acc.full_name || acc.zalo_id}</p>
+                    {acc.phone && <p className="text-muted-foreground text-[11px]">{acc.phone}</p>}
+                    <p className="text-muted-foreground text-[11px]">{acc.zalo_id}</p>
                   </div>
                   {selected && (
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-blue-400 flex-shrink-0">
@@ -274,33 +274,33 @@ function CloneModal({ workflow, accounts, onClose, onDone }: {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl w-[380px] overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-700 flex items-center justify-between">
+      <div className="bg-popover border border-border rounded-2xl shadow-2xl w-[380px] overflow-hidden">
+        <div className="px-5 py-4 border-b border-border flex items-center justify-between">
           <div>
-            <p className="text-white font-semibold text-sm">Nhân bản workflow</p>
-            <p className="text-gray-400 text-[11px] mt-0.5 truncate">"{workflow.name}"</p>
+            <p className="text-foreground font-semibold text-sm">Nhân bản workflow</p>
+            <p className="text-muted-foreground text-[11px] mt-0.5 truncate">"{workflow.name}"</p>
           </div>
-          <button onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 transition-colors">
+          <button onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
           </button>
         </div>
         <div className="p-5 space-y-4">
-          <p className="text-gray-400 text-xs leading-relaxed">
+          <p className="text-muted-foreground text-xs leading-relaxed">
             Chọn tài khoản đích để sao chép workflow. Tất cả nodes, edges và cấu hình sẽ được copy - chỉ tài khoản áp dụng thay đổi.
           </p>
           {available.length === 0 ? (
-            <div className="bg-gray-800/60 border border-gray-700 rounded-xl px-4 py-5 text-center">
-              <p className="text-gray-400 text-xs">Không có tài khoản nào khác để nhân bản vào.</p>
-              <p className="text-gray-400 text-[11px] mt-1">Đăng nhập thêm tài khoản Zalo để dùng tính năng này.</p>
+            <div className="bg-card border border-border rounded-xl px-4 py-5 text-center">
+              <p className="text-muted-foreground text-xs">Không có tài khoản nào khác để nhân bản vào.</p>
+              <p className="text-muted-foreground text-[11px] mt-1">Đăng nhập thêm tài khoản Zalo để dùng tính năng này.</p>
             </div>
           ) : (
             <div className="space-y-2">
               {available.map(acc => (
                 <label key={acc.zalo_id}
                   className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border cursor-pointer transition-colors ${
-                    targetId === acc.zalo_id ? 'bg-blue-500/10 border-blue-500/50' : 'bg-gray-800/50 border-gray-700/60 hover:border-gray-600'
+                    targetId === acc.zalo_id ? 'bg-blue-500/10 border-blue-500/50' : 'bg-card/50 border-border/60 hover:border-input'
                   }`}>
                   <input type="radio" name="cloneTarget" value={acc.zalo_id}
                     checked={targetId === acc.zalo_id} onChange={() => setTargetId(acc.zalo_id)}
@@ -312,9 +312,9 @@ function CloneModal({ workflow, accounts, onClose, onDone }: {
                       </div>
                   }
                   <div className="min-w-0 flex-1">
-                    <p className="text-white text-xs font-medium truncate">{acc.full_name || acc.zalo_id}</p>
-                    {acc.phone && <p className="text-gray-400 text-[11px]">{acc.phone}</p>}
-                    <p className="text-gray-400 text-[11px]">{acc.zalo_id}</p>
+                    <p className="text-foreground text-xs font-medium truncate">{acc.full_name || acc.zalo_id}</p>
+                    {acc.phone && <p className="text-muted-foreground text-[11px]">{acc.phone}</p>}
+                    <p className="text-muted-foreground text-[11px]">{acc.zalo_id}</p>
                   </div>
                   {targetId === acc.zalo_id && (
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-blue-400 flex-shrink-0">
@@ -328,7 +328,7 @@ function CloneModal({ workflow, accounts, onClose, onDone }: {
         </div>
         {available.length > 0 && (
           <div className="px-5 pb-5 flex gap-2">
-            <button onClick={onClose} className="flex-1 px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm font-medium rounded-xl transition-colors">
+            <button onClick={onClose} className="flex-1 px-4 py-2 bg-card hover:bg-muted text-foreground/80 text-sm font-medium rounded-xl transition-colors">
               Hủy
             </button>
             <button onClick={handleClone} disabled={!targetId || loading}
@@ -376,17 +376,17 @@ function CloneAllModal({ sourceZaloId, accounts, onClose, onDone }: {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl w-[400px] overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-700 flex items-center justify-between">
+      <div className="bg-popover border border-border rounded-2xl shadow-2xl w-[400px] overflow-hidden">
+        <div className="px-5 py-4 border-b border-border flex items-center justify-between">
           <div>
-            <p className="text-white font-semibold text-sm">Nhân bản tất cả workflows</p>
-            <p className="text-gray-400 text-[11px] mt-0.5 flex items-center gap-1.5">
+            <p className="text-foreground font-semibold text-sm">Nhân bản tất cả workflows</p>
+            <p className="text-muted-foreground text-[11px] mt-0.5 flex items-center gap-1.5">
               <span>Từ:</span>
               {sourceAcc?.avatar_url && <img src={sourceAcc.avatar_url} className="w-4 h-4 rounded-full object-cover" alt="" />}
               <span className="text-blue-400">{sourceAcc?.full_name || sourceZaloId}</span>
             </p>
           </div>
-          <button onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 transition-colors">
+          <button onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
@@ -399,16 +399,16 @@ function CloneAllModal({ sourceZaloId, accounts, onClose, onDone }: {
             </p>
           </div>
           {available.length === 0 ? (
-            <div className="bg-gray-800/60 border border-gray-700 rounded-xl px-4 py-5 text-center">
-              <p className="text-gray-400 text-xs">Không có tài khoản nào khác để nhân bản vào.</p>
+            <div className="bg-card border border-border rounded-xl px-4 py-5 text-center">
+              <p className="text-muted-foreground text-xs">Không có tài khoản nào khác để nhân bản vào.</p>
             </div>
           ) : (
             <div className="space-y-2">
-              <p className="text-gray-400 text-xs font-medium">Chọn tài khoản đích:</p>
+              <p className="text-muted-foreground text-xs font-medium">Chọn tài khoản đích:</p>
               {available.map(acc => (
                 <label key={acc.zalo_id}
                   className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border cursor-pointer transition-colors ${
-                    targetId === acc.zalo_id ? 'bg-blue-500/10 border-blue-500/50' : 'bg-gray-800/50 border-gray-700/60 hover:border-gray-600'
+                    targetId === acc.zalo_id ? 'bg-blue-500/10 border-blue-500/50' : 'bg-card/50 border-border/60 hover:border-input'
                   }`}>
                   <input type="radio" name="cloneAllTarget" value={acc.zalo_id}
                     checked={targetId === acc.zalo_id} onChange={() => setTargetId(acc.zalo_id)}
@@ -420,9 +420,9 @@ function CloneAllModal({ sourceZaloId, accounts, onClose, onDone }: {
                       </div>
                   }
                   <div className="min-w-0 flex-1">
-                    <p className="text-white text-xs font-medium truncate">{acc.full_name || acc.zalo_id}</p>
-                    {acc.phone && <p className="text-gray-400 text-[11px]">{acc.phone}</p>}
-                    <p className="text-gray-400 text-[11px]">{acc.zalo_id}</p>
+                    <p className="text-foreground text-xs font-medium truncate">{acc.full_name || acc.zalo_id}</p>
+                    {acc.phone && <p className="text-muted-foreground text-[11px]">{acc.phone}</p>}
+                    <p className="text-muted-foreground text-[11px]">{acc.zalo_id}</p>
                   </div>
                   {targetId === acc.zalo_id && (
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-blue-400 flex-shrink-0">
@@ -436,7 +436,7 @@ function CloneAllModal({ sourceZaloId, accounts, onClose, onDone }: {
         </div>
         {available.length > 0 && (
           <div className="px-5 pb-5 flex gap-2">
-            <button onClick={onClose} className="flex-1 px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm font-medium rounded-xl transition-colors">
+            <button onClick={onClose} className="flex-1 px-4 py-2 bg-card hover:bg-muted text-foreground/80 text-sm font-medium rounded-xl transition-colors">
               Hủy
             </button>
             <button onClick={handleCloneAll} disabled={!targetId || loading}
@@ -481,7 +481,8 @@ function TestRunModal({ accounts, workflowPageIds, triggerType, onRun, onClose }
     if (!selectedAccount) return;
     setLoadingFriends(true);
     setSelectedFriend(null);
-    ipc.db?.getFriends({ zaloId: selectedAccount }).then((res: any) => {
+    // DataAccessor: chế độ nhân viên đọc danh sách bạn từ Boss (IPC trả stub rỗng → danh sách luôn trống)
+    DataAccessor.getFriends({ zaloId: selectedAccount }).then((res: any) => {
       if (res?.success) {
         const list = (res.friends || []).filter((f: any) => f.userId !== selectedAccount);
         setFriends(list);
@@ -522,13 +523,13 @@ function TestRunModal({ accounts, workflowPageIds, triggerType, onRun, onClose }
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl w-[440px] max-h-[85vh] flex flex-col overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-700 flex items-center justify-between flex-shrink-0">
+      <div className="bg-popover border border-border rounded-2xl shadow-2xl w-[440px] max-h-[85vh] flex flex-col overflow-hidden">
+        <div className="px-5 py-4 border-b border-border flex items-center justify-between flex-shrink-0">
           <div>
-            <p className="text-white font-semibold text-sm flex items-center gap-2"><PlayIcon className="w-4 h-4" /> Chạy thử Workflow</p>
-            <p className="text-gray-400 text-[11px] mt-0.5">{isFriendRequest ? 'Chọn người để mô phỏng lời mời kết bạn' : 'Chọn người nhận để gửi tin nhắn thử nghiệm'}</p>
+            <p className="text-foreground font-semibold text-sm flex items-center gap-2"><PlayIcon className="w-4 h-4" /> Chạy thử Workflow</p>
+            <p className="text-muted-foreground text-[11px] mt-0.5">{isFriendRequest ? 'Chọn người để mô phỏng lời mời kết bạn' : 'Chọn người nhận để gửi tin nhắn thử nghiệm'}</p>
           </div>
-          <button onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 transition-colors">
+          <button onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
@@ -537,7 +538,7 @@ function TestRunModal({ accounts, workflowPageIds, triggerType, onRun, onClose }
         <div className="p-5 space-y-4 overflow-y-auto flex-1">
           {availableAccounts.length > 1 && (
             <div>
-              <label className="text-gray-400 text-xs font-medium mb-1.5 block">Tài khoản gửi</label>
+              <label className="text-muted-foreground text-xs font-medium mb-1.5 block">Tài khoản gửi</label>
               <div className="space-y-1.5">
                 {availableAccounts.map(acc => (
                   <button key={acc.zalo_id} type="button"
@@ -545,7 +546,7 @@ function TestRunModal({ accounts, workflowPageIds, triggerType, onRun, onClose }
                     className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl border text-left transition-all ${
                       selectedAccount === acc.zalo_id
                         ? 'bg-blue-600/20 border-blue-500/60 ring-1 ring-blue-500/30'
-                        : 'bg-gray-800/60 border-gray-700/50 hover:border-gray-600'
+                        : 'bg-card/60 border-border/50 hover:border-input'
                     }`}>
                     {acc.avatar_url
                       ? <img src={acc.avatar_url} className="w-7 h-7 rounded-full object-cover flex-shrink-0" alt="" />
@@ -553,7 +554,7 @@ function TestRunModal({ accounts, workflowPageIds, triggerType, onRun, onClose }
                           {(acc.full_name || acc.zalo_id).charAt(0).toUpperCase()}
                         </div>}
                     <div className="min-w-0 flex-1">
-                      <p className={`text-sm font-medium truncate ${selectedAccount === acc.zalo_id ? 'text-blue-300' : 'text-gray-200'}`}>
+                      <p className={`text-sm font-medium truncate ${selectedAccount === acc.zalo_id ? 'text-blue-300' : 'text-foreground'}`}>
                         {acc.full_name || acc.zalo_id}
                       </p>
                     </div>
@@ -564,33 +565,33 @@ function TestRunModal({ accounts, workflowPageIds, triggerType, onRun, onClose }
           )}
           {!isFriendRequest && (
           <div>
-            <label className="text-gray-400 text-xs font-medium mb-1.5 block">Nội dung tin nhắn thử ($trigger.content)</label>
+            <label className="text-muted-foreground text-xs font-medium mb-1.5 block">Nội dung tin nhắn thử ($trigger.content)</label>
             <textarea
               value={testContent}
               onChange={e => setTestContent(e.target.value)}
-              className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-600 focus:border-blue-500 outline-none resize-none"
+              className="w-full bg-card border border-border rounded-xl px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:border-blue-500 outline-none resize-none"
               rows={2}
               placeholder="Nhập tin nhắn thử nghiệm..."
             />
           </div>
           )}
           <div>
-            <label className="text-gray-400 text-xs font-medium mb-1.5 block">
-              {isFriendRequest ? 'Chọn người gửi lời mời kết bạn' : 'Chọn người nhận'} <span className="text-gray-400">(không thể gửi cho chính mình)</span>
+            <label className="text-muted-foreground text-xs font-medium mb-1.5 block">
+              {isFriendRequest ? 'Chọn người gửi lời mời kết bạn' : 'Chọn người nhận'} <span className="text-muted-foreground">(không thể gửi cho chính mình)</span>
             </label>
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
-              className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-600 focus:border-blue-500 outline-none mb-2"
+              className="w-full bg-card border border-border rounded-xl px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:border-blue-500 outline-none mb-2"
               placeholder="Tìm tên hoặc ID..."
             />
             {loadingFriends ? (
-              <div className="flex items-center gap-2 py-4 justify-center text-gray-400 text-xs">
+              <div className="flex items-center gap-2 py-4 justify-center text-muted-foreground text-xs">
                 <span className="w-4 h-4 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin" />
                 Đang tải danh bạ…
               </div>
             ) : filteredFriends.length === 0 ? (
-              <div className="py-4 text-center text-gray-400 text-xs">
+              <div className="py-4 text-center text-muted-foreground text-xs">
                 {friends.length === 0 ? 'Chưa có bạn bè nào' : 'Không tìm thấy'}
               </div>
             ) : (
@@ -603,18 +604,18 @@ function TestRunModal({ accounts, workflowPageIds, triggerType, onRun, onClose }
                       className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl border text-left transition-all ${
                         isActive
                           ? 'bg-green-600/20 border-green-500/60 ring-1 ring-green-500/30'
-                          : 'bg-gray-800/40 border-gray-700/40 hover:border-gray-600'
+                          : 'bg-card/40 border-border/40 hover:border-input'
                       }`}>
                       {f.avatar
                         ? <img src={f.avatar} className="w-7 h-7 rounded-full object-cover flex-shrink-0" alt="" />
-                        : <div className="w-7 h-7 rounded-full bg-gray-700 flex items-center justify-center flex-shrink-0 text-[10px] text-gray-400 font-bold">
+                        : <div className="w-7 h-7 rounded-full bg-muted flex items-center justify-center flex-shrink-0 text-[10px] text-muted-foreground font-bold">
                             {(f.displayName || '?').charAt(0).toUpperCase()}
                           </div>}
                       <div className="min-w-0 flex-1">
-                        <p className={`text-sm font-medium truncate ${isActive ? 'text-green-300' : 'text-gray-200'}`}>
+                        <p className={`text-sm font-medium truncate ${isActive ? 'text-green-300' : 'text-foreground'}`}>
                           {f.displayName || f.userId}
                         </p>
-                        <p className="text-[10px] text-gray-400 truncate">{f.userId}</p>
+                        <p className="text-[10px] text-muted-foreground truncate">{f.userId}</p>
                       </div>
                       {isActive && (
                         <svg className="w-5 h-5 text-green-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
@@ -628,8 +629,8 @@ function TestRunModal({ accounts, workflowPageIds, triggerType, onRun, onClose }
             )}
           </div>
         </div>
-        <div className="px-5 py-4 border-t border-gray-700 flex gap-2 flex-shrink-0">
-          <button onClick={onClose} className="flex-1 px-4 py-2.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm font-medium rounded-xl transition-colors">
+        <div className="px-5 py-4 border-t border-border flex gap-2 flex-shrink-0">
+          <button onClick={onClose} className="flex-1 px-4 py-2.5 bg-card hover:bg-muted text-foreground/80 text-sm font-medium rounded-xl transition-colors">
             Hủy
           </button>
           <button onClick={handleRun} disabled={!selectedFriend || !selectedAccount}
@@ -676,7 +677,7 @@ function ChannelFilterButton({ value, onChange }: {
         className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-colors border ${
           value !== 'all'
             ? 'bg-blue-600/20 border-blue-500/50 text-blue-300 hover:bg-blue-600/30'
-            : 'bg-gray-800 border-gray-700 text-gray-300 hover:border-gray-600 hover:text-white'
+            : 'bg-card border-border text-foreground/80 hover:border-input hover:text-foreground'
         }`}
       >
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0">
@@ -690,13 +691,13 @@ function ChannelFilterButton({ value, onChange }: {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-1.5 w-[180px] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 overflow-hidden">
+        <div className="absolute right-0 top-full mt-1.5 w-[180px] bg-popover border border-border rounded-xl shadow-2xl z-50 overflow-hidden">
           {options.map(opt => (
             <button
               key={opt.key}
               onClick={() => { onChange(opt.key); setOpen(false); }}
-              className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-gray-800/70 ${
-                value === opt.key ? 'bg-gray-800/40 text-white' : 'text-gray-400'
+              className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-card/70 ${
+                value === opt.key ? 'bg-card/40 text-foreground' : 'text-muted-foreground'
               }`}
             >
               {opt.key === CHANNEL.ZALO && <span className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" />}
@@ -793,6 +794,17 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
       }).catch(() => {});
     }
   }, [isEmployeeMode]);
+
+  // Workflow đổi ở máy khác (Boss / nhân viên khác lưu, xoá, bật tắt, nhân bản — event relay workflow:changed) → tải
+  // lại danh sách; gom các event dồn dập (nhân bản hàng loạt) thành một lần tải.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const unsub = ipc.on?.('workflow:changed', () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { timer = null; void load(); }, 300);
+    });
+    return () => { if (timer) clearTimeout(timer); unsub?.(); };
+  }, [isEmployeeMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const createNew = async (channel: Channel) => {
     const id = uuidv4();
@@ -1004,12 +1016,12 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
       ? wf.pageIds
       : (wf.pageId ? [wf.pageId] : []);
     if (ids.length === 0) {
-      return <span className="text-gray-400 text-[11px]"><SmartphoneIcon className="w-4 h-4 inline" /> Tất cả tài khoản</span>;
+      return <span className="text-muted-foreground text-[11px]"><SmartphoneIcon className="w-4 h-4 inline" /> Tất cả tài khoản</span>;
     }
     if (ids.length === 1) {
       const acc = accounts.find(a => a.zalo_id === ids[0]);
       return (
-        <span className="flex items-center gap-1 text-gray-400 text-[11px]">
+        <span className="flex items-center gap-1 text-muted-foreground text-[11px]">
           {acc?.avatar_url
             ? <img src={acc.avatar_url} className="w-3.5 h-3.5 rounded-full object-cover flex-shrink-0" alt="" />
             : <span><SmartphoneIcon className="w-4 h-4" /></span>
@@ -1020,7 +1032,7 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
     }
     const names = ids.map(id => accounts.find(a => a.zalo_id === id)?.full_name || id);
     return (
-      <span className="flex items-center gap-1 text-gray-400 text-[11px]" title={names.join(', ')}>
+      <span className="flex items-center gap-1 text-muted-foreground text-[11px]" title={names.join(', ')}>
         <span><SmartphoneIcon className="w-4 h-4" /></span>
         <span>{ids.length} tài khoản</span>
       </span>
@@ -1045,13 +1057,13 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="px-6 py-5 border-b border-gray-800 flex-shrink-0">
+      <div className="px-6 py-5 border-b border-border flex-shrink-0">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h1 className="text-white text-xl font-bold flex items-center gap-2">
+            <h1 className="text-foreground text-xl font-bold flex items-center gap-2">
               <LightningIcon className="w-5 h-5" /> WorkFlow Automation
             </h1>
-            <p className="text-gray-400 text-sm mt-0.5">Tự động hoá công việc với Workflow Automation</p>
+            <p className="text-muted-foreground text-sm mt-0.5">Tự động hoá công việc với Workflow Automation</p>
           </div>
 
           <div className="flex items-center gap-2">
@@ -1083,7 +1095,7 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
             )}
             <button
               onClick={() => importFileRef.current?.click()}
-              className="flex items-center gap-2 px-4 py-2.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm font-medium rounded-xl transition-colors"
+              className="flex items-center gap-2 px-4 py-2.5 bg-card hover:bg-muted border border-border text-foreground/80 text-sm font-medium rounded-xl transition-colors"
               title="Nhập workflow từ file JSON"
             >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -1109,18 +1121,18 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
           <div className="flex items-center gap-3">
             <div className="relative flex-1 max-w-md">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none">
                 <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
               </svg>
               <input
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
                 placeholder="Tìm workflow theo tên hoặc mô tả..."
-                className="w-full bg-gray-800/80 border border-gray-700 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 outline-none transition-all"
+                className="w-full bg-card border border-border rounded-xl pl-10 pr-4 py-2.5 text-sm text-foreground placeholder-subtle-foreground focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 outline-none transition-all"
               />
               {searchQuery && (
                 <button onClick={() => setSearchQuery('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-300 transition-colors">
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground/80 transition-colors">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                   </svg>
@@ -1136,7 +1148,7 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
             {/* Channel filter */}
             <ChannelFilterButton value={channelFilter} onChange={setChannelFilter} />
 
-            <div className="flex items-center gap-3 text-xs text-gray-400">
+            <div className="flex items-center gap-3 text-xs text-muted-foreground">
               <span className="flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-green-500" />
                 {workflows.filter(w => w.enabled).length} đang bật
@@ -1164,8 +1176,8 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
 
         {!loading && workflows.length === 0 && (
           <div className="flex flex-col items-center justify-center py-20 text-center">
-            <div className="w-16 h-16 rounded-2xl bg-gray-800 border border-gray-700 flex items-center justify-center mb-4">
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-400">
+            <div className="w-16 h-16 rounded-2xl bg-card border border-border flex items-center justify-center mb-4">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-muted-foreground">
                 <circle cx="5" cy="6" r="2"/><circle cx="19" cy="6" r="2"/>
                 <circle cx="12" cy="18" r="2"/>
                 <path d="M7 6h10M5 8v4a7 7 0 0 0 7 7M19 8v4a7 7 0 0 1-7 7"/>
@@ -1189,7 +1201,7 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
 
         {!loading && workflows.length > 0 && filteredWorkflows.length === 0 && (
           <div className="flex flex-col items-center justify-center py-16 text-center">
-            <p className="text-gray-400 text-sm">
+            <p className="text-muted-foreground text-sm">
               {searchQuery ? `Không tìm thấy workflow nào với "${searchQuery}"` : 'Không có workflow nào khớp với bộ lọc.'}
             </p>
             <button onClick={() => { setFilterPages([]); setSearchQuery(''); }} className="mt-3 text-blue-400 text-xs hover:text-blue-300 transition-colors">
@@ -1204,14 +1216,14 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
             const isRunning = runningId === wf.id;
             return (
               <div key={wf.id}
-                className="group bg-gray-900 border border-gray-700/80 rounded-2xl hover:border-gray-600 transition-all hover:shadow-lg hover:shadow-black/20 flex flex-col overflow-hidden">
+                className="group bg-card rounded-2xl shadow-sm hover:shadow-md transition-shadow flex flex-col overflow-hidden">
                 {/* Card header */}
                 <div className="px-4 pt-4 pb-3 flex items-start gap-3">
                   {/* Status indicator */}
                   <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
                     wf.enabled
-                      ? 'bg-green-500/15 text-green-400 border border-green-500/30'
-                      : 'bg-gray-800 text-gray-400 border border-gray-700'
+                      ? 'bg-success/15 text-success'
+                      : 'bg-muted text-muted-foreground'
                   }`}>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <circle cx="5" cy="6" r="2"/><circle cx="19" cy="6" r="2"/>
@@ -1222,7 +1234,7 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
 
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-0.5">
-                      <h3 className="text-white font-semibold text-sm truncate flex-1">{wf.name}</h3>
+                      <h3 className="text-foreground font-semibold text-sm truncate flex-1">{wf.name}</h3>
                       {renderChannelBadge(wf)}
                       {/* Toggle */}
                       <button
@@ -1230,36 +1242,36 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
                         className="flex-shrink-0"
                         title={wf.enabled ? 'Đang bật - nhấn để tắt' : 'Đang tắt - nhấn để bật'}
                       >
-                        <div className={`w-9 h-[20px] rounded-full transition-colors relative ${wf.enabled ? 'bg-blue-600' : 'bg-gray-700'}`}>
+                        <div className={`w-9 h-[20px] rounded-full transition-colors relative ${wf.enabled ? 'bg-blue-600' : 'bg-muted'}`}>
                           <span className={`absolute top-[3px] w-[14px] h-[14px] bg-white rounded-full shadow transition-all ${wf.enabled ? 'left-[19px]' : 'left-[3px]'}`} />
                         </div>
                       </button>
                     </div>
                     {wf.description && (
-                      <p className="text-gray-400 text-xs line-clamp-2 leading-relaxed">{wf.description}</p>
+                      <p className="text-muted-foreground text-xs line-clamp-2 leading-relaxed">{wf.description}</p>
                     )}
                   </div>
                 </div>
 
                 {/* Card meta */}
                 <div className="px-4 pb-3 flex items-center gap-2 flex-wrap">
-                  <span className="inline-flex items-center text-[11px] px-2 py-0.5 rounded-full bg-gray-800 border border-gray-700 text-gray-400">
+                  <span className="inline-flex items-center text-[11px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
                     {getTriggerLabel(wf)}
                   </span>
-                  <span className="text-[11px] text-gray-400">{(wf.nodes || []).length} nodes</span>
-                  <span className="text-gray-800">·</span>
+                  <span className="text-[11px] text-muted-foreground">{(wf.nodes || []).length} nodes</span>
+                  <span className="text-subtle-foreground">·</span>
                   {renderPageBadges(wf)}
                 </div>
 
                 {/* Card footer */}
-                <div className="px-4 py-3 border-t border-gray-800 flex items-center justify-between mt-auto">
-                  <span className="text-[11px] text-gray-400">
+                <div className="px-4 py-3 border-t border-border/60 flex items-center justify-between mt-auto">
+                  <span className="text-[11px] text-muted-foreground">
                     {new Date(wf.updatedAt).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })}
                   </span>
 
                   <div className="flex items-center gap-1">
                     <button onClick={() => handleRunClick(wf)} disabled={isRunning} title="Chạy thử"
-                      className="h-7 px-2.5 rounded-lg flex items-center justify-center gap-1.5 text-xs font-medium text-gray-400 hover:text-green-400 hover:bg-green-500/10 disabled:opacity-40 transition-colors">
+                      className="h-7 px-2.5 rounded-lg flex items-center justify-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-green-400 hover:bg-green-500/10 disabled:opacity-40 transition-colors">
                       {isRunning
                         ? <span className="w-3 h-3 border-2 border-green-500/30 border-t-green-500 rounded-full animate-spin" />
                         : <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
@@ -1267,27 +1279,27 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
                       <span className="hidden sm:inline">Chạy thử</span>
                     </button>
                     <button onClick={() => handleExport(wf)} title="Xuất JSON"
-                      className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-blue-400 hover:bg-blue-500/10 transition-colors">
+                      className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-blue-400 hover:bg-blue-500/10 transition-colors">
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
                       </svg>
                     </button>
                     <button onClick={() => setCloningWf(wf)} title="Nhân bản"
-                      className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-amber-400 hover:bg-amber-500/10 transition-colors">
+                      className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-amber-400 hover:bg-amber-500/10 transition-colors">
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
                         <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
                       </svg>
                     </button>
                     <button onClick={() => onEdit(wf.id)} title="Chỉnh sửa"
-                      className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-blue-400 hover:bg-blue-500/10 transition-colors">
+                      className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-blue-400 hover:bg-blue-500/10 transition-colors">
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
                         <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
                       </svg>
                     </button>
                     <button onClick={() => handleDelete(wf.id, wf.name)} title="Xóa"
-                      className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-red-400 hover:bg-red-500/10 transition-colors">
+                      className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors">
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <polyline points="3 6 5 6 21 6"/>
                         <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>

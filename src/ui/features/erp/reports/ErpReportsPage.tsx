@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import ipc from '@/lib/ipc';
+import DataAccessor from '@/lib/data/DataAccessor';
 import { useEmployeeStore } from '@/store/employeeStore';
 import { useErpEmployeeStore } from '@/store/erp/erpEmployeeStore';
 import { ERP_DATE_FILTER_OPTIONS, getDefaultCustomRange, resolveErpDateRange, startOfDay, endOfDay, type ErpDateFilterPreset } from '../shared/erpDateFilters';
@@ -14,8 +14,8 @@ const CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#0
 
 function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-xl border border-gray-700/60 bg-gray-800/50 p-4">
-      <h3 className="text-sm font-semibold text-white mb-3">{title}</h3>
+    <div className="rounded-xl border border-border/60 bg-card p-4">
+      <h3 className="text-sm font-semibold text-foreground mb-3">{title}</h3>
       {children}
     </div>
   );
@@ -23,8 +23,8 @@ function ChartCard({ title, children }: { title: string; children: React.ReactNo
 
 function MetricCard({ label, value, tone }: { label: string; value: number; tone: string }) {
   return (
-    <div className="rounded-xl border border-gray-700/60 bg-gray-800/50 p-4">
-      <div className="text-[11px] uppercase tracking-wider text-gray-400">{label}</div>
+    <div className="rounded-xl border border-border/60 bg-card p-4">
+      <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}</div>
       <div className={`text-2xl font-semibold mt-2 ${tone}`}>{value}</div>
     </div>
   );
@@ -33,11 +33,11 @@ function MetricCard({ label, value, tone }: { label: string; value: number; tone
 function ReportTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-gray-800 border border-gray-600 rounded-xl px-3 py-2 text-xs shadow-xl">
-      {label && <div className="text-white font-medium mb-1">{label}</div>}
+    <div className="bg-card border border-input rounded-xl px-3 py-2 text-xs shadow-xl">
+      {label && <div className="text-foreground font-medium mb-1">{label}</div>}
       {payload.map((item: any) => (
         <div key={item.dataKey} className="flex items-center justify-between gap-4">
-          <span className="text-gray-300">{item.name}</span>
+          <span className="text-foreground/80">{item.name}</span>
           <span style={{ color: item.color || item.fill }}>{item.value}</span>
         </div>
       ))}
@@ -65,15 +65,16 @@ export default function ErpReportsPage() {
     setLoading(true);
     await Promise.all([loadEmployees(), loadProfiles(), loadDepartments(), loadPendingLeaves()]);
 
-    const [taskRes, eventRes, attendanceRes] = await Promise.all([
-      ipc.erp?.taskList?.({ archived: false }),
-      ipc.erp?.calendarListEvents?.({ from: rangeStart, to: forecastEnd }),
-      ipc.erp?.attendanceList?.({ all: true, from: new Date(rangeStart).toISOString().slice(0, 10), to: new Date(todayEnd).toISOString().slice(0, 10) }),
+    // DataAccessor: nhân viên (admin) đọc trên Boss qua REST. Lỗi đọc → giữ số liệu đang hiện
+    const [taskRes, eventRes, attendanceRes]: any[] = await Promise.all([
+      DataAccessor.erpTasks({ archived: false }),
+      DataAccessor.erpCalendarEvents({ from: rangeStart, to: forecastEnd }),
+      DataAccessor.erpAttendanceList({ all: true, from: new Date(rangeStart).toISOString().slice(0, 10), to: new Date(todayEnd).toISOString().slice(0, 10) }),
     ]);
 
-    setTasks(taskRes?.success ? (taskRes.tasks || []) : []);
-    setEvents(eventRes?.success ? (eventRes.events || []) : []);
-    setAttendance(attendanceRes?.success ? (attendanceRes.list || []) : []);
+    if (taskRes?.success) setTasks(taskRes.tasks || []);
+    if (eventRes?.success) setEvents(eventRes.events || []);
+    if (attendanceRes?.success) setAttendance(attendanceRes.list || []);
     setLoading(false);
   };
 
@@ -180,16 +181,16 @@ export default function ErpReportsPage() {
   ];
 
   return (
-    <div className="h-full overflow-auto p-4 space-y-4 bg-gray-900">
+    <div className="h-full overflow-auto p-4 space-y-4 bg-background">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <h2 className="text-sm font-semibold text-white">Báo cáo ERP trực quan</h2>
+          <h2 className="text-sm font-semibold text-foreground">Báo cáo ERP trực quan</h2>
         </div>
         <div className="flex items-center gap-2">
           <select
             value={dateFilter}
             onChange={e => setDateFilter(e.target.value as ErpDateFilterPreset)}
-            className="bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-200"
+            className="bg-muted border border-input rounded-lg px-2.5 py-1.5 text-xs text-foreground"
           >
             {ERP_DATE_FILTER_OPTIONS.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
           </select>
@@ -199,19 +200,19 @@ export default function ErpReportsPage() {
                 type="date"
                 value={customDateRange.from}
                 onChange={e => setCustomDateRange(current => ({ ...current, from: e.target.value }))}
-                className="bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-200"
+                className="bg-muted border border-input rounded-lg px-2.5 py-1.5 text-xs text-foreground"
               />
               <input
                 type="date"
                 value={customDateRange.to}
                 onChange={e => setCustomDateRange(current => ({ ...current, to: e.target.value }))}
-                className="bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-200"
+                className="bg-muted border border-input rounded-lg px-2.5 py-1.5 text-xs text-foreground"
               />
             </>
           )}
           <button
             onClick={reload}
-            className="px-3 py-1.5 text-xs rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-200"
+            className="px-3 py-1.5 text-xs rounded-lg bg-muted hover:bg-accent text-foreground"
           >
             Làm mới
           </button>
@@ -290,17 +291,17 @@ export default function ErpReportsPage() {
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         {sections.map(section => (
-          <div key={section.title} className="rounded-xl border border-gray-700/60 bg-gray-800/50 p-4">
-            <h3 className="text-sm font-semibold text-white mb-3">{section.title}</h3>
+          <div key={section.title} className="rounded-xl border border-border/60 bg-card p-4">
+            <h3 className="text-sm font-semibold text-foreground mb-3">{section.title}</h3>
             {loading ? (
               <PageLoading variant="inline" text="Đang tải báo cáo..." />
             ) : section.items.length === 0 ? (
-              <div className="text-sm text-gray-400">{section.empty}</div>
+              <div className="text-sm text-muted-foreground">{section.empty}</div>
             ) : (
               <div className="space-y-2">
                 {section.items.map(item => (
-                  <div key={item.key} className="rounded-lg border border-gray-700/60 bg-gray-900/30 px-3 py-2">
-                    <div className="text-sm text-white truncate">{item.title}</div>
+                  <div key={item.key} className="rounded-lg border border-border/60 bg-card px-3 py-2">
+                    <div className="text-sm text-foreground truncate">{item.title}</div>
                     <div className={`text-xs mt-1 ${item.tone}`}>{item.meta}</div>
                   </div>
                 ))}

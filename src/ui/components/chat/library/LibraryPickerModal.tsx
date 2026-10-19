@@ -22,6 +22,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import ipc from '../../../lib/ipc';
 import * as channelIpc from '../../../lib/channelIpc';
 import DataAccessor, { refreshLibraryCache } from '../../../lib/data/DataAccessor';
+import { LIBRARY_CHANGED_EVENT } from '@/lib/chat/relayUiEvents';
 import { useChatStore } from '@/store/chatStore';
 import { useAccountStore } from '@/store/accountStore';
 import { messageQueue, generateTempId, extractMsgIdFromResponse } from '@/lib/MessageQueue';
@@ -241,6 +242,22 @@ export default function LibraryPickerModal({
     setPage(1);
     loadItems(1);
   }, [search, activeFolderId, loadItems]);
+
+  // Thư viện đổi ở máy khác (Boss / nhân viên — relay library:*) hoặc kết nối BOSS phục hồi: useZaloEvents đã xoá
+  // cache → mục bị xoá biến mất ngay, trang đầu tải lại (đang ở trang sau thì không kéo người dùng về đầu)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail || {};
+      if (detail.action === 'deleted' && detail.uuid) {
+        setItems(prev => (prev.some(i => i.uuid === detail.uuid) ? prev.filter(i => i.uuid !== detail.uuid) : prev));
+        return;
+      }
+      if (page === 1) loadItems(1);
+      if (detail.action === 'resync') loadFolders();
+    };
+    window.addEventListener(LIBRARY_CHANGED_EVENT, handler);
+    return () => window.removeEventListener(LIBRARY_CHANGED_EVENT, handler);
+  }, [page, loadItems, loadFolders]);
 
   const handleLoadMore = () => {
     const next = page + 1;
@@ -462,7 +479,8 @@ export default function LibraryPickerModal({
     try {
       const { useEmployeeStore } = require('../../../store/employeeStore');
       const mode = useEmployeeStore.getState().mode;
-      if (mode === 'employee') return {}; // employee mode: proxy action tự inject auth
+      // employee mode: Boss tự gắn auth thật — nhưng phải biết tài khoản nào (auth rỗng → Boss dùng tài khoản đầu tiên)
+      if (mode === 'employee') return { accountId: zaloId };
     } catch {}
     return null;
   };
@@ -557,11 +575,15 @@ export default function LibraryPickerModal({
             if (isNonZaloChannel) {
               let lastMsgId = '';
               for (const item of imageItems) {
+                // Máy nhân viên không có file thư viện (không có _localPath) → gửi uuid, Boss tự lấy file
+                // (trước đây ảnh bị bỏ qua im lặng mà vẫn báo gửi xong)
                 const fp = item._localPath || '';
-                if (!fp) continue;
-                const res = await channelIpc.sendAttachment(channel, {
+                if (!fp && !item.uuid) continue;
+                const res: any = await channelIpc.sendAttachment(channel, {
                   accountId: zaloId, threadId, threadType, filePath: fp, body: '', fileType: 'image',
+                  ...(fp ? {} : { libraryUuid: item.uuid }),
                 });
+                if (res && res.success === false) return { success: false, error: res.error || 'Gửi ảnh thất bại' };
                 if (res?.messageId) lastMsgId = res.messageId;
               }
               return { success: true, msgId: lastMsgId };
@@ -615,13 +637,15 @@ export default function LibraryPickerModal({
             // Every non-Zalo channel uses its adapter, including Facebook.
             if (itemIsNonZalo) {
               const fp = item._localPath || '';
-              if (!fp) return { success: false, error: 'No local file path' };
+              if (!fp && !item.uuid) return { success: false, error: 'No local file path' };
+              // Máy nhân viên: không có file thư viện → uuid, Boss đổi ra đường dẫn file
+              const library = fp ? {} : { libraryUuid: item.uuid };
               if (item.type === 'video') {
-                const res = await channelIpc.sendVideo(itemChannel, { accountId: zaloId, threadId, threadType, filePath: fp });
+                const res = await channelIpc.sendVideo(itemChannel, { accountId: zaloId, threadId, threadType, filePath: fp, ...library });
                 return { success: true, ...(res as any) };
               } else {
                 const res = await channelIpc.sendAttachment(itemChannel, {
-                  accountId: zaloId, threadId, threadType, filePath: fp, body: '', fileType: 'file',
+                  accountId: zaloId, threadId, threadType, filePath: fp, body: '', fileType: 'file', ...library,
                 });
                 return { success: true, ...(res as any) };
               }
@@ -781,7 +805,7 @@ export default function LibraryPickerModal({
             onChange={e => setFolderInput({ ...folderInput, value: e.target.value })}
             onKeyDown={e => { if (e.key === 'Enter') submitFolderInput(); if (e.key === 'Escape') setFolderInput(null); }}
             onBlur={() => setTimeout(() => submitFolderInput(), 200)}
-            className="w-full px-2 py-1 text-xs bg-gray-700 border border-blue-500 rounded-lg text-gray-200 outline-none"
+            className="w-full px-2 py-1 text-xs bg-muted border border-blue-500 rounded-lg text-foreground outline-none"
           />
         </div>
       ) : (
@@ -790,7 +814,7 @@ export default function LibraryPickerModal({
         className={`flex items-center gap-1 px-3 py-1.5 rounded-lg cursor-pointer text-sm transition-all group relative ${
           activeFolderId === folder.id
             ? 'bg-blue-600/30 text-blue-300'
-            : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'
+            : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
         }`}
         style={{ paddingLeft: `${12 + depth * 16}px` }}
       >
@@ -798,7 +822,7 @@ export default function LibraryPickerModal({
           <span><FolderIcon className="w-4 h-4" /></span>
           <span className="truncate">{folder.name}</span>
           {libraryScope === 'all' && (
-            <span className="text-[9px] text-gray-500 truncate max-w-20">
+            <span className="text-[9px] text-subtle-foreground truncate max-w-20">
               {libraryAccounts.find(account => account.zalo_id === folder.owner_zalo_id)?.display_name
                 || libraryAccounts.find(account => account.zalo_id === folder.owner_zalo_id)?.full_name
                 || 'Trang'}
@@ -810,17 +834,17 @@ export default function LibraryPickerModal({
         {/* ⋯ menu button */}
         <div className="relative">
           <button onClick={(e) => { e.stopPropagation(); setShowFolderMenu(showFolderMenu === folder.id ? null : folder.id); }}
-            className="p-1 rounded-md text-gray-400 hover:text-gray-200 opacity-0 group-hover:opacity-100 transition-all text-sm">⋯</button>
+            className="p-1 rounded-md text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-all text-sm">⋯</button>
 
           {showFolderMenu === folder.id && (
-            <div className="absolute right-0 top-full mt-1 bg-gray-700 border border-gray-600 rounded-xl shadow-2xl z-50 py-1 w-40"
+            <div className="absolute right-0 top-full mt-1 bg-muted border border-input rounded-xl shadow-2xl z-50 py-1 w-40"
               onClick={e => e.stopPropagation()}>
               <button onClick={() => handleAddChildFolder(folder.id)}
-                className="w-full text-left px-3 py-1.5 text-xs text-gray-200 hover:bg-gray-600 flex items-center gap-2"><FolderIcon className="w-4 h-4 inline" /> Thêm thư mục con</button>
+                className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-accent flex items-center gap-2"><FolderIcon className="w-4 h-4 inline" /> Thêm thư mục con</button>
               <button onClick={() => { handleRenameFolder(folder.id); }}
-                className="w-full text-left px-3 py-1.5 text-xs text-gray-200 hover:bg-gray-600 flex items-center gap-2"><EditIcon className="w-3.5 h-3.5" /> Đổi tên</button>
+                className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-accent flex items-center gap-2"><EditIcon className="w-3.5 h-3.5" /> Đổi tên</button>
               <button onClick={() => handleDeleteFolder(folder.id)}
-                className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-gray-600 flex items-center gap-2"><TrashIcon className="w-4 h-4 inline" /> Xoá</button>
+                className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-accent flex items-center gap-2"><TrashIcon className="w-4 h-4 inline" /> Xoá</button>
             </div>
           )}
         </div>
@@ -839,11 +863,11 @@ export default function LibraryPickerModal({
     return (
       <React.Fragment key={folder.id}>
         <button onClick={() => handleMoveToFolder(itemUuid, folder.id)}
-          className="w-full text-left px-3 py-1.5 text-xs text-gray-200 hover:bg-gray-700 flex items-center gap-2 truncate"
+          className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-muted flex items-center gap-2 truncate"
           style={{ paddingLeft: `${12 + depth * 16}px` }}>
           <span><FolderIcon className="w-4 h-4" /></span>
           <span className="truncate">{folder.name}</span>
-          {folder.item_count ? <span className="ml-auto text-[10px] text-gray-400">{folder.item_count}</span> : null}
+          {folder.item_count ? <span className="ml-auto text-[10px] text-muted-foreground">{folder.item_count}</span> : null}
         </button>
         {children.map(child => renderFolderPickerItem(child, itemUuid, depth + 1))}
       </React.Fragment>
@@ -852,20 +876,20 @@ export default function LibraryPickerModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full max-w-5xl h-[85vh] bg-gray-800 border border-gray-700 rounded-2xl shadow-2xl flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+      <div className="w-full max-w-5xl h-[85vh] bg-card border border-border rounded-2xl shadow-2xl flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-700/50">
-          <h2 className="text-lg font-semibold text-white">{typeLabel}</h2>
-          <span className="text-xs text-gray-400">{total} file</span>
-          <button onClick={() => { refreshLibraryCache(); loadItems(1); loadFolders(); }} className="p-1.5 text-gray-400 hover:text-white transition-colors" title="Làm mới"><RefreshIcon className="w-4 h-4" /></button>
-          <button onClick={onClose} className="p-1.5 text-gray-400 hover:text-white transition-colors ml-auto">✕</button>
+        <div className="flex items-center justify-between px-5 py-3 border-b border-border/50">
+          <h2 className="text-lg font-semibold text-foreground">{typeLabel}</h2>
+          <span className="text-xs text-muted-foreground">{total} file</span>
+          <button onClick={() => { refreshLibraryCache(); loadItems(1); loadFolders(); }} className="p-1.5 text-muted-foreground hover:text-foreground transition-colors" title="Làm mới"><RefreshIcon className="w-4 h-4" /></button>
+          <button onClick={onClose} className="p-1.5 text-muted-foreground hover:text-foreground transition-colors ml-auto">✕</button>
         </div>
 
         <div className="flex flex-1 overflow-hidden">
           {/* ─── Left sidebar: folders (30%) ─── */}
-          <div className="w-1/4 border-r border-gray-700/50 flex flex-col">
-            <div className="flex items-center justify-between px-4 py-2 border-b border-gray-700/50">
-              <span className="text-xs font-medium text-gray-400 uppercase tracking-wide">Thư mục</span>
+          <div className="w-1/4 border-r border-border/50 flex flex-col">
+            <div className="flex items-center justify-between px-4 py-2 border-b border-border/50">
+              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Thư mục</span>
               <button onClick={() => handleCreateFolder()}
                 className="w-7 h-7 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-lg font-bold flex items-center justify-center transition-colors shadow-md"
                 title="Tạo thư mục mới"
@@ -874,19 +898,19 @@ export default function LibraryPickerModal({
             <div className="flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
               <div onClick={() => setActiveFolderId(undefined as any)}
                 className={`flex items-center gap-2 px-3 py-1.5 rounded-lg cursor-pointer text-sm transition-all ${
-                  activeFolderId === undefined ? 'bg-blue-600/30 text-blue-300' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'
+                  activeFolderId === undefined ? 'bg-blue-600/30 text-blue-300' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
                 }`}>
                 <span>📂</span>
                 <span className="flex-1">Tất cả</span>
               </div>
               <div onClick={() => setActiveFolderId(-1)}
                 className={`flex items-center gap-2 px-3 py-1.5 rounded-lg cursor-pointer text-sm transition-all ${
-                  activeFolderId === -1 ? 'bg-blue-600/30 text-blue-300' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'
+                  activeFolderId === -1 ? 'bg-blue-600/30 text-blue-300' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
                 }`}>
                 <StarIcon className="w-4 h-4 text-yellow-400" />
                 <span className="flex-1">Yêu thích</span>
               </div>
-              <div className="h-px bg-gray-700/50 my-2" />
+              <div className="h-px bg-muted/50 my-2" />
               {folderInput?.mode === 'create' && (
                 <div className="px-2 py-1">
                   <input autoFocus
@@ -895,38 +919,38 @@ export default function LibraryPickerModal({
                     onKeyDown={e => { if (e.key === 'Enter') submitFolderInput(); if (e.key === 'Escape') setFolderInput(null); }}
                     onBlur={() => setTimeout(() => submitFolderInput(), 200)}
                     placeholder="Tên thư mục..."
-                    className="w-full px-2 py-1 text-xs bg-gray-700 border border-gray-500 rounded-lg text-gray-200 placeholder-gray-500 outline-none"
+                    className="w-full px-2 py-1 text-xs bg-muted border border-border-strong rounded-lg text-foreground placeholder-subtle-foreground outline-none"
                   />
                 </div>
               )}
               {rootFolders.map(f => renderFolderItem(f))}
               {rootFolders.length === 0 && !folderInput && (
-                <p className="text-xs text-gray-400 text-center py-4">Chưa có thư mục</p>
+                <p className="text-xs text-muted-foreground text-center py-4">Chưa có thư mục</p>
               )}
             </div>
           </div>
 
           {/* ─── Right content (70%) ─── */}
           <div className="w-3/4 flex flex-col">
-            <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-700/50">
+            <div className="flex items-center gap-2 px-4 py-2 border-b border-border/50">
               {/* Library scope dropdown */}
               <div className="relative shrink-0" ref={scopeDropdownRef}>
                 <button
                   onClick={() => setScopeDropdownOpen(p => !p)}
-                  className="flex items-center gap-2 px-3 py-1.5 bg-gray-700 border border-gray-600 rounded-lg text-sm text-left hover:border-gray-500 transition-colors min-w-[160px] max-w-[200px]"
+                  className="flex items-center gap-2 px-3 py-1.5 bg-muted border border-input rounded-lg text-sm text-left hover:border-border-strong transition-colors min-w-[160px] max-w-[200px]"
                   title="Chọn phạm vi thư viện"
                 >
                   {libraryScope === 'all' ? (
                     <>
                       <span className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0 text-white-important">★</span>
-                      <span className="text-gray-200 truncate">Tất cả trang</span>
+                      <span className="text-foreground truncate">Tất cả trang</span>
                     </>
                   ) : (() => {
                     const acc = libraryAccounts.find(a => a.zalo_id === libraryScope);
                     return acc ? (
                       <>
                         <div className="relative flex-shrink-0">
-                          <div className="w-6 h-6 rounded-full overflow-hidden ring-1 ring-white/10">
+                          <div className="w-6 h-6 rounded-full overflow-hidden ring-1 ring-foreground/10">
                             {acc.avatar_url ? (
                               <img src={acc.avatar_url} alt="" className="w-full h-full object-cover"
                                 onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
@@ -940,43 +964,43 @@ export default function LibraryPickerModal({
                             <ChannelBadge channel={(acc.channel as any) || CHANNEL.ZALO} size="sm" />
                           </div>
                         </div>
-                        <span className="text-gray-200 truncate">{acc.display_name || acc.full_name || acc.zalo_id}</span>
+                        <span className="text-foreground truncate">{acc.display_name || acc.full_name || acc.zalo_id}</span>
                       </>
                     ) : (
-                      <span className="text-gray-500">Chọn trang...</span>
+                      <span className="text-subtle-foreground">Chọn trang...</span>
                     );
                   })()}
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`ml-auto flex-shrink-0 text-gray-400 transition-transform ${scopeDropdownOpen ? 'rotate-180' : ''}`}>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`ml-auto flex-shrink-0 text-muted-foreground transition-transform ${scopeDropdownOpen ? 'rotate-180' : ''}`}>
                     <polyline points="6 9 12 15 18 9"/>
                   </svg>
                 </button>
                 {scopeDropdownOpen && (
-                  <div className="absolute left-0 top-full mt-1 bg-gray-700 border border-gray-600 rounded-xl shadow-2xl z-50 overflow-hidden min-w-[200px] max-h-[280px] overflow-y-auto">
+                  <div className="absolute left-0 top-full mt-1 bg-muted border border-input rounded-xl shadow-2xl z-50 overflow-hidden min-w-[200px] max-h-[280px] overflow-y-auto">
                     {/* Tất cả trang */}
                     <button
                       onClick={() => { changeLibraryScope('all'); setScopeDropdownOpen(false); }}
-                      className={`w-full flex items-center gap-3 px-3 py-2.5 transition-colors ${libraryScope === 'all' ? 'bg-blue-500/10' : 'hover:bg-gray-600'}`}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 transition-colors ${libraryScope === 'all' ? 'bg-blue-500/10' : 'hover:bg-accent'}`}
                     >
                       <span className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0 text-white-important">★</span>
                       <div className="flex-1 min-w-0 text-left">
-                        <span className="text-sm text-gray-200 block">Tất cả trang</span>
-                        <span className="text-[10px] text-gray-400 block">{libraryAccounts.length} trang</span>
+                        <span className="text-sm text-foreground block">Tất cả trang</span>
+                        <span className="text-[10px] text-muted-foreground block">{libraryAccounts.length} trang</span>
                       </div>
                       {libraryScope === 'all' && (
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2.5" className="flex-shrink-0"><polyline points="20 6 9 17 4 12"/></svg>
                       )}
                     </button>
-                    <div className="border-t border-gray-600/50" />
+                    <div className="border-t border-input/50" />
                     {/* Individual accounts */}
                     {libraryAccounts.map(acc => {
                       const isChecked = libraryScope === acc.zalo_id;
                       return (
                         <button key={acc.zalo_id}
                           onClick={() => { changeLibraryScope(acc.zalo_id); setScopeDropdownOpen(false); }}
-                          className={`w-full flex items-center gap-3 px-3 py-2.5 transition-colors ${isChecked ? 'bg-blue-500/10' : 'hover:bg-gray-600'}`}
+                          className={`w-full flex items-center gap-3 px-3 py-2.5 transition-colors ${isChecked ? 'bg-blue-500/10' : 'hover:bg-accent'}`}
                         >
                           <div className="relative flex-shrink-0">
-                            <div className="w-8 h-8 rounded-full overflow-hidden ring-1 ring-white/10">
+                            <div className="w-8 h-8 rounded-full overflow-hidden ring-1 ring-foreground/10">
                               {acc.avatar_url ? (
                                 <img src={acc.avatar_url} alt="" className="w-full h-full object-cover"
                                   onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
@@ -991,8 +1015,8 @@ export default function LibraryPickerModal({
                             </div>
                           </div>
                           <div className="flex-1 min-w-0 text-left">
-                            <span className="text-sm text-gray-200 truncate block">{acc.display_name || acc.full_name || acc.zalo_id}</span>
-                            <span className="text-[10px] text-gray-400 truncate block">{acc.phone || acc.zalo_id}</span>
+                            <span className="text-sm text-foreground truncate block">{acc.display_name || acc.full_name || acc.zalo_id}</span>
+                            <span className="text-[10px] text-muted-foreground truncate block">{acc.phone || acc.zalo_id}</span>
                           </div>
                           {isChecked && (
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2.5" className="flex-shrink-0"><polyline points="20 6 9 17 4 12"/></svg>
@@ -1005,7 +1029,7 @@ export default function LibraryPickerModal({
               </div>
               <input value={search} onChange={e => setSearch(e.target.value)}
                 placeholder="Tìm trong thư viện..."
-                className="min-w-0 flex-1 px-3 py-1.5 bg-gray-700 border border-gray-600 rounded-lg text-sm text-gray-200 placeholder-gray-500"
+                className="min-w-0 flex-1 px-3 py-1.5 bg-muted border border-input rounded-lg text-sm text-foreground placeholder-subtle-foreground"
               />
             </div>
 
@@ -1017,7 +1041,7 @@ export default function LibraryPickerModal({
               onDrop={handleDrop}
               className={`flex-1 overflow-y-auto p-4 transition-all ${isDragOver ? 'bg-blue-900/20 border-2 border-dashed border-blue-500/50 rounded-lg' : ''}`}>
               {items.length === 0 && !loading && (
-                <div className="flex flex-col items-center justify-center h-full text-gray-400">
+                <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
                   <span className="text-4xl mb-2">📂</span>
                   <p className="text-sm">Thư viện trống</p>
                   <p className="text-xs mt-1">Nhấn "Upload vào thư viện" để thêm file</p>
@@ -1032,7 +1056,7 @@ export default function LibraryPickerModal({
                       {/*** Thumbnail (overflow-hidden removed — dropdowns render here without being clipped) ***/}
                       <div onClick={() => toggleSelect(item.uuid)}
                         className={`relative aspect-square rounded-xl cursor-pointer border-2 transition-all ${
-                          selected.has(item.uuid) ? 'border-blue-500 ring-2 ring-blue-500/40' : 'border-transparent hover:border-gray-500'
+                          selected.has(item.uuid) ? 'border-blue-500 ring-2 ring-blue-500/40' : 'border-transparent hover:border-border-strong'
                         }`}>
                         {/*** Chỉ clip riêng ảnh, không clip dropdown ***/}
                         <div className="absolute inset-0 overflow-hidden rounded-xl pointer-events-none">
@@ -1041,10 +1065,10 @@ export default function LibraryPickerModal({
 
                         {/*** Star favorite (top-left) ***/}
                         <div className={`absolute top-1 left-1 z-10 ${!item.is_favorite ? 'opacity-0 group-hover:opacity-100' : ''} transition-opacity`}>
-                          <div className="bg-gray-500 backdrop-blur-sm rounded-lg p-1 shadow-lg">
+                          <div className="bg-accent backdrop-blur-sm rounded-lg p-1 shadow-lg">
                             <button onClick={(e) => { e.stopPropagation(); handleToggleFavorite(item.uuid, item.is_favorite); }}
                               className="text-[11px] leading-none block" title={item.is_favorite ? 'Bỏ yêu thích' : 'Yêu thích'}>
-                              {item.is_favorite ? <StarIcon className="w-4 h-4 text-yellow-400" /> : <StarIcon className="w-4 h-4 text-gray-400" />}
+                              {item.is_favorite ? <StarIcon className="w-4 h-4 text-yellow-400" /> : <StarIcon className="w-4 h-4 text-muted-foreground" />}
                             </button>
                           </div>
                         </div>
@@ -1052,7 +1076,7 @@ export default function LibraryPickerModal({
                         {/*** ⋮ button (top-right, hover) — menu ở modal level fixed ***/}
                         <div className="absolute top-1 right-1 z-20 opacity-0 group-hover:opacity-100 transition-opacity">
                           <button onClick={(e) => handleMenuClick(e, item.uuid)}
-                            className="bg-gray-500 backdrop-blur-sm rounded-lg p-2 shadow-lg text-gray-200 hover:text-white text-sm leading-none">⋮</button>
+                            className="bg-accent backdrop-blur-sm rounded-lg p-2 shadow-lg text-foreground hover:text-foreground text-sm leading-none">⋮</button>
                         </div>
 
                         {selected.has(item.uuid) && (
@@ -1070,13 +1094,13 @@ export default function LibraryPickerModal({
                               onChange={e => setEditingValue(e.target.value)}
                               onBlur={() => submitRename(item.uuid)}
                               onKeyDown={e => { if (e.key === 'Enter') submitRename(item.uuid); if (e.key === 'Escape') setEditingName(null); }}
-                              className="flex-1 text-[10px] bg-gray-700 border border-gray-500 rounded px-1 py-0.5 text-gray-200 outline-none"
+                              className="flex-1 text-[10px] bg-muted border border-border-strong rounded px-1 py-0.5 text-foreground outline-none"
                             />
                             <button onClick={() => submitRename(item.uuid)}
                               className="text-green-400 hover:text-green-300 text-xs">✓</button>
                           </div>
                         ) : (
-                          <span className="block text-[10px] text-gray-400 truncate">{item.name}</span>
+                          <span className="block text-[10px] text-muted-foreground truncate">{item.name}</span>
                         )}
                       </div>
 
@@ -1093,11 +1117,11 @@ export default function LibraryPickerModal({
                       {/*** Thumbnail (overflow-hidden removed for dropdown) ***/}
                       <div onClick={() => toggleSelect(item.uuid)}
                         className={`relative aspect-video rounded-xl cursor-pointer border-2 transition-all ${
-                          selected.has(item.uuid) ? 'border-blue-500' : 'border-transparent hover:border-gray-500'
+                          selected.has(item.uuid) ? 'border-blue-500' : 'border-transparent hover:border-border-strong'
                         }`}>
                         {/*** Clip riêng video icon ***/}
                         <div className="absolute inset-0 overflow-hidden rounded-xl pointer-events-none">
-                          <div className="w-full h-full bg-gray-700 flex items-center justify-center text-3xl">🎬</div>
+                          <div className="w-full h-full bg-muted flex items-center justify-center text-3xl">🎬</div>
                         </div>
 
                         {/*** Star favorite (top-left) ***/}
@@ -1105,7 +1129,7 @@ export default function LibraryPickerModal({
                           <div className="bg-black/50 backdrop-blur-sm rounded-lg p-1 shadow-lg">
                             <button onClick={(e) => { e.stopPropagation(); handleToggleFavorite(item.uuid, item.is_favorite); }}
                               className="text-[11px] leading-none block" title={item.is_favorite ? 'Bỏ yêu thích' : 'Yêu thích'}>
-                              {item.is_favorite ? <StarIcon className="w-4 h-4 text-yellow-400" /> : <StarIcon className="w-4 h-4 text-gray-400" />}
+                              {item.is_favorite ? <StarIcon className="w-4 h-4 text-yellow-400" /> : <StarIcon className="w-4 h-4 text-muted-foreground" />}
                             </button>
                           </div>
                         </div>
@@ -1113,7 +1137,7 @@ export default function LibraryPickerModal({
                         {/*** ⋮ button ***/}
                         <div className="absolute top-1 right-1 z-20 opacity-0 group-hover:opacity-100 transition-opacity">
                           <button onClick={(e) => handleMenuClick(e, item.uuid)}
-                            className="bg-black/50 backdrop-blur-sm rounded-lg p-1 shadow-lg text-gray-200 hover:text-white text-sm leading-none">⋮</button>
+                            className="bg-black/50 backdrop-blur-sm rounded-lg p-1 shadow-lg text-foreground hover:text-white text-sm leading-none">⋮</button>
                         </div>
 
                         <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 p-1.5 pointer-events-none">
@@ -1123,13 +1147,13 @@ export default function LibraryPickerModal({
                                 onChange={e => setEditingValue(e.target.value)}
                                 onBlur={() => submitRename(item.uuid)}
                                 onKeyDown={e => { if (e.key === 'Enter') submitRename(item.uuid); if (e.key === 'Escape') setEditingName(null); }}
-                                className="flex-1 text-xs bg-gray-900/80 border border-gray-500 rounded px-1 py-0.5 text-gray-200 outline-none"
+                                className="flex-1 text-xs bg-card border border-border-strong rounded px-1 py-0.5 text-foreground outline-none"
                               />
                               <button onClick={() => submitRename(item.uuid)}
                                 className="text-green-400 hover:text-green-300 text-xs">✓</button>
                             </div>
                           ) : (
-                            <span className="block text-xs text-white truncate">{item.name}</span>
+                            <span className="block text-xs text-foreground truncate">{item.name}</span>
                           )}
                         </div>
 
@@ -1150,7 +1174,7 @@ export default function LibraryPickerModal({
                   {items.filter(i => i.type === 'file').map(item => (
                     <div key={item.uuid} onClick={() => toggleSelect(item.uuid)}
                       className={`flex items-center gap-3 px-4 py-3 rounded-xl cursor-pointer border transition-all group ${
-                        selected.has(item.uuid) ? 'border-blue-500 bg-blue-500/10' : 'border-gray-700/50 hover:border-gray-500 bg-gray-800/50'
+                        selected.has(item.uuid) ? 'border-blue-500 bg-blue-500/10' : 'border-border/50 hover:border-border-strong bg-card/50'
                       }`}>
                       <span className="text-2xl">{getFileIcon(item.name)}</span>
                       <div className="flex-1 min-w-0">
@@ -1160,7 +1184,7 @@ export default function LibraryPickerModal({
                               onChange={e => setEditingValue(e.target.value)}
                               onBlur={() => submitRename(item.uuid)}
                               onKeyDown={e => { if (e.key === 'Enter') submitRename(item.uuid); if (e.key === 'Escape') setEditingName(null); }}
-                              className="flex-1 text-sm bg-gray-700 border border-gray-500 rounded px-2 py-1 text-gray-200 outline-none"
+                              className="flex-1 text-sm bg-muted border border-border-strong rounded px-2 py-1 text-foreground outline-none"
                               onClick={e => e.stopPropagation()}
                             />
                             <button onClick={(e) => { e.stopPropagation(); submitRename(item.uuid); }}
@@ -1168,15 +1192,15 @@ export default function LibraryPickerModal({
                           </div>
                         ) : (
                           <>
-                            <p className="text-sm text-gray-200 truncate">{item.name}</p>
-                            <p className="text-xs text-gray-400">{(item.size / 1024).toFixed(1)} KB</p>
+                            <p className="text-sm text-foreground truncate">{item.name}</p>
+                            <p className="text-xs text-muted-foreground">{(item.size / 1024).toFixed(1)} KB</p>
                           </>
                         )}
                       </div>
                       {/*** ⋮ Menu button ***/}
                       <div className="relative opacity-0 group-hover:opacity-100 transition-opacity">
                         <button onClick={(e) => handleMenuClick(e, item.uuid)}
-                          className="bg-black/40 hover:bg-black/60 rounded-lg px-1.5 py-1 text-sm text-gray-300 hover:text-white">⋮</button>
+                          className="bg-black/40 hover:bg-black/60 rounded-lg px-1.5 py-1 text-sm text-foreground/80 hover:text-white">⋮</button>
                       </div>
                       {selected.has(item.uuid) && <span className="text-blue-400 ml-1">✓</span>}
                     </div>
@@ -1184,16 +1208,16 @@ export default function LibraryPickerModal({
                 </div>
               )}
 
-              {loading && <div className="flex justify-center py-4"><span className="text-gray-400 animate-pulse">⏳ Đang tải...</span></div>}
+              {loading && <div className="flex justify-center py-4"><span className="text-muted-foreground animate-pulse">⏳ Đang tải...</span></div>}
               {hasMore && !loading && (
-                <button onClick={handleLoadMore} className="w-full py-3 text-sm text-gray-400 hover:text-white transition-colors">Tải thêm...</button>
+                <button onClick={handleLoadMore} className="w-full py-3 text-sm text-muted-foreground hover:text-foreground transition-colors">Tải thêm...</button>
               )}
             </div>
           </div>
         </div>
 
         {/* Bottom bar */}
-        <div className="flex items-center gap-3 px-5 py-3 border-t border-gray-700/50">
+        <div className="flex items-center gap-3 px-5 py-3 border-t border-border/50">
           <input ref={fileInputRef} type="file" multiple accept={getAcceptType(initialType)} onChange={handleUploadAndSend} className="hidden" />
           <input ref={directInputRef} type="file" multiple accept={getAcceptType(initialType)} onChange={handleDirectFile} className="hidden" />
           <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
@@ -1201,15 +1225,15 @@ export default function LibraryPickerModal({
             className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-700/80 hover:bg-indigo-600 text-white-important text-xs rounded-lg transition-colors disabled:opacity-50"><SendIcon className="w-4 h-4 inline" /> {uploading ? 'Đang tải...' : `Upload vào ${uploadOwnerLabel}`}
           </button>
           <button onClick={() => directInputRef.current?.click()}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-200 text-xs rounded-lg transition-colors"><MonitorIcon className="w-4 h-4 inline" /> Chọn từ Máy tính
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-muted hover:bg-accent text-foreground text-xs rounded-lg transition-colors"><MonitorIcon className="w-4 h-4 inline" /> Chọn từ Máy tính
           </button>
           <div className="flex-1" />
-          <span className="text-xs text-gray-400">{selectedItems.length} file</span>
+          <span className="text-xs text-muted-foreground">{selectedItems.length} file</span>
           <button onClick={handleSendSelected} disabled={selectedItems.length === 0}
             className={`px-5 py-1.5 text-sm rounded-lg transition-colors ${
               selectedItems.length > 0
                 ? 'bg-blue-600 hover:bg-blue-500 text-white'
-                : 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                : 'bg-muted text-muted-foreground cursor-not-allowed'
             }`}>
             Gửi {selectedItems.length ? `${selectedItems.length} file` : ''}
           </button>
@@ -1223,30 +1247,30 @@ export default function LibraryPickerModal({
         return (
           <>
             <div className="fixed inset-0 z-[99]" onClick={closeMenus} />
-            <div className="fixed z-[100] bg-gray-800 border border-gray-600 rounded-xl shadow-2xl py-1 w-48"
+            <div className="fixed z-[100] bg-card border border-input rounded-xl shadow-2xl py-1 w-48"
               style={{ top: menuPos.top, left: menuPos.left }} onClick={e => e.stopPropagation()}>
               <button onClick={() => { handleToggleFavorite(item.uuid, item.is_favorite); closeMenus(); }}
-                className="w-full text-left px-3 py-1.5 text-xs text-gray-200 hover:bg-gray-700 flex items-center gap-2">
+                className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-muted flex items-center gap-2">
                 {item.is_favorite ? <><StarIcon className="w-3.5 h-3.5 inline" /> Bỏ yêu thích</> : '☆ Yêu thích'}
               </button>
               <button onClick={() => { setMoveFolderTarget(item.uuid); setFolderPos(menuPos); setMenuTarget(null); setMenuPos(null); }}
-                className="w-full text-left px-3 py-1.5 text-xs text-gray-200 hover:bg-gray-700 flex items-center gap-2"><FolderIcon className="w-4 h-4 inline" /> Chuyển đến thư mục →
+                className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-muted flex items-center gap-2"><FolderIcon className="w-4 h-4 inline" /> Chuyển đến thư mục →
               </button>
               <button onClick={() => { startRename(item.uuid, item.name); closeMenus(); }}
-                className="w-full text-left px-3 py-1.5 text-xs text-gray-200 hover:bg-gray-700 flex items-center gap-2">
+                className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-muted flex items-center gap-2">
                 <EditIcon className="w-3.5 h-3.5 inline" /> Đổi tên
               </button>
               {item.folder_id !== null && (
                 <>
-                  <div className="h-px bg-gray-600 mx-2" />
+                  <div className="h-px bg-accent mx-2" />
                   <button onClick={() => handleMoveToFolder(item.uuid, null)}
-                    className="w-full text-left px-3 py-1.5 text-xs text-gray-400 hover:bg-gray-700 flex items-center gap-2"><TrashIcon className="w-4 h-4 inline" /> Bỏ khỏi thư mục
+                    className="w-full text-left px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted flex items-center gap-2"><TrashIcon className="w-4 h-4 inline" /> Bỏ khỏi thư mục
                   </button>
                 </>
               )}
-              <div className="h-px bg-gray-600 mx-2" />
+              <div className="h-px bg-accent mx-2" />
               <button onClick={() => handleDeleteItem(item.uuid)}
-                className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-gray-700 flex items-center gap-2">
+                className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-muted flex items-center gap-2">
                 <CloseIcon className="w-4 h-4" /> Xoá
               </button>
             </div>
@@ -1261,17 +1285,17 @@ export default function LibraryPickerModal({
         return (
           <>
             <div className="fixed inset-0 z-[99]" onClick={closeMenus} />
-            <div className="fixed z-[100] bg-gray-800 border border-gray-600 rounded-xl shadow-2xl py-1 min-w-[180px] max-h-[260px] overflow-y-auto"
+            <div className="fixed z-[100] bg-card border border-input rounded-xl shadow-2xl py-1 min-w-[180px] max-h-[260px] overflow-y-auto"
               style={{ top: folderPos.top, left: folderPos.left }} onClick={e => e.stopPropagation()}>
-              <div className="px-3 py-1.5 text-[10px] text-gray-400 uppercase tracking-wider">Chuyển đến</div>
+              <div className="px-3 py-1.5 text-[10px] text-muted-foreground uppercase tracking-wider">Chuyển đến</div>
               {rootFolders.length === 0 && (
-                <p className="px-3 py-2 text-xs text-gray-400">Chưa có thư mục</p>
+                <p className="px-3 py-2 text-xs text-muted-foreground">Chưa có thư mục</p>
               )}
               {rootFolders.map(f => renderFolderPickerItem(f, item.uuid))}
               {item.folder_id !== null && (
-                <><div className="h-px bg-gray-600 mx-2" />
+                <><div className="h-px bg-accent mx-2" />
                 <button onClick={() => handleMoveToFolder(item.uuid, null)}
-                  className="w-full text-left px-3 py-1.5 text-xs text-gray-400 hover:bg-gray-700 flex items-center gap-2">✕ Bỏ khỏi thư mục</button></>
+                  className="w-full text-left px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted flex items-center gap-2">✕ Bỏ khỏi thư mục</button></>
               )}
             </div>
           </>
@@ -1311,7 +1335,7 @@ function ImagePreview({ item }: { item: any }) {
     setErr(false);
   }, [item.thumbUrl, item._localPath, item._thumbLocalPath, item.fileUrl]);
 
-  if (!src || err) return <div className="w-full h-full bg-gray-700 flex items-center justify-center text-2xl"><ImageIcon className="w-4 h-4" /></div>;
+  if (!src || err) return <div className="w-full h-full bg-muted flex items-center justify-center text-2xl"><ImageIcon className="w-4 h-4" /></div>;
   return (
     <img
       src={src}

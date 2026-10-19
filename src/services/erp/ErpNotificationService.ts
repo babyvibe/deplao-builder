@@ -52,20 +52,33 @@ export default class ErpNotificationService {
     return this.db().query<ErpNotification>(sql, [recipientId, limit, offset]);
   }
 
-  markRead(ids: number[]): void {
+  /**
+   * Đánh dấu đã đọc. `recipientId` → chỉ thông báo của người đó (id thông báo của người khác bị bỏ qua) — handler IPC
+   * luôn truyền danh tính người gọi; trước đây theo id bất kỳ → nhân viên (REST) đánh dấu / xoá được hộp thư người khác.
+   */
+  markRead(ids: number[], recipientId?: string): void {
     if (!ids.length) return;
     const placeholders = ids.map(() => '?').join(',');
-    this.db().run(`UPDATE erp_notifications SET read = 1 WHERE id IN (${placeholders})`, ids);
+    if (recipientId === undefined) {
+      this.db().run(`UPDATE erp_notifications SET read = 1 WHERE id IN (${placeholders})`, ids);
+      return;
+    }
+    this.db().run(`UPDATE erp_notifications SET read = 1 WHERE id IN (${placeholders}) AND recipient_id = ?`, [...ids, recipientId]);
   }
 
   markAllRead(recipientId: string): void {
     this.db().run(`UPDATE erp_notifications SET read = 1 WHERE recipient_id = ?`, [recipientId]);
   }
 
-  delete(ids: number[]): void {
+  /** Xoá thông báo — `recipientId` như markRead: chỉ thông báo của người đó. */
+  delete(ids: number[], recipientId?: string): void {
     if (!ids.length) return;
     const placeholders = ids.map(() => '?').join(',');
-    this.db().run(`DELETE FROM erp_notifications WHERE id IN (${placeholders})`, ids);
+    if (recipientId === undefined) {
+      this.db().run(`DELETE FROM erp_notifications WHERE id IN (${placeholders})`, ids);
+      return;
+    }
+    this.db().run(`DELETE FROM erp_notifications WHERE id IN (${placeholders}) AND recipient_id = ?`, [...ids, recipientId]);
   }
 
   deleteAll(recipientId: string): void {

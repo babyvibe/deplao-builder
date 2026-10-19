@@ -1,0 +1,65 @@
+package messagix
+
+import (
+	"encoding/json"
+	"strconv"
+
+	"go.mau.fi/mautrix-meta/pkg/messagix/methods"
+	"go.mau.fi/mautrix-meta/pkg/messagix/socket"
+)
+
+type TaskManager struct {
+	client    *Client
+	currTasks []socket.TaskData
+	traceId   string
+}
+
+func (c *Client) newTaskManager() *TaskManager {
+	return &TaskManager{
+		client:    c,
+		currTasks: make([]socket.TaskData, 0),
+		traceId:   "",
+	}
+}
+
+func (tm *TaskManager) FinalizePayload() ([]byte, error) {
+	p := &socket.TaskPayload{
+		EpochId:     methods.GenerateEpochID(),
+		Tasks:       tm.currTasks,
+		DataTraceId: tm.traceId,
+		VersionId:   strconv.FormatInt(tm.client.configs.VersionID, 10),
+	}
+	tm.currTasks = make([]socket.TaskData, 0)
+	return json.Marshal(p)
+}
+
+//lint:ignore U1000 -
+func (tm *TaskManager) setTraceId(traceId string) {
+	tm.traceId = traceId
+}
+
+func (tm *TaskManager) AddNewTask(task socket.Task) {
+	payload, queueName := task.Create()
+	label := task.GetLabel()
+	if queueName == "" {
+		tm.client.Logger.Error().Str("label", label).Msg("no queue name provided for task")
+		return
+	}
+
+	payloadMarshalled, err := json.Marshal(payload)
+	if err != nil {
+		tm.client.Logger.Err(err).Str("label", label).Msg("failed to marshal task payload")
+		return
+	}
+
+	taskData := socket.TaskData{
+		FailureCount: nil,
+		Label:        label,
+		Payload:      string(payloadMarshalled),
+		QueueName:    queueName,
+		TaskID:       tm.client.getTaskID(),
+	}
+	tm.client.Logger.Trace().Str("label", label).Any("payload", payload).Any("queueName", queueName).Int64("taskId", taskData.TaskID).Msg("Creating task")
+
+	tm.currTasks = append(tm.currTasks, taskData)
+}

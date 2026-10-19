@@ -1,0 +1,261 @@
+package igconnector
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"maps"
+	"net/http"
+	"slices"
+
+	"github.com/rs/zerolog"
+	"maunium.net/go/mautrix/bridgev2"
+	"maunium.net/go/mautrix/bridgev2/database"
+	"maunium.net/go/mautrix/bridgev2/status"
+
+	"go.mau.fi/util/exslices"
+
+	"go.mau.fi/mautrix-meta/pkg/instameow"
+	"go.mau.fi/mautrix-meta/pkg/messagix/cookies"
+	"go.mau.fi/mautrix-meta/pkg/messagix/httpclient"
+	"go.mau.fi/mautrix-meta/pkg/messagix/loginerrors"
+	"go.mau.fi/mautrix-meta/pkg/messagix/types"
+	"go.mau.fi/mautrix-meta/pkg/metaid"
+)
+
+const (
+	FlowIDCookies = "instagram"
+
+	LoginStepIDCookies  = "fi.mau.meta.cookies"
+	LoginStepIDComplete = "fi.mau.meta.complete"
+
+	instagramWebLoggedInURLPattern = "^https://www\\.instagram\\.com/(?:direct/(?:inbox/|t/[0-9]+/)?)?(?:\\?.*)?$"
+)
+
+func (ic *IGConnector) CreateLogin(ctx context.Context, user *bridgev2.User, flowID string) (bridgev2.LoginProcess, error) {
+	switch flowID {
+	case FlowIDAndroidNative:
+		return &MetaNativeLogin{User: user, Main: ic, nativeLogin: true}, nil
+	case FlowIDWebNative:
+		return &MetaNativeLogin{
+			User: user,
+			Main: ic,
+		}, nil
+	case FlowIDCookies:
+	default:
+		return nil, bridgev2.ErrInvalidLoginFlowID
+	}
+
+	return &MetaCookieLogin{
+		User: user,
+		Main: ic,
+	}, nil
+}
+
+var (
+	loginFlowInstagram = bridgev2.LoginFlow{
+		Name:        "Cookies",
+		Description: "Login using cookies from instagram.com",
+		ID:          FlowIDCookies,
+	}
+)
+
+func (ic *IGConnector) GetLoginFlows() []bridgev2.LoginFlow {
+	return []bridgev2.LoginFlow{loginFlowInstagramNative, loginFlowInstagram, loginFlowInstagramPassword}
+}
+
+type MetaCookieLogin struct {
+	User *bridgev2.User
+	Main *IGConnector
+}
+
+var _ bridgev2.LoginProcessCookies = (*MetaCookieLogin)(nil)
+
+func cookieListToFields(cookies []cookies.MetaCookieName, domain string, required bool) []bridgev2.LoginCookieField {
+	fields := make([]bridgev2.LoginCookieField, len(cookies))
+	for i, cookie := range cookies {
+		fields[i] = bridgev2.LoginCookieField{
+			ID:       string(cookie),
+			Required: required,
+			Sources: []bridgev2.LoginCookieFieldSource{
+				{
+					Type:         bridgev2.LoginCookieTypeCookie,
+					Name:         string(cookie),
+					CookieDomain: domain,
+				},
+			},
+		}
+	}
+	return fields
+}
+
+func (m *MetaCookieLogin) Start(ctx context.Context) (*bridgev2.LoginStep, error) {
+	return &bridgev2.LoginStep{
+		Type:         bridgev2.LoginStepTypeCookies,
+		StepID:       LoginStepIDCookies,
+		Instructions: "Enter a JSON object with your cookies, or a cURL command copied from browser devtools.",
+		CookiesParams: &bridgev2.LoginCookiesParams{
+			//UserAgent:         useragent.UserAgent,
+			URL: "https://www.instagram.com/accounts/login/",
+			Fields: append(
+				cookieListToFields(cookies.IGRequiredCookies, "instagram.com", true),
+				cookieListToFields(cookies.IGOptionalCookies, "instagram.com", false)...,
+			),
+			WaitForURLPattern: instagramWebLoggedInURLPattern,
+		},
+	}, nil
+}
+
+func (m *MetaCookieLogin) Cancel() {}
+
+func getInstaClient(log zerolog.Logger, conn *IGConnector, c *cookies.Cookies, useProxy bool) (*instameow.Client, error) {
+	client := instameow.NewClient(instameow.ClientParams{
+		Cookies:                   c,
+		Log:                       log,
+		Settings:                  conn.Bridge.GetHTTPClientSettings(),
+		DisableTyping:             conn.Config.DisableTyping,
+		LogRedactedLoginResponses: conn.Config.LogRedactedLoginResponses,
+	})
+	if useProxy && (conn.Config.GetProxyFrom != "" || conn.Config.Proxy != "") {
+		client.GetHTTP().GetNewProxy = conn.getProxy
+		if !client.GetHTTP().UpdateProxy("login") {
+			return nil, fmt.Errorf("failed to update proxy")
+		}
+	}
+	return client, nil
+}
+
+func loginWithCookies(
+	ctx context.Context,
+	log zerolog.Logger,
+	client *instameow.Client,
+	bridgeUser *bridgev2.User,
+	conn *IGConnector,
+	c *cookies.Cookies,
+	nativeSession *types.InstagramNativeSession,
+	requireNative bool,
+	beforeClientStart func(),
+) (*bridgev2.LoginStep, error) {
+	log.Debug().
+		Strs("cookie_names", exslices.CastToString[string](slices.Collect(maps.Keys(c.GetAll())))).
+		Msg("Logging in with cookies")
+	if requireNative {
+		if nativeSession == nil || nativeSession.Authorization == "" || nativeSession.UserID != c.Get(cookies.IGCookieDSUserID) {
+			return nil, errMissingAuth
+		}
+		client.SetInstagramNativeSession(nativeSession)
+	}
+	user, mailbox, err := client.LoadIndex(ctx)
+	if err != nil {
+		log.Err(err).Msg("Failed to load messages page for login")
+		if errors.Is(err, httpclient.ErrRateLimited) {
+			return nil, loginerrors.RateLimited
+		} else if errors.Is(err, httpclient.ErrChallengeRequired) {
+			return nil, loginerrors.Challenge
+		} else if errors.Is(err, httpclient.ErrCheckpointRequired) {
+			return nil, loginerrors.Checkpoint
+		} else if errors.Is(err, httpclient.ErrConsentRequired) {
+			return nil, loginerrors.Consent
+		} else if errors.Is(err, httpclient.ErrAccountSuspended) {
+			return nil, loginerrors.AccountSuspended
+		} else if errors.Is(err, httpclient.ErrTokenInvalidated) {
+			return nil, loginerrors.TokenInvalidated
+		} else {
+			return nil, fmt.Errorf("%w: %w", loginerrors.Unknown, err)
+		}
+	}
+
+	ownFBID := client.GetOwnFBID()
+	if ownFBID == 0 {
+		return nil, fmt.Errorf("own fbid not found")
+	}
+	if nativeSession != nil && (nativeSession.UserID != user.ID || nativeSession.UserID != c.Get(cookies.IGCookieDSUserID)) {
+		nativeSession = nil
+	}
+	if requireNative && (nativeSession == nil || nativeSession.Authorization == "") {
+		return nil, errMissingAuth
+	}
+	client.SetInstagramNativeSession(nativeSession)
+	loginID := metaid.MakeUserLoginID(ownFBID)
+	var loginUA string
+	if req, ok := ctx.Value("fi.mau.provision.request").(*http.Request); ok {
+		loginUA = req.Header.Get("User-Agent")
+	}
+
+	ul, err := bridgeUser.NewLogin(ctx, &database.UserLogin{
+		ID:         loginID,
+		RemoteName: user.GetName(),
+		RemoteProfile: status.RemoteProfile{
+			Name: user.GetName(),
+		},
+		Metadata: &metaid.UserLoginMetadata{
+			Platform:               c.Platform,
+			Cookies:                c,
+			LoginUA:                loginUA,
+			IGID:                   user.ID,
+			InstagramNativeSession: nativeSession,
+		},
+	}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to save new login: %w", err)
+	}
+	if beforeClientStart != nil {
+		beforeClientStart()
+	}
+
+	igClient := ul.Client.(*IGClient)
+	// Override the client because LoadMessagesPage saves some state and we don't want to call it again
+	client.SetLogger(ul.Log.With().Str("component", "instameow").Logger())
+	client.SetEventHandler(igClient.handleIGEvent)
+	igClient.Client = client
+
+	dumpedState, err := client.DumpState()
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to dump initial reconnection state")
+	} else if err = conn.DB.PutReconnectionState(ctx, ul.ID, dumpedState); err != nil {
+		log.Warn().Err(err).Msg("Failed to save initial reconnection state")
+	}
+
+	backgroundCtx := ul.Log.WithContext(conn.Bridge.BackgroundCtx)
+	ul.BridgeState.Send(status.BridgeState{StateEvent: status.StateConnecting})
+	go func() {
+		igClient.connectWithMailbox(backgroundCtx, backgroundCtx, user, mailbox)
+		igClient.schedulePeriodicReconnect(backgroundCtx)
+		zerolog.Ctx(ctx).Debug().Msg("Processed mailbox after login, connecting to DGW")
+		go igClient.Client.Connect(backgroundCtx)
+	}()
+	return &bridgev2.LoginStep{
+		Type:         bridgev2.LoginStepTypeComplete,
+		StepID:       LoginStepIDComplete,
+		Instructions: fmt.Sprintf("Logged in as %s (%s)", user.GetName(), ul.ID),
+		CompleteParams: &bridgev2.LoginCompleteParams{
+			UserLoginID: ul.ID,
+			UserLogin:   ul,
+		},
+	}, nil
+}
+
+func submitInstagramCookies(ctx context.Context, conn *IGConnector, user *bridgev2.User, strCookies map[string]string) (*bridgev2.LoginStep, error) {
+	c := &cookies.Cookies{Platform: types.Instagram}
+	strCookiesCopy := map[cookies.MetaCookieName]string{}
+	for key, val := range strCookies {
+		strCookiesCopy[cookies.MetaCookieName(key)] = val
+	}
+	c.UpdateValues(strCookiesCopy)
+
+	missingCookies := c.GetMissingCookieNames()
+	if len(missingCookies) > 0 {
+		return nil, loginerrors.MissingCookies.AppendMessage(": %v", missingCookies)
+	}
+
+	log := user.Log.With().Str("component", "instameow").Logger()
+	client, err := getInstaClient(log, conn, c, conn.Config.ProxyOther)
+	if err != nil {
+		return nil, err
+	}
+	return loginWithCookies(ctx, log, client, user, conn, c, nil, false, nil)
+}
+
+func (m *MetaCookieLogin) SubmitCookies(ctx context.Context, strCookies map[string]string) (*bridgev2.LoginStep, error) {
+	return submitInstagramCookies(ctx, m.Main, m.User, strCookies)
+}

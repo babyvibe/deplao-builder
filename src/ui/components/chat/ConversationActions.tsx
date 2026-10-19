@@ -53,23 +53,23 @@ export function DangerActionRow({
   const textColor =
     variant === 'danger' ? 'text-red-400' :
     variant === 'warning' ? 'text-orange-400' :
-    'text-gray-200';
+    'text-foreground';
   return (
     <button
       onClick={onClick}
       disabled={disabled}
-      className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-700/50 transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed`}
+      className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/50 transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed`}
     >
-      <div className={`w-8 h-8 rounded-full bg-gray-700 flex items-center justify-center flex-shrink-0 ${textColor}`}>
+      <div className={`w-8 h-8 rounded-full bg-muted flex items-center justify-center flex-shrink-0 ${textColor}`}>
         {icon}
       </div>
       <div className="flex-1 min-w-0">
         <p className={`text-sm ${textColor}`}>{label}</p>
-        {sublabel && <p className="text-[11px] text-gray-400 mt-0.5 truncate">{sublabel}</p>}
+        {sublabel && <p className="text-[11px] text-muted-foreground mt-0.5 truncate">{sublabel}</p>}
       </div>
       {rightEl ?? (
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-          className="text-gray-400 flex-shrink-0">
+          className="text-muted-foreground flex-shrink-0">
           <polyline points="9 18 15 12 9 6"/>
         </svg>
       )}
@@ -442,7 +442,7 @@ export function GroupActionSection({ groupId, groupName, isOwner, onLeft, channe
   const supportsReport = channelCap ? channelCap.supportsReport : true;
   const supportsLeave = channelCap ? channelCap.supportsLeaveGroup : true;
   return (
-    <div className="border-t border-gray-700">
+    <div className="border-t border-border">
       {supportsReport && <ReportAction targetId={groupId} targetName={groupName} targetType="group" />}
       <DeleteHistoryAction threadId={groupId} />
       {supportsLeave && !isOwner && (
@@ -473,7 +473,7 @@ export function UserActionSection({
   const supportsReport = channelCap ? channelCap.supportsReport : true;
   const supportsRemoveFriend = channelCap ? channelCap.supportsRemoveFriend : true;
   return (
-    <div className="border-t border-gray-700">
+    <div className="border-t border-border">
       {supportsMutualGroups && <MutualGroupsRow userId={userId} onOpen={onMutualGroupsOpen} />}
       {supportsBlock && <BlockUserAction userId={userId} userName={userName} channel={channelCap?.id || CHANNEL.ZALO} />}
       {supportsReport && <ReportAction targetId={userId} targetName={userName} targetType="user" />}

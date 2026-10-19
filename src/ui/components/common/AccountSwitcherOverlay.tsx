@@ -1,5 +1,6 @@
 import React from 'react';
 import { useAppStore } from '@/store/appStore';
+import { useShallow } from 'zustand/react/shallow';
 import { useAccountStore } from '@/store/accountStore';
 import { toLocalMediaUrl } from '@/lib/localMedia';
 import { PhoneIcon } from './icons';
@@ -14,8 +15,13 @@ import { CHANNEL } from '@/lib/channelHelper';
  * Index 0 = "Tất cả tài khoản" (virtual), indices 1..N = accounts[0..N-1].
  */
 export default function AccountSwitcherOverlay() {
-  const { accountSwitcherOpen, accountSwitcherIndex, mergedInboxMode } = useAppStore();
-  const { accounts } = useAccountStore();
+  const { accountSwitcherOpen, accountSwitcherIndex, mergedInboxMode } = useAppStore(useShallow(s => ({
+    accountSwitcherOpen: s.accountSwitcherOpen, accountSwitcherIndex: s.accountSwitcherIndex,
+    mergedInboxMode: s.mergedInboxMode,
+  })));
+  const { accounts } = useAccountStore(useShallow(s => ({
+    accounts: s.accounts,
+  })));
   const theme = useAppStore(s => s.theme);
   const isLight = theme === 'light';
 
@@ -38,10 +44,10 @@ export default function AccountSwitcherOverlay() {
             sel
               ? isLight
                 ? 'bg-white/90 border-2 border-blue-500 shadow-xl shadow-blue-500/20 scale-105'
-                : 'bg-gray-700/90 border-2 border-blue-500 shadow-xl shadow-blue-500/20 scale-105'
+                : 'bg-muted/90 border-2 border-blue-500 shadow-xl shadow-blue-500/20 scale-105'
               : isLight
                 ? 'bg-white/60 border border-gray-300/50 opacity-60 hover:opacity-80'
-                : 'bg-gray-800/60 border border-gray-600/50 opacity-60 hover:opacity-80'
+                : 'bg-card/60 border border-input/50 opacity-60 hover:opacity-80'
           }`}
         >
           {/* All-accounts icon */}
@@ -56,14 +62,14 @@ export default function AccountSwitcherOverlay() {
 
           {/* Title */}
           <p className={`text-sm font-semibold text-center truncate w-full max-w-[140px] ${
-            isLight ? 'text-gray-800' : 'text-white'
+            isLight ? 'text-gray-800' : 'text-foreground'
           }`}>
             Tất cả tài khoản
           </p>
 
           {/* Hint */}
           <p className={`text-[10px] text-center truncate w-full max-w-[140px] ${
-            isLight ? 'text-gray-400' : 'text-gray-400'
+            isLight ? 'text-muted-foreground' : 'text-muted-foreground'
           }`}>
             {mergedInboxMode ? 'Hiện tất cả hội thoại' : `${accounts.length} tài khoản`}
           </p>
@@ -85,10 +91,10 @@ export default function AccountSwitcherOverlay() {
     const cardBg = sel
       ? isLight
         ? 'bg-white/90 border-2 border-blue-500 shadow-xl shadow-blue-500/20 scale-105'
-        : 'bg-gray-700/90 border-2 border-blue-500 shadow-xl shadow-blue-500/20 scale-105'
+        : 'bg-muted/90 border-2 border-blue-500 shadow-xl shadow-blue-500/20 scale-105'
       : isLight
         ? 'bg-white/60 border border-gray-300/50 opacity-60 hover:opacity-80'
-        : 'bg-gray-800/60 border border-gray-600/50 opacity-60 hover:opacity-80';
+        : 'bg-card/60 border border-input/50 opacity-60 hover:opacity-80';
 
     return (
       <div
@@ -119,14 +125,14 @@ export default function AccountSwitcherOverlay() {
 
         {/* Name */}
         <p className={`text-sm font-semibold text-center truncate w-full max-w-[140px] ${
-          isLight ? 'text-gray-800' : 'text-white'
+          isLight ? 'text-gray-800' : 'text-foreground'
         }`}>
           {acc.full_name}
         </p>
 
         {/* UID */}
         <p className={`text-[10px] font-mono truncate w-full max-w-[140px] text-center ${
-          isLight ? 'text-gray-400' : 'text-gray-400'
+          isLight ? 'text-muted-foreground' : 'text-muted-foreground'
         }`}>
           ID: {acc.zalo_id}
         </p>
@@ -134,7 +140,7 @@ export default function AccountSwitcherOverlay() {
         {/* Phone */}
         {acc.phone && (
           <p className={`text-[10px] truncate w-full max-w-[140px] text-center ${
-            isLight ? 'text-gray-400' : 'text-gray-400'
+            isLight ? 'text-muted-foreground' : 'text-muted-foreground'
           }`}>
             <PhoneIcon className="w-3 h-3 inline" /> {acc.phone}
           </p>

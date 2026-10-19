@@ -41,9 +41,9 @@ export default function FriendListAccountSelector({
   onSelectAccount,
 }: Props) {
   return (
-    <div className="flex items-center gap-3 px-4 py-2.5 border-b border-gray-700 flex-shrink-0 bg-gray-850">
+    <div className="flex items-center gap-3 px-4 py-2.5 border-b border-border flex-shrink-0 bg-card">
       {/* ── Tabs (trái) ── */}
-      <div className="flex bg-gray-800 rounded-lg p-0.5 gap-0.5">
+      <div className="flex bg-card rounded-lg p-0.5 gap-0.5">
         {TABS.map(({ key, label, icon }) => {
           const isActive = tab === key;
           const badge = key === 'friends' && friendsCount
@@ -58,7 +58,7 @@ export default function FriendListAccountSelector({
               key={key}
               onClick={() => onTabChange(key)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap
-                ${isActive ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'}`}
+                ${isActive ? 'bg-blue-600 text-white shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'}`}
             >
               <span>{icon}</span>
               <span>{label}</span>
@@ -68,7 +68,7 @@ export default function FriendListAccountSelector({
                     ? 'bg-white/20 text-white'
                     : key === 'requests'
                       ? 'bg-red-500 text-white'
-                      : 'bg-gray-600 text-gray-300'
+                      : 'bg-accent text-foreground/80'
                   }`}>
                   {badge > 99 ? '99+' : badge}
                 </span>

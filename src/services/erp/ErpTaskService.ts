@@ -1,3 +1,4 @@
+import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import DatabaseService from '../database/DatabaseService';
 import EventBroadcaster from '../event/EventBroadcaster';
@@ -186,6 +187,25 @@ export default class ErpTaskService {
       watchers: Array.from(new Set(watchers.filter(Boolean))),
       dependencies,
     };
+  }
+
+  /** Người thực hiện hiện tại (kiểm tra quyền giao việc theo thay đổi). */
+  getTaskAssignees(taskId: string): string[] {
+    return this.db().query<{ employee_id: string }>(
+      `SELECT employee_id FROM erp_task_assignees WHERE task_id = ?`, [taskId]
+    ).map(r => String(r.employee_id)).filter(Boolean);
+  }
+
+  /** Người tạo task (undefined = không có task). */
+  getTaskReporterId(taskId: string): string | undefined {
+    const row = this.db().queryOne<{ reporter_id: string | null }>(`SELECT reporter_id FROM erp_tasks WHERE id = ?`, [taskId]);
+    return row ? String(row.reporter_id ?? '') : undefined;
+  }
+
+  /** Người viết bình luận (undefined = không có bình luận). */
+  getCommentAuthorId(commentId: number): string | undefined {
+    const row = this.db().queryOne<{ author_id: string | null }>(`SELECT author_id FROM erp_task_comments WHERE id = ?`, [commentId]);
+    return row ? String(row.author_id ?? '') : undefined;
   }
 
   // ─── Watchers (Phase 2) ───────────────────────────────────────────────────
@@ -404,7 +424,7 @@ export default class ErpTaskService {
       this.db().run(`DELETE FROM erp_tasks WHERE id = ?`, [id]);
     });
     for (const attachment of existingAttachments) {
-      FileStorageService.deleteManagedTaskAttachment(attachment.file_path);
+      this._deleteOwnedAttachmentFile(id, attachment.file_path);
     }
     EventBroadcaster.emit('erp:event:taskDeleted', { taskId: id });
   }
@@ -565,8 +585,26 @@ export default class ErpTaskService {
 
     for (const attachment of existingAttachments) {
       if (!keptPaths.has(attachment.file_path)) {
-        FileStorageService.deleteManagedTaskAttachment(attachment.file_path);
+        this._deleteOwnedAttachmentFile(taskId, attachment.file_path);
       }
+    }
+  }
+
+  /**
+   * Xoá file khi bỏ tệp đính kèm / xoá task — CHỈ file nằm trong thư mục riêng của task (media/erp/tasks/<id>, nơi
+   * saveTaskAttachment chép file vào). Tệp đính kèm trỏ tới file media khác (ảnh chat, file nhân viên upload lên Boss…)
+   * chỉ bỏ liên kết: trước đây mọi file trong thư mục media đều bị xoá → mất file của nơi khác.
+   */
+  private _deleteOwnedAttachmentFile(taskId: string, filePath: string): void {
+    try {
+      const abs = FileStorageService.resolveAbsolutePath(filePath);
+      if (!abs) return;
+      const taskDir = path.join(FileStorageService.getBaseDir(), 'erp', 'tasks', taskId);
+      const rel = path.relative(taskDir, abs);
+      if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return;
+      FileStorageService.deleteManagedTaskAttachment(filePath);
+    } catch (err: any) {
+      Logger.warn(`[ErpTaskService] bỏ qua xoá tệp đính kèm: ${err.message}`);
     }
   }
 

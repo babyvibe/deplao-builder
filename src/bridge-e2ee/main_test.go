@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,7 +68,7 @@ func TestReadAndValidateLocalPath_Oversize(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for oversize file")
 	}
-if !strings.Contains(err.Error(), "too large") {
+	if !strings.Contains(err.Error(), "too large") {
 		t.Fatalf("expected 'too large' in error, got: %v", err)
 	}
 }
@@ -98,5 +100,85 @@ func TestHelloResponse(t *testing.T) {
 	}
 	if bridgeVersion == "" {
 		t.Fatal("bridgeVersion must not be empty")
+	}
+}
+
+func TestServeRequestsRejectsOversizedLine(t *testing.T) {
+	input := strings.NewReader(strings.Repeat("x", 65) + "\n")
+
+	err := serveRequests(input, 64)
+
+	if err == nil {
+		t.Fatal("serveRequests() accepted a request larger than its hard limit")
+	}
+}
+
+// captureStdout runs fn and returns what it wrote to os.Stdout.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := os.Stdout
+	os.Stdout = writer
+	defer func() { os.Stdout = original }()
+	fn()
+	writer.Close()
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// DEPLAO_ADAPTER: a panic inside one request (seen in the Messenger Lite Bloks
+// interpreter) must become an error response instead of killing the bridge.
+func TestHandleSafelyTurnsPanicIntoErrorResponse(t *testing.T) {
+	originalHandler := handleRequest
+	t.Cleanup(func() { handleRequest = originalHandler })
+	handleRequest = func(*request) { panic("nil pointer dereference") }
+
+	output := captureStdout(t, func() {
+		handleSafely(&request{ID: 7, Method: "syncHistory"})
+	})
+
+	var response struct {
+		ID    uint64 `json:"id"`
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(output)), &response); err != nil {
+		t.Fatalf("response is not JSON: %q (%v)", output, err)
+	}
+	if response.ID != 7 || response.OK || !strings.Contains(response.Error, "syncHistory") {
+		t.Fatalf("unexpected response: %+v", response)
+	}
+}
+
+func TestServeRequestsKeepsServingAfterPanic(t *testing.T) {
+	originalHandler := handleRequest
+	t.Cleanup(func() { handleRequest = originalHandler })
+	calls := 0
+	handleRequest = func(req *request) {
+		calls++
+		if req.ID == 1 {
+			panic("boom")
+		}
+		ok(req.ID, map[string]interface{}{})
+	}
+
+	output := captureStdout(t, func() {
+		input := strings.NewReader("{\"id\":1,\"method\":\"hello\"}\n\n{\"id\":2,\"method\":\"hello\"}\n")
+		if err := serveRequests(input, 1024); err != nil {
+			t.Errorf("serveRequests() error = %v", err)
+		}
+	})
+
+	if calls != 2 {
+		t.Fatalf("handled %d requests, want 2 (blank lines skipped, panic survived)", calls)
+	}
+	if !strings.Contains(output, "\"id\":2,\"ok\":true") {
+		t.Fatalf("second request was not answered: %q", output)
 	}
 }

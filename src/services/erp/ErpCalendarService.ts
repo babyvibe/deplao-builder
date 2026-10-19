@@ -323,11 +323,13 @@ export default class ErpCalendarService {
         WHERE r.triggered = 0 AND (e.start_at - r.minutes_before * 60000) <= ?
       `, [now]);
       for (const row of due) {
-        const evt: ErpCalendarEvent = {
+        // Sự kiện đầy đủ (có người tham gia): relay gửi nhắc lịch cho người tổ chức + người tham gia (relayAudience) —
+        // trước đây bản dựng từ dòng SQL không có attendees → nhắc lịch qua cron chỉ tới người tổ chức
+        const evt: ErpCalendarEvent = this.getEvent(row.event_id) ?? ({
           ...row,
           id: row.event_id,
           reminders: [],
-        } as any;
+        } as any);
         this._fireReminder(row.reminder_id, evt, row.minutes_before);
       }
     } catch (err: any) {

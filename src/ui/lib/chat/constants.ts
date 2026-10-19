@@ -19,6 +19,18 @@ export const MESSAGE_AROUND_LIMIT = 200;
 /** Số contact/tin nhắn mỗi page khi query DB */
 export const PAGE_SIZE = 200;
 
+/**
+ * Số hội thoại hiển thị thêm mỗi lần trong danh sách (DB vẫn query PAGE_SIZE). Dựng 200 hàng (avatar ghép, nhãn…)
+ * mỗi lần đổi tài khoản / bộ lọc làm chuyển tài khoản bị khựng; cuộn gần cuối danh sách thì hiện thêm.
+ */
+export const CONVERSATION_DISPLAY_STEP = 60;
+
+/** Số tin nhắn tải thêm mỗi lần cuộn lên (tin đầu tiên khi mở hội thoại vẫn là MESSAGE_LOAD_LIMIT) */
+export const MESSAGE_LOAD_MORE_LIMIT = 40;
+
+/** Cuộn lên còn cách đỉnh danh sách bấy nhiêu px thì tự tải trang tin cũ hơn (tải trước khi chạm đỉnh) */
+export const LOAD_OLDER_PREFETCH_PX = 800;
+
 /** Số page tối đa khi load tin nhắn cũ */
 export const MAX_PAGES = 100;
 

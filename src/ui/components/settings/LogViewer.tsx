@@ -9,7 +9,7 @@ const LEVEL_STYLE: Record<LogLevel, string> = {
   warn:  'text-yellow-400',
   info:  'text-blue-400',
   debug: 'text-purple-400',
-  log:   'text-gray-300',
+  log:   'text-foreground/80',
 };
 
 const LEVEL_LABEL: Record<LogLevel, string> = {
@@ -77,8 +77,8 @@ export default function LogViewer() {
     // Chiều cao cố định theo viewport để vùng list cuộn độc lập (parent Settings đã overflow-y-auto)
     <div className="flex flex-col h-[calc(100vh-120px)]">
       <div>
-        <h2 className="text-lg font-semibold text-white mb-1">Nhật ký hệ thống</h2>
-        <p className="text-xs text-gray-400 mb-3">Theo dõi mọi hoạt động (gửi tin, thêm liên hệ, lỗi…) theo thời gian thực.</p>
+        <h2 className="text-lg font-semibold text-foreground mb-1">Nhật ký hệ thống</h2>
+        <p className="text-xs text-muted-foreground mb-3">Theo dõi mọi hoạt động (gửi tin, thêm liên hệ, lỗi…) theo thời gian thực.</p>
       </div>
 
       {/* Toolbar */}
@@ -87,7 +87,7 @@ export default function LogViewer() {
           {FILTERS.map(f => (
             <button key={f} onClick={() => setFilter(f)}
               className={`text-xs px-2.5 py-1 rounded-lg transition-colors ${
-                filter === f ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                filter === f ? 'bg-blue-600 text-white' : 'bg-muted text-foreground/80 hover:bg-accent'
               }`}>
               {f === 'all' ? 'Tất cả' : LEVEL_LABEL[f]}
             </button>
@@ -95,25 +95,25 @@ export default function LogViewer() {
         </div>
         <input value={search} onChange={e => setSearch(e.target.value)}
           placeholder="Tìm trong log..."
-          className="flex-1 min-w-[120px] bg-gray-700 border border-gray-600 rounded-lg px-3 py-1 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500" />
-        <label className="flex items-center gap-1.5 text-xs text-gray-300 cursor-pointer">
+          className="flex-1 min-w-[120px] bg-muted border border-input rounded-lg px-3 py-1 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500" />
+        <label className="flex items-center gap-1.5 text-xs text-foreground/80 cursor-pointer">
           <input type="checkbox" checked={autoScroll} onChange={e => setAutoScroll(e.target.checked)} className="accent-blue-500" />
           Tự cuộn
         </label>
-        <button onClick={handleCopy} className="text-xs px-2.5 py-1 rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600">Copy</button>
-        <button onClick={handleExport} className="text-xs px-2.5 py-1 rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600">Xuất file</button>
+        <button onClick={handleCopy} className="text-xs px-2.5 py-1 rounded-lg bg-muted text-foreground/80 hover:bg-accent">Copy</button>
+        <button onClick={handleExport} className="text-xs px-2.5 py-1 rounded-lg bg-muted text-foreground/80 hover:bg-accent">Xuất file</button>
         <button onClick={handleClear} className="text-xs px-2.5 py-1 rounded-lg bg-red-600/80 text-white hover:bg-red-600">Xóa</button>
       </div>
 
-      <div className="text-[11px] text-gray-500 mb-1 flex-shrink-0">{visible.length} / {entries.length} dòng</div>
+      <div className="text-[11px] text-subtle-foreground mb-1 flex-shrink-0">{visible.length} / {entries.length} dòng</div>
 
       {/* Log list */}
-      <div className="flex-1 overflow-y-auto bg-gray-900 rounded-lg border border-gray-700 p-2 font-mono text-[11px] leading-relaxed">
+      <div className="flex-1 overflow-y-auto bg-card rounded-lg border border-border p-2 font-mono text-[11px] leading-relaxed">
         {visible.length === 0 ? (
-          <p className="text-gray-500 text-center py-8">Chưa có log nào phù hợp</p>
+          <p className="text-subtle-foreground text-center py-8">Chưa có log nào phù hợp</p>
         ) : visible.map((e, i) => (
-          <div key={i} className="flex gap-2 py-0.5 hover:bg-gray-800/50 rounded px-1">
-            <span className="text-gray-500 flex-shrink-0">{fmt(e.ts)}</span>
+          <div key={i} className="flex gap-2 py-0.5 hover:bg-muted rounded px-1">
+            <span className="text-subtle-foreground flex-shrink-0">{fmt(e.ts)}</span>
             <span className={`flex-shrink-0 w-16 ${LEVEL_STYLE[e.level]}`}>{LEVEL_LABEL[e.level]}</span>
             <span className={`whitespace-pre-wrap break-all ${LEVEL_STYLE[e.level]}`}>{e.msg}</span>
           </div>

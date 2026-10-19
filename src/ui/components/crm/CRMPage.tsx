@@ -1,9 +1,12 @@
-import React, { useEffect, useCallback, useState } from 'react';
+import React, { useEffect, useCallback, useRef, useState } from 'react';
 import { useCRMStore, CRMContact } from '@/store/crmStore';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore, LabelData } from '@/store/appStore';
-import DataAccessor from '@/lib/data/DataAccessor';
+import DataAccessor, { isReadFailure } from '@/lib/data/DataAccessor';
+import { useEmployeeResync } from '@/hooks/useEmployeeResync';
+import { relayEventAccount, THREAD_LABELS_CHANGED_EVENT } from '@/lib/chat/relayUiEvents';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
+import { refreshStaleContacts } from '@/lib/contactRefresh';
 import CRMContactList from './contacts/CRMContactList';
 import CRMContactDetailPanel from './contacts/CRMContactDetailPanel';
 import BulkActionBar from './contacts/BulkActionBar';
@@ -22,16 +25,38 @@ import CRMRequestsTab from './search/CRMRequestsTab';
 import AddToContactsModal from './contacts/AddToContactsModal';
 import AccountSelectorDropdown from '@/components/common/AccountSelectorDropdown';
 import { getCapability, type Channel } from '../../../configs/channelConfig';
+import { buildCRMContactFilters } from '../../../shared/crmContactFilters';
 import ScanPanel from './scan/ScanPanel';
 import ScanHistoryTab from './scan/ScanHistoryTab';
 import ScanStatsTab from './scan/ScanStatsTab';
 import { Spinner } from '@/components/common/PageLoading';
 import { CHANNEL } from '@/lib/channelHelper';
 import {
-  CampaignIcon, ChartIcon, ClipboardListIcon, CloudIcon, HardDriveIcon, SearchIcon, SendIcon, UserIcon,
+  CampaignIcon, ChartIcon, ClipboardListIcon, CloudIcon, HardDriveIcon, PlusIcon, SearchIcon, SendIcon, UserIcon,
   UserPlusIcon, UsersIcon, WifiIcon
 } from '@/components/common/icons';
+import { Button, EmptyState } from '@/components/ui';
 
+
+/**
+ * Tài khoản sở hữu danh sách liên hệ / chiến dịch đang nằm trong useCRMStore (store sống lâu hơn CRMPage).
+ * Lần tải lỗi chỉ giữ danh sách cũ khi nó thuộc đúng tài khoản đang xem.
+ */
+let crmContactsOwner: string | null = null;
+let crmCampaignsOwner: string | null = null;
+
+/** Mảng rỗng cố định — `labels[id] || []` tạo mảng mới mỗi lần render làm truy vấn liên hệ chạy lại liên tục. */
+const NO_LABELS: LabelData[] = [];
+
+/** Báo lỗi tải gọn phía trên danh sách — dữ liệu cũ (nếu có) vẫn hiện, không thay bằng "trống". */
+function LoadFailedBanner({ text, onRetry, busy }: { text: string; onRetry: () => void; busy?: boolean }) {
+  return (
+    <div role="status" className="flex items-center justify-center gap-2 px-4 py-2 text-xs text-muted-foreground bg-muted/50 border-b border-border">
+      <span>{text}</span>
+      <Button variant="link" size="sm" className="text-xs" onClick={onRetry} disabled={busy}>Thử lại</Button>
+    </div>
+  );
+}
 
 // ── Wizard Step Indicator ────────────────────────────────────────────────
 function WizardStepIndicator({ currentStep }: { currentStep: number }) {
@@ -49,17 +74,17 @@ function WizardStepIndicator({ currentStep }: { currentStep: number }) {
                 ? 'bg-blue-600 text-white'
                 : s.num === currentStep
                   ? 'bg-blue-600/20 text-blue-400 border-2 border-blue-500'
-                  : 'bg-gray-700 text-gray-400'
+                  : 'bg-muted text-muted-foreground'
             }`}>
               {s.num < currentStep ? '✓' : s.num}
             </div>
             <span className={`text-xs font-medium ${
-              s.num <= currentStep ? 'text-gray-200' : 'text-gray-400'
+              s.num <= currentStep ? 'text-foreground' : 'text-muted-foreground'
             }`}>{s.label}</span>
           </div>
           {i < steps.length - 1 && (
             <div className={`w-8 h-0.5 ${
-              s.num < currentStep ? 'bg-blue-500' : 'bg-gray-700'
+              s.num < currentStep ? 'bg-blue-500' : 'bg-muted'
             }`} />
           )}
         </React.Fragment>
@@ -82,7 +107,9 @@ export default function CRMPage() {
   const activeAccount = accounts.find(a => a.zalo_id === activeAccountId);
   const channelCap = getCapability((activeAccount?.channel || CHANNEL.ZALO) as Channel);
 
-  const zaloLabels: LabelData[] = activeAccountId ? (labels[activeAccountId] || []) : [];
+  const zaloLabels: LabelData[] = (activeAccountId && labels[activeAccountId]) || NO_LABELS;
+  // Danh sách hội thoại của nhãn Zalo chỉ ảnh hưởng truy vấn khi đang lọc theo nhãn Zalo
+  const labelsForFilter = store.filterLabelIds.length > 0 ? zaloLabels : NO_LABELS;
 
   const [showCreateCampaign, setShowCreateCampaign] = useState(false);
   const [showCloneCampaign, setShowCloneCampaign] = useState(false);
@@ -109,14 +136,32 @@ export default function CRMPage() {
   const [localLabels, setLocalLabels] = useState<Array<{ id: number; name: string; color: string; text_color?: string; emoji?: string }>>([]);
   const [localLabelThreadMap, setLocalLabelThreadMap] = useState<Record<string, number[]>>({});
 
+  // Lần tải gần nhất lỗi (employee: mất kết nối BOSS) — danh sách đang hiện là dữ liệu cũ / trống do lỗi
+  const [contactsLoadFailed, setContactsLoadFailed] = useState(false);
+  const [campaignsLoadFailed, setCampaignsLoadFailed] = useState(false);
+
+  // Tài khoản của Nhãn Local đang hiện: chỉ giữ dữ liệu cũ khi lỗi nếu nó thuộc đúng tài khoản đang xem
+  const labelsOwnerRef = useRef<string | null>(null);
+
   const loadLocalLabels = useCallback(async () => {
     if (!activeAccountId) return;
+    const accountId = activeAccountId;
     try {
       const [labelsRes, threadsRes] = await Promise.all([
-        DataAccessor.getLocalLabels({ zaloId: activeAccountId }),
-        DataAccessor.getLocalLabelThreads({ zaloId: activeAccountId }),
+        DataAccessor.getLocalLabels({ zaloId: accountId }),
+        DataAccessor.getLocalLabelThreads({ zaloId: accountId }),
       ]);
-      setLocalLabels(labelsRes?.labels || []);
+      const labelsFailed = isReadFailure(labelsRes);
+      const threadsFailed = isReadFailure(threadsRes);
+      if ((labelsFailed || threadsFailed) && labelsOwnerRef.current !== accountId) {
+        // Lỗi ngay khi đổi tài khoản: không để nhãn của tài khoản trước hiện (và bị lọc / gán) cho tài khoản này
+        setLocalLabels([]);
+        setLocalLabelThreadMap({});
+      }
+      labelsOwnerRef.current = accountId;
+      // Lỗi → giữ nhãn / gán nhãn đang có của tài khoản (trước đây bị thay bằng rỗng)
+      if (!labelsFailed) setLocalLabels(labelsRes?.labels || []);
+      if (threadsFailed) return;
       // Build thread→labelIds map
       const map: Record<string, number[]> = {};
       (threadsRes?.threads || []).forEach((row: any) => {
@@ -129,47 +174,104 @@ export default function CRMPage() {
 
   useEffect(() => { loadLocalLabels(); }, [activeAccountId]);
 
-  // Listen for local-labels-changed to refresh local labels
+  // Listen for local-labels-changed to refresh local labels — cả gán / bỏ nhãn của tài khoản đang mở do Boss / nhân
+  // viên khác làm (relay db:localLabelThreadChanged → 'ui:threadLabelsChanged'; trước đây danh sách CRM không biết)
   useEffect(() => {
-    const handler = () => { loadLocalLabels(); };
+    // Đang lọc theo Nhãn Local (lọc trong DB) → tải lại cả danh sách liên hệ
+    const reloadLabels = () => {
+      loadLocalLabels();
+      if (useCRMStore.getState().filterLocalLabelIds.length > 0) loadContactsRef.current();
+    };
+    const handler = () => { reloadLabels(); };
+    const handleThreadLabels = (e: Event) => {
+      const owner = relayEventAccount((e as CustomEvent).detail);
+      if (!owner || owner === activeAccountId) reloadLabels();
+    };
     window.addEventListener('local-labels-changed', handler);
-    return () => window.removeEventListener('local-labels-changed', handler);
-  }, [loadLocalLabels]);
+    window.addEventListener(THREAD_LABELS_CHANGED_EVENT, handleThreadLabels);
+    return () => {
+      window.removeEventListener('local-labels-changed', handler);
+      window.removeEventListener(THREAD_LABELS_CHANGED_EVENT, handleThreadLabels);
+    };
+  }, [loadLocalLabels, activeAccountId]);
 
   // ── Load data ────────────────────────────────────────────────────────────
+  /**
+   * Tuỳ chọn truy vấn theo bộ lọc đang chọn — dùng chung cho danh sách (1 trang) và Xuất CSV (toàn bộ).
+   * Nhãn / Có SĐT / Có ghi chú / Giới tính / Sinh nhật lọc trong DB trước khi cắt trang: trước đây chúng chỉ lọc trang
+   * đang tải (liên hệ ở trang khác không bao giờ khớp, mất phân trang) và Xuất CSV bỏ qua chúng.
+   */
+  const contactQuery = useCallback((range: { limit: number; offset: number }) => {
+    const backendContactTypes = store.filterContactTypes.filter(t => t !== 'has_phone' && t !== 'has_notes');
+    return {
+      search: store.searchText,
+      contactTypes: backendContactTypes.length > 0 ? backendContactTypes : undefined,
+      contactType: backendContactTypes.length === 0 ? 'all' : undefined,
+      sortBy: store.sortBy,
+      sortDir: store.sortDir,
+      filters: buildCRMContactFilters({
+        filterLabelIds: store.filterLabelIds,
+        filterLocalLabelIds: store.filterLocalLabelIds,
+        filterContactTypes: store.filterContactTypes,
+        filterGender: store.filterGender,
+        filterBirthday: store.filterBirthday,
+      }, labelsForFilter),
+      ...range,
+    };
+  }, [store.searchText, store.filterContactTypes, store.sortBy, store.sortDir, store.filterLabelIds,
+    store.filterLocalLabelIds, store.filterGender, store.filterBirthday, labelsForFilter]);
+
+  // Đổi bộ lọc liên tục → nhiều lần tải chồng nhau: chỉ nhận kết quả của lần mới nhất
+  const contactsSeqRef = useRef(0);
   const loadContacts = useCallback(async () => {
     if (!activeAccountId) return;
+    const seq = ++contactsSeqRef.current;
     store.setContactsLoading(true);
-    // Strip client-only filters (has_phone, has_notes) before sending to backend
-    const backendContactTypes = store.filterContactTypes.filter(t => t !== 'has_phone' && t !== 'has_notes');
     const res = await DataAccessor.getCRMContacts({
       zaloId: activeAccountId,
-      opts: {
-        search: store.searchText,
-        contactTypes: backendContactTypes.length > 0 ? backendContactTypes : undefined,
-        contactType: backendContactTypes.length === 0 ? 'all' : undefined,
-        sortBy: store.sortBy,
-        sortDir: store.sortDir,
-        limit: store.pageSize,
-        offset: store.page * store.pageSize,
-      },
+      opts: contactQuery({ limit: store.pageSize, offset: store.page * store.pageSize }),
     });
+    if (seq !== contactsSeqRef.current) return;
     store.setContactsLoading(false);
-    if (res?.success) store.setContacts(res.contacts, res.total);
-  }, [activeAccountId, store.searchText, store.filterContactTypes, store.sortBy, store.sortDir, store.page, store.pageSize]);
+    // Lỗi → GIỮ danh sách đang có của tài khoản (không thay bằng rỗng) + báo "Không tải được — Thử lại"
+    const failed = isReadFailure(res);
+    setContactsLoadFailed(failed);
+    if (res?.success) {
+      crmContactsOwner = activeAccountId;
+      store.setContacts(res.contacts, res.total);
+      // Tự làm mới tên/avatar liên hệ cũ (fire-and-forget; tự bỏ qua ở chế độ nhân viên / kênh khác Zalo)
+      refreshStaleContacts(activeAccountId, res.contacts).catch(() => {});
+    } else if (failed && crmContactsOwner !== activeAccountId) {
+      // Danh sách đang hiện thuộc tài khoản khác: không giữ (thao tác hàng loạt sẽ nhắm nhầm liên hệ)
+      crmContactsOwner = activeAccountId;
+      store.setContacts([], 0);
+    }
+  }, [activeAccountId, contactQuery, store.page, store.pageSize]);
+  const loadContactsRef = useRef(loadContacts);
+  loadContactsRef.current = loadContacts;
 
   const loadCampaigns = useCallback(async () => {
     if (!activeAccountId) return;
     store.setCampaignsLoading(true);
     const res = await DataAccessor.getCRMCampaigns({ zaloId: activeAccountId });
     store.setCampaignsLoading(false);
-    if (res?.success) store.setCampaigns(res.campaigns);
+    const failed = isReadFailure(res);
+    setCampaignsLoadFailed(failed);
+    if (res?.success) {
+      crmCampaignsOwner = activeAccountId;
+      store.setCampaigns(res.campaigns);
+    } else if (failed && crmCampaignsOwner !== activeAccountId) {
+      // Chiến dịch đang hiện thuộc tài khoản khác: không giữ
+      crmCampaignsOwner = activeAccountId;
+      store.setCampaigns([]);
+    }
   }, [activeAccountId]);
 
   // Load group count from DB eagerly so the tab badge shows before entering the groups page
   const loadGroupCount = useCallback(async () => {
     if (!activeAccountId) return;
     const res = await DataAccessor.getConversations(activeAccountId, 999, 0);
+    if (isReadFailure(res)) return; // lỗi đọc ≠ 0 nhóm: giữ số đang hiện
     const allContacts = res?.items || [];
     const count = (allContacts || []).filter((c: any) =>
       c.contact_type === 'group' && !(String(c.channel || '').startsWith('telegram') && c.telegram_peer_type === 'channel')
@@ -182,6 +284,7 @@ export default function CRMPage() {
     if (!activeAccountId) return;
     try {
       const recRes = await DataAccessor.getFriendRequests({ zaloId: activeAccountId, direction: 'received' });
+      if (isReadFailure(recRes)) return; // lỗi đọc ≠ 0 lời mời: giữ số + chấm đỏ đang hiện
       const count = recRes?.requests?.length ?? 0;
       store.setRequestCount(count);
       if (count === 0) clearCRMRequestUnseen(activeAccountId);
@@ -214,7 +317,8 @@ export default function CRMPage() {
     }
     loadContacts(); loadCampaigns(); loadGroupCount(); loadRequestCount();
   }, [activeAccountId]);
-  useEffect(() => { loadContacts(); }, [store.searchText, store.filterContactTypes, store.sortBy, store.sortDir, store.page, store.pageSize]);
+  // contactQuery đổi khi tìm kiếm / sắp xếp / mọi bộ lọc (kể cả hội thoại của nhãn Zalo đang lọc) đổi
+  useEffect(() => { loadContacts(); }, [contactQuery, store.page, store.pageSize]);
 
   // Listen for crm-contacts-changed to refresh contacts list (e.g. after AddToContactsModal)
   useEffect(() => {
@@ -228,6 +332,12 @@ export default function CRMPage() {
       clearCRMRequestUnseen(activeAccountId);
     }
   }, [activeAccountId, store.tab, clearCRMRequestUnseen]);
+
+  // ── Chế độ nhân viên: kết nối BOSS phục hồi → tải lại dữ liệu CRM đang hiển thị ──
+  // (lần tải lỗi lúc mất kết nối đã giữ dữ liệu cũ; giờ làm mới). Các tab con tự tải khi mở lại.
+  useEmployeeResync(() => Promise.allSettled([
+    loadContacts(), loadCampaigns(), loadGroupCount(), loadRequestCount(), loadLocalLabels(),
+  ]));
 
   // ── Load initial queue status when account changes ────────────────────────
   useEffect(() => {
@@ -247,8 +357,15 @@ export default function CRMPage() {
 
   // ── Real-time queue events ────────────────────────────────────────────────
   useEffect(() => {
+    // Mỗi tin chiến dịch gửi đi = 1 crm:queueUpdate; catch-up sau khi nhân viên kết nối lại phát lại cả loạt → gộp
+    // các lần tải lại danh sách chiến dịch (trước đây mỗi event một lần gọi BOSS)
+    let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+    const reloadCampaignsSoon = () => {
+      if (reloadTimer) clearTimeout(reloadTimer);
+      reloadTimer = setTimeout(() => { reloadTimer = null; loadCampaigns(); }, 400);
+    };
     const unsubUpdate = ipc.on?.('crm:queueUpdate', (data: any) => {
-      if (data.zaloId !== activeAccountId) return;
+      if (data?.zaloId !== activeAccountId) return;
       store.updateQueueStatus(data.zaloId, {
         running: true,
         tokens: data.tokens,
@@ -256,7 +373,7 @@ export default function CRMPage() {
         lastSentAt: data.lastSentAt,
         dailyPaused: false,
       });
-      loadCampaigns();
+      reloadCampaignsSoon();
     });
     // Rate-limited / status-only broadcasts (no send happened)
     const unsubStatus = ipc.on?.('crm:queueStatus', (data: any) => {
@@ -289,11 +406,15 @@ export default function CRMPage() {
     const handleCampaignChange = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       if (!detail?.ownerZaloId || detail.ownerZaloId === activeAccountId) {
-        loadCampaigns();
+        reloadCampaignsSoon();
       }
     };
     window.addEventListener('ui:campaignChanged', handleCampaignChange);
-    return () => { unsubUpdate?.(); unsubStatus?.(); unsubDone?.(); window.removeEventListener('ui:campaignChanged', handleCampaignChange); };
+    return () => {
+      if (reloadTimer) clearTimeout(reloadTimer);
+      unsubUpdate?.(); unsubStatus?.(); unsubDone?.();
+      window.removeEventListener('ui:campaignChanged', handleCampaignChange);
+    };
   }, [activeAccountId]);
 
   // ── Campaign actions ─────────────────────────────────────────────────────
@@ -348,11 +469,21 @@ export default function CRMPage() {
     }
   };
 
-  const handleAddContactsToCampaign = async (campaignId: number, contacts: any[]) => {
-    if (!activeAccountId) return;
-    await DataAccessor.addCampaignContacts({ zaloId: activeAccountId, campaignId, contacts });
+  const handleAddContactsToCampaign = async (campaignId: number, contacts: any[]): Promise<boolean> => {
+    if (!activeAccountId) return false;
+    let res: any;
+    try {
+      res = await DataAccessor.addCampaignContacts({ zaloId: activeAccountId, campaignId, contacts });
+    } catch (err: any) {
+      res = { success: false, error: err?.message };
+    }
     await loadCampaigns();
+    if (!res?.success) {
+      showNotification('Không thêm được liên hệ vào chiến dịch: ' + (res?.error || 'lỗi không rõ'), 'error');
+      return false;
+    }
     showNotification(`Đã thêm ${contacts.length} liên hệ vào chiến dịch`, 'success');
+    return true;
   };
 
   const handleUpdateCampaign = async (data: any) => {
@@ -393,7 +524,8 @@ export default function CRMPage() {
       avatar: c.avatar,
       phone: c.phone || '',
     }));
-    await handleAddContactsToCampaign(wizardCampaignId, toAdd);
+    const added = await handleAddContactsToCampaign(wizardCampaignId, toAdd);
+    if (!added) return; // giữ wizard mở để thử lại
     // Wizard complete
     setWizardActive(false);
     setWizardStep(0);
@@ -544,24 +676,15 @@ export default function CRMPage() {
     }
   };
 
-  /** Fetch toàn bộ liên hệ theo bộ lọc hiện tại (không phân trang) để xuất CSV */
+  /** Fetch toàn bộ liên hệ theo bộ lọc hiện tại (không phân trang) để xuất CSV — cùng bộ lọc với danh sách */
   const handleExportAll = useCallback(async (): Promise<any[]> => {
     if (!activeAccountId) return [];
-    const backendContactTypes = store.filterContactTypes.filter(t => t !== 'has_phone' && t !== 'has_notes');
     const res = await DataAccessor.getCRMContacts({
       zaloId: activeAccountId,
-      opts: {
-        search: store.searchText,
-        contactTypes: backendContactTypes.length > 0 ? backendContactTypes : undefined,
-        contactType: backendContactTypes.length === 0 ? 'all' : undefined,
-        sortBy: store.sortBy,
-        sortDir: store.sortDir,
-        limit: 100000,
-        offset: 0,
-      },
+      opts: contactQuery({ limit: 100000, offset: 0 }),
     });
     return res?.success ? res.contacts : [];
-  }, [activeAccountId, store.searchText, store.filterContactTypes, store.sortBy, store.sortDir]);
+  }, [activeAccountId, contactQuery]);
 
   const handleMessage = (contact: CRMContact) => {    openQuickChat({
       target: { userId: contact.contact_id, displayName: contact.alias || contact.display_name, avatarUrl: contact.avatar, threadType: 0 },
@@ -573,96 +696,11 @@ export default function CRMPage() {
   const activeCampaign = store.campaigns.find(c => c.id === store.activeCampaignId) || null;
   const activeContact = store.contacts.find(c => c.contact_id === store.activeContactId) || null;
 
-  // Client-side filtering: Zalo labels, local labels, has_phone, has_notes
-  const filteredContacts = (() => {
-    let result = store.contacts;
-
-    // Filter by Zalo labels
-    if (store.filterLabelIds.length > 0) {
-      result = result.filter(c => {
-        const isGroup = c.contact_type === 'group';
-        const labelThreadId = isGroup ? `g${c.contact_id}` : c.contact_id;
-        return store.filterLabelIds.every(labelId => {
-          const convs = zaloLabels.find(l => l.id === labelId)?.conversations;
-          return convs?.includes(c.contact_id) || convs?.includes(labelThreadId);
-        });
-      });
-    }
-
-    // Filter by local labels
-    if (store.filterLocalLabelIds.length > 0) {
-      result = result.filter(c => {
-        const threadLIds = localLabelThreadMap[c.contact_id] || [];
-        return store.filterLocalLabelIds.every(lid => threadLIds.includes(lid));
-      });
-    }
-
-    // Client-side filter: has_phone
-    if (store.filterContactTypes.includes('has_phone')) {
-      result = result.filter(c => !!c.phone);
-    }
-
-    // Client-side filter: has_notes
-    if (store.filterContactTypes.includes('has_notes')) {
-      result = result.filter(c => c.note_count > 0);
-    }
-
-    // Client-side filter: gender
-    if (store.filterGender === 'male') {
-      result = result.filter(c => c.gender === 0);
-    } else if (store.filterGender === 'female') {
-      result = result.filter(c => c.gender === 1);
-    } else if (store.filterGender === 'unknown') {
-      result = result.filter(c => c.gender === null || c.gender === undefined);
-    }
-
-    // Client-side filter: birthday
-    if (store.filterBirthday === 'has_birthday') {
-      result = result.filter(c => !!c.birthday);
-    } else if (store.filterBirthday === 'no_birthday') {
-      result = result.filter(c => !c.birthday);
-    } else if (store.filterBirthday === 'today') {
-      const now = new Date();
-      const todayDD = String(now.getDate()).padStart(2, '0');
-      const todayMM = String(now.getMonth() + 1).padStart(2, '0');
-      result = result.filter(c => {
-        if (!c.birthday) return false;
-        const parts = c.birthday.split('/');
-        return parts.length >= 2 && parts[0] === todayDD && parts[1] === todayMM;
-      });
-    } else if (store.filterBirthday === 'this_week') {
-      const now = new Date();
-      // Build set of DD/MM for the next 7 days (including today)
-      const weekDates = new Set<string>();
-      for (let i = 0; i < 7; i++) {
-        const d = new Date(now);
-        d.setDate(d.getDate() + i);
-        weekDates.add(`${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`);
-      }
-      result = result.filter(c => {
-        if (!c.birthday) return false;
-        const parts = c.birthday.split('/');
-        if (parts.length < 2) return false;
-        return weekDates.has(`${parts[0]}/${parts[1]}`);
-      });
-    } else if (store.filterBirthday === 'this_month') {
-      const currentMonth = String(new Date().getMonth() + 1).padStart(2, '0');
-      result = result.filter(c => {
-        if (!c.birthday) return false;
-        // birthday format: DD/MM/YYYY
-        const parts = c.birthday.split('/');
-        return parts.length >= 2 && parts[1] === currentMonth;
-      });
-    }
-
-    return result;
-  })();
-
   return (
-    <div className="flex flex-col h-full bg-gray-900">
+    <div className="flex flex-col h-full bg-background">
       {/* Top bar */}
-      <div className="flex items-center gap-3 px-5 py-3 border-b border-gray-700 flex-shrink-0 bg-gray-850">
-        <div className="flex bg-gray-800 rounded-lg p-0.5">
+      <div className="flex items-center gap-3 px-5 py-3 border-b border-border flex-shrink-0 bg-card">
+        <div className="flex bg-muted rounded-lg p-0.5">
           {(['search', 'contacts', 'groups', 'requests', 'campaigns', 'history', 'scan', 'scan_history', 'scan_stats'] as const).filter(t => {
             if (t === 'search') return channelCap.supportsCRMSearch;
             if (t === 'requests') return channelCap.supportsFriendRequest;
@@ -679,14 +717,14 @@ export default function CRMPage() {
                 try { localStorage.setItem('scanTabSeen', 'true'); } catch {}
               }
             }}
-              className={`px-4 py-1.5 rounded-md text-xs font-medium flex transition-colors ${store.tab === t ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}>
+              className={`px-4 py-1.5 rounded-md text-xs font-medium flex transition-colors ${store.tab === t ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}>
               {t === 'search' ? <><SearchIcon className="w-4 h-4 mr-2" /> Tìm kiếm</>
                 : t === 'contacts' ? <><UserIcon className="w-4 h-4 mr-2" /> Liên hệ{store.totalContacts ? ` (${store.totalContacts})` : ''}</>
                 : t === 'groups' ? (
                   <span className="relative inline-flex items-center gap-1.5">
                     <span className="flex"><UsersIcon className="w-4 h-4 mr-2" /> Nhóm{store.groupCount ? ` (${store.groupCount})` : ''}</span>
                     {hasScanNewDot && (
-                      <span className="w-2 h-2 bg-red-500 rounded-full border border-gray-900 flex-shrink-0 animate-pulse" />
+                      <span className="w-2 h-2 bg-red-500 rounded-full border border-border flex-shrink-0 animate-pulse" />
                     )}
                   </span>
                 )
@@ -694,7 +732,7 @@ export default function CRMPage() {
                   <span className="relative inline-flex items-center gap-1.5">
                     <span className="flex"><UserPlusIcon className="w-4 h-4 mr-2" /> Lời mời{store.requestCount ? ` (${store.requestCount})` : ''}</span>
                     {hasUnreadRequestDot && (
-                      <span className="w-2 h-2 bg-red-500 rounded-full border border-gray-900 flex-shrink-0" />
+                      <span className="w-2 h-2 bg-red-500 rounded-full border border-border flex-shrink-0" />
                     )}
                   </span>
                 )
@@ -711,7 +749,7 @@ export default function CRMPage() {
         {/* Navigate to Analytics / Reports */}
         <button
           onClick={() => navigateToAnalytics('overview')}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-gray-400 hover:text-white hover:bg-gray-700/60 transition-colors"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
           title="Xem báo cáo & phân tích"
         ><ChartIcon className="w-4 h-4 inline" /> </button>
         {/* Account selector */}
@@ -731,15 +769,15 @@ export default function CRMPage() {
           {store.tab === 'contacts' && (
             <>
               <div className="flex-1 flex flex-col overflow-hidden">
+                {contactsLoadFailed && !store.contactsLoading && (
+                  <LoadFailedBanner
+                    text={store.contacts.length > 0 ? 'Không tải được danh sách liên hệ mới nhất — đang hiện dữ liệu cũ' : 'Không tải được danh sách liên hệ'}
+                    onRetry={loadContacts}
+                  />
+                )}
                 <CRMContactList
-                  contacts={filteredContacts}
-                  total={
-                    (store.filterLabelIds.length === 0 && store.filterLocalLabelIds.length === 0
-                      && !store.filterContactTypes.includes('has_phone') && !store.filterContactTypes.includes('has_notes')
-                      && store.filterGender === 'all' && store.filterBirthday === 'all')
-                      ? store.totalContacts
-                      : filteredContacts.length
-                  }
+                  contacts={store.contacts}
+                  total={store.totalContacts}
                   page={store.page}
                   pageSize={store.pageSize}
                   loading={store.contactsLoading}
@@ -760,7 +798,7 @@ export default function CRMPage() {
                   localLabelThreadMap={localLabelThreadMap}
                   onSelectContact={store.toggleSelectContact}
                   onActivateContact={id => store.setActiveContact(store.activeContactId === id ? null : id)}
-                  onSelectAll={() => store.selectAllContacts(filteredContacts.map(c => c.contact_id))}
+                  onSelectAll={() => store.selectAllContacts(store.contacts.map(c => c.contact_id))}
                   onClearAll={store.clearSelection}
                   onExportAll={handleExportAll}
                   onFilterChange={store.setFilter}
@@ -787,7 +825,13 @@ export default function CRMPage() {
           {/* ── Campaigns tab ── */}
           {store.tab === 'campaigns' && (
             <>
-              <div className="w-79 flex-shrink-0 border-r border-gray-700 overflow-hidden flex flex-col">
+              <div className="w-80 flex-shrink-0 border-r border-border overflow-hidden flex flex-col">
+                {campaignsLoadFailed && !store.campaignsLoading && (
+                  <LoadFailedBanner
+                    text={store.campaigns.length > 0 ? 'Không tải được chiến dịch mới nhất' : 'Không tải được danh sách chiến dịch'}
+                    onRetry={loadCampaigns}
+                  />
+                )}
                 <CampaignList
                   campaigns={store.campaigns}
                   loading={store.campaignsLoading}
@@ -809,18 +853,17 @@ export default function CRMPage() {
                     localLabels={localLabels}
                     localLabelThreadMap={localLabelThreadMap}
                     onStatusChange={handleUpdateCampaignStatus}
-                    onAddContacts={handleAddContactsToCampaign}
+                    onAddContacts={async (campaignId, contacts) => { await handleAddContactsToCampaign(campaignId, contacts); }}
                     onUpdate={handleUpdateCampaign}
                   />
                 ) : (
-                  <div className="flex flex-col items-center justify-center h-full text-gray-400">
-                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mb-3 opacity-30">
-                      <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-                    </svg>
-                    <p className="text-sm">Chọn chiến dịch để xem chi tiết</p>
-                    <button onClick={startWizard}
-                      className="mt-3 text-xs text-blue-400 hover:text-blue-300">Tạo chiến dịch mới →</button>
-                  </div>
+                  <EmptyState
+                    className="h-full"
+                    icon={<CampaignIcon className="h-6 w-6" />}
+                    title="Chọn chiến dịch để xem chi tiết"
+                    description="Tiến độ gửi, nội dung và danh sách liên hệ của chiến dịch sẽ hiện ở đây."
+                    action={<Button variant="outline" size="sm" leftIcon={<PlusIcon className="h-4 w-4" />} onClick={startWizard}>Tạo chiến dịch mới</Button>}
+                  />
                 )}
               </div>
             </>
@@ -904,6 +947,7 @@ export default function CRMPage() {
       {wizardActive && wizardStep === 2 && wizardCampaignId !== null && (
         <TargetSelector
           zaloId={activeAccountId || ''}
+          channel={(activeAccount?.channel || CHANNEL.ZALO) as Channel}
           allLabels={zaloLabels}
           localLabels={localLabels}
           localLabelThreadMap={localLabelThreadMap}
@@ -930,15 +974,15 @@ export default function CRMPage() {
       {showBulkLocalModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
           onClick={() => setShowBulkLocalModal(false)}>
-          <div className="bg-gray-800 border border-gray-600 rounded-2xl w-80 p-5 shadow-2xl"
+          <div className="bg-card border border-input rounded-2xl w-80 p-5 shadow-2xl"
             onClick={e => e.stopPropagation()}>
-            <h3 className="font-semibold text-white mb-1"><HardDriveIcon className="w-4 h-4 inline" /> Gán Nhãn Local</h3>
-            <p className="text-xs text-gray-400 mb-3">
+            <h3 className="font-semibold text-foreground mb-1"><HardDriveIcon className="w-4 h-4 inline" /> Gán Nhãn Local</h3>
+            <p className="text-xs text-muted-foreground mb-3">
               Áp dụng cho <span className="text-blue-400 font-medium">{store.selectedContactIds.size}</span> liên hệ đã chọn
-              <span className="text-gray-400 ml-1">(chọn nhiều)</span>
+              <span className="text-muted-foreground ml-1">(chọn nhiều)</span>
             </p>
             {localLabels.length === 0 ? (
-              <p className="text-xs text-gray-400 py-4 text-center">Chưa có Nhãn Local nào.</p>
+              <p className="text-xs text-muted-foreground py-4 text-center">Chưa có Nhãn Local nào.</p>
             ) : (
               <LocalLabelSelector
                 labels={localLabels}
@@ -950,7 +994,7 @@ export default function CRMPage() {
             )}
             <div className="flex gap-2 mt-4">
               <button onClick={() => setShowBulkLocalModal(false)}
-                className="flex-1 py-2 rounded-xl bg-gray-700 text-gray-300 text-sm hover:bg-gray-600">
+                className="flex-1 py-2 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent">
                 Hủy
               </button>
               <button onClick={handleApplyBulkLocalLabel}
@@ -967,15 +1011,15 @@ export default function CRMPage() {
       {showBulkZaloModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
           onClick={() => setShowBulkZaloModal(false)}>
-          <div className="bg-gray-800 border border-gray-600 rounded-2xl w-80 p-5 shadow-2xl"
+          <div className="bg-card border border-input rounded-2xl w-80 p-5 shadow-2xl"
             onClick={e => e.stopPropagation()}>
-            <h3 className="font-semibold text-white mb-1"><CloudIcon className="w-4 h-4 inline" /> Gán nhãn Zalo</h3>
-            <p className="text-xs text-gray-400 mb-3">
+            <h3 className="font-semibold text-foreground mb-1"><CloudIcon className="w-4 h-4 inline" /> Gán nhãn Zalo</h3>
+            <p className="text-xs text-muted-foreground mb-3">
               Áp dụng cho <span className="text-blue-400 font-medium">{store.selectedContactIds.size}</span> liên hệ đã chọn
-              <span className="text-gray-400 ml-1">(chỉ 1 nhãn / hội thoại)</span>
+              <span className="text-muted-foreground ml-1">(chỉ 1 nhãn / hội thoại)</span>
             </p>
             {zaloLabels.length === 0 ? (
-              <p className="text-xs text-gray-400 py-4 text-center">Chưa có nhãn Zalo nào. Hãy đồng bộ nhãn từ header trước.</p>
+              <p className="text-xs text-muted-foreground py-4 text-center">Chưa có nhãn Zalo nào. Hãy đồng bộ nhãn từ header trước.</p>
             ) : (
               <ZaloLabelSelector
                 allLabels={zaloLabels}
@@ -986,7 +1030,7 @@ export default function CRMPage() {
             )}
             <div className="flex gap-2 mt-4">
               <button onClick={() => setShowBulkZaloModal(false)}
-                className="flex-1 py-2 rounded-xl bg-gray-700 text-gray-300 text-sm hover:bg-gray-600">
+                className="flex-1 py-2 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent">
                 Hủy
               </button>
               <button onClick={handleApplyBulkLabel}
@@ -1005,10 +1049,10 @@ export default function CRMPage() {
         return (
           <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
             onClick={() => setAddToCampaignModal(false)}>
-            <div className="bg-gray-800 border border-gray-600 rounded-2xl w-80 p-5 shadow-2xl"
+            <div className="bg-card border border-input rounded-2xl w-80 p-5 shadow-2xl"
               onClick={e => e.stopPropagation()}>
               <div className="flex items-center justify-between mb-3">
-                <h3 className="font-semibold text-white">Chọn chiến dịch</h3>
+                <h3 className="font-semibold text-foreground">Chọn chiến dịch</h3>
                 <button
                   onClick={() => setShowCreateInAddModal(true)}
                   className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors px-2 py-1 rounded-lg hover:bg-blue-500/10">
@@ -1022,13 +1066,13 @@ export default function CRMPage() {
               {availableCampaigns.length === 0 ? (
                 /* ── Empty state ── */
                 <div className="flex flex-col items-center py-4 gap-3">
-                  <div className="w-12 h-12 rounded-full bg-gray-700 flex items-center justify-center">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-400">
+                  <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-muted-foreground">
                       <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
                     </svg>
                   </div>
-                  <p className="text-sm text-gray-300 text-center font-medium">Chưa có chiến dịch phù hợp</p>
-                  <p className="text-xs text-gray-400 text-center leading-relaxed">
+                  <p className="text-sm text-foreground/80 text-center font-medium">Chưa có chiến dịch phù hợp</p>
+                  <p className="text-xs text-muted-foreground text-center leading-relaxed">
                     Tất cả chiến dịch đã hoàn thành hoặc chưa có chiến dịch nào.
                   </p>
                   <button
@@ -1040,7 +1084,7 @@ export default function CRMPage() {
                     Tạo chiến dịch mới
                   </button>
                   <button onClick={() => setAddToCampaignModal(false)}
-                    className="w-full py-1.5 rounded-xl bg-gray-700 text-gray-300 text-sm hover:bg-gray-600 transition-colors">
+                    className="w-full py-1.5 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent transition-colors">
                     Hủy
                   </button>
                 </div>
@@ -1052,28 +1096,29 @@ export default function CRMPage() {
                       <button key={c.id} onClick={() => setSelectedCampaignForAdd(c.id)}
                         className={`w-full text-left px-3 py-2.5 rounded-xl border text-sm transition-colors
                           ${selectedCampaignForAdd === c.id
-                            ? 'border-blue-500 bg-blue-500/20 text-white'
-                            : 'border-gray-600 text-gray-300 hover:border-gray-500'}`}>
+                            ? 'border-blue-500 bg-blue-500/20 text-foreground'
+                            : 'border-input text-foreground/80 hover:border-border-strong'}`}>
                         <span className="flex items-center gap-1.5">
                           <span className={`inline-block w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                            c.status === 'active' ? 'bg-green-400' : c.status === 'paused' ? 'bg-yellow-400' : 'bg-gray-500'
+                            c.status === 'active' ? 'bg-green-400' : c.status === 'paused' ? 'bg-yellow-400' : 'bg-accent'
                           }`} />
                           {c.name}
                         </span>
-                        <span className="block text-xs text-gray-400 mt-0.5 pl-3">{c.total_contacts} liên hệ</span>
+                        <span className="block text-xs text-muted-foreground mt-0.5 pl-3">{c.total_contacts} liên hệ</span>
                       </button>
                     ))}
                   </div>
                   <div className="flex gap-2 mt-4">
                     <button onClick={() => setAddToCampaignModal(false)}
-                      className="flex-1 py-2 rounded-xl bg-gray-700 text-gray-300 text-sm hover:bg-gray-600">Hủy</button>
+                      className="flex-1 py-2 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent">Hủy</button>
                     <button disabled={!selectedCampaignForAdd}
                       onClick={async () => {
                         if (!selectedCampaignForAdd || !activeAccountId) return;
                         const contacts = store.contacts
                           .filter(c => store.selectedContactIds.has(c.contact_id))
                           .map(c => ({ contactId: c.contact_id, displayName: c.alias || c.display_name, avatar: c.avatar }));
-                        await handleAddContactsToCampaign(selectedCampaignForAdd, contacts);
+                        const added = await handleAddContactsToCampaign(selectedCampaignForAdd, contacts);
+                        if (!added) return; // giữ lựa chọn để thử lại
                         store.clearSelection();
                         setAddToCampaignModal(false);
                       }}
@@ -1116,7 +1161,7 @@ export default function CRMPage() {
       {showLeaveGroupConfirm && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50"
           onClick={() => { if (!leavingGroups) setShowLeaveGroupConfirm(false); }}>
-          <div className="bg-gray-800 border border-gray-600 rounded-2xl w-[380px] p-6 shadow-2xl"
+          <div className="bg-card border border-input rounded-2xl w-[380px] p-6 shadow-2xl"
             onClick={e => e.stopPropagation()}>
             <div className="flex items-center gap-3 mb-3">
               <div className="w-9 h-9 rounded-xl bg-red-500/15 border border-red-500/30 flex items-center justify-center flex-shrink-0">
@@ -1127,13 +1172,13 @@ export default function CRMPage() {
                 </svg>
               </div>
               <div>
-                <h3 className="font-semibold text-white text-sm">Rời nhóm đã chọn</h3>
-                <p className="text-xs text-gray-400 mt-0.5">
+                <h3 className="font-semibold text-foreground text-sm">Rời nhóm đã chọn</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
                   Hành động này không thể hoàn tác
                 </p>
               </div>
             </div>
-            <p className="text-xs text-gray-300 mb-5 leading-relaxed">
+            <p className="text-xs text-foreground/80 mb-5 leading-relaxed">
               Bạn sắp rời <span className="text-red-300 font-semibold">
                 {store.contacts.filter(c => store.selectedContactIds.has(c.contact_id) && c.contact_type === 'group').length} nhóm
               </span>. Sau khi rời, tài khoản sẽ không còn trong nhóm đó nữa.
@@ -1142,7 +1187,7 @@ export default function CRMPage() {
               <button
                 onClick={() => setShowLeaveGroupConfirm(false)}
                 disabled={leavingGroups}
-                className="flex-1 py-2 rounded-xl bg-gray-700 text-gray-300 text-sm hover:bg-gray-600 disabled:opacity-40 transition-colors">
+                className="flex-1 py-2 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent disabled:opacity-40 transition-colors">
                 Hủy
               </button>
               <button

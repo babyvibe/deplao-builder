@@ -75,6 +75,9 @@ type Client struct {
 	recentMessageSweep  int64
 	liveMessageCutoffMs int64
 	regularConnected    atomic.Bool
+	// DEPLAO_ADAPTER: per-thread history requests waiting for their upsert page (history.go).
+	historyMu         sync.Mutex
+	historyCollectors map[int64]*historyCollector
 }
 
 // ClientConfig for creating a new client
@@ -85,6 +88,19 @@ type ClientConfig struct {
 	DeviceData     string            `json:"deviceData,omitempty"`     // JSON string of device data (optional, takes priority over DevicePath)
 	E2EEMemoryOnly bool              `json:"e2eeMemoryOnly,omitempty"` // If true, E2EE state is stored in memory only (no file, no events)
 	LogLevel       string            `json:"logLevel"`
+}
+
+type e2eeConnectOperations struct {
+	// DEPLAO_ADAPTER: registration runs only for a device without a server
+	// identity, and before prepare (see ConnectE2EE). nil means "register".
+	needsRegistration func() bool
+	prepare           func() (*whatsmeow.Client, error)
+	register          func() error
+	save              func() error
+	connect           func(*whatsmeow.Client) error
+	// DEPLAO_ADAPTER: optional wait for the encrypted socket to authenticate.
+	waitReady  func(*whatsmeow.Client) error
+	disconnect func(*whatsmeow.Client)
 }
 
 // NewClient creates a new messagix client
@@ -125,7 +141,8 @@ func NewClient(cfg *ClientConfig) (*Client, error) {
 		logLevel = zerolog.Disabled
 	}
 	zerolog.SetGlobalLevel(logLevel)
-	logger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).With().Timestamp().Logger()
+	console := zerolog.ConsoleWriter{Out: os.Stderr}
+	logger := zerolog.New(newRedactingLogWriter(console)).With().Timestamp().Logger()
 
 	// Create messagix client
 	msgClient := messagix.NewClient(cks, logger, &messagix.Config{
@@ -194,9 +211,9 @@ func NewClient(cfg *ClientConfig) (*Client, error) {
 
 func (c *Client) handleMessagixEvent(ctx context.Context, evt any) {
 	switch evt.(type) {
-	case *messagix.Event_Ready, *messagix.Event_Reconnected:
+	case *messagix.ConnectedEvent, *messagix.ReconnectedEvent:
 		c.regularConnected.Store(true)
-	case *messagix.Event_SocketError, *messagix.Event_PermanentError:
+	case *messagix.TransientDisconnectEvent, *messagix.PermanentErrorEvent:
 		c.regularConnected.Store(false)
 	}
 	c.handleEvent(ctx, evt)
@@ -272,6 +289,8 @@ func (c *Client) collectInitialData(initialTable *table.LSTable) *InitialData {
 	}
 
 	upsert, insert := initialTable.WrapMessages()
+	// DEPLAO_ADAPTER: CTA + carousel rows for template cards (xma.go).
+	extras := newTableExtras(initialTable)
 	seen := make(map[string]struct{})
 	appendMessage := func(wrapped *table.WrappedMessage) {
 		if wrapped == nil || wrapped.MessageId == "" {
@@ -281,7 +300,7 @@ func (c *Client) collectInitialData(initialTable *table.LSTable) *InitialData {
 			return
 		}
 		seen[wrapped.MessageId] = struct{}{}
-		data.Messages = append(data.Messages, c.convertWrappedMessage(wrapped))
+		data.Messages = append(data.Messages, c.convertWrappedMessage(wrapped, extras))
 	}
 	for _, batch := range upsert {
 		for _, wrapped := range batch.Messages {
@@ -296,44 +315,93 @@ func (c *Client) collectInitialData(initialTable *table.LSTable) *InitialData {
 
 // ConnectE2EE sets up and connects the E2EE client
 func (c *Client) ConnectE2EE() error {
+	// A disconnect in progress wins over any configuration error.
+	if err := c.lifecycleError(); err != nil {
+		return err
+	}
+	if c.DeviceStore == nil || c.DeviceStore.Device == nil {
+		return errors.New("E2EE device store is not initialized")
+	}
+	return c.connectE2EE(e2eeConnectOperations{
+		// Registering is a one-time operation. Re-registering a restored device
+		// changes its server identity and can invalidate the persisted session
+		// used to decrypt incoming messages after an app restart.
+		needsRegistration: func() bool {
+			deviceID := c.DeviceStore.Device.ID
+			return deviceID == nil || deviceID.User == "" || deviceID.Device == 0
+		},
+		prepare: c.Messagix.PrepareE2EEClient,
+		register: func() error {
+			return c.Messagix.RegisterE2EE(c.ctx, c.FBID)
+		},
+		save: c.DeviceStore.Save,
+		connect: func(e2eeClient *whatsmeow.Client) error {
+			return e2eeClient.ConnectContext(c.ctx)
+		},
+		waitReady: func(e2eeClient *whatsmeow.Client) error {
+			return waitForE2EEReady(c.ctx, e2eeClient, 45*time.Second)
+		},
+		disconnect: func(e2eeClient *whatsmeow.Client) {
+			e2eeClient.Disconnect()
+		},
+	})
+}
+
+// connectE2EE keeps fbchat-v2 2.3.2's guarantee that a failed attempt never
+// leaves a partially initialized client behind, with Deplao's ordering:
+// first-time registration happens before prepare so that whatsmeow is built
+// from the already-registered device and restored sessions keep their keys.
+func (c *Client) connectE2EE(operations e2eeConnectOperations) (err error) {
 	c.connectMu.Lock()
 	defer c.connectMu.Unlock()
-	if err := c.lifecycleError(); err != nil {
+	if err = c.lifecycleError(); err != nil {
 		return err
 	}
 
 	currentE2EE := c.snapshotE2EEClient()
-	if currentE2EE != nil && currentE2EE.IsConnected() {
-		return nil
+	if currentE2EE != nil {
+		if isE2EEReady(currentE2EE) {
+			return nil
+		}
+		// A socket that never authenticated (or dropped) must not block a fresh attempt.
+		c.rollbackE2EEClient(currentE2EE, currentE2EE.Disconnect)
 	}
 
-	if c.DeviceStore == nil || c.DeviceStore.Device == nil {
-		return errors.New("E2EE device store is not initialized")
-	}
-
-	// Registering is a one-time operation. Re-registering a restored device
-	// changes its server identity and can invalidate the persisted session used
-	// to decrypt incoming messages after an app restart.
-	deviceID := c.DeviceStore.Device.ID
-	if deviceID == nil || deviceID.User == "" || deviceID.Device == 0 {
-		if err := c.Messagix.RegisterE2EE(c.ctx, c.FBID); err != nil {
+	if operations.needsRegistration == nil || operations.needsRegistration() {
+		if err = operations.register(); err != nil {
 			return fmt.Errorf("register E2EE device: %w", err)
 		}
-		if err := c.DeviceStore.Save(); err != nil {
+		if err = operations.save(); err != nil {
 			return fmt.Errorf("failed to persist E2EE device after registration: %w", err)
 		}
 	}
-	if err := c.lifecycleError(); err != nil {
+	if err = c.lifecycleError(); err != nil {
 		return err
 	}
 
-	// This must happen after any first-time registration. fbchat-v2 prepares
-	// whatsmeow from the already-registered device so restored sessions retain
-	// their original keys and JID.
-	e2eeClient, err := c.Messagix.PrepareE2EEClient()
-	if err != nil {
-		return fmt.Errorf("prepare E2EE client: %w", err)
+	e2eeClient, prepareErr := operations.prepare()
+	if prepareErr != nil {
+		return fmt.Errorf("prepare E2EE client: %w", prepareErr)
 	}
+	if e2eeClient == nil {
+		return errors.New("prepared E2EE client is nil")
+	}
+	var eventHandlerID uint32
+	eventHandlerRegistered := false
+	defer func() {
+		if err == nil {
+			return
+		}
+		if eventHandlerRegistered {
+			e2eeClient.RemoveEventHandler(eventHandlerID)
+		}
+		var disconnect func()
+		if operations.disconnect != nil {
+			disconnect = func() { operations.disconnect(e2eeClient) }
+		}
+		c.rollbackE2EEClient(e2eeClient, disconnect)
+	}()
+
 	c.lifecycleMu.Lock()
 	if c.disconnected || c.ctx.Err() != nil {
 		c.lifecycleMu.Unlock()
@@ -341,28 +409,41 @@ func (c *Client) ConnectE2EE() error {
 	}
 	c.E2EE = e2eeClient
 	c.lifecycleMu.Unlock()
-	if err := c.lifecycleError(); err != nil {
+	if err = c.lifecycleError(); err != nil {
 		return err
 	}
 
 	// Register before connecting: ConnectContext may synchronously deliver queued
 	// messages, so registering afterwards creates a message-loss window.
-	e2eeClient.AddEventHandler(c.handleE2EEEvent)
+	eventHandlerID = e2eeClient.AddEventHandler(c.handleE2EEEvent)
+	eventHandlerRegistered = true
 
-	// Connect E2EE
-	if err := e2eeClient.ConnectContext(c.ctx); err != nil {
+	if err = operations.connect(e2eeClient); err != nil {
 		return fmt.Errorf("connect E2EE socket: %w", err)
 	}
-	if err := c.lifecycleError(); err != nil {
-		e2eeClient.Disconnect()
+	if err = c.lifecycleError(); err != nil {
 		return err
 	}
-	if err := waitForE2EEReady(c.ctx, e2eeClient, 45*time.Second); err != nil {
-		e2eeClient.Disconnect()
-		return fmt.Errorf("wait for E2EE authentication: %w", err)
+	if operations.waitReady != nil {
+		if err = operations.waitReady(e2eeClient); err != nil {
+			return fmt.Errorf("wait for E2EE authentication: %w", err)
+		}
 	}
-
 	return nil
+}
+
+func (c *Client) rollbackE2EEClient(e2eeClient *whatsmeow.Client, disconnect func()) {
+	if e2eeClient == nil {
+		return
+	}
+	c.lifecycleMu.Lock()
+	if c.E2EE == e2eeClient {
+		c.E2EE = nil
+	}
+	c.lifecycleMu.Unlock()
+	if disconnect != nil {
+		disconnect()
+	}
 }
 
 // Disconnect disconnects from Messenger
@@ -490,18 +571,20 @@ func (c *Client) Events() <-chan *Event {
 
 // DeviceStore manages the E2EE device persistently
 type DeviceStore struct {
-	Device       *store.Device
-	path         string
-	mu           sync.RWMutex
-	saveMu       sync.Mutex
-	identities   map[string][32]byte
-	sessions     map[string][]byte
-	preKeys      map[uint32]*keys.PreKey
-	uploadedKeys map[uint32]struct{}
-	senderKeys   map[string][]byte
-	nextPreKeyID uint32
-	deleted      bool
-	dataChanges  *deviceDataDispatcher
+	Device        *store.Device
+	path          string
+	mu            sync.RWMutex
+	saveMu        sync.Mutex
+	identities    map[string][32]byte
+	sessions      map[string][]byte
+	preKeys       map[uint32]*keys.PreKey
+	uploadedKeys  map[uint32]struct{}
+	senderKeys    map[string][]byte
+	privacyTokens map[string]store.PrivacyToken
+	nctSalt       []byte
+	nextPreKeyID  uint32
+	deleted       bool
+	dataChanges   *deviceDataDispatcher
 }
 
 var errDeviceDataDispatcherStopped = errors.New("device data dispatcher is stopped")
@@ -612,41 +695,50 @@ func (ds *DeviceStore) stopDataChangedDispatcher() {
 
 // DeviceJSON for JSON serialization
 type DeviceJSON struct {
-	NoiseKeyPriv     string            `json:"noise_key_priv"`
-	IdentityKeyPriv  string            `json:"identity_key_priv"`
-	SignedPreKeyPriv string            `json:"signed_pre_key_priv"`
-	SignedPreKeyID   uint32            `json:"signed_pre_key_id"`
-	SignedPreKeySig  string            `json:"signed_pre_key_sig"`
-	RegistrationID   uint32            `json:"registration_id"`
-	AdvSecretKey     string            `json:"adv_secret_key"`
-	FacebookUUID     string            `json:"facebook_uuid"`
-	JIDUser          string            `json:"jid_user,omitempty"`
-	JIDDevice        uint16            `json:"jid_device,omitempty"`
-	LID              string            `json:"lid,omitempty"`
-	LIDMigrationTS   int64             `json:"lid_migration_timestamp,omitempty"`
-	PushName         string            `json:"push_name,omitempty"`
-	BusinessName     string            `json:"business_name,omitempty"`
-	Platform         string            `json:"platform,omitempty"`
-	Account          string            `json:"account,omitempty"`
-	Identities       map[string]string `json:"identities,omitempty"`
-	Sessions         map[string]string `json:"sessions,omitempty"`
-	PreKeys          map[string]string `json:"pre_keys,omitempty"`
-	UploadedPreKeys  []uint32          `json:"uploaded_pre_keys"`
-	SenderKeys       map[string]string `json:"sender_keys,omitempty"`
-	NextPreKeyID     uint32            `json:"next_pre_key_id"`
+	NoiseKeyPriv     string                      `json:"noise_key_priv"`
+	IdentityKeyPriv  string                      `json:"identity_key_priv"`
+	SignedPreKeyPriv string                      `json:"signed_pre_key_priv"`
+	SignedPreKeyID   uint32                      `json:"signed_pre_key_id"`
+	SignedPreKeySig  string                      `json:"signed_pre_key_sig"`
+	RegistrationID   uint32                      `json:"registration_id"`
+	AdvSecretKey     string                      `json:"adv_secret_key"`
+	FacebookUUID     string                      `json:"facebook_uuid"`
+	JIDUser          string                      `json:"jid_user,omitempty"`
+	JIDDevice        uint16                      `json:"jid_device,omitempty"`
+	LID              string                      `json:"lid,omitempty"`
+	LIDMigrationTS   int64                       `json:"lid_migration_timestamp,omitempty"`
+	PushName         string                      `json:"push_name,omitempty"`
+	BusinessName     string                      `json:"business_name,omitempty"`
+	Platform         string                      `json:"platform,omitempty"`
+	Account          string                      `json:"account,omitempty"`
+	Identities       map[string]string           `json:"identities,omitempty"`
+	Sessions         map[string]string           `json:"sessions,omitempty"`
+	PreKeys          map[string]string           `json:"pre_keys,omitempty"`
+	UploadedPreKeys  []uint32                    `json:"uploaded_pre_keys"`
+	SenderKeys       map[string]string           `json:"sender_keys,omitempty"`
+	PrivacyTokens    map[string]PrivacyTokenJSON `json:"privacy_tokens,omitempty"`
+	NCTSalt          string                      `json:"nct_salt,omitempty"`
+	NextPreKeyID     uint32                      `json:"next_pre_key_id"`
+}
+
+type PrivacyTokenJSON struct {
+	Token           string `json:"token"`
+	Timestamp       *int64 `json:"timestamp,omitempty"`
+	SenderTimestamp *int64 `json:"sender_timestamp,omitempty"`
 }
 
 const maxRegistrationID = 16380
 
 func newEmptyDeviceStore(path string) *DeviceStore {
 	return &DeviceStore{
-		path:         path,
-		identities:   make(map[string][32]byte),
-		sessions:     make(map[string][]byte),
-		preKeys:      make(map[uint32]*keys.PreKey),
-		uploadedKeys: make(map[uint32]struct{}),
-		senderKeys:   make(map[string][]byte),
-		nextPreKeyID: 1,
+		path:          path,
+		identities:    make(map[string][32]byte),
+		sessions:      make(map[string][]byte),
+		preKeys:       make(map[uint32]*keys.PreKey),
+		uploadedKeys:  make(map[uint32]struct{}),
+		senderKeys:    make(map[string][]byte),
+		privacyTokens: make(map[string]store.PrivacyToken),
+		nextPreKeyID:  1,
 	}
 }
 
@@ -811,6 +903,33 @@ func (ds *DeviceStore) loadDeviceJSON(deviceJSON *DeviceJSON) error {
 		}
 		ds.senderKeys[storageKey] = decoded
 	}
+	for userString, encoded := range deviceJSON.PrivacyTokens {
+		user, parseErr := waTypes.ParseJID(userString)
+		if parseErr != nil {
+			return fmt.Errorf("parse privacy token user %q: %w", userString, parseErr)
+		}
+		tokenBytes, decodeErr := decodeStoredBytes("privacy token", encoded.Token, -1)
+		if decodeErr != nil {
+			return fmt.Errorf("privacy token %q: %w", userString, decodeErr)
+		}
+		token := store.PrivacyToken{
+			User:  user.ToNonAD(),
+			Token: tokenBytes,
+		}
+		if encoded.Timestamp != nil {
+			token.Timestamp = time.Unix(*encoded.Timestamp, 0)
+		}
+		if encoded.SenderTimestamp != nil {
+			token.SenderTimestamp = time.Unix(*encoded.SenderTimestamp, 0)
+		}
+		ds.privacyTokens[token.User.String()] = token
+	}
+	if deviceJSON.NCTSalt != "" {
+		ds.nctSalt, err = decodeStoredBytes("NCT salt", deviceJSON.NCTSalt, -1)
+		if err != nil {
+			return err
+		}
+	}
 
 	if deviceJSON.UploadedPreKeys == nil {
 		// Legacy stores did not distinguish uploaded pre-keys. Treat existing
@@ -851,6 +970,9 @@ func newDeviceStore(path string, randomReader io.Reader) (*DeviceStore, error) {
 	created := false
 
 	if data, err := os.ReadFile(path); err == nil {
+		if err := protectPrivateFile(path, 0600); err != nil {
+			return nil, fmt.Errorf("protect existing device store: %w", err)
+		}
 		var deviceJSON DeviceJSON
 		if err := json.Unmarshal(data, &deviceJSON); err != nil {
 			return nil, fmt.Errorf("decode device store: %w", err)
@@ -925,6 +1047,10 @@ func (ds *DeviceStore) marshalDeviceDataLocked() ([]byte, error) {
 		PreKeys:          make(map[string]string),
 		UploadedPreKeys:  make([]uint32, 0, len(ds.uploadedKeys)),
 		SenderKeys:       make(map[string]string),
+		PrivacyTokens:    make(map[string]PrivacyTokenJSON),
+	}
+	if len(ds.nctSalt) > 0 {
+		deviceJSON.NCTSalt = base64.StdEncoding.EncodeToString(ds.nctSalt)
 	}
 
 	if ds.Device.ID != nil {
@@ -962,27 +1088,45 @@ func (ds *DeviceStore) marshalDeviceDataLocked() ([]byte, error) {
 	for k, v := range ds.senderKeys {
 		deviceJSON.SenderKeys[k] = base64.StdEncoding.EncodeToString(v)
 	}
+	for user, token := range ds.privacyTokens {
+		encoded := PrivacyTokenJSON{
+			Token: base64.StdEncoding.EncodeToString(token.Token),
+		}
+		if !token.Timestamp.IsZero() {
+			timestamp := token.Timestamp.Unix()
+			encoded.Timestamp = &timestamp
+		}
+		if !token.SenderTimestamp.IsZero() {
+			senderTimestamp := token.SenderTimestamp.Unix()
+			encoded.SenderTimestamp = &senderTimestamp
+		}
+		deviceJSON.PrivacyTokens[user] = encoded
+	}
 
 	return json.MarshalIndent(deviceJSON, "", "  ")
 }
 
 type mutableDeviceStoreState struct {
-	identities   map[string][32]byte
-	sessions     map[string][]byte
-	preKeys      map[uint32]*keys.PreKey
-	uploadedKeys map[uint32]struct{}
-	senderKeys   map[string][]byte
-	nextPreKeyID uint32
+	identities    map[string][32]byte
+	sessions      map[string][]byte
+	preKeys       map[uint32]*keys.PreKey
+	uploadedKeys  map[uint32]struct{}
+	senderKeys    map[string][]byte
+	privacyTokens map[string]store.PrivacyToken
+	nctSalt       []byte
+	nextPreKeyID  uint32
 }
 
 func (ds *DeviceStore) captureMutableStateLocked() mutableDeviceStoreState {
 	state := mutableDeviceStoreState{
-		identities:   make(map[string][32]byte, len(ds.identities)),
-		sessions:     make(map[string][]byte, len(ds.sessions)),
-		preKeys:      make(map[uint32]*keys.PreKey, len(ds.preKeys)),
-		uploadedKeys: make(map[uint32]struct{}, len(ds.uploadedKeys)),
-		senderKeys:   make(map[string][]byte, len(ds.senderKeys)),
-		nextPreKeyID: ds.nextPreKeyID,
+		identities:    make(map[string][32]byte, len(ds.identities)),
+		sessions:      make(map[string][]byte, len(ds.sessions)),
+		preKeys:       make(map[uint32]*keys.PreKey, len(ds.preKeys)),
+		uploadedKeys:  make(map[uint32]struct{}, len(ds.uploadedKeys)),
+		senderKeys:    make(map[string][]byte, len(ds.senderKeys)),
+		privacyTokens: make(map[string]store.PrivacyToken, len(ds.privacyTokens)),
+		nctSalt:       cloneBytes(ds.nctSalt),
+		nextPreKeyID:  ds.nextPreKeyID,
 	}
 	for address, identity := range ds.identities {
 		state.identities[address] = identity
@@ -999,6 +1143,10 @@ func (ds *DeviceStore) captureMutableStateLocked() mutableDeviceStoreState {
 	for key, senderKey := range ds.senderKeys {
 		state.senderKeys[key] = senderKey
 	}
+	for user, token := range ds.privacyTokens {
+		token.Token = cloneBytes(token.Token)
+		state.privacyTokens[user] = token
+	}
 	return state
 }
 
@@ -1008,6 +1156,8 @@ func (ds *DeviceStore) restoreMutableStateLocked(state mutableDeviceStoreState) 
 	ds.preKeys = state.preKeys
 	ds.uploadedKeys = state.uploadedKeys
 	ds.senderKeys = state.senderKeys
+	ds.privacyTokens = state.privacyTokens
+	ds.nctSalt = state.nctSalt
 	ds.nextPreKeyID = state.nextPreKeyID
 }
 
@@ -1096,7 +1246,7 @@ func persistDeviceSnapshot(path string, dataChanges *deviceDataDispatcher, data 
 
 func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
 	directory := filepath.Dir(path)
-	temporaryFile, err := os.CreateTemp(directory, "."+filepath.Base(path)+".tmp-*")
+	temporaryFile, err := createPrivateTempFile(directory, "."+filepath.Base(path)+".tmp-*", mode)
 	if err != nil {
 		return fmt.Errorf("create temporary device store: %w", err)
 	}
@@ -1111,9 +1261,6 @@ func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
 		}
 	}()
 
-	if err := temporaryFile.Chmod(mode); err != nil {
-		return fmt.Errorf("set temporary device store permissions: %w", err)
-	}
 	if written, err := temporaryFile.Write(data); err != nil {
 		return fmt.Errorf("write temporary device store: %w", err)
 	} else if written != len(data) {

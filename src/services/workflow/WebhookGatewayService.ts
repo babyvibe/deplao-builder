@@ -18,6 +18,21 @@ import * as http from 'http';
 import Logger from '../../utils/Logger';
 import TunnelService from '../tunnel/TunnelService';
 
+/**
+ * Cloudflare tự động (cloud-settings tunnel.mode = 'cloudflare_auto'): địa chỉ webhook workflow là dịch vụ 'workflow'
+ * của tunnel cố định dùng chung; server cổng 9889 vẫn chạy như cũ. Nạp lười — chế độ khác / lỗi nạp → null = như cũ.
+ */
+type CloudTunnelApi = typeof import('../cloudflare/tunnel');
+
+function cloudTunnelIfAuto(): CloudTunnelApi | null {
+  try {
+    const mod: CloudTunnelApi = require('../cloudflare/tunnel');
+    return mod.isCloudTunnelAuto() ? mod : null;
+  } catch {
+    return null;
+  }
+}
+
 // Lazy import to avoid circular dependency at module load time
 let WorkflowEngineService: any = null;
 function getWorkflowEngine(): any {
@@ -118,6 +133,8 @@ class WebhookGatewayService {
     if (!this.running) {
       return { success: false, error: 'Gateway server chưa được bật' };
     }
+    const cloud = cloudTunnelIfAuto();
+    if (cloud) return this.startCloudTunnel(cloud);
     try {
       const url = await TunnelService.start(this.port, 'Webhook Gateway');
       this.tunnelActive = true;
@@ -136,7 +153,36 @@ class WebhookGatewayService {
     }
   }
 
-  public async stopTunnel(): Promise<{ success: boolean }> {
+  /** Cloudflare tự động: bật dịch vụ 'workflow' (đổi ingress của tunnel dùng chung, không chạy lại cloudflared). */
+  private async startCloudTunnel(cloud: CloudTunnelApi): Promise<{ success: boolean; tunnelUrl?: string; error?: string }> {
+    try {
+      await cloud.cloudTunnel.setServiceEnabled('workflow', true);
+      const address = cloud.cloudTunnel.addressOf('workflow');
+      const url = address.state === 'active' ? address.url : null;
+      if (!url) return { success: false, error: address.error || 'Địa chỉ Cloudflare chưa kết nối xong — đang tự thử lại' };
+      // Đã có địa chỉ cố định → tunnel cũ của cổng này (Quick Tunnel…) không còn dùng
+      if (this.tunnelActive || TunnelService.getState(this.port)) {
+        void TunnelService.stop(this.port).catch(() => {});
+        this.tunnelActive = false;
+        this.tunnelUrl = null;
+      }
+      Logger.log(`[WebhookGateway] 🌐 Cloudflare tự động: ${url}`);
+      return { success: true, tunnelUrl: url };
+    } catch (err: any) {
+      Logger.error(`[WebhookGateway] Cloudflare tunnel error: ${err.message}`);
+      return { success: false, error: err.message };
+    }
+  }
+
+  public async stopTunnel(): Promise<{ success: boolean; error?: string }> {
+    const cloud = cloudTunnelIfAuto();
+    if (cloud) {
+      try {
+        await cloud.cloudTunnel.setServiceEnabled('workflow', false);
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
+    }
     await TunnelService.stop(this.port);
     this.tunnelActive = false;
     this.tunnelUrl = null;
@@ -144,6 +190,13 @@ class WebhookGatewayService {
   }
 
   public getStatus(): { running: boolean; port: number; tunnelActive: boolean; tunnelUrl: string | null } {
+    const cloud = cloudTunnelIfAuto();
+    if (cloud) {
+      // Địa chỉ gốc của dịch vụ 'workflow' (nơi dùng tự nối /api/workflow/webhook/<token>)
+      const address = cloud.cloudTunnel.addressOf('workflow');
+      const url = address.state === 'active' ? address.url : null;
+      return { running: this.running, port: this.port, tunnelActive: !!url, tunnelUrl: url };
+    }
     return {
       running: this.running,
       port: this.port,
@@ -298,7 +351,8 @@ class WebhookGatewayService {
   }
 
   public getWebhookUrl(): string | null {
-    return this.tunnelUrl ? `${this.tunnelUrl}/api/workflow/webhook` : null;
+    const tunnelUrl = this.getStatus().tunnelUrl;
+    return tunnelUrl ? `${tunnelUrl}/api/workflow/webhook` : null;
   }
 }
 

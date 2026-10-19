@@ -11,7 +11,7 @@ import {
   ConnectParams, GroupNameParams, BlockParams, ForwardParams,
   EditParams, PollParams,
 } from './ChannelAdapter';
-import ipc from '../ipc';
+import ipc, { buildZaloAuth } from '../ipc';
 import DataAccessor from '../data/DataAccessor';
 
 export class ZaloAdapter extends BaseChannelAdapter {
@@ -22,9 +22,11 @@ export class ZaloAdapter extends BaseChannelAdapter {
     try {
       const { useAccountStore } = require('../../store/accountStore');
       const account = useAccountStore.getState().accounts?.find((a: any) => a.zalo_id === accountId);
-      if (account?.cookies) {
-        return { cookies: account.cookies, imei: account.imei || '', userAgent: account.user_agent || '' };
-      }
+      if (account?.cookies) return buildZaloAuth(account, accountId);
+      // Máy nhân viên không có cookie (snapshot không gửi) → auth chỉ mang accountId, Boss gắn phiên thật của đúng tài
+      // khoản đó (trước đây trả undefined → "Missing auth", hoặc Boss dùng tài khoản được giao đầu tiên)
+      const { useEmployeeStore } = require('../../store/employeeStore');
+      if (account && useEmployeeStore.getState().mode === 'employee') return buildZaloAuth(account, accountId);
     } catch {}
     return undefined;
   }

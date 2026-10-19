@@ -4,12 +4,14 @@ import FileStorageService from '../../src/services/file/FileStorageService';
 import WorkflowEngineService from '../../src/services/workflow/WorkflowEngineService';
 import EventBroadcaster from '../../src/services/event/EventBroadcaster';
 import MediaCacheService from '../../src/services/cache/MediaCacheService';
-import { proxyToBoss } from './proxyHelper';
+import { proxyToBoss, proxyToBossWithResult } from './proxyHelper';
 import Logger from '../../src/utils/Logger';
 import * as path from 'path';
 import * as fs from 'fs';
 import AppModeManager from '../../src/utils/AppModeManager';
 import WorkspaceManager from '../../src/utils/WorkspaceManager';
+import { clampMediaPageLimit, normalizeMediaCursor } from '../../src/services/database/mediaMessagesQuery';
+import { contactAliasChanged, contactProfileChanged } from '../../src/services/database/contactProfileChange';
 
 function isEmployeeMode(): boolean {
     try {
@@ -17,6 +19,20 @@ function isEmployeeMode(): boolean {
         if (activeWs?.type === 'remote') return true;
     } catch {}
     return false;
+}
+
+/**
+ * Tạm dừng đồng bộ DB lên Cloudflare quanh thao tác thay file DB (dbsync nhả file trước, kiểm tra lại DB sau).
+ * Không nạp được module (hoặc đồng bộ đang tắt) → chạy thẳng.
+ */
+function withCloudDbPaused<T>(reason: string, fn: () => Promise<T>): Promise<T> {
+    let cloudDb: { pauseFor<R>(reason: string, fn: () => Promise<R> | R): Promise<R> } | null = null;
+    try {
+        cloudDb = (require('../../src/services/cloudflare/dbsync') as typeof import('../../src/services/cloudflare/dbsync')).cloudDb;
+    } catch {
+        cloudDb = null;
+    }
+    return cloudDb ? cloudDb.pauseFor(reason, fn) : fn();
 }
 
 // Copy toàn bộ thư mục src → dest (async, recursive).
@@ -117,13 +133,33 @@ export function registerDatabaseIpc() {
         }
     });
 
-    ipcMain.handle('db:getContactsFiltered', async (_event, params: { zaloId: string; channel?: string; search?: string; othersOnly?: boolean; excludeOthers?: boolean; unreadOnly?: boolean; limit?: number; offset?: number }) => {
+    ipcMain.handle('db:getContactById', async (_event, { zaloId, contactId }: { zaloId: string; contactId: string }) => {
+        try {
+            if (isEmployeeMode()) return { success: true, contact: null };
+            const contact = DatabaseService.getInstance().getContactById(zaloId, String(contactId));
+            return { success: true, contact: contact || null };
+        } catch (error: any) {
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('db:getContactsFiltered', async (_event, params: { zaloId: string; channel?: string; search?: string; othersOnly?: boolean; excludeOthers?: boolean; unreadOnly?: boolean; contactIds?: string[]; limit?: number; offset?: number }) => {
         try {
             if (isEmployeeMode()) return { success: true, contacts: [] };
             const contacts = DatabaseService.getInstance().getContactsFiltered(params.zaloId, params);
             return { success: true, contacts };
         } catch (error: any) {
             return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('db:searchContactsForPicker', async (_event, params: { zaloId: string; search?: string; type?: 'user' | 'group' | 'all'; limit?: number; offset?: number; ids?: string[] }) => {
+        const empty = { items: [], total: 0, counts: { all: 0, user: 0, group: 0 } };
+        try {
+            if (isEmployeeMode()) return { success: true, ...empty };
+            return { success: true, ...DatabaseService.getInstance().searchContactsForPicker(params.zaloId, params) };
+        } catch (error: any) {
+            return { success: false, error: error.message, ...empty };
         }
     });
 
@@ -147,12 +183,16 @@ export function registerDatabaseIpc() {
         }
     });
 
-    ipcMain.handle('db:getMediaMessages', async (_event, { zaloId, threadId, limit, offset }) => {
+    ipcMain.handle('db:getMediaMessages', async (_event, { zaloId, threadId, limit, offset, beforeTs, beforeMsgId, afterTs, afterMsgId }) => {
         try {
             if (isEmployeeMode()) return { success: true };
-            const messages = threadId
-                ? DatabaseService.getInstance().getMediaMessages(zaloId, threadId, limit ?? 50, offset ?? 0)
-                : DatabaseService.getInstance().getAllLocalMediaMessages(zaloId);
+            if (!threadId) return { success: true, messages: DatabaseService.getInstance().getAllLocalMediaMessages(zaloId) };
+            // beforeTs/afterTs (+ msgId): keyset page on (timestamp, msg_id) for the image viewer gallery, newest-first.
+            // No cursor → the old offset paging (panel Ảnh/Video, Public API), unchanged.
+            const cursor = normalizeMediaCursor({ beforeTs, beforeMsgId, afterTs, afterMsgId });
+            const messages = cursor
+                ? DatabaseService.getInstance().getMediaMessages(zaloId, threadId, clampMediaPageLimit(limit), 0, cursor)
+                : DatabaseService.getInstance().getMediaMessages(zaloId, threadId, limit ?? 50, offset ?? 0);
             return { success: true, messages };
         } catch (error: any) {
             return { success: false, error: error.message };
@@ -179,30 +219,40 @@ export function registerDatabaseIpc() {
         }
     });
 
+    // Ghi trên Boss (UI Boss, proxy / REST của nhân viên) phát event như lệnh REST tương ứng → UI Boss + nhân viên được
+    // giao tài khoản cập nhật ngay. Nhân viên (isEmployeeMode) không phát: Boss phát sau khi ghi và relay về.
     ipcMain.handle('db:markAsRead', async (_event, { zaloId, contactId }) => {
         try {
             if (isEmployeeMode()) proxyToBoss('db:markAsRead', { zaloId, contactId });
             DatabaseService.getInstance().markAsRead(zaloId, contactId);
+            // Đã đọc là dữ liệu chung → máy khác xoá số chưa đọc (trước đây Boss đọc không xoá được số của nhân viên)
+            if (!isEmployeeMode()) EventBroadcaster.emit('db:unreadChanged', { zaloId, contactId, unread: 0 });
             return { success: true };
         } catch (error: any) {
             return { success: false, error: error.message };
         }
     });
 
-    ipcMain.handle('db:markMessageRecalled', async (_event, { zaloId, msgId }) => {
+    ipcMain.handle('db:markMessageRecalled', async (_event, { zaloId, msgId, threadId }) => {
         try {
-            if (isEmployeeMode()) proxyToBoss('db:markMessageRecalled', { zaloId, msgId });
-            DatabaseService.getInstance().markMessageRecalled(zaloId, msgId);
+            if (isEmployeeMode()) proxyToBoss('db:markMessageRecalled', { zaloId, msgId, threadId });
+            // threadId: msg_id Telegram chỉ duy nhất trong 1 hội thoại (xem DatabaseService.messageIdScope)
+            DatabaseService.getInstance().markMessageRecalled(zaloId, msgId, threadId ? String(threadId) : undefined);
             return { success: true };
         } catch (error: any) {
             return { success: false, error: error.message };
         }
     });
 
-    ipcMain.handle('db:deleteMessages', async (_event, { zaloId, msgIds }: { zaloId: string; msgIds: string[] }) => {
+    ipcMain.handle('db:deleteMessages', async (_event, { zaloId, msgIds, threadId }: { zaloId: string; msgIds: string[]; threadId?: string }) => {
         try {
-            if (isEmployeeMode()) proxyToBoss('db:deleteMessages', { zaloId, msgIds });
-            DatabaseService.getInstance().deleteMessages(zaloId, msgIds);
+            if (isEmployeeMode()) proxyToBoss('db:deleteMessages', { zaloId, msgIds, threadId });
+            DatabaseService.getInstance().deleteMessages(zaloId, msgIds, threadId ? String(threadId) : undefined);
+            // Xoá khỏi app: máy khác bỏ tin khỏi khung chat (cùng event lệnh REST messages/delete vẫn phát).
+            // scope 'app' ≠ chat.delete của Zalo (tin vẫn giữ, hiện "đã thu hồi"): bên nhận XOÁ tin, không đánh dấu thu hồi.
+            if (!isEmployeeMode() && Array.isArray(msgIds) && msgIds.length > 0) {
+                EventBroadcaster.emit('event:delete', { zaloId, msgIds, scope: 'app', ...(threadId ? { threadId: String(threadId) } : {}) });
+            }
             return { success: true };
         } catch (error: any) {
             return { success: false, error: error.message };
@@ -212,7 +262,21 @@ export function registerDatabaseIpc() {
     ipcMain.handle('db:updateContactProfile', async (_event, { zaloId, contactId, displayName, avatarUrl, phone, contactType, gender, birthday, isBot, manualDetails }) => {
         try {
             if (isEmployeeMode()) proxyToBoss('db:updateContactProfile', { zaloId, contactId, displayName, avatarUrl, phone, contactType, gender, birthday, isBot, manualDetails });
-            DatabaseService.getInstance().updateContactProfile(zaloId, contactId, displayName || '', avatarUrl || '', phone || '', contactType || '', gender ?? null, birthday ?? null, isBot ?? null, Boolean(manualDetails));
+            const db = DatabaseService.getInstance();
+            // Boss gọi cho gần như mọi tin nhắn đến → chỉ phát event khi hồ sơ THẬT SỰ đổi (so bản ghi trước / sau)
+            const emit = !isEmployeeMode() && !!contactId;
+            const before = emit ? db.getContactById(zaloId, String(contactId)) : undefined;
+            db.updateContactProfile(zaloId, contactId, displayName || '', avatarUrl || '', phone || '', contactType || '', gender ?? null, birthday ?? null, isBot ?? null, Boolean(manualDetails));
+            if (emit) {
+                const after: any = db.getContactById(zaloId, String(contactId));
+                if (contactProfileChanged(before as any, after)) {
+                    EventBroadcaster.emit('db:contactProfileUpdated', {
+                        ownerZaloId: zaloId, contactId: String(contactId),
+                        displayName: after.display_name, avatarUrl: after.avatar_url, phone: after.phone,
+                        gender: after.gender, birthday: after.birthday,
+                    });
+                }
+            }
             return { success: true };
         } catch (error: any) {
             return { success: false, error: error.message };
@@ -229,11 +293,12 @@ export function registerDatabaseIpc() {
         }
     });
 
-    ipcMain.handle('db:updateReaction', async (_event, { zaloId, msgId, userId, icon, emoji }) => {
+    ipcMain.handle('db:updateReaction', async (_event, { zaloId, msgId, userId, icon, emoji, threadId }) => {
         try {
             const iconValue = icon || emoji || '';
-            if (isEmployeeMode()) proxyToBoss('db:updateReaction', { zaloId, msgId, userId, icon: iconValue });
-            DatabaseService.getInstance().updateMessageReaction(zaloId, String(msgId), userId, iconValue);
+            // threadId: chỉ sửa tin của đúng hội thoại (msg_id có thể trùng giữa các hội thoại)
+            if (isEmployeeMode()) proxyToBoss('db:updateReaction', { zaloId, msgId, userId, icon: iconValue, threadId });
+            DatabaseService.getInstance().updateMessageReaction(zaloId, String(msgId), userId, iconValue, threadId ? String(threadId) : undefined);
             return { success: true };
         } catch (error: any) {
             return { success: false, error: error.message };
@@ -320,7 +385,7 @@ export function registerDatabaseIpc() {
         }
     });
 
-    ipcMain.handle('db:setStoragePath', async (event, { newFolder, useExisting }: { newFolder: string; useExisting?: boolean }) => {
+    ipcMain.handle('db:setStoragePath', async (event, { newFolder, useExisting }: { newFolder: string; useExisting?: boolean }) => withCloudDbPaused('storage-path', async () => {
         try {
             if (!fs.existsSync(newFolder)) {
                 fs.mkdirSync(newFolder, { recursive: true });
@@ -445,7 +510,7 @@ export function registerDatabaseIpc() {
         } catch (error: any) {
             return { success: false, error: error.message };
         }
-    });
+    }));
 
     ipcMain.handle('db:selectStorageFolder', async () => {
         try {
@@ -501,6 +566,8 @@ export function registerDatabaseIpc() {
         try {
             if (isEmployeeMode()) proxyToBoss('db:deleteConversation', { zaloId, contactId });
             DatabaseService.getInstance().deleteConversation(zaloId, contactId);
+            // Máy khác bỏ hội thoại khỏi danh sách (trước đây chỉ lệnh REST phát, Boss xoá thì nhân viên không biết)
+            if (!isEmployeeMode()) EventBroadcaster.emit('db:conversationDeleted', { ownerZaloId: zaloId, contactId, threadId: contactId });
             return { success: true };
         } catch (error: any) {
             return { success: false, error: error.message };
@@ -537,6 +604,17 @@ export function registerDatabaseIpc() {
         }
     });
 
+    // Panel "Thành viên" của khung chat: phân trang + tìm trong DB (không tải cả nhóm vài nghìn người một lần)
+    ipcMain.handle('db:getGroupMembersPage', async (_event, params: { zaloId: string; groupId: string; query?: string; limit?: number; offset?: number; ownerRole?: number }) => {
+        try {
+            const { zaloId, groupId, query, limit, offset, ownerRole } = params || ({} as any);
+            const page = DatabaseService.getInstance().getGroupMembersPage(zaloId, groupId, { query, limit, offset, ownerRole });
+            return { success: true, ...page };
+        } catch (error: any) {
+            return { success: false, error: error.message, members: [], total: 0 };
+        }
+    });
+
     ipcMain.handle('db:getAllGroupMembers', async (_event, { zaloId }: { zaloId: string }) => {
         try {
             const rows = DatabaseService.getInstance().getAllGroupMembers(zaloId);
@@ -558,7 +636,8 @@ export function registerDatabaseIpc() {
 
     ipcMain.handle('db:upsertGroupMember', async (_event, { zaloId, groupId, member }: { zaloId: string; groupId: string; member: any }) => {
         try {
-            if (isEmployeeMode()) proxyToBoss("upsertGroupMember", { zaloId, groupId, member });
+            // Tên kênh phải có tiền tố db: — trước đây gửi "upsertGroupMember" → Boss không có handler, không bao giờ ghi
+            if (isEmployeeMode()) proxyToBoss('db:upsertGroupMember', { zaloId, groupId, member });
             DatabaseService.getInstance().upsertGroupMember(zaloId, groupId, member);
             return { success: true };
         } catch (error: any) {
@@ -568,7 +647,7 @@ export function registerDatabaseIpc() {
 
     ipcMain.handle('db:removeGroupMember', async (_event, { zaloId, groupId, memberId }: { zaloId: string; groupId: string; memberId: string }) => {
         try {
-            if (isEmployeeMode()) proxyToBoss("removeGroupMember", { zaloId, groupId, memberId });
+            if (isEmployeeMode()) proxyToBoss('db:removeGroupMember', { zaloId, groupId, memberId });
             DatabaseService.getInstance().removeGroupMember(zaloId, groupId, memberId);
             return { success: true };
         } catch (error: any) {
@@ -581,7 +660,8 @@ export function registerDatabaseIpc() {
     // ─── Sticker Cache ────────────────────────────────────────────────────
     ipcMain.handle('db:saveStickers', async (_event, { stickers }: { stickers: any[] }) => {
         try {
-            if (isEmployeeMode()) proxyToBoss("saveStickers", { stickers });
+            // Cache sticker dùng chung trên Boss (không theo tài khoản) — đọc sticker của nhân viên đi REST tới Boss
+            if (isEmployeeMode()) proxyToBoss('db:saveStickers', { stickers });
             DatabaseService.getInstance().saveStickers(stickers || []);
             return { success: true };
         } catch (error: any) {
@@ -612,7 +692,7 @@ export function registerDatabaseIpc() {
 
     ipcMain.handle('db:addRecentSticker', async (_event, { stickerId }: { stickerId: number }) => {
         try {
-            if (isEmployeeMode()) proxyToBoss("addRecentSticker", { stickerId });
+            if (isEmployeeMode()) proxyToBoss('db:addRecentSticker', { stickerId });
             DatabaseService.getInstance().addRecentSticker(stickerId);
             return { success: true };
         } catch (error: any) {
@@ -622,7 +702,7 @@ export function registerDatabaseIpc() {
 
     ipcMain.handle('db:markStickerUnsupported', async (_event, { stickerId }: { stickerId: number }) => {
         try {
-            if (isEmployeeMode()) proxyToBoss("markStickerUnsupported", { stickerId });
+            if (isEmployeeMode()) proxyToBoss('db:markStickerUnsupported', { stickerId });
             DatabaseService.getInstance().markStickerUnsupported(stickerId);
             return { success: true };
         } catch (error: any) {
@@ -632,7 +712,7 @@ export function registerDatabaseIpc() {
 
     ipcMain.handle('db:saveStickerPacks', async (_event, { packs }: { packs: any[] }) => {
         try {
-            if (isEmployeeMode()) proxyToBoss("saveStickerPacks", { packs });
+            if (isEmployeeMode()) proxyToBoss('db:saveStickerPacks', { packs });
             DatabaseService.getInstance().saveStickerPacks(packs || []);
             return { success: true };
         } catch (error: any) {
@@ -664,7 +744,7 @@ export function registerDatabaseIpc() {
 
     ipcMain.handle('db:saveKeywordStickers', async (_event, { keyword, stickerIds }: { keyword: string; stickerIds: number[] }) => {
         try {
-            if (isEmployeeMode()) proxyToBoss("saveKeywordStickers", { keyword, stickerIds });
+            if (isEmployeeMode()) proxyToBoss('db:saveKeywordStickers', { keyword, stickerIds });
             DatabaseService.getInstance().saveKeywordStickers(keyword, stickerIds);
             return { success: true };
         } catch (error: any) {
@@ -716,7 +796,7 @@ export function registerDatabaseIpc() {
 
     ipcMain.handle('db:saveFriendRequests', async (_event, { zaloId, requests, direction }: { zaloId: string; requests: any[]; direction: 'received' | 'sent' }) => {
         try {
-            if (isEmployeeMode()) proxyToBoss("saveFriendRequests", { zaloId, requests, direction });
+            if (isEmployeeMode()) proxyToBoss('db:saveFriendRequests', { zaloId, requests, direction });
             DatabaseService.getInstance().saveFriendRequests(zaloId, requests, direction);
             return { success: true };
         } catch (error: any) {
@@ -776,9 +856,15 @@ export function registerDatabaseIpc() {
 
     // ─── Pinned Messages ──────────────────────────────────────────────────────
 
+    // Nhân viên: ghim tin nhắn nằm trên DB Boss. Đọc qua proxy (trước đây trả rỗng → ghim xong ChatWindow tải lại thì
+    // bảng ghim trống); ghi CHỜ Boss xác nhận rồi mới ghi bản sao cục bộ + phát event cho UI của chính mình — Boss lỗi /
+    // từ chối thì trả lỗi để UI báo (trước đây fire-and-forget: UI báo "Đã ghim" dù Boss không ghi).
     ipcMain.handle('db:getPinnedMessages', async (_event, { zaloId, threadId }: { zaloId: string; threadId: string }) => {
         try {
-            if (isEmployeeMode()) return { success: true };
+            if (isEmployeeMode()) {
+                const res = await proxyToBossWithResult('db:getPinnedMessages', { zaloId, threadId });
+                return res?.success === false ? { ...res, pins: [] } : { success: true, pins: Array.isArray(res?.pins) ? res.pins : [] };
+            }
             const pins = DatabaseService.getInstance().getPinnedMessages(zaloId, threadId);
             return { success: true, pins };
         } catch (error: any) {
@@ -788,9 +874,12 @@ export function registerDatabaseIpc() {
 
     ipcMain.handle('db:pinMessage', async (_event, { zaloId, threadId, pin }: { zaloId: string; threadId: string; pin: any }) => {
         try {
+            if (isEmployeeMode()) {
+                const res = await proxyToBossWithResult('db:pinMessage', { zaloId, threadId, pin });
+                if (res?.success === false) return res;
+            }
             DatabaseService.getInstance().pinMessage(zaloId, threadId, pin);
             EventBroadcaster.emit('db:pinnedMessageChanged', { action: 'pin', ownerZaloId: zaloId, threadId, pin });
-            proxyToBoss('db:pinMessage', { zaloId, threadId, pin });
             return { success: true };
         } catch (error: any) {
             return { success: false, error: error.message };
@@ -799,9 +888,12 @@ export function registerDatabaseIpc() {
 
     ipcMain.handle('db:unpinMessage', async (_event, { zaloId, threadId, msgId }: { zaloId: string; threadId: string; msgId: string }) => {
         try {
+            if (isEmployeeMode()) {
+                const res = await proxyToBossWithResult('db:unpinMessage', { zaloId, threadId, msgId });
+                if (res?.success === false) return res;
+            }
             DatabaseService.getInstance().unpinMessage(zaloId, threadId, msgId);
             EventBroadcaster.emit('db:pinnedMessageChanged', { action: 'unpin', ownerZaloId: zaloId, threadId, msgId });
-            proxyToBoss('db:unpinMessage', { zaloId, threadId, msgId });
             return { success: true };
         } catch (error: any) {
             return { success: false, error: error.message };
@@ -810,9 +902,12 @@ export function registerDatabaseIpc() {
 
     ipcMain.handle('db:bringPinnedToTop', async (_event, { zaloId, threadId, msgId }: { zaloId: string; threadId: string; msgId: string }) => {
         try {
+            if (isEmployeeMode()) {
+                const res = await proxyToBossWithResult('db:bringPinnedToTop', { zaloId, threadId, msgId });
+                if (res?.success === false) return res;
+            }
             DatabaseService.getInstance().bringPinnedToTop(zaloId, threadId, msgId);
             EventBroadcaster.emit('db:pinnedMessageChanged', { action: 'bringToTop', ownerZaloId: zaloId, threadId, msgId });
-            proxyToBoss('db:bringPinnedToTop', { zaloId, threadId, msgId });
             return { success: true };
         } catch (error: any) {
             return { success: false, error: error.message };
@@ -979,7 +1074,8 @@ export function registerDatabaseIpc() {
         threadType?: number; labelText?: string; labelColor?: string; labelEmoji?: string;
     }) => {
         try {
-            if (isEmployeeMode()) proxyToBoss("assignLocalLabelToThread", { zaloId, labelId, threadId });
+            // Nhân viên: chỉ proxy MỘT lần ở cuối (db:assignLocalLabelToThread, đủ tham số cho trigger workflow trên Boss).
+            // Bản cũ gửi thêm "assignLocalLabelToThread" (không tiền tố — Boss không có handler).
             DatabaseService.getInstance().assignLocalLabelToThread(zaloId, labelId, threadId);
             // Centralized workflow label event emission
             try {
@@ -1009,7 +1105,6 @@ export function registerDatabaseIpc() {
         zaloId: string; labelIds: number[]; threadIds: string[];
     }) => {
         try {
-            if (isEmployeeMode()) proxyToBoss("bulkAssignLocalLabelToThread", { zaloId, labelIds, threadIds });
             const count = DatabaseService.getInstance().bulkAssignLocalLabelToThread(zaloId, labelIds, threadIds);
             // Emit single event after bulk operation
             EventBroadcaster.emit('db:localLabelThreadChanged', { action: 'bulkAssign', ownerZaloId: zaloId, labelIds, threadIds });
@@ -1025,7 +1120,6 @@ export function registerDatabaseIpc() {
         threadType?: number; labelText?: string; labelColor?: string; labelEmoji?: string;
     }) => {
         try {
-            if (isEmployeeMode()) proxyToBoss("removeLocalLabelFromThread", { zaloId, labelId, threadId });
             DatabaseService.getInstance().removeLocalLabelFromThread(zaloId, labelId, threadId);
             // Centralized workflow label event emission
             try {
@@ -1084,8 +1178,13 @@ export function registerDatabaseIpc() {
 
     ipcMain.handle('db:setContactAlias', async (_event, { zaloId, contactId, alias }: { zaloId: string; contactId: string; alias: string }) => {
         try {
-            DatabaseService.getInstance().setContactAlias(zaloId, contactId, alias);
-            EventBroadcaster.emit('db:contactAliasChanged', { ownerZaloId: zaloId, contactId, alias });
+            const db = DatabaseService.getInstance();
+            // Mỗi lần kết nối lại Zalo lưu lại bí danh của cả danh bạ → chỉ phát event khi bí danh thật sự đổi
+            const before = db.getContactById(zaloId, String(contactId || ''));
+            db.setContactAlias(zaloId, contactId, alias);
+            if (contactAliasChanged(before as any, alias)) {
+                EventBroadcaster.emit('db:contactAliasChanged', { ownerZaloId: zaloId, contactId, alias });
+            }
             proxyToBoss('db:setContactAlias', { zaloId, contactId, alias });
             return { success: true };
         } catch (error: any) {
@@ -1108,9 +1207,10 @@ export function registerDatabaseIpc() {
         } catch (error: any) { return { success: false, error: error.message }; }
     });
 
+    // Bản nháp là dữ liệu CỦA MÁY (như Zalo PC): nhân viên ghi vào DB cục bộ của workspace (upsertDraft/deleteDraft ở
+    // trên không proxy) nên cũng đọc từ đó. Trước đây chế độ nhân viên trả stub rỗng → nháp không bao giờ khôi phục.
     ipcMain.handle('db:getDraft', async (_event, { zaloId, threadId }: { zaloId: string; threadId: string }) => {
         try {
-            if (isEmployeeMode()) return { success: true };
             const draft = DatabaseService.getInstance().getDraft(zaloId, threadId);
             return { success: true, draft };
         } catch (error: any) { return { success: false, error: error.message }; }
@@ -1118,7 +1218,6 @@ export function registerDatabaseIpc() {
 
     ipcMain.handle('db:getDrafts', async (_event, { zaloId }: { zaloId: string }) => {
         try {
-            if (isEmployeeMode()) return { success: true };
             const drafts = DatabaseService.getInstance().getDrafts(zaloId);
             return { success: true, drafts };
         } catch (error: any) { return { success: false, error: error.message }; }
@@ -1132,9 +1231,15 @@ export function registerDatabaseIpc() {
     });
 
     // ─── Bank Cards ─────────────────────────────────────────────────────
+    // Nhân viên: thẻ ngân hàng nằm trên DB Boss (id do Boss cấp) — đọc / ghi đều proxy chờ kết quả, không ghi bản sao
+    // cục bộ (id cục bộ khác id Boss → sửa / xoá theo id sẽ trúng thẻ khác). Trước đây proxy "upsertBankCard" (không
+    // tiền tố, Boss không có handler) và đọc trả rỗng → nhân viên không bao giờ thấy / lưu được thẻ.
     ipcMain.handle('db:getBankCards', async (_event, { zaloId }: { zaloId: string }) => {
         try {
-            if (isEmployeeMode()) return { success: true };
+            if (isEmployeeMode()) {
+                const res = await proxyToBossWithResult('db:getBankCards', { zaloId });
+                return res?.success === false ? { ...res, cards: [] } : { success: true, cards: Array.isArray(res?.cards) ? res.cards : [] };
+            }
             const cards = DatabaseService.getInstance().getBankCards(zaloId);
             return { success: true, cards };
         } catch (error: any) { return { success: false, error: error.message }; }
@@ -1142,15 +1247,16 @@ export function registerDatabaseIpc() {
 
     ipcMain.handle('db:upsertBankCard', async (_event, { zaloId, card }: { zaloId: string; card: any }) => {
         try {
-            if (isEmployeeMode()) proxyToBoss("upsertBankCard", { zaloId, card });
+            if (isEmployeeMode()) return await proxyToBossWithResult('db:upsertBankCard', { zaloId, card });
             const id = DatabaseService.getInstance().upsertBankCard(zaloId, card);
+            if (!(id > 0)) return { success: false, error: 'Không lưu được thẻ ngân hàng' };
             return { success: true, id };
         } catch (error: any) { return { success: false, error: error.message }; }
     });
 
     ipcMain.handle('db:deleteBankCard', async (_event, { zaloId, id }: { zaloId: string; id: number }) => {
         try {
-            if (isEmployeeMode()) proxyToBoss("deleteBankCard", { zaloId, id });
+            if (isEmployeeMode()) return await proxyToBossWithResult('db:deleteBankCard', { zaloId, id });
             DatabaseService.getInstance().deleteBankCard(zaloId, id);
             return { success: true };
         } catch (error: any) { return { success: false, error: error.message }; }
@@ -1170,6 +1276,42 @@ export function registerDatabaseIpc() {
             DatabaseService.getInstance().setLocalPinnedConversation(zaloId, threadId, isPinned);
             EventBroadcaster.emit('db:pinnedConversationChanged', { ownerZaloId: zaloId, threadId, isPinned });
             proxyToBoss('db:setLocalPinnedConversation', { zaloId, threadId, isPinned });
+            return { success: true };
+        } catch (error: any) { return { success: false, error: error.message }; }
+    });
+
+    // ─── Tự động đánh dấu đã đọc: hội thoại chưa đọc theo thời gian tin cuối ───
+    ipcMain.handle('db:getUnreadConversations', async (_event, params: { zaloId: string; from?: number; to?: number; includeOthers?: boolean; channel?: string }) => {
+        try {
+            if (isEmployeeMode()) return { success: true, conversations: [] };
+            const { zaloId, ...opts } = params || ({} as any);
+            return { success: true, conversations: DatabaseService.getInstance().getUnreadConversations(zaloId, opts) };
+        } catch (error: any) { return { success: false, error: error.message, conversations: [] }; }
+    });
+
+    // ─── Starred messages ("Tin đánh dấu") ───────────────────────────────
+    // Employee mode reads / writes through Boss REST (DataAccessor), like local pins.
+    ipcMain.handle('db:getStarredMessageKeys', async (_event, { zaloId }: { zaloId: string }) => {
+        try {
+            if (isEmployeeMode()) return { success: true, keys: [] };
+            return { success: true, keys: DatabaseService.getInstance().getStarredMessageKeys(zaloId) };
+        } catch (error: any) { return { success: false, error: error.message, keys: [] }; }
+    });
+
+    ipcMain.handle('db:getStarredMessages', async (_event, { zaloIds, limit, offset }: { zaloIds: string[]; limit?: number; offset?: number }) => {
+        try {
+            if (isEmployeeMode()) return { success: true, items: [], hasMore: false };
+            const pageSize = Math.max(1, Math.min(200, Number(limit) || 50));
+            const rows = DatabaseService.getInstance().getStarredMessages(Array.isArray(zaloIds) ? zaloIds : [], pageSize + 1, offset || 0);
+            return { success: true, items: rows.slice(0, pageSize), hasMore: rows.length > pageSize };
+        } catch (error: any) { return { success: false, error: error.message, items: [], hasMore: false }; }
+    });
+
+    ipcMain.handle('db:setMessageStarred', async (_event, { zaloId, threadId, msgId, starred, snapshot }: { zaloId: string; threadId: string; msgId: string; starred: boolean; snapshot?: unknown }) => {
+        try {
+            DatabaseService.getInstance().setMessageStarred(zaloId, String(threadId || ''), String(msgId || ''), !!starred, snapshot);
+            EventBroadcaster.emit('db:starredMessageChanged', { ownerZaloId: zaloId, threadId, msgId, starred: !!starred });
+            proxyToBoss('db:setMessageStarred', { zaloId, threadId, msgId, starred, snapshot });
             return { success: true };
         } catch (error: any) { return { success: false, error: error.message }; }
     });

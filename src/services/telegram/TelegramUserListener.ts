@@ -21,6 +21,24 @@ import FileStorageService from '../file/FileStorageService';
 import { shouldFetchAvatar, markAvatarFetched, markAvatarSuccess, resetAvatarCache } from '../../utils/avatarFetchCache';
 import type { TelegramPeerType } from '../../models/telegram';
 import { getTelegramMessagePreview } from './TelegramMessagePreview';
+import { parseGroupLink } from '../../shared/groupLinks';
+import { describeTelegramServiceAction } from './telegramServiceText';
+import { getTelegramForwardAttachment, telegramEntityName } from './telegramForward';
+import { markTelegramMessagesDeleted } from './telegramDeletions';
+import { telegramStrippedThumb, telegramVideoAttributes, telegramWebpageMeta } from './telegramMediaMeta';
+import * as TelegramStickers from './telegramStickers';
+import { stickerSetRefOf, type StickerClientDeps, type TelegramStickerSetRef } from './telegramStickers';
+import { mapReadReceiptError, normalizeReadParticipants, type ReadReceiptUnavailableReason } from './telegramReadReceipts';
+import { applyTelegramReadUpdate, parseTelegramReadUpdate } from './telegramReadHistory';
+import { isTelegramMetaAttachment } from '../../shared/telegramAttachmentTypes';
+import { isUndecryptedCredential } from '../../shared/storedCredential';
+import { normalizeTelegramReaction, orderTelegramReactions, type TelegramChatReactions, type TelegramReactionCatalog } from '../../shared/telegramReactions';
+import {
+  normalizeTelegramTtl, telegramCallCardContent, telegramCallReasonOf, telegramPresenceOf, telegramPresenceRank,
+  telegramUsernameError, validateTelegramUsername,
+  type TelegramCallHistoryItem, type TelegramCallInfo, type TelegramChatSettings, type TelegramContactItem,
+  type TelegramCreateChannelResult, type TelegramMissingInvitee,
+} from '../../shared/telegramQuickModel';
 
 // Telegram API credentials - đăng ký tại my.telegram.org
 import { API_ID, API_HASH } from '../../configs/telegram.config';
@@ -38,6 +56,8 @@ interface ActiveListener {
   reconnectTimer: ReturnType<typeof setTimeout> | null;
   healthTimer: ReturnType<typeof setInterval> | null;
   channelPollTimer: ReturnType<typeof setInterval> | null;
+  /** Archived/All dialog watch; separate from channelPollTimer (see CHANNEL_DIALOG_WATCH_TICK_MS). */
+  dialogWatchTimer: ReturnType<typeof setInterval> | null;
   connecting: Promise<void> | null;
   healthCheckClient: TelegramClient | null;
   transportDownSince: number | null;
@@ -47,12 +67,55 @@ interface ActiveListener {
    * noisy and hides the account that is actually affected. */
   lastTransportErrorAt: number;
   stopped: boolean;
+  /** The GramJS Connection object last seen healthy. GramJS replaces it when
+   * it rebuilds the socket in place, which is how a real reconnect is told
+   * apart from its periodic `connected` heartbeat. */
+  transportIdentity: unknown;
+  /** Pending confirmation of a GramJS `disconnected` report (see
+   * TRANSPORT_DISCONNECT_CONFIRM_MS). */
+  disconnectConfirmTimer: ReturnType<typeof setTimeout> | null;
+  /** Last time the primary transport was observed healthy (heartbeat, probe,
+   * connect). Nothing runs while the machine sleeps, so after a long sleep this
+   * still holds the pre-sleep time and selects a full catch-up. */
+  lastAliveAt: number;
+  /** Last time Telegram pushed any update to this connection. */
+  lastUpdateAt: number;
+  /** Set on system resume: the next restoration must run a full catch-up. */
+  forceFullCatchUp: boolean;
+  /** Telegram rejected the authorization itself (revoked, expired, duplicated).
+   * Only a new login can fix it, so nothing reconnects automatically. */
+  sessionInvalid: boolean;
 }
 
 const RECONNECT_DELAY_MS = 5000;
 const MAX_RECONNECT_DELAY_MS = 60_000;
 const PRIMARY_RECONNECT_GRACE_MS = 70_000;
 const HEALTH_CHECK_INTERVAL_MS = 45_000;
+// GramJS 2.26 emits `disconnected` whenever a ping is slower than 1s and then
+// `connected` when the same socket answers. Only an outage that is still
+// unresolved after this window is surfaced to the UI and rebuilds the client.
+const TRANSPORT_DISCONNECT_CONFIRM_MS = 8_000;
+// A blip shorter than this only needs updates.getDifference plus the recent
+// dialog watch. Longer outages (including any system sleep) run the full
+// history/channel catch-up.
+const LIGHT_CATCHUP_MAX_OFFLINE_MS = 5 * 60_000;
+// Telegram documents "no updates for 15 minutes or longer" as a gap that the
+// client must close with getDifference.
+const NO_UPDATES_WATCHDOG_MS = 15 * 60_000;
+// The health probe is application level. When GramJS pings are still being
+// answered, a slow getMe (FLOOD_WAIT sleeps inside GramJS) is not an outage.
+const HEALTH_HEARTBEAT_FRESH_MS = 30_000;
+const STALE_RECOVERY_REQUEUE_INTERVAL_MS = 5 * 60_000;
+// No application await may depend on a single MTProto request forever. GramJS
+// has no request timeout, and it never rejects requests of a client that was
+// disconnected. Generous enough for GramJS's own FLOOD_WAIT sleeps (<= 60s).
+const TELEGRAM_RPC_DEADLINE_MS = 180_000;
+// client.connect() retries five times; each TCP attempt has no timeout of its
+// own (about 21s on Windows when SYN goes unanswered).
+const TELEGRAM_CONNECT_DEADLINE_MS = 120_000;
+const TELEGRAM_PROBE_DEADLINE_MS = 15_000;
+const MEDIA_DOWNLOAD_DEADLINE_MS = 5 * 60_000;
+const RETIRED_CLIENT_SHUTDOWN_MS = 3_000;
 const INITIAL_DIALOG_LIMIT = 300;
 const RECENT_DIALOG_LIMIT = 200;
 // Metadata-only sweep: this is deliberately independent from history sync.
@@ -69,10 +132,20 @@ const MAX_TELEGRAM_MESSAGE_ID = 2_147_483_647;
 /** Map accountId → ActiveListener */
 const activeListeners = new Map<string, ActiveListener>();
 const intentionallyDisconnectedClients = new WeakSet<TelegramClient>();
-const reconnectCatchUps = new Map<string, Promise<void>>();
+/** Clients whose GramJS sender and update loop were shut down by retireTelegramClient. */
+const retiredClients = new WeakSet<TelegramClient>();
+type CatchUpMode = 'light' | 'full';
+const reconnectCatchUps = new Map<string, { client: TelegramClient; promise: Promise<void> }>();
+/** Strongest catch-up requested while one was already running for the same client. */
+const pendingCatchUpModes = new Map<string, CatchUpMode>();
+const catchUpFailureCounts = new Map<string, number>();
 const manualRefreshTasks = new Map<string, Promise<void>>();
-const syncingAccounts = new Set<string>();
-const recoveringUpdateAccounts = new Set<string>();
+/** Account locks remember the client that owns them. A lock held by a retired
+ * client never blocks its replacement: GramJS does not reject the old client's
+ * in-flight requests, so that lock could otherwise be held forever. */
+type AccountLockOwner = { client: TelegramClient; since: number };
+const syncingAccounts = new Map<string, AccountLockOwner>();
+const recoveringUpdateAccounts = new Map<string, AccountLockOwner>();
 const membershipReconciliations = new Map<string, Promise<void>>();
 const membershipReconciledAccounts = new Set<string>();
 const rawUpdateHandlers = new Map<string, (update: any) => Promise<void>>();
@@ -153,7 +226,9 @@ async function clearPendingLogin(): Promise<void> {
   const current = pendingLogin;
   pendingLogin = null;
   if (current?.client) {
-    try { await current.client.disconnect(); } catch {}
+    // The login client shares its auth key with the listener started next;
+    // disconnect() alone would keep its ping loop running for good.
+    await retireTelegramClient(current.client, 'login_finished');
   }
 }
 
@@ -265,11 +340,14 @@ function persistTelegramDialogState(
   entity: any,
   fullChat?: any,
   emitRefresh = true,
-): void {
+  /** 1 when the dialog was listed as archived; omitted keeps the stored folder. */
+  listedFolderId?: 1,
+): boolean {
   const db = DatabaseService.getInstance();
-  if (!db || !chatId) return;
+  if (!db || !chatId) return false;
   const existing = db.queryOne<any>(
-    `SELECT telegram_folder_id, is_muted, mute_until, telegram_membership_state, is_in_others FROM contacts WHERE owner_zalo_id = ? AND contact_id = ?`,
+    `SELECT telegram_folder_id, is_muted, mute_until, telegram_membership_state, is_in_others, unread_count, telegram_can_send
+     FROM contacts WHERE owner_zalo_id = ? AND contact_id = ?`,
     [accountId, chatId],
   );
   const peerType = entity ? getTelegramPeerType(entity) : (db.getTelegramPeer(accountId, chatId)?.peer_type || 'user');
@@ -278,7 +356,7 @@ function persistTelegramDialogState(
   const membership = entity
     ? getTelegramMembership(entity)
     : { state: (existing?.telegram_membership_state || 'member') as TelegramMembershipState, action: 'none' as const, reason: '' };
-  const folderId = Number(dialog?.folderId ?? dialog?.dialog?.folderId ?? existing?.telegram_folder_id ?? 0);
+  const folderId = Number(listedFolderId ?? dialog?.folderId ?? dialog?.dialog?.folderId ?? existing?.telegram_folder_id ?? 0);
   const rawMuteUntil = dialog?.dialog?.notifySettings?.muteUntil ?? dialog?.notifySettings?.muteUntil;
   const muteUntilSeconds = rawMuteUntil == null ? null : Number(rawMuteUntil || 0);
   const foreverMuted = muteUntilSeconds == null
@@ -297,6 +375,18 @@ function persistTelegramDialogState(
   const isBot = entity?.className === 'User' && entity?.bot ? 1 : null;
   // Lấy unread_count từ Telegram dialog (đồng bộ chính xác với Telegram)
   const dialogUnreadCount = Number(dialog?.unreadCount ?? 0);
+  // is_in_others: archived | chưa tham gia (joinable/request/left/forbidden)
+  const isInOthers = (folderId === 1 || membership.state !== 'member') ? 1 : 0;
+  // Only fields the conversation list renders. Online counts and timestamps
+  // change on every pass and must not trigger a renderer refresh.
+  const changed = !existing
+    || Number(existing.unread_count || 0) !== dialogUnreadCount
+    || Number(existing.telegram_folder_id || 0) !== folderId
+    || Number(existing.is_muted || 0) !== (foreverMuted ? 1 : 0)
+    || Number(existing.mute_until || 0) !== muteUntilMs
+    || String(existing.telegram_membership_state || '') !== membership.state
+    || Number(existing.is_in_others || 0) !== isInOthers
+    || Number(existing.telegram_can_send ?? 1) !== (capability.canSend ? 1 : 0);
   db.run(
     `INSERT INTO contacts
        (owner_zalo_id, contact_id, display_name, avatar_url, is_friend, contact_type, unread_count, channel,
@@ -322,8 +412,7 @@ function persistTelegramDialogState(
     [accountId, chatId, displayName, contactType, dialogUnreadCount, foreverMuted ? 1 : 0, muteUntilMs,
       folderId, folderId === 1 ? 1 : 0, capability.canSend ? 1 : 0, capability.reason,
       peerType, membersCount, onlineCount, Date.now(), membership.state, membership.action,
-      // is_in_others: archived | chưa tham gia (joinable/request/left/forbidden)
-      (folderId === 1 || membership.state !== 'member') ? 1 : 0, isBot],
+      isInOthers, isBot],
   );
   // Saved Messages (self-chat) → auto pin local
   if (isSelfChat) {
@@ -332,16 +421,19 @@ function persistTelegramDialogState(
       [accountId, chatId, Date.now()],
     );
   }
-  // Emit event to trigger renderer cache refresh (othersConversations, mutedThreads)
-  if (emitRefresh) {
+  // Emit event to trigger renderer cache refresh (othersConversations, mutedThreads).
+  // The module has only a default export: the former
+  // require('../event/EventBroadcaster').EventBroadcaster was undefined, so this
+  // refresh threw inside a swallowed try/catch and never reached the renderer.
+  if (emitRefresh && changed) {
     try {
-      const { EventBroadcaster } = require('../event/EventBroadcaster');
       EventBroadcaster.emit('db:unreadChanged', {
         zaloId: accountId,
         source: 'telegram_dialog_state',
       });
     } catch {}
   }
+  return changed;
 }
 
 /**
@@ -520,6 +612,42 @@ function buildTelegramQuoteData(message: {
   });
 }
 
+/**
+ * Tên người gửi tin được trích dẫn (fromD trong quote_data — khung trích dẫn hiện tên như Telegram):
+ * thành viên nhóm → peer đã biết → liên hệ → chính tài khoản. Không gọi mạng; không có thì ''.
+ */
+function resolveTelegramQuoteSenderName(
+  db: { queryOne<T = any>(sql: string, params?: any[]): T | undefined } | null | undefined,
+  accountId: string,
+  chatId: string,
+  senderId?: string | null,
+): string {
+  const id = String(senderId || '');
+  if (!db || !id) return '';
+  try {
+    const member = db.queryOne<any>(
+      `SELECT display_name FROM page_group_member WHERE owner_zalo_id = ? AND group_id = ? AND member_id = ?`,
+      [accountId, chatId, id],
+    );
+    if (member?.display_name) return String(member.display_name);
+    const peer = db.queryOne<any>(
+      `SELECT display_name FROM telegram_peers WHERE owner_zalo_id = ? AND peer_id = ?`,
+      [accountId, id],
+    );
+    if (peer?.display_name) return String(peer.display_name);
+    const contact = db.queryOne<any>(
+      `SELECT display_name FROM contacts WHERE owner_zalo_id = ? AND contact_id = ?`,
+      [accountId, id],
+    );
+    if (contact?.display_name && contact.display_name !== id) return String(contact.display_name);
+    if (id === accountId) {
+      const self = db.queryOne<any>(`SELECT full_name FROM accounts WHERE zalo_id = ?`, [accountId]);
+      return String(self?.full_name || '');
+    }
+  } catch {}
+  return '';
+}
+
 function hasUsableTelegramQuoteData(value?: string | null): boolean {
   if (!value) return false;
   try {
@@ -540,16 +668,22 @@ function hasUsableTelegramQuoteData(value?: string | null): boolean {
   }
 }
 
-/** Convert the aggregate MTProto reaction payload into Deplao's display model.
- * Telegram only provides identities for a recent subset of reactors, so counts
- * remain authoritative while the users map contains only identities Telegram
- * actually returned (including the current account when marked as my). */
-function normalizeTelegramReactions(reactions: any, accountId: string): {
+type NormalizedTelegramReactions = {
   total: number;
   lastReact: string;
   emoji: Record<string, { total: number; users: Record<string, number> }>;
-} {
-  const normalized = { total: 0, lastReact: '', emoji: {} as Record<string, { total: number; users: Record<string, number> }> };
+};
+
+/** Convert the aggregate MTProto reaction payload into Deplao's display model.
+ * Telegram only provides identities for a recent subset of reactors, so counts
+ * remain authoritative while the users map contains only identities Telegram
+ * actually returned (including the current account when marked as my).
+ * The account's own reaction comes from `chosen_order` (also present in channels,
+ * where recent reactors are hidden) or a `my` recent reaction. A `min` payload is
+ * shared by every user and omits the own reaction: `previous` (stored value) then
+ * keeps the own reaction that is already known, like Telegram Desktop does. */
+function normalizeTelegramReactions(reactions: any, accountId: string, previous?: NormalizedTelegramReactions | null): NormalizedTelegramReactions {
+  const normalized: NormalizedTelegramReactions = { total: 0, lastReact: '', emoji: {} };
   const getEmoji = (reaction: any): string => {
     if (reaction?.className === 'ReactionEmoji') return String(reaction.emoticon || '');
     if (reaction?.className === 'ReactionCustomEmoji' && reaction.documentId != null) {
@@ -563,6 +697,7 @@ function normalizeTelegramReactions(reactions: any, accountId: string): {
     const count = Math.max(0, Number(result?.count || 0));
     if (!emoji || !count) continue;
     normalized.emoji[emoji] = { total: count, users: {} };
+    if (result?.chosenOrder != null || result?.chosen) normalized.emoji[emoji].users[accountId] = 1;
     normalized.total += count;
     normalized.lastReact = emoji;
   }
@@ -576,7 +711,153 @@ function normalizeTelegramReactions(reactions: any, accountId: string): {
     normalized.emoji[emoji].users[userId] = 1;
   }
 
+  if (reactions?.min && previous?.emoji) {
+    for (const [emoji, entry] of Object.entries(normalized.emoji)) {
+      if (previous.emoji[emoji]?.users?.[accountId]) entry.users[accountId] = 1;
+    }
+  }
+
   return normalized;
+}
+
+function parseStoredTelegramReactions(raw: unknown): NormalizedTelegramReactions | null {
+  if (typeof raw !== 'string' || !raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && parsed.emoji && typeof parsed.emoji === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Same counts and same known reactors per emoji (lastReact / key order ignored). */
+function sameTelegramReactions(stored: NormalizedTelegramReactions | null, next: NormalizedTelegramReactions): boolean {
+  const before = Object.entries(stored?.emoji || {}).filter(([, entry]) => Number(entry?.total || 0) > 0);
+  if (before.length !== Object.keys(next.emoji).length) return false;
+  return before.every(([emoji, entry]) => {
+    const after = next.emoji[emoji];
+    if (!after || Number(entry.total) !== after.total) return false;
+    const users = (value: Record<string, number> | undefined) => Object.keys(value || {}).sort().join(',');
+    return users(entry.users) === users(after.users);
+  });
+}
+
+/** Content stored for a Telegram message (caption, poll question, dice…; audio without caption → placeholder). */
+function telegramDisplayContent(content: string, msgType: string): string {
+  return content || (msgType === 'audio' ? '🎵 Audio' : '');
+}
+
+/**
+ * Lưu + phát reaction tổng hợp của 1 tin Telegram: THAY THẾ (không cộng dồn), đúng hội thoại + kênh.
+ * Nguồn: UpdateMessageReactions đẩy về (Telegram chỉ đẩy cho tác giả tin), UpdateEditMessage "ẩn" (chat riêng /
+ * nhóm thường: đổi reaction tới dưới dạng sửa tin, mang toàn bộ reaction hiện tại), kết quả SendReaction và
+ * GetMessagesReactions (poll). Chỉ ghi DB + phát sự kiện khi reaction thực sự đổi (`force`: luôn phát - kết quả
+ * SendReaction thay bản tạm ở renderer).
+ */
+function applyTelegramMessageReactions(
+  accountId: string,
+  client: any,
+  chatId: string,
+  msgId: string,
+  rawReactions: any,
+  topicRootMessageId?: string,
+  force = false,
+): boolean {
+  if (!chatId || !msgId) return false;
+  const db = DatabaseService.getInstance();
+  const row = db?.queryOne<{ reactions: string | null }>(
+    `SELECT reactions FROM messages WHERE msg_id = ? AND owner_zalo_id = ? AND thread_id = ? AND channel = 'telegram_user'`,
+    [msgId, accountId, chatId],
+  );
+  // Tin chưa có trong DB: lần tải lịch sử sau mang reaction theo (persistTelegramMessage lưu đè reactions)
+  if (!row && !force) return false;
+  const previous = parseStoredTelegramReactions(row?.reactions);
+  const reactions = normalizeTelegramReactions(rawReactions, accountId, previous);
+  if (!force && sameTelegramReactions(previous, reactions)) return false;
+  for (const recent of rawReactions?.recentReactions || []) {
+    const reactorId = getCanonicalChatId(recent?.peerId);
+    if (reactorId && !reactorId.startsWith('-') && reactorId !== accountId) {
+      hydrateTelegramIdentity(accountId, client, reactorId, chatId).catch(() => {});
+    }
+  }
+  if (row) {
+    db.run(
+      `UPDATE messages SET reactions = ? WHERE msg_id = ? AND owner_zalo_id = ? AND thread_id = ? AND channel = 'telegram_user'`,
+      [JSON.stringify(reactions), msgId, accountId, chatId],
+    );
+  }
+  EventBroadcaster.emit('event:telegramReaction', {
+    zaloId: accountId,
+    threadId: chatId,
+    msgId,
+    topicRootMessageId,
+    reactions,
+  });
+  return true;
+}
+
+function applyTelegramReactionUpdate(accountId: string, client: any, update: any, force = false): boolean {
+  return applyTelegramMessageReactions(
+    accountId, client, getCanonicalChatId(update?.peer), String(update?.msgId || ''), update?.reactions,
+    update?.topMsgId ? String(update.topMsgId) : undefined, force,
+  );
+}
+
+/** Áp mọi UpdateMessageReactions trong kết quả RPC (GramJS không đưa kết quả RPC vào luồng update). Trả số tin đã đổi. */
+function applyTelegramReactionResult(accountId: string, client: any, result: any, force = false): number {
+  const { Api } = require('telegram');
+  let applied = 0;
+  for (const update of result?.updates || []) {
+    if (update instanceof Api.UpdateMessageReactions && applyTelegramReactionUpdate(accountId, client, update, force)) {
+      applied++;
+    }
+  }
+  return applied;
+}
+
+/**
+ * UpdateEditMessage / UpdateEditChannelMessage.
+ * 1) Reaction: ở chat riêng / nhóm thường Telegram KHÔNG gửi UpdateMessageReactions - đổi reaction tới dưới dạng sửa tin
+ *    "ẩn" (editHide) mang toàn bộ reaction hiện tại của tin (không có trường reactions = đã gỡ hết) → luôn áp.
+ * 2) Nội dung: tính giống lúc lưu tin (caption / câu hỏi bình chọn / 🎲 / "🎵 Audio"…) rồi mới so. Đổi reaction không đổi
+ *    nội dung; so thẳng với msg.message từng xoá nội dung tin bình chọn / audio / xúc xắc và gắn nhầm "đã chỉnh sửa".
+ *    editHide (VD bot cập nhật dần câu trả lời): đổi nội dung nhưng không gắn nhãn sửa, không ghi lịch sử sửa.
+ */
+function applyTelegramMessageEdit(accountId: string, client: any, msg: any): void {
+  if (!msg || msg.className === 'MessageEmpty' || msg.id == null || !msg.peerId) return;
+  const msgId = String(msg.id);
+  const chatId = getCanonicalChatId(msg.peerId);
+  const db = DatabaseService.getInstance();
+  if (!chatId || !db) return;
+
+  applyTelegramMessageReactions(accountId, client, chatId, msgId, msg.reactions, getForumTopicId(msg) || undefined);
+
+  const existingMsg = db.queryOne<any>(
+    `SELECT content, edit_history, is_edited FROM messages WHERE msg_id = ? AND owner_zalo_id = ? AND thread_id = ? AND channel = 'telegram_user'`,
+    [msgId, accountId, chatId],
+  );
+  if (!existingMsg) return;
+  const peerType = db.getTelegramPeer(accountId, chatId)?.peer_type as TelegramPeerType | undefined;
+  const normalized = normalizeTelegramMessageMedia(msg, peerType);
+  const newText = telegramDisplayContent(normalized.content, normalized.msgType);
+  const storedText = String(existingMsg.content || '');
+  // Một số đường lưu (tải lịch sử) không dùng placeholder "🎵 Audio" → coi cả 2 dạng là "không đổi"
+  if (storedText === newText || storedText === normalized.content) return;
+
+  const hidden = !!msg.editHide;
+  let editHistory: any[] = [];
+  if (existingMsg.edit_history) {
+    try { editHistory = JSON.parse(existingMsg.edit_history); } catch { editHistory = []; }
+  }
+  if (!hidden && storedText) {
+    editHistory.push({ oldBody: storedText, editedAt: Date.now(), editCount: editHistory.length + 1 });
+  }
+  db.run(
+    `UPDATE messages SET content = ?, is_edited = ?, edit_history = ? WHERE msg_id = ? AND owner_zalo_id = ? AND thread_id = ? AND channel = 'telegram_user'`,
+    [newText, hidden ? (existingMsg.is_edited ? 1 : 0) : 1, JSON.stringify(editHistory), msgId, accountId, chatId],
+  );
+  EventBroadcaster.emit('event:messageEdited', { zaloId: accountId, msgId, newText, threadId: chatId, hidden });
+  Logger.log(`[TelegramUserListener] Message edited: ${msgId}${hidden ? ' (hidden)' : ''}`);
 }
 
 function getMessageIdFromUpdates(result: any): string | undefined {
@@ -612,6 +893,8 @@ function getTelegramStickerAttachment(message: any): Record<string, any> | null 
         ? 'mp4'
         : 'webp';
 
+  // Bộ sticker chứa nó — bấm sticker trong chat mở popup bộ (xem / thêm vào tài khoản) như Telegram
+  const stickerSet = stickerSetRefOf(stickerAttribute.stickerset);
   return {
     type: 'sticker',
     is_sticker: true,
@@ -623,6 +906,8 @@ function getTelegramStickerAttachment(message: any): Record<string, any> | null 
     width: imageSize?.w || 0,
     height: imageSize?.h || 0,
     mime_type: mimeType,
+    ...(stickerSet?.id ? { set_id: stickerSet.id, set_access_hash: stickerSet.accessHash || '' } : {}),
+    ...(stickerSet?.shortName ? { set_short_name: stickerSet.shortName } : {}),
   };
 }
 
@@ -644,6 +929,14 @@ function getTelegramPostAttachment(message: any, peerType?: TelegramPeerType): R
     discussion_channel_id: replies?.channelId != null ? String(replies.channelId) : '',
     grouped_id: message?.groupedId != null ? String(message.groupedId) : '',
   };
+}
+
+/** Tin mình vừa gửi vào kênh phát tin → thẻ "Bài đăng kênh" (như tin nhận qua socket / lịch sử). */
+function sentChannelPostAttachment(accountId: string, chatId: string, sent: any): Record<string, any> | null {
+  if (!String(chatId).startsWith('-100')) return null;
+  const peerType = DatabaseService.getInstance()?.getTelegramPeer(accountId, chatId)?.peer_type as TelegramPeerType | undefined;
+  if (sent?.post !== true && peerType !== 'channel') return null;
+  return getTelegramPostAttachment(sent || {}, 'channel');
 }
 
 function getTelegramGroupedMediaAttachment(message: any): Record<string, any> | null {
@@ -733,6 +1026,17 @@ function normalizeTelegramMessageMedia(message: any, peerType?: TelegramPeerType
   msgType: string;
   attachments: Record<string, any>[];
 } {
+  // Cuộc gọi (MessageService · messageActionPhoneCall) → thẻ cuộc gọi như Zalo (CallBubble) ở mọi đường lưu tin:
+  // socket, lịch sử, tải thêm. Trước đây bị bỏ vì không có chữ.
+  if (message?.action?.className === 'MessageActionPhoneCall') {
+    return { content: telegramCallCardContent(telegramCallInfoOf(message)), msgType: 'chat.recommended', attachments: [] };
+  }
+  // Tin hệ thống khác (tạo kênh / nhóm, đổi ảnh, ghim…) → dòng thông báo. Trước đây tin trong kênh được gắn thẻ "bài
+  // đăng kênh" (peerType = channel) nên "Channel created" thành bài đăng rỗng. Hành động chưa hỗ trợ → '' (bỏ qua).
+  if (message?.className === 'MessageService') {
+    const text = describeTelegramServiceAction(message);
+    return { content: text, msgType: text ? 'system' : 'text', attachments: [] };
+  }
   const attachments: Record<string, any>[] = [];
   const postAttachment = getTelegramPostAttachment(message, peerType);
   if (postAttachment) attachments.push(postAttachment);
@@ -740,6 +1044,9 @@ function normalizeTelegramMessageMedia(message: any, peerType?: TelegramPeerType
   if (groupedMediaAttachment) attachments.push(groupedMediaAttachment);
   attachments.push(...getTelegramCustomEmojiAttachments(message));
   attachments.push(...getTelegramMentionAttachments(message));
+  // "Chuyển tiếp từ …" (fwdFrom) — trước đây bỏ qua, tin chuyển tiếp trông như tin người gửi tự viết
+  const forwardAttachment = getTelegramForwardAttachment(message);
+  if (forwardAttachment) attachments.push(forwardAttachment);
 
   let content = String(message?.message || message?.text || '');
   const sticker = getTelegramStickerAttachment(message);
@@ -756,6 +1063,9 @@ function normalizeTelegramMessageMedia(message: any, peerType?: TelegramPeerType
       type: 'photo', id: String(photo?.id || ''), dc_id: photo?.dcId,
       access_hash: String(photo?.accessHash || ''), width: largest?.w || 0,
       height: largest?.h || 0, file_size: largest?.size || 0,
+      // GramJS message.photo falls back to the link preview's photo: source 'webpage' + tên trang / tiêu đề / mô tả
+      // (thẻ như Telegram; preview lỗi thì ẩn). `page_url`, never `url`: the renderer reads attachments[].url as the image source.
+      ...telegramWebpageMeta(media),
     });
   } else if (sticker) {
     msgType = 'sticker';
@@ -765,8 +1075,9 @@ function normalizeTelegramMessageMedia(message: any, peerType?: TelegramPeerType
     const videoNote = message.videoNote as any;
     attachments.push({
       type: 'video_note', id: String(videoNote?.id || ''), dc_id: videoNote?.dcId,
-      access_hash: String(videoNote?.accessHash || ''), duration: videoNote?.duration || 0,
-      width: videoNote?.w || 0, height: videoNote?.h || 0, file_size: videoNote?.size || 0,
+      access_hash: String(videoNote?.accessHash || ''), file_size: videoNote?.size || 0,
+      ...telegramVideoAttributes(videoNote),
+      stripped_thumb: telegramStrippedThumb(videoNote) || undefined,
     });
   } else if (message?.voice) {
     msgType = 'audio';
@@ -789,18 +1100,23 @@ function normalizeTelegramMessageMedia(message: any, peerType?: TelegramPeerType
     const gif = message.gif as any;
     attachments.push({
       type: 'gif', id: String(gif?.id || ''), dc_id: gif?.dcId,
-      access_hash: String(gif?.accessHash || ''), duration: gif?.duration || 0,
-      width: gif?.w || 0, height: gif?.h || 0, file_size: gif?.size || 0,
+      access_hash: String(gif?.accessHash || ''), file_size: gif?.size || 0,
       mime_type: gif?.mimeType || '',
+      ...telegramVideoAttributes(gif),
+      stripped_thumb: telegramStrippedThumb(gif) || undefined,
+      ...telegramWebpageMeta(media),
     });
   } else if (message?.video) {
     msgType = 'video';
     const video = message.video as any;
     attachments.push({
       type: 'video', id: String(video?.id || ''), dc_id: video?.dcId,
-      access_hash: String(video?.accessHash || ''), duration: video?.duration || 0,
-      width: video?.w || 0, height: video?.h || 0, file_size: video?.size || 0,
+      access_hash: String(video?.accessHash || ''), file_size: video?.size || 0,
       mime_type: video?.mimeType || '',
+      ...telegramVideoAttributes(video),
+      stripped_thumb: telegramStrippedThumb(video) || undefined,
+      // Link preview chỉ có video (vd. fxTikTok): thẻ tên trang / tiêu đề / mô tả bọc video
+      ...telegramWebpageMeta(media),
     });
   } else if (message?.document) {
     msgType = 'file';
@@ -814,6 +1130,7 @@ function normalizeTelegramMessageMedia(message: any, peerType?: TelegramPeerType
       access_hash: String(document?.accessHash || ''), file_name: filename,
       name: filename, mime_type: document?.mimeType || '', file_size: document?.size || 0,
       fileSize: document?.size || 0,
+      ...telegramWebpageMeta(media),
     });
   } else if (mediaClass === 'MessageMediaWebPage') {
     const webpage = media?.webpage || {};
@@ -1108,10 +1425,20 @@ function deriveChatIdFromRawMessage(message: any): string | undefined {
  * Start MTProto listener cho 1 tài khoản
  */
 export async function startListener(account: TelegramUserAccount): Promise<{ success: boolean; error?: string }> {
+  // Phiên vẫn còn dạng mã hoá = không giải mã được trên máy này (dữ liệu chép từ máy khác…): không đăng ký listener —
+  // listener lỗi kết nối được giữ lại để tự thử lại, với chuỗi hỏng sẽ thử mãi
+  if (isUndecryptedCredential(account.stringSession)) {
+    return {
+      success: false,
+      error: 'Phiên đăng nhập Telegram không giải mã được trên máy này. Vui lòng đăng nhập lại tài khoản Telegram này.',
+    };
+  }
   const existing = activeListeners.get(account.accountId);
   if (existing) {
     existing.account = account;
     existing.stopped = false;
+    // An explicit start may carry a new session from a fresh login.
+    existing.sessionInvalid = false;
     if (existing.connected && existing.client?.connected) {
       return { success: true };
     }
@@ -1123,7 +1450,7 @@ export async function startListener(account: TelegramUserAccount): Promise<{ suc
       await connectListener(existing);
       return { success: true };
     } catch (err: any) {
-      return { success: false, error: err.message };
+      return { success: false, error: describeTelegramConnectError(err) };
     }
   }
 
@@ -1137,13 +1464,20 @@ export async function startListener(account: TelegramUserAccount): Promise<{ suc
     connected: false,
     reconnectTimer: null,
     healthTimer: null,
-      channelPollTimer: null,
-      connecting: null,
-      healthCheckClient: null,
-      transportDownSince: null,
-      retryCount: 0,
-      lastTransportErrorAt: 0,
-      stopped: false,
+    channelPollTimer: null,
+    dialogWatchTimer: null,
+    connecting: null,
+    healthCheckClient: null,
+    transportDownSince: null,
+    retryCount: 0,
+    lastTransportErrorAt: 0,
+    stopped: false,
+    transportIdentity: null,
+    disconnectConfirmTimer: null,
+    lastAliveAt: 0,
+    lastUpdateAt: 0,
+    forceFullCatchUp: false,
+    sessionInvalid: false,
   };
   activeListeners.set(account.accountId, listener);
 
@@ -1154,8 +1488,22 @@ export async function startListener(account: TelegramUserAccount): Promise<{ suc
     Logger.error(`[TelegramUserListener] Failed to start for ${account.accountId}: ${err.message}`);
     // Keep the listener registered: connectListener has scheduled recovery and
     // removing it here previously made a failed first connection permanent.
-    return { success: false, error: err.message };
+    return { success: false, error: describeTelegramConnectError(err) };
   }
+}
+
+/** User-facing reason for a failed connect. When Telegram has rejected the
+ * authorization itself, "Kết nối lại" can never succeed: say a new login is needed. */
+function describeTelegramConnectError(err?: unknown): string {
+  const raw = String((err as any)?.errorMessage || (err as any)?.message || err || '');
+  if (raw.toUpperCase().includes('AUTH_KEY_DUPLICATED')) {
+    return 'Telegram đã huỷ phiên đăng nhập này vì phát hiện phiên được dùng từ hai kết nối cùng lúc '
+      + '(AUTH_KEY_DUPLICATED). Vui lòng đăng nhập lại tài khoản Telegram này.';
+  }
+  if (isFatalTelegramSessionError(err)) {
+    return 'Phiên đăng nhập Telegram đã hết hiệu lực hoặc bị thu hồi. Vui lòng đăng nhập lại tài khoản Telegram này.';
+  }
+  return raw || 'Không thể kết nối Telegram';
 }
 
 function clearHealthCheck(listener: ActiveListener): void {
@@ -1164,6 +1512,230 @@ function clearHealthCheck(listener: ActiveListener): void {
     listener.healthTimer = null;
   }
   listener.healthCheckClient = null;
+}
+
+function clearDisconnectConfirmTimer(listener: ActiveListener): void {
+  if (listener.disconnectConfirmTimer) {
+    clearTimeout(listener.disconnectConfirmTimer);
+    listener.disconnectConfirmTimer = null;
+  }
+}
+
+/** Settle with `promise`, or reject once `ms` elapses. This only stops waiting;
+ * the underlying request keeps running. */
+function withDeadline<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} (deadline ${Math.round(ms / 1000)}s)`)), ms);
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+/** Give every client.invoke() a deadline, including GramJS's own internal
+ * calls (getDialogs/getMessages iterators, getMe, GetState). */
+function installRpcDeadline(client: TelegramClient): void {
+  const anyClient = client as any;
+  if (anyClient.__deplaoRpcDeadline || typeof anyClient.invoke !== 'function') return;
+  const invoke = anyClient.invoke.bind(client);
+  anyClient.__deplaoRpcDeadline = true;
+  anyClient.invoke = (request: any, ...rest: any[]) => withDeadline(
+    invoke(request, ...rest),
+    TELEGRAM_RPC_DEADLINE_MS,
+    `TELEGRAM_RPC_TIMEOUT ${request?.className || 'request'}`,
+  );
+}
+
+/**
+ * Keep exactly one MTProto session on the account's main DC.
+ *
+ * GramJS sends every upload, and every download of a file stored on the main
+ * DC, through client.getSender(mainDc). That opens a second sender with the
+ * same authorization key to the main DC's regular (non-media) address.
+ * Telegram treats parallel sessions on a non-media DC as a duplicated key and
+ * invalidates the authorization for good (406 AUTH_KEY_DUPLICATED, the user
+ * must log in again; see core.telegram.org/api/errors). Reconnects after
+ * sleep or network loss made both connections come back at the same moment.
+ * Serve main-DC transfers on the primary sender instead; other DCs keep their
+ * own senders, which use separate authorizations.
+ *
+ * Senders GramJS still creates are tracked so that retiring the client can
+ * shut them down even while they are still connecting.
+ */
+function installSingleMainSession(client: TelegramClient): void {
+  const anyClient = client as any;
+  if (anyClient.__deplaoSingleMainSession) return;
+  anyClient.__deplaoSingleMainSession = true;
+  if (typeof anyClient.getSender === 'function') {
+    const getSender = anyClient.getSender.bind(client);
+    anyClient.getSender = (dcId?: number) => {
+      const mainDcId = Number(anyClient.session?.dcId || 0);
+      if (!dcId || (mainDcId > 0 && Number(dcId) === mainDcId)) return Promise.resolve(anyClient._sender);
+      return getSender(dcId);
+    };
+  }
+  if (typeof anyClient._createExportedSender === 'function') {
+    const createExportedSender = anyClient._createExportedSender.bind(client);
+    const created = new Set<any>();
+    anyClient.__deplaoExportedSenders = created;
+    anyClient._createExportedSender = (dcId: number) => {
+      const sender = createExportedSender(dcId);
+      created.add(sender);
+      return sender;
+    };
+  }
+}
+
+/** GramJS's Connection object for the primary socket. It is replaced whenever
+ * the sender rebuilds the socket, unlike the `connected` heartbeat. */
+function getTransportIdentity(client: TelegramClient | null | undefined): unknown {
+  return (client as any)?._sender?._connection ?? null;
+}
+
+function isCurrentTelegramClient(accountId: string, client: TelegramClient | null | undefined): boolean {
+  if (!client || retiredClients.has(client)) return false;
+  const listener = activeListeners.get(accountId);
+  return !!listener && !listener.stopped && listener.client === client;
+}
+
+function isAccountLockOwnerLive(accountId: string, owner: AccountLockOwner | undefined): boolean {
+  if (!owner) return false;
+  if (retiredClients.has(owner.client) || intentionallyDisconnectedClients.has(owner.client)) return false;
+  const listener = activeListeners.get(accountId);
+  // Without a registered listener (tests, early startup) the owner stands;
+  // only a known newer client generation supersedes it.
+  if (!listener) return true;
+  return listener.client === owner.client && !listener.stopped;
+}
+
+function isAccountLockHeld(lock: Map<string, AccountLockOwner>, accountId: string): boolean {
+  const owner = lock.get(accountId);
+  if (!owner) return false;
+  if (isAccountLockOwnerLive(accountId, owner)) return true;
+  // Owned by a retired client generation. Its late completion cannot release
+  // the replacement's lock because release checks ownership.
+  lock.delete(accountId);
+  return false;
+}
+
+function acquireAccountLock(lock: Map<string, AccountLockOwner>, accountId: string, client: TelegramClient): void {
+  lock.set(accountId, { client, since: Date.now() });
+}
+
+function releaseAccountLock(lock: Map<string, AccountLockOwner>, accountId: string, client: TelegramClient): void {
+  if (lock.get(accountId)?.client === client) lock.delete(accountId);
+}
+
+/** Reject every request a retired sender still holds so the application tasks
+ * awaiting them unwind and release their locks. */
+function rejectPendingSenderRequests(sender: any, error: Error): void {
+  const states = new Set<any>();
+  try { for (const state of sender?._pendingState?.values?.() || []) states.add(state); } catch {}
+  try { for (const state of sender?._sendQueue?._pendingStates || []) states.add(state); } catch {}
+  try { for (const state of sender?._sendQueue?._queue || []) if (state) states.add(state); } catch {}
+  for (const state of states) {
+    try {
+      // Pings and MsgsAck have no awaiting caller; attach a handler first so
+      // rejecting them cannot surface as an unhandled rejection.
+      state?.promise?.catch?.(() => {});
+      state?.reject?.(error);
+    } catch {}
+  }
+  try { sender?._pendingState?.clear?.(); } catch {}
+}
+
+/** An attempt that was already connecting can still open its socket after
+ * retirement. Close it if that happens; give up after three minutes. */
+function reapRetiredSenderConnection(sender: any): void {
+  let checks = 0;
+  const timer = setInterval(() => {
+    checks++;
+    const connection = sender?._connection;
+    try {
+      if (connection?._connected) connection.disconnect?.()?.catch?.(() => {});
+    } catch {}
+    const settled = !sender?.isConnecting && !sender?.isReconnecting && !connection?._connected;
+    if (settled || checks >= 36) clearInterval(timer);
+  }, 5_000);
+  (timer as any).unref?.();
+}
+
+function neutralizeRetiredSender(sender: any, error: Error): void {
+  if (!sender || sender.__deplaoRetired) return;
+  sender.__deplaoRetired = true;
+  try {
+    // End GramJS's in-place reconnect loop after the attempt in flight and
+    // never start another one for this sender.
+    sender._retries = 0;
+    sender.reconnect = () => {};
+    // GramJS 2.26: an attempt in flight still completes after disconnect()
+    // and sets _userConnected=true, reviving the sender on the same auth key.
+    // Telegram can then route updates to it, where every handler drops them.
+    Object.defineProperty(sender, '_userConnected', {
+      configurable: true,
+      get: () => false,
+      set: () => {},
+    });
+  } catch {}
+  rejectPendingSenderRequests(sender, error);
+  Promise.resolve()
+    .then(() => sender.disconnect?.())
+    .catch(() => {});
+  reapRetiredSenderConnection(sender);
+}
+
+/**
+ * Shut a client down for good. GramJS's disconnect() alone leaves the client's
+ * ping/update loop running forever, never rejects requests that are still
+ * waiting (which kept account sync locks held across reconnects), and does not
+ * stop an in-place reconnect in progress.
+ */
+async function retireTelegramClient(client: TelegramClient | null | undefined, reason: string): Promise<void> {
+  if (!client) return;
+  intentionallyDisconnectedClients.add(client);
+  if (retiredClients.has(client)) return;
+  retiredClients.add(client);
+  const anyClient = client as any;
+  const error = new Error(`TELEGRAM_CLIENT_RETIRED: ${reason}`);
+  // File-DC senders: GramJS 2.26's disconnect() walks these Maps with
+  // Object.values(), so it neither closes them nor clears their release timers.
+  try {
+    for (const timeout of anyClient._exportedSenderReleaseTimeouts?.values?.() || []) clearTimeout(timeout);
+    anyClient._exportedSenderReleaseTimeouts?.clear?.();
+  } catch {}
+  // Senders tracked at creation, including ones still connecting. Their
+  // promise in _exportedSenderPromises settles only after they connected and
+  // already resent their queued requests, which is too late.
+  try {
+    for (const sender of anyClient.__deplaoExportedSenders || []) neutralizeRetiredSender(sender, error);
+  } catch {}
+  try {
+    for (const senderPromise of anyClient._exportedSenderPromises?.values?.() || []) {
+      Promise.resolve(senderPromise).then(sender => neutralizeRetiredSender(sender, error)).catch(() => {});
+    }
+  } catch {}
+  neutralizeRetiredSender(anyClient._sender, error);
+  // Nothing may be sent through this client any more. The DC_ID_INVALID tag is
+  // what ends GramJS's _connectSender loop, which otherwise retries a file-DC
+  // sender every second forever once authorization can no longer be exported.
+  const rejectRetired = () => Promise.reject(Object.assign(new Error(error.message), { errorMessage: 'DC_ID_INVALID' }));
+  anyClient.invoke = rejectRetired;
+  anyClient.invokeWithSender = rejectRetired;
+  // destroy() marks the client destroyed synchronously, which ends the update
+  // loop, and drops its event handlers once disconnected.
+  let shutdown: Promise<unknown> = Promise.resolve();
+  try {
+    shutdown = Promise.resolve(typeof anyClient.destroy === 'function' ? anyClient.destroy() : anyClient.disconnect?.());
+  } catch {}
+  let shutdownTimer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    shutdown.catch(() => {}),
+    new Promise(resolve => { shutdownTimer = setTimeout(resolve, RETIRED_CLIENT_SHUTDOWN_MS); }),
+  ]);
+  if (shutdownTimer) clearTimeout(shutdownTimer);
 }
 
 function isFatalTelegramSessionError(err?: unknown): boolean {
@@ -1224,66 +1796,148 @@ function isTelegramTransportError(err?: unknown): boolean {
   ].some(code => message.includes(code));
 }
 
+/**
+ * A primary-transport `connected` report. GramJS 2.26 emits one after every
+ * successful ~9s ping (its wake-up branch always runs because
+ * PING_INTERVAL_TO_WAKE_UP < PING_INTERVAL), so almost all of them are
+ * heartbeats on an unchanged socket and must stay cheap no-ops. Only a
+ * confirmed outage or a socket GramJS rebuilt in place is a reconnect.
+ */
+function handlePrimaryTransportConnected(listener: ActiveListener, client: TelegramClient): void {
+  if (listener.stopped || listener.client !== client || retiredClients.has(client) || !client.connected) return;
+  clearDisconnectConfirmTimer(listener);
+  const transportChanged = getTransportIdentity(client) !== listener.transportIdentity;
+  if (listener.connected && !transportChanged && listener.transportDownSince === null) {
+    listener.lastAliveAt = Date.now();
+    return;
+  }
+  markPrimaryConnectionRestored(
+    listener,
+    client,
+    transportChanged ? 'gramjs_transport_rebuilt' : 'gramjs_auto_reconnect',
+  );
+}
+
+/**
+ * A primary-transport outage report: UpdateConnectionState.disconnected or a
+ * transport error passed to onError. GramJS also reports `disconnected` when a
+ * ping is merely slower than 1s and the same socket answers moments later
+ * (slow network, or this process busy with a sync pass), and file-DC senders
+ * share the same onError. Treating each report as an outage flapped the UI and
+ * restarted a full catch-up every few seconds, so confirm it first.
+ */
+function handlePrimaryTransportDisconnected(listener: ActiveListener, client: TelegramClient, reason: string): void {
+  if (listener.stopped || listener.client !== client || retiredClients.has(client)) return;
+  if (!listener.connected || listener.reconnectTimer || listener.disconnectConfirmTimer) return;
+  listener.disconnectConfirmTimer = setTimeout(() => {
+    listener.disconnectConfirmTimer = null;
+    if (listener.stopped || listener.client !== client || retiredClients.has(client)) return;
+    const senderReconnecting = !!(client as any)._sender?.isReconnecting;
+    if (client.connected && !senderReconnecting) {
+      if (getTransportIdentity(client) === listener.transportIdentity) {
+        tgLog('info', listener.account.accountId, 'socket', 'TRANSPORT_BLIP_IGNORED', { result: reason });
+        return;
+      }
+      // GramJS rebuilt the socket in place within the confirmation window.
+      markPrimaryConnectionRestored(listener, client, 'gramjs_transport_rebuilt');
+      return;
+    }
+    scheduleReconnect(listener, reason);
+  }, TRANSPORT_DISCONNECT_CONFIRM_MS);
+}
+
 function markPrimaryConnectionRestored(
   listener: ActiveListener,
   client: TelegramClient,
   source: string,
 ): void {
-  if (listener.stopped || listener.client !== client || !client.connected) return;
+  if (listener.stopped || listener.client !== client || retiredClients.has(client) || !client.connected) return;
   if (listener.reconnectTimer) {
     clearTimeout(listener.reconnectTimer);
     listener.reconnectTimer = null;
   }
+  clearDisconnectConfirmTimer(listener);
+  const accountId = listener.account.accountId;
+  const now = Date.now();
   const wasConnected = listener.connected;
-  // GramJS can emit UpdateConnectionState.connected for the initial socket
-  // handshake (and occasionally duplicate it while the socket is already
-  // healthy). A history/channel catch-up is only warranted after this
-  // listener observed a transport outage; otherwise every startup would
+  const identity = getTransportIdentity(client);
+  // Startup handshakes and heartbeats are not outages. Only a confirmed outage
+  // or a rebuilt socket can have lost updates; otherwise every startup would
   // re-enqueue all previously completed channel recoveries.
-  const hadTransportOutage = listener.transportDownSince !== null;
+  const hadTransportOutage = listener.transportDownSince !== null || identity !== listener.transportIdentity;
+  const previousAliveAt = listener.lastAliveAt;
   listener.connected = true;
   listener.transportDownSince = null;
+  listener.transportIdentity = identity;
   listener.retryCount = 0;
-  startHealthCheck(listener);
-  startChannelPoller(listener);
+  listener.lastAliveAt = now;
+  if (hadTransportOutage) {
+    // Compare the recent dialogs with local cursors right away rather than at
+    // the next 45/90s watch slot.
+    channelDialogWatchStates.set(accountId, { nextMainAt: 0, nextArchivedAt: 0 });
+  }
+  // Start the timers only when an outage stopped them. Restarting them on the
+  // ~9s heartbeat meant the 45s health check and the 15s poll of open
+  // channels never fired at all.
+  if (!listener.healthTimer) startHealthCheck(listener);
+  if (!listener.channelPollTimer) startChannelPoller(listener);
+  else if (hadTransportOutage) refreshRecentChannelDialogWatch(listener);
   if (!wasConnected) {
     EventBroadcaster.emit('event:connected', {
-      zaloId: listener.account.accountId,
+      zaloId: accountId,
       accountInfo: { channel: 'telegram_user' },
     });
   }
-  tgLog('info', listener.account.accountId, 'socket', 'PRIMARY_CONNECTION_RESTORED', { result: source });
-  if (hadTransportOutage) {
-    Logger.log(`[TelegramUserListener] Starting reconnect catch-up for ${listener.account.accountId} (${source})`);
-    scheduleReconnectCatchUp(listener, client);
-  }
+  tgLog('info', accountId, 'socket', 'PRIMARY_CONNECTION_RESTORED', { result: source });
+  if (!hadTransportOutage) return;
+  const offlineFor = previousAliveAt > 0 ? now - previousAliveAt : Number.POSITIVE_INFINITY;
+  const mode: CatchUpMode = listener.forceFullCatchUp || offlineFor > LIGHT_CATCHUP_MAX_OFFLINE_MS ? 'full' : 'light';
+  listener.forceFullCatchUp = false;
+  Logger.log(
+    `[TelegramUserListener] Starting ${mode} reconnect catch-up for ${accountId} `
+    + `(${source}, offline ${Number.isFinite(offlineFor) ? `${Math.round(offlineFor / 1000)}s` : 'unknown'})`,
+  );
+  scheduleReconnectCatchUp(listener, client, mode);
 }
 
-function scheduleReconnect(listener: ActiveListener, reason: string, err?: unknown): void {
+function scheduleReconnect(
+  listener: ActiveListener,
+  reason: string,
+  err?: unknown,
+  options: { delayMs?: number } = {},
+): void {
   const wasConnected = listener.connected;
   listener.connected = false;
   listener.transportDownSince ??= Date.now();
+  clearDisconnectConfirmTimer(listener);
   clearHealthCheck(listener);
   stopChannelPoller(listener);
-  if (listener.stopped) return;
+  if (listener.stopped || listener.sessionInvalid) return;
 
   if (isFatalTelegramSessionError(err)) {
+    listener.sessionInvalid = true;
     if (listener.reconnectTimer) {
       clearTimeout(listener.reconnectTimer);
       listener.reconnectTimer = null;
     }
     if (listener.client) {
-      intentionallyDisconnectedClients.add(listener.client);
-      listener.client.disconnect().catch(() => {});
+      retireTelegramClient(listener.client, 'session_invalid').catch(() => {});
     }
     Logger.error(`[TelegramUserListener] Session cannot reconnect for ${listener.account.accountId} (${reason})`);
     EventBroadcaster.emit('event:disconnected', {
       zaloId: listener.account.accountId,
       reason: 'session_invalid',
+      message: describeTelegramConnectError(err),
     });
     return;
   }
-  if (listener.reconnectTimer) return;
+  if (listener.reconnectTimer) {
+    // An explicit delay (network back online, system resume) replaces the
+    // exponential backoff; other callers keep the timer already armed.
+    if (options.delayMs === undefined) return;
+    clearTimeout(listener.reconnectTimer);
+    listener.reconnectTimer = null;
+  }
 
   if (wasConnected) {
     EventBroadcaster.emit('event:disconnected', {
@@ -1293,7 +1947,7 @@ function scheduleReconnect(listener: ActiveListener, reason: string, err?: unkno
   }
 
   listener.retryCount++;
-  const delay = Math.min(
+  const delay = options.delayMs ?? Math.min(
     RECONNECT_DELAY_MS * Math.pow(2, Math.min(listener.retryCount - 1, 10)),
     MAX_RECONNECT_DELAY_MS,
   );
@@ -1302,15 +1956,19 @@ function scheduleReconnect(listener: ActiveListener, reason: string, err?: unkno
     listener.reconnectTimer = null;
     if (listener.stopped) return;
     const currentClient = listener.client;
-    if (currentClient?.connected) {
-      markPrimaryConnectionRestored(listener, currentClient, 'timer_transport_alive');
+    const usable = !!currentClient && !retiredClients.has(currentClient);
+    if (usable && currentClient!.connected) {
+      markPrimaryConnectionRestored(listener, currentClient!, 'timer_transport_alive');
       return;
     }
 
     // GramJS first tries to reconnect its main sender in place. Do not destroy
     // that client mid-handshake; five connection attempts can legitimately take
     // close to a minute. If it remains stuck beyond the grace window, rebuild it.
-    const senderReconnecting = !!(currentClient as any)?._sender?.isReconnecting;
+    // Never shorten this wait: a replacement opened while GramJS's own attempt
+    // is completing is a second session on the main DC, and Telegram answers
+    // that with AUTH_KEY_DUPLICATED, which permanently invalidates the login.
+    const senderReconnecting = usable && !!(currentClient as any)?._sender?.isReconnecting;
     const downFor = Date.now() - (listener.transportDownSince || Date.now());
     if (senderReconnecting && downFor < PRIMARY_RECONNECT_GRACE_MS) {
       listener.reconnectTimer = setTimeout(reconnect, RECONNECT_DELAY_MS);
@@ -1326,32 +1984,52 @@ function scheduleReconnect(listener: ActiveListener, reason: string, err?: unkno
 
 function startHealthCheck(listener: ActiveListener): void {
   clearHealthCheck(listener);
+  let lastStaleRequeueAt = 0;
   listener.healthTimer = setInterval(async () => {
     if (listener.stopped || !listener.client) return;
     const client = listener.client;
     if (listener.healthCheckClient) return;
     listener.healthCheckClient = client;
+    const accountId = listener.account.accountId;
     try {
       if (!client.connected) throw new Error('MTProto transport disconnected');
       // TG-04: getMe() has no transport-level deadline. A hung RPC previously
       // kept healthCheckClient latched forever, which made every later tick
       // return early — the account looked healthy while nothing was probing it.
-      const PROBE_TIMEOUT_MS = 15_000;
-      let probeTimeout: ReturnType<typeof setTimeout> | undefined;
-      await Promise.race([
-        client.getMe(),
-        new Promise<never>((_, reject) => {
-          probeTimeout = setTimeout(() => reject(new Error('health_probe_timeout')), PROBE_TIMEOUT_MS);
-        }),
-      ]).finally(() => {
-        if (probeTimeout) clearTimeout(probeTimeout);
-      });
+      await withDeadline(client.getMe(), TELEGRAM_PROBE_DEADLINE_MS, 'health_probe_timeout');
       if (listener.client !== client || listener.stopped) return;
       listener.connected = true;
       listener.retryCount = 0;
+      listener.lastAliveAt = Date.now();
+      // Telegram treats "no updates for 15 minutes or longer" as a gap the
+      // client must close with getDifference; doing so also renews the
+      // session's update subscription.
+      if (Date.now() - listener.lastUpdateAt >= NO_UPDATES_WATCHDOG_MS) {
+        listener.lastUpdateAt = Date.now();
+        Logger.log(`[TelegramUserListener] No updates for ${Math.round(NO_UPDATES_WATCHDOG_MS / 60_000)} min on ${accountId}; fetching difference`);
+        scheduleReconnectCatchUp(listener, client, 'light');
+      }
+      // A recovery worker that died with its client leaves its row `draining`.
+      // Reclaim such rows here instead of only when the next account sync starts.
+      if (Date.now() - lastStaleRequeueAt >= STALE_RECOVERY_REQUEUE_INTERVAL_MS) {
+        lastStaleRequeueAt = Date.now();
+        DatabaseService.getInstance()?.requeueStaleChannelRecoveries(accountId);
+        reconcileRecoveryMembership(accountId);
+        schedulePendingChannelRecovery(listener);
+      }
     } catch (err: any) {
       if (listener.client !== client || listener.stopped) return;
-      Logger.warn(`[TelegramUserListener] Health check failed for ${listener.account.accountId}: ${err.message}`);
+      if (
+        !isFatalTelegramSessionError(err)
+        && client.connected
+        && Date.now() - listener.lastAliveAt < HEALTH_HEARTBEAT_FRESH_MS
+      ) {
+        // GramJS pings on this socket are still answered: a slow RPC (for
+        // example a FLOOD_WAIT sleep inside GramJS) is not a transport outage.
+        Logger.warn(`[TelegramUserListener] Health probe slow for ${accountId}, transport heartbeat is fresh: ${err.message}`);
+        return;
+      }
+      Logger.warn(`[TelegramUserListener] Health check failed for ${accountId}: ${err.message}`);
       scheduleReconnect(listener, 'health_check', err);
     } finally {
       if (listener.healthCheckClient === client) listener.healthCheckClient = null;
@@ -1359,45 +2037,92 @@ function startHealthCheck(listener: ActiveListener): void {
   }, HEALTH_CHECK_INTERVAL_MS);
 }
 
-function scheduleReconnectCatchUp(listener: ActiveListener, client: TelegramClient): void {
+/**
+ * Catch up on what the primary connection may have missed.
+ *  - light: updates.getDifference plus the queued/urgent channel recoveries.
+ *    Falls back to the history pass by itself when the difference is not
+ *    complete (no cursor yet, DifferenceTooLong, failure).
+ *  - full: additionally re-checks every known channel and the recent dialogs'
+ *    history. Used on startup, after a long outage and after system sleep.
+ * One catch-up runs per account; a request arriving meanwhile reruns it once
+ * afterwards, because the running pass may already be past getDifference.
+ */
+function scheduleReconnectCatchUp(listener: ActiveListener, client: TelegramClient, mode: CatchUpMode = 'full'): void {
   const accountId = listener.account.accountId;
-  if (reconnectCatchUps.has(accountId)) return;
+  const existing = reconnectCatchUps.get(accountId);
+  if (existing && existing.client === client && !retiredClients.has(client)) {
+    const pending = pendingCatchUpModes.get(accountId);
+    pendingCatchUpModes.set(accountId, pending === 'full' || mode === 'full' ? 'full' : 'light');
+    return;
+  }
   let retryNeeded = false;
-  const task = (async () => {
+  const promise: Promise<void> = (async () => {
     const idle = await waitForTelegramAccountSync(accountId, 30_000);
     if (!idle) {
       retryNeeded = true;
       return;
     }
-    if (listener.client !== client || listener.stopped || !client.connected) return;
-    const result = await synchronizeTelegramAccount(accountId, client, {
-      includeHistory: true,
-      recoverRecentChannels: true,
-    });
-    EventBroadcaster.emit('event:telegramSync', result.success
-      ? { zaloId: accountId, status: 'completed', inserted: result.inserted, pending: !result.historyComplete }
-      : { zaloId: accountId, status: 'failed', error: 'Không thể hoàn tất đồng bộ tin nhắn Telegram' },
-    );
-    if (!result.success) {
+    if (!isCurrentTelegramClient(accountId, client) || !client.connected) return;
+    const result = await synchronizeTelegramAccount(accountId, client, mode === 'full'
+      ? { includeHistory: true, recoverRecentChannels: true }
+      : {});
+    if (!isCurrentTelegramClient(accountId, client)) return;
+    const firstFailure = !catchUpFailureCounts.get(accountId);
+    if (result.success) {
+      // A light pass delivers what it recovers through event:message already;
+      // reporting "completed" on every 15-minute check would only spam toasts.
+      if (mode === 'full' || result.inserted > 0) {
+        EventBroadcaster.emit('event:telegramSync', {
+          zaloId: accountId,
+          status: 'completed',
+          inserted: result.inserted,
+          pending: !result.historyComplete,
+        });
+      }
+    } else {
       retryNeeded = true;
-      Logger.warn(`[TelegramUserListener] Reconnect catch-up was deferred for ${accountId}`);
+      Logger.warn(`[TelegramUserListener] ${mode} catch-up was deferred for ${accountId}`);
+      if (mode === 'full' && firstFailure) {
+        EventBroadcaster.emit('event:telegramSync', {
+          zaloId: accountId,
+          status: 'failed',
+          error: 'Không thể hoàn tất đồng bộ tin nhắn Telegram',
+        });
+      }
     }
   })().catch((err: any) => {
+    // TG-05: a thrown pass needs the same retry as a failed one, unless its
+    // client was replaced (the replacement schedules its own catch-up).
+    retryNeeded = isCurrentTelegramClient(accountId, client);
     Logger.warn(`[TelegramUserListener] Reconnect catch-up failed for ${accountId}: ${err.message}`);
   }).finally(() => {
-    if (reconnectCatchUps.get(accountId) === task) reconnectCatchUps.delete(accountId);
+    // A newer client's catch-up owns the account now; leave its state alone.
+    if (reconnectCatchUps.get(accountId)?.promise !== promise) return;
+    reconnectCatchUps.delete(accountId);
+    const rerunMode = pendingCatchUpModes.get(accountId);
+    pendingCatchUpModes.delete(accountId);
     const current = activeListeners.get(accountId);
+    const currentClient = current?.client;
     if (
-      current?.client &&
-      (current.client !== client || retryNeeded) &&
-      current.connected &&
-      current.client.connected &&
-      !current.stopped
-    ) {
-      setTimeout(() => scheduleReconnectCatchUp(current, current.client!), 1000);
+      !current || !currentClient || current.stopped || !current.connected
+      || !currentClient.connected || retiredClients.has(currentClient)
+    ) return;
+    if (currentClient !== client) {
+      setTimeout(() => scheduleReconnectCatchUp(current, currentClient, 'full'), 1_000);
+      return;
     }
+    if (retryNeeded) {
+      const failures = (catchUpFailureCounts.get(accountId) || 0) + 1;
+      catchUpFailureCounts.set(accountId, failures);
+      const delay = Math.min(5_000 * Math.pow(3, failures - 1), 5 * 60_000);
+      const retryMode: CatchUpMode = mode === 'full' || rerunMode === 'full' ? 'full' : 'light';
+      setTimeout(() => scheduleReconnectCatchUp(current, currentClient, retryMode), delay);
+      return;
+    }
+    catchUpFailureCounts.delete(accountId);
+    if (rerunMode) setTimeout(() => scheduleReconnectCatchUp(current, currentClient, rerunMode), 1_000);
   });
-  reconnectCatchUps.set(accountId, task);
+  reconnectCatchUps.set(accountId, { client, promise });
 }
 
 // ─── Channel Poller (Phase D/E rewrite) ─────────────────────────────────────
@@ -1419,14 +2144,33 @@ const URGENT_CHANNEL_RECOVERY_PRIORITY = 1000;
 // recent page is vastly cheaper (and safer) than polling every channel.
 const CHANNEL_DIALOG_WATCH_LIMIT = 100;
 const CHANNEL_DIALOG_WATCH_MAIN_INTERVAL_MS = 45_000;
-const CHANNEL_DIALOG_WATCH_ARCHIVED_INTERVAL_MS = 90_000;
+// Telegram may stop pushing updates for some channels ("Subscribing to updates
+// of channels/supergroups"); in practice that is mostly Archived/"Khác", where
+// this watch is the realtime path. Checked more often than All.
+const CHANNEL_DIALOG_WATCH_ARCHIVED_INTERVAL_MS = 30_000;
+// The watch runs on its own timer, so a long recovery drain (or a FLOOD_WAIT
+// that GramJS sleeps inside a request) cannot postpone it.
+const CHANNEL_DIALOG_WATCH_TICK_MS = 5_000;
+// Opened channels are short-polled at the interval Telegram returns in
+// getChannelDifference's `timeout`; never on every poller pass.
+const ACTIVE_CHANNEL_MIN_POLL_MS = 1_000;
+const ACTIVE_CHANNEL_DEFAULT_POLL_MS = 5_000;
+const ACTIVE_CHANNEL_MAX_POLL_MS = 60_000;
+// Typing in a busy group asks for at most one difference per interval.
+const TYPING_CHANNEL_RECOVERY_MIN_INTERVAL_MS = 15_000;
+// Backoff for a channel whose recovery failed without a FLOOD_WAIT.
+const CHANNEL_RECOVERY_RETRY_BASE_MS = 5_000;
+const CHANNEL_RECOVERY_RETRY_MAX_MS = 5 * 60_000;
+// A failed history repair may be tried again for the same top message.
+const CHANNEL_HISTORY_REPAIR_RETRY_MS = 10 * 60_000;
 // Reconnect/manual sync can inspect recent dialogs, but must never fan out to
 // every historical channel a long-lived account has ever seen.
 const MAX_RECONNECT_CHANNEL_RECOVERY = 200;
 
 /** Per-account channel poll serialization. Key: accountId */
 const channelPollQueues = new Map<string, Promise<void>>();
-type ChannelDifferenceResult = 'complete' | 'retry' | 'unavailable';
+// continue: the slice limit was reached after progress; drain again without backoff.
+type ChannelDifferenceResult = 'complete' | 'retry' | 'unavailable' | 'continue';
 type ChannelRecoveryQueueItem = {
   channel_id: string;
   access_hash: string;
@@ -1459,7 +2203,8 @@ const channelDialogWatchStates = new Map<string, {
   nextMainAt: number;
   nextArchivedAt: number;
 }>();
-const channelDialogWatchTasks = new Map<string, Promise<void>>();
+/** Keyed by account; a task of a retired client must not block its replacement. */
+const channelDialogWatchTasks = new Map<string, { client: TelegramClient; promise: Promise<void> }>();
 
 const channelDifferenceQueues = new Map<string, { client: TelegramClient; promise: Promise<ChannelDifferenceResult> }>();
 /** Channels explicitly marked by a live PTS gap/server hint or a failed
@@ -1472,6 +2217,25 @@ const channelDifferenceQueues = new Map<string, { client: TelegramClient; promis
 // (telegram_channel_recovery_queue). The RAM Map is kept only for active
 // channel leases (UI-navigated channels).
 const activeChannelLeases = new Map<string, Map<string, number>>();
+// Per-channel maps below are keyed `${accountId}:${channelId}`.
+/** Earliest next short-poll of an opened (leased) channel. */
+const activeChannelNextPollAt = new Map<string, number>();
+/** `timeout` (seconds) returned by the channel's last getChannelDifference. */
+const channelDifferenceTimeouts = new Map<string, number>();
+/** Consecutive recovery failures without FLOOD_WAIT (drives the retry backoff). */
+const channelRecoveryFailures = new Map<string, number>();
+const typingChannelRecoveryAt = new Map<string, number>();
+/** History repair attempted per channel, by Telegram top message ID. */
+const channelHistoryRepairs = new Map<string, { topMessageId: number; failedAt: number }>();
+const channelHistoryRepairQueues = new Map<string, Promise<void>>();
+const channelRecoveryDrainDueAt = new Map<string, number>();
+
+function deleteAccountChannelKeys(map: Map<string, unknown>, accountId: string): void {
+  const prefix = `${accountId}:`;
+  for (const key of [...map.keys()]) {
+    if (key.startsWith(prefix)) map.delete(key);
+  }
+}
 
 function getChannelRecoveryThrottle(accountId: string): ChannelRecoveryThrottle {
   let throttle = channelRecoveryThrottles.get(accountId);
@@ -1521,25 +2285,85 @@ function schedulePendingChannelRecovery(listener: ActiveListener): void {
   if (listener.stopped || !listener.client?.connected) return;
   const db = DatabaseService.getInstance();
   if (!db) return;
+  const now = Date.now();
+  let runAt: number | null;
   // A full reconnect catch-up can take minutes for accounts with many old
   // channels. During that period continue only the live PTS-gap lane; the
   // ordinary pending queue remains owned by the reconnect worker.
-  if (recoveringUpdateAccounts.has(accountId)) {
-    if (!db.hasPendingUrgentChannelRecovery(accountId)) return;
-  } else if (db.getChannelRecoveryStats(accountId).pending <= 0) {
-    return;
+  if (isAccountLockHeld(recoveringUpdateAccounts, accountId)) {
+    runAt = db.hasPendingUrgentChannelRecovery(accountId) ? now : null;
+  } else {
+    // Only rows the workers can actually take. Counting every pending row
+    // (including channels the account is no longer a member of, which dequeue
+    // skips) made this reschedule the poller every 250ms forever, and each
+    // pass re-polled every opened channel.
+    runAt = db.getNextChannelRecoveryRunAt(accountId);
+    const leasePollAt = getNextActiveChannelPollAt(accountId);
+    if (leasePollAt !== null && (runAt === null || leasePollAt < runAt)) runAt = leasePollAt;
   }
-  if (channelRecoveryDrainTimers.has(accountId)) return;
+  if (runAt === null) return;
   const throttle = getChannelRecoveryThrottle(accountId);
   const delay = Math.max(
     CHANNEL_RECOVERY_CONTINUE_DELAY_MS,
-    throttle.cooldownUntil > Date.now() ? throttle.cooldownUntil - Date.now() + CHANNEL_RECOVERY_CONTINUE_DELAY_MS : 0,
+    runAt - now,
+    throttle.cooldownUntil > now ? throttle.cooldownUntil - now + CHANNEL_RECOVERY_CONTINUE_DELAY_MS : 0,
   );
+  // The 15-second poll interval covers anything due later.
+  if (delay > CHANNEL_POLL_INTERVAL_MS) return;
+  const dueAt = now + delay;
+  const existing = channelRecoveryDrainTimers.get(accountId);
+  if (existing) {
+    if ((channelRecoveryDrainDueAt.get(accountId) ?? 0) <= dueAt) return;
+    clearTimeout(existing);
+  }
   const timer = setTimeout(() => {
     channelRecoveryDrainTimers.delete(accountId);
+    channelRecoveryDrainDueAt.delete(accountId);
     pollChannelUpdates(listener).catch(() => {});
   }, delay);
   channelRecoveryDrainTimers.set(accountId, timer);
+  channelRecoveryDrainDueAt.set(accountId, dueAt);
+}
+
+/** Park/reopen recovery rows to match membership (see reconcileChannelRecoveryMembership). */
+function reconcileRecoveryMembership(accountId: string): void {
+  const result = DatabaseService.getInstance()?.reconcileChannelRecoveryMembership(accountId);
+  if (result && (result.parked > 0 || result.reopened > 0)) {
+    Logger.log(
+      `[TelegramUserListener] Recovery queue: parked ${result.parked} channels the account is not a member of, `
+      + `reopened ${result.reopened} for ${accountId}`,
+    );
+  }
+}
+
+function nextChannelRecoveryRetryAt(accountId: string, channelId: string): number {
+  const key = `${accountId}:${channelId}`;
+  const failures = (channelRecoveryFailures.get(key) || 0) + 1;
+  channelRecoveryFailures.set(key, failures);
+  return Date.now() + Math.min(
+    CHANNEL_RECOVERY_RETRY_BASE_MS * Math.pow(2, Math.min(failures - 1, 10)),
+    CHANNEL_RECOVERY_RETRY_MAX_MS,
+  );
+}
+
+/** Next short-poll of an opened channel follows Telegram's `timeout`. */
+function noteActiveChannelPolled(accountId: string, channelId: string): void {
+  if (!activeChannelLeases.get(accountId)?.has(channelId)) return;
+  const key = `${accountId}:${channelId}`;
+  const timeoutSeconds = channelDifferenceTimeouts.get(key) || 0;
+  const delay = timeoutSeconds > 0
+    ? Math.min(ACTIVE_CHANNEL_MAX_POLL_MS, Math.max(ACTIVE_CHANNEL_MIN_POLL_MS, timeoutSeconds * 1000))
+    : ACTIVE_CHANNEL_DEFAULT_POLL_MS;
+  activeChannelNextPollAt.set(key, Date.now() + delay);
+}
+
+function getNextActiveChannelPollAt(accountId: string): number | null {
+  let next: number | null = null;
+  for (const channelId of getActiveChannelRecoveryOrder(accountId)) {
+    const at = activeChannelNextPollAt.get(`${accountId}:${channelId}`) ?? 0;
+    if (next === null || at < next) next = at;
+  }
+  return next;
 }
 
 /**
@@ -1552,7 +2376,10 @@ function getActiveChannelRecoveryOrder(accountId: string): string[] {
   if (!leases) return [];
   const now = Date.now();
   for (const [channelId, expiresAt] of leases) {
-    if (expiresAt <= now) leases.delete(channelId);
+    if (expiresAt <= now) {
+      leases.delete(channelId);
+      activeChannelNextPollAt.delete(`${accountId}:${channelId}`);
+    }
   }
   return [...leases.keys()].reverse();
 }
@@ -1560,15 +2387,23 @@ function getActiveChannelRecoveryOrder(accountId: string): string[] {
 function touchActiveChannel(accountId: string, channelId: string): void {
   if (!channelId.startsWith('-100')) return;
   const leases = activeChannelLeases.get(accountId) || new Map<string, number>();
+  const now = Date.now();
+  const alreadyOpen = (leases.get(channelId) || 0) > now;
   // Map insertion order acts as a small LRU.
   leases.delete(channelId);
-  leases.set(channelId, Date.now() + ACTIVE_CHANNEL_LEASE_MS);
+  leases.set(channelId, now + ACTIVE_CHANNEL_LEASE_MS);
   while (leases.size > MAX_ACTIVE_CHANNELS_PER_ACCOUNT) {
     const oldest = leases.keys().next().value;
     if (!oldest) break;
     leases.delete(oldest);
+    activeChannelNextPollAt.delete(`${accountId}:${oldest}`);
   }
   activeChannelLeases.set(accountId, leases);
+  // Opening a channel polls it at once. The UI touches an open channel again
+  // for topics/forum checks; that only extends the lease and keeps Telegram's
+  // polling interval.
+  if (alreadyOpen) return;
+  activeChannelNextPollAt.set(`${accountId}:${channelId}`, 0);
   const listener = activeListeners.get(accountId);
   if (listener?.client?.connected && !listener.stopped) {
     pollChannelUpdates(listener).catch(() => {});
@@ -1601,8 +2436,12 @@ function hasVerifiedTelegramChannelMembership(accountId: string, channelId: stri
  */
 function refreshRecentChannelDialogWatch(listener: ActiveListener): void {
   const accountId = listener.account.accountId;
-  if (listener.stopped || listener.client?.connected !== true) return;
-  if (channelDialogWatchTasks.has(accountId)) return;
+  const client = listener.client;
+  if (listener.stopped || !client || client.connected !== true || retiredClients.has(client)) return;
+  // A watch still waiting on a retired client's request must not disable the
+  // watch for its replacement (it used to stay pending forever).
+  const running = channelDialogWatchTasks.get(accountId);
+  if (running && running.client === client) return;
 
   const state = channelDialogWatchStates.get(accountId) || { nextMainAt: 0, nextArchivedAt: 0 };
   const now = Date.now();
@@ -1613,14 +2452,14 @@ function refreshRecentChannelDialogWatch(listener: ActiveListener): void {
   if (inspectArchived) state.nextArchivedAt = now + CHANNEL_DIALOG_WATCH_ARCHIVED_INTERVAL_MS;
   channelDialogWatchStates.set(accountId, state);
 
-  const task = (async () => {
+  const promise: Promise<void> = (async () => {
     const db = DatabaseService.getInstance();
-    const client = listener.client;
-    if (!db || !client || listener.stopped || listener.client !== client || !client.connected) return;
+    if (!db || listener.stopped || listener.client !== client || !client.connected) return;
 
     let inspected = 0;
     let queuedMain = 0;
     let queuedArchived = 0;
+    let repairs = 0;
     let stateChanged = false;
     const inspectFolder = async (folder: 0 | 1): Promise<void> => {
       const dialogs = folder === 1
@@ -1632,23 +2471,42 @@ function refreshRecentChannelDialogWatch(listener: ActiveListener): void {
         if (!channelId.startsWith('-100')) continue;
         inspected++;
         if (dialog.entity) cacheTelegramPeer(accountId, channelId, dialog.entity);
+        // Only "archived" is ever read from a listing. The All pass calls
+        // getDialogs without `folder`, which also returns recently active
+        // archived chats WITHOUT folderId (observed live), so a missing
+        // folderId must keep the stored folder. Treating it as 0 moved those
+        // chats to "Tất cả" on every All pass until the next Archived pass.
+        // Unarchiving arrives as UpdateFolderPeers (live or via getDifference).
+        const listedFolder: 1 | undefined = folder === 1
+          || Number((dialog as any)?.folderId ?? (dialog as any)?.dialog?.folderId ?? 0) === 1 ? 1 : undefined;
         // Keep dialog membership/folder metadata fresh but avoid a renderer
-        // refresh for every row. One refresh below is enough for this pass.
-        persistTelegramDialogState(accountId, channelId, dialog, dialog.entity, undefined, false);
-        stateChanged = true;
+        // refresh for every row. One refresh below is enough for this pass,
+        // and only when a visible field (unread, folder, mute...) changed.
+        if (persistTelegramDialogState(accountId, channelId, dialog, dialog.entity, undefined, false, listedFolder)) {
+          stateChanged = true;
+        }
         if (!hasVerifiedTelegramChannelMembership(accountId, channelId)) continue;
 
         const localPts = Math.max(0, Number(db.getTelegramChannelPts(accountId, channelId) || 0));
         const serverPts = Math.max(0, Number((dialog as any)?.dialog?.pts ?? (dialog as any)?.pts ?? 0));
         const localMessageId = getTelegramHistoryCheckpoint(db, accountId, channelId);
         const topMessageId = Math.max(0, Number((dialog as any)?.dialog?.topMessage ?? (dialog as any)?.topMessage ?? 0));
-        // A dialog may not expose PTS in every GramJS shape.  Its top message
-        // is still an authoritative, cheap indication that a difference must
-        // be drained. Do not queue an unchanged dialog merely because one of
-        // the optional fields is absent.
-        const needsDifference = (serverPts > 0 && serverPts > localPts)
-          || (topMessageId > 0 && topMessageId > localMessageId);
-        if (!needsDifference) continue;
+        // The dialog PTS is authoritative when present; the top message is
+        // only the fallback for a dialog shape without it. Comparing the top
+        // message as well queued a channel on every pass forever whenever
+        // that message is not stored locally (history never loaded, a service
+        // message...), although its difference was already empty.
+        const needsDifference = serverPts > 0
+          ? serverPts > localPts
+          : topMessageId > 0 && topMessageId > localMessageId;
+        if (!needsDifference) {
+          // Cursor current, newest message still missing locally: a
+          // difference cannot return it, the history can (once).
+          if (serverPts > 0 && topMessageId > localMessageId) {
+            if (scheduleChannelHistoryRepair(listener, client, dialog, channelId, topMessageId)) repairs++;
+          }
+          continue;
+        }
         // This is a current-server cursor/top-message signal, not a broad
         // historical scan. Put it in the live lane so reconnect catch-up
         // cannot make a recently active Archived dialog wait behind thousands
@@ -1671,16 +2529,80 @@ function refreshRecentChannelDialogWatch(listener: ActiveListener): void {
     if (stateChanged) {
       EventBroadcaster.emit('db:unreadChanged', { zaloId: accountId, source: 'telegram_dialog_watch' });
     }
-    Logger.log(`[TelegramUserListener] Dialog watch inspected ${inspected} channels; queued ${queuedMain} All and ${queuedArchived} Khác for ${accountId}`);
+    if (queuedMain || queuedArchived || repairs) {
+      Logger.log(
+        `[TelegramUserListener] Dialog watch inspected ${inspected} channels; queued ${queuedMain} All and `
+        + `${queuedArchived} Khác, ${repairs} history repairs for ${accountId}`,
+      );
+    }
     if (queuedMain || queuedArchived) {
       schedulePendingChannelRecovery(listener);
     }
   })().catch((err: any) => {
     Logger.warn(`[TelegramUserListener] Dialog watch failed for ${accountId}: ${err.message}`);
   }).finally(() => {
-    if (channelDialogWatchTasks.get(accountId) === task) channelDialogWatchTasks.delete(accountId);
+    if (channelDialogWatchTasks.get(accountId)?.promise === promise) channelDialogWatchTasks.delete(accountId);
   });
-  channelDialogWatchTasks.set(accountId, task);
+  channelDialogWatchTasks.set(accountId, { client, promise });
+}
+
+/**
+ * Read a channel's newest history once per Telegram top message when its
+ * cursor is current but that message is not stored (a cursor seeded without
+ * history, or a message getChannelDifference will not replay). Stored like the
+ * history pass: no notification or workflow event. Returns whether a read was
+ * scheduled.
+ */
+function scheduleChannelHistoryRepair(
+  listener: ActiveListener,
+  client: TelegramClient,
+  dialog: any,
+  channelId: string,
+  topMessageId: number,
+): boolean {
+  const accountId = listener.account.accountId;
+  const key = `${accountId}:${channelId}`;
+  const previous = channelHistoryRepairs.get(key);
+  if (previous?.topMessageId === topMessageId
+    && (!previous.failedAt || Date.now() - previous.failedAt < CHANNEL_HISTORY_REPAIR_RETRY_MS)) {
+    return false;
+  }
+  channelHistoryRepairs.set(key, { topMessageId, failedAt: 0 });
+  const queue = channelHistoryRepairQueues.get(accountId) || Promise.resolve();
+  const task: Promise<void> = queue.then(async () => {
+    if (listener.stopped || listener.client !== client || !client.connected || retiredClients.has(client)) return;
+    const db = DatabaseService.getInstance();
+    if (!db) return;
+    // A queued difference owns this channel and may still deliver the rows.
+    if (db.queryOne(
+      `SELECT 1 AS open FROM telegram_channel_recovery_queue
+       WHERE owner_zalo_id = ? AND channel_id = ? AND status IN ('pending', 'draining')`,
+      [accountId, channelId],
+    )) {
+      channelHistoryRepairs.delete(key);
+      return;
+    }
+    const localMessageId = getTelegramHistoryCheckpoint(db, accountId, channelId);
+    // Newest rows after the local checkpoint (or the bounded first load).
+    const messages: any[] = [...await client.getMessages(dialog.inputEntity ?? dialog.entity ?? dialog.id, {
+      limit: INITIAL_MESSAGES_PER_DIALOG,
+      ...(localMessageId > 0 ? { minId: localMessageId } : {}),
+    })];
+    const inserted = await persistTelegramHistoryMessages(accountId, client, channelId, dialog, messages);
+    Logger.log(
+      `[TelegramUserListener] History repair for ${channelId}: fetched ${messages.length}, stored ${inserted} `
+      + `(local ${localMessageId}, top ${topMessageId})`,
+    );
+  }).catch((err: any) => {
+    const current = channelHistoryRepairs.get(key);
+    if (current?.topMessageId === topMessageId) channelHistoryRepairs.set(key, { topMessageId, failedAt: Date.now() });
+    Logger.warn(`[TelegramUserListener] History repair failed for ${channelId}: ${err?.message || err}`);
+  });
+  channelHistoryRepairQueues.set(accountId, task);
+  task.finally(() => {
+    if (channelHistoryRepairQueues.get(accountId) === task) channelHistoryRepairQueues.delete(accountId);
+  }).catch(() => {});
+  return true;
 }
 
 function markChannelRecoveryPending(accountId: string, channelId: string, priority = 0): void {
@@ -1734,12 +2656,15 @@ function requestChannelRecovery(listener: ActiveListener, channelId: string, rea
  */
 function scheduleTypingChannelRecovery(listener: ActiveListener, channelId: string): void {
   if (!hasVerifiedTelegramChannelMembership(listener.account.accountId, channelId)) return;
-  touchActiveChannel(listener.account.accountId, channelId);
   const key = `${listener.account.accountId}:${channelId}`;
-  const previous = typingChannelRecoveryTimers.get(key);
-  if (previous) clearTimeout(previous);
+  // One probe per interval. Typing used to lease the channel for ten minutes
+  // of short-polling, so busy groups evicted the chats actually open, and a
+  // timer reset on every typing event postponed the probe while people typed.
+  if (typingChannelRecoveryTimers.has(key)) return;
+  if (Date.now() - (typingChannelRecoveryAt.get(key) || 0) < TYPING_CHANNEL_RECOVERY_MIN_INTERVAL_MS) return;
   const timer = setTimeout(() => {
     typingChannelRecoveryTimers.delete(key);
+    typingChannelRecoveryAt.set(key, Date.now());
     if (listener.stopped || listener.client?.connected !== true) return;
     requestChannelRecovery(listener, channelId, 'channel_typing_followup');
   }, 1_500);
@@ -1749,9 +2674,16 @@ function scheduleTypingChannelRecovery(listener: ActiveListener, channelId: stri
 
 function startChannelPoller(listener: ActiveListener): void {
   if (listener.channelPollTimer) clearInterval(listener.channelPollTimer);
-  // Do not make a freshly connected Archived dialog wait for the first
-  // 15-second interval before its fallback watch begins.
+  if (listener.dialogWatchTimer) clearInterval(listener.dialogWatchTimer);
+  // Do not make a freshly connected Archived dialog wait for its first slot.
   refreshRecentChannelDialogWatch(listener);
+  // The watch is not driven by the poller: a poll stays busy for as long as
+  // its recovery batch drains (including GramJS FLOOD_WAIT sleeps), which used
+  // to postpone Archived detection by minutes.
+  listener.dialogWatchTimer = setInterval(() => {
+    if (listener.stopped || !listener.client?.connected) return;
+    refreshRecentChannelDialogWatch(listener);
+  }, CHANNEL_DIALOG_WATCH_TICK_MS);
   listener.channelPollTimer = setInterval(() => {
     if (listener.stopped || !listener.client?.connected) return;
     pollChannelUpdates(listener).catch(() => {});
@@ -1762,6 +2694,10 @@ function stopChannelPoller(listener: ActiveListener): void {
   if (listener.channelPollTimer) {
     clearInterval(listener.channelPollTimer);
     listener.channelPollTimer = null;
+  }
+  if (listener.dialogWatchTimer) {
+    clearInterval(listener.dialogWatchTimer);
+    listener.dialogWatchTimer = null;
   }
   // Clean up in-flight queue for this account
   channelPollQueues.delete(listener.account.accountId);
@@ -1798,9 +2734,31 @@ async function recoverQueuedChannel(
   queued: ChannelRecoveryQueueItem,
   source: TelegramIngressSource,
 ): Promise<ChannelRecoveryOutcome> {
+  try {
+    return await recoverQueuedChannelNow(accountId, client, queued, source);
+  } finally {
+    noteActiveChannelPolled(accountId, queued.channel_id);
+  }
+}
+
+function readChannelRecoveryRetryAt(db: DatabaseService, accountId: string, channelId: string): number {
+  return Number(db.queryOne<{ retry_at: number }>(
+    `SELECT retry_at FROM telegram_channel_recovery_queue
+     WHERE owner_zalo_id = ? AND channel_id = ?`,
+    [accountId, channelId],
+  )?.retry_at || 0);
+}
+
+async function recoverQueuedChannelNow(
+  accountId: string,
+  client: TelegramClient,
+  queued: ChannelRecoveryQueueItem,
+  source: TelegramIngressSource,
+): Promise<ChannelRecoveryOutcome> {
   const db = DatabaseService.getInstance();
   if (!db) return 'retry';
   const channelId = queued.channel_id;
+  const failureKey = `${accountId}:${channelId}`;
   // Even an active-view poll needs a durable history boundary while its RPC
   // is in flight: realtime can arrive before a TooLong response comes back.
   if (queued.queued === false) markChannelRecoveryPending(accountId, channelId);
@@ -1827,35 +2785,43 @@ async function recoverQueuedChannel(
   // dialog.pts after the history snapshot has been persisted.
   const currentPts = Math.max(0, Number(db.getTelegramChannelPts(accountId, channelId) || 0));
 
+  // A retry time set before this drain (backoff) is not a FLOOD_WAIT signal.
+  const retryAtBefore = readChannelRecoveryRetryAt(db, accountId, channelId);
   try {
     db.updateChannelRecoveryStatus(accountId, channelId, 'draining');
     const recovered = await drainChannelDifference(accountId, client, channelId, accessHash, currentPts, source);
     if (recovered === 'complete' || recovered === 'unavailable') {
+      channelRecoveryFailures.delete(failureKey);
       clearChannelRecoveryPending(accountId, channelId);
-      if (queued.priority >= URGENT_CHANNEL_RECOVERY_PRIORITY) {
-        // Logger.log(`[TelegramUserListener] Live channel recovery completed for ${channelId}`);
-      }
       return 'complete';
     }
     // drainChannelDifference handles FLOOD_WAIT internally and persists its
     // retry_at. Read it back so this worker pool pauses globally instead of
     // continuing other channel history/difference requests during the wait.
-    const retry6 = db.queryOne<{ retry_at: number }>(
-      `SELECT retry_at FROM telegram_channel_recovery_queue
-       WHERE owner_zalo_id = ? AND channel_id = ?`,
-      [accountId, channelId],
-    );
-    if (Number(retry6?.retry_at || 0) > Date.now()) {
-      const waitMs = Math.max(1_000, Number(retry6!.retry_at) - Date.now());
+    const retryAtAfter = readChannelRecoveryRetryAt(db, accountId, channelId);
+    if (retryAtAfter > Date.now() && retryAtAfter !== retryAtBefore) {
+      const waitMs = Math.max(1_000, retryAtAfter - Date.now());
       applyChannelRecoveryFloodWait(accountId, new Error(`FLOOD_WAIT_${Math.ceil(waitMs / 1000)}`));
       return 'flood';
     }
     // A recoverable, non-flood incomplete result must return the durable row
     // to pending. enqueueChannelRecovery intentionally preserves `draining`
     // rows, so using it here would leave this channel stuck forever.
+    if (recovered === 'continue') {
+      // Progress was made up to the slice limit: drain on, no backoff.
+      channelRecoveryFailures.delete(failureKey);
+      db.updateChannelRecoveryStatus(accountId, channelId, 'pending', {
+        pts: currentPts,
+        lastError: 'channel_difference_continue',
+      });
+      return 'retry';
+    }
+    // Back off per channel: a peer failing the same way on every pass used
+    // to be retried immediately, hot-looping the poller.
     db.updateChannelRecoveryStatus(accountId, channelId, 'pending', {
       pts: currentPts,
       lastError: 'channel_difference_incomplete',
+      retryAt: nextChannelRecoveryRetryAt(accountId, channelId),
     });
     return 'retry';
   } catch (err: any) {
@@ -1869,7 +2835,10 @@ async function recoverQueuedChannel(
       return 'flood';
     }
     tgLog('warn', accountId, source, `Channel ${channelId} error: ${err.message}`);
-    db.updateChannelRecoveryStatus(accountId, channelId, 'pending', { lastError: err.message });
+    db.updateChannelRecoveryStatus(accountId, channelId, 'pending', {
+      lastError: err.message,
+      retryAt: nextChannelRecoveryRetryAt(accountId, channelId),
+    });
     return 'retry';
   }
 }
@@ -1887,9 +2856,31 @@ async function runChannelRecoveryWorkers(
 
   let nextIndex = 0;
   let stopForFlood = false;
-  const worker = async () => {
-    while (!stopForFlood && !listener_stopped(accountId)) {
+  // Live work (a PTS gap, TooLong, a dialog watch hit on an Archived channel)
+  // that arrives while backlog items drain is taken between items, not after
+  // the whole batch.
+  const claimed = new Set<string>();
+  const db = DatabaseService.getInstance();
+  const takeNext = (): ChannelRecoveryQueueItem | undefined => {
+    const live = (db?.dequeueUrgentChannelRecovery(accountId, claimed.size + 5) as ChannelRecoveryQueueItem[] | undefined)
+      ?.find(item => !claimed.has(item.channel_id));
+    if (live) {
+      claimed.add(live.channel_id);
+      return live;
+    }
+    while (nextIndex < items.length) {
       const item = items[nextIndex++];
+      if (claimed.has(item.channel_id)) continue;
+      claimed.add(item.channel_id);
+      return item;
+    }
+    return undefined;
+  };
+  const worker = async () => {
+    // Stop with the client generation that started this pool: a retired
+    // client can no longer send, and its items belong to the replacement.
+    while (!stopForFlood && !listener_stopped(accountId) && isCurrentTelegramClient(accountId, client)) {
+      const item = takeNext();
       if (!item) return;
       const outcome = await recoverQueuedChannel(accountId, client, item, source);
       if (outcome === 'flood') {
@@ -1911,15 +2902,10 @@ async function pollChannelUpdatesNow(listener: ActiveListener): Promise<void> {
 
   const db = DatabaseService.getInstance();
   if (!db) return;
-  const reconnectRecoveryActive = recoveringUpdateAccounts.has(accountId);
+  const reconnectRecoveryActive = isAccountLockHeld(recoveringUpdateAccounts, accountId);
 
   try {
-    // Socket updates are still authoritative realtime. This lightweight
-    // folder-aware dialog observation only supplies a recovery hint when a
-    // channel update was not delivered by the socket (most visibly Archived /
-    // "Khác" dialogs after reconnect). It runs independently so it never
-    // blocks a live PTS-gap worker.
-    refreshRecentChannelDialogWatch(listener);
+    // The Archived/All dialog watch has its own timer (startChannelPoller).
     const throttle = getChannelRecoveryThrottle(accountId);
     if (throttle.cooldownUntil > Date.now()) {
       schedulePendingChannelRecovery(listener);
@@ -1938,7 +2924,13 @@ async function pollChannelUpdatesNow(listener: ActiveListener): Promise<void> {
     // Active-channel leases are useful for normal backlog ordering, but must
     // not let an open conversation steal a non-urgent row while reconnect
     // recovery is processing the durable queue.
-    const activeChannelIds = reconnectRecoveryActive ? [] : getActiveChannelRecoveryOrder(accountId);
+    // Opened channels are short-polled only when due (Telegram's `timeout`),
+    // however often this pass runs.
+    const now = Date.now();
+    const activeChannelIds = reconnectRecoveryActive
+      ? []
+      : getActiveChannelRecoveryOrder(accountId)
+        .filter(channelId => (activeChannelNextPollAt.get(`${accountId}:${channelId}`) ?? 0) <= now);
     const activeChannelSet = new Set(activeChannelIds);
     const queuedById = new Map<string, ChannelRecoveryQueueItem>();
     for (const c of queuedChannels) {
@@ -2240,6 +3232,11 @@ async function drainChannelDifferenceNow(
       return unavailable ? 'unavailable' : 'retry'; // Don't commit PTS on failure
     }
 
+    // When to short-poll this channel again if it is open (seconds).
+    const pollTimeout = Number((diff as any)?.timeout || 0);
+    if (pollTimeout > 0) channelDifferenceTimeouts.set(queueKeyFor(accountId, channelId), pollTimeout);
+    else channelDifferenceTimeouts.delete(queueKeyFor(accountId, channelId));
+
     // ── ChannelDifferenceEmpty: no new updates ────────────────────────
     if (diff instanceof Api.updates.ChannelDifferenceEmpty) {
       // P1.2 fix: commit PTS from ChannelDifferenceEmpty
@@ -2359,7 +3356,11 @@ async function drainChannelDifferenceNow(
   }
 
   tgLog('warn', accountId, source, `Drain slice limit reached for ${channelId}`);
-  return 'retry';
+  return 'continue';
+}
+
+function queueKeyFor(accountId: string, channelId: string): string {
+  return `${accountId}:${channelId}`;
 }
 
 async function connectListener(listener: ActiveListener): Promise<void> {
@@ -2376,13 +3377,15 @@ async function connectListener(listener: ActiveListener): Promise<void> {
 async function connectListenerNow(listener: ActiveListener): Promise<void> {
   const { account } = listener;
 
-  // Cleanup old client before creating new one
+  // Retire the old client before creating a new one. GramJS's disconnect()
+  // alone would leave its update loop running and its in-flight requests (and
+  // the account locks awaiting them) pending forever.
   const previousClient = listener.client;
   if (previousClient) {
-    intentionallyDisconnectedClients.add(previousClient);
     listener.client = null;
-    try { await previousClient.disconnect(); } catch {}
+    await retireTelegramClient(previousClient, 'replaced');
   }
+  clearDisconnectConfirmTimer(listener);
   clearHealthCheck(listener);
   stopChannelPoller(listener);
 
@@ -2390,6 +3393,8 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
   const client = new TelegramClient(stringSession, API_ID, API_HASH, {
     connectionRetries: 5,
   });
+  installRpcDeadline(client);
+  installSingleMainSession(client);
 
   // GramJS's update loop prints a raw `Error: TIMEOUT` stack after its own
   // ping retries. The error is expected during a temporary network outage and
@@ -2403,9 +3408,11 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
 
     // Do this before rate-limiting diagnostics. A later TIMEOUT in the same
     // outage must still leave the listener marked offline if an earlier state
-    // event was missed by GramJS.
+    // event was missed by GramJS. GramJS also reports file-DC sender failures
+    // and errors thrown by our own handlers here, so a transport error is only
+    // a candidate outage until the primary socket is confirmed down.
     if (transportError) {
-      scheduleReconnect(listener, 'gramjs_transport_error', err);
+      handlePrimaryTransportDisconnected(listener, client, 'gramjs_transport_error');
     }
 
     const now = Date.now();
@@ -2431,30 +3438,40 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
   listener.client = client;
 
   try {
-    const transportConnected = await client.connect();
+    // client.connect() retries without a deadline of its own, and a request
+    // that never gets an answer would otherwise hold listener.connecting (and
+    // with it every later reconnect) forever.
+    const transportConnected = await withDeadline(
+      client.connect(),
+      TELEGRAM_CONNECT_DEADLINE_MS,
+      'TELEGRAM_CONNECT_TIMEOUT',
+    );
     if (!transportConnected && !client.connected) {
       throw new Error('MTProto transport failed to connect');
     }
     // stopListener may have run while the transport handshake was in flight.
     if (listener.stopped) {
-      intentionallyDisconnectedClients.add(client);
-      try { await client.disconnect(); } catch {}
+      await retireTelegramClient(client, 'listener_stopped');
       return;
     }
 
     // A live TCP transport is not enough to mark an account online. This
     // authorized request catches revoked/expired sessions before timers and UI
     // are started for a client that cannot actually receive account updates.
-    await client.getMe();
+    await withDeadline(client.getMe(), TELEGRAM_PROBE_DEADLINE_MS * 2, 'TELEGRAM_GETME_TIMEOUT');
     if (listener.stopped || listener.client !== client) {
-      intentionallyDisconnectedClients.add(client);
-      try { await client.disconnect(); } catch {}
+      await retireTelegramClient(client, 'listener_replaced');
       return;
     }
+    const connectedAt = Date.now();
     listener.connected = true;
     listener.transportDownSince = null;
     listener.retryCount = 0;
     listener.stopped = false;
+    listener.transportIdentity = getTransportIdentity(client);
+    listener.lastAliveAt = connectedAt;
+    listener.lastUpdateAt = connectedAt;
+    listener.forceFullCatchUp = false;
 
     const { Api } = require('telegram');
     const { UpdateConnectionState } = require('telegram/network');
@@ -2470,7 +3487,10 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
       ) return;
 
       const state = Number(stateUpdate?.state);
-      tgLog(state === UpdateConnectionState.connected ? 'info' : 'warn', account.accountId, 'socket', 'CONNECTION_STATE', {
+      // Verbose only: GramJS reports `connected` after every ~9s ping and
+      // `disconnected` for every ping slower than 1s. Confirmed outages are
+      // logged by scheduleReconnect.
+      tgLog('info', account.accountId, 'socket', 'CONNECTION_STATE', {
         result: state === UpdateConnectionState.connected
           ? 'connected'
           : state === UpdateConnectionState.broken
@@ -2479,15 +3499,30 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
       });
 
       if (state === UpdateConnectionState.connected) {
-        markPrimaryConnectionRestored(listener, client, 'gramjs_auto_reconnect');
+        handlePrimaryTransportConnected(listener, client);
         return;
       }
-
-      scheduleReconnect(
-        listener,
-        state === UpdateConnectionState.broken ? 'transport_broken' : 'transport_disconnected',
-      );
+      if (state === UpdateConnectionState.broken) {
+        scheduleReconnect(listener, 'transport_broken');
+        return;
+      }
+      handlePrimaryTransportDisconnected(listener, client, 'transport_disconnected');
     }, new Raw({ types: [UpdateConnectionState] }));
+
+    // Any server push proves the update stream is alive. Feeds the 15-minute
+    // no-update watchdog in the health check.
+    client.addEventHandler(async (update: any) => {
+      if (update instanceof UpdateConnectionState || listener.client !== client) return;
+      listener.lastUpdateAt = Date.now();
+    }, new Raw({}));
+
+    // updatesTooLong: Telegram dropped events queued for this connection and
+    // expects the client to fetch them with updates.getDifference.
+    client.addEventHandler(async () => {
+      if (listener.stopped || listener.client !== client || retiredClients.has(client)) return;
+      Logger.log(`[TelegramUserListener] updatesTooLong for ${account.accountId}; fetching difference`);
+      scheduleReconnectCatchUp(listener, client, 'light');
+    }, new Raw({ types: [Api.UpdatesTooLong].filter(Boolean) }));
 
     // Diagnostic ingress probe: register BEFORE the high-level NewMessage
     // builder so we can distinguish "Telegram did not send the update" from
@@ -2727,9 +3762,6 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
       try {
         const db = DatabaseService.getInstance();
         if (!db) return;
-        let msgId: string | undefined;
-        let newText: string | undefined;
-        let chatId: string | undefined;
 
         if (update instanceof Api.UpdateChannelTooLong) {
           if (update.channelId != null) {
@@ -2820,205 +3852,86 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
         }
 
         if (update instanceof Api.UpdateMessageReactions) {
-          const chatId = getCanonicalChatId(update.peer);
-          const msgId = String(update.msgId || '');
-          if (!chatId || !msgId) return;
-          const reactions = normalizeTelegramReactions(update.reactions, account.accountId);
-          for (const recent of update.reactions?.recentReactions || []) {
-            const reactorId = getCanonicalChatId(recent?.peerId);
-            if (reactorId && !reactorId.startsWith('-')) {
-              hydrateTelegramIdentity(account.accountId, client, reactorId, chatId).catch(() => {});
-            }
-          }
-          db.run(
-            'UPDATE messages SET reactions = ? WHERE msg_id = ? AND owner_zalo_id = ? AND thread_id = ? AND channel = \'telegram_user\'',
-            [JSON.stringify(reactions), msgId, account.accountId, chatId],
-          );
-          EventBroadcaster.emit('event:telegramReaction', {
-            zaloId: account.accountId,
-            threadId: chatId,
-            msgId,
-            topicRootMessageId: update.topMsgId ? String(update.topMsgId) : undefined,
-            reactions,
-          });
+          applyTelegramReactionUpdate(account.accountId, client, update);
           return;
         }
 
-        // Channel reactions (UpdateChannelMessageReactions)
+        // Legacy constructor name kept for old layers; current layers send UpdateMessageReactions (peer = channel)
         if ((update as any).className === 'UpdateChannelMessageReactions' ||
             (update as any).CONSTRUCTOR_ID === 0xc2db42ae) {
           const channelId = (update as any).channelId;
-          const msgId = String((update as any).topMsgId || (update as any).msgId || '');
-          if (!channelId || !msgId) return;
-          const chatId = `-100${String(channelId)}`;
-          const reactions = normalizeTelegramReactions((update as any).reactions, account.accountId);
-          db.run(
-            'UPDATE messages SET reactions = ? WHERE msg_id = ? AND owner_zalo_id = ? AND thread_id = ? AND channel = \'telegram_user\'',
-            [JSON.stringify(reactions), msgId, account.accountId, chatId],
+          if (channelId == null) return;
+          applyTelegramMessageReactions(
+            account.accountId, client, `-100${String(channelId)}`, String((update as any).msgId || ''), (update as any).reactions,
+            (update as any).topMsgId ? String((update as any).topMsgId) : undefined,
           );
-          EventBroadcaster.emit('event:telegramReaction', {
-            zaloId: account.accountId,
-            threadId: chatId,
-            msgId,
-            reactions,
-          });
           return;
         }
 
-        if (update instanceof Api.UpdateEditMessage) {
-          const msg = update.message;
-          if (!msg) return;
-          msgId = String(msg.id);
-          newText = (msg as any).message || (msg as any).text || '';
-          // Extract chat ID from peer
-          const peerId = (msg as any).peerId;
-          if (peerId) chatId = getCanonicalChatId(peerId);
-        } else if (update instanceof Api.UpdateEditChannelMessage) {
-          const msg = update.message;
-          if (!msg) return;
-          msgId = String(msg.id);
-          newText = (msg as any).message || (msg as any).text || '';
-          const peerId = (msg as any).peerId;
-          if (peerId) chatId = getCanonicalChatId(peerId);
-        }
-
-        if (msgId && newText !== undefined) {
-          if (chatId) {
-            // Build edit_history from current content (giống Facebook handler)
-            const existingMsg = db.queryOne<any>(
-              `SELECT content, edit_history FROM messages WHERE msg_id = ? AND owner_zalo_id = ? AND thread_id = ? AND channel = 'telegram_user'`,
-              [msgId, account.accountId, chatId]
-            );
-            let editHistory: any[] = [];
-            if (existingMsg?.edit_history) {
-              try { editHistory = JSON.parse(existingMsg.edit_history); } catch { editHistory = []; }
-            }
-            const contentChanged = existingMsg?.content && existingMsg.content !== newText;
-            if (contentChanged) {
-              editHistory.push({ oldBody: existingMsg.content, editedAt: Date.now(), editCount: editHistory.length + 1 });
-            }
-            // Only set is_edited=1 when content ACTUALLY changed (reaction updates don't change content)
-            db.run(
-              `UPDATE messages SET content = ?, is_edited = ?, edit_history = ? WHERE msg_id = ? AND owner_zalo_id = ? AND thread_id = ? AND channel = 'telegram_user'`,
-              [newText, contentChanged ? 1 : 0, JSON.stringify(editHistory), msgId, account.accountId, chatId]
-            );
-          }
-          EventBroadcaster.emit('event:messageEdited', {
-            zaloId: account.accountId,
-            msgId,
-            newText,
-            threadId: chatId,
-          });
-          Logger.log(`[TelegramUserListener] Message edited: ${msgId}`);
+        if (update instanceof Api.UpdateEditMessage || update instanceof Api.UpdateEditChannelMessage) {
+          applyTelegramMessageEdit(account.accountId, client, update.message);
+          return;
         }
 
         // Handle deleted messages (thu hồi)
         if (update instanceof Api.UpdateDeleteMessages || update instanceof Api.UpdateDeleteChannelMessages) {
           const ids = update.messages || [];
-          // Channel message IDs are scoped to their channel. Never mark an
-          // equal ID in another Telegram channel as deleted.
+          // Kênh / siêu nhóm: ID theo kênh (sự kiện mang kênh). Hộp tin chung (chat riêng + nhóm thường): ID duy nhất
+          // trong tài khoản, không được đụng bài kênh trùng số — xem telegramDeletions.ts.
           const deletedThreadId = update instanceof Api.UpdateDeleteChannelMessages && update.channelId != null
             ? `-100${String(update.channelId)}`
             : undefined;
-          for (const id of ids) {
-            const msgIdStr = String(id);
-            // Lưu recalled_content trước khi đánh dấu thu hồi
-            const scope = deletedThreadId
-              ? `msg_id = ? AND owner_zalo_id = ? AND thread_id = ? AND channel = 'telegram_user'`
-              : `msg_id = ? AND owner_zalo_id = ? AND channel = 'telegram_user'`;
-            const scopeParams = deletedThreadId
-              ? [msgIdStr, account.accountId, deletedThreadId]
-              : [msgIdStr, account.accountId];
-            const existingMsg = db.queryOne<any>(
-              `SELECT content, msg_type, recalled_content, recalled_msg_type FROM messages WHERE ${scope}`, scopeParams
-            );
-            const recalledContent = existingMsg?.recalled_content ?? existingMsg?.content ?? null;
-            const recalledMsgType = existingMsg?.recalled_msg_type
-              || (existingMsg?.msg_type !== 'recalled' ? existingMsg?.msg_type : null);
-            Logger.log(`[TelegramUserListener] Recall msg ${msgIdStr}: content="${(recalledContent || '').slice(0, 100)}" type=${recalledMsgType || '-'} scope=${scope} deletedThreadId=${deletedThreadId || 'none'}`);
-            if (deletedThreadId) {
-              db.run(
-                `UPDATE messages SET msg_type = 'recalled', status = 'recalled', is_recalled = 1,
-                 recalled_content = CASE WHEN recalled_content IS NULL OR recalled_content = '' THEN ? ELSE recalled_content END,
-                 recalled_msg_type = CASE WHEN recalled_msg_type IS NULL OR recalled_msg_type = '' THEN ? ELSE recalled_msg_type END
-                 WHERE msg_id = ? AND owner_zalo_id = ? AND thread_id = ? AND channel = 'telegram_user'`,
-                [recalledContent, recalledMsgType, msgIdStr, account.accountId, deletedThreadId]
-              );
+          const deletedByThread = markTelegramMessagesDeleted(db, account.accountId, ids, deletedThreadId, (line) => Logger.log(line));
+          if (deletedThreadId) {
+            if (ids.length > 0) {
+              EventBroadcaster.emit('event:messagesDeleted', {
+                zaloId: account.accountId,
+                messageIds: ids.map(String),
+                threadId: deletedThreadId,
+              });
+            }
+          } else {
+            // Common box: báo theo đúng hội thoại chứa tin. Không phát id chưa lưu (không có threadId) — renderer
+            // sẽ dò mọi hội thoại và đánh dấu nhầm bài kênh trùng số.
+            for (const [threadId, messageIds] of deletedByThread) {
+              EventBroadcaster.emit('event:messagesDeleted', { zaloId: account.accountId, messageIds, threadId });
+            }
+          }
+        }
+
+        // ── Đã đọc (telegramReadHistory.ts): Inbox = MÌNH đã đọc tin đến (máy khác) → số chưa đọc theo Telegram;
+        //    Outbox = NGƯỜI KHÁC đã đọc tin mình gửi → "đã xem". History = chat riêng / nhóm thường, Channel = siêu nhóm / kênh.
+        const readUpdate = parseTelegramReadUpdate(update, getCanonicalChatId);
+        if (readUpdate) {
+          try {
+            const result = applyTelegramReadUpdate(db, account.accountId, readUpdate);
+            if (readUpdate.direction === 'outbox') {
+              EventBroadcaster.emit('event:seen', {
+                zaloId: account.accountId,
+                threadId: readUpdate.chatId,
+                msgId: String(readUpdate.maxId),
+                channel: 'telegram_user',
+              });
             } else {
-              db.run(
-                `UPDATE messages SET msg_type = 'recalled', status = 'recalled', is_recalled = 1,
-                 recalled_content = CASE WHEN recalled_content IS NULL OR recalled_content = '' THEN ? ELSE recalled_content END,
-                 recalled_msg_type = CASE WHEN recalled_msg_type IS NULL OR recalled_msg_type = '' THEN ? ELSE recalled_msg_type END
-                 WHERE msg_id = ? AND owner_zalo_id = ? AND channel = 'telegram_user'`,
-                [recalledContent, recalledMsgType, msgIdStr, account.accountId]
-              );
-            }
-          }
-          if (ids.length > 0) {
-            EventBroadcaster.emit('event:messagesDeleted', {
-              zaloId: account.accountId,
-              messageIds: ids.map(String),
-              threadId: deletedThreadId,
-            });
-          }
-        }
-
-        // ── Read history (inbox = other party read our messages) ─────────────
-        if (update instanceof Api.UpdateReadHistoryInbox) {
-          try {
-            const peer = (update as any).peer;
-            const maxId = String(update.maxId || '');
-            if (peer && maxId) {
-              const readChatId = getCanonicalChatId(peer);
-              // Đánh dấu tin nhắn đã gửi (is_sent=1) là 'read' đến maxId
-              db.run(
-                `UPDATE messages SET status = 'read'
-                 WHERE owner_zalo_id = ? AND thread_id = ? AND channel = 'telegram_user'
-                   AND is_sent = 1 AND CAST(msg_id AS INTEGER) <= ? AND status != 'read'`,
-                [account.accountId, readChatId, Number(maxId)],
-              );
-              EventBroadcaster.emit('event:seen', {
-                zaloId: account.accountId,
-                threadId: readChatId,
-                msgId: maxId,
-                channel: 'telegram_user',
-              });
-              EventBroadcaster.emit('db:unreadChanged', { zaloId: account.accountId, source: 'telegram_read_inbox' });
+              // Có contactId + unread: renderer chỉ sửa đúng hội thoại (unread 0) thay vì tải lại cả danh sách
+              if (result.unread !== undefined) {
+                EventBroadcaster.emit('db:unreadChanged', {
+                  zaloId: account.accountId,
+                  contactId: readUpdate.chatId,
+                  unread: result.unread,
+                  source: 'telegram_read_inbox',
+                });
+              }
+              if (result.mentionCleared) {
+                EventBroadcaster.emit('db:contactFlagsChanged', {
+                  ownerZaloId: account.accountId,
+                  contactId: readUpdate.chatId,
+                  flags: { has_mention: 0 },
+                });
+              }
             }
           } catch (err: any) {
-            Logger.warn(`[TelegramUserListener] ReadHistoryInbox error: ${err.message}`);
-          }
-          return;
-        }
-
-        // ── Read history outbox (we read their messages on another device) ───
-        if (update instanceof Api.UpdateReadHistoryOutbox) {
-          try {
-            const peer = (update as any).peer;
-            if (peer) {
-              const readChatId = getCanonicalChatId(peer);
-              // Đánh dấu tin nhắn nhận được (is_sent=0) là 'read' và clear unread_count
-              db.run(
-                `UPDATE messages SET status = 'read'
-                 WHERE owner_zalo_id = ? AND thread_id = ? AND channel = 'telegram_user'
-                   AND is_sent = 0 AND status != 'read'`,
-                [account.accountId, readChatId],
-              );
-              db.run(
-                `UPDATE contacts SET unread_count = 0
-                 WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'telegram_user'`,
-                [account.accountId, readChatId],
-              );
-              EventBroadcaster.emit('event:seen', {
-                zaloId: account.accountId,
-                threadId: readChatId,
-                msgId: String(update.maxId || ''),
-                channel: 'telegram_user',
-              });
-              EventBroadcaster.emit('db:unreadChanged', { zaloId: account.accountId, source: 'telegram_read_outbox' });
-            }
-          } catch (err: any) {
-            Logger.warn(`[TelegramUserListener] ReadHistoryOutbox error: ${err.message}`);
+            Logger.warn(`[TelegramUserListener] Read update (${readUpdate.direction}) error: ${err.message}`);
           }
           return;
         }
@@ -3103,6 +4016,8 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
         Api.UpdateNewChannelMessage,
         Api.UpdateReadHistoryInbox,
         Api.UpdateReadHistoryOutbox,
+        Api.UpdateReadChannelInbox,
+        Api.UpdateReadChannelOutbox,
         Api.UpdatePinnedMessages,
         Api.UpdatePinnedChannelMessages,
         Api.UpdateUserStatus,
@@ -3137,28 +4052,26 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
       }
     }, new Raw({ types: [Api.UpdateNewMessage, Api.UpdateNewChannelMessage] }));
 
+    // Cuộc gọi Telegram: báo cuộc gọi đến (nghe trên điện thoại / Telegram, hoặc từ chối) và khi nó kết thúc.
+    client.addEventHandler(async (update: any) => {
+      if (listener.stopped || listener.client !== client) return;
+      try {
+        await handleTelegramPhoneCallUpdate(account.accountId, client, update?.phoneCall);
+      } catch (err: any) {
+        tgLog('warn', account.accountId, 'socket', `UpdatePhoneCall error: ${err.message}`);
+      }
+    }, new Raw({ types: [(Api as any).UpdatePhoneCall].filter(Boolean) }));
+
     Logger.log(`[TelegramUserListener] Connected for ${account.accountId}`);
     startHealthCheck(listener);
     startChannelPoller(listener);
 
     // Recover MTProto updates before recording the next global cursor. This
     // remains background work so a slow history backfill never blocks UI login.
-    synchronizeTelegramAccount(account.accountId, client, {
-      includeHistory: true,
-      recoverRecentChannels: true,
-    }).then(result => {
-      EventBroadcaster.emit('event:telegramSync', result.success
-        ? { zaloId: account.accountId, status: 'completed', inserted: result.inserted, pending: !result.historyComplete }
-        : { zaloId: account.accountId, status: 'failed', error: 'Không thể hoàn tất đồng bộ tin nhắn Telegram' },
-      );
-    }).catch(err => {
-      Logger.warn(`[TelegramUserListener] Telegram update synchronization failed: ${err.message}`);
-      EventBroadcaster.emit('event:telegramSync', {
-        zaloId: account.accountId,
-        status: 'failed',
-        error: 'Không thể hoàn tất đồng bộ tin nhắn Telegram',
-      });
-    });
+    // Running it as this client's catch-up gives a failed first pass the same
+    // backoff retry as a reconnect, instead of leaving the account without any
+    // catch-up until the next outage.
+    scheduleReconnectCatchUp(listener, client, 'full');
 
     // Establish membership separately from the bounded history sync. This is
     // required before a socket update from a minimally-described channel can
@@ -3180,6 +4093,10 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
     });
   } catch (err: any) {
     Logger.error(`[TelegramUserListener] Connection failed for ${account.accountId}: ${err.message}`);
+    // GramJS starts its update loop even when connect() fails, and a timed-out
+    // connect keeps retrying in the background. Shut this attempt down.
+    if (listener.client === client) listener.client = null;
+    await retireTelegramClient(client, 'connect_failed');
     scheduleReconnect(listener, 'connect', err);
     throw err;
   }
@@ -3234,7 +4151,12 @@ async function resolveTelegramServiceMember(
   return { id: userId, dName: displayName, avatar: cached?.avatar || '' };
 }
 
-async function handleServiceMessage(accountId: string, message: any, client?: TelegramClient): Promise<ProcessResult> {
+async function handleServiceMessage(
+  accountId: string,
+  message: any,
+  client?: TelegramClient,
+  source: TelegramIngressSource = 'socket',
+): Promise<ProcessResult> {
   const action = message.action;
   if (!action) return { status: 'ignored' };
 
@@ -3270,6 +4192,11 @@ async function handleServiceMessage(accountId: string, message: any, client?: Te
     if (persistedService) {
       return { status: 'duplicate', chatId: serviceChatId, messageId: serviceMsgId };
     }
+  }
+
+  // Cuộc gọi 1-1: thẻ cuộc gọi trong hội thoại (không phải dòng thông báo hệ thống của nhóm)
+  if (className === 'MessageActionPhoneCall') {
+    return persistTelegramCallServiceMessage(accountId, message, source);
   }
 
   let systemText = '';
@@ -3383,7 +4310,9 @@ async function handleServiceMessage(accountId: string, message: any, client?: Te
       threadId: serviceChatId,
     });
   } else {
-    Logger.log(`[TelegramUserListener] Service message: ${className} in ${serviceChatId}`);
+    // Tạo kênh / nhóm, đổi tự xoá tin nhắn, cuộc gọi nhóm… (câu chung, như khi lưu từ lịch sử)
+    systemText = describeTelegramServiceAction(message);
+    if (!systemText) Logger.log(`[TelegramUserListener] Service message: ${className} in ${serviceChatId}`);
   }
 
   // Save service message to DB (idempotent — P1.5)
@@ -3398,8 +4327,8 @@ async function handleServiceMessage(accountId: string, message: any, client?: Te
         db.run(`
           INSERT INTO messages
             (msg_id, owner_zalo_id, thread_id, thread_type, sender_id, content, msg_type, timestamp, is_sent, status, channel, attachments, topic_id)
-          VALUES (?, ?, ?, 1, 'system', ?, 'system', ?, 0, 'received', 'telegram_user', ?, ?)
-        `, [serviceMsgId, accountId, serviceChatId, systemText, serviceTimestamp, JSON.stringify(systemMembers), getForumTopicId(message)]);
+          VALUES (?, ?, ?, ?, 'system', ?, 'system', ?, 0, 'received', 'telegram_user', ?, ?)
+        `, [serviceMsgId, accountId, serviceChatId, serviceChatId.startsWith('-') ? 1 : 0, systemText, serviceTimestamp, JSON.stringify(systemMembers), getForumTopicId(message)]);
 
         // Emit group event only for new service messages
         if (groupEventType && (groupEventType === 'member_join' || groupEventType === 'member_leave')) {
@@ -3437,7 +4366,7 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
   // GramJS delivers these as NewMessageEvent where message is a MessageService.
   // Handle them separately from normal messages.
   if ((message as any).className === 'MessageService') {
-    const result = await handleServiceMessage(accountId, message, client);
+    const result = await handleServiceMessage(accountId, message, client, source);
     const serviceChatId = result.chatId || deriveChatIdFromRawMessage(message) || '';
     if (serviceChatId.startsWith('-100')) {
       tgChannelRealtimeTrace('SERVICE_MESSAGE_HANDLED', accountId, {
@@ -3624,22 +4553,7 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
           [replyToId, accountId, chatId]
         );
         if (orig) {
-          // Resolve sender name from group members cache or peer registry
-          let senderName = '';
-          if (orig.sender_id) {
-            const member = db.queryOne<any>(
-              `SELECT display_name FROM page_group_member WHERE owner_zalo_id = ? AND group_id = ? AND member_id = ?`,
-              [accountId, chatId, orig.sender_id]
-            );
-            senderName = member?.display_name || '';
-            if (!senderName) {
-              const peer = db.queryOne<any>(
-                `SELECT display_name FROM telegram_peers WHERE owner_zalo_id = ? AND peer_id = ?`,
-                [accountId, orig.sender_id]
-              );
-              senderName = peer?.display_name || '';
-            }
-          }
+          const senderName = resolveTelegramQuoteSenderName(db, accountId, chatId, orig.sender_id);
           quoteData = buildTelegramQuoteData({
             msgId: replyToId,
             content: orig.content,
@@ -3657,12 +4571,8 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
   const db = DatabaseService.getInstance();
   if (!db) return { status: 'failed', chatId, messageId };
 
-  const displayContent = content || (() => {
-    // Chỉ hiện placeholder cho audio (có ý nghĩa), còn lại empty nếu không có caption
-    if (msgType === 'audio') return '🎵 Audio';
-    if (msgType !== 'text') return '';
-    return '';
-  })();
+  // Chỉ hiện placeholder cho audio (có ý nghĩa), còn lại empty nếu không có caption
+  const displayContent = telegramDisplayContent(content, msgType);
 
   const inlineButtons = parseInlineButtons(message);
 
@@ -3929,7 +4839,15 @@ function queueTelegramDownload<T>(accountId: string, resourceKey: string, operat
   if (existing) return existing as Promise<T>;
 
   const previous = mediaDownloadQueues.get(accountId) || Promise.resolve();
-  const task = previous.catch(() => undefined).then(() => operation()) as Promise<T>;
+  // The queue is strictly serial per account. GramJS downloads have no
+  // client-side timeout, so one transfer stuck on a dead file-DC sender used
+  // to stall every later image, sticker and avatar for good. The transfer
+  // itself keeps running; only the queue moves on.
+  const task = previous.catch(() => undefined).then(() => withDeadline(
+    Promise.resolve().then(operation),
+    MEDIA_DOWNLOAD_DEADLINE_MS,
+    `TELEGRAM_DOWNLOAD_TIMEOUT ${resourceKey}`,
+  )) as Promise<T>;
   let settled!: Promise<T>;
   settled = task.finally(() => {
     if (mediaDownloadQueues.get(accountId) === settled) mediaDownloadQueues.delete(accountId);
@@ -3946,6 +4864,31 @@ function downloadProfilePhotoQueued(accountId: string, client: TelegramClient, p
     `avatar:${resourceId}:${isBig ? 'big' : 'small'}`,
     () => client.downloadProfilePhoto(peer, { isBig }),
   );
+}
+
+/**
+ * What to download for a message. A link preview (MessageMediaWebPage) only shows its photo,
+ * but GramJS downloadMedia(message) picks `webpage.document || webpage.photo`: for YouTube links
+ * that is the whole video (100–800 MB), which was saved as images/*.jpg and rendered as a broken
+ * image — and every repair attempt downloaded it again.
+ */
+function getTelegramDownloadTarget(message: any): any {
+  const media = message?.media;
+  if (media?.className === 'MessageMediaWebPage') {
+    const photo = media?.webpage?.photo;
+    if (photo?.className === 'Photo') return photo;
+  }
+  return message;
+}
+
+/** JPEG / PNG / GIF / WebP signature: a "photo" download must decode in <img>. */
+function isImageBuffer(buffer: Buffer): boolean {
+  if (!buffer || buffer.length < 12) return false;
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return true;
+  if (buffer[0] === 0x89 && buffer.subarray(1, 4).toString('latin1') === 'PNG') return true;
+  const head = buffer.subarray(0, 4).toString('latin1');
+  if (head === 'GIF8') return true;
+  return head === 'RIFF' && buffer.subarray(8, 12).toString('latin1') === 'WEBP';
 }
 
 function downloadMediaForMessage(
@@ -3976,8 +4919,8 @@ async function downloadMediaForMessageNow(
   if (!db) return null;
 
   try {
-    // Download media buffer từ GramJS
-    const mediaResult = await client.downloadMedia(message);
+    // Download media buffer từ GramJS (link preview → only its photo, never the linked document)
+    const mediaResult = await client.downloadMedia(getTelegramDownloadTarget(message));
     if (!mediaResult || mediaResult.length === 0) {
       tgLog('warn', accountId, 'history', 'MEDIA_DOWNLOAD_EMPTY', {
         chatId: threadId,
@@ -3987,6 +4930,15 @@ async function downloadMediaForMessageNow(
       return null;
     }
     const buffer = Buffer.from(mediaResult);
+    if (msgType === 'photo' && !isImageBuffer(buffer)) {
+      // Never store a video/document as images/*.jpg (broken <img>, huge file).
+      tgLog('warn', accountId, 'history', 'MEDIA_DOWNLOAD_NOT_IMAGE', {
+        chatId: threadId,
+        messageId,
+        bytes: buffer.length,
+      });
+      return null;
+    }
 
     // Determine file extension
     const ext = getMediaExtension(msgType, message);
@@ -4471,12 +5423,10 @@ async function recoverTelegramUpdateDifference(accountId: string, client: Telegr
   }
 }
 
-async function saveCurrentTelegramUpdateState(accountId: string, client: TelegramClient): Promise<void> {
-  const db = DatabaseService.getInstance();
-  if (!db) return;
+async function fetchTelegramUpdateState(client: TelegramClient): Promise<TelegramUpdateState> {
   const { Api } = require('telegram');
   const state = await client.invoke(new Api.updates.GetState());
-  db.saveTelegramUpdateState(accountId, toTelegramUpdateState(state, { pts: 0, qts: 0, date: 0, seq: 0 }));
+  return toTelegramUpdateState(state, { pts: 0, qts: 0, date: 0, seq: 0 });
 }
 
 type TelegramHistorySyncResult = {
@@ -4496,21 +5446,22 @@ async function synchronizeTelegramAccount(
   client: TelegramClient,
   options: { includeHistory?: boolean; recoverRecentChannels?: boolean } = {}
 ): Promise<TelegramAccountSyncResult> {
-  if (recoveringUpdateAccounts.has(accountId)) {
+  if (isAccountLockHeld(recoveringUpdateAccounts, accountId)) {
     // TG-04: a reconnect that lands while a previous recovery is still
     // finishing must not be reported as a failed sync. Wait (bounded) for the
     // current owner to release the account instead of failing fast — that
-    // made reconnect look broken while recovery was perfectly healthy.
+    // made reconnect look broken while recovery was perfectly healthy. A lock
+    // owned by a retired client is not waited for at all (isAccountLockHeld).
     const LOCK_WAIT_MS = 60_000;
     const deadline = Date.now() + LOCK_WAIT_MS;
-    while (recoveringUpdateAccounts.has(accountId) && Date.now() < deadline) {
+    while (isAccountLockHeld(recoveringUpdateAccounts, accountId) && Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, 100));
     }
-    if (recoveringUpdateAccounts.has(accountId)) {
+    if (isAccountLockHeld(recoveringUpdateAccounts, accountId)) {
       return { success: false, historyComplete: false, inserted: 0 };
     }
   }
-  recoveringUpdateAccounts.add(accountId);
+  acquireAccountLock(recoveringUpdateAccounts, accountId, client);
   try {
     // Emit initial syncing status with recovery queue stats
     const db = DatabaseService.getInstance();
@@ -4518,6 +5469,8 @@ async function synchronizeTelegramAccount(
     // was in flight. Such rows otherwise remain `draining` forever and will
     // never be considered by either the backlog or the live recovery lane.
     db?.requeueStaleChannelRecoveries(accountId);
+    // Rows of channels the account is no longer in stay, parked as not_member.
+    reconcileRecoveryMembership(accountId);
     const stats = db?.getChannelRecoveryStats(accountId);
     if (stats && (stats.pending + stats.draining) > 0) {
       EventBroadcaster.emit('event:telegramSync', {
@@ -4530,6 +5483,21 @@ async function synchronizeTelegramAccount(
     }
 
     const differenceResult = await recoverTelegramUpdateDifference(accountId, client);
+    // Without a usable common-box cursor (never stored, or DifferenceTooLong),
+    // snapshot the server state BEFORE the history pass and store that
+    // snapshot once the pass has run. getDifference from it covers everything
+    // after it, so storing it cannot skip an update; the history pass and the
+    // channel queue cover what came before. This used to be stored only after
+    // a *complete* history pass, which never happens for accounts with 200 or
+    // more dialogs, so those accounts never used getDifference at all.
+    let seedState: TelegramUpdateState | null = null;
+    if (differenceResult === 'no_state' || differenceResult === 'too_long') {
+      try {
+        seedState = await fetchTelegramUpdateState(client);
+      } catch (err: any) {
+        Logger.warn(`[TelegramUserListener] GetState failed for ${accountId}: ${err.message}`);
+      }
+    }
     // Channel cursors are the realtime catch-up path. Run them before the broad
     // dialog history backfill, which may hit messages.GetHistory FLOOD_WAIT.
     const channelResult = await recoverChannelUpdates(accountId, client, {
@@ -4546,10 +5514,13 @@ async function synchronizeTelegramAccount(
     }
 
     const historyResult = await fetchMissedMessages(accountId, client);
-    // Never advance a cursor after DifferenceTooLong or a failed difference:
-    // the bounded dialog backfill may still have scheduled another pass.
-    if (historyResult.success && historyResult.complete && differenceResult === 'no_state') {
-      await saveCurrentTelegramUpdateState(accountId, client);
+    // A failed difference keeps its stored cursor (it will be retried). Only a
+    // missing/too-long cursor is replaced, and only by the pre-history snapshot.
+    // A pass superseded by a newer client must not overwrite that client's cursor.
+    const stillOwner = recoveringUpdateAccounts.get(accountId)?.client === client && !retiredClients.has(client);
+    if (seedState && historyResult.success && stillOwner) {
+      DatabaseService.getInstance()?.saveTelegramUpdateState(accountId, seedState);
+      Logger.log(`[TelegramUserListener] Stored Telegram update cursor for ${accountId} (pts=${seedState.pts})`);
     }
     DatabaseService.getInstance()?.repairTelegramLastMessagePreviews(accountId, 'telegram_user');
     // TG-06: history succeeding does not launder a failed channel recovery
@@ -4560,7 +5531,7 @@ async function synchronizeTelegramAccount(
       inserted: historyResult.inserted,
     };
   } finally {
-    recoveringUpdateAccounts.delete(accountId);
+    releaseAccountLock(recoveringUpdateAccounts, accountId, client);
     const listener = activeListeners.get(accountId);
     if (listener?.client === client && listener.client.connected && !listener.stopped) {
       pollChannelUpdates(listener).catch(() => {});
@@ -4570,7 +5541,7 @@ async function synchronizeTelegramAccount(
 
 async function waitForTelegramAccountSync(accountId: string, timeoutMs = 30_000): Promise<boolean> {
   const startedAt = Date.now();
-  while (recoveringUpdateAccounts.has(accountId) || syncingAccounts.has(accountId)) {
+  while (isAccountLockHeld(recoveringUpdateAccounts, accountId) || isAccountLockHeld(syncingAccounts, accountId)) {
     if (Date.now() - startedAt >= timeoutMs) return false;
     await new Promise(resolve => setTimeout(resolve, 100));
   }
@@ -4710,7 +5681,7 @@ async function recoverChannelUpdates(
       const dialogs = await client.getDialogs({ limit: MAX_DIALOG_PAGES * DIALOG_PAGE_SIZE });
 
       for (let page = 0; page < MAX_DIALOG_PAGES; page++) {
-        if (listener_stopped(accountId)) break;
+        if (listener_stopped(accountId) || !isCurrentTelegramClient(accountId, client)) break;
         try {
           const pageDialogs = dialogs.slice(page * DIALOG_PAGE_SIZE, (page + 1) * DIALOG_PAGE_SIZE);
           if (pageDialogs.length === 0) break;
@@ -4865,10 +5836,132 @@ async function repairAccessHash(
   return false;
 }
 
+const historyInsertThreadIds = new Map<string, Set<string>>();
+const historyInsertTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/**
+ * The history pass persists rows without event:message (that event also
+ * drives workflows and notifications). Tell the renderer which conversations
+ * gained rows so it can merge them into an open chat instead of waiting for
+ * the whole pass, coalesced to one event per account every 500ms. This also
+ * covers a socket copy that arrives after history stored the same message and
+ * is therefore deduplicated without a UI event.
+ */
+function noteTelegramHistoryInsert(accountId: string, chatId: string): void {
+  let threadIds = historyInsertThreadIds.get(accountId);
+  if (!threadIds) {
+    threadIds = new Set<string>();
+    historyInsertThreadIds.set(accountId, threadIds);
+  }
+  threadIds.add(chatId);
+  if (historyInsertTimers.has(accountId)) return;
+  historyInsertTimers.set(accountId, setTimeout(() => {
+    historyInsertTimers.delete(accountId);
+    const changed = [...(historyInsertThreadIds.get(accountId) || [])];
+    historyInsertThreadIds.delete(accountId);
+    if (changed.length === 0) return;
+    EventBroadcaster.emit('db:unreadChanged', {
+      zaloId: accountId,
+      source: 'telegram_history_batch',
+      threadIds: changed,
+    });
+  }, 500));
+}
+
+/**
+ * Store history rows the way the history pass does: idempotent persist, the
+ * conversation preview only (unread comes from the dialog), media for recent
+ * rows, and no event:message (that event also drives workflows and desktop
+ * notifications). Returns how many rows were newly inserted.
+ */
+async function persistTelegramHistoryMessages(
+  accountId: string,
+  client: TelegramClient,
+  chatId: string,
+  dialog: any,
+  messages: any[],
+): Promise<number> {
+  const db = DatabaseService.getInstance();
+  if (!db) return 0;
+  // Sort ASC by timestamp — message cuối cùng trong loop sẽ là mới nhất
+  messages.sort((a: any, b: any) => (a.date || 0) - (b.date || 0));
+  let inserted = 0;
+
+  for (const msg of messages) {
+    const msgTimestamp = (msg.date || 0) * 1000;
+    const messageId = String(msg.id);
+    if (!messageId) continue;
+
+    // Phase B: Use persistTelegramMessage for idempotency
+    const senderId = String(msg.senderId?.valueOf() || '');
+    const isSelf = msg.out || false;
+    const isGroup = dialog.isChannel || dialog.isGroup;
+    const threadType = isGroup ? 1 : 0;
+
+    // Resolve sender name for group last_message preview
+    let senderName = '';
+    if (isGroup && !isSelf) {
+      try {
+        const sender = await msg.getSender?.();
+        if (sender) {
+          senderName = (sender as any).firstName
+            ? [(sender as any).firstName, (sender as any).lastName].filter(Boolean).join(' ')
+            : (sender as any).title || (sender as any).username || '';
+        }
+      } catch {}
+    }
+
+    const dialogPeerType = dialog.entity
+      ? getTelegramPeerType(dialog.entity)
+      : db.getTelegramPeer(accountId, chatId)?.peer_type as TelegramPeerType | undefined;
+    const { content, msgType, attachments } = normalizeTelegramMessageMedia(msg, dialogPeerType);
+    const reactions = normalizeTelegramReactions((msg as any).reactions, accountId);
+
+    const displayContent = telegramDisplayContent(content, msgType);
+
+    if (!displayContent && msgType === 'text') continue;
+
+    // Use idempotent persist — returns inserted/duplicate
+    const result = persistTelegramMessage(db, {
+      msgId: messageId, accountId, chatId, threadType,
+      senderId, content: displayContent, msgType, timestamp: msgTimestamp,
+      isSelf, attachments, topicId: getForumTopicId(msg), reactions,
+    });
+
+    // Side effects only on actual insert (P1.5)
+    if (result.status === 'inserted') {
+      // Media download for recent messages only
+      if (attachments.some((attachment: any) => !isTelegramMetaAttachment(attachment)) && client) {
+        const isRecent = (Date.now() - msgTimestamp) < 24 * 60 * 60 * 1000;
+        if (isRecent) {
+          downloadMediaForMessage(accountId, client, msg, messageId, msgType, chatId).catch(() => {});
+        }
+      }
+
+      // Update contacts — chỉ cập nhật last_message, KHÔNG increment unread_count
+      // (unread_count đã được đồng bộ chính xác từ Telegram dialog trong persistTelegramDialogState)
+      const chatTitle = dialog.title || chatId;
+      db.run(`
+        INSERT INTO contacts (owner_zalo_id, contact_id, display_name, avatar_url, is_friend, contact_type, unread_count, last_message, last_message_time, channel)
+        VALUES (?, ?, ?, '', 0, ?, 0, ?, ?, 'telegram_user')
+        ON CONFLICT(owner_zalo_id, contact_id) DO UPDATE SET
+          display_name = CASE WHEN excluded.display_name != '' AND contacts.display_name = '' THEN excluded.display_name ELSE contacts.display_name END,
+          last_message = CASE WHEN excluded.last_message_time >= COALESCE(contacts.last_message_time, 0) THEN excluded.last_message ELSE contacts.last_message END,
+          last_message_time = CASE WHEN excluded.last_message_time >= COALESCE(contacts.last_message_time, 0) THEN excluded.last_message_time ELSE contacts.last_message_time END,
+          channel = 'telegram_user'
+      `, [accountId, chatId, chatTitle, isGroup ? 'group' : 'user', getTelegramMessagePreview(msgType, content), msgTimestamp]);
+
+      inserted++;
+      noteTelegramHistoryInsert(accountId, chatId);
+    }
+  }
+  return inserted;
+}
+
 async function fetchMissedMessages(accountId: string, client: TelegramClient): Promise<TelegramHistorySyncResult> {
   const db = DatabaseService.getInstance();
-  if (!db || syncingAccounts.has(accountId)) return { success: false, complete: false, inserted: 0 };
-  syncingAccounts.add(accountId);
+  if (!db || isAccountLockHeld(syncingAccounts, accountId)) return { success: false, complete: false, inserted: 0 };
+  acquireAccountLock(syncingAccounts, accountId, client);
   let needsFollowUpSync = false;
   let inventoryTruncated = false;
   let archiveFetchFailed = false;
@@ -4876,11 +5969,13 @@ async function fetchMissedMessages(accountId: string, client: TelegramClient): P
   try {
     // Lấy thời gian tin nhắn cuối cùng đã lưu trong DB
     normalizeLegacyTelegramContacts(accountId);
-    const existingCount = db.queryOne<any>(
-      `SELECT COUNT(*) as count FROM messages WHERE owner_zalo_id = ? AND channel = 'telegram_user'`,
+    // Chỉ cần biết "đã từng có tin Telegram nào chưa" → EXISTS dừng ở dòng đầu
+    // thay vì COUNT(*) quét toàn bộ messages của tài khoản.
+    const hasExisting = db.queryOne<any>(
+      `SELECT 1 AS one FROM messages WHERE owner_zalo_id = ? AND channel = 'telegram_user' LIMIT 1`,
       [accountId]
     );
-    const isFirstSync = (existingCount?.count || 0) === 0;
+    const isFirstSync = !hasExisting;
 
     // Lấy tất cả cuộc hội thoại (dialogs) — limit cao hơn cho lần đầu
     const dialogLimit = isFirstSync ? INITIAL_DIALOG_LIMIT : RECENT_DIALOG_LIMIT;
@@ -4918,8 +6013,15 @@ async function fetchMissedMessages(accountId: string, client: TelegramClient): P
     }
 
     let totalSynced = 0;
+    let retiredMidPass = false;
 
     for (const dialog of allDialogs) {
+      // A reconnect retired this client: its requests can no longer be sent,
+      // and the replacement client runs its own pass.
+      if (retiredClients.has(client)) {
+        retiredMidPass = true;
+        break;
+      }
       const chatId = getCanonicalChatId(dialog.id);
       if (!chatId) continue;
       if (dialog.entity) cacheTelegramPeer(accountId, chatId, dialog.entity);
@@ -4961,84 +6063,7 @@ async function fetchMissedMessages(accountId: string, client: TelegramClient): P
         }
       }
 
-      // Sort ASC by timestamp — message cuối cùng trong loop sẽ là mới nhất
-      messages.sort((a: any, b: any) => (a.date || 0) - (b.date || 0));
-
-      for (const msg of messages) {
-        const msgTimestamp = (msg.date || 0) * 1000;
-        const messageId = String(msg.id);
-        if (!messageId) continue;
-
-        // Phase B: Use persistTelegramMessage for idempotency
-        const senderId = String(msg.senderId?.valueOf() || '');
-        const isSelf = msg.out || false;
-        const isGroup = dialog.isChannel || dialog.isGroup;
-        const threadType = isGroup ? 1 : 0;
-
-        // Resolve sender name for group last_message preview
-        let senderName = '';
-        if (isGroup && !isSelf) {
-          try {
-            const sender = await msg.getSender?.();
-            if (sender) {
-              senderName = (sender as any).firstName
-                ? [(sender as any).firstName, (sender as any).lastName].filter(Boolean).join(' ')
-                : (sender as any).title || (sender as any).username || '';
-            }
-          } catch {}
-        }
-
-        const dialogPeerType = dialog.entity
-          ? getTelegramPeerType(dialog.entity)
-          : db.getTelegramPeer(accountId, chatId)?.peer_type as TelegramPeerType | undefined;
-        const { content, msgType, attachments } = normalizeTelegramMessageMedia(msg, dialogPeerType);
-        const reactions = normalizeTelegramReactions((msg as any).reactions, accountId);
-
-        const displayContent = content || (() => {
-          if (msgType === 'audio') return '🎵 Audio';
-          if (msgType !== 'text') return '';
-          return '';
-        })();
-
-        if (!displayContent && msgType === 'text') continue;
-
-        // Use idempotent persist — returns inserted/duplicate
-        const result = persistTelegramMessage(db, {
-          msgId: messageId, accountId, chatId, threadType,
-          senderId, content: displayContent, msgType, timestamp: msgTimestamp,
-          isSelf, attachments, topicId: getForumTopicId(msg), reactions,
-        });
-
-        // Side effects only on actual insert (P1.5)
-        if (result.status === 'inserted') {
-          // Media download for recent messages only
-          if (attachments.some((attachment: any) =>
-            attachment.type !== 'telegram_post'
-            && attachment.type !== 'telegram_grouped_media'
-            && attachment.type !== 'custom_emoji'
-          ) && client) {
-            const isRecent = (Date.now() - msgTimestamp) < 24 * 60 * 60 * 1000;
-            if (isRecent) {
-              downloadMediaForMessage(accountId, client, msg, messageId, msgType, chatId).catch(() => {});
-            }
-          }
-
-          // Update contacts — chỉ cập nhật last_message, KHÔNG increment unread_count
-          // (unread_count đã được đồng bộ chính xác từ Telegram dialog trong persistTelegramDialogState)
-          const chatTitle = dialog.title || chatId;
-          db.run(`
-            INSERT INTO contacts (owner_zalo_id, contact_id, display_name, avatar_url, is_friend, contact_type, unread_count, last_message, last_message_time, channel)
-            VALUES (?, ?, ?, '', 0, ?, 0, ?, ?, 'telegram_user')
-            ON CONFLICT(owner_zalo_id, contact_id) DO UPDATE SET
-              display_name = CASE WHEN excluded.display_name != '' AND contacts.display_name = '' THEN excluded.display_name ELSE contacts.display_name END,
-              last_message = CASE WHEN excluded.last_message_time >= COALESCE(contacts.last_message_time, 0) THEN excluded.last_message ELSE contacts.last_message END,
-              last_message_time = CASE WHEN excluded.last_message_time >= COALESCE(contacts.last_message_time, 0) THEN excluded.last_message_time ELSE contacts.last_message_time END,
-              channel = 'telegram_user'
-          `, [accountId, chatId, chatTitle, isGroup ? 'group' : 'user', getTelegramMessagePreview(msgType, content), msgTimestamp]);
-
-          totalSynced++;
-        }
-      }
+      totalSynced += await persistTelegramHistoryMessages(accountId, client, chatId, dialog, messages);
     }
 
     if (totalSynced > 0) {
@@ -5054,28 +6079,21 @@ async function fetchMissedMessages(accountId: string, client: TelegramClient): P
     // A failed archive leg or a truncated dialog list is partial work — the
     // scheduler needs to see that, not a green checkmark.
     return {
-      success: !archiveFetchFailed,
-      complete: !needsFollowUpSync && !inventoryTruncated && !archiveFetchFailed,
+      success: !archiveFetchFailed && !retiredMidPass,
+      complete: !needsFollowUpSync && !inventoryTruncated && !archiveFetchFailed && !retiredMidPass,
       inserted: totalSynced,
     };
   } catch (err: any) {
     Logger.warn(`[TelegramUserListener] fetchMissedMessages error: ${err.message}`);
     return { success: false, complete: false, inserted: 0 };
   } finally {
-    syncingAccounts.delete(accountId);
-    if (needsFollowUpSync && activeListeners.get(accountId)?.client === client) {
+    releaseAccountLock(syncingAccounts, accountId, client);
+    const followUpListener = activeListeners.get(accountId);
+    if (needsFollowUpSync && followUpListener && isCurrentTelegramClient(accountId, client)) {
+      // Runs after the pass that called us (or reruns it once it finishes)
+      // instead of racing it for the account lock.
       setTimeout(() => {
-        synchronizeTelegramAccount(accountId, client, {
-          includeHistory: true,
-          recoverRecentChannels: true,
-        }).then(result => {
-          EventBroadcaster.emit('event:telegramSync', result.success
-            ? { zaloId: accountId, status: 'completed', inserted: result.inserted, pending: !result.historyComplete }
-            : { zaloId: accountId, status: 'failed', error: 'Không thể hoàn tất đồng bộ tin nhắn Telegram' },
-          );
-        }).catch(err => {
-          Logger.warn(`[TelegramUserListener] Follow-up recovery failed: ${err.message}`);
-        });
+        if (isCurrentTelegramClient(accountId, client)) scheduleReconnectCatchUp(followUpListener, client, 'full');
       }, 1000);
     }
   }
@@ -5678,12 +6696,22 @@ export async function sendMessage(accountId: string, chatId: string, text: strin
     // Build quote_data nếu reply
     let quoteData: string | null = null;
     if (replyToMsgId) {
-      const dbQuote = DatabaseService.getInstance()?.queryOne<any>(
-        `SELECT content, msg_type, sender_id FROM messages WHERE msg_id = ? AND owner_zalo_id = ? AND thread_id = ? AND channel = 'telegram_user'`,
+      const quoteDb = DatabaseService.getInstance();
+      const dbQuote = quoteDb?.queryOne<any>(
+        `SELECT content, msg_type, sender_id, attachments, local_paths FROM messages WHERE msg_id = ? AND owner_zalo_id = ? AND thread_id = ? AND channel = 'telegram_user'`,
         [replyToMsgId, accountId, chatId]
       );
       if (dbQuote) {
-        quoteData = JSON.stringify({ msgId: replyToMsgId, msg: dbQuote.content || '', senderId: dbQuote.sender_id || '', msgType: dbQuote.msg_type || 'text' });
+        // Cùng dạng với tin nhận: có tên người gửi (fromD) và ảnh xem trước của tin gốc
+        quoteData = buildTelegramQuoteData({
+          msgId: replyToMsgId,
+          content: dbQuote.content,
+          msgType: dbQuote.msg_type,
+          senderId: dbQuote.sender_id,
+          senderName: resolveTelegramQuoteSenderName(quoteDb, accountId, chatId, dbQuote.sender_id),
+          attachments: dbQuote.attachments,
+          localPaths: dbQuote.local_paths,
+        });
       } else {
         quoteData = JSON.stringify({ msgId: replyToMsgId, msg: '', senderId: '', msgType: 'text' });
       }
@@ -5696,13 +6724,16 @@ export async function sendMessage(accountId: string, chatId: string, text: strin
         user_id: String(mention.uid || ''),
       }))
       .filter((mention) => mention.user_id && mention.length > 0 && mention.offset + mention.length <= text.length);
+    // Kênh phát tin: tin vừa đăng hiện ngay dạng "Bài đăng kênh" (trước đây chỉ sau lần đồng bộ kế tiếp)
+    const postAttachment = sentChannelPostAttachment(accountId, chatId, result);
+    const rowAttachments = postAttachment ? [postAttachment, ...mentionAttachments] : mentionAttachments;
     const db = DatabaseService.getInstance();
     if (db) {
       db.run(`
         INSERT OR IGNORE INTO messages
           (msg_id, owner_zalo_id, thread_id, thread_type, sender_id, content, msg_type, timestamp, is_sent, attachments, status, channel, reply_to_id, quote_data)
         VALUES (?, ?, ?, ?, ?, ?, 'text', ?, 1, ?, 'sent', 'telegram_user', ?, ?)
-      `, [msgId, accountId, chatId, threadType, accountId, text, now, JSON.stringify(mentionAttachments), replyToMsgId || null, quoteData]);
+      `, [msgId, accountId, chatId, threadType, accountId, text, now, JSON.stringify(rowAttachments), replyToMsgId || null, quoteData]);
 
       // Update contacts (last_message, last_message_time) — đảm bảo conversation list cập nhật ngay
       db.run(`
@@ -5735,7 +6766,7 @@ export async function sendMessage(accountId: string, chatId: string, text: strin
           ts: String(now),
           replyToId: replyToMsgId || undefined,
           quoteData: quoteData || undefined,
-          attachments: mentionAttachments,
+          attachments: rowAttachments,
         },
       },
     });
@@ -6070,6 +7101,8 @@ export async function getMessages(
 
       const cachedPeerType = db?.getTelegramPeer(accountId, chatId)?.peer_type as TelegramPeerType | undefined;
       const { content, msgType, attachments } = normalizeTelegramMessageMedia(msg, cachedPeerType);
+      // Tin hệ thống không có câu hiển thị → không lưu (trước đây thành tin / bài đăng rỗng)
+      if ((msg as any).className === 'MessageService' && !content) continue;
       const reactions = normalizeTelegramReactions((msg as any).reactions, accountId);
 
       // Reply detection
@@ -6082,18 +7115,10 @@ export async function getMessages(
         if (rawOriginal) {
           const originalMedia = normalizeTelegramMessageMedia(rawOriginal, cachedPeerType);
           const origSenderId = String(rawOriginal.senderId?.valueOf() || '');
-          // Resolve sender name from raw message entities or group members
-          let origSenderName = '';
-          const origSender = (rawOriginal as any).sender || (rawOriginal as any).fromId;
-          if (origSender?.firstName) {
-            origSenderName = [origSender.firstName, origSender.lastName].filter(Boolean).join(' ');
-          }
+          // Tên người gửi: entity đi kèm trang lịch sử (người dùng / kênh) → DB
+          let origSenderName = telegramEntityName((rawOriginal as any).sender);
           if (!origSenderName && origSenderId) {
-            const member = db?.queryOne<any>(
-              `SELECT display_name FROM page_group_member WHERE owner_zalo_id = ? AND group_id = ? AND member_id = ?`,
-              [accountId, chatId, origSenderId]
-            );
-            origSenderName = member?.display_name || '';
+            origSenderName = resolveTelegramQuoteSenderName(db, accountId, chatId, origSenderId);
           }
           quoteData = buildTelegramQuoteData({
             msgId: replyToId,
@@ -6110,15 +7135,7 @@ export async function getMessages(
             [replyToId, accountId, chatId],
           );
           if (original) {
-            // Resolve sender name from group members
-            let origSenderName2 = '';
-            if (original.sender_id) {
-              const member2 = db?.queryOne<any>(
-                `SELECT display_name FROM page_group_member WHERE owner_zalo_id = ? AND group_id = ? AND member_id = ?`,
-                [accountId, chatId, original.sender_id]
-              );
-              origSenderName2 = member2?.display_name || '';
-            }
+            const origSenderName2 = resolveTelegramQuoteSenderName(db, accountId, chatId, original.sender_id);
             quoteData = buildTelegramQuoteData({
               msgId: replyToId,
               content: original.content,
@@ -6168,16 +7185,18 @@ export async function getMessages(
           `, [msgId, accountId, chatId, chatId.startsWith('-') ? 1 : 0, senderId, content, msgType, timestamp, isSelf ? 1 : 0, attachments.length ? JSON.stringify(attachments) : '[]', JSON.stringify(reactions), replyToId || null, quoteData || null, topicId || null]);
           // Repair legacy API-synced rows without replaying contact/unread/UI
           // side effects. local_paths remains untouched.
+          // Tin hệ thống lưu nhầm thành tin / "bài đăng kênh" rỗng ở bản cũ → sửa thành dòng thông báo
           db.run(`
             UPDATE messages
-            SET attachments = CASE WHEN ? != '[]' THEN ? ELSE attachments END,
+            SET attachments = CASE WHEN ? = 'system' THEN '[]' WHEN ? != '[]' THEN ? ELSE attachments END,
                 msg_type = CASE WHEN msg_type = 'text' AND ? != 'text' THEN ? ELSE msg_type END,
+                content = CASE WHEN ? = 'system' AND COALESCE(content, '') = '' THEN ? ELSE content END,
                 reactions = ?,
                 reply_to_id = ?,
                 quote_data = COALESCE(quote_data, ?),
                 topic_id = COALESCE(topic_id, ?)
             WHERE msg_id = ? AND owner_zalo_id = ? AND thread_id = ? AND channel = 'telegram_user'
-          `, [JSON.stringify(attachments), JSON.stringify(attachments), msgType, msgType, JSON.stringify(reactions), replyToId || null, quoteData || null, topicId || null, msgId, accountId, chatId]);
+          `, [msgType, JSON.stringify(attachments), JSON.stringify(attachments), msgType, msgType, msgType, content, JSON.stringify(reactions), replyToId || null, quoteData || null, topicId || null, msgId, accountId, chatId]);
         } catch {}
       }
 
@@ -6300,15 +7319,7 @@ async function repairMessageQuotesNow(
       [item.replyToId, accountId, chatId],
     );
     if (original) {
-      // Resolve sender name from group members
-      let senderName = '';
-      if (original.sender_id) {
-        const member = db.queryOne<any>(
-          `SELECT display_name FROM page_group_member WHERE owner_zalo_id = ? AND group_id = ? AND member_id = ?`,
-          [accountId, chatId, original.sender_id]
-        );
-        senderName = member?.display_name || '';
-      }
+      const senderName = resolveTelegramQuoteSenderName(db, accountId, chatId, original.sender_id);
       const quoteData = buildTelegramQuoteData({
         msgId: item.replyToId,
         content: original.content,
@@ -6643,6 +7654,48 @@ async function repairMessageMediaNow(
 }
 
 /**
+ * Bản ghi cũ thiếu thông tin thẻ link (lưu trước khi có tiêu đề / mô tả, hoặc video link chưa có thẻ): lấy lại các tin
+ * từ Telegram trong 1 RPC cho cả lô (tối đa 100), chuẩn hoá lại attachments — KHÔNG tải media, không đụng nội dung,
+ * số chưa đọc hay sự kiện tin mới. Renderer gom theo hội thoại khi thẻ hiện ra (telegramPreviewRefresh.ts).
+ */
+export async function refreshMessageAttachments(
+  accountId: string,
+  chatId: string,
+  messageIds: string[],
+): Promise<{ success: boolean; messages?: Array<{ messageId: string; attachments: any[] }>; error?: string }> {
+  const listener = activeListeners.get(accountId);
+  if (!listener?.client || !listener.connected) return { success: false, error: 'Telegram listener is not connected' };
+  const ids = [...new Set((messageIds || []).map(Number))]
+    .filter((id) => Number.isSafeInteger(id) && id > 0)
+    .slice(0, 100);
+  if (!chatId || ids.length === 0) return { success: true, messages: [] };
+  try {
+    const peer = await resolveInputPeer(accountId, listener.client, chatId);
+    const fetched = await listener.client.getMessages(peer, { ids });
+    const db = DatabaseService.getInstance();
+    const cachedPeerType = db?.getTelegramPeer(accountId, chatId)?.peer_type as TelegramPeerType | undefined;
+    const messages: Array<{ messageId: string; attachments: any[] }> = [];
+    for (const message of fetched || []) {
+      if (!message || (message as any).className === 'MessageEmpty' || !(message as any).id) continue;
+      const messageId = String((message as any).id);
+      const normalized = normalizeTelegramMessageMedia(message, cachedPeerType);
+      if (!normalized.attachments.length) continue;
+      db?.run(
+        `UPDATE messages SET attachments = ?
+         WHERE msg_id = ? AND owner_zalo_id = ? AND thread_id = ? AND channel = 'telegram_user' AND msg_type != 'recalled'`,
+        [JSON.stringify(normalized.attachments), messageId, accountId, chatId],
+      );
+      messages.push({ messageId, attachments: normalized.attachments });
+    }
+    tgLog('info', accountId, 'history', 'ATTACHMENTS_REFRESHED', { chatId, requested: ids.length, refreshed: messages.length });
+    return { success: true, messages };
+  } catch (err: any) {
+    tgLog('warn', accountId, 'history', 'ATTACHMENTS_REFRESH_FAILED', { chatId, requested: ids.length, error: err?.message || String(err) });
+    return { success: false, error: err?.message || String(err) };
+  }
+}
+
+/**
  * Forward message (User API)
  */
 export async function forwardMessages(accountId: string, fromChatId: string, toChatId: string, messageIds: string[]): Promise<{ success: boolean; error?: string }> {
@@ -6691,7 +7744,8 @@ export async function sendFile(accountId: string, chatId: string, filePath: stri
 
     // Use client.sendFile() — handles upload + response parsing + message ID extraction
     const sendOpts: any = { file: resolvedPath, forceDocument: fileType === 'file' };
-    if (caption) sendOpts.message = caption;
+    // GramJS sendFile reads `caption` (a `message` key is ignored → the caption never reached Telegram).
+    if (caption) sendOpts.caption = caption;
     if (replyToMsgId) sendOpts.replyTo = Number(replyToMsgId);
 
     Logger.log(`[TG:sendFile] STEP2 sendOpts:`, JSON.stringify({ file: resolvedPath, forceDocument: sendOpts.forceDocument, hasCaption: !!caption }));
@@ -6762,6 +7816,9 @@ export async function sendFile(accountId: string, chatId: string, filePath: stri
 
     Logger.log(`[TG:sendFile] STEP4 msgType=${msgType} attachments=${attachments.length} attachmentTypes=${attachments.map((a: any) => a.type).join(',')}`);
 
+    const postAttachment = sentChannelPostAttachment(accountId, chatId, result);
+    if (postAttachment) attachments.unshift(postAttachment);
+
     // Media preview for contacts.last_message
     const mediaPreview = msgType === 'photo' ? '🖼️ Hình ảnh'
       : msgType === 'video' ? '🎬 Video'
@@ -6771,12 +7828,22 @@ export async function sendFile(accountId: string, chatId: string, filePath: stri
     // Build quote_data nếu reply
     let quoteData: string | null = null;
     if (replyToMsgId) {
-      const dbQuote = DatabaseService.getInstance()?.queryOne<any>(
-        `SELECT content, msg_type, sender_id FROM messages WHERE msg_id = ? AND owner_zalo_id = ? AND thread_id = ? AND channel = 'telegram_user'`,
+      const quoteDb = DatabaseService.getInstance();
+      const dbQuote = quoteDb?.queryOne<any>(
+        `SELECT content, msg_type, sender_id, attachments, local_paths FROM messages WHERE msg_id = ? AND owner_zalo_id = ? AND thread_id = ? AND channel = 'telegram_user'`,
         [replyToMsgId, accountId, chatId]
       );
       if (dbQuote) {
-        quoteData = JSON.stringify({ msgId: replyToMsgId, msg: dbQuote.content || '', senderId: dbQuote.sender_id || '', msgType: dbQuote.msg_type || 'text' });
+        // Cùng dạng với tin nhận: có tên người gửi (fromD) và ảnh xem trước của tin gốc
+        quoteData = buildTelegramQuoteData({
+          msgId: replyToMsgId,
+          content: dbQuote.content,
+          msgType: dbQuote.msg_type,
+          senderId: dbQuote.sender_id,
+          senderName: resolveTelegramQuoteSenderName(quoteDb, accountId, chatId, dbQuote.sender_id),
+          attachments: dbQuote.attachments,
+          localPaths: dbQuote.local_paths,
+        });
       } else {
         quoteData = JSON.stringify({ msgId: replyToMsgId, msg: '', senderId: '', msgType: 'text' });
       }
@@ -6841,6 +7908,69 @@ export async function sendFile(accountId: string, chatId: string, filePath: stri
     return { success: true, messageId: msgId };
   } catch (err: any) {
     Logger.error(`[TG:sendFile] FAILED: ${err.message}`);
+    return { success: false, error: err.message };
+  }
+}
+
+/** Telegram media groups hold 2–10 items. */
+const TELEGRAM_ALBUM_MAX = 10;
+
+/**
+ * Send several images as one album, the caption on the first item (Telegram shows it under the
+ * album). GramJS does not feed RPC results to the update handlers, so every message of the album
+ * is persisted through handleNewMessage — the same path as an own message sent from another
+ * device (grouped media attachment, contact preview, silent UI event, media hydration).
+ */
+export async function sendAlbum(
+  accountId: string,
+  chatId: string,
+  filePaths: string[],
+  caption?: string,
+): Promise<{ success: boolean; messageId?: string; messageIds?: string[]; error?: string }> {
+  const files = filePaths.filter(Boolean);
+  if (files.length === 0) return { success: false, error: 'Không có ảnh để gửi' };
+  if (files.length === 1) return sendFile(accountId, chatId, files[0], caption, 'image');
+
+  const listener = activeListeners.get(accountId);
+  if (!listener?.client || !listener.connected) return { success: false, error: 'Not connected' };
+  const denial = getPersistedTelegramSendDenial(accountId, chatId);
+  if (denial) return { success: false, error: denial };
+  const rateLimit = checkRateLimit(accountId);
+  if (!rateLimit.allowed) return { success: false, error: `Rate limited. Wait ${rateLimit.waitSeconds}s.` };
+  try {
+    const pathMod = require('path');
+    const fs = require('fs');
+    const resolved = files.map(file => resolveTelegramUploadPath(file).replace(/\//g, pathMod.sep));
+    const missing = resolved.find((file: string) => !fs.existsSync(file));
+    if (missing) return { success: false, error: `File không tồn tại: ${pathMod.basename(missing)}` };
+
+    const peer = await resolveInputPeer(accountId, listener.client, chatId);
+    const messageIds: string[] = [];
+    for (let start = 0; start < resolved.length; start += TELEGRAM_ALBUM_MAX) {
+      const chunk = resolved.slice(start, start + TELEGRAM_ALBUM_MAX);
+      const result: any = await listener.client.sendFile(peer, {
+        // A one-item "album" is rejected by messages.SendMultiMedia → plain photo.
+        file: chunk.length === 1 ? chunk[0] : chunk,
+        caption: start === 0 ? (caption || '') : '',
+      });
+      const sent = (Array.isArray(result) ? result : [result]).filter(Boolean);
+      for (const message of sent) {
+        messageIds.push(String(message.id));
+        try {
+          await handleNewMessage(accountId, { message } as any, listener.client, 'history');
+        } catch (persistErr: any) {
+          tgLog('warn', accountId, 'history', 'ALBUM_PERSIST_FAILED', {
+            chatId,
+            messageId: String(message.id),
+            error: persistErr?.message || String(persistErr),
+          });
+        }
+      }
+    }
+    Logger.log(`[TG:sendAlbum] SUCCESS chat=${chatId} items=${resolved.length} messages=${messageIds.length} caption=${!!caption}`);
+    return { success: true, messageId: messageIds[0], messageIds };
+  } catch (err: any) {
+    Logger.error(`[TG:sendAlbum] FAILED: ${err.message}`);
     return { success: false, error: err.message };
   }
 }
@@ -6950,6 +8080,87 @@ export async function signIn(phoneNumber: string, code: string, phoneCodeHash: s
  * empty. Reactions are scoped to the peer and message id; a forum topic does
  * not need a separate topMsgId for this RPC.
  */
+// ── Reaction dùng được trong hội thoại (menu chuột phải / thanh chọn reaction) ─────────────────────────────────
+const REACTION_CATALOG_TTL_MS = 6 * 60 * 60 * 1000;
+const CHAT_REACTIONS_TTL_MS = 10 * 60 * 1000;
+const reactionCatalogCache = new Map<string, Omit<TelegramReactionCatalog, 'chat'> & { at: number }>();
+const chatReactionsCache = new Map<string, { at: number; chat: TelegramChatReactions }>();
+
+/** Chuỗi reaction đúng như danh sách của Telegram (bỏ U+FE0F; khớp danh sách đã tải nếu có). */
+function canonicalTelegramReaction(accountId: string, emoji: string): string {
+  const normalized = normalizeTelegramReaction(emoji);
+  const catalog = reactionCatalogCache.get(accountId);
+  const match = catalog?.available.find((reaction) => normalizeTelegramReaction(reaction.emoticon) === normalized);
+  return match?.emoticon || normalized;
+}
+
+function parseChatReactions(value: any): TelegramChatReactions {
+  if (value?.className === 'ChatReactionsNone') return { kind: 'none' };
+  if (value?.className === 'ChatReactionsSome') {
+    return {
+      kind: 'some',
+      emoticons: (value.reactions || [])
+        .filter((reaction: any) => reaction?.className === 'ReactionEmoji' && reaction.emoticon)
+        .map((reaction: any) => String(reaction.emoticon)),
+    };
+  }
+  return { kind: 'all' };
+}
+
+/**
+ * Reaction dùng được trong hội thoại, reaction hay dùng của tài khoản đứng trước (như menu chuột phải Telegram).
+ * Danh sách chuẩn + reaction hay dùng + Premium: cache 6 giờ / tài khoản; giới hạn của nhóm / kênh (admin chọn hoặc
+ * tắt reaction): cache 10 phút / hội thoại. Chat riêng: mọi reaction chuẩn.
+ */
+export async function getAvailableReactions(
+  accountId: string,
+  chatId: string,
+): Promise<{ success: boolean; reactions?: string[]; error?: string }> {
+  const listener = activeListeners.get(accountId);
+  if (!listener?.client || !listener.connected) return { success: false, error: 'Not connected' };
+  try {
+    const { Api } = require('telegram');
+    const client = listener.client;
+    let catalog = reactionCatalogCache.get(accountId);
+    if (!catalog || Date.now() - catalog.at > REACTION_CATALOG_TTL_MS) {
+      const [availableResult, topResult, me]: any[] = await Promise.all([
+        client.invoke(new Api.messages.GetAvailableReactions({ hash: 0 })).catch(() => null),
+        client.invoke(new Api.messages.GetTopReactions({ limit: 100, hash: BigInt(0) as any })).catch(() => null),
+        client.getMe().catch(() => null),
+      ]);
+      catalog = {
+        at: Date.now(),
+        available: (availableResult?.reactions || [])
+          .map((reaction: any) => ({ emoticon: String(reaction?.reaction || ''), premium: !!reaction?.premium, inactive: !!reaction?.inactive }))
+          .filter((reaction: any) => reaction.emoticon),
+        top: (topResult?.reactions || [])
+          .filter((reaction: any) => reaction?.className === 'ReactionEmoji' && reaction.emoticon)
+          .map((reaction: any) => String(reaction.emoticon)),
+        isPremium: !!me?.premium,
+      };
+      // Không lấy được danh sách chuẩn (lỗi mạng…) → không cache lâu, lần sau hỏi lại
+      if (catalog.available.length > 0) reactionCatalogCache.set(accountId, catalog);
+    }
+
+    const chatKey = `${accountId}:${chatId}`;
+    let chatEntry = chatReactionsCache.get(chatKey);
+    if (!chatEntry || Date.now() - chatEntry.at > CHAT_REACTIONS_TTL_MS) {
+      let chat: TelegramChatReactions = { kind: 'all' };
+      if (String(chatId).startsWith('-')) {
+        const full: any = String(chatId).startsWith('-100')
+          ? await client.invoke(new Api.channels.GetFullChannel({ channel: await resolveInputChannel(accountId, client, chatId) })).catch(() => null)
+          : await client.invoke(new Api.messages.GetFullChat({ chatId: getBasicGroupId(chatId) })).catch(() => null);
+        chat = parseChatReactions(full?.fullChat?.availableReactions);
+      }
+      chatEntry = { at: Date.now(), chat };
+      chatReactionsCache.set(chatKey, chatEntry);
+    }
+    return { success: true, reactions: orderTelegramReactions({ ...catalog, chat: chatEntry.chat }) };
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) };
+  }
+}
+
 export async function sendReaction(
   accountId: string,
   chatId: string,
@@ -6967,13 +8178,45 @@ export async function sendReaction(
   try {
     const { Api } = require('telegram');
     const peer = await resolveInputPeer(accountId, listener.client, chatId);
-    await listener.client.invoke(new Api.messages.SendReaction({
+    const emoticon = emoji ? canonicalTelegramReaction(accountId, emoji) : '';
+    const result = await listener.client.invoke(new Api.messages.SendReaction({
       peer,
       msgId: numericMessageId,
-      reaction: emoji ? [new Api.ReactionEmoji({ emoticon: emoji })] : [],
-      addToRecent: !!emoji,
+      reaction: emoticon ? [new Api.ReactionEmoji({ emoticon })] : [],
+      addToRecent: !!emoticon,
     }));
+    // Kết quả có UpdateMessageReactions với số đếm chính thức → lưu + cập nhật UI (thay bản tạm ở renderer)
+    try {
+      applyTelegramReactionResult(accountId, listener.client, result, true);
+    } catch (applyErr: any) {
+      Logger.warn(`[TelegramUser] sendReaction: không áp được kết quả reaction ${chatId}/${messageId}: ${applyErr?.message}`);
+    }
     return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Lấy lại reaction chính thức của các tin (messages.GetMessagesReactions) và lưu đè. Sửa dữ liệu bị cộng dồn sai
+ * trước đây (reaction của bài kênh trùng ID bị ghi vào tin của hội thoại khác) và đồng bộ reaction của chính mình.
+ */
+export async function refreshMessageReactions(
+  accountId: string,
+  chatId: string,
+  messageIds: string[],
+): Promise<{ success: boolean; applied?: number; error?: string }> {
+  const listener = activeListeners.get(accountId);
+  if (!listener?.client || !listener.connected) return { success: false, error: 'Not connected' };
+  const ids = [...new Set(messageIds.map(id => Number(String(id).replace(/^tg_/, ''))))]
+    .filter(id => Number.isSafeInteger(id) && id > 0)
+    .slice(0, 100);
+  if (!ids.length) return { success: true, applied: 0 };
+  try {
+    const { Api } = require('telegram');
+    const peer = await resolveInputPeer(accountId, listener.client, chatId);
+    const result = await listener.client.invoke(new Api.messages.GetMessagesReactions({ peer, id: ids }));
+    return { success: true, applied: applyTelegramReactionResult(accountId, listener.client, result) };
   } catch (err: any) {
     return { success: false, error: err.message };
   }
@@ -7005,7 +8248,8 @@ export async function sendTopicFile(accountId: string, chatId: string, topicRoot
 
     // Use client.sendFile() — handles upload + response parsing + message ID extraction
     const sendOpts: any = { file: resolvedPath, forceDocument: fileType === 'file', topMsgId: Number(topicRootMessageId) };
-    if (caption) sendOpts.message = caption;
+    // GramJS sendFile reads `caption` (a `message` key is ignored → the caption never reached Telegram).
+    if (caption) sendOpts.caption = caption;
 
     const result = await listener.client.sendFile(peer, sendOpts);
     const msgId = String(result?.id || '');
@@ -7144,11 +8388,11 @@ export function stopListener(accountId: string): void {
     clearTimeout(listener.reconnectTimer);
     listener.reconnectTimer = null;
   }
+  clearDisconnectConfirmTimer(listener);
   clearHealthCheck(listener);
   stopChannelPoller(listener);
   if (listener.client) {
-    intentionallyDisconnectedClients.add(listener.client);
-    listener.client.disconnect().catch(() => {});
+    retireTelegramClient(listener.client, 'listener_stopped').catch(() => {});
   }
   activeListeners.delete(accountId);
   rawUpdateHandlers.delete(accountId);
@@ -7157,9 +8401,25 @@ export function stopListener(accountId: string): void {
   channelDialogWatchStates.delete(accountId);
   channelDialogWatchTasks.delete(accountId);
   reconnectCatchUps.delete(accountId);
+  pendingCatchUpModes.delete(accountId);
+  catchUpFailureCounts.delete(accountId);
+  recoveringUpdateAccounts.delete(accountId);
+  syncingAccounts.delete(accountId);
+  const historyInsertTimer = historyInsertTimers.get(accountId);
+  if (historyInsertTimer) clearTimeout(historyInsertTimer);
+  historyInsertTimers.delete(accountId);
+  historyInsertThreadIds.delete(accountId);
   const drainTimer = channelRecoveryDrainTimers.get(accountId);
   if (drainTimer) clearTimeout(drainTimer);
   channelRecoveryDrainTimers.delete(accountId);
+  channelRecoveryDrainDueAt.delete(accountId);
+  channelHistoryRepairQueues.delete(accountId);
+  for (const map of [
+    activeChannelNextPollAt, channelDifferenceTimeouts, channelRecoveryFailures,
+    typingChannelRecoveryAt, channelHistoryRepairs,
+  ] as Map<string, unknown>[]) {
+    deleteAccountChannelKeys(map, accountId);
+  }
   for (const [key, timer] of typingChannelRecoveryTimers) {
     if (!key.startsWith(`${accountId}:`)) continue;
     clearTimeout(timer);
@@ -7188,6 +8448,80 @@ export function getActiveListeners(): Array<{ accountId: string; connected: bool
 export function isConnected(accountId: string): boolean {
   const listener = activeListeners.get(accountId);
   return !!(listener?.connected && listener.client?.connected);
+}
+
+/**
+ * Probe the primary connection now instead of waiting for GramJS's next ping
+ * or the reconnect backoff. A dead or offline listener is rebuilt within a
+ * second; a live one that survived a sleep gets a catch-up.
+ */
+function probeTelegramListenerNow(listener: ActiveListener, reason: string): void {
+  if (listener.stopped || listener.connecting || listener.sessionInvalid) return;
+  const accountId = listener.account.accountId;
+  const client = listener.client;
+  if (!client || retiredClients.has(client) || !listener.connected) {
+    // A confirmed outage waiting on its backoff: retry now. An in-place GramJS
+    // reconnect that is still running keeps its grace period (scheduleReconnect),
+    // so this cannot open a second session on the main DC.
+    listener.retryCount = 0;
+    scheduleReconnect(listener, reason, undefined, { delayMs: 1_000 });
+    return;
+  }
+  if (!client.connected) {
+    // GramJS is rebuilding the socket in place right now; confirm the outage
+    // like any other report instead of replacing the client mid-handshake.
+    handlePrimaryTransportDisconnected(listener, client, reason);
+    return;
+  }
+  if (listener.healthCheckClient === client) return;
+  listener.healthCheckClient = client;
+  withDeadline(client.getMe(), TELEGRAM_PROBE_DEADLINE_MS, `${reason}_probe_timeout`)
+    .then(() => {
+      if (listener.client !== client || listener.stopped || retiredClients.has(client)) return;
+      const now = Date.now();
+      const offlineFor = listener.lastAliveAt > 0 ? now - listener.lastAliveAt : Number.POSITIVE_INFINITY;
+      listener.lastAliveAt = now;
+      if (listener.forceFullCatchUp) {
+        // The socket survived the sleep, so no reconnect will start a catch-up.
+        listener.forceFullCatchUp = false;
+        scheduleReconnectCatchUp(listener, client, offlineFor > LIGHT_CATCHUP_MAX_OFFLINE_MS ? 'full' : 'light');
+      }
+    })
+    .catch((err: any) => {
+      if (listener.client !== client || listener.stopped) return;
+      Logger.warn(`[TelegramUserListener] ${reason} probe failed for ${accountId}: ${err.message}`);
+      if (isFatalTelegramSessionError(err)) {
+        scheduleReconnect(listener, reason, err);
+        return;
+      }
+      // GramJS usually notices the dead socket and rebuilds it in place
+      // within the confirmation window.
+      handlePrimaryTransportDisconnected(listener, client, reason);
+    })
+    .finally(() => {
+      if (listener.healthCheckClient === client) listener.healthCheckClient = null;
+    });
+}
+
+/**
+ * The machine woke up (`resume`) or the session was unlocked. Nothing ran while
+ * it slept and Telegram has usually closed the socket, so probe every listener
+ * now. After a real sleep the next restoration runs a full catch-up.
+ */
+export function handleSystemResume(reason: 'resume' | 'unlock-screen' = 'resume'): void {
+  for (const listener of activeListeners.values()) {
+    if (listener.stopped) continue;
+    if (reason === 'resume') listener.forceFullCatchUp = true;
+    probeTelegramListenerNow(listener, `system_${reason.replace('-', '_')}`);
+  }
+}
+
+/** The OS reports connectivity again: rebuild dead connections immediately. */
+export function handleNetworkOnline(): void {
+  for (const listener of activeListeners.values()) {
+    if (listener.stopped) continue;
+    probeTelegramListenerNow(listener, 'network_online');
+  }
 }
 
 /**
@@ -7472,6 +8806,1192 @@ export async function joinGroup(
   return { success: true, info: info.info };
 }
 
+// ─── Thao tác nhanh: tạo nhóm, tham gia bằng link, thêm liên hệ ─────────────────
+
+/** Telegram RPC errors the quick actions can hit, in plain Vietnamese. */
+function friendlyTelegramActionError(raw: string): string {
+  const message = String(raw || '');
+  const flood = /FLOOD_WAIT_(\d+)/.exec(message) || /wait of (\d+) seconds/i.exec(message);
+  if (flood) return `Thao tác quá nhanh, Telegram yêu cầu chờ ${flood[1]} giây`;
+  const known: Array<[string, string]> = [
+    // Mã cụ thể trước mã chung (so khớp chuỗi con: USER_CHANNELS_TOO_MUCH chứa CHANNELS_TOO_MUCH)
+    ['USER_CHANNELS_TOO_MUCH', 'Người này đã tham gia quá nhiều nhóm / kênh'],
+    ['INVITE_HASH_EXPIRED', 'Link mời đã hết hạn'],
+    ['INVITE_HASH_INVALID', 'Link mời không hợp lệ'],
+    ['INVITE_HASH_EMPTY', 'Link mời không hợp lệ'],
+    ['USERNAME_NOT_OCCUPIED', 'Không tìm thấy tên người dùng / nhóm này'],
+    ['USERNAME_INVALID', 'Tên người dùng không hợp lệ'],
+    ['CHANNELS_TOO_MUCH', 'Tài khoản đã tham gia quá nhiều nhóm / kênh'],
+    ['USERS_TOO_MUCH', 'Nhóm đã đủ thành viên'],
+    ['USERS_TOO_FEW', 'Cần chọn ít nhất 1 thành viên'],
+    ['USER_PRIVACY_RESTRICTED', 'Người này không cho phép thêm vào nhóm'],
+    ['USER_NOT_MUTUAL_CONTACT', 'Chỉ thêm được người đã lưu số của nhau'],
+    ['CHAT_TITLE_EMPTY', 'Nhập tên nhóm'],
+    ['PEER_FLOOD', 'Telegram đang hạn chế thao tác của tài khoản này, thử lại sau'],
+    ['USER_RESTRICTED', 'Tài khoản đang bị Telegram hạn chế'],
+    ['CHANNEL_PRIVATE', 'Nhóm / kênh riêng tư — cần link mời'],
+    ['USER_BANNED_IN_CHANNEL', 'Tài khoản đã bị chặn khỏi nhóm / kênh này'],
+    ['CONTACT_NAME_EMPTY', 'Nhập tên liên hệ'],
+    ['USER_KICKED', 'Người này đã bị xoá khỏi nhóm / kênh — gỡ chặn trước khi mời lại'],
+    ['USER_BOT', 'Bot chỉ thêm được làm quản trị viên kênh'],
+    ['BOTS_TOO_MUCH', 'Nhóm / kênh đã có quá nhiều bot'],
+    ['USER_BLOCKED', 'Người này đã chặn tài khoản'],
+    ['INPUT_USER_DEACTIVATED', 'Tài khoản Telegram này đã bị xoá'],
+    ['CHAT_MEMBER_ADD_FAILED', 'Telegram không thêm được người này'],
+    ['CHAT_ADMIN_REQUIRED', 'Cần quyền quản trị'],
+    ['CHANNELS_ADMIN_PUBLIC_TOO_MUCH', 'Tài khoản đang quản lý quá nhiều kênh / nhóm công khai'],
+  ];
+  const hit = known.find(([code]) => message.includes(code));
+  return hit ? hit[1] : message;
+}
+
+/** The chat entity inside an Updates / messages.InvitedUsers result. */
+function firstChatOfUpdates(result: any): any | null {
+  const container = result?.updates && !Array.isArray(result.updates) ? result.updates : result;
+  const chats: any[] = container?.chats || result?.chats || [];
+  return chats.find(chat => chat?.className === 'Chat' || chat?.className === 'Channel') || null;
+}
+
+/**
+ * A chat / user the account just created, joined or added: cache the peer, upsert the
+ * conversation row and move it to the top of the list (RPC results never reach the
+ * update handlers, so nothing else would insert it before the next sync).
+ */
+function rememberQuickActionPeer(accountId: string, entity: any, preview: string): string {
+  const peerId = getCanonicalChatId(entity);
+  cacheTelegramPeer(accountId, peerId, entity);
+  persistTelegramDialogState(accountId, peerId, null, entity, undefined, false);
+  DatabaseService.getInstance()?.run(
+    `UPDATE contacts SET
+       last_message = CASE WHEN COALESCE(last_message, '') = '' THEN ? ELSE last_message END,
+       last_message_time = MAX(COALESCE(last_message_time, 0), ?)
+     WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'telegram_user'`,
+    [preview, Date.now(), accountId, peerId],
+  );
+  EventBroadcaster.emit('db:unreadChanged', { zaloId: accountId, source: 'telegram_quick_action' });
+  return peerId;
+}
+
+/**
+ * "Nhóm mới" như Telegram: nhóm thường (messages.CreateChat) kèm tự xoá tin nhắn nếu chọn; không chọn ai vẫn tạo được
+ * (TDLib: danh sách thành viên được để trống). Máy chủ từ chối nhóm trống (USERS_TOO_FEW) → siêu nhóm.
+ * Người không thêm được vì quyền riêng tư nằm trong `missingInvitees` (gửi link mời cho họ được).
+ */
+export async function createGroup(
+  accountId: string,
+  title: string,
+  userIds: string[] = [],
+  options: { photoPath?: string; ttlPeriod?: number } = {},
+): Promise<{
+  success: boolean;
+  chatId?: string;
+  title?: string;
+  missing?: number;
+  missingInvitees?: TelegramMissingInvitee[];
+  supergroup?: boolean;
+  photoError?: string;
+  error?: string;
+}> {
+  const name = String(title || '').trim();
+  if (!name) return { success: false, error: 'Nhập tên nhóm' };
+  if (name.length > 128) return { success: false, error: 'Tên nhóm tối đa 128 ký tự' };
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+  const ttlPeriod = normalizeTelegramTtl(options?.ttlPeriod);
+  try {
+    const { Api } = require('telegram');
+    const { getInputUser } = require('telegram/Utils');
+    const ids = Array.from(new Set((userIds || []).map(String).filter(id => id && id !== accountId)));
+    const users: any[] = [];
+    for (const id of ids) users.push(getInputUser(await resolveInputPeer(accountId, conn.client, id)));
+    let result: any;
+    let supergroup = false;
+    try {
+      result = await conn.client.invoke(new Api.messages.CreateChat({ users, title: name, ...(ttlPeriod ? { ttlPeriod } : {}) }));
+    } catch (err: any) {
+      const message = String(err?.errorMessage || err?.message || err);
+      if (users.length > 0 || !message.includes('USERS_TOO_FEW')) throw err;
+      result = await conn.client.invoke(new Api.channels.CreateChannel({ title: name, about: '', megagroup: true, ...(ttlPeriod ? { ttlPeriod } : {}) }));
+      supergroup = true;
+    }
+    const chat = firstChatOfUpdates(result);
+    if (!chat) return { success: false, error: 'Telegram không trả về nhóm vừa tạo' };
+    const chatId = rememberQuickActionPeer(accountId, chat, 'Bạn đã tạo nhóm');
+    const missingInvitees = readMissingInvitees(accountId, result);
+    const photoError = options?.photoPath
+      ? await applyTelegramChatPhoto(accountId, conn.client, chatId, getTelegramPeerType(chat), options.photoPath)
+      : undefined;
+    tgLog('info', accountId, 'history', 'GROUP_CREATED', { chatId, members: ids.length, missing: missingInvitees.length, supergroup });
+    return {
+      success: true,
+      chatId,
+      title: chat.title || name,
+      missing: missingInvitees.length,
+      missingInvitees,
+      ...(supergroup ? { supergroup } : {}),
+      ...(photoError ? { photoError } : {}),
+    };
+  } catch (err: any) {
+    const message = String(err?.errorMessage || err?.message || err);
+    tgLog('warn', accountId, 'history', 'GROUP_CREATE_FAILED', { error: message });
+    return { success: false, error: friendlyTelegramActionError(message) };
+  }
+}
+
+export interface TelegramLinkPreview {
+  success: boolean;
+  title?: string;
+  about?: string;
+  membersCount?: number;
+  isChannel?: boolean;
+  alreadyMember?: boolean;
+  requestNeeded?: boolean;
+  /** Known only for public chats and chats the account can already see. */
+  chatId?: string;
+  error?: string;
+}
+
+/** Xem trước link t.me (tên, số thành viên, đã là thành viên chưa) trước khi tham gia. */
+export async function previewJoinLink(accountId: string, link: string): Promise<TelegramLinkPreview> {
+  const target = parseGroupLink(link);
+  if (!target || target.channel !== 'telegram') return { success: false, error: 'Không phải link nhóm / kênh Telegram' };
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+  try {
+    const { Api } = require('telegram');
+    if (target.kind === 'invite') {
+      const invite: any = await conn.client.invoke(new Api.messages.CheckChatInvite({ hash: target.hash }));
+      if (invite?.chat) {
+        const chat = invite.chat;
+        const chatId = getCanonicalChatId(chat);
+        cacheTelegramPeer(accountId, chatId, chat);
+        return {
+          success: true, title: chat.title, membersCount: Number(chat.participantsCount || 0) || undefined,
+          isChannel: !!chat.broadcast, alreadyMember: invite.className === 'ChatInviteAlready' && !chat.left, chatId,
+        };
+      }
+      return {
+        success: true, title: invite?.title, about: invite?.about || undefined,
+        membersCount: Number(invite?.participantsCount || 0) || undefined,
+        isChannel: !!invite?.broadcast, requestNeeded: !!invite?.requestNeeded,
+      };
+    }
+    const resolved: any = await conn.client.invoke(new Api.contacts.ResolveUsername({ username: target.username }));
+    const chat = (resolved?.chats || []).find((item: any) => item?.className === 'Channel' || item?.className === 'Chat');
+    if (!chat) return { success: false, error: 'Tên này là một người dùng, không phải nhóm / kênh' };
+    const chatId = getCanonicalChatId(chat);
+    cacheTelegramPeer(accountId, chatId, chat);
+    return {
+      success: true, title: chat.title, membersCount: Number(chat.participantsCount || 0) || undefined,
+      isChannel: !!chat.broadcast, alreadyMember: !chat.left, requestNeeded: !!chat.joinRequest, chatId,
+    };
+  } catch (err: any) {
+    return { success: false, error: friendlyTelegramActionError(String(err?.errorMessage || err?.message || err)) };
+  }
+}
+
+/**
+ * Tham gia nhóm / kênh bằng link: link mời riêng (messages.ImportChatInvite) hoặc tên công khai
+ * (channels.JoinChannel). `requested`: nhóm cần quản trị viên duyệt; `already`: đã là thành viên.
+ */
+export async function joinByLink(
+  accountId: string,
+  link: string,
+): Promise<{ success: boolean; chatId?: string; title?: string; requested?: boolean; already?: boolean; error?: string }> {
+  const target = parseGroupLink(link);
+  if (!target || target.channel !== 'telegram') return { success: false, error: 'Không phải link nhóm / kênh Telegram' };
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+  const { Api } = require('telegram');
+  try {
+    let result: any;
+    if (target.kind === 'invite') {
+      result = await conn.client.invoke(new Api.messages.ImportChatInvite({ hash: target.hash }));
+    } else {
+      const preview = await previewJoinLink(accountId, link);
+      if (!preview.success || !preview.chatId) return { success: false, error: preview.error || 'Không tìm thấy nhóm / kênh' };
+      if (preview.alreadyMember) return { success: true, already: true, chatId: preview.chatId, title: preview.title };
+      result = await conn.client.invoke(new Api.channels.JoinChannel({
+        channel: await resolveInputChannel(accountId, conn.client, preview.chatId),
+      }));
+    }
+    const chat = firstChatOfUpdates(result);
+    if (!chat) return { success: false, error: 'Telegram không trả về nhóm vừa tham gia' };
+    const chatId = rememberQuickActionPeer(accountId, chat, 'Bạn đã tham gia nhóm');
+    tgLog('info', accountId, 'history', 'JOINED_BY_LINK', { chatId, kind: target.kind });
+    return { success: true, chatId, title: chat.title };
+  } catch (err: any) {
+    const message = String(err?.errorMessage || err?.message || err);
+    if (message.includes('INVITE_REQUEST_SENT')) return { success: true, requested: true };
+    if (message.includes('USER_ALREADY_PARTICIPANT')) {
+      const preview = await previewJoinLink(accountId, link).catch(() => null);
+      return { success: true, already: true, chatId: preview?.chatId, title: preview?.title };
+    }
+    tgLog('warn', accountId, 'history', 'JOIN_BY_LINK_FAILED', { error: message });
+    return { success: false, error: friendlyTelegramActionError(message) };
+  }
+}
+
+/** "0912 345 678" → "+84912345678" (Telegram needs the international form; Việt Nam by default). */
+export function normalizeTelegramPhone(phone: string): string {
+  const digits = String(phone || '').replace(/[^\d+]/g, '');
+  if (digits.startsWith('+')) return '+' + digits.slice(1).replace(/\+/g, '');
+  if (digits.startsWith('00')) return '+' + digits.slice(2);
+  if (digits.startsWith('84')) return '+' + digits;
+  if (digits.startsWith('0')) return '+84' + digits.slice(1);
+  return digits ? '+' + digits : '';
+}
+
+/**
+ * Thêm bạn Telegram: theo số điện thoại (contacts.ImportContacts) hoặc @tên người dùng
+ * (contacts.ResolveUsername + contacts.AddContact). Hội thoại 1-1 được tạo sẵn trong danh sách.
+ */
+export async function addContact(
+  accountId: string,
+  params: { phone?: string; username?: string; firstName?: string; lastName?: string },
+): Promise<{ success: boolean; userId?: string; displayName?: string; username?: string; phone?: string; error?: string }> {
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+  const { Api } = require('telegram');
+  const firstName = String(params.firstName || '').trim();
+  const lastName = String(params.lastName || '').trim();
+  try {
+    let user: any = null;
+    const username = String(params.username || '').trim().replace(/^@/, '');
+    if (username) {
+      const resolved: any = await conn.client.invoke(new Api.contacts.ResolveUsername({ username }));
+      user = (resolved?.users || []).find((item: any) => item?.className === 'User') || null;
+      if (!user || resolved?.peer?.className !== 'PeerUser') return { success: false, error: 'Không tìm thấy người dùng Telegram này' };
+      const { getInputUser } = require('telegram/Utils');
+      await conn.client.invoke(new Api.contacts.AddContact({
+        id: getInputUser(user),
+        firstName: firstName || user.firstName || username,
+        lastName: firstName ? lastName : (user.lastName || ''),
+        phone: '',
+      }));
+    } else {
+      const phone = normalizeTelegramPhone(params.phone || '');
+      if (phone.replace(/\D/g, '').length < 8) return { success: false, error: 'Nhập số điện thoại hoặc @tên người dùng' };
+      const imported: any = await conn.client.invoke(new Api.contacts.ImportContacts({
+        contacts: [new Api.InputPhoneContact({ clientId: Date.now(), phone, firstName: firstName || phone, lastName })],
+      }));
+      user = (imported?.users || []).find((item: any) => item?.className === 'User') || null;
+      if (!user) return { success: false, error: 'Số này chưa dùng Telegram hoặc không cho tìm theo số điện thoại' };
+    }
+    const displayName = [user.firstName, user.lastName].filter(Boolean).join(' ') || user.username || firstName;
+    const userId = rememberQuickActionPeer(accountId, user, 'Đã thêm liên hệ');
+    tgLog('info', accountId, 'history', 'CONTACT_ADDED', { userId, by: username ? 'username' : 'phone' });
+    return { success: true, userId, displayName, username: user.username || undefined, phone: user.phone || undefined };
+  } catch (err: any) {
+    const message = String(err?.errorMessage || err?.message || err);
+    tgLog('warn', accountId, 'history', 'CONTACT_ADD_FAILED', { error: message });
+    return { success: false, error: friendlyTelegramActionError(message) };
+  }
+}
+
+// ─── Telegram: nhóm mới, kênh mới, cài đặt nhóm / kênh, danh bạ, cuộc gọi ──────────
+// Theo tài liệu API Telegram (core.telegram.org/api/channel, /api/invites, /api/calls): "Nhóm mới" = nhóm thường
+// (messages.createChat, được phép không có thành viên), "Kênh mới" = channels.createChannel broadcast; link công
+// khai chỉ cho siêu nhóm / kênh; nhóm, siêu nhóm, kênh mới tạo đã có sẵn link mời chính.
+
+/** Ảnh nhóm / kênh từ file trên máy (đường dẫn tuyệt đối, tương đối thư mục dữ liệu hoặc local-media://). */
+async function uploadTelegramChatPhoto(client: TelegramClient, photoPath: string): Promise<{ photo: any; buffer: Buffer }> {
+  const { Api } = require('telegram');
+  const absolute = resolveTelegramUploadPath(photoPath);
+  const buffer: Buffer = fs.readFileSync(absolute);
+  const { CustomFile } = require('telegram/client/uploads');
+  // client.uploadFile trả InputFile / InputFileBig → bọc thẳng vào InputChatUploadedPhoto
+  // (Api.InputFileUploaded không tồn tại trong GramJS: bản cũ của editChatPhoto luôn lỗi vì nó).
+  const file = await client.uploadFile({ file: new CustomFile(path.basename(absolute), buffer.length, '', buffer), workers: 1 });
+  return { photo: new Api.InputChatUploadedPhoto({ file }), buffer };
+}
+
+/** Ảnh đại diện vừa đặt: thu nhỏ (cạnh dài ≤ 640px) để danh sách không phải giải mã ảnh gốc vài MB. */
+function avatarThumbnail(buffer: Buffer): { data: Buffer; ext: string } {
+  try {
+    const { nativeImage } = require('electron');
+    const image = nativeImage?.createFromBuffer?.(buffer);
+    if (!image || image.isEmpty()) return { data: buffer, ext: '.jpg' };
+    const { width, height } = image.getSize();
+    if (Math.max(width, height) <= 640) return { data: buffer, ext: '.jpg' };
+    return { data: image.resize(width >= height ? { width: 640 } : { height: 640 }).toJPEG(88), ext: '.jpg' };
+  } catch {
+    return { data: buffer, ext: '.jpg' };
+  }
+}
+
+/**
+ * Ảnh vừa đặt hiện ngay ở danh sách hội thoại: lưu bản thu nhỏ vào _avatars/telegram (như ảnh tải về) và cập nhật hội
+ * thoại. Trước đây chờ tải lại ảnh từ Telegram — entity trong cache còn ảnh cũ nên vài phút sau mới hiện.
+ */
+async function rememberLocalChatPhoto(accountId: string, chatId: string, buffer: Buffer): Promise<void> {
+  const { data, ext } = avatarThumbnail(buffer);
+  const saved = await saveAvatarToDisk(data, `telegram_avatar_${chatId}_${Date.now()}${ext}`);
+  if (!saved) return;
+  const normalized = saved.replace(/\\/g, '/');
+  const avatarUrl = 'local-media://' + (normalized.startsWith('/') ? normalized : '/' + normalized);
+  DatabaseService.getInstance()?.run(
+    `UPDATE contacts SET avatar_url = ? WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'telegram_user'`,
+    [avatarUrl, accountId, chatId],
+  );
+  resetAvatarCache(accountId, chatId);
+  EventBroadcaster.emit('db:unreadChanged', { zaloId: accountId, source: 'telegram_avatar_refresh' });
+}
+
+/** Đặt ảnh cho nhóm / kênh. Trả lỗi (tiếng Việt) thay vì ném: nhóm / kênh vừa tạo vẫn dùng được khi ảnh lỗi. */
+async function applyTelegramChatPhoto(
+  accountId: string,
+  client: TelegramClient,
+  chatId: string,
+  peerType: TelegramPeerType,
+  photoPath: string,
+): Promise<string | undefined> {
+  try {
+    const { Api } = require('telegram');
+    const { photo, buffer } = await uploadTelegramChatPhoto(client, photoPath);
+    if (isChannelPeerType(peerType)) {
+      await client.invoke(new Api.channels.EditPhoto({ channel: await resolveInputChannel(accountId, client, chatId), photo }));
+    } else {
+      await client.invoke(new Api.messages.EditChatPhoto({ chatId: getBasicGroupId(chatId), photo }));
+    }
+    await rememberLocalChatPhoto(accountId, chatId, buffer).catch(() => {});
+    return undefined;
+  } catch (err: any) {
+    const message = String(err?.errorMessage || err?.message || err);
+    tgLog('warn', accountId, 'history', 'CHAT_PHOTO_FAILED', { chatId, error: message });
+    if (message.includes('PHOTO_CROP_SIZE_SMALL')) return 'Ảnh quá nhỏ — chọn ảnh lớn hơn';
+    if (message.includes('IMAGE_PROCESS_FAILED') || message.includes('PHOTO_INVALID') || message.includes('PHOTO_EXT_INVALID')) {
+      return 'Telegram không đọc được ảnh này — chọn ảnh JPG / PNG khác';
+    }
+    if (message.includes('ENOENT')) return 'Không tìm thấy file ảnh';
+    return friendlyTelegramActionError(message);
+  }
+}
+
+/** Tên hiển thị đã biết của một người (cache peer → hội thoại → id). */
+function telegramKnownName(accountId: string, peerId: string): string {
+  const db = DatabaseService.getInstance();
+  const peer = db?.getTelegramPeer(accountId, peerId);
+  if (peer?.display_name) return peer.display_name;
+  const contact = db?.queryOne<any>(
+    `SELECT display_name FROM contacts WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'telegram_user'`,
+    [accountId, peerId],
+  );
+  return contact?.display_name || peer?.username || peerId;
+}
+
+/** messages.InvitedUsers.missing_invitees → danh sách người chưa thêm được (+ lý do Premium nếu có). */
+function readMissingInvitees(accountId: string, result: any): TelegramMissingInvitee[] {
+  const list: any[] = Array.isArray(result?.missingInvitees) ? result.missingInvitees : [];
+  return list
+    .map(item => {
+      const userId = String(item?.userId?.valueOf?.() ?? item?.userId ?? '');
+      return {
+        userId,
+        name: telegramKnownName(accountId, userId),
+        ...(item?.premiumWouldAllowInvite ? { premiumWouldAllowInvite: true } : {}),
+        ...(item?.premiumRequiredForPm ? { premiumRequiredForPm: true } : {}),
+      };
+    })
+    .filter(item => item.userId);
+}
+
+/**
+ * Mời người vào nhóm / kênh: siêu nhóm, kênh → channels.InviteToChannel theo lô 50 (lô lỗi → thử từng người để biết
+ * ai thêm được); nhóm thường → messages.AddChatUser từng người (100 tin gần nhất hiện cho người mới, như Telegram).
+ */
+async function inviteUsersToChat(
+  accountId: string,
+  client: TelegramClient,
+  chatId: string,
+  peerType: TelegramPeerType,
+  userIds: string[],
+): Promise<{ invited: number; missingInvitees: TelegramMissingInvitee[] }> {
+  const { Api } = require('telegram');
+  const { getInputUser } = require('telegram/Utils');
+  const ids = Array.from(new Set((userIds || []).map(String).filter(id => id && id !== accountId)));
+  const missingInvitees: TelegramMissingInvitee[] = [];
+  let invited = 0;
+  const failed = (userId: string, err: any) => {
+    const raw = String(err?.errorMessage || err?.message || err);
+    if (raw.includes('USER_ALREADY_PARTICIPANT')) {
+      invited++;
+      return;
+    }
+    missingInvitees.push({
+      userId,
+      name: telegramKnownName(accountId, userId),
+      // Không thêm được vì quyền riêng tư → vẫn gửi link mời được (như Telegram)
+      ...(raw.includes('USER_PRIVACY_RESTRICTED') || raw.includes('USER_NOT_MUTUAL_CONTACT') ? {} : { error: friendlyTelegramActionError(raw) }),
+    });
+  };
+  const inputs: Array<{ id: string; user: any }> = [];
+  for (const id of ids) {
+    try {
+      inputs.push({ id, user: getInputUser(await resolveInputPeer(accountId, client, id)) });
+    } catch (err: any) {
+      missingInvitees.push({ userId: id, name: telegramKnownName(accountId, id), error: 'Không tìm thấy người này trên Telegram' });
+    }
+  }
+  if (inputs.length === 0) return { invited, missingInvitees };
+
+  if (isChannelPeerType(peerType)) {
+    const channel = await resolveInputChannel(accountId, client, chatId);
+    for (let i = 0; i < inputs.length; i += 50) {
+      const batch = inputs.slice(i, i + 50);
+      try {
+        const result: any = await client.invoke(new Api.channels.InviteToChannel({ channel, users: batch.map(item => item.user) }));
+        const missing = readMissingInvitees(accountId, result);
+        missingInvitees.push(...missing);
+        invited += batch.length - missing.length;
+      } catch (err: any) {
+        if (batch.length === 1) {
+          failed(batch[0].id, err);
+          continue;
+        }
+        for (const item of batch) {
+          try {
+            const result: any = await client.invoke(new Api.channels.InviteToChannel({ channel, users: [item.user] }));
+            const missing = readMissingInvitees(accountId, result);
+            if (missing.length) missingInvitees.push(...missing);
+            else invited++;
+          } catch (singleErr: any) {
+            failed(item.id, singleErr);
+          }
+        }
+      }
+    }
+  } else {
+    const basicChatId = getBasicGroupId(chatId);
+    for (const item of inputs) {
+      try {
+        const result: any = await client.invoke(new Api.messages.AddChatUser({ chatId: basicChatId, userId: item.user, fwdLimit: 100 }));
+        const missing = readMissingInvitees(accountId, result);
+        if (missing.length) missingInvitees.push(...missing);
+        else invited++;
+      } catch (err: any) {
+        failed(item.id, err);
+      }
+    }
+  }
+  return { invited, missingInvitees };
+}
+
+/** Link mời chính của nhóm / kênh (đọc từ thông tin đầy đủ; chưa có thì tạo). '' khi không có quyền. */
+async function readPrimaryInviteLink(
+  accountId: string,
+  client: TelegramClient,
+  chatId: string,
+  peerType: TelegramPeerType,
+): Promise<string> {
+  const { Api } = require('telegram');
+  try {
+    const full: any = isChannelPeerType(peerType)
+      ? await client.invoke(new Api.channels.GetFullChannel({ channel: await resolveInputChannel(accountId, client, chatId) }))
+      : await client.invoke(new Api.messages.GetFullChat({ chatId: getBasicGroupId(chatId) }));
+    const link = String(full?.fullChat?.exportedInvite?.link || '');
+    if (link) return link;
+  } catch (err: any) {
+    tgLog('warn', accountId, 'history', 'FULL_CHAT_FOR_INVITE_FAILED', { chatId, error: err?.message });
+  }
+  try {
+    const exported: any = await client.invoke(new Api.messages.ExportChatInvite({ peer: await resolveInputPeer(accountId, client, chatId) }));
+    return String(exported?.link || '');
+  } catch (err: any) {
+    tgLog('warn', accountId, 'history', 'EXPORT_INVITE_FAILED', { chatId, error: err?.message });
+    return '';
+  }
+}
+
+/** Ghi lại tên công khai mới của nhóm / kênh vào cache peer (link t.me hiển thị ngay). */
+function rememberTelegramUsername(accountId: string, chatId: string, username: string): void {
+  DatabaseService.getInstance()?.run(
+    `UPDATE telegram_peers SET username = ?, updated_at = ? WHERE owner_zalo_id = ? AND peer_id = ?`,
+    [username, Date.now(), accountId, chatId],
+  );
+}
+
+/**
+ * "Kênh mới": tạo kênh phát tin (channels.CreateChannel broadcast), rồi ảnh, link công khai (nếu chọn), mời người
+ * theo dõi. Bước sau lỗi không huỷ kênh đã tạo — trả lỗi riêng (photoError / usernameError / inviteError) để màn hình
+ * báo và cho làm lại trong thông tin kênh.
+ */
+export async function createChannel(
+  accountId: string,
+  params: { title: string; about?: string; photoPath?: string; username?: string; userIds?: string[] },
+): Promise<TelegramCreateChannelResult> {
+  const title = String(params?.title || '').trim();
+  if (!title) return { success: false, error: 'Nhập tên kênh' };
+  if (title.length > 128) return { success: false, error: 'Tên kênh tối đa 128 ký tự' };
+  const about = String(params?.about || '').trim();
+  if (about.length > 255) return { success: false, error: 'Mô tả tối đa 255 ký tự' };
+  let username = '';
+  if (params?.username) {
+    const check = validateTelegramUsername(params.username);
+    if ('error' in check) return { success: false, error: check.error };
+    username = check.username;
+  }
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+  const { Api } = require('telegram');
+  try {
+    const result = await conn.client.invoke(new Api.channels.CreateChannel({ broadcast: true, title, about }));
+    const chat = firstChatOfUpdates(result);
+    if (!chat) return { success: false, error: 'Telegram không trả về kênh vừa tạo' };
+    const chatId = rememberQuickActionPeer(accountId, chat, 'Bạn đã tạo kênh');
+    const out: TelegramCreateChannelResult = { success: true, chatId, title: chat.title || title };
+    if (params.photoPath) {
+      const photoError = await applyTelegramChatPhoto(accountId, conn.client, chatId, 'channel', params.photoPath);
+      if (photoError) out.photoError = photoError;
+    }
+    if (username) {
+      try {
+        await conn.client.invoke(new Api.channels.UpdateUsername({ channel: await resolveInputChannel(accountId, conn.client, chatId), username }));
+        rememberTelegramUsername(accountId, chatId, username);
+        out.username = username;
+      } catch (err: any) {
+        out.usernameError = telegramUsernameError(String(err?.errorMessage || err?.message || err));
+      }
+    }
+    if (params.userIds?.length) {
+      try {
+        const invited = await inviteUsersToChat(accountId, conn.client, chatId, 'channel', params.userIds);
+        out.invited = invited.invited;
+        out.missingInvitees = invited.missingInvitees;
+      } catch (err: any) {
+        out.inviteError = friendlyTelegramActionError(String(err?.errorMessage || err?.message || err));
+      }
+    }
+    out.inviteLink = out.username
+      ? `https://t.me/${out.username}`
+      : (await readPrimaryInviteLink(accountId, conn.client, chatId, 'channel')) || undefined;
+    tgLog('info', accountId, 'history', 'CHANNEL_CREATED', { chatId, public: !!out.username, invited: out.invited || 0 });
+    return out;
+  } catch (err: any) {
+    const message = String(err?.errorMessage || err?.message || err);
+    tgLog('warn', accountId, 'history', 'CHANNEL_CREATE_FAILED', { error: message });
+    if (message.includes('CHAT_ABOUT_TOO_LONG')) return { success: false, error: 'Mô tả quá dài' };
+    return { success: false, error: friendlyTelegramActionError(message) };
+  }
+}
+
+/**
+ * Kiểm tra tên link công khai (channels.CheckUsername). `chatId` trống = kênh chưa tạo (InputChannelEmpty).
+ * `available: false` + `error` = tên không dùng được (đã có người dùng, sai quy tắc…); `success: false` = lỗi kết nối.
+ */
+export async function checkChatUsername(
+  accountId: string,
+  chatId: string | null | undefined,
+  username: string,
+): Promise<{ success: boolean; available?: boolean; username?: string; error?: string }> {
+  const check = validateTelegramUsername(username);
+  if ('error' in check) return { success: true, available: false, error: check.error };
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+  const { Api } = require('telegram');
+  try {
+    const channel = chatId ? await resolveInputChannel(accountId, conn.client, chatId) : new Api.InputChannelEmpty();
+    const ok = await conn.client.invoke(new Api.channels.CheckUsername({ channel, username: check.username }));
+    return ok
+      ? { success: true, available: true, username: check.username }
+      : { success: true, available: false, username: check.username, error: 'Tên này đã có người dùng' };
+  } catch (err: any) {
+    const raw = String(err?.errorMessage || err?.message || err);
+    if (/USERNAME|CHANNELS_ADMIN_PUBLIC_TOO_MUCH/.test(raw)) {
+      return { success: true, available: false, username: check.username, error: telegramUsernameError(raw) };
+    }
+    return { success: false, error: friendlyTelegramActionError(raw) };
+  }
+}
+
+/** Đặt / bỏ link công khai (channels.UpdateUsername; '' = chuyển sang riêng tư). Trả link đang dùng sau khi đổi. */
+export async function setChatUsername(
+  accountId: string,
+  chatId: string,
+  username: string,
+): Promise<{ success: boolean; username?: string; link?: string; error?: string }> {
+  let name = '';
+  if (String(username || '').trim()) {
+    const check = validateTelegramUsername(username);
+    if ('error' in check) return { success: false, error: check.error };
+    name = check.username;
+  }
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+  const { Api } = require('telegram');
+  try {
+    const peerType = await resolveChatPeerType(accountId, conn.client, chatId);
+    if (!isChannelPeerType(peerType)) return { success: false, error: 'Nhóm thường chưa đặt được link công khai — chỉ siêu nhóm và kênh' };
+    try {
+      await conn.client.invoke(new Api.channels.UpdateUsername({ channel: await resolveInputChannel(accountId, conn.client, chatId), username: name }));
+    } catch (err: any) {
+      const raw = String(err?.errorMessage || err?.message || err);
+      if (!raw.includes('USERNAME_NOT_MODIFIED') && !raw.includes('CHAT_NOT_MODIFIED')) throw err;
+    }
+    rememberTelegramUsername(accountId, chatId, name);
+    const link = name ? `https://t.me/${name}` : await readPrimaryInviteLink(accountId, conn.client, chatId, peerType);
+    tgLog('info', accountId, 'history', 'CHAT_USERNAME_SET', { chatId, public: !!name });
+    return { success: true, username: name, link };
+  } catch (err: any) {
+    return { success: false, error: telegramUsernameError(String(err?.errorMessage || err?.message || err)) };
+  }
+}
+
+/** Thông tin + quyền để màn "Quản lý nhóm / kênh" Telegram biết hiện gì (GetFullChannel / GetFullChat). */
+export async function getChatSettings(accountId: string, chatId: string): Promise<{ success: boolean; settings?: TelegramChatSettings; error?: string }> {
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+  const { Api } = require('telegram');
+  try {
+    const peerType = await resolveChatPeerType(accountId, conn.client, chatId);
+    if (peerType === 'user') return { success: false, error: 'Đây không phải nhóm / kênh' };
+    const channelLike = isChannelPeerType(peerType);
+    const full: any = channelLike
+      ? await conn.client.invoke(new Api.channels.GetFullChannel({ channel: await resolveInputChannel(accountId, conn.client, chatId) }))
+      : await conn.client.invoke(new Api.messages.GetFullChat({ chatId: getBasicGroupId(chatId) }));
+    const fullChat = full?.fullChat || {};
+    const chats: any[] = Array.isArray(full?.chats) ? full.chats : [];
+    const entity = chats.find(chat => getCanonicalChatId(chat) === chatId) || null;
+    if (entity) cacheTelegramPeer(accountId, chatId, entity);
+    const type = entity ? getTelegramPeerType(entity) : peerType;
+    const isBroadcast = type === 'channel';
+    const creator = !!entity?.creator;
+    const rights = entity?.adminRights || null;
+    const defaults = entity?.defaultBannedRights || null;
+    // Nhóm thường: thành viên được đổi thông tin / mời người trừ khi bị cấm; siêu nhóm thiếu quyền mặc định = cấm.
+    const memberAllowed = (flag: string) => !isBroadcast && !(defaults ? defaults[flag] : channelLike);
+    const linkedId = fullChat.linkedChatId != null ? `-100${String(fullChat.linkedChatId?.valueOf?.() ?? fullChat.linkedChatId)}` : '';
+    const linked = linkedId ? chats.find(chat => getCanonicalChatId(chat) === linkedId) : null;
+    const activeUsername = entity?.username
+      || (Array.isArray(entity?.usernames) ? entity.usernames.find((item: any) => item?.active)?.username : '')
+      || '';
+    const settings: TelegramChatSettings = {
+      peerType: type,
+      title: String(entity?.title || ''),
+      about: String(fullChat.about || ''),
+      username: String(activeUsername || ''),
+      inviteLink: String(fullChat.exportedInvite?.link || ''),
+      membersCount: Number(fullChat.participantsCount ?? entity?.participantsCount ?? fullChat.participants?.participants?.length ?? 0) || 0,
+      isCreator: creator,
+      isAdmin: creator || !!rights,
+      canChangeInfo: creator || !!rights?.changeInfo || memberAllowed('changeInfo'),
+      canInviteUsers: creator || !!rights?.inviteUsers || memberAllowed('inviteUsers'),
+      canSetUsername: channelLike && (creator || !!fullChat.canSetUsername),
+      canDelete: channelLike ? (creator || !!fullChat.canDeleteChannel) : creator,
+      signatures: !!entity?.signatures,
+      linkedChat: linkedId ? { id: linkedId, title: String(linked?.title || '') } : null,
+      ttlPeriod: Number(fullChat.ttlPeriod || 0) || 0,
+      joinRequest: !!entity?.joinRequest,
+    };
+    return { success: true, settings };
+  } catch (err: any) {
+    return { success: false, error: friendlyTelegramActionError(String(err?.errorMessage || err?.message || err)) };
+  }
+}
+
+function isNotModified(raw: string): boolean {
+  return raw.includes('_NOT_MODIFIED');
+}
+
+/** Sửa mô tả nhóm / kênh (messages.EditChatAbout, tối đa 255 ký tự). */
+export async function editChatAbout(accountId: string, chatId: string, about: string): Promise<{ success: boolean; error?: string }> {
+  const text = String(about || '').trim();
+  if (text.length > 255) return { success: false, error: 'Mô tả tối đa 255 ký tự' };
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+  const { Api } = require('telegram');
+  try {
+    await conn.client.invoke(new Api.messages.EditChatAbout({ peer: await resolveInputPeer(accountId, conn.client, chatId), about: text }));
+    return { success: true };
+  } catch (err: any) {
+    const raw = String(err?.errorMessage || err?.message || err);
+    if (isNotModified(raw)) return { success: true };
+    if (raw.includes('CHAT_ABOUT_TOO_LONG')) return { success: false, error: 'Mô tả quá dài' };
+    if (raw.includes('CHAT_ADMIN_REQUIRED')) return { success: false, error: 'Cần quyền quản trị để sửa mô tả' };
+    return { success: false, error: friendlyTelegramActionError(raw) };
+  }
+}
+
+/** Tạo link mời chính mới, link cũ hết hiệu lực (messages.EditExportedChatInvite revoked → link thay thế). */
+export async function revokeInviteLink(accountId: string, chatId: string): Promise<{ success: boolean; link?: string; error?: string }> {
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+  const { Api } = require('telegram');
+  try {
+    const peerType = await resolveChatPeerType(accountId, conn.client, chatId);
+    const peer = await resolveInputPeer(accountId, conn.client, chatId);
+    const current = await readPrimaryInviteLink(accountId, conn.client, chatId, peerType);
+    if (current) {
+      try {
+        const replaced: any = await conn.client.invoke(new Api.messages.EditExportedChatInvite({ peer, link: current, revoked: true }));
+        const link = String(replaced?.newInvite?.link || '');
+        if (link) return { success: true, link };
+      } catch (err: any) {
+        tgLog('warn', accountId, 'history', 'REVOKE_INVITE_FALLBACK', { chatId, error: err?.message });
+      }
+    }
+    const exported: any = await conn.client.invoke(new Api.messages.ExportChatInvite({ peer, legacyRevokePermanent: true }));
+    const link = String(exported?.link || '');
+    return link ? { success: true, link } : { success: false, error: 'Telegram không trả về link mới' };
+  } catch (err: any) {
+    const raw = String(err?.errorMessage || err?.message || err);
+    if (raw.includes('CHAT_ADMIN_REQUIRED')) return { success: false, error: 'Cần quyền mời thành viên để đổi link' };
+    return { success: false, error: friendlyTelegramActionError(raw) };
+  }
+}
+
+/** Kênh: bật / tắt ghi tên người đăng dưới mỗi bài (channels.ToggleSignatures). */
+export async function toggleChannelSignatures(accountId: string, chatId: string, enabled: boolean): Promise<{ success: boolean; error?: string }> {
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+  const { Api } = require('telegram');
+  try {
+    await conn.client.invoke(new Api.channels.ToggleSignatures({
+      channel: await resolveInputChannel(accountId, conn.client, chatId),
+      ...(enabled ? { signaturesEnabled: true } : {}),
+    }));
+    return { success: true };
+  } catch (err: any) {
+    const raw = String(err?.errorMessage || err?.message || err);
+    if (isNotModified(raw)) return { success: true };
+    if (raw.includes('CHAT_ADMIN_REQUIRED')) return { success: false, error: 'Cần quyền quản trị kênh' };
+    return { success: false, error: friendlyTelegramActionError(raw) };
+  }
+}
+
+/** Nhóm có thể làm nhóm thảo luận cho kênh (channels.GetGroupsForDiscussion). Nhóm thường phải nâng cấp trước. */
+export async function getDiscussionGroups(accountId: string): Promise<{
+  success: boolean;
+  groups?: Array<{ id: string; title: string; membersCount: number; basicGroup: boolean }>;
+  error?: string;
+}> {
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+  const { Api } = require('telegram');
+  try {
+    const result: any = await conn.client.invoke(new Api.channels.GetGroupsForDiscussion());
+    const groups = (Array.isArray(result?.chats) ? result.chats : [])
+      .filter((chat: any) => chat?.className === 'Chat' || (chat?.className === 'Channel' && chat?.megagroup))
+      .map((chat: any) => {
+        const id = getCanonicalChatId(chat);
+        cacheTelegramPeer(accountId, id, chat);
+        return { id, title: String(chat.title || id), membersCount: Number(chat.participantsCount || 0) || 0, basicGroup: chat.className === 'Chat' };
+      });
+    return { success: true, groups };
+  } catch (err: any) {
+    return { success: false, error: friendlyTelegramActionError(String(err?.errorMessage || err?.message || err)) };
+  }
+}
+
+/**
+ * Gắn / gỡ nhóm thảo luận của kênh (channels.SetDiscussionGroup; groupId trống = gỡ). Nhóm đang ẩn lịch sử với thành
+ * viên mới không gắn được: `showHistory` = cho phép bật hiện lịch sử (như Telegram hỏi trước) rồi gắn lại.
+ */
+export async function setDiscussionGroup(
+  accountId: string,
+  channelId: string,
+  groupId: string | null | undefined,
+  showHistory = false,
+): Promise<{ success: boolean; needsHistory?: boolean; error?: string }> {
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+  const { Api } = require('telegram');
+  const link = async () => conn.client.invoke(new Api.channels.SetDiscussionGroup({
+    broadcast: await resolveInputChannel(accountId, conn.client, channelId),
+    group: groupId ? await resolveInputChannel(accountId, conn.client, groupId) : new Api.InputChannelEmpty(),
+  }));
+  try {
+    try {
+      await link();
+    } catch (err: any) {
+      const raw = String(err?.errorMessage || err?.message || err);
+      if (!raw.includes('MEGAGROUP_PREHISTORY_HIDDEN') || !groupId) throw err;
+      if (!showHistory) {
+        return { success: false, needsHistory: true, error: 'Nhóm đang ẩn lịch sử trò chuyện với thành viên mới — cần bật hiện lịch sử để gắn làm nhóm thảo luận' };
+      }
+      await conn.client.invoke(new Api.channels.TogglePreHistoryHidden({ channel: await resolveInputChannel(accountId, conn.client, groupId), enabled: false }));
+      await link();
+    }
+    tgLog('info', accountId, 'history', 'DISCUSSION_GROUP_SET', { channelId, linked: !!groupId });
+    return { success: true };
+  } catch (err: any) {
+    const raw = String(err?.errorMessage || err?.message || err);
+    if (raw.includes('LINK_NOT_MODIFIED')) return { success: true };
+    if (raw.includes('MEGAGROUP_ID_INVALID')) return { success: false, error: 'Nhóm này chưa là siêu nhóm — không gắn được' };
+    if (raw.includes('CHAT_ADMIN_REQUIRED')) return { success: false, error: 'Cần quyền quản trị cả kênh và nhóm' };
+    return { success: false, error: friendlyTelegramActionError(raw) };
+  }
+}
+
+/** Tự xoá tin nhắn của nhóm / kênh sau N giây (messages.SetHistoryTTL; 0 = tắt). */
+export async function setChatHistoryTtl(accountId: string, chatId: string, period: number): Promise<{ success: boolean; ttlPeriod?: number; error?: string }> {
+  const seconds = normalizeTelegramTtl(period);
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+  const { Api } = require('telegram');
+  try {
+    await conn.client.invoke(new Api.messages.SetHistoryTTL({ peer: await resolveInputPeer(accountId, conn.client, chatId), period: seconds }));
+    return { success: true, ttlPeriod: seconds };
+  } catch (err: any) {
+    const raw = String(err?.errorMessage || err?.message || err);
+    if (isNotModified(raw)) return { success: true, ttlPeriod: seconds };
+    if (raw.includes('CHAT_ADMIN_REQUIRED')) return { success: false, error: 'Cần quyền quản trị để đổi tự xoá tin nhắn' };
+    if (raw.includes('TTL_PERIOD_INVALID')) return { success: false, error: 'Thời gian tự xoá không hợp lệ' };
+    return { success: false, error: friendlyTelegramActionError(raw) };
+  }
+}
+
+/**
+ * Xoá hẳn nhóm / kênh cho mọi người (chỉ người tạo): channels.DeleteChannel / messages.DeleteChat. Hội thoại trong
+ * Deplao chuyển sang "không còn khả dụng" (giữ tin cũ, ra khỏi hộp thư chính) như khi nhóm bị xoá từ máy khác.
+ */
+export async function deleteChat(accountId: string, chatId: string): Promise<{ success: boolean; error?: string }> {
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+  const { Api } = require('telegram');
+  try {
+    const peerType = await resolveChatPeerType(accountId, conn.client, chatId);
+    if (peerType === 'user') return { success: false, error: 'Đây không phải nhóm / kênh' };
+    if (isChannelPeerType(peerType)) {
+      await conn.client.invoke(new Api.channels.DeleteChannel({ channel: await resolveInputChannel(accountId, conn.client, chatId) }));
+    } else {
+      await conn.client.invoke(new Api.messages.DeleteChat({ chatId: getBasicGroupId(chatId) }));
+    }
+    DatabaseService.getInstance()?.run(
+      `UPDATE contacts SET telegram_membership_state = 'forbidden', telegram_join_action = 'none', telegram_can_send = 0,
+         telegram_send_reason = ?, is_in_others = 1, telegram_state_updated_at = ?
+       WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'telegram_user'`,
+      [peerType === 'channel' ? 'Kênh đã bị xoá' : 'Nhóm đã bị xoá', Date.now(), accountId, chatId],
+    );
+    EventBroadcaster.emit('db:unreadChanged', { zaloId: accountId, source: 'telegram_chat_deleted' });
+    tgLog('info', accountId, 'history', 'CHAT_DELETED', { chatId, peerType });
+    return { success: true };
+  } catch (err: any) {
+    const raw = String(err?.errorMessage || err?.message || err);
+    if (raw.includes('CHAT_ADMIN_REQUIRED') || raw.includes('CHAT_FORBIDDEN')) return { success: false, error: 'Chỉ người tạo mới xoá được' };
+    if (raw.includes('CHANNEL_TOO_LARGE')) return { success: false, error: 'Kênh quá lớn — Telegram yêu cầu liên hệ hỗ trợ để xoá' };
+    return { success: false, error: friendlyTelegramActionError(raw) };
+  }
+}
+
+/** Mời nhiều người vào nhóm / kênh có sẵn (thêm người theo dõi, thành viên). */
+export async function inviteUsers(
+  accountId: string,
+  chatId: string,
+  userIds: string[],
+): Promise<{ success: boolean; invited?: number; missingInvitees?: TelegramMissingInvitee[]; error?: string }> {
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+  try {
+    const peerType = await resolveChatPeerType(accountId, conn.client, chatId);
+    if (peerType === 'user') return { success: false, error: 'Đây không phải nhóm / kênh' };
+    const result = await inviteUsersToChat(accountId, conn.client, chatId, peerType, userIds);
+    tgLog('info', accountId, 'history', 'USERS_INVITED', { chatId, invited: result.invited, missing: result.missingInvitees.length });
+    return { success: true, ...result };
+  } catch (err: any) {
+    return { success: false, error: friendlyTelegramActionError(String(err?.errorMessage || err?.message || err)) };
+  }
+}
+
+/** Danh bạ Telegram (contacts.GetContacts) — sắp như Telegram: đang trực tuyến, rồi truy cập gần nhất. */
+export async function getContacts(accountId: string): Promise<{ success: boolean; contacts?: TelegramContactItem[]; error?: string }> {
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+  const { Api } = require('telegram');
+  try {
+    const result: any = await conn.client.invoke(new Api.contacts.GetContacts({ hash: BigInt(0) }));
+    const mutual = new Set<string>(
+      (Array.isArray(result?.contacts) ? result.contacts : [])
+        .filter((item: any) => item?.mutual)
+        .map((item: any) => String(item.userId?.valueOf?.() ?? item.userId)),
+    );
+    const db = DatabaseService.getInstance();
+    const rows = db?.query<any>(
+      `SELECT contact_id, avatar_url FROM contacts WHERE owner_zalo_id = ? AND channel = 'telegram_user' AND contact_type = 'user'`,
+      [accountId],
+    ) || [];
+    const chats = new Map<string, any>(rows.map((row: any) => [String(row.contact_id), row]));
+    const users: any[] = (Array.isArray(result?.users) ? result.users : [])
+      .filter((user: any) => user?.className === 'User' && !user.deleted && !user.self);
+    // access_hash của từng liên hệ → tạo nhóm / mời / nhắn tin được ngay (1 transaction cho cả danh bạ)
+    const cacheAll = () => {
+      for (const user of users) cacheTelegramPeer(accountId, String(user.id?.valueOf?.() ?? user.id), user);
+    };
+    if (db && typeof (db as any).transaction === 'function') db.transaction(cacheAll);
+    else cacheAll();
+    const contacts: TelegramContactItem[] = users.map((user: any) => {
+      const id = String(user.id?.valueOf?.() ?? user.id);
+      const row = chats.get(id);
+      const name = [user.firstName, user.lastName].filter(Boolean).join(' ') || user.username || (user.phone ? `+${user.phone}` : id);
+      return {
+        id,
+        name,
+        firstName: String(user.firstName || ''),
+        lastName: String(user.lastName || ''),
+        username: String(user.username || ''),
+        phone: String(user.phone || ''),
+        avatar: String(row?.avatar_url || ''),
+        mutual: mutual.has(id),
+        presence: telegramPresenceOf(user.status),
+        hasChat: !!row,
+        bot: !!user.bot,
+      };
+    });
+    const now = Date.now();
+    contacts.sort((a, b) => telegramPresenceRank(b.presence, now) - telegramPresenceRank(a.presence, now) || a.name.localeCompare(b.name, 'vi'));
+    return { success: true, contacts };
+  } catch (err: any) {
+    return { success: false, error: friendlyTelegramActionError(String(err?.errorMessage || err?.message || err)) };
+  }
+}
+
+/** Xoá khỏi danh bạ Telegram (contacts.DeleteContacts) — không xoá hội thoại. */
+export async function deleteContacts(accountId: string, userIds: string[]): Promise<{ success: boolean; error?: string }> {
+  const ids = Array.from(new Set((userIds || []).map(String).filter(Boolean)));
+  if (ids.length === 0) return { success: true };
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+  const { Api } = require('telegram');
+  const { getInputUser } = require('telegram/Utils');
+  try {
+    const users: any[] = [];
+    for (const id of ids) users.push(getInputUser(await resolveInputPeer(accountId, conn.client, id)));
+    await conn.client.invoke(new Api.contacts.DeleteContacts({ id: users }));
+    tgLog('info', accountId, 'history', 'CONTACTS_DELETED', { count: ids.length });
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: friendlyTelegramActionError(String(err?.errorMessage || err?.message || err)) };
+  }
+}
+
+/** messageActionPhoneCall của một tin (MessageService) → thông tin cuộc gọi. */
+function telegramCallInfoOf(message: any): TelegramCallInfo {
+  const action = message?.action || {};
+  return {
+    out: !!message?.out,
+    reason: telegramCallReasonOf(action.reason?.className),
+    duration: Number(action.duration || 0) || 0,
+    video: !!action.video,
+  };
+}
+
+/**
+ * Lịch sử cuộc gọi của tài khoản (như màn "Cuộc gọi" của Telegram): messages.Search với peer trống +
+ * InputMessagesFilterPhoneCalls (missed = chỉ gọi nhỡ), phân trang theo offsetId.
+ */
+export async function getCallHistory(
+  accountId: string,
+  params: { missed?: boolean; offsetId?: number; limit?: number } = {},
+): Promise<{ success: boolean; items?: TelegramCallHistoryItem[]; nextOffsetId?: number; hasMore?: boolean; error?: string }> {
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+  const { Api } = require('telegram');
+  const limit = Math.max(1, Math.min(100, Math.floor(Number(params.limit) || 50)));
+  try {
+    const result: any = await conn.client.invoke(new Api.messages.Search({
+      peer: new Api.InputPeerEmpty(),
+      q: '',
+      filter: new Api.InputMessagesFilterPhoneCalls(params.missed ? { missed: true } : {}),
+      minDate: 0,
+      maxDate: 0,
+      offsetId: Math.max(0, Math.floor(Number(params.offsetId) || 0)),
+      addOffset: 0,
+      limit,
+      maxId: 0,
+      minId: 0,
+      hash: BigInt(0),
+    }));
+    const messages: any[] = Array.isArray(result?.messages) ? result.messages : [];
+    const users = new Map<string, any>();
+    for (const user of Array.isArray(result?.users) ? result.users : []) {
+      users.set(String(user?.id?.valueOf?.() ?? user?.id), user);
+    }
+    const db = DatabaseService.getInstance();
+    const avatars = new Map<string, string>(
+      (db?.query<any>(
+        `SELECT contact_id, avatar_url FROM contacts WHERE owner_zalo_id = ? AND channel = 'telegram_user' AND contact_type = 'user' AND COALESCE(avatar_url, '') != ''`,
+        [accountId],
+      ) || []).map((row: any) => [String(row.contact_id), String(row.avatar_url)]),
+    );
+    const items: TelegramCallHistoryItem[] = [];
+    for (const message of messages) {
+      if (message?.action?.className !== 'MessageActionPhoneCall') continue;
+      const userId = deriveChatIdFromRawMessage(message) || '';
+      if (!userId) continue;
+      const user = users.get(userId);
+      if (user) cacheTelegramPeer(accountId, userId, user);
+      const call = telegramCallInfoOf(message);
+      items.push({
+        msgId: String(message.id),
+        userId,
+        name: (user && ([user.firstName, user.lastName].filter(Boolean).join(' ') || user.username)) || telegramKnownName(accountId, userId),
+        avatar: avatars.get(userId) || '',
+        date: Number(message.date || 0) * 1000,
+        out: call.out,
+        reason: call.reason,
+        duration: Number(call.duration || 0),
+        video: !!call.video,
+      });
+    }
+    const last = messages[messages.length - 1];
+    return { success: true, items, nextOffsetId: last ? Number(last.id) : 0, hasMore: messages.length >= limit };
+  } catch (err: any) {
+    return { success: false, error: friendlyTelegramActionError(String(err?.errorMessage || err?.message || err)) };
+  }
+}
+
+// ── Cuộc gọi đến ───────────────────────────────────────────────────────────────
+// Deplao chưa có bộ thoại của Telegram (tgcalls: WebRTC + giao thức tín hiệu riêng, Telegram không công bố) nên
+// không nghe máy được: chỉ báo "có cuộc gọi đến" để người dùng nghe trên điện thoại / Telegram, hoặc từ chối ngay.
+// Không gọi phone.receivedCall (sẽ làm Telegram coi máy này đang bận và từ chối các cuộc gọi khác).
+
+const ringingTelegramCalls = new Map<string, { timer: ReturnType<typeof setTimeout> }>();
+
+function endRingingTelegramCall(accountId: string, callId: string, reason: string): void {
+  const key = `${accountId}:${callId}`;
+  const ringing = ringingTelegramCalls.get(key);
+  if (!ringing) return;
+  clearTimeout(ringing.timer);
+  ringingTelegramCalls.delete(key);
+  EventBroadcaster.emit('event:telegramCall', { zaloId: accountId, state: 'ended', callId, reason });
+}
+
+async function handleTelegramPhoneCallUpdate(accountId: string, client: TelegramClient, call: any): Promise<void> {
+  if (!call) return;
+  const callId = String(call.id?.valueOf?.() ?? call.id ?? '');
+  if (!callId) return;
+  if (call.className === 'PhoneCallRequested') {
+    // Chỉ cuộc gọi tới chính tài khoản này (cuộc gọi đi từ máy khác không vào đây)
+    if (String(call.participantId?.valueOf?.() ?? call.participantId ?? '') !== String(accountId)) return;
+    const key = `${accountId}:${callId}`;
+    if (ringingTelegramCalls.has(key)) return;
+    const userId = String(call.adminId?.valueOf?.() ?? call.adminId ?? '');
+    let name = telegramKnownName(accountId, userId);
+    if (name === userId) {
+      try {
+        const entity: any = await hydrateTelegramIdentity(accountId, client, userId);
+        name = [entity?.firstName, entity?.lastName].filter(Boolean).join(' ') || entity?.username || userId;
+      } catch {}
+    }
+    const avatar = DatabaseService.getInstance()?.queryOne<any>(
+      `SELECT avatar_url FROM contacts WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'telegram_user'`,
+      [accountId, userId],
+    )?.avatar_url || '';
+    // Telegram tự kết thúc cuộc gọi không ai nghe (PhoneCallDiscarded); hẹn giờ phòng khi mất cập nhật đó.
+    const timer = setTimeout(() => endRingingTelegramCall(accountId, callId, 'timeout'), 90_000);
+    ringingTelegramCalls.set(key, { timer });
+    EventBroadcaster.emit('event:telegramCall', {
+      zaloId: accountId,
+      state: 'ringing',
+      callId,
+      accessHash: String(call.accessHash?.valueOf?.() ?? call.accessHash ?? ''),
+      userId,
+      name,
+      avatar,
+      video: !!call.video,
+      date: Number(call.date || 0) * 1000,
+    });
+    tgLog('info', accountId, 'socket', 'INCOMING_CALL', { video: !!call.video });
+    return;
+  }
+  if (call.className === 'PhoneCallDiscarded') {
+    endRingingTelegramCall(accountId, callId, telegramCallReasonOf(call.reason?.className) || 'ended');
+  } else if (call.className === 'PhoneCall' || call.className === 'PhoneCallAccepted') {
+    endRingingTelegramCall(accountId, callId, 'answered_elsewhere');
+  }
+}
+
+/** Từ chối cuộc gọi đang đổ chuông (phone.DiscardCall lý do bận — như nút "Từ chối" của Telegram). */
+export async function declineCall(
+  accountId: string,
+  params: { callId: string; accessHash: string; video?: boolean },
+): Promise<{ success: boolean; error?: string }> {
+  const callId = String(params?.callId || '');
+  if (!/^-?\d+$/.test(callId) || !/^-?\d+$/.test(String(params?.accessHash || ''))) return { success: false, error: 'Cuộc gọi không hợp lệ' };
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+  const { Api } = require('telegram');
+  try {
+    await conn.client.invoke(new Api.phone.DiscardCall({
+      peer: new Api.InputPhoneCall({ id: BigInt(callId), accessHash: BigInt(String(params.accessHash)) }),
+      duration: 0,
+      reason: new Api.PhoneCallDiscardReasonBusy(),
+      connectionId: BigInt(0),
+      ...(params.video ? { video: true } : {}),
+    }));
+    endRingingTelegramCall(accountId, callId, 'declined');
+    return { success: true };
+  } catch (err: any) {
+    const raw = String(err?.errorMessage || err?.message || err);
+    if (raw.includes('CALL_ALREADY_ACCEPTED')) {
+      endRingingTelegramCall(accountId, callId, 'answered_elsewhere');
+      return { success: false, error: 'Cuộc gọi đã được nghe trên thiết bị khác' };
+    }
+    if (raw.includes('CALL_ALREADY_DECLINED') || raw.includes('CALL_PEER_INVALID')) {
+      endRingingTelegramCall(accountId, callId, 'ended');
+      return { success: true };
+    }
+    return { success: false, error: friendlyTelegramActionError(raw) };
+  }
+}
+
+/**
+ * Tin cuộc gọi trong hội thoại 1-1 (socket): lưu thẻ cuộc gọi, đưa hội thoại lên đầu, báo khung chat như tin mới.
+ * Lịch sử / tải thêm đi qua normalizeTelegramMessageMedia (cùng thẻ) nên không cần nhánh riêng.
+ */
+function persistTelegramCallServiceMessage(accountId: string, message: any, source: TelegramIngressSource): ProcessResult {
+  const db = DatabaseService.getInstance();
+  if (!db) return { status: 'failed' };
+  const msgId = String(message?.id ?? '');
+  const chatId = deriveChatIdFromRawMessage(message) || '';
+  if (!msgId || !chatId || chatId.startsWith('-')) return { status: 'ignored', chatId, messageId: msgId };
+  const isSelf = !!message.out;
+  const timestamp = (message.date || Math.floor(Date.now() / 1000)) * 1000;
+  const { content, msgType } = normalizeTelegramMessageMedia(message);
+  const senderId = isSelf ? String(accountId) : chatId;
+  const result = persistTelegramMessage(db, {
+    msgId, accountId, chatId, threadType: 0, senderId, content, msgType, timestamp, isSelf, attachments: [],
+  });
+  if (result.status !== 'inserted') return result;
+  const preview = getTelegramMessagePreview(msgType, content);
+  const countUnread = !isSelf && source === 'socket';
+  const name = telegramKnownName(accountId, chatId);
+  db.run(`
+    INSERT INTO contacts (owner_zalo_id, contact_id, display_name, avatar_url, is_friend, contact_type, unread_count, last_message, last_message_time, channel)
+    VALUES (?, ?, ?, '', 0, 'user', ?, ?, ?, 'telegram_user')
+    ON CONFLICT(owner_zalo_id, contact_id) DO UPDATE SET
+      last_message = CASE WHEN excluded.last_message_time >= COALESCE(contacts.last_message_time, 0) THEN excluded.last_message ELSE contacts.last_message END,
+      last_message_time = CASE WHEN excluded.last_message_time >= COALESCE(contacts.last_message_time, 0) THEN excluded.last_message_time ELSE contacts.last_message_time END,
+      unread_count = CASE WHEN ? = 0 THEN contacts.unread_count ELSE contacts.unread_count + 1 END,
+      channel = 'telegram_user'
+  `, [accountId, chatId, name === chatId ? '' : name, countUnread ? 1 : 0, preview, timestamp, countUnread ? 1 : 0]);
+  EventBroadcaster.emit('event:message', {
+    zaloId: accountId,
+    channel: 'telegram_user',
+    message: {
+      channel: 'telegram_user',
+      type: 0,
+      threadId: chatId,
+      isSelf,
+      _silentNotification: source !== 'socket',
+      data: {
+        uidFrom: senderId,
+        idTo: chatId,
+        msgId,
+        content,
+        preview,
+        msgType,
+        channel: 'telegram_user',
+        isChannel: false,
+        ts: String(timestamp),
+        dName: isSelf || name === chatId ? '' : name,
+      },
+    },
+  });
+  tgLog('info', accountId, source, `UI_EMITTED call ${msgId}`, { chatId });
+  return result;
+}
+
 export async function getGroupMembers(accountId: string, chatId: string, limit = 200): Promise<{ success: boolean; members?: any[]; error?: string }> {
   const conn = ensureConnected(accountId);
   if ('error' in conn) {
@@ -7754,7 +10274,64 @@ export async function getMessageReactions(
       nextOffset: result.nextOffset || '',
     };
   } catch (err: any) {
+    // Kênh phát tin: Telegram không cho xem ai đã thả cảm xúc (kể cả quản trị viên) — BROADCAST_FORBIDDEN
+    if (String(err?.errorMessage || err?.message || '').includes('BROADCAST_FORBIDDEN')) {
+      return { success: false, anonymous: true, error: 'Kênh ẩn danh người thả cảm xúc' } as any;
+    }
     return { success: false, error: err.message };
+  }
+}
+
+/**
+ * "Đã xem" của tin mình gửi (như Telegram Desktop: chuột phải → "10 đã xem" + danh sách). Nhóm / siêu nhóm:
+ * getMessageReadParticipants (Telegram chỉ cho nhóm nhỏ, tin ≤ 7 ngày); chat riêng: getOutboxReadDate. Tên người xem:
+ * một lệnh users.GetUsers cho các id đã có trong cache GramJS (không có thì renderer tự tra liên hệ / thành viên nhóm).
+ */
+export async function getMessageReadParticipants(
+  accountId: string,
+  chatId: string,
+  messageId: string,
+): Promise<{
+  success: boolean;
+  kind?: 'group' | 'private';
+  participants?: Array<{ userId: string; date: number; name: string }>;
+  readAt?: number;
+  reason?: ReadReceiptUnavailableReason;
+  error?: string;
+}> {
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, reason: 'error', error: conn.error };
+  const msgId = Number(messageId);
+  if (!Number.isSafeInteger(msgId) || msgId <= 0) return { success: false, reason: 'error', error: 'Tin chưa gửi xong' };
+  const { Api } = require('telegram');
+  try {
+    const peer = await resolveInputPeer(accountId, conn.client, chatId);
+    if (!String(chatId).startsWith('-')) {
+      const res: any = await conn.client.invoke(new Api.messages.GetOutboxReadDate({ peer, msgId }));
+      return { success: true, kind: 'private', readAt: Math.max(0, Number(res?.date || 0)) * 1000, participants: [] };
+    }
+    const participants = normalizeReadParticipants(await conn.client.invoke(new Api.messages.GetMessageReadParticipants({ peer, msgId })));
+    const names = new Map<string, string>();
+    const inputUsers: any[] = [];
+    for (const { userId } of participants.slice(0, 100)) {
+      try {
+        const inputPeer = (conn.client as any)._entityCache?.get(userId);
+        if (inputPeer?.className === 'InputPeerUser') inputUsers.push(new Api.InputUser({ userId: inputPeer.userId, accessHash: inputPeer.accessHash }));
+      } catch { /* chưa có trong cache: renderer tự tra */ }
+    }
+    if (inputUsers.length) {
+      try {
+        const users: any[] = await conn.client.invoke(new Api.users.GetUsers({ id: inputUsers }));
+        for (const user of users || []) {
+          const name = telegramEntityName(user);
+          if (user?.id != null && name) names.set(String(user.id), name);
+        }
+      } catch { /* chỉ là tên dự phòng */ }
+    }
+    return { success: true, kind: 'group', participants: participants.map((p) => ({ ...p, name: names.get(p.userId) || '' })) };
+  } catch (err: any) {
+    const mapped = mapReadReceiptError(err);
+    return { success: false, reason: mapped.reason, error: mapped.message };
   }
 }
 
@@ -8063,24 +10640,9 @@ export async function editChatPhoto(accountId: string, chatId: string, photoPath
   const conn = ensureConnected(accountId);
   if ('error' in conn) return { success: false, error: conn.error };
   try {
-    const { Api } = require('telegram');
-    const fs = require('fs');
     const peerType = await resolveChatPeerType(accountId, conn.client, chatId);
-    const buffer = fs.readFileSync(photoPath);
-    // GramJS uploadFile expects CustomFile, not raw Buffer
-    const { CustomFile } = require('telegram/client/uploads');
-    const customFile = new CustomFile(require('path').basename(photoPath), buffer.length, '', buffer);
-    const file = await conn.client.uploadFile({ file: customFile, workers: 1 });
-    const inputFile = 'id' in file
-      ? new Api.InputFileUploaded({ id: file.id, parts: file.parts, md5Checksum: Buffer.alloc(0) })
-      : file;
-
-    if (isChannelPeerType(peerType)) {
-      await conn.client.invoke(new Api.channels.EditPhoto({ channel: await resolveInputChannel(accountId, conn.client, chatId), photo: inputFile }));
-    } else {
-      await conn.client.invoke(new Api.messages.EditChatPhoto({ chatId: getBasicGroupId(chatId), photo: inputFile }));
-    }
-    return { success: true };
+    const error = await applyTelegramChatPhoto(accountId, conn.client, chatId, peerType, photoPath);
+    return error ? { success: false, error } : { success: true };
   } catch (err: any) {
     return { success: false, error: err.message };
   }
@@ -8109,7 +10671,7 @@ export async function editChatAdmin(accountId: string, chatId: string, userId: s
         pinMessages: false, addAdmins: false, anonymous: false,
         manageCall: false, other: false,
       });
-      await conn.client.invoke(new Api.channels.EditAdmin({ channel: await resolveInputChannel(accountId, conn.client, chatId), participant: user, adminRights }));
+      await conn.client.invoke(new Api.channels.EditAdmin({ channel: await resolveInputChannel(accountId, conn.client, chatId), userId: user, adminRights, rank: '' }));
     } else {
       await conn.client.invoke(new Api.messages.EditChatAdmin({ chatId: getBasicGroupId(chatId), userId: user, isAdmin }));
     }
@@ -8165,17 +10727,9 @@ export async function exportChatInvite(accountId: string, chatId: string): Promi
   const conn = ensureConnected(accountId);
   if ('error' in conn) return { success: false, error: conn.error };
   try {
-    const { Api } = require('telegram');
     const peerType = await resolveChatPeerType(accountId, conn.client, chatId);
-    const peer = await resolveInputPeer(accountId, conn.client, chatId);
-    let result: any;
-    if (isChannelPeerType(peerType)) {
-      result = await conn.client.invoke(new Api.messages.ExportChatInvite({ peer, legacyRevokePermanent: false }));
-    } else {
-      result = await conn.client.invoke(new Api.messages.ExportChatInvite({ peer }));
-    }
-    const link = result?.link || result?.result?.link || '';
-    return { success: true, link };
+    const link = await readPrimaryInviteLink(accountId, conn.client, chatId, peerType);
+    return link ? { success: true, link } : { success: false, error: 'Không lấy được link mời — cần quyền mời thành viên' };
   } catch (err: any) {
     return { success: false, error: err.message };
   }
@@ -8184,6 +10738,31 @@ export async function exportChatInvite(accountId: string, chatId: string): Promi
 /**
  * Đánh dấu đã đọc nhóm
  */
+/**
+ * @-mentions and reactions have their OWN unread counters on Telegram (the "@" / "❤" badges of the
+ * Telegram apps): messages/channels.ReadHistory does not clear them. Clear both like "Mark as read"
+ * in the Telegram apps (messages.readMentions / messages.readReactions, repeated while `offset` > 0).
+ * Best-effort: a failure here must not turn a successful ReadHistory into an error.
+ */
+async function readTelegramUnreadThings(accountId: string, client: any, peer: any, chatId: string, topMsgId?: number): Promise<void> {
+  const { Api } = require('telegram');
+  const requests: Array<[string, (args: any) => any]> = [
+    ['readMentions', args => new Api.messages.ReadMentions(args)],
+    ...(Api.messages.ReadReactions ? [['readReactions', (args: any) => new Api.messages.ReadReactions(args)] as [string, (args: any) => any]] : []),
+  ];
+  for (const [name, build] of requests) {
+    try {
+      // AffectedHistory.offset > 0 → Telegram has more to process, call again
+      for (let round = 0; round < 20; round++) {
+        const result: any = await client.invoke(build({ peer, ...(topMsgId ? { topMsgId } : {}) }));
+        if (!(Number(result?.offset) > 0)) break;
+      }
+    } catch (err: any) {
+      tgLog('warn', accountId, 'socket', `${name} failed`, { chatId, topMsgId, error: err?.message });
+    }
+  }
+}
+
 export async function readChatHistory(accountId: string, chatId: string): Promise<{ success: boolean; error?: string }> {
   const conn = ensureConnected(accountId);
   if ('error' in conn) return { success: false, error: conn.error };
@@ -8195,6 +10774,8 @@ export async function readChatHistory(accountId: string, chatId: string): Promis
     } else {
       await conn.client.invoke(new Api.messages.ReadHistory({ peer: await resolveInputPeer(accountId, conn.client, chatId) }));
     }
+    // ReadHistory leaves the @-mention / reaction badges → clear them too (whole chat, every forum topic)
+    await readTelegramUnreadThings(accountId, conn.client, await resolveInputPeer(accountId, conn.client, chatId), chatId);
     return { success: true };
   } catch (err: any) {
     return { success: false, error: err.message };
@@ -8221,6 +10802,8 @@ export async function readForumTopic(accountId: string, chatId: string, topMsgId
       msgId: Number(topMsgId),
       readMaxId: maxId,
     }));
+    // The topic's @-mention / reaction badges are separate counters (see readTelegramUnreadThings)
+    await readTelegramUnreadThings(accountId, conn.client, peer, chatId, Number(topMsgId));
     return { success: true };
   } catch (err: any) {
     Logger.warn(`[TelegramUserListener] readForumTopic failed: ${err.message}`);
@@ -8810,233 +11393,177 @@ export async function sendTopicMessage(accountId: string, chatId: string, rootMe
 }
 
 // ─── Telegram Sticker/GIF APIs ──────────────────────────────────────────────
+// Logic ở ./telegramStickers — dữ liệu đồng bộ với tài khoản (bộ đã cài, gần đây, yêu thích, GIF đã lưu) + bộ đệm
+// Document để gửi / tải (fileReference hết hạn → lấy lại từ nguồn). Ở đây chỉ nối phiên đang chạy và đường lưu tin vừa
+// gửi (handleNewMessage 'history' như sendAlbum: GramJS không đưa kết quả RPC vào luồng update).
 
-/** Get all installed sticker sets */
-export async function getStickerSets(accountId: string): Promise<{ success: boolean; sets?: any[]; error?: string }> {
+function telegramStickerDeps(accountId: string): StickerClientDeps | { error: string } {
   const conn = ensureConnected(accountId);
-  if ('error' in conn) return { success: false, error: conn.error };
-  try {
-    const { Api } = require('telegram');
-    const result = await conn.client.invoke(new Api.messages.GetAllStickers({ hash: BigInt(0) }));
-    const sets = (result.sets || []).map((set: any) => ({
-      id: String(set.id?.valueOf?.() || set.id || ''),
-      accessHash: String(set.accessHash?.valueOf?.() || ''),
-      shortName: set.shortName || '',
-      title: set.title || '',
-      count: set.count || 0,
-    }));
-    Logger.log(`[TelegramUser] getStickerSets: ${sets.length} sets, sample: ${sets[0]?.shortName || 'none'}`);
-    return { success: true, sets };
-  } catch (err: any) {
-    return { success: false, error: err.message };
-  }
-}
-
-/** Get stickers from a specific set */
-export async function getStickerSetStickers(accountId: string, setId: string, accessHash?: string, shortName?: string): Promise<{ success: boolean; stickers?: any[]; error?: string }> {
-  const conn = ensureConnected(accountId);
-  if ('error' in conn) return { success: false, error: conn.error };
-  try {
-    const { Api } = require('telegram');
-    // Use InputStickerSetShortName if available (doesn't need accessHash)
-    let stickerset: any;
-    if (shortName) {
-      stickerset = new Api.InputStickerSetShortName({ shortName });
-    } else {
-      // Fallback: need valid accessHash
-      if (!accessHash || accessHash === '0') {
-        return { success: false, error: 'Missing sticker set accessHash' };
-      }
-      stickerset = new Api.InputStickerSetID({ id: BigInt(setId), accessHash: BigInt(accessHash) });
-    }
-    const result = await conn.client.invoke(new Api.messages.GetStickerSet({
-      stickerset,
-      hash: 0,  // int type, not long
-    }));
-    const stickers = (result.documents || []).map((doc: any) => {
-      const attrs = doc.attributes || [];
-      const stickerAttr = attrs.find((a: any) => a.className === 'DocumentAttributeSticker');
-      const imageSize = attrs.find((a: any) => a.className === 'DocumentAttributeImageSize');
-      const mimeType = String(doc.mimeType || '');
-      const format = mimeType.includes('tgsticker') ? 'tgs' : mimeType.includes('webm') ? 'webm' : 'webp';
-      return {
-        id: String(doc.id?.valueOf?.() || doc.id || ''),
-        emoji: stickerAttr?.alt || '',
-        format, width: imageSize?.w || 512, height: imageSize?.h || 512,
-        accessHash: String(doc.accessHash || ''), dcId: doc.dcId || 0,
-      };
-    });
-    return { success: true, stickers };
-  } catch (err: any) {
-    return { success: false, error: err.message };
-  }
-}
-
-/** Get recent stickers */
-export async function getRecentStickers(accountId: string): Promise<{ success: boolean; stickers?: any[]; error?: string }> {
-  const conn = ensureConnected(accountId);
-  if ('error' in conn) return { success: false, error: conn.error };
-  try {
-    const { Api } = require('telegram');
-    const result = await conn.client.invoke(new Api.messages.GetRecentStickers({ hash: BigInt(0) }));
-    const stickers = (result.stickers || []).map((doc: any) => {
-      const attrs = doc.attributes || [];
-      const stickerAttr = attrs.find((a: any) => a.className === 'DocumentAttributeSticker');
-      const mimeType = String(doc.mimeType || '');
-      const format = mimeType.includes('tgsticker') ? 'tgs' : mimeType.includes('webm') ? 'webm' : 'webp';
-      return { id: String(doc.id?.valueOf?.() || doc.id || ''), emoji: stickerAttr?.alt || '', format };
-    });
-    return { success: true, stickers };
-  } catch (err: any) {
-    return { success: false, error: err.message };
-  }
-}
-
-/** Get trending GIFs */
-export async function getGifs(accountId: string): Promise<{ success: boolean; gifs?: any[]; error?: string }> {
-  const conn = ensureConnected(accountId);
-  if ('error' in conn) return { success: false, error: conn.error };
-  try {
-    const { Api } = require('telegram');
-    const result = await conn.client.invoke(new Api.messages.GetGifs({ hash: BigInt(0) }));
-    const gifs = (result.gifs || []).map((doc: any) => ({
-      id: String(doc.id?.valueOf?.() || doc.id || ''),
-      dcId: doc.dcId || 0,
-      accessHash: String(doc.accessHash || ''),
-      size: doc.size || 0,
-    }));
-    return { success: true, gifs };
-  } catch (err: any) {
-    return { success: false, error: err.message };
-  }
-}
-
-/** Search GIFs */
-export async function searchGifs(accountId: string, query: string): Promise<{ success: boolean; gifs?: any[]; error?: string }> {
-  const conn = ensureConnected(accountId);
-  if ('error' in conn) return { success: false, error: conn.error };
-  try {
-    const { Api } = require('telegram');
-    const result = await conn.client.invoke(new Api.messages.SearchGifs({ q: query, offset: 0 }));
-    const gifs = (result.gifs || []).map((doc: any) => ({
-      id: String(doc.id?.valueOf?.() || doc.id || ''),
-      dcId: doc.dcId || 0,
-      accessHash: String(doc.accessHash || ''),
-    }));
-    return { success: true, gifs };
-  } catch (err: any) {
-    return { success: false, error: err.message };
-  }
-}
-
-/** Send sticker by document ID */
-export async function sendSticker(accountId: string, chatId: string, stickerId: string, accessHash?: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
-  const conn = ensureConnected(accountId);
-  if ('error' in conn) return { success: false, error: conn.error };
-  try {
-    const { Api } = require('telegram');
-    const peer = await resolveInputPeer(accountId, conn.client, chatId);
-    // Try to resolve the sticker document to get correct accessHash and fileReference
-    let stickerAccessHash = BigInt(accessHash || '0');
-    let fileReference = Buffer.from([]);
-    if (!accessHash) {
-      // Fallback: try to get from cached sticker or recent stickers
+  if ('error' in conn) return conn;
+  const { Api } = require('telegram');
+  const client = conn.client;
+  return {
+    client,
+    Api,
+    resolvePeer: (chatId: string) => resolveInputPeer(accountId, client, chatId),
+    persistSent: async (message: any) => {
       try {
-        const recent = await conn.client.invoke(new Api.messages.GetRecentStickers({ hash: BigInt(0) }));
-        const found = (recent.stickers || []).find((d: any) => String(d.id) === stickerId);
-        if (found) {
-          stickerAccessHash = found.accessHash || BigInt(0);
-          fileReference = found.fileReference || Buffer.from([]);
-        }
-      } catch {}
-    }
-    const result = await conn.client.sendFile(peer, {
-      file: new Api.InputDocument({
-        id: BigInt(stickerId),
-        accessHash: stickerAccessHash,
-        fileReference,
-      }),
-    });
-    return { success: true, messageId: String(result?.id || Date.now()) };
-  } catch (err: any) {
-    return { success: false, error: err.message };
-  }
+        await handleNewMessage(accountId, { message } as any, client, 'history');
+      } catch (persistErr: any) {
+        tgLog('warn', accountId, 'history', 'STICKER_PERSIST_FAILED', {
+          messageId: String(message?.id || ''),
+          error: persistErr?.message || String(persistErr),
+        });
+      }
+    },
+    baseDir: FileStorageService.getBaseDir(),
+  };
 }
 
-/** Send GIF by document ID */
-export async function sendGif(accountId: string, chatId: string, documentId: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
-  const conn = ensureConnected(accountId);
-  if ('error' in conn) return { success: false, error: conn.error };
-  try {
-    const { Api } = require('telegram');
-    const peer = await resolveInputPeer(accountId, conn.client, chatId);
-    const result = await conn.client.sendFile(peer, {
-      file: new Api.InputDocument({ id: BigInt(documentId), accessHash: BigInt(0), fileReference: Buffer.from([]) }),
-    });
-    return { success: true, messageId: String(result?.id || Date.now()) };
-  } catch (err: any) {
-    return { success: false, error: err.message };
-  }
+const TELEGRAM_STICKER_SEND_ERRORS: Array<[RegExp, string]> = [
+  [/CHAT_SEND_STICKERS_FORBIDDEN/i, 'Hội thoại này không cho gửi sticker'],
+  [/CHAT_SEND_GIFS_FORBIDDEN/i, 'Hội thoại này không cho gửi GIF'],
+  [/CHAT_WRITE_FORBIDDEN|CHAT_ADMIN_REQUIRED|USER_BANNED_IN_CHANNEL/i, 'Bạn không có quyền gửi tin trong hội thoại này'],
+  [/STICKER_NOT_CACHED/, 'Không tìm thấy sticker trên tài khoản — mở lại bảng sticker rồi thử lại'],
+];
+
+function telegramStickerSendError(error: string): string {
+  for (const [pattern, text] of TELEGRAM_STICKER_SEND_ERRORS) if (pattern.test(error)) return text;
+  return error;
+}
+
+/** Bảng sticker: bộ đã cài (thứ tự của tài khoản) + sticker gần đây + yêu thích. */
+export async function getStickerPanel(accountId: string) {
+  const deps = telegramStickerDeps(accountId);
+  if ('error' in deps) return { success: false as const, error: deps.error };
+  return TelegramStickers.getStickerPanel(accountId, deps);
+}
+
+/** Nội dung 1 bộ sticker + đã cài vào tài khoản chưa. */
+export async function getStickerSet(accountId: string, ref: TelegramStickerSetRef) {
+  const deps = telegramStickerDeps(accountId);
+  if ('error' in deps) return { success: false as const, error: deps.error };
+  return TelegramStickers.getStickerSet(accountId, ref, deps);
+}
+
+/** Bộ sticker của 1 tin sticker trong chat (bấm sticker → popup bộ). */
+export async function getStickerSetOfMessage(accountId: string, chatId: string, messageId: string) {
+  const deps = telegramStickerDeps(accountId);
+  if ('error' in deps) return { success: false as const, error: deps.error };
+  return TelegramStickers.getStickerSetOfMessage(accountId, chatId, messageId, deps);
+}
+
+/** Thêm / gỡ bộ sticker khỏi tài khoản (app Telegram khác cũng thấy). */
+export async function setStickerSetInstalled(accountId: string, ref: TelegramStickerSetRef, installed: boolean) {
+  const deps = telegramStickerDeps(accountId);
+  if ('error' in deps) return { success: false as const, error: deps.error };
+  return TelegramStickers.setStickerSetInstalled(accountId, ref, installed, deps);
+}
+
+/** File vẽ sticker / GIF trong bảng: 'thumb' ảnh tĩnh nhỏ, 'full' cả file (phát khi rê chuột). */
+export async function getStickerFile(accountId: string, docId: string, variant: 'thumb' | 'full' = 'thumb') {
+  const deps = telegramStickerDeps(accountId);
+  if ('error' in deps) return { success: false as const, error: deps.error };
+  return TelegramStickers.getStickerFile(accountId, String(docId || ''), variant, deps);
+}
+
+/** Lưu / bỏ lưu GIF vào tài khoản. */
+export async function setGifSaved(accountId: string, docId: string, saved: boolean) {
+  const deps = telegramStickerDeps(accountId);
+  if ('error' in deps) return { success: false as const, error: deps.error };
+  return TelegramStickers.setGifSaved(accountId, String(docId || ''), saved, deps);
+}
+
+/** Tìm bộ sticker (ô tìm của bảng sticker); từ khoá rỗng → bộ thịnh hành. */
+export async function searchStickerSets(accountId: string, query: string) {
+  const deps = telegramStickerDeps(accountId);
+  if ('error' in deps) return { success: false as const, error: deps.error };
+  const q = String(query || '').trim();
+  return q ? TelegramStickers.searchStickerSets(accountId, q, deps) : TelegramStickers.getFeaturedStickerSets(accountId, deps);
+}
+
+/** Bộ sticker đã cài (tên cũ, giữ cho nơi gọi cũ). */
+export async function getStickerSets(accountId: string): Promise<{ success: boolean; sets?: any[]; error?: string }> {
+  const result = await getStickerPanel(accountId);
+  return result.success ? { success: true, sets: result.sets } : result;
+}
+
+/** Sticker của 1 bộ (tên cũ). */
+export async function getStickerSetStickers(accountId: string, setId: string, accessHash?: string, shortName?: string): Promise<{ success: boolean; stickers?: any[]; set?: any; error?: string }> {
+  const ref: TelegramStickerSetRef = {
+    ...(setId && accessHash && accessHash !== '0' ? { id: String(setId), accessHash: String(accessHash) } : {}),
+    ...(shortName ? { shortName } : {}),
+  };
+  if (!ref.id && !ref.shortName) return { success: false, error: 'Thiếu thông tin bộ sticker' };
+  const result = await getStickerSet(accountId, ref);
+  return result.success ? { success: true, stickers: result.stickers, set: result.set } : result;
+}
+
+/** Sticker gần đây (tên cũ). */
+export async function getRecentStickers(accountId: string): Promise<{ success: boolean; stickers?: any[]; error?: string }> {
+  const result = await getStickerPanel(accountId);
+  return result.success ? { success: true, stickers: result.recent } : result;
+}
+
+/** GIF đã lưu của tài khoản. API Telegram không có "GIF thịnh hành" riêng — tìm (kể cả từ khoá rỗng) qua @gif. */
+export async function getGifs(accountId: string): Promise<{ success: boolean; gifs?: any[]; error?: string }> {
+  const deps = telegramStickerDeps(accountId);
+  if ('error' in deps) return { success: false, error: deps.error };
+  return TelegramStickers.getSavedGifs(accountId, deps);
+}
+
+/** Tìm GIF qua inline bot @gif như app Telegram (từ khoá rỗng = GIF thịnh hành); `nextOffset` để tải tiếp. */
+export async function searchGifs(accountId: string, query: string, offset = ''): Promise<{ success: boolean; gifs?: any[]; nextOffset?: string; error?: string }> {
+  const deps = telegramStickerDeps(accountId);
+  if ('error' in deps) return { success: false, error: deps.error };
+  return TelegramStickers.searchGifs(accountId, String(query || ''), String(offset || ''), deps);
 }
 
 /**
- * Download sticker thumbnail for picker display.
- * Returns local file path of the downloaded sticker.
+ * Gửi sticker / GIF theo document id (bảng sticker, popup bộ, workflow `tg.sendSticker`, API). Document lấy từ bộ đệm —
+ * nơi gọi chỉ có id thì tìm trong gần đây / yêu thích / GIF đã lưu / các bộ đã cài. Tin gửi đi lưu + hiện như tin của
+ * mình gửi từ thiết bị khác; sticker vào "gần đây", GIF vào "GIF đã lưu" của tài khoản.
  */
-export async function downloadSticker(accountId: string, stickerId: string, accessHash?: string): Promise<{ success: boolean; localPath?: string; error?: string }> {
-  const conn = ensureConnected(accountId);
-  if ('error' in conn) return { success: false, error: conn.error };
-  try {
-    const { Api } = require('telegram');
-    // Try to get the sticker document
-    let doc: any = null;
-
-    // Method 1: Get from recent stickers
-    try {
-      const recent = await conn.client.invoke(new Api.messages.GetRecentStickers({ hash: BigInt(0) }));
-      doc = (recent.stickers || []).find((d: any) => String(d.id) === stickerId);
-    } catch {}
-
-    // Method 2: If not found in recent, try from faved stickers
-    if (!doc) {
-      try {
-        const faved = await conn.client.invoke(new Api.messages.GetFavedStickers({ hash: BigInt(0) }));
-        doc = (faved.stickers || []).find((d: any) => String(d.id) === stickerId);
-      } catch {}
-    }
-
-    if (!doc) {
-      // Try to construct InputDocument from provided accessHash
-      if (accessHash) {
-        doc = { id: BigInt(stickerId), accessHash: BigInt(accessHash), fileReference: Buffer.from([]) };
-      } else {
-        return { success: false, error: 'Sticker not found in recent/faved' };
-      }
-    }
-
-    // Download the document
-    const buffer = await conn.client.downloadMedia(doc);
-    if (!buffer || buffer.length === 0) {
-      return { success: false, error: 'Download failed' };
-    }
-
-    // Save to disk
-    const fs = require('fs');
-    const path = require('path');
-    const FileStorageService = require('../file/FileStorageService').default;
-    const baseDir = FileStorageService.getBaseDir();
-    const stickersDir = path.join(baseDir, accountId, 'stickers');
-    if (!fs.existsSync(stickersDir)) fs.mkdirSync(stickersDir, { recursive: true });
-
-    const mimeType = doc.mimeType || '';
-    const ext = mimeType.includes('webm') ? '.webm' : mimeType.includes('tgsticker') || mimeType.includes('lottie') ? '.tgs' : '.webp';
-    const filePath = path.join(stickersDir, `sticker_${stickerId}${ext}`);
-    fs.writeFileSync(filePath, Buffer.from(buffer));
-
-    return { success: true, localPath: filePath };
-  } catch (err: any) {
-    return { success: false, error: err.message };
+export async function sendSticker(
+  accountId: string,
+  chatId: string,
+  stickerId: string,
+  _accessHash?: string,
+  options: { replyToMsgId?: string; topicRootId?: string } = {},
+): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  const deps = telegramStickerDeps(accountId);
+  if ('error' in deps) return { success: false, error: deps.error };
+  const denial = getPersistedTelegramSendDenial(accountId, chatId);
+  if (denial) return { success: false, error: denial };
+  const rateLimit = checkRateLimit(accountId);
+  if (!rateLimit.allowed) return { success: false, error: `Rate limited. Wait ${rateLimit.waitSeconds}s.` };
+  const docId = String(stickerId || '');
+  if (!(await TelegramStickers.ensureStickerCached(accountId, docId, deps))) {
+    return { success: false, error: telegramStickerSendError('STICKER_NOT_CACHED') };
   }
+  const result = await TelegramStickers.sendStickerDocument(accountId, chatId, docId, options, deps);
+  // 'in' (không dùng !result.success): tsconfig không strict → không thu hẹp union theo success
+  if ('error' in result) {
+    Logger.warn(`[TG:sendSticker] FAILED chat=${chatId} doc=${docId}: ${result.error}`);
+    return { success: false, error: telegramStickerSendError(result.error) };
+  }
+  return { success: true, messageId: result.messageId };
+}
+
+/** Gửi GIF theo document id (GIF đã lưu / kết quả tìm @gif). */
+export async function sendGif(
+  accountId: string,
+  chatId: string,
+  documentId: string,
+  options: { replyToMsgId?: string; topicRootId?: string } = {},
+): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  return sendSticker(accountId, chatId, documentId, undefined, options);
+}
+
+/** Ảnh sticker cho bảng chọn (tên cũ) — như getStickerFile(…, 'thumb'). */
+export async function downloadSticker(accountId: string, stickerId: string, _accessHash?: string): Promise<{ success: boolean; localPath?: string; error?: string }> {
+  const result = await getStickerFile(accountId, stickerId, 'thumb');
+  return result.success ? { success: true, localPath: result.localPath } : result;
 }
 
 // ─── Test seams ──────────────────────────────────────────────────────────────
@@ -9047,6 +11574,36 @@ export async function downloadSticker(accountId: string, stickerId: string, acce
 // instead of duplicating the logic in test fixtures.
 // Replace these with proper module APIs as the recovery coordinator lands.
 export const __test = {
+  // Quick actions (create group / join by link / add contact)
+  createGroup,
+  createChannel,
+  checkChatUsername,
+  setChatUsername,
+  getChatSettings,
+  revokeInviteLink,
+  setDiscussionGroup,
+  inviteUsers,
+  getContacts,
+  getCallHistory,
+  declineCall,
+  handleTelegramPhoneCallUpdate,
+  persistTelegramCallServiceMessage,
+  ringingTelegramCalls,
+  previewJoinLink,
+  joinByLink,
+  addContact,
+  firstChatOfUpdates,
+  // Media download (link previews download their photo only)
+  normalizeTelegramMessageMedia,
+  getTelegramDownloadTarget,
+  isImageBuffer,
+  downloadMediaForMessage,
+  // Reactions / edits (private chats deliver reaction changes as hidden edits)
+  normalizeTelegramReactions,
+  applyTelegramMessageReactions,
+  applyTelegramReactionResult,
+  applyTelegramMessageEdit,
+  readTelegramUnreadThings,
   drainChannelDifference,
   drainChannelDifferenceNow,
   synchronizeTelegramAccount,
@@ -9063,5 +11620,36 @@ export const __test = {
   membershipReconciledAccounts,
   membershipReconciliations,
   reconnectCatchUps,
+  pendingCatchUpModes,
   activeListeners,
+  // Reconnect lifecycle (sleep/wake, network loss)
+  handlePrimaryTransportConnected,
+  handlePrimaryTransportDisconnected,
+  markPrimaryConnectionRestored,
+  scheduleReconnect,
+  probeTelegramListenerNow,
+  retireTelegramClient,
+  retiredClients,
+  installRpcDeadline,
+  installSingleMainSession,
+  isAccountLockHeld,
+  waitForTelegramAccountSync,
+  refreshRecentChannelDialogWatch,
+  channelDialogWatchTasks,
+  channelDialogWatchStates,
+  persistTelegramDialogState,
+  queueTelegramDownload,
+  // Archived realtime: scheduling, opened-channel polling, typing, repair
+  schedulePendingChannelRecovery,
+  channelRecoveryDrainTimers,
+  touchActiveChannel,
+  noteActiveChannelPolled,
+  getNextActiveChannelPollAt,
+  activeChannelLeases,
+  activeChannelNextPollAt,
+  channelDifferenceTimeouts,
+  scheduleTypingChannelRecovery,
+  typingChannelRecoveryTimers,
+  channelHistoryRepairs,
+  channelHistoryRepairQueues,
 };

@@ -28,7 +28,7 @@ class AppModeManager {
     }
 
     public getMode(): AppMode {
-        // If mode was manually set (e.g. by connectToBoss/disconnectFromBoss), respect it
+        // If mode was manually set (e.g. by employee:setMode), respect it
         if (this.manualOverride) return this.mode;
 
         // Otherwise delegate to WorkspaceManager for workspace-aware mode

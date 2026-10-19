@@ -91,22 +91,22 @@ export function ConfirmDialog({
     >
       <div
         ref={dialogRef}
-        className="bg-gray-800 border border-gray-700 rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden"
+        className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden"
         style={{ animation: 'dialogIn 0.15s ease-out' }}
       >
         <div className="px-6 pt-6 pb-5 flex items-start gap-4">
           {iconMap[variant]}
           <div className="flex-1 min-w-0 pt-0.5">
-            <h3 className="text-white font-semibold text-base leading-snug mb-1">{title}</h3>
+            <h3 className="text-foreground font-semibold text-base leading-snug mb-1">{title}</h3>
             {message && (
-              <p className="text-gray-400 text-sm leading-relaxed whitespace-pre-line">{message}</p>
+              <p className="text-muted-foreground text-sm leading-relaxed whitespace-pre-line">{message}</p>
             )}
           </div>
         </div>
-        <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-gray-700/60">
+        <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-border/60">
           <button
             onClick={onCancel}
-            className="px-4 py-2 rounded-xl text-sm font-medium text-gray-300 hover:text-white hover:bg-gray-700 transition-colors"
+            className="px-4 py-2 rounded-xl text-sm font-medium text-foreground/80 hover:text-foreground hover:bg-muted transition-colors"
           >
             {cancelText}
           </button>

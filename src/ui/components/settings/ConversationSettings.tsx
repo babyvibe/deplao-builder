@@ -26,12 +26,12 @@ export default function ConversationSettings() {
   }, [accounts]);
 
   return (
-    <div className="flex flex-col h-full relative bg-gray-900">
+    <div className="flex flex-col h-full relative bg-background">
 
       {/* Top header: tabs + search + account filter */}
-      <div className="border-b border-gray-800 bg-gray-900 px-4 flex items-center gap-3 flex-wrap shrink-0">
+      <div className="border-b border-border bg-background px-4 flex items-center gap-3 flex-wrap shrink-0">
         {/* Main tabs - pill style */}
-        <div className="flex bg-gray-800 rounded-lg p-0.5 gap-0.5 my-2">
+        <div className="flex bg-card rounded-lg p-0.5 gap-0.5 my-2">
           {([
             { id: 'quick_msg' as const, label: 'Tin nhắn nhanh' },
             { id: 'labels'    as const, label: 'Quản lý nhãn' },
@@ -42,7 +42,7 @@ export default function ConversationSettings() {
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-colors whitespace-nowrap ${
                 activeTab === tab.id
                   ? 'bg-blue-600 text-white shadow-sm'
-                  : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-muted'
               }`}
             >{tab.label}</button>
           ))}
@@ -68,9 +68,9 @@ export default function ConversationSettings() {
             value={searchText}
             onChange={e => setSearchText(e.target.value)}
             placeholder="Tìm kiếm..."
-            className="bg-gray-800 border border-gray-700 text-sm rounded-lg pl-8 pr-3 py-1.5 focus:border-blue-500 outline-none w-44 text-gray-200 placeholder-gray-500"
+            className="bg-card border border-border text-sm rounded-lg pl-8 pr-3 py-1.5 focus:border-blue-500 outline-none w-44 text-foreground placeholder-subtle-foreground"
           />
-          <svg className="w-4 h-4 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <svg className="w-4 h-4 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
           </svg>
         </div>

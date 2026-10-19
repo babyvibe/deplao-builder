@@ -2,7 +2,8 @@ import React, { useEffect, useState, useCallback } from 'react';
 import type { CRMContact, CRMNote } from '@/store/crmStore';
 import type { LabelData } from '@/store/appStore';
 import ipc, { buildZaloAuth } from '@/lib/ipc'
-import DataAccessor from '@/lib/data/DataAccessor';
+import DataAccessor, { isReadFailure, readFailureMessage } from '@/lib/data/DataAccessor';
+import { useEmployeeResync } from '@/hooks/useEmployeeResync';
 import PageLoading from '@/components/common/PageLoading';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
@@ -83,11 +84,11 @@ export default function CRMContactDetailPanel({ contact, channel = CHANNEL.ZALO,
     setLocalLabelToggling(labelId);
     try {
       const threadType = contact.contact_type === 'group' ? 1 : 0;
-      if (exists) {
-        await DataAccessor.removeLocalLabelFromThread({ zaloId: activeAccountId, labelId, threadId: contact.contact_id });
-      } else {
-        await DataAccessor.assignLocalLabelToThread({ zaloId: activeAccountId, labelId, threadId: contact.contact_id });
-      }
+      const res: any = exists
+        ? await DataAccessor.removeLocalLabelFromThread({ zaloId: activeAccountId, labelId, threadId: contact.contact_id })
+        : await DataAccessor.assignLocalLabelToThread({ zaloId: activeAccountId, labelId, threadId: contact.contact_id });
+      // Nhân viên: Boss từ chối / mất kết nối trả success:false (không ném lỗi) → báo lỗi thay vì "Đã gắn nhãn"
+      if (res?.success === false) throw new Error(res.error || 'write failed');
       showNotification(exists ? `Đã gỡ nhãn "${label.name}"` : `Đã gắn nhãn "${label.name}"`, 'success');
       window.dispatchEvent(new CustomEvent('local-labels-changed', { detail: { zaloId: activeAccountId } }));
     } catch {
@@ -132,10 +133,14 @@ export default function CRMContactDetailPanel({ contact, channel = CHANNEL.ZALO,
     Promise.all(promises).finally(() => setLoading(false));
   }, [detailTab, contact.contact_id, isZalo, isGroup]);
 
-  // Re-fetch notes when remote CRM note changes arrive
+  // Re-fetch notes when remote CRM note changes arrive (Boss / nhân viên khác — relay crm:noteChanged; bỏ qua ghi chú
+  // của tài khoản khác hoặc của liên hệ khác khi payload cho biết)
   useEffect(() => {
     const handleNoteChange = (e: Event) => {
       const detail = (e as CustomEvent).detail;
+      if (detail?.ownerZaloId && detail.ownerZaloId !== activeAccountId) return;
+      const noteContact = detail?.note?.contact_id ?? detail?.note?.contactId;
+      if (noteContact && String(noteContact) !== String(contact.contact_id)) return;
       if (detailTab === 'info' && activeAccountId) {
         loadNotes();
       }
@@ -143,6 +148,9 @@ export default function CRMContactDetailPanel({ contact, channel = CHANNEL.ZALO,
     window.addEventListener('ui:noteChanged', handleNoteChange);
     return () => window.removeEventListener('ui:noteChanged', handleNoteChange);
   }, [detailTab, activeAccountId, contact.contact_id]);
+
+  // Chế độ nhân viên: kết nối BOSS phục hồi → tải lại ghi chú (đổi trong lúc mất kết nối không có event)
+  useEmployeeResync(() => (detailTab === 'info' && activeAccountId ? loadNotes() : undefined));
 
   const loadNotes = async () => {
     if (!activeAccountId) return;
@@ -153,7 +161,8 @@ export default function CRMContactDetailPanel({ contact, channel = CHANNEL.ZALO,
   const loadZaloNotes = async () => {
     if (!activeAccountId) return;
     try {
-      const res = await ipc.db?.getPinnedMessages({ zaloId: activeAccountId, threadId: contact.contact_id });
+      const res = await DataAccessor.getPinnedMessages({ zaloId: activeAccountId, threadId: contact.contact_id });
+      if (isReadFailure(res)) return; // đọc lỗi (nhân viên mất kết nối Boss): giữ ghi chú nhóm đang hiện
       const notePins: PinnedNote[] = (res?.pins ?? [])
         .filter((p: any) => p.msg_type === 'note')
         .map((p: any) => {
@@ -227,9 +236,15 @@ export default function CRMContactDetailPanel({ contact, channel = CHANNEL.ZALO,
   };
 
   const handleSaveNote = async (content: string, id?: number) => {
-    if (!activeAccountId) return;
-    await DataAccessor.saveCRMNote({ zaloId: activeAccountId, note: { id, contact_id: contact.contact_id, content } });
+    if (!activeAccountId) return false;
+    const res = await DataAccessor.saveCRMNote({ zaloId: activeAccountId, note: { id, contact_id: contact.contact_id, content } });
+    if (isReadFailure(res)) {
+      // Lưu lỗi (employee: mất kết nối BOSS) — báo + giữ nội dung đang gõ (NoteList), không âm thầm mất ghi chú
+      showNotification('Không lưu được ghi chú: ' + readFailureMessage(res), 'error');
+      return false;
+    }
     await loadNotes();
+    return true;
   };
 
   const handleDeleteNote = async (noteId: number) => {
@@ -288,13 +303,13 @@ export default function CRMContactDetailPanel({ contact, channel = CHANNEL.ZALO,
   });
 
   return (
-    <div className="w-80 flex-shrink-0 flex flex-col bg-gray-850 border-l border-gray-700 h-full">
+    <div className="w-80 flex-shrink-0 flex flex-col bg-card border-l border-border h-full">
       {/* Header */}
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-700">
-        <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-border">
+        <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
         </button>
-        <span className="text-sm font-semibold text-white flex-1 truncate">{name}</span>
+        <span className="text-sm font-semibold text-foreground flex-1 truncate">{name}</span>
         <button onClick={() => onMessage(contact)}
           title="Nhắn tin"
           className="p-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors">
@@ -303,26 +318,26 @@ export default function CRMContactDetailPanel({ contact, channel = CHANNEL.ZALO,
       </div>
 
       {/* Avatar + basic info */}
-      <div className="flex flex-col items-center gap-2 px-4 py-4 border-b border-gray-700">
+      <div className="flex flex-col items-center gap-2 px-4 py-4 border-b border-border">
         {contact.avatar
           ? <img src={contact.avatar} alt="" className="w-16 h-16 rounded-full object-cover" />
           : <div className="w-16 h-16 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-2xl font-bold">
               {(name || 'U').charAt(0).toUpperCase()}
             </div>}
         <div className="text-center">
-          <p className="text-white font-semibold text-sm">{name}</p>
+          <p className="text-foreground font-semibold text-sm">{name}</p>
           {contact.alias && contact.alias !== contact.display_name &&
-            <p className="text-xs text-gray-400">({contact.display_name})</p>}
-          {contact.phone && <p className="text-xs text-gray-400 mt-0.5"><PhoneDisplay phone={contact.phone} className="text-xs text-gray-400" /></p>}
+            <p className="text-xs text-muted-foreground">({contact.display_name})</p>}
+          {contact.phone && <p className="text-xs text-muted-foreground mt-0.5"><PhoneDisplay phone={contact.phone} className="text-xs text-muted-foreground" /></p>}
           {/* Gender & Birthday */}
           <div className="flex items-center gap-2 mt-1.5">
             {isZalo && <>
-            <span className={`inline-block mt-1 px-2 py-0.5 rounded-full text-[11px] font-medium ${contact.is_friend ? 'bg-green-500/20 text-green-400' : 'bg-gray-600/50 text-gray-400'}`}>
+            <span className={`inline-block mt-1 px-2 py-0.5 rounded-full text-[11px] font-medium ${contact.is_friend ? 'bg-green-500/20 text-green-400' : 'bg-accent/50 text-muted-foreground'}`}>
               {contact.is_friend ? '✓ Bạn bè' : 'Chưa kết bạn'}
             </span>
             {contact.gender === 0 && <span className="text-[11px] text-blue-400 bg-blue-400/10 px-1.5 py-0.5 rounded">♂ Nam</span>}
             {contact.gender === 1 && <span className="text-[11px] text-pink-400 bg-pink-400/10 px-1.5 py-0.5 rounded">♀ Nữ</span>}
-            {contact.birthday && <span className="text-[11px] text-gray-400 bg-gray-600/30 px-1.5 py-0.5 rounded"><GiftIcon className="w-4 h-4 inline" /> {contact.birthday}</span>}
+            {contact.birthday && <span className="text-[11px] text-muted-foreground bg-accent/30 px-1.5 py-0.5 rounded"><GiftIcon className="w-4 h-4 inline" /> {contact.birthday}</span>}
             </>}
           </div>
         </div>
@@ -344,14 +359,14 @@ export default function CRMContactDetailPanel({ contact, channel = CHANNEL.ZALO,
             })}
           </div>
         )}
-        <p className="text-[11px] text-gray-400">ID: {contact.contact_id}</p>
+        <p className="text-[11px] text-muted-foreground">ID: {contact.contact_id}</p>
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-gray-700 text-xs">
+      <div className="flex border-b border-border text-xs">
         {(['info','history'] as DetailTab[]).map(t => (
           <button key={t} onClick={() => setDetailTab(t)}
-            className={`flex-1 py-2.5 font-medium transition-colors ${detailTab === t ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-gray-200'}`}>
+            className={`flex-1 py-2.5 font-medium transition-colors ${detailTab === t ? 'text-blue-400 border-b-2 border-blue-400' : 'text-muted-foreground hover:text-foreground'}`}>
             {t === 'info' ? 'Nhãn/Ghi chú' : 'Lịch sử gửi tin'}
           </button>
         ))}
@@ -368,9 +383,9 @@ export default function CRMContactDetailPanel({ contact, channel = CHANNEL.ZALO,
             {detailTab === 'info' && (
               <div className="space-y-3">
                 {/* Manual contact fields are shared by every channel. */}
-                <section className="rounded-xl border border-gray-600 bg-gray-800 p-3 shadow-sm">
+                <section className="rounded-xl border border-input bg-card p-3 shadow-sm">
                   <div className="flex items-center justify-between mb-2">
-                    <p className="text-xs text-gray-300 font-medium">Thông tin liên hệ</p>
+                    <p className="text-xs text-foreground/80 font-medium">Thông tin liên hệ</p>
                     {!editingDetails && (
                       <button onClick={() => setEditingDetails(true)} className="text-[11px] text-blue-400 hover:text-blue-300">
                         Sửa
@@ -379,29 +394,29 @@ export default function CRMContactDetailPanel({ contact, channel = CHANNEL.ZALO,
                   </div>
                   {editingDetails ? (
                     <div className="space-y-2">
-                      <label className="block text-[11px] text-gray-400">
+                      <label className="block text-[11px] text-muted-foreground">
                         Điện thoại
                         <input value={manualPhone} onChange={e => setManualPhone(e.target.value)} type="tel" placeholder="Nhập số điện thoại"
-                          className="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-2 text-xs text-gray-100 placeholder:text-gray-500 outline-none transition-colors focus:border-blue-500 focus:ring-1 focus:ring-blue-500" />
+                          className="mt-1 w-full rounded-lg border border-input bg-card px-2.5 py-2 text-xs text-foreground placeholder:text-subtle-foreground outline-none transition-colors focus:border-blue-500 focus:ring-1 focus:ring-blue-500" />
                       </label>
-                      <label className="block text-[11px] text-gray-400">
+                      <label className="block text-[11px] text-muted-foreground">
                         Giới tính
                         <select value={manualGender ?? ''} onChange={e => setManualGender(e.target.value === '' ? null : Number(e.target.value))}
                           style={{ colorScheme: 'dark' }}
-                          className="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-2 text-xs text-gray-100 outline-none transition-colors focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                          className="mt-1 w-full rounded-lg border border-input bg-card px-2.5 py-2 text-xs text-foreground outline-none transition-colors focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
                           <option value="">Chưa xác định</option>
                           <option value="0">Nam</option>
                           <option value="1">Nữ</option>
                         </select>
                       </label>
-                      <label className="block text-[11px] text-gray-400">
+                      <label className="block text-[11px] text-muted-foreground">
                         Sinh nhật
                         <input type="date" value={manualBirthday} onChange={e => setManualBirthday(e.target.value)}
                           style={{ colorScheme: 'dark' }}
-                          className="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-2 text-xs text-gray-100 outline-none transition-colors focus:border-blue-500 focus:ring-1 focus:ring-blue-500" />
+                          className="mt-1 w-full rounded-lg border border-input bg-card px-2.5 py-2 text-xs text-foreground outline-none transition-colors focus:border-blue-500 focus:ring-1 focus:ring-blue-500" />
                       </label>
                       <div className="flex justify-end gap-2 pt-1">
-                        <button onClick={cancelEditManualDetails} disabled={savingDetails} className="px-2.5 py-1 rounded text-[11px] text-gray-300 hover:bg-gray-700 disabled:opacity-50">Huỷ</button>
+                        <button onClick={cancelEditManualDetails} disabled={savingDetails} className="px-2.5 py-1 rounded text-[11px] text-foreground/80 hover:bg-muted disabled:opacity-50">Huỷ</button>
                         <button onClick={handleSaveManualDetails} disabled={savingDetails} className="px-2.5 py-1 rounded bg-blue-600 text-[11px] text-white hover:bg-blue-700 disabled:opacity-50">
                           {savingDetails ? 'Đang lưu...' : 'Lưu'}
                         </button>
@@ -409,16 +424,16 @@ export default function CRMContactDetailPanel({ contact, channel = CHANNEL.ZALO,
                     </div>
                   ) : (
                     <dl className="space-y-1.5 text-xs">
-                      <div className="flex justify-between gap-3"><dt className="text-gray-400">Điện thoại</dt><dd className="text-gray-200 text-right break-all">{contact.phone ? <PhoneDisplay phone={contact.phone} className="text-xs text-gray-200" /> : '—'}</dd></div>
-                      <div className="flex justify-between gap-3"><dt className="text-gray-400">Giới tính</dt><dd className="text-gray-200">{contact.gender === 0 ? 'Nam' : contact.gender === 1 ? 'Nữ' : 'Chưa xác định'}</dd></div>
-                      <div className="flex justify-between gap-3"><dt className="text-gray-400">Sinh nhật</dt><dd className="text-gray-200">{contact.birthday || '—'}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Điện thoại</dt><dd className="text-foreground text-right break-all">{contact.phone ? <PhoneDisplay phone={contact.phone} className="text-xs text-foreground" /> : '—'}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Giới tính</dt><dd className="text-foreground">{contact.gender === 0 ? 'Nam' : contact.gender === 1 ? 'Nữ' : 'Chưa xác định'}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Sinh nhật</dt><dd className="text-foreground">{contact.birthday || '—'}</dd></div>
                     </dl>
                   )}
                 </section>
 
                 {/* Local labels */}
                 <>
-                  <p className="text-xs text-gray-400 font-medium">Nhãn Local</p>
+                  <p className="text-xs text-muted-foreground font-medium">Nhãn Local</p>
                   <LocalLabelSelector
                     labels={localLabels || []}
                     selectedIds={threadLocalLabelIds}
@@ -431,9 +446,9 @@ export default function CRMContactDetailPanel({ contact, channel = CHANNEL.ZALO,
 
                 {/* Zalo labels */}
                 {isZalo && <>
-                  <p className="text-xs text-gray-400 font-medium">Nhãn Zalo</p>
+                  <p className="text-xs text-muted-foreground font-medium">Nhãn Zalo</p>
                   {allLabels.length === 0 ? (
-                    <p className="text-xs text-gray-400">Chưa tải nhãn. Hãy đồng bộ nhãn từ header.</p>
+                    <p className="text-xs text-muted-foreground">Chưa tải nhãn. Hãy đồng bộ nhãn từ header.</p>
                   ) : (
                     <ZaloLabelSelector
                       allLabels={allLabels}
@@ -450,19 +465,19 @@ export default function CRMContactDetailPanel({ contact, channel = CHANNEL.ZALO,
                   )}
                 </>}
 
-                <p className="text-xs text-gray-400 font-medium">Ghi chú</p>
+                <p className="text-xs text-muted-foreground font-medium">Ghi chú</p>
 
                 {/* Tab switcher - chỉ hiện với nhóm */}
                 {isZalo && isGroup && (
-                  <div className="flex rounded-lg overflow-hidden border border-gray-600 text-[11px] mb-1">
+                  <div className="flex rounded-lg overflow-hidden border border-input text-[11px] mb-1">
                     <button
                       onClick={() => setNoteTab('local')}
-                      className={`flex-1 py-1 font-medium transition-colors ${noteTab === 'local' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}>
+                      className={`flex-1 py-1 font-medium transition-colors ${noteTab === 'local' ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}>
                       Nội bộ
                     </button>
                     <button
                       onClick={() => setNoteTab('zalo')}
-                      className={`flex-1 py-1 font-medium transition-colors ${noteTab === CHANNEL.ZALO ? 'bg-yellow-500/80 text-white' : 'text-gray-400 hover:text-gray-200'}`}>
+                      className={`flex-1 py-1 font-medium transition-colors ${noteTab === CHANNEL.ZALO ? 'bg-yellow-500/80 text-white' : 'text-muted-foreground hover:text-foreground'}`}>
                       Zalo ({zaloNotes.length})
                     </button>
                   </div>
@@ -477,16 +492,16 @@ export default function CRMContactDetailPanel({ contact, channel = CHANNEL.ZALO,
                 {isZalo && isGroup && noteTab === CHANNEL.ZALO && (
                   <div className="space-y-2">
                     {zaloNotes.length === 0 && (
-                      <p className="text-xs text-gray-400 text-center py-2">Chưa có ghi chú Zalo nào</p>
+                      <p className="text-xs text-muted-foreground text-center py-2">Chưa có ghi chú Zalo nào</p>
                     )}
                     {zaloNotes.map(note => (
                       <div key={note.topicId} className="bg-yellow-500/5 border border-yellow-700/30 rounded-lg p-2.5">
-                        <p className="text-xs text-gray-200 whitespace-pre-wrap">{note.title}</p>
+                        <p className="text-xs text-foreground whitespace-pre-wrap">{note.title}</p>
                         <div className="flex items-center justify-between mt-1.5">
                           {note.creatorName && (
-                            <span className="text-[11px] text-gray-400">{note.creatorName}</span>
+                            <span className="text-[11px] text-muted-foreground">{note.creatorName}</span>
                           )}
-                          <span className="text-[11px] text-gray-400 ml-auto">
+                          <span className="text-[11px] text-muted-foreground ml-auto">
                             {note.editTime ? new Date(note.editTime).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}
                           </span>
                         </div>
@@ -499,16 +514,16 @@ export default function CRMContactDetailPanel({ contact, channel = CHANNEL.ZALO,
 
             {detailTab === 'history' && (
               <div className="space-y-2">
-                {sendLog.length === 0 && <p className="text-xs text-gray-400 text-center py-4">Chưa có lịch sử gửi</p>}
+                {sendLog.length === 0 && <p className="text-xs text-muted-foreground text-center py-4">Chưa có lịch sử gửi</p>}
                 {sendLog.map(log => (
                   <div key={log.id} className={`p-2.5 rounded-lg border text-xs ${log.status === 'sent' ? 'bg-green-500/5 border-green-700/30' : 'bg-red-500/5 border-red-700/30'}`}>
                     <div className="flex items-center justify-between mb-1">
                       <span className={`font-medium ${log.status === 'sent' ? 'text-green-400' : 'text-red-400'}`}>
                         {log.status === 'sent' ? '✓ Đã gửi' : '✕ Thất bại'}
                       </span>
-                      <span className="text-gray-400">{fmt(log.sent_at)}</span>
+                      <span className="text-muted-foreground">{fmt(log.sent_at)}</span>
                     </div>
-                    <p className="text-gray-300 line-clamp-2">{log.message}</p>
+                    <p className="text-foreground/80 line-clamp-2">{log.message}</p>
                     {log.error && <p className="text-red-400 text-[11px] mt-1">{log.error}</p>}
                   </div>
                 ))}

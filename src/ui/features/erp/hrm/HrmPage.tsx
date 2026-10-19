@@ -4,6 +4,8 @@ import { useErpPermissions, useCurrentEmployeeId } from '@/hooks/erp/useErpConte
 import { useEmployeeStore } from '@/store/employeeStore';
 import { useAppStore } from '@/store/appStore';
 import ipc from '@/lib/ipc';
+import DataAccessor from '@/lib/data/DataAccessor';
+import { withErpDeniedNotice } from '@/store/erp/erpStoreHelpers';
 import { ConfirmDialog, ErpModalCard, ErpOverlay } from '../shared/ErpDialogs';
 import { BotIcon, ChartIcon, ChatIcon, EditIcon, LightningIcon, LinkIcon, LockIcon, SettingsIcon, TrashIcon, TrendingUpIcon, UserIcon } from '@/components/common/icons';
 
@@ -53,8 +55,8 @@ function getRoleBadgeClass(role?: string | null) {
     : role === 'manager' ? 'bg-orange-600/20 text-orange-400'
     : role === 'admin' ? 'bg-violet-600/20 text-violet-300'
     : role === 'member' ? 'bg-blue-600/20 text-blue-300'
-    : role === 'guest' ? 'bg-gray-600/30 text-gray-300'
-    : 'bg-gray-600/20 text-gray-400';
+    : role === 'guest' ? 'bg-accent/30 text-foreground/80'
+    : 'bg-accent/20 text-muted-foreground';
 }
 
 function getRoleLabel(role?: string | null) {
@@ -166,13 +168,13 @@ export default function HrmPage() {
   ] as const;
 
   return (
-    <div className="h-full flex flex-col bg-gray-900">
-      <div className="flex gap-1 px-4 py-2 border-b border-gray-700/60">
+    <div className="h-full flex flex-col bg-background">
+      <div className="flex gap-1 px-4 py-2 border-b border-border/60">
         {tabs.map(t => (
           <button key={t.id}
             onClick={() => setTab(t.id)}
             className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-              tab === t.id ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700/60 hover:text-gray-200'
+              tab === t.id ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
             }`}
           >
             {t.label}
@@ -197,6 +199,7 @@ function EmployeesTab() {
   const { showNotification } = useAppStore();
   const { profiles, departments, positions, loadProfiles, loadDepartments, loadPositions, upsertProfile } = useErpEmployeeStore();
   const { employees, loadEmployees } = useEmployeeStore();
+  const isEmployeeMode = useEmployeeStore(s => s.mode === 'employee');
   const [editorState, setEditorState] = useState<{ employee?: any | null; profile?: any | null } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
   const [roleTreeOpen, setRoleTreeOpen] = useState(false);
@@ -292,7 +295,13 @@ function EmployeesTab() {
     const employeeId = row.employee?.employee_id || row.profile?.employee_id;
     if (!employeeId) return;
     try {
-      if (row.employee) {
+      // Tài khoản nhân viên chỉ Boss quản lý (IPC employee:* trên máy nhân viên chạy DB cục bộ) — nhân viên quản lý chỉ
+      // xoá hồ sơ ERP (REST → Boss)
+      if (isEmployeeMode && !row.profile) {
+        showNotification('Chỉ Boss xoá được tài khoản nhân viên', 'error');
+        return;
+      }
+      if (row.employee && !isEmployeeMode) {
         const res = await ipc.employee?.delete?.(employeeId);
         if (!res?.success) {
           showNotification(res?.error || 'Không thể xóa nhân viên', 'error');
@@ -300,7 +309,7 @@ function EmployeesTab() {
         }
       }
       if (row.profile) {
-        const res = await ipc.erp?.employeeDeleteProfile?.({ employeeId });
+        const res: any = withErpDeniedNotice(await DataAccessor.erpDeleteProfile(employeeId));
         if (res && !res.success) {
           showNotification(res.error || 'Không thể xóa hồ sơ ERP', 'error');
           return;
@@ -317,15 +326,15 @@ function EmployeesTab() {
     <div className="p-4">
       <div className="flex items-start justify-between gap-3 mb-3">
         <div>
-          <h3 className="text-sm font-semibold text-white">Danh sách nhân sự ({rows.length})</h3>
-          <p className="text-[11px] text-gray-400 mt-1">Dữ liệu tài khoản đồng bộ trực tiếp với mục <span className="text-gray-300">Cài đặt → Nhân viên</span>; ERP chỉ bổ sung hồ sơ nội bộ.</p>
+          <h3 className="text-sm font-semibold text-foreground">Danh sách nhân sự ({rows.length})</h3>
+          <p className="text-[11px] text-muted-foreground mt-1">Dữ liệu tài khoản đồng bộ trực tiếp với mục <span className="text-foreground/80">Cài đặt → Nhân viên</span>; ERP chỉ bổ sung hồ sơ nội bộ.</p>
         </div>
         <div className="flex items-center gap-2 self-start">
           <button
             type="button"
             onClick={() => setRoleTreeOpen(true)}
             title="Biểu đồ cây theo role"
-            className="relative inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-700 bg-gray-800 text-sm text-gray-200 transition-colors hover:border-blue-500/50 hover:bg-gray-700"
+            className="relative inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-card text-sm text-foreground transition-colors hover:border-blue-500/50 hover:bg-muted"
           >
             🌳
             {roleTree.length > 0 && (
@@ -345,9 +354,9 @@ function EmployeesTab() {
         </div>
       </div>
 
-      <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+      <div className="bg-card rounded-lg border border-border overflow-hidden">
         <table className="w-full text-xs">
-          <thead className="bg-gray-700/50 text-gray-400">
+          <thead className="bg-muted/50 text-muted-foreground">
             <tr>
               <th className="px-3 py-2 text-left">Tài khoản</th>
               <th className="px-3 py-2 text-left">Phòng ban</th>
@@ -357,12 +366,12 @@ function EmployeesTab() {
               <th className="px-3 py-2"></th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-700/50">
+          <tbody className="divide-y divide-border/50">
             {rows.map(({ employee, profile }) => (
-              <tr key={employee?.employee_id || profile?.employee_id} className="text-gray-200 hover:bg-gray-700/30 align-top">
+              <tr key={employee?.employee_id || profile?.employee_id} className="text-foreground hover:bg-muted/30 align-top">
                 <td className="px-3 py-2">
                   <div className="font-medium">{employee?.display_name || getEmpName(profile?.employee_id)}</div>
-                  <div className="text-[11px] text-gray-400 mt-0.5">
+                  <div className="text-[11px] text-muted-foreground mt-0.5">
                     {employee?.username ? `@${employee.username}` : 'Chưa có tài khoản đăng nhập'}
                   </div>
                   <div className="flex flex-wrap gap-1 mt-1">
@@ -382,7 +391,7 @@ function EmployeesTab() {
                     return (
                       <div>
                         <span className={`px-2 py-0.5 rounded-full text-[10px] ${getRoleBadgeClass(resolvedRole)}`}>{getRoleLabel(resolvedRole)}</span>
-                        <div className="text-[10px] text-gray-400 mt-1"><LockIcon className="w-4 h-4 inline" /> {moduleCount} module · <SettingsIcon className="w-4 h-4 inline" /> {actionOverrideCount} action riêng</div>
+                        <div className="text-[10px] text-muted-foreground mt-1"><LockIcon className="w-4 h-4 inline" /> {moduleCount} module · <SettingsIcon className="w-4 h-4 inline" /> {actionOverrideCount} action riêng</div>
                       </div>
                     );
                   })()}
@@ -402,7 +411,7 @@ function EmployeesTab() {
               </tr>
             ))}
             {rows.length === 0 && (
-              <tr><td colSpan={6} className="px-3 py-6 text-center text-gray-400">Chưa có nhân sự nào</td></tr>
+              <tr><td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">Chưa có nhân sự nào</td></tr>
             )}
           </tbody>
         </table>
@@ -411,7 +420,7 @@ function EmployeesTab() {
       {/* Quick "add missing employees" section */}
       {canManageDepartments && (
         <div className="mt-4">
-          <h4 className="text-xs font-semibold text-gray-400 mb-2">Tạo hồ sơ ERP cho nhân viên đã có tài khoản</h4>
+          <h4 className="text-xs font-semibold text-muted-foreground mb-2">Tạo hồ sơ ERP cho nhân viên đã có tài khoản</h4>
           <div className="flex flex-wrap gap-2">
             {employees
               .filter((e: any) => !profiles.find(p => p.employee_id === e.employee_id))
@@ -419,7 +428,7 @@ function EmployeesTab() {
               .map((e: any) => (
                 <button key={e.employee_id}
                   onClick={() => setEditorState({ employee: e, profile: null })}
-                  className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-xs text-gray-200">
+                  className="px-3 py-1.5 bg-muted hover:bg-accent rounded text-xs text-foreground">
                   + {e.display_name}
                 </button>
               ))}
@@ -429,13 +438,13 @@ function EmployeesTab() {
 
       {roleTreeOpen && (
         <ErpOverlay onClose={() => setRoleTreeOpen(false)}>
-          <ErpModalCard className="w-full max-w-5xl max-h-[88vh] overflow-auto rounded-xl border-gray-600 p-5">
+          <ErpModalCard className="w-full max-w-5xl max-h-[88vh] overflow-auto rounded-xl border-input p-5">
             <div className="flex items-start justify-between gap-3 mb-4">
               <div>
-                <h3 className="text-white font-semibold">Biểu đồ cây theo role</h3>
-                <p className="text-[11px] text-gray-400 mt-1">Hiển thị cấu trúc role ERP → phòng ban → từng nhân sự để rà nhanh phân tầng nhân sự.</p>
+                <h3 className="text-foreground font-semibold">Biểu đồ cây theo role</h3>
+                <p className="text-[11px] text-muted-foreground mt-1">Hiển thị cấu trúc role ERP → phòng ban → từng nhân sự để rà nhanh phân tầng nhân sự.</p>
               </div>
-              <button onClick={() => setRoleTreeOpen(false)} className="text-gray-400 hover:text-white">✕</button>
+              <button onClick={() => setRoleTreeOpen(false)} className="text-muted-foreground hover:text-foreground">✕</button>
             </div>
             <RoleTreePanel roleTree={roleTree} />
           </ErpModalCard>
@@ -452,6 +461,22 @@ function EmployeesTab() {
           onClose={() => setEditorState(null)}
           onSave={async ({ employeeId, employeePatch, profilePatch, modulePermissionsPatch, shouldCreateAccount, shouldUpdateAccount }: any) => {
             let resolvedEmployeeId = employeeId;
+            if (isEmployeeMode) {
+              // Máy nhân viên: tài khoản / quyền module chỉ Boss quản lý (IPC employee:* ở đây chạy DB cục bộ) — chỉ lưu hồ
+              // sơ ERP lên Boss (REST, Boss kiểm tra quyền sửa hồ sơ / đổi vai trò)
+              if (shouldCreateAccount || !resolvedEmployeeId) {
+                showNotification('Chỉ Boss tạo được tài khoản nhân viên mới', 'error');
+                return;
+              }
+              const saved = await upsertProfile(resolvedEmployeeId, profilePatch);
+              if (!saved.success) {
+                showNotification(saved.error || 'Không lưu được hồ sơ', 'error');
+                return;
+              }
+              await Promise.all([loadEmployees(), loadProfiles()]);
+              setEditorState(null);
+              return;
+            }
             if (shouldCreateAccount) {
               const created = await ipc.employee?.create?.(employeePatch);
               if (!created?.success || !created?.employee?.employee_id) {
@@ -523,34 +548,34 @@ function EmployeeEditorModal({ employee, profile, departments, positions, canMan
 
   return (
     <ErpOverlay onClose={onClose}>
-      <ErpModalCard className="w-full max-w-5xl max-h-[88vh] overflow-auto rounded-xl border-gray-600 p-4 sm:p-5">
+      <ErpModalCard className="w-full max-w-5xl max-h-[88vh] overflow-auto rounded-xl border-input p-4 sm:p-5">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-white font-semibold">{isEdit ? 'Cập nhật nhân sự' : 'Thêm nhân sự mới'}</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-white">✕</button>
+          <h3 className="text-foreground font-semibold">{isEdit ? 'Cập nhật nhân sự' : 'Thêm nhân sự mới'}</h3>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">✕</button>
         </div>
 
         <div className="space-y-4 text-xs">
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
           <div className="space-y-3">
-            <div className="text-[11px] uppercase tracking-wider text-gray-400">Tài khoản</div>
+            <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Tài khoản</div>
             <Field label="Tên hiển thị">
-              <input value={accountForm.display_name} onChange={e => setAccountForm({ ...accountForm, display_name: e.target.value })} className="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-white" />
+              <input value={accountForm.display_name} onChange={e => setAccountForm({ ...accountForm, display_name: e.target.value })} className="w-full bg-muted border border-input rounded px-2 py-1.5 text-foreground" />
             </Field>
             <Field label="Tên đăng nhập">
-              <input disabled={isEdit} value={accountForm.username} onChange={e => setAccountForm({ ...accountForm, username: e.target.value })} className="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-white disabled:opacity-50" />
+              <input disabled={isEdit} value={accountForm.username} onChange={e => setAccountForm({ ...accountForm, username: e.target.value })} className="w-full bg-muted border border-input rounded px-2 py-1.5 text-foreground disabled:opacity-50" />
             </Field>
             <Field label={isEdit ? 'Mật khẩu mới (bỏ trống để giữ nguyên)' : 'Mật khẩu'}>
-              <input type="password" value={accountForm.password} onChange={e => setAccountForm({ ...accountForm, password: e.target.value })} className="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-white" />
+              <input type="password" value={accountForm.password} onChange={e => setAccountForm({ ...accountForm, password: e.target.value })} className="w-full bg-muted border border-input rounded px-2 py-1.5 text-foreground" />
             </Field>
             <Field label="Vai trò tài khoản">
-              <select disabled={!canManageEmployees} value={accountForm.role} onChange={e => setAccountForm({ ...accountForm, role: e.target.value })} className="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-white disabled:opacity-50">
+              <select disabled={!canManageEmployees} value={accountForm.role} onChange={e => setAccountForm({ ...accountForm, role: e.target.value })} className="w-full bg-muted border border-input rounded px-2 py-1.5 text-foreground disabled:opacity-50">
                 <option value="employee">Nhân viên</option>
                 <option value="boss">Boss</option>
               </select>
             </Field>
             {isEdit && canManageEmployees && (
               <Field label="Trạng thái">
-                <select value={String(accountForm.is_active)} onChange={e => setAccountForm({ ...accountForm, is_active: Number(e.target.value) })} className="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-white">
+                <select value={String(accountForm.is_active)} onChange={e => setAccountForm({ ...accountForm, is_active: Number(e.target.value) })} className="w-full bg-muted border border-input rounded px-2 py-1.5 text-foreground">
                   <option value="1">Đang hoạt động</option>
                   <option value="0">Vô hiệu</option>
                 </select>
@@ -564,84 +589,84 @@ function EmployeeEditorModal({ employee, profile, departments, positions, canMan
           </div>
 
           <div className="space-y-3">
-            <div className="text-[11px] uppercase tracking-wider text-gray-400">Hồ sơ ERP</div>
+            <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Hồ sơ ERP</div>
             <Field label="Phòng ban">
-              <select value={profileForm.department_id ?? ''} onChange={e => setProfileForm({ ...profileForm, department_id: e.target.value ? Number(e.target.value) : null })} className="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-white">
+              <select value={profileForm.department_id ?? ''} onChange={e => setProfileForm({ ...profileForm, department_id: e.target.value ? Number(e.target.value) : null })} className="w-full bg-muted border border-input rounded px-2 py-1.5 text-foreground">
                 <option value="">- không -</option>
                 {departments.map((d: any) => <option key={d.id} value={d.id}>{d.name}</option>)}
               </select>
             </Field>
             <Field label="Chức vụ">
-              <select value={profileForm.position_id ?? ''} onChange={e => setProfileForm({ ...profileForm, position_id: e.target.value ? Number(e.target.value) : null })} className="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-white">
+              <select value={profileForm.position_id ?? ''} onChange={e => setProfileForm({ ...profileForm, position_id: e.target.value ? Number(e.target.value) : null })} className="w-full bg-muted border border-input rounded px-2 py-1.5 text-foreground">
                 <option value="">- không -</option>
                 {positions.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
             </Field>
             <Field label="Role ERP">
-              <select disabled={!canManageEmployees} value={profileForm.erp_role ?? 'member'} onChange={e => setProfileForm({ ...profileForm, erp_role: e.target.value })} className="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-white disabled:opacity-50">
+              <select disabled={!canManageEmployees} value={profileForm.erp_role ?? 'member'} onChange={e => setProfileForm({ ...profileForm, erp_role: e.target.value })} className="w-full bg-muted border border-input rounded px-2 py-1.5 text-foreground disabled:opacity-50">
                 {ERP_ROLE_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
             </Field>
-            <Field label="SĐT"><input value={profileForm.phone ?? ''} onChange={e => setProfileForm({ ...profileForm, phone: e.target.value })} className="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-white" /></Field>
-            <Field label="Email"><input value={profileForm.email ?? ''} onChange={e => setProfileForm({ ...profileForm, email: e.target.value })} className="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-white" /></Field>
+            <Field label="SĐT"><input value={profileForm.phone ?? ''} onChange={e => setProfileForm({ ...profileForm, phone: e.target.value })} className="w-full bg-muted border border-input rounded px-2 py-1.5 text-foreground" /></Field>
+            <Field label="Email"><input value={profileForm.email ?? ''} onChange={e => setProfileForm({ ...profileForm, email: e.target.value })} className="w-full bg-muted border border-input rounded px-2 py-1.5 text-foreground" /></Field>
           </div>
           </div>
 
           <div className="space-y-3">
-            <div className="text-[11px] uppercase tracking-wider text-gray-400">Phân quyền</div>
+            <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Phân quyền</div>
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
-            <div className="rounded-xl border border-gray-700/60 bg-gray-900/30 p-3">
+            <div className="rounded-xl border border-border/60 bg-card p-3">
               <div className="flex items-center justify-between gap-2 mb-3">
                 <div>
-                  <div className="text-xs font-semibold text-white">Quyền module Deplao</div>
-                  <div className="text-[11px] text-gray-400 mt-1">Áp dụng cho các module ngoài ERP khi nhân viên đăng nhập.</div>
+                  <div className="text-xs font-semibold text-foreground">Quyền module Deplao</div>
+                  <div className="text-[11px] text-muted-foreground mt-1">Áp dụng cho các module ngoài ERP khi nhân viên đăng nhập.</div>
                 </div>
-                {!canConfigureModulePermissions && <span className="text-[10px] text-gray-400">Chỉ quản lý mới được chỉnh</span>}
+                {!canConfigureModulePermissions && <span className="text-[10px] text-muted-foreground">Chỉ quản lý mới được chỉnh</span>}
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                 {EMPLOYEE_MODULES.map(module => (
-                  <label key={module.key} className={`flex items-center gap-2.5 rounded-lg border px-3 py-2 ${modulePermissions[module.key] ? 'border-blue-500/40 bg-blue-500/10' : 'border-gray-700/70 bg-gray-800/60'} ${canConfigureModulePermissions ? 'cursor-pointer' : 'opacity-60 cursor-not-allowed'}`}>
+                  <label key={module.key} className={`flex items-center gap-2.5 rounded-lg border px-3 py-2 ${modulePermissions[module.key] ? 'border-blue-500/40 bg-blue-500/10' : 'border-border/70 bg-card'} ${canConfigureModulePermissions ? 'cursor-pointer' : 'opacity-60 cursor-not-allowed'}`}>
                     <input type="checkbox" disabled={!canConfigureModulePermissions} checked={!!modulePermissions[module.key]} onChange={() => updateModulePermission(module.key)} className="sr-only" />
-                    <span className={`w-4 h-4 rounded border flex items-center justify-center ${modulePermissions[module.key] ? 'border-blue-400 bg-blue-500' : 'border-gray-500'}`}>
+                    <span className={`w-4 h-4 rounded border flex items-center justify-center ${modulePermissions[module.key] ? 'border-blue-400 bg-blue-500' : 'border-border-strong'}`}>
                       {modulePermissions[module.key] && <span className="text-[10px] text-white">✓</span>}
                     </span>
                     <span className="text-base">{module.icon}</span>
                     <div className="min-w-0">
-                      <div className="text-xs text-gray-100 font-medium">{module.label}</div>
-                      <div className="text-[10px] text-gray-400 truncate">{module.desc}</div>
+                      <div className="text-xs text-foreground font-medium">{module.label}</div>
+                      <div className="text-[10px] text-muted-foreground truncate">{module.desc}</div>
                     </div>
                   </label>
                 ))}
               </div>
             </div>
 
-            <div className="rounded-xl border border-gray-700/60 bg-gray-900/30 p-3">
+            <div className="rounded-xl border border-border/60 bg-card p-3">
               <div className="flex items-center justify-between gap-2 mb-3">
                 <div>
-                  <div className="text-xs font-semibold text-white">Quyền action ERP</div>
-                  <div className="text-[11px] text-gray-400 mt-1">Role hiện tại: <span className="text-gray-300">{getRoleLabel(effectiveRole)}</span>. Có thể ghi đè riêng từng action.</div>
+                  <div className="text-xs font-semibold text-foreground">Quyền action ERP</div>
+                  <div className="text-[11px] text-muted-foreground mt-1">Role hiện tại: <span className="text-foreground/80">{getRoleLabel(effectiveRole)}</span>. Có thể ghi đè riêng từng action.</div>
                 </div>
-                {!canManageEmployees && <span className="text-[10px] text-gray-400">Chỉ quản lý mới được chỉnh</span>}
+                {!canManageEmployees && <span className="text-[10px] text-muted-foreground">Chỉ quản lý mới được chỉnh</span>}
               </div>
               <div className="space-y-3 max-h-[360px] overflow-auto pr-1">
                 {ERP_PERMISSION_GROUPS.map(group => (
-                  <div key={group.id} className="rounded-lg border border-gray-700/70 bg-gray-800/50 p-3 space-y-2">
-                    <div className="text-[11px] uppercase tracking-wider text-gray-400">{group.label}</div>
+                  <div key={group.id} className="rounded-lg border border-border/70 bg-card p-3 space-y-2">
+                    <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{group.label}</div>
                     {group.actions.map(action => {
                       const meta = ERP_PERMISSION_META[action];
                       const inheritedAllowed = ERP_PERMISSIONS[action].includes(effectiveRole);
                       return (
                         <div key={action} className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_170px] gap-2 items-start">
                           <div>
-                            <div className="text-xs text-gray-100 font-medium">{meta.label}</div>
-                            <div className="text-[10px] text-gray-400 mt-0.5">{meta.description}</div>
-                            <div className="text-[10px] text-gray-400 mt-1">Mặc định theo role: {inheritedAllowed ? 'Cho phép' : 'Chặn'} · Role được phép: {ERP_PERMISSIONS[action].join(', ')}</div>
+                            <div className="text-xs text-foreground font-medium">{meta.label}</div>
+                            <div className="text-[10px] text-muted-foreground mt-0.5">{meta.description}</div>
+                            <div className="text-[10px] text-muted-foreground mt-1">Mặc định theo role: {inheritedAllowed ? 'Cho phép' : 'Chặn'} · Role được phép: {ERP_PERMISSIONS[action].join(', ')}</div>
                           </div>
                           <select
                             disabled={!canManageEmployees}
                             value={actionPermissions[action]}
                             onChange={e => setActionPermissions(current => ({ ...current, [action]: e.target.value as 'inherit' | ErpPermissionOverrideMode }))}
-                            className="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-white disabled:opacity-50"
+                            className="w-full bg-muted border border-input rounded px-2 py-1.5 text-foreground disabled:opacity-50"
                           >
                             <option value="inherit">Kế thừa role ({inheritedAllowed ? 'Cho phép' : 'Chặn'})</option>
                             <option value="allow">Cho phép riêng</option>
@@ -659,7 +684,7 @@ function EmployeeEditorModal({ employee, profile, departments, positions, canMan
         </div>
 
         <div className="flex justify-end gap-2 mt-5">
-          <button onClick={onClose} className="px-3 py-1.5 text-gray-400 hover:text-white text-xs">Hủy</button>
+          <button onClick={onClose} className="px-3 py-1.5 text-muted-foreground hover:text-foreground text-xs">Hủy</button>
           <button onClick={() => onSave({
             employeeId: employee?.employee_id ?? profile?.employee_id,
             employeePatch: hasAccount
@@ -679,7 +704,7 @@ function EmployeeEditorModal({ employee, profile, departments, positions, canMan
             shouldUpdateAccount: hasAccount,
           })} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded">Lưu</button>
         </div>
-        {(employee?.employee_id || profile?.employee_id) && <div className="text-[10px] text-gray-400 mt-2">Employee ID: {employee?.employee_id || profile?.employee_id}</div>}
+        {(employee?.employee_id || profile?.employee_id) && <div className="text-[10px] text-muted-foreground mt-2">Employee ID: {employee?.employee_id || profile?.employee_id}</div>}
       </ErpModalCard>
     </ErpOverlay>
   );
@@ -687,18 +712,18 @@ function EmployeeEditorModal({ employee, profile, departments, positions, canMan
 
 const Field = ({ label, children }: any) => (
   <div>
-    <label className="block text-gray-400 mb-1">{label}</label>
+    <label className="block text-muted-foreground mb-1">{label}</label>
     {children}
   </div>
 );
 
-function ActionIconButton({ children, onClick, title, color = 'text-gray-400 hover:text-white' }: { children: React.ReactNode; onClick: () => void; title: string; color?: string }) {
+function ActionIconButton({ children, onClick, title, color = 'text-muted-foreground hover:text-foreground' }: { children: React.ReactNode; onClick: () => void; title: string; color?: string }) {
   return (
     <button
       type="button"
       onClick={onClick}
       title={title}
-      className={`w-7 h-7 inline-flex items-center justify-center rounded-lg hover:bg-gray-700/70 transition-colors ${color}`}
+      className={`w-7 h-7 inline-flex items-center justify-center rounded-lg hover:bg-muted/70 transition-colors ${color}`}
     >
       {children}
     </button>
@@ -708,7 +733,7 @@ function ActionIconButton({ children, onClick, title, color = 'text-gray-400 hov
 function RoleTreePanel({ roleTree }: { roleTree: any[] }) {
   if (roleTree.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-gray-700 bg-gray-900/30 px-4 py-8 text-center text-sm text-gray-400">
+      <div className="rounded-xl border border-dashed border-border bg-card px-4 py-8 text-center text-sm text-muted-foreground">
         Chưa có dữ liệu role để dựng cây nhân sự
       </div>
     );
@@ -717,40 +742,40 @@ function RoleTreePanel({ roleTree }: { roleTree: any[] }) {
   return (
     <div>
       <div className="flex items-center justify-end mb-3">
-        <div className="text-[11px] text-gray-400">{roleTree.length} nhánh role đang có dữ liệu</div>
+        <div className="text-[11px] text-muted-foreground">{roleTree.length} nhánh role đang có dữ liệu</div>
       </div>
       <div className="grid grid-cols-1 2xl:grid-cols-2 gap-4">
         {roleTree.map(branch => (
-          <div key={branch.role} className="rounded-xl border border-gray-700/60 bg-gray-900/30 p-4">
+          <div key={branch.role} className="rounded-xl border border-border/60 bg-card p-4">
             <div className="flex items-center justify-between gap-3 mb-3">
               <div>
-                <div className="text-[11px] uppercase tracking-wider text-gray-400">Role ERP</div>
-                <div className="text-sm font-semibold text-white mt-1">{branch.label}</div>
+                <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Role ERP</div>
+                <div className="text-sm font-semibold text-foreground mt-1">{branch.label}</div>
               </div>
               <span className={`px-2 py-1 rounded-full text-[10px] font-medium ${branch.badgeClass}`}>{branch.count} nhân sự</span>
             </div>
 
             <div className="space-y-3">
               {branch.departments.map((department: any) => (
-                <div key={`${branch.role}-${department.id}`} className="relative pl-4 border-l border-gray-700/70">
+                <div key={`${branch.role}-${department.id}`} className="relative pl-4 border-l border-border/70">
                   <span className="absolute left-[-4px] top-2.5 w-2 h-2 rounded-full bg-blue-400/70" />
                   <div className="flex items-center justify-between gap-2">
-                    <div className="text-xs font-medium text-gray-200">{department.name}</div>
-                    <span className="text-[10px] text-gray-400 bg-gray-800 px-1.5 py-0.5 rounded-full">{department.members.length}</span>
+                    <div className="text-xs font-medium text-foreground">{department.name}</div>
+                    <span className="text-[10px] text-muted-foreground bg-card px-1.5 py-0.5 rounded-full">{department.members.length}</span>
                   </div>
                   <div className="mt-2 ml-1 space-y-2">
                     {department.members.map((member: any) => (
-                      <div key={member.id} className="rounded-lg border border-gray-700/60 bg-gray-800/60 px-3 py-2">
+                      <div key={member.id} className="rounded-lg border border-border/60 bg-card px-3 py-2">
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
-                            <div className="text-sm text-white font-medium truncate">{member.name}</div>
-                            <div className="text-[11px] text-gray-400 mt-0.5 truncate">
+                            <div className="text-sm text-foreground font-medium truncate">{member.name}</div>
+                            <div className="text-[11px] text-muted-foreground mt-0.5 truncate">
                               {member.username ? `@${member.username}` : 'Chưa có tài khoản'} · {member.positionName}
                             </div>
                           </div>
                           {!member.hasAccount && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-yellow-600/20 text-yellow-300">Thiếu tài khoản</span>}
                         </div>
-                        <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-gray-400">
+                        <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-muted-foreground">
                           <span><LockIcon className="w-4 h-4 inline" /> {member.moduleCount} module</span>
                           <span><SettingsIcon className="w-4 h-4 inline" /> {member.actionOverrideCount} action riêng</span>
                         </div>
@@ -779,7 +804,7 @@ function DepartmentsTab() {
   return (
     <div className="p-4">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-white">Phòng ban ({departments.length})</h3>
+        <h3 className="text-sm font-semibold text-foreground">Phòng ban ({departments.length})</h3>
         {perms.can('department.manage') && (
           <button onClick={() => setCreating(true)} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded">
             + Thêm phòng ban
@@ -788,11 +813,11 @@ function DepartmentsTab() {
       </div>
       <div className="grid gap-2">
         {departments.map(d => (
-          <div key={d.id} className="bg-gray-800 border border-gray-700 rounded-lg p-3 flex items-center justify-between">
+          <div key={d.id} className="bg-card border border-border rounded-lg p-3 flex items-center justify-between">
             <div>
-              <div className="text-sm text-white font-medium">{d.name}</div>
-              {d.description && <div className="text-xs text-gray-400 mt-0.5">{d.description}</div>}
-              <div className="text-[10px] text-gray-400 mt-0.5">{(d as any).employeeCount ?? 0} nhân sự</div>
+              <div className="text-sm text-foreground font-medium">{d.name}</div>
+              {d.description && <div className="text-xs text-muted-foreground mt-0.5">{d.description}</div>}
+              <div className="text-[10px] text-muted-foreground mt-0.5">{(d as any).employeeCount ?? 0} nhân sự</div>
             </div>
             {perms.can('department.manage') && (
               <div className="flex gap-1">
@@ -807,17 +832,17 @@ function DepartmentsTab() {
             )}
           </div>
         ))}
-        {departments.length === 0 && <div className="text-center text-gray-400 text-xs py-6">Chưa có phòng ban</div>}
+        {departments.length === 0 && <div className="text-center text-muted-foreground text-xs py-6">Chưa có phòng ban</div>}
       </div>
 
       {creating && (
         <ErpOverlay onClose={() => { setCreating(false); setNewName(''); }}>
-          <ErpModalCard className="w-full max-w-sm rounded-xl border-gray-600 p-5">
-            <h3 className="text-white font-semibold mb-3">Tạo phòng ban</h3>
+          <ErpModalCard className="w-full max-w-sm rounded-xl border-input p-5">
+            <h3 className="text-foreground font-semibold mb-3">Tạo phòng ban</h3>
             <input autoFocus value={newName} onChange={e => setNewName(e.target.value)}
-              placeholder="Tên phòng ban" className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white text-sm mb-4" />
+              placeholder="Tên phòng ban" className="w-full bg-muted border border-input rounded px-3 py-2 text-foreground text-sm mb-4" />
             <div className="flex justify-end gap-2">
-              <button onClick={() => { setCreating(false); setNewName(''); }} className="px-3 py-1.5 text-gray-400 text-xs">Hủy</button>
+              <button onClick={() => { setCreating(false); setNewName(''); }} className="px-3 py-1.5 text-muted-foreground text-xs">Hủy</button>
               <button disabled={!newName.trim()} onClick={async () => {
                 await createDepartment({ name: newName.trim() });
                 setCreating(false); setNewName('');
@@ -843,8 +868,8 @@ function PositionsTab() {
     <div className="p-4">
       <div className="flex items-center justify-between mb-3">
         <div>
-          <h3 className="text-sm font-semibold text-white">Chức vụ ({positions.length})</h3>
-          <p className="text-[11px] text-gray-400 mt-1">Quản lý danh mục chức vụ để gán nhanh cho hồ sơ nhân sự ERP.</p>
+          <h3 className="text-sm font-semibold text-foreground">Chức vụ ({positions.length})</h3>
+          <p className="text-[11px] text-muted-foreground mt-1">Quản lý danh mục chức vụ để gán nhanh cho hồ sơ nhân sự ERP.</p>
         </div>
         {perms.can('position.manage') && (
           <button onClick={() => setCreating(true)} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded">
@@ -855,10 +880,10 @@ function PositionsTab() {
 
       <div className="grid gap-2">
         {positions.map(position => (
-          <div key={position.id} className="bg-gray-800 border border-gray-700 rounded-lg p-3 flex items-center justify-between gap-3">
+          <div key={position.id} className="bg-card border border-border rounded-lg p-3 flex items-center justify-between gap-3">
             <div>
-              <div className="text-sm text-white font-medium">{position.name}</div>
-              <div className="text-[11px] text-gray-400 mt-0.5">
+              <div className="text-sm text-foreground font-medium">{position.name}</div>
+              <div className="text-[11px] text-muted-foreground mt-0.5">
                 {departments.find(d => d.id === position.department_id)?.name || 'Toàn công ty'} · Cấp {position.level ?? 0}
               </div>
             </div>
@@ -878,26 +903,26 @@ function PositionsTab() {
             )}
           </div>
         ))}
-        {positions.length === 0 && <div className="text-center text-gray-400 text-xs py-6">Chưa có chức vụ nào</div>}
+        {positions.length === 0 && <div className="text-center text-muted-foreground text-xs py-6">Chưa có chức vụ nào</div>}
       </div>
 
       {creating && (
         <ErpOverlay onClose={() => { setCreating(false); setName(''); setDepartmentId(''); }}>
-          <ErpModalCard className="w-full max-w-sm rounded-xl border-gray-600 p-5">
-            <h3 className="text-white font-semibold mb-3">Tạo chức vụ</h3>
+          <ErpModalCard className="w-full max-w-sm rounded-xl border-input p-5">
+            <h3 className="text-foreground font-semibold mb-3">Tạo chức vụ</h3>
             <div className="space-y-3 text-xs">
               <Field label="Tên chức vụ">
-                <input autoFocus value={name} onChange={e => setName(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white" />
+                <input autoFocus value={name} onChange={e => setName(e.target.value)} className="w-full bg-muted border border-input rounded px-3 py-2 text-foreground" />
               </Field>
               <Field label="Phòng ban">
-                <select value={departmentId} onChange={e => setDepartmentId(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white">
+                <select value={departmentId} onChange={e => setDepartmentId(e.target.value)} className="w-full bg-muted border border-input rounded px-3 py-2 text-foreground">
                   <option value="">Toàn công ty</option>
                   {departments.map((department: any) => <option key={department.id} value={department.id}>{department.name}</option>)}
                 </select>
               </Field>
             </div>
             <div className="flex justify-end gap-2 mt-5">
-              <button onClick={() => { setCreating(false); setName(''); setDepartmentId(''); }} className="px-3 py-1.5 text-gray-400 text-xs">Hủy</button>
+              <button onClick={() => { setCreating(false); setName(''); setDepartmentId(''); }} className="px-3 py-1.5 text-muted-foreground text-xs">Hủy</button>
               <button disabled={!name.trim()} onClick={async () => {
                 await createPosition({ name: name.trim(), department_id: departmentId ? Number(departmentId) : null });
                 setCreating(false); setName(''); setDepartmentId('');
@@ -980,19 +1005,19 @@ function AttendanceTab() {
 
   return (
     <div className="p-4">
-      <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 mb-4">
-        <div className="text-xs text-gray-400 mb-2">Hôm nay</div>
+      <div className="bg-card rounded-lg border border-border p-4 mb-4">
+        <div className="text-xs text-muted-foreground mb-2">Hôm nay</div>
         <div className="flex items-center gap-4">
           <div className="flex-1">
-            <div className="text-sm text-white">
+            <div className="text-sm text-foreground">
               {todayAttendance?.check_in_at
                 ? <>Check-in: <span className="text-green-400">{new Date(todayAttendance.check_in_at).toLocaleTimeString()}</span></>
-                : <span className="text-gray-400">Chưa check-in</span>}
+                : <span className="text-muted-foreground">Chưa check-in</span>}
             </div>
-            <div className="text-sm text-white mt-1">
+            <div className="text-sm text-foreground mt-1">
               {todayAttendance?.check_out_at
                 ? <>Check-out: <span className="text-blue-400">{new Date(todayAttendance.check_out_at).toLocaleTimeString()}</span></>
-                : <span className="text-gray-400">Chưa check-out</span>}
+                : <span className="text-muted-foreground">Chưa check-out</span>}
             </div>
           </div>
           <div className="flex gap-2">
@@ -1010,58 +1035,58 @@ function AttendanceTab() {
         </div>
       </div>
 
-      <div className="mb-3 rounded-xl border border-gray-700/60 bg-gray-800/50 p-3 text-xs">
+      <div className="mb-3 rounded-xl border border-border/60 bg-card p-3 text-xs">
         <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
           <div>
-            <div className="text-sm font-semibold text-white">Bộ lọc chấm công</div>
-            <div className="text-[11px] text-gray-400 mt-1">Lọc theo nhân sự, phòng ban, chức vụ, quyền ERP và ngày ghi nhận công.</div>
+            <div className="text-sm font-semibold text-foreground">Bộ lọc chấm công</div>
+            <div className="text-[11px] text-muted-foreground mt-1">Lọc theo nhân sự, phòng ban, chức vụ, quyền ERP và ngày ghi nhận công.</div>
           </div>
-          <div className="text-[11px] text-gray-400">{filteredAttendanceList.length} bản ghi phù hợp</div>
+          <div className="text-[11px] text-muted-foreground">{filteredAttendanceList.length} bản ghi phù hợp</div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
         {canViewOthers && (
           <>
-            <button onClick={() => { setScope('all'); setEmployeeFilter(''); }} className={`px-2.5 py-1 rounded ${scope === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300'}`}>Tất cả</button>
-            <button onClick={() => { setScope('mine'); setEmployeeFilter(''); }} className={`px-2.5 py-1 rounded ${scope === 'mine' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300'}`}>Của tôi</button>
-            <select value={employeeFilter} onChange={e => setEmployeeFilter(e.target.value)} className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white">
+            <button onClick={() => { setScope('all'); setEmployeeFilter(''); }} className={`px-2.5 py-1 rounded ${scope === 'all' ? 'bg-blue-600 text-white' : 'bg-muted text-foreground/80'}`}>Tất cả</button>
+            <button onClick={() => { setScope('mine'); setEmployeeFilter(''); }} className={`px-2.5 py-1 rounded ${scope === 'mine' ? 'bg-blue-600 text-white' : 'bg-muted text-foreground/80'}`}>Của tôi</button>
+            <select value={employeeFilter} onChange={e => setEmployeeFilter(e.target.value)} className="bg-muted border border-input rounded px-2 py-1 text-foreground">
               <option value="">{scope === 'all' ? 'Tất cả nhân sự' : 'Nhân sự hiện tại'}</option>
               <option value="boss">Boss</option>
               {employeeOptions.map(option => <option key={option.employeeId} value={option.employeeId}>{option.name}</option>)}
             </select>
           </>
         )}
-          <select value={departmentFilter} onChange={e => setDepartmentFilter(e.target.value)} className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white">
+          <select value={departmentFilter} onChange={e => setDepartmentFilter(e.target.value)} className="bg-muted border border-input rounded px-2 py-1 text-foreground">
             <option value="">Tất cả phòng ban</option>
             {departments.map((department: any) => <option key={department.id} value={department.id}>{department.name}</option>)}
           </select>
-          <select value={positionFilter} onChange={e => setPositionFilter(e.target.value)} className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white">
+          <select value={positionFilter} onChange={e => setPositionFilter(e.target.value)} className="bg-muted border border-input rounded px-2 py-1 text-foreground">
             <option value="">Tất cả chức vụ</option>
             {positions.map((position: any) => <option key={position.id} value={position.id}>{position.name}</option>)}
           </select>
-          <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)} className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white">
+          <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)} className="bg-muted border border-input rounded px-2 py-1 text-foreground">
             <option value="">Tất cả role ERP</option>
             {ERP_ROLE_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
             <option value="unassigned">Chưa gán role</option>
           </select>
-          <select value={dateFilter} onChange={e => setDateFilter(e.target.value as ErpDateFilterPreset)} className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white">
+          <select value={dateFilter} onChange={e => setDateFilter(e.target.value as ErpDateFilterPreset)} className="bg-muted border border-input rounded px-2 py-1 text-foreground">
             {ERP_DATE_FILTER_OPTIONS.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
           </select>
           {dateFilter === 'custom' && (
             <>
-              <label className="text-gray-400">Từ</label>
+              <label className="text-muted-foreground">Từ</label>
               <input type="date" value={customDateRange.from} onChange={e => setCustomDateRange(range => ({ ...range, from: e.target.value }))}
-                className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white" />
-              <label className="text-gray-400">Đến</label>
+                className="bg-muted border border-input rounded px-2 py-1 text-foreground" />
+              <label className="text-muted-foreground">Đến</label>
               <input type="date" value={customDateRange.to} onChange={e => setCustomDateRange(range => ({ ...range, to: e.target.value }))}
-                className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white" />
+                className="bg-muted border border-input rounded px-2 py-1 text-foreground" />
             </>
           )}
         </div>
       </div>
 
-      <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+      <div className="bg-card rounded-lg border border-border overflow-hidden">
         <table className="w-full text-xs">
-          <thead className="bg-gray-700/50 text-gray-400">
+          <thead className="bg-muted/50 text-muted-foreground">
             <tr>
               {(canViewOthers || scope === 'all' || !!employeeFilter) && <th className="px-3 py-2 text-left">Nhân viên</th>}
               <th className="px-3 py-2 text-left">Ngày</th>
@@ -1070,16 +1095,16 @@ function AttendanceTab() {
               <th className="px-3 py-2 text-left">Số giờ</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-700/50">
+          <tbody className="divide-y divide-border/50">
             {filteredAttendanceList.map(a => {
               const hrs = a.check_in_at && a.check_out_at ? ((a.check_out_at - a.check_in_at) / 3600000).toFixed(1) : '-';
               const meta = employeeMeta.get(a.employee_id);
               return (
-                <tr key={a.id} className="text-gray-200">
+                <tr key={a.id} className="text-foreground">
                   {(canViewOthers || scope === 'all' || !!employeeFilter) && (
                     <td className="px-3 py-2">
                       <div className="font-medium">{getEmpName(a.employee_id)}</div>
-                      <div className="text-[10px] text-gray-400 mt-0.5">{meta?.departmentName || 'Chưa gán phòng ban'} · {meta?.positionName || 'Chưa gán chức vụ'} · {getRoleLabel(meta?.role)}</div>
+                      <div className="text-[10px] text-muted-foreground mt-0.5">{meta?.departmentName || 'Chưa gán phòng ban'} · {meta?.positionName || 'Chưa gán chức vụ'} · {getRoleLabel(meta?.role)}</div>
                     </td>
                   )}
                   <td className="px-3 py-2">{a.date}</td>
@@ -1090,7 +1115,7 @@ function AttendanceTab() {
               );
             })}
             {filteredAttendanceList.length === 0 && (
-              <tr><td colSpan={(canViewOthers || scope === 'all' || !!employeeFilter) ? 5 : 4} className="px-3 py-6 text-center text-gray-400">Chưa có dữ liệu</td></tr>
+              <tr><td colSpan={(canViewOthers || scope === 'all' || !!employeeFilter) ? 5 : 4} className="px-3 py-6 text-center text-muted-foreground">Chưa có dữ liệu</td></tr>
             )}
           </tbody>
         </table>
@@ -1142,39 +1167,39 @@ function LeaveTab() {
 
   return (
     <div className="p-4 space-y-6">
-      <div className="rounded-xl border border-gray-700/60 bg-gray-800/50 p-3 text-xs">
+      <div className="rounded-xl border border-border/60 bg-card p-3 text-xs">
         <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
           <div>
-            <div className="text-sm font-semibold text-white">Bộ lọc nghỉ phép</div>
-            <div className="text-[11px] text-gray-400 mt-1">Lọc đơn theo phòng ban, chức vụ, quyền ERP và ngày tạo đơn.</div>
+            <div className="text-sm font-semibold text-foreground">Bộ lọc nghỉ phép</div>
+            <div className="text-[11px] text-muted-foreground mt-1">Lọc đơn theo phòng ban, chức vụ, quyền ERP và ngày tạo đơn.</div>
           </div>
-          <div className="text-[11px] text-gray-400">{filteredMyLeaves.length}{canApprove ? ` / ${filteredPendingLeaves.length}` : ''} bản ghi hiển thị</div>
+          <div className="text-[11px] text-muted-foreground">{filteredMyLeaves.length}{canApprove ? ` / ${filteredPendingLeaves.length}` : ''} bản ghi hiển thị</div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <select value={departmentFilter} onChange={e => setDepartmentFilter(e.target.value)} className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white">
+          <select value={departmentFilter} onChange={e => setDepartmentFilter(e.target.value)} className="bg-muted border border-input rounded px-2 py-1 text-foreground">
             <option value="">Tất cả phòng ban</option>
             {departments.map((department: any) => <option key={department.id} value={department.id}>{department.name}</option>)}
           </select>
-          <select value={positionFilter} onChange={e => setPositionFilter(e.target.value)} className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white">
+          <select value={positionFilter} onChange={e => setPositionFilter(e.target.value)} className="bg-muted border border-input rounded px-2 py-1 text-foreground">
             <option value="">Tất cả chức vụ</option>
             {positions.map((position: any) => <option key={position.id} value={position.id}>{position.name}</option>)}
           </select>
-          <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)} className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white">
+          <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)} className="bg-muted border border-input rounded px-2 py-1 text-foreground">
             <option value="">Tất cả role ERP</option>
             {ERP_ROLE_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
             <option value="unassigned">Chưa gán role</option>
           </select>
-          <select value={createdDateFilter} onChange={e => setCreatedDateFilter(e.target.value as ErpDateFilterPreset)} className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white">
+          <select value={createdDateFilter} onChange={e => setCreatedDateFilter(e.target.value as ErpDateFilterPreset)} className="bg-muted border border-input rounded px-2 py-1 text-foreground">
             {ERP_DATE_FILTER_OPTIONS.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
           </select>
           {createdDateFilter === 'custom' && (
             <>
-              <label className="text-gray-400">Từ</label>
+              <label className="text-muted-foreground">Từ</label>
               <input type="date" value={customCreatedRange.from} onChange={e => setCustomCreatedRange(range => ({ ...range, from: e.target.value }))}
-                className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white" />
-              <label className="text-gray-400">Đến</label>
+                className="bg-muted border border-input rounded px-2 py-1 text-foreground" />
+              <label className="text-muted-foreground">Đến</label>
               <input type="date" value={customCreatedRange.to} onChange={e => setCustomCreatedRange(range => ({ ...range, to: e.target.value }))}
-                className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white" />
+                className="bg-muted border border-input rounded px-2 py-1 text-foreground" />
             </>
           )}
         </div>
@@ -1182,7 +1207,7 @@ function LeaveTab() {
 
       <div>
         <div className="flex items-center justify-between mb-2">
-          <h3 className="text-sm font-semibold text-white">Đơn nghỉ phép của tôi</h3>
+          <h3 className="text-sm font-semibold text-foreground">Đơn nghỉ phép của tôi</h3>
           <button onClick={() => setCreating(true)} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded">
             + Tạo đơn
           </button>
@@ -1192,7 +1217,7 @@ function LeaveTab() {
 
       {canApprove && (
         <div>
-          <h3 className="text-sm font-semibold text-white mb-2">Đơn chờ duyệt ({filteredPendingLeaves.length})</h3>
+          <h3 className="text-sm font-semibold text-foreground mb-2">Đơn chờ duyệt ({filteredPendingLeaves.length})</h3>
           <LeaveTable rows={filteredPendingLeaves} showActor approvable onDecide={decideLeave} getEmployeeMeta={employeeMeta} />
         </div>
       )}
@@ -1204,9 +1229,9 @@ function LeaveTab() {
 
 function LeaveTable({ rows, showActor, approvable, onDecide, onCancel, getEmployeeMeta }: any) {
   return (
-    <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+    <div className="bg-card rounded-lg border border-border overflow-hidden">
       <table className="w-full text-xs">
-        <thead className="bg-gray-700/50 text-gray-400">
+        <thead className="bg-muted/50 text-muted-foreground">
           <tr>
             {showActor && <th className="px-3 py-2 text-left">Người gửi</th>}
             <th className="px-3 py-2 text-left">Loại</th>
@@ -1218,15 +1243,15 @@ function LeaveTable({ rows, showActor, approvable, onDecide, onCancel, getEmploy
             <th className="px-3 py-2"></th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-700/50">
+        <tbody className="divide-y divide-border/50">
           {(rows || []).map((l: any) => {
             const meta = getEmployeeMeta?.get?.(l.requester_id);
             return (
-            <tr key={l.id} className="text-gray-200">
+            <tr key={l.id} className="text-foreground">
               {showActor && (
                 <td className="px-3 py-2">
-                  <div className="font-medium text-gray-100">{meta?.name || l.requester_id}</div>
-                  <div className="text-[10px] text-gray-400 mt-0.5">{meta?.departmentName || 'Chưa gán phòng ban'} · {meta?.positionName || 'Chưa gán chức vụ'} · {getRoleLabel(meta?.role)}</div>
+                  <div className="font-medium text-foreground">{meta?.name || l.requester_id}</div>
+                  <div className="text-[10px] text-muted-foreground mt-0.5">{meta?.departmentName || 'Chưa gán phòng ban'} · {meta?.positionName || 'Chưa gán chức vụ'} · {getRoleLabel(meta?.role)}</div>
                 </td>
               )}
               <td className="px-3 py-2">{l.leave_type}</td>
@@ -1238,7 +1263,7 @@ function LeaveTable({ rows, showActor, approvable, onDecide, onCancel, getEmploy
                 <span className={`px-2 py-0.5 rounded-full text-[10px] ${
                   l.status === 'approved' ? 'bg-green-600/20 text-green-400' :
                   l.status === 'rejected' ? 'bg-red-600/20 text-red-400' :
-                  l.status === 'cancelled' ? 'bg-gray-600/20 text-gray-400' :
+                  l.status === 'cancelled' ? 'bg-accent/20 text-muted-foreground' :
                   'bg-yellow-600/20 text-yellow-400'
                 }`}>{l.status}</span>
               </td>
@@ -1250,13 +1275,13 @@ function LeaveTable({ rows, showActor, approvable, onDecide, onCancel, getEmploy
                   </>
                 )}
                 {!approvable && l.status === 'pending' && (
-                  <button onClick={() => onCancel(l.id)} className="text-gray-400 hover:text-white text-[11px]">Hủy</button>
+                  <button onClick={() => onCancel(l.id)} className="text-muted-foreground hover:text-foreground text-[11px]">Hủy</button>
                 )}
               </td>
             </tr>
           );})}
           {(!rows || rows.length === 0) && (
-            <tr><td colSpan={showActor ? 8 : 7} className="px-3 py-6 text-center text-gray-400">Không có đơn nào</td></tr>
+            <tr><td colSpan={showActor ? 8 : 7} className="px-3 py-6 text-center text-muted-foreground">Không có đơn nào</td></tr>
           )}
         </tbody>
       </table>
@@ -1274,15 +1299,15 @@ function LeaveCreateModal({ onClose, onSubmit }: any) {
 
   return (
     <ErpOverlay onClose={onClose}>
-      <ErpModalCard className="w-full max-w-md rounded-xl border-gray-600 p-5">
+      <ErpModalCard className="w-full max-w-md rounded-xl border-input p-5">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-white font-semibold">Tạo đơn nghỉ phép</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-white">✕</button>
+          <h3 className="text-foreground font-semibold">Tạo đơn nghỉ phép</h3>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">✕</button>
         </div>
         <div className="space-y-3 text-xs">
           <Field label="Loại">
             <select value={form.leave_type} onChange={e => setForm({ ...form, leave_type: e.target.value })}
-              className="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-white">
+              className="w-full bg-muted border border-input rounded px-2 py-1.5 text-foreground">
               <option value="annual">Nghỉ phép năm</option>
               <option value="sick">Nghỉ ốm</option>
               <option value="unpaid">Nghỉ không lương</option>
@@ -1292,20 +1317,20 @@ function LeaveCreateModal({ onClose, onSubmit }: any) {
           <div className="grid grid-cols-2 gap-2">
             <Field label="Từ ngày">
               <input type="date" value={form.start_date} onChange={e => setForm({ ...form, start_date: e.target.value })}
-                className="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-white" />
+                className="w-full bg-muted border border-input rounded px-2 py-1.5 text-foreground" />
             </Field>
             <Field label="Đến ngày">
               <input type="date" value={form.end_date} onChange={e => setForm({ ...form, end_date: e.target.value })}
-                className="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-white" />
+                className="w-full bg-muted border border-input rounded px-2 py-1.5 text-foreground" />
             </Field>
           </div>
           <Field label="Lý do">
             <textarea value={form.reason} onChange={e => setForm({ ...form, reason: e.target.value })} rows={3}
-              className="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-white" />
+              className="w-full bg-muted border border-input rounded px-2 py-1.5 text-foreground" />
           </Field>
         </div>
         <div className="flex justify-end gap-2 mt-5">
-          <button onClick={onClose} className="px-3 py-1.5 text-gray-400 hover:text-white text-xs">Hủy</button>
+          <button onClick={onClose} className="px-3 py-1.5 text-muted-foreground hover:text-foreground text-xs">Hủy</button>
           <button disabled={!form.reason.trim()} onClick={() => onSubmit(form)}
             className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded disabled:opacity-50">Gửi đơn</button>
         </div>

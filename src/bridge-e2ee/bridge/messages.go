@@ -37,9 +37,15 @@ type SendMessageOptions struct {
 
 // SendMessageResult result of sending a message
 type SendMessageResult struct {
-	MessageID   string `json:"messageId"`
-	TimestampMs int64  `json:"timestampMs"`
+	MessageID      string `json:"messageId"`
+	TimestampMs    int64  `json:"timestampMs"`
+	DeliveryStatus string `json:"deliveryStatus,omitempty"`
 }
+
+const (
+	DeliveryStatusAcknowledged = "acknowledged"
+	DeliveryStatusUnknown      = "unknown"
+)
 
 // SendMessage sends a text message
 func (c *Client) SendMessage(opts *SendMessageOptions) (*SendMessageResult, error) {
@@ -161,18 +167,24 @@ func (c *Client) sendE2EEMessage(opts *SendMessageOptions) (*SendMessageResult, 
 	resp, err := e2eeClient.SendFBMessage(c.ctx, chatJID, waMsg, metadata, whatsmeow.SendRequestExtra{ID: msgID})
 	if err != nil {
 		if isE2EESendResponseTimeout(err) {
-			return &SendMessageResult{
-				MessageID:   msgID,
-				TimestampMs: time.Now().UnixMilli(),
-			}, nil
+			return newUnknownE2EESendResult(msgID, time.Now()), nil
 		}
 		return nil, err
 	}
 
 	return &SendMessageResult{
-		MessageID:   msgID,
-		TimestampMs: resp.Timestamp.UnixMilli(),
+		MessageID:      msgID,
+		TimestampMs:    resp.Timestamp.UnixMilli(),
+		DeliveryStatus: DeliveryStatusAcknowledged,
 	}, nil
+}
+
+func newUnknownE2EESendResult(messageID string, timestamp time.Time) *SendMessageResult {
+	return &SendMessageResult{
+		MessageID:      messageID,
+		TimestampMs:    timestamp.UnixMilli(),
+		DeliveryStatus: DeliveryStatusUnknown,
+	}
 }
 
 func (c *Client) ensureE2EEDM(chatJID waTypes.JID) error {
@@ -365,7 +377,24 @@ func parseJID(jidStr string) (waTypes.JID, error) {
 // E2EE send typing
 func (c *Client) SendE2EETyping(chatJIDStr string, isTyping bool) error {
 	e2eeClient := c.snapshotE2EEClient()
-	if e2eeClient == nil || !e2eeClient.IsConnected() {
+	if e2eeClient == nil {
+		return ErrE2EENotConnected
+	}
+	return c.sendE2EETyping(e2eeClient, chatJIDStr, isTyping)
+}
+
+const e2eeTypingTimeout = 10 * time.Second
+
+type e2eeTypingSender interface {
+	e2eeConnectionState
+	SendChatPresence(context.Context, waTypes.JID, waTypes.ChatPresence, waTypes.ChatPresenceMedia) error
+}
+
+func (c *Client) sendE2EETyping(e2eeClient e2eeTypingSender, chatJIDStr string, isTyping bool) error {
+	if err := c.lifecycleError(); err != nil {
+		return err
+	}
+	if !isE2EEReady(e2eeClient) {
 		return ErrE2EENotConnected
 	}
 
@@ -378,7 +407,9 @@ func (c *Client) SendE2EETyping(chatJIDStr string, isTyping bool) error {
 	if isTyping {
 		presence = waTypes.ChatPresenceComposing
 	}
-	return e2eeClient.SendChatPresence(context.Background(), chatJID, presence, waTypes.ChatPresenceMediaText)
+	ctx, cancel := context.WithTimeout(c.ctx, e2eeTypingTimeout)
+	defer cancel()
+	return e2eeClient.SendChatPresence(ctx, chatJID, presence, waTypes.ChatPresenceMediaText)
 }
 
 // EditE2EEMessage edits an E2EE message

@@ -1,17 +1,19 @@
-import React, { useState, useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import type { CRMCampaign } from '@/store/crmStore';
+import { cn } from '@/lib/cn';
 import { showConfirm } from '@/components/common/ConfirmDialog';
 import PageLoading from '@/components/common/PageLoading';
-import { CalendarIcon, ClipboardListIcon, ShuffleIcon, TrashIcon, UserCheckIcon, UsersIcon } from '@/components/common/icons';
-
-function fmtDelayRange(min: number, max: number): string {
-  const fmt = (s: number) => {
-    if (s < 60) return `${s}s`;
-    if (s < 3600) return `${Math.round(s / 60)}ph`;
-    return `${Math.round(s / 3600)}h`;
-  };
-  return min === max ? fmt(min) : `${fmt(min)}-${fmt(max)}`;
-}
+import { Button, DropdownMenu, DropdownMenuItem, DropdownMenuSeparator, EmptyState, Input, Select } from '@/components/ui';
+import { CampaignIcon, CopyIcon, PauseIcon, PlayIcon, PlusIcon, SearchIcon, TrashIcon } from '@/components/common/icons';
+import {
+  CAMPAIGN_STATUS_META,
+  CAMPAIGN_TYPE_LABEL,
+  campaignStatusOf,
+  campaignTypeOf,
+  formatDay,
+  type CampaignStatus,
+} from '@/lib/crm/campaignView';
+import { CampaignProgressBar, CampaignTypeTile, STATUS_TEXT } from './CampaignParts';
 
 interface CampaignListProps {
   campaigns: CRMCampaign[];
@@ -24,159 +26,167 @@ interface CampaignListProps {
   onUpdateStatus: (id: number, status: string) => void;
 }
 
-const STATUS_STYLE: Record<string, string> = {
-  draft: 'bg-gray-600/30 text-gray-400',
-  active: 'bg-green-500/20 text-green-400',
-  paused: 'bg-yellow-500/20 text-yellow-400',
-  done: 'bg-blue-500/20 text-blue-400',
-};
-const STATUS_LABEL: Record<string, string> = { draft: 'Nháp', active: '▶ Đang chạy', paused: '⏸ Tạm dừng', done: '✓ Hoàn thành' };
+type StatusFilter = 'all' | CampaignStatus;
 
-const PAGE_SIZE = 10;
+const STATUS_FILTERS: StatusFilter[] = ['all', 'draft', 'active', 'paused', 'done'];
 
-function fmtDate(ts: number): string {
-  if (!ts) return '';
-  return new Date(ts).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: '2-digit' });
+const PAGE_SIZE = 20;
+
+function MoreDotsIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" />
+    </svg>
+  );
 }
 
 export default function CampaignList({ campaigns, loading, activeId, onSelect, onCreate, onDelete, onClone, onUpdateStatus }: CampaignListProps) {
   const [search, setSearch] = useState('');
-  const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [filterStatus, setFilterStatus] = useState<StatusFilter>('all');
   const [page, setPage] = useState(0);
+
+  const counts = useMemo(() => {
+    const result: Record<StatusFilter, number> = { all: campaigns.length, draft: 0, active: 0, paused: 0, done: 0 };
+    for (const c of campaigns) result[campaignStatusOf(c.status)]++;
+    return result;
+  }, [campaigns]);
 
   const filtered = useMemo(() => {
     let list = campaigns;
-    if (filterStatus !== 'all') list = list.filter(c => c.status === filterStatus);
+    if (filterStatus !== 'all') list = list.filter(c => campaignStatusOf(c.status) === filterStatus);
     if (search.trim()) {
-      const q = search.toLowerCase();
+      const q = search.trim().toLowerCase();
       list = list.filter(c => c.name.toLowerCase().includes(q));
     }
     return list;
   }, [campaigns, search, filterStatus]);
 
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
-  const paged = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  // Deleting the last campaigns of the last page must not leave an empty page.
+  const currentPage = Math.min(page, Math.max(0, totalPages - 1));
+  const paged = filtered.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
 
   const resetPage = () => setPage(0);
 
+  const confirmDelete = async (c: CRMCampaign) => {
+    const ok = await showConfirm({
+      title: 'Xóa chiến dịch?',
+      message: `"${c.name}" sẽ bị xóa vĩnh viễn cùng toàn bộ dữ liệu gửi. Hành động này không thể hoàn tác.`,
+      variant: 'danger',
+      confirmText: 'Xóa',
+    });
+    if (ok) onDelete(c.id);
+  };
+
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full flex-col bg-card">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700 flex-shrink-0">
-        <span className="text-sm font-semibold text-gray-200">{campaigns.length} chiến dịch</span>
-        <button onClick={onCreate}
-          className="flex items-center gap-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition-colors">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-          </svg>
-          Tạo mới
-        </button>
+      <div className="flex flex-shrink-0 items-center justify-between gap-2 px-4 pb-3 pt-4">
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold text-foreground">Chiến dịch</h2>
+          <p className="text-xs text-muted-foreground">
+            {campaigns.length} chiến dịch{counts.active > 0 ? ` · ${counts.active} đang chạy` : ''}
+          </p>
+        </div>
+        <Button size="sm" leftIcon={<PlusIcon className="h-4 w-4" />} onClick={onCreate}>Tạo mới</Button>
       </div>
 
       {/* Filters */}
-      <div className="px-3 pt-2.5 pb-2 border-b border-gray-700 flex-shrink-0 space-y-2">
-        <div className="relative">
-          <svg width="12" height="12" className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"
-            viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-          </svg>
-          <input value={search} onChange={e => { setSearch(e.target.value); resetPage(); }}
-            placeholder="Tìm tên chiến dịch..."
-            className="w-full bg-gray-700 border border-gray-600 rounded-lg pl-7 pr-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500" />
+      <div className="flex flex-shrink-0 gap-2 border-b border-border px-4 pb-3">
+        <div className="relative min-w-0 flex-1">
+          <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-subtle-foreground" />
+          <Input value={search} onChange={e => { setSearch(e.target.value); resetPage(); }}
+            placeholder="Tìm chiến dịch..." className="h-8 pl-8 text-[13px]" />
         </div>
-        <div className="flex gap-1 flex-wrap">
-          {(['all', 'draft', 'active', 'paused', 'done'] as const).map(s => (
-            <button key={s} onClick={() => { setFilterStatus(s); resetPage(); }}
-              className={`text-[11px] px-2 py-0.5 rounded-full border transition-colors ${
-                filterStatus === s ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-600 text-gray-400 hover:border-gray-500'
-              }`}>
-              {s === 'all' ? 'Tất cả' : STATUS_LABEL[s]}
-            </button>
+        <Select value={filterStatus} aria-label="Lọc theo trạng thái"
+          onChange={e => { setFilterStatus(e.target.value as StatusFilter); resetPage(); }}
+          wrapperClassName="w-32 shrink-0" className={cn('h-8 pl-2.5 pr-8 text-[13px]', filterStatus !== 'all' && 'border-primary/60 text-primary')}>
+          {STATUS_FILTERS.map(s => (
+            <option key={s} value={s}>{s === 'all' ? 'Tất cả' : CAMPAIGN_STATUS_META[s].label} ({counts[s]})</option>
           ))}
-        </div>
+        </Select>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-3 space-y-2">
+      {/* List */}
+      <div className="flex-1 space-y-2 overflow-y-auto p-3">
         {loading && <PageLoading variant="skeleton" skeletonVariant="cards" />}
 
         {!loading && filtered.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full text-gray-400 py-10">
-            <p className="text-sm">{search || filterStatus !== 'all' ? 'Không tìm thấy chiến dịch' : 'Chưa có chiến dịch nào'}</p>
-            {!search && filterStatus === 'all' && (
-              <button onClick={onCreate} className="mt-3 text-xs text-blue-400 hover:text-blue-300">Tạo chiến dịch đầu tiên →</button>
-            )}
-          </div>
+          search || filterStatus !== 'all' ? (
+            <EmptyState compact icon={<SearchIcon className="h-6 w-6" />} title="Không tìm thấy chiến dịch" />
+          ) : (
+            <EmptyState icon={<CampaignIcon className="h-6 w-6" />} title="Chưa có chiến dịch nào"
+              description="Gửi tin nhắn, kết bạn hoặc mời vào nhóm hàng loạt, có giãn cách và giới hạn mỗi ngày."
+              action={<Button size="sm" leftIcon={<PlusIcon className="h-4 w-4" />} onClick={onCreate}>Tạo chiến dịch đầu tiên</Button>} />
+          )
         )}
 
-        {paged.map(c => {
-          const progress = c.total_contacts > 0 ? (c.sent_count / c.total_contacts) * 100 : 0;
+        {!loading && paged.map(c => {
+          const status = campaignStatusOf(c.status);
+          const type = campaignTypeOf(c.campaign_type);
+          const active = activeId === c.id;
           return (
-            <div key={c.id} onClick={() => onSelect(c.id)}
-              className={`rounded-xl border p-3 cursor-pointer transition-colors ${activeId === c.id ? 'border-blue-500 bg-blue-500/10' : 'border-gray-700 bg-gray-800 hover:border-gray-600'}`}>
-              <div className="flex items-start justify-between gap-2 mb-1.5">
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-white truncate">{c.name}</p>
-                  <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                    {/* Campaign type badge */}
-                    {c.campaign_type === 'friend_request' && (
-                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-400 border border-purple-500/30"><UserCheckIcon className="w-4 h-4 inline" /> Kết bạn</span>
-                    )}
-                    {c.campaign_type === 'invite_to_group' && (
-                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-orange-500/20 text-orange-400 border border-orange-500/30"><UsersIcon className="w-4 h-4 inline" /> Mời nhóm</span>
-                    )}
-                    {c.campaign_type === 'mixed' && (
-                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-400 border border-indigo-500/30"><ShuffleIcon className="w-4 h-4 inline" /> Hỗn hợp</span>
-                    )}
-                    <span className="text-[11px] text-gray-400">
-                      ⏱ {fmtDelayRange(c.delay_min_seconds || Math.max(30, c.delay_seconds - 10), c.delay_max_seconds || c.delay_seconds + 10)}
-                      {c.created_at ? <> · 📅 {fmtDate(c.created_at)}</> : null}
+            <div key={c.id} role="button" tabIndex={0} aria-current={active ? 'true' : undefined}
+              onClick={() => onSelect(c.id)}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(c.id); } }}
+              className={cn(
+                'group flex cursor-pointer gap-3 rounded-xl border p-3 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring',
+                active ? 'border-primary/40 bg-selected' : 'border-border hover:border-border-strong hover:bg-muted',
+              )}>
+              <CampaignTypeTile type={type} status={status} className="mt-0.5 h-9 w-9 rounded-lg" />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-start gap-1">
+                  <p className="min-w-0 flex-1 truncate pt-0.5 text-[13px] font-medium text-foreground"
+                    title={c.created_at ? `${c.name} · tạo ${formatDay(c.created_at)}` : c.name}>
+                    {c.name}
+                  </p>
+                  {/* Stop row selection for the menu trigger and its (portaled) items. */}
+                  <div className="-mr-1 shrink-0" onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
+                    <DropdownMenu align="end" trigger={
+                      <button type="button" aria-label="Thao tác chiến dịch"
+                        className={cn(
+                          'flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition hover:bg-accent hover:text-foreground focus-visible:opacity-100',
+                          active ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+                        )}>
+                        <MoreDotsIcon className="h-4 w-4" />
+                      </button>
+                    }>
+                      {status === 'draft' && (
+                        <DropdownMenuItem icon={<PlayIcon className="h-4 w-4" />} onSelect={() => onUpdateStatus(c.id, 'active')}>Bắt đầu</DropdownMenuItem>
+                      )}
+                      {status === 'active' && (
+                        <DropdownMenuItem icon={<PauseIcon className="h-4 w-4" />} onSelect={() => onUpdateStatus(c.id, 'paused')}>Tạm dừng</DropdownMenuItem>
+                      )}
+                      {status === 'paused' && (
+                        <DropdownMenuItem icon={<PlayIcon className="h-4 w-4" />} onSelect={() => onUpdateStatus(c.id, 'active')}>Tiếp tục</DropdownMenuItem>
+                      )}
+                      <DropdownMenuItem icon={<CopyIcon className="h-4 w-4" />} onSelect={() => onClone(c.id)}>Nhân bản</DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem destructive icon={<TrashIcon className="h-4 w-4" />} onSelect={() => { void confirmDelete(c); }}>
+                        Xóa chiến dịch
+                      </DropdownMenuItem>
+                    </DropdownMenu>
+                  </div>
+                </div>
+                <p className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <span className={cn('inline-flex shrink-0 items-center gap-1 font-medium', STATUS_TEXT[status])}>
+                    <span className={cn('h-1.5 w-1.5 rounded-full bg-current', status === 'active' && 'animate-pulse')} />
+                    {CAMPAIGN_STATUS_META[status].label}
+                  </span>
+                  <span aria-hidden="true">·</span>
+                  <span className="truncate">{CAMPAIGN_TYPE_LABEL[type]}</span>
+                  <span aria-hidden="true">·</span>
+                  <span className="shrink-0 tabular-nums">{c.total_contacts} liên hệ</span>
+                </p>
+                {c.total_contacts > 0 && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <CampaignProgressBar total={c.total_contacts} sent={c.sent_count} failed={c.failed_count} className="h-1 flex-1" />
+                    <span className="shrink-0 text-[10px] tabular-nums text-subtle-foreground">
+                      {c.sent_count}/{c.total_contacts}
+                      {c.failed_count > 0 && <span className="text-destructive"> · {c.failed_count} lỗi</span>}
                     </span>
                   </div>
-                </div>
-                <span className={`text-[11px] px-2 py-0.5 rounded-full flex-shrink-0 ${STATUS_STYLE[c.status]}`}>
-                  {STATUS_LABEL[c.status]}
-                </span>
-              </div>
-
-              {c.total_contacts > 0 && (
-                <div className="mb-2">
-                  <div className="flex justify-between text-[11px] text-gray-400 mb-1">
-                    <span>{c.sent_count}/{c.total_contacts} đã gửi</span>
-                    {c.failed_count > 0 && <span className="text-red-400">{c.failed_count} lỗi</span>}
-                  </div>
-                  <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
-                    <div className="h-full bg-blue-500 rounded-full transition-all" style={{ width: `${progress}%` }} />
-                  </div>
-                </div>
-              )}
-
-              <div className="flex gap-1.5 mt-1.5" onClick={e => e.stopPropagation()}>
-                {c.status === 'draft' && (
-                  <button onClick={() => onUpdateStatus(c.id, 'active')}
-                    className="flex-1 text-[12px] py-1 rounded-lg bg-green-600 hover:bg-green-700 text-white">▶ Bắt đầu</button>
                 )}
-                {c.status === 'active' && (
-                  <button onClick={() => onUpdateStatus(c.id, 'paused')}
-                    className="flex-1 text-[12px] py-1 rounded-lg bg-yellow-600 hover:bg-yellow-700 text-white">⏸ Tạm dừng</button>
-                )}
-                {c.status === 'paused' && (
-                  <button onClick={() => onUpdateStatus(c.id, 'active')}
-                    className="flex-1 text-[12px] py-1 rounded-lg bg-green-600 hover:bg-green-700 text-white">▶ Tiếp tục</button>
-                )}
-                <button onClick={() => onClone(c.id)}
-                  title="Nhân bản chiến dịch"
-                  className="px-2 text-[12px] py-1 rounded-lg bg-gray-700 hover:bg-blue-700/50 text-gray-400 hover:text-blue-300 transition-colors"><ClipboardListIcon className="w-4 h-4 inline" /> Nhân bản</button>
-                <button
-                  onClick={async () => {
-                    const ok = await showConfirm({
-                      title: 'Xóa chiến dịch?',
-                      message: `"${c.name}" sẽ bị xóa vĩnh viễn cùng toàn bộ dữ liệu gửi. Hành động này không thể hoàn tác.`,
-                      variant: 'danger',
-                      confirmText: 'Xóa',
-                    });
-                    if (ok) onDelete(c.id);
-                  }}
-                  className="px-2 text-[12px] py-1 rounded-lg bg-gray-700 hover:bg-red-700/50 text-gray-400 hover:text-red-300 transition-colors"><TrashIcon className="w-4 h-4" /></button>
               </div>
             </div>
           );
@@ -185,12 +195,10 @@ export default function CampaignList({ campaigns, loading, activeId, onSelect, o
 
       {/* Pagination */}
       {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-2 px-3 py-2 border-t border-gray-700 flex-shrink-0">
-          <button disabled={page === 0} onClick={() => setPage(p => p - 1)}
-            className="px-2.5 py-1 rounded-lg bg-gray-700 text-xs text-gray-300 hover:bg-gray-600 disabled:opacity-40">‹</button>
-          <span className="text-xs text-gray-400">{page + 1} / {totalPages}</span>
-          <button disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)}
-            className="px-2.5 py-1 rounded-lg bg-gray-700 text-xs text-gray-300 hover:bg-gray-600 disabled:opacity-40">›</button>
+        <div className="flex flex-shrink-0 items-center justify-between border-t border-border px-3 py-2">
+          <Button variant="ghost" size="sm" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)} aria-label="Trang trước">‹ Trước</Button>
+          <span className="text-xs tabular-nums text-muted-foreground">{currentPage + 1} / {totalPages}</span>
+          <Button variant="ghost" size="sm" disabled={currentPage >= totalPages - 1} onClick={() => setPage(currentPage + 1)} aria-label="Trang sau">Sau ›</Button>
         </div>
       )}
     </div>

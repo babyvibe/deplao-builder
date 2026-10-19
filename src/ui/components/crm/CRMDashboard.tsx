@@ -1,6 +1,6 @@
 import DateInputVN from '@/components/common/DateInputVN';
 import PageLoading from '@/components/common/PageLoading';
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend,
@@ -8,7 +8,10 @@ import {
 import { useCRMStore, ContactTypeFilter } from '@/store/crmStore';
 import { useAppStore, LabelData } from '@/store/appStore';
 import { useAccountStore } from '@/store/accountStore';
-import DataAccessor from '@/lib/data/DataAccessor';
+import DataAccessor, { isReadFailure } from '@/lib/data/DataAccessor';
+import { useEmployeeResync } from '@/hooks/useEmployeeResync';
+import { readOutcome } from '@/lib/crm/loadFailure';
+import LoadFailedNotice from './LoadFailedNotice';
 import ipc from '@/lib/ipc';
 import { CampaignIcon, ChartIcon, ChatIcon, CheckIcon, CloudIcon, EditIcon, GhostIcon, HardDriveIcon, InboxIcon, PlayIcon, SendIcon, ShuffleIcon, TagIcon, UserCheckIcon, UserIcon, UsersIcon } from '@/components/common/icons';
 import { CHANNEL } from '@/lib/channelHelper';
@@ -24,16 +27,16 @@ function MiniStat({ icon, label, value, sub, color = 'blue', onClick }: {
     yellow: 'bg-yellow-500/10 border-yellow-500/20',
     purple: 'bg-purple-500/10 border-purple-500/20',
     red:    'bg-red-500/10 border-red-500/20',
-    gray:   'bg-gray-700/40 border-gray-600',
+    gray:   'bg-muted/40 border-input',
   };
   const content = (
     <>
       <div className="flex items-center gap-1.5 mb-1">
         <span className="text-sm leading-none">{icon}</span>
-        <span className="text-[11px] text-gray-400 leading-tight">{label}</span>
+        <span className="text-[11px] text-muted-foreground leading-tight">{label}</span>
       </div>
-      <span className="text-xl font-bold text-white leading-tight">{value}</span>
-      {sub && <span className="text-[11px] text-gray-400 mt-0.5">{sub}</span>}
+      <span className="text-xl font-bold text-foreground leading-tight">{value}</span>
+      {sub && <span className="text-[11px] text-muted-foreground mt-0.5">{sub}</span>}
     </>
   );
   if (onClick) {
@@ -53,7 +56,7 @@ function MiniStat({ icon, label, value, sub, color = 'blue', onClick }: {
 
 function ProgressBar({ value, color = '#22c55e' }: { value: number; color?: string }) {
   return (
-    <div className="h-1 bg-gray-700 rounded-full overflow-hidden mt-1">
+    <div className="h-1 bg-muted rounded-full overflow-hidden mt-1">
       <div className="h-full rounded-full transition-all duration-500"
         style={{ width: `${Math.min(100, Math.max(0, value))}%`, backgroundColor: color }} />
     </div>
@@ -69,7 +72,7 @@ interface CampaignStat {
 const TYPE_LABEL: Record<string, string> = { message: '💬', friend_request: '🤝', mixed: '🔀', invite_to_group: '👥' };
 const ST_STYLE: Record<string, string> = {
   active: 'bg-green-500/20 text-green-400', paused: 'bg-yellow-500/20 text-yellow-400',
-  done: 'bg-blue-500/20 text-blue-400', draft: 'bg-gray-700 text-gray-400',
+  done: 'bg-blue-500/20 text-blue-400', draft: 'bg-muted text-muted-foreground',
 };
 const ST_LABEL: Record<string, string> = { active: '▶ Chạy', paused: '⏸ Dừng', done: '✓ Xong', draft: 'Nháp' };
 
@@ -77,14 +80,14 @@ const DonutTooltip = ({ active, payload }: any) => {
   if (!active || !payload?.length) return null;
   const d = payload[0].payload;
   return (
-    <div className="bg-gray-800 border border-gray-600 rounded-xl px-3 py-2 text-xs shadow-xl">
+    <div className="bg-card border border-input rounded-xl px-3 py-2 text-xs shadow-xl">
       <div className="flex items-center gap-1.5 mb-0.5">
         <span className="w-2 h-2 rounded-full" style={{ backgroundColor: d.color }} />
         {d.emoji && <span>{d.emoji}</span>}
-        <span className="text-white font-medium">{d.name}</span>
+        <span className="text-foreground font-medium">{d.name}</span>
       </div>
       <span className="text-blue-300 font-bold">{d.value}</span>
-      <span className="text-gray-400 ml-1">hội thoại</span>
+      <span className="text-muted-foreground ml-1">hội thoại</span>
     </div>
   );
 };
@@ -93,13 +96,13 @@ const CampTooltip = ({ active, payload }: any) => {
   if (!active || !payload?.length) return null;
   const full = payload[0]?.payload?.fullName;
   return (
-    <div className="bg-gray-800 border border-gray-600 rounded-xl px-3 py-2 text-xs shadow-xl max-w-[220px]">
-      {full && <p className="text-white font-medium mb-1.5 truncate">{full}</p>}
+    <div className="bg-card border border-input rounded-xl px-3 py-2 text-xs shadow-xl max-w-[220px]">
+      {full && <p className="text-foreground font-medium mb-1.5 truncate">{full}</p>}
       {payload.map((p: any) => (
         <div key={p.name} className="flex items-center justify-between gap-4">
           <span className="flex items-center gap-1">
             <span className="w-2 h-2 rounded-full" style={{ backgroundColor: p.fill }} />
-            <span className="text-gray-300">{p.name}</span>
+            <span className="text-foreground/80">{p.name}</span>
           </span>
           <span className="font-bold" style={{ color: p.fill }}>{p.value}</span>
         </div>
@@ -109,10 +112,12 @@ const CampTooltip = ({ active, payload }: any) => {
 };
 
 export default function CRMDashboard() {
-  const store = useCRMStore();
-  const { campaigns, groupCount } = store;
-  const { labels } = useAppStore();
-  const { activeAccountId } = useAccountStore();
+  const campaigns = useCRMStore(s => s.campaigns);
+  const groupCount = useCRMStore(s => s.groupCount);
+  const setFilter = useCRMStore(s => s.setFilter);
+  const setTab = useCRMStore(s => s.setTab);
+  const labels = useAppStore(s => s.labels);
+  const activeAccountId = useAccountStore(s => s.activeAccountId);
 
   const [contactStats, setContactStats] = useState({ total: 0, friendCount: 0, noteCount: 0 });
   const [campaignStats, setCampaignStats] = useState<CampaignStat[]>([]);
@@ -132,6 +137,21 @@ export default function CRMDashboard() {
   const [prevStats, setPrevStats] = useState(emptyStats);
   const [customStats, setCustomStats] = useState(emptyStats);
   const [loadingActivity, setLoadingActivity] = useState(false);
+
+  // ── Lần tải lỗi (employee: mất kết nối BOSS) ────────────────────────────────
+  // Lỗi → giữ số liệu đang có của đúng tài khoản (+ "Không tải được — Thử lại"), không thay bằng 0 / rỗng; số liệu
+  // của tài khoản khác thì bỏ. *OwnerRef = tài khoản (hoặc tài khoản + kỳ) của dữ liệu đang hiện.
+  const [statsFailed, setStatsFailed] = useState(false);
+  const [activityFailed, setActivityFailed] = useState(false);
+  const [localLabelsFailed, setLocalLabelsFailed] = useState(false);
+  const [localLabelsLoading, setLocalLabelsLoading] = useState(false);
+  const statsOwnerRef = useRef<string | null>(null);
+  const activityOwnerRef = useRef<string | null>(null);
+  const localLabelsOwnerRef = useRef<string | null>(null);
+  // Chỉ lần tải mới nhất được ghi state (đổi tài khoản / kỳ trong lúc chờ)
+  const statsSeqRef = useRef(0);
+  const activitySeqRef = useRef(0);
+  const localLabelsSeqRef = useRef(0);
 
   // Custom date range
   const todayStr = new Date().toISOString().split('T')[0];
@@ -180,29 +200,57 @@ export default function CRMDashboard() {
 
   const zaloLabels: LabelData[] = activeAccountId ? (labels[activeAccountId] || []) : [];
 
-  useEffect(() => {
+  const loadActivity = useCallback(async () => {
     if (!activeAccountId) return;
+    const accountId = activeAccountId;
+    const seq = ++activitySeqRef.current;
     setLoadingActivity(true);
     const extract = (r: any) => r?.success
       ? { conversationCount: r.conversationCount, messageCount: r.messageCount, sentCount: r.sentCount, receivedCount: r.receivedCount }
       : emptyStats;
+    // Lỗi đọc (kể cả ném lỗi) → `{ success: false }` để giữ số liệu cũ thay vì về 0
+    const settle = (p: Promise<any>) => p.catch((err: any) => ({ success: false, error: err?.message }));
 
-    if (activityPeriod === 'custom') {
-      if (!customApplied) { setLoadingActivity(false); return; }
-      const from = new Date(customApplied.from + 'T00:00:00').getTime();
-      const to   = new Date(customApplied.to   + 'T23:59:59.999').getTime();
-      DataAccessor.getActivityStats({ zaloId: activeAccountId, sinceTs: from, untilTs: to } as any)
-        .then(r => setCustomStats(extract(r))).catch(() => {}).finally(() => setLoadingActivity(false));
-    } else {
-      const curRange  = activityPeriod === 'day' ? getDayRange(0)   : activityPeriod === 'week' ? getWeekRange(0)   : getMonthRange(0);
-      const prevRange = activityPeriod === 'day' ? getDayRange(-1)  : activityPeriod === 'week' ? getWeekRange(-1)  : getMonthRange(-1);
-      Promise.all([
-        DataAccessor.getActivityStats({ zaloId: activeAccountId, sinceTs: curRange.from,  untilTs: curRange.to  } as any),
-        DataAccessor.getActivityStats({ zaloId: activeAccountId, sinceTs: prevRange.from, untilTs: prevRange.to } as any),
-      ]).then(([cr, pr]) => { setCurStats(extract(cr)); setPrevStats(extract(pr)); })
-        .catch(() => {}).finally(() => setLoadingActivity(false));
+    try {
+      if (activityPeriod === 'custom') {
+        if (!customApplied) { setActivityFailed(false); return; }
+        const from = new Date(customApplied.from + 'T00:00:00').getTime();
+        const to   = new Date(customApplied.to   + 'T23:59:59.999').getTime();
+        const owner = `${accountId}|custom|${customApplied.from}|${customApplied.to}`;
+        const r = await settle(DataAccessor.getActivityStats({ zaloId: accountId, sinceTs: from, untilTs: to } as any));
+        if (seq !== activitySeqRef.current) return;
+        const failed = isReadFailure(r);
+        const outcome = readOutcome(failed, activityOwnerRef.current, owner);
+        if (outcome === 'clear') setCustomStats(emptyStats);
+        else if (outcome === 'replace') setCustomStats(extract(r));
+        activityOwnerRef.current = owner;
+        setActivityFailed(failed);
+      } else {
+        const curRange  = activityPeriod === 'day' ? getDayRange(0)   : activityPeriod === 'week' ? getWeekRange(0)   : getMonthRange(0);
+        const prevRange = activityPeriod === 'day' ? getDayRange(-1)  : activityPeriod === 'week' ? getWeekRange(-1)  : getMonthRange(-1);
+        const owner = `${accountId}|${activityPeriod}`;
+        const [cr, pr] = await Promise.all([
+          settle(DataAccessor.getActivityStats({ zaloId: accountId, sinceTs: curRange.from,  untilTs: curRange.to  } as any)),
+          settle(DataAccessor.getActivityStats({ zaloId: accountId, sinceTs: prevRange.from, untilTs: prevRange.to } as any)),
+        ]);
+        if (seq !== activitySeqRef.current) return;
+        const failed = isReadFailure(cr) || isReadFailure(pr);
+        if (readOutcome(failed, activityOwnerRef.current, owner) === 'clear') {
+          // Lỗi ngay khi đổi tài khoản / kỳ: không hiện số liệu của tài khoản / kỳ trước
+          setCurStats(emptyStats);
+          setPrevStats(emptyStats);
+        }
+        if (!isReadFailure(cr)) setCurStats(extract(cr));
+        if (!isReadFailure(pr)) setPrevStats(extract(pr));
+        activityOwnerRef.current = owner;
+        setActivityFailed(failed);
+      }
+    } finally {
+      if (seq === activitySeqRef.current) setLoadingActivity(false);
     }
   }, [activeAccountId, activityPeriod, customApplied]);
+
+  useEffect(() => { loadActivity(); }, [loadActivity]);
 
   const handleApplyCustom = useCallback(() => {
     const from = new Date(customFrom);
@@ -226,14 +274,14 @@ export default function CRMDashboard() {
       return (
         <div>
           <div className="flex items-center flex-wrap gap-2 mb-3">
-            <label className="text-[11px] text-gray-400">Từ</label>
+            <label className="text-[11px] text-muted-foreground">Từ</label>
             <DateInputVN value={customFrom} max={customTo}
               onChange={e => { setCustomFrom(e.target.value); setCustomError(''); }}
-              className="bg-gray-700 border border-gray-600 rounded-lg px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-blue-500" />
-            <label className="text-[11px] text-gray-400">Đến</label>
+              className="bg-muted border border-input rounded-lg px-2 py-1 text-xs text-foreground focus:outline-none focus:border-blue-500" />
+            <label className="text-[11px] text-muted-foreground">Đến</label>
             <DateInputVN value={customTo} min={customFrom} max={todayStr}
               onChange={e => { setCustomTo(e.target.value); setCustomError(''); }}
-              className="bg-gray-700 border border-gray-600 rounded-lg px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-blue-500" />
+              className="bg-muted border border-input rounded-lg px-2 py-1 text-xs text-foreground focus:outline-none focus:border-blue-500" />
             <button onClick={handleApplyCustom}
               className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded-lg transition-colors">
               Xem
@@ -253,7 +301,7 @@ export default function CRMDashboard() {
                 color="yellow" />
             </div>
           ) : (
-            <p className="text-xs text-gray-400 text-center py-4">Chọn khoảng thời gian và nhấn <strong className="text-gray-400">Xem</strong></p>
+            <p className="text-xs text-muted-foreground text-center py-4">Chọn khoảng thời gian và nhấn <strong className="text-muted-foreground">Xem</strong></p>
           )}
         </div>
       );
@@ -278,7 +326,7 @@ export default function CRMDashboard() {
       return v >= 0 ? `+${v}%` : `${v}%`;
     };
     const pctColor = (cur: number, prev: number) =>
-      prev === 0 ? 'text-gray-400' : cur >= prev ? 'text-emerald-400' : 'text-red-400';
+      prev === 0 ? 'text-muted-foreground' : cur >= prev ? 'text-emerald-400' : 'text-red-400';
     const pctArrow = (cur: number, prev: number) =>
       prev === 0 ? '' : cur > prev ? '▲' : cur < prev ? '▼' : '→';
 
@@ -302,13 +350,13 @@ export default function CRMDashboard() {
           <span className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-sm bg-blue-500 inline-block" />
             <span className="text-blue-300 font-medium">{cfg.curLabel}</span>
-            <span className="text-gray-400">{cfg.curDate}</span>
+            <span className="text-muted-foreground">{cfg.curDate}</span>
           </span>
           <span className="text-gray-700">|</span>
           <span className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-sm bg-gray-500 inline-block" />
-            <span className="text-gray-400 font-medium">{cfg.prevLabel}</span>
-            <span className="text-gray-400">{cfg.prevDate}</span>
+            <span className="w-2.5 h-2.5 rounded-sm bg-accent inline-block" />
+            <span className="text-muted-foreground font-medium">{cfg.prevLabel}</span>
+            <span className="text-muted-foreground">{cfg.prevDate}</span>
           </span>
         </div>
 
@@ -318,13 +366,13 @@ export default function CRMDashboard() {
             const cur  = curStats[m.key];
             const prev = prevStats[m.key];
             return (
-              <div key={m.key} className="bg-gray-700/40 border border-gray-600/50 rounded-xl p-3">
+              <div key={m.key} className="bg-muted/40 border border-input/50 rounded-xl p-3">
                 <div className="flex items-center gap-1 mb-1.5">
                   <span className="text-sm leading-none">{m.icon}</span>
-                  <span className="text-[11px] text-gray-400">{m.label}</span>
+                  <span className="text-[11px] text-muted-foreground">{m.label}</span>
                 </div>
                 <div className="flex items-end gap-1.5">
-                  <span className="text-xl font-bold text-white leading-tight">{cur}</span>
+                  <span className="text-xl font-bold text-foreground leading-tight">{cur}</span>
                   {(prev > 0 || cur > 0) && (
                     <span className={`text-[11px] font-semibold pb-0.5 ${pctColor(cur, prev)}`}>
                       {pctArrow(cur, prev)} {pct(cur, prev)}
@@ -332,15 +380,15 @@ export default function CRMDashboard() {
                   )}
                 </div>
                 <div className="flex items-center gap-1 mt-1">
-                  <span className="text-[11px] text-gray-400">vs</span>
-                  <span className="text-[11px] text-gray-400 font-medium">{prev}</span>
-                  <span className="text-[11px] text-gray-400">{cfg.prevLabel.toLowerCase()}</span>
+                  <span className="text-[11px] text-muted-foreground">vs</span>
+                  <span className="text-[11px] text-muted-foreground font-medium">{prev}</span>
+                  <span className="text-[11px] text-muted-foreground">{cfg.prevLabel.toLowerCase()}</span>
                 </div>
                 {/* Mini split bar */}
                 <div className="mt-1.5 flex gap-0.5 h-1">
                   <div className="rounded-full bg-blue-500 transition-all"
                     style={{ width: `${cur + prev > 0 ? Math.round(cur / (cur + prev) * 100) : 50}%` }} />
-                  <div className="rounded-full bg-gray-600 flex-1" />
+                  <div className="rounded-full bg-accent flex-1" />
                 </div>
               </div>
             );
@@ -358,15 +406,15 @@ export default function CRMDashboard() {
                 content={({ active, payload, label }: any) => {
                   if (!active || !payload?.length) return null;
                   return (
-                    <div className="bg-gray-800 border border-gray-600 rounded-xl px-3 py-2 text-xs shadow-xl">
-                      <p className="text-gray-400 mb-1.5 font-medium">{label}</p>
+                    <div className="bg-card border border-input rounded-xl px-3 py-2 text-xs shadow-xl">
+                      <p className="text-muted-foreground mb-1.5 font-medium">{label}</p>
                       {payload.map((p: any) => (
                         <div key={p.name} className="flex items-center justify-between gap-4">
                           <span className="flex items-center gap-1.5">
                             <span className="w-2 h-2 rounded-sm inline-block" style={{ backgroundColor: p.fill }} />
-                            <span className="text-gray-300">{p.name}</span>
+                            <span className="text-foreground/80">{p.name}</span>
                           </span>
-                          <span className="font-bold text-white">{p.value}</span>
+                          <span className="font-bold text-foreground">{p.value}</span>
                         </div>
                       ))}
                     </div>
@@ -384,32 +432,81 @@ export default function CRMDashboard() {
     );
   };
 
-  useEffect(() => {
+  const loadStats = useCallback(async () => {
     if (!activeAccountId) return;
-    DataAccessor.getContactStats({ zaloId: activeAccountId })
-      .then(r => { if (r?.success) setContactStats({ total: r.total, friendCount: r.friendCount, noteCount: r.noteCount }); })
-      .catch(() => {});
+    const accountId = activeAccountId;
+    const seq = ++statsSeqRef.current;
     setLoadingCampStats(true);
-    DataAccessor.getCampaignStats({ zaloId: activeAccountId, limit: 10 })
-      .then(r => { if (r?.success) setCampaignStats(r.stats); })
-      .catch(() => {})
-      .finally(() => setLoadingCampStats(false));
-    // Load local labels and their counts
-    Promise.all([
-      DataAccessor.getLocalLabels({ zaloId: activeAccountId }),
-      DataAccessor.getLocalLabelThreads({ zaloId: activeAccountId }),
-    ]).then(([labelsRes, threadsRes]) => {
+    const settle = (p: Promise<any>) => p.catch((err: any) => ({ success: false, error: err?.message }));
+    const [contactRes, campRes] = await Promise.all([
+      settle(DataAccessor.getContactStats({ zaloId: accountId })),
+      settle(DataAccessor.getCampaignStats({ zaloId: accountId, limit: 10 })),
+    ]);
+    if (seq !== statsSeqRef.current) return;
+    setLoadingCampStats(false);
+    const failed = isReadFailure(contactRes) || isReadFailure(campRes);
+    if (readOutcome(failed, statsOwnerRef.current, accountId) === 'clear') {
+      // Lỗi ngay khi đổi tài khoản: không để số liệu của tài khoản trước hiện cho tài khoản này
+      setContactStats({ total: 0, friendCount: 0, noteCount: 0 });
+      setCampaignStats([]);
+    }
+    statsOwnerRef.current = accountId;
+    if (contactRes?.success) setContactStats({ total: contactRes.total, friendCount: contactRes.friendCount, noteCount: contactRes.noteCount });
+    if (campRes?.success) setCampaignStats(campRes.stats);
+    setStatsFailed(failed);
+  }, [activeAccountId]);
+
+  // Load local labels and their counts
+  const loadLocalLabels = useCallback(async () => {
+    if (!activeAccountId) return;
+    const accountId = activeAccountId;
+    const seq = ++localLabelsSeqRef.current;
+    setLocalLabelsLoading(true);
+    let labelsRes: any;
+    let threadsRes: any;
+    try {
+      [labelsRes, threadsRes] = await Promise.all([
+        DataAccessor.getLocalLabels({ zaloId: accountId }),
+        DataAccessor.getLocalLabelThreads({ zaloId: accountId }),
+      ]);
+    } catch (err: any) {
+      labelsRes = threadsRes = { success: false, error: err?.message };
+    }
+    if (seq !== localLabelsSeqRef.current) return;
+    setLocalLabelsLoading(false);
+    const labelsFailed = isReadFailure(labelsRes);
+    const threadsFailed = isReadFailure(threadsRes);
+    const failed = labelsFailed || threadsFailed;
+    if (readOutcome(failed, localLabelsOwnerRef.current, accountId) === 'clear') {
+      // Lỗi ngay khi đổi tài khoản: không để nhãn của tài khoản trước hiện cho tài khoản này
+      setLocalLabels([]);
+      setLocalLabelCounts({});
+    }
+    localLabelsOwnerRef.current = accountId;
+    // Lỗi → giữ nhãn / số hội thoại đang có của tài khoản (trước đây bị thay bằng rỗng)
+    if (!labelsFailed) {
       const lbls = (labelsRes?.labels || []).filter((l: any) => (l?.is_active ?? 1) === 1)
         .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || String(a.name || '').localeCompare(String(b.name || '')));
       setLocalLabels(lbls);
+    }
+    if (!threadsFailed) {
       const counts: Record<number, number> = {};
       (threadsRes?.threads || []).forEach((row: any) => {
         const lid = Number(row.label_id);
         counts[lid] = (counts[lid] || 0) + 1;
       });
       setLocalLabelCounts(counts);
-    }).catch(() => {});
+    }
+    setLocalLabelsFailed(failed);
   }, [activeAccountId]);
+
+  useEffect(() => {
+    loadStats();
+    loadLocalLabels();
+  }, [loadStats, loadLocalLabels]);
+
+  // Chế độ nhân viên: kết nối BOSS phục hồi → tải lại toàn bộ số liệu đang hiển thị
+  useEmployeeResync(() => Promise.allSettled([loadStats(), loadActivity(), loadLocalLabels()]));
 
 
   const { total: totalContacts, friendCount, noteCount } = contactStats;
@@ -427,18 +524,18 @@ export default function CRMDashboard() {
   const totalLabelConvs = labelData.reduce((s, l) => s + l.value, 0);
 
   const handleLabelClick = (labelId: number) => {
-    store.setFilter({ filterLabelIds: [labelId], filterLocalLabelIds: [], filterContactTypes: [], page: 0 });
-    store.setTab('contacts');
+    setFilter({ filterLabelIds: [labelId], filterLocalLabelIds: [], filterContactTypes: [], page: 0 });
+    setTab('contacts');
   };
 
   const handleLocalLabelClick = (labelId: number) => {
-    store.setFilter({ filterLocalLabelIds: [labelId], filterLabelIds: [], filterContactTypes: [], page: 0 });
-    store.setTab('contacts');
+    setFilter({ filterLocalLabelIds: [labelId], filterLabelIds: [], filterContactTypes: [], page: 0 });
+    setTab('contacts');
   };
 
   const handleNavigateContacts = (filterContactTypes: ContactTypeFilter[]) => {
-    store.setFilter({ filterContactTypes, filterLabelIds: [], filterLocalLabelIds: [], page: 0 });
-    store.setTab('contacts');
+    setFilter({ filterContactTypes, filterLabelIds: [], filterLocalLabelIds: [], page: 0 });
+    setTab('contacts');
   };
 
   const campChartData = campaignStats.map(c => ({
@@ -452,11 +549,20 @@ export default function CRMDashboard() {
   return (
     <div className="flex-1 overflow-y-auto p-5 space-y-4">
 
+      {/* Lần tải số liệu lỗi: giữ số đang có (nếu có), báo gọn + thử lại thay vì trông như "0" */}
+      {(statsFailed || activityFailed) && !loadingCampStats && !loadingActivity && (
+        <LoadFailedNotice
+          className="justify-start rounded-xl border border-border bg-muted/50"
+          text="Không tải được số liệu CRM mới nhất — số liệu đang hiện có thể chưa cập nhật"
+          onRetry={() => { loadStats(); loadActivity(); }}
+        />
+      )}
+
       {/* ── Row 1: Contacts + Campaigns ── */}
       <div className="grid grid-cols-2 gap-4">
         {/* ...existing contacts and campaigns cards... */}
-        <div className="bg-gray-800/50 border border-gray-700 rounded-2xl p-4">
-          <h3 className="text-[14px] font-semibold text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+        <div className="bg-card border border-border rounded-2xl p-4">
+          <h3 className="text-[14px] font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-1.5">
             <span><UsersIcon className="w-4 h-4" /></span> Liên hệ
           </h3>
           {(() => {
@@ -482,8 +588,8 @@ export default function CRMDashboard() {
           })()}
         </div>
 
-        <div className="bg-gray-800/50 border border-gray-700 rounded-2xl p-4">
-          <h3 className="text-[14px] font-semibold text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+        <div className="bg-card border border-border rounded-2xl p-4">
+          <h3 className="text-[14px] font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-1.5">
             <span><CampaignIcon className="w-4 h-4" /></span> Chiến dịch ({campaigns.length})
           </h3>
           <div className="grid grid-cols-2 gap-2">
@@ -498,12 +604,12 @@ export default function CRMDashboard() {
       </div>
 
       {/* ── Row 2: Activity Stats ── */}
-      <div className="bg-gray-800/50 border border-gray-700 rounded-2xl p-4">
+      <div className="bg-card border border-border rounded-2xl p-4">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-[14px] font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+          <h3 className="text-[14px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
             <span><ChatIcon className="w-4 h-4" /></span> Hoạt động hội thoại
           </h3>
-          <div className="flex bg-gray-700/60 rounded-lg p-0.5 gap-0.5">
+          <div className="flex bg-muted/60 rounded-lg p-0.5 gap-0.5">
             {([
               { key: 'day',    label: 'Theo ngày'  },
               { key: 'week',   label: 'Theo tuần'  },
@@ -512,7 +618,7 @@ export default function CRMDashboard() {
             ] as const).map(({ key, label }) => (
               <button key={key} onClick={() => setActivityPeriod(key)}
                 className={`px-3 py-1 rounded-md text-[11px] font-medium transition-colors ${
-                  activityPeriod === key ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'
+                  activityPeriod === key ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'
                 }`}>
                 {label}
               </button>
@@ -524,20 +630,20 @@ export default function CRMDashboard() {
       </div>
 
       {/* ── Row 3: Labels (Local + Zalo tabs) ── */}
-      {(localLabels.length > 0 || zaloLabels.length > 0) && (
-        <div className="bg-gray-800/50 border border-gray-700 rounded-2xl p-4">
+      {(localLabels.length > 0 || zaloLabels.length > 0 || localLabelsFailed) && (
+        <div className="bg-card border border-border rounded-2xl p-4">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-[14px] font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+            <h3 className="text-[14px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
               <span><TagIcon className="w-4 h-4" /></span> Nhãn
             </h3>
-            <div className="flex bg-gray-700/60 rounded-lg p-0.5 gap-0.5">
+            <div className="flex bg-muted/60 rounded-lg p-0.5 gap-0.5">
               <button onClick={() => setLabelSubTab('local')}
                 className={`px-3 py-1 rounded-md text-[11px] font-medium transition-colors ${
-                  labelSubTab === 'local' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'
+                  labelSubTab === 'local' ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'
                 }`}><HardDriveIcon className="w-4 h-4 inline" /> Local</button>
               <button onClick={() => setLabelSubTab('zalo')}
                 className={`px-3 py-1 rounded-md text-[11px] font-medium transition-colors ${
-                  labelSubTab === CHANNEL.ZALO ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'
+                  labelSubTab === CHANNEL.ZALO ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'
                 }`}><CloudIcon className="w-4 h-4 inline" /> Zalo</button>
             </div>
           </div>
@@ -549,8 +655,18 @@ export default function CRMDashboard() {
             const totalLocalConvs = localLabelData.reduce((s, l) => s + l.value, 0);
 
             return localLabelData.length === 0 ? (
-              <p className="text-xs text-gray-400 py-4 text-center">Chưa có Nhãn Local nào. Vào Cài đặt → Nhãn để tạo.</p>
+              localLabelsFailed ? (
+                <LoadFailedNotice className="py-4" text="Không tải được Nhãn Local" onRetry={loadLocalLabels} busy={localLabelsLoading} />
+              ) : (
+                <p className="text-xs text-muted-foreground py-4 text-center">Chưa có Nhãn Local nào. Vào Cài đặt → Nhãn để tạo.</p>
+              )
             ) : (
+              <>
+              {/* Lỗi khi đã có nhãn: giữ nhãn + số hội thoại cũ, báo gọn */}
+              {localLabelsFailed && (
+                <LoadFailedNotice className="justify-start px-0 pt-0 pb-3" text="Không tải được số liệu Nhãn Local mới nhất"
+                  onRetry={loadLocalLabels} busy={localLabelsLoading} />
+              )}
               <div className="flex gap-5 items-start">
                 {/* Donut */}
                 {localLabelData.some(l => l.value > 0) ? (
@@ -565,8 +681,8 @@ export default function CRMDashboard() {
                       </PieChart>
                     </ResponsiveContainer>
                     <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                      <span className="text-xl font-bold text-white">{totalLocalConvs}</span>
-                      <span className="text-[9px] text-gray-400 mt-0.5">hội thoại</span>
+                      <span className="text-xl font-bold text-foreground">{totalLocalConvs}</span>
+                      <span className="text-[9px] text-muted-foreground mt-0.5">hội thoại</span>
                     </div>
                   </div>
                 ) : null}
@@ -578,17 +694,18 @@ export default function CRMDashboard() {
                     return (
                       <button key={l.id} onClick={() => handleLocalLabelClick(l.id)}
                         title="Click để lọc liên hệ theo nhãn"
-                        className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-gray-700/40 hover:bg-gray-700 transition-colors text-left group w-full min-w-0">
+                        className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-muted/40 hover:bg-muted transition-colors text-left group w-full min-w-0">
                         <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: l.color }} />
                         {l.emoji && <span className="text-xs flex-shrink-0">{l.emoji}</span>}
-                        <span className="flex-1 text-xs text-gray-300 truncate">{l.name}</span>
+                        <span className="flex-1 text-xs text-foreground/80 truncate">{l.name}</span>
                         <span className="text-xs font-bold text-blue-400 group-hover:text-blue-300 flex-shrink-0 group-hover:underline">{l.value}</span>
-                        {totalLocalConvs > 0 && <span className="text-[11px] text-gray-400 flex-shrink-0">{pct}%</span>}
+                        {totalLocalConvs > 0 && <span className="text-[11px] text-muted-foreground flex-shrink-0">{pct}%</span>}
                       </button>
                     );
                   })}
                 </div>
               </div>
+              </>
             );
           })() : (
             /* ── Zalo labels tab ── */
@@ -605,8 +722,8 @@ export default function CRMDashboard() {
                     </PieChart>
                   </ResponsiveContainer>
                   <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                    <span className="text-xl font-bold text-white">{totalLabelConvs}</span>
-                    <span className="text-[9px] text-gray-400 mt-0.5">hội thoại</span>
+                    <span className="text-xl font-bold text-foreground">{totalLabelConvs}</span>
+                    <span className="text-[9px] text-muted-foreground mt-0.5">hội thoại</span>
                   </div>
                 </div>
                 <div className="flex-1 grid grid-cols-2 gap-1.5 content-start max-h-44 overflow-y-auto pr-1">
@@ -615,36 +732,38 @@ export default function CRMDashboard() {
                     return (
                       <button key={l.id} onClick={() => handleLabelClick(l.id)}
                         title="Click để lọc liên hệ theo nhãn"
-                        className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-gray-700/40 hover:bg-gray-700 transition-colors text-left group w-full min-w-0">
+                        className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-muted/40 hover:bg-muted transition-colors text-left group w-full min-w-0">
                         <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: l.color }} />
                         {l.emoji && <span className="text-xs flex-shrink-0">{l.emoji}</span>}
-                        <span className="flex-1 text-xs text-gray-300 truncate">{l.name}</span>
+                        <span className="flex-1 text-xs text-foreground/80 truncate">{l.name}</span>
                         <span className="text-xs font-bold text-blue-400 group-hover:text-blue-300 flex-shrink-0 group-hover:underline">
                           {l.value}
                         </span>
-                        <span className="text-[11px] text-gray-400 flex-shrink-0">{pct}%</span>
+                        <span className="text-[11px] text-muted-foreground flex-shrink-0">{pct}%</span>
                       </button>
                     );
                   })}
                 </div>
               </div>
             ) : (
-              <p className="text-xs text-gray-400 py-4 text-center">{zaloLabels.length > 0 ? 'Các nhãn Zalo chưa có hội thoại nào' : 'Chưa có nhãn Zalo'}</p>
+              <p className="text-xs text-muted-foreground py-4 text-center">{zaloLabels.length > 0 ? 'Các nhãn Zalo chưa có hội thoại nào' : 'Chưa có nhãn Zalo'}</p>
             )
           )}
         </div>
       )}
 
       {/* ── Row 4: Top 10 campaign stats ── */}
-      <div className="bg-gray-800/50 border border-gray-700 rounded-2xl p-4">
-        <h3 className="text-[14px] font-semibold text-gray-400 uppercase tracking-wider mb-4 flex items-center gap-1.5">
+      <div className="bg-card border border-border rounded-2xl p-4">
+        <h3 className="text-[14px] font-semibold text-muted-foreground uppercase tracking-wider mb-4 flex items-center gap-1.5">
           <span><ChartIcon className="w-4 h-4" /></span> Thống kê 10 chiến dịch gần nhất
         </h3>
 
         {loadingCampStats ? (
           <PageLoading variant="skeleton" skeletonVariant="table" />
+        ) : campaignStats.length === 0 && statsFailed ? (
+          <LoadFailedNotice className="py-10" text="Không tải được thống kê chiến dịch" onRetry={loadStats} />
         ) : campaignStats.length === 0 ? (
-          <div className="text-center py-10 text-gray-400 text-sm">Chưa có chiến dịch nào</div>
+          <div className="text-center py-10 text-muted-foreground text-sm">Chưa có chiến dịch nào</div>
         ) : (
           <>
             {/* Bar chart */}
@@ -664,10 +783,10 @@ export default function CRMDashboard() {
             </div>
 
             {/* Detail table */}
-            <div className="overflow-x-auto rounded-xl border border-gray-700/50">
+            <div className="overflow-x-auto rounded-xl border border-border/50">
               <table className="w-full text-xs border-collapse">
                 <thead>
-                  <tr className="text-[11px] text-gray-400 bg-gray-800/80">
+                  <tr className="text-[11px] text-muted-foreground bg-card/80">
                     <th className="text-left py-2.5 px-3 font-medium">Chiến dịch</th>
                     <th className="text-center py-2.5 px-2 font-medium">Loại</th>
                     <th className="text-right py-2.5 px-2 font-medium">Tổng KH</th>
@@ -683,10 +802,10 @@ export default function CRMDashboard() {
                     const failPct  = c.total_contacts > 0 ? Math.round(c.failed_count  / c.total_contacts * 100) : 0;
                     const replyPct = c.sent_count     > 0 ? Math.round(c.replied_count / c.sent_count     * 100) : 0;
                     return (
-                      <tr key={c.id} className="border-t border-gray-700/50 hover:bg-gray-800/40 transition-colors">
+                      <tr key={c.id} className="border-t border-border/50 hover:bg-card/40 transition-colors">
                         <td className="py-2.5 px-3">
-                          <p className="text-gray-200 font-medium truncate max-w-[180px]">{c.name}</p>
-                          <p className="text-[11px] text-gray-400 mt-0.5">
+                          <p className="text-foreground font-medium truncate max-w-[180px]">{c.name}</p>
+                          <p className="text-[11px] text-muted-foreground mt-0.5">
                             {new Date(c.created_at).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: '2-digit' })}
                           </p>
                         </td>
@@ -697,24 +816,24 @@ export default function CRMDashboard() {
                                                                    'bg-blue-500/20 text-blue-400 border-blue-500/30'
                           }`}>{TYPE_LABEL[c.campaign_type] || '💬'}</span>
                         </td>
-                        <td className="py-2.5 px-2 text-right text-gray-300 font-semibold">{c.total_contacts}</td>
+                        <td className="py-2.5 px-2 text-right text-foreground/80 font-semibold">{c.total_contacts}</td>
                         <td className="py-2.5 px-2 text-right">
                           <span className="text-green-400 font-semibold">{c.sent_count}</span>
-                          <span className="text-gray-400 text-[11px] ml-1">({sentPct}%)</span>
+                          <span className="text-muted-foreground text-[11px] ml-1">({sentPct}%)</span>
                           <ProgressBar value={sentPct} color="#22c55e" />
                         </td>
                         <td className="py-2.5 px-2 text-right">
                           {c.failed_count > 0 ? (
                             <>
                               <span className="text-red-400 font-semibold">{c.failed_count}</span>
-                              <span className="text-gray-400 text-[11px] ml-1">({failPct}%)</span>
+                              <span className="text-muted-foreground text-[11px] ml-1">({failPct}%)</span>
                               <ProgressBar value={failPct} color="#ef4444" />
                             </>
                           ) : <span className="text-gray-700">-</span>}
                         </td>
                         <td className="py-2.5 px-2 text-right">
                           <span className="text-blue-400 font-semibold">{c.replied_count}</span>
-                          <span className="text-gray-400 text-[11px] ml-1">({replyPct}%)</span>
+                          <span className="text-muted-foreground text-[11px] ml-1">({replyPct}%)</span>
                           <ProgressBar value={replyPct} color="#3b82f6" />
                         </td>
                         <td className="py-2.5 px-3 text-right">
@@ -732,9 +851,9 @@ export default function CRMDashboard() {
         )}
       </div>
 
-      {/* Empty state */}
-      {totalContacts === 0 && campaigns.length === 0 && zaloLabels.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-16 text-gray-400">
+      {/* Empty state (không hiện khi số liệu tải lỗi — lỗi ≠ "chưa có dữ liệu") */}
+      {totalContacts === 0 && campaigns.length === 0 && zaloLabels.length === 0 && !statsFailed && (
+        <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" className="mb-3 opacity-30">
             <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
             <circle cx="9" cy="7" r="4"/>

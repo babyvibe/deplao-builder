@@ -435,12 +435,20 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
       if (!res?.filePaths?.length) return;
 
       setUploadingFile(true);
+      // Từng file trả kết quả thật (nhân viên: upload lên Boss rồi Boss đọc nội dung) — trước đây luôn báo thành công
+      const failed: string[] = [];
       for (const fp of res.filePaths) {
-        await ipc.ai?.uploadFile(savedId, fp);
+        const up: any = await ipc.ai?.uploadFile(savedId, fp);
+        if (!up?.success) failed.push(`${fp.replace(/^.*[/\\]/, '')}: ${up?.error || 'không tải lên được'}`);
       }
       const filesRes = await DataAccessor.getAssistantFiles(savedId);
       if (filesRes?.success) setFiles(filesRes.files || []);
-      showNotification('✅ Đã tải file lên', 'success');
+      if (failed.length === 0) {
+        showNotification('✅ Đã tải file lên', 'success');
+      } else {
+        const okCount = res.filePaths.length - failed.length;
+        showNotification(`❌ ${okCount > 0 ? `Tải lên ${okCount}/${res.filePaths.length} file. ` : ''}Lỗi: ${failed.join('; ')}`, 'error');
+      }
     } catch (e: any) {
       showNotification('❌ Lỗi upload: ' + e.message, 'error');
     }
@@ -449,7 +457,11 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
 
   const handleRemoveFile = async (fileId: number) => {
     try {
-      await ipc.ai?.removeFile(fileId);
+      const res: any = await ipc.ai?.removeFile(fileId);
+      if (res?.success === false) {
+        showNotification('❌ Không xoá được file: ' + (res.error || ''), 'error');
+        return;
+      }
       setFiles(prev => prev.filter(f => f.id !== fileId));
     } catch {}
   };
@@ -594,10 +606,10 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
   // ─── Render ──────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-col h-full overflow-hidden bg-gray-900">
+    <div className="flex flex-col h-full overflow-hidden bg-background">
       {/* Header */}
-      <div className="px-6 py-3 border-b border-gray-700 flex-shrink-0 flex items-center gap-3">
-        <button onClick={onBack} className="text-gray-400 hover:text-white transition-colors">
+      <div className="px-6 py-3 border-b border-border flex-shrink-0 flex items-center gap-3">
+        <button onClick={onBack} className="text-muted-foreground hover:text-foreground transition-colors">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M19 12H5M12 19l-7-7 7-7"/>
           </svg>
@@ -606,14 +618,14 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
           {currentPlatform.icon}
         </div>
         <div className="flex-1 min-w-0">
-          <h1 className="text-base font-semibold text-white truncate">
+          <h1 className="text-base font-semibold text-foreground truncate">
             {savedId ? name || 'Chỉnh sửa trợ lý' : 'Tạo trợ lý AI mới'}
           </h1>
-          <p className="text-xs text-gray-400">{currentPlatform.label} - {model === '__custom__' ? (customModelInput || 'tự nhập...') : model}</p>
+          <p className="text-xs text-muted-foreground">{currentPlatform.label} - {model === '__custom__' ? (customModelInput || 'tự nhập...') : model}</p>
         </div>
         <label className="flex items-center gap-2 cursor-pointer flex-shrink-0">
-          <span className="text-xs text-gray-400">Kích hoạt</span>
-          <div className={`relative w-10 h-5 rounded-full transition-colors ${enabled ? 'bg-blue-600' : 'bg-gray-600'}`}
+          <span className="text-xs text-muted-foreground">Kích hoạt</span>
+          <div className={`relative w-10 h-5 rounded-full transition-colors ${enabled ? 'bg-blue-600' : 'bg-accent'}`}
             onClick={() => setEnabled(!enabled)}>
             <div className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${enabled ? 'translate-x-5' : ''}`}/>
           </div>
@@ -623,7 +635,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors flex-shrink-0 border ${
             showChatPanel
               ? 'bg-blue-600/20 text-blue-400 border-blue-600/40'
-              : 'text-gray-400 hover:text-white border-gray-600 hover:border-gray-500'
+              : 'text-muted-foreground hover:text-foreground border-input hover:border-border-strong'
           }`}
           title={showChatPanel ? 'Ẩn chat thử' : 'Hiện chat thử'}
         ><ChatIcon className="w-4 h-4 inline" /> Chat thử
@@ -634,7 +646,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors flex-shrink-0 border ${
               showReport
                 ? 'bg-purple-600/20 text-purple-400 border-purple-600/40'
-                : 'text-gray-400 hover:text-white border-gray-600 hover:border-gray-500'
+                : 'text-muted-foreground hover:text-foreground border-input hover:border-border-strong'
             }`}
             title="Báo cáo sử dụng"
           ><ChartIcon className="w-4 h-4 inline" /> Báo cáo
@@ -649,26 +661,26 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
 
           {/* Basic info */}
           <div>
-            <h2 className="text-sm font-semibold text-gray-300 mb-2"><EditIcon className="w-4 h-4 inline" /> Thông tin cơ bản</h2>
-            <div className="space-y-3 bg-gray-800 rounded-xl p-4">
+            <h2 className="text-sm font-semibold text-foreground/80 mb-2"><EditIcon className="w-4 h-4 inline" /> Thông tin cơ bản</h2>
+            <div className="space-y-3 bg-card rounded-xl p-4">
               <div>
-                <label className="block text-xs text-gray-400 mb-1">Tên trợ lý *</label>
+                <label className="block text-xs text-muted-foreground mb-1">Tên trợ lý *</label>
                 <input type="text" value={name} onChange={e => setName(e.target.value)}
                   placeholder="VD: Trợ lý bán hàng..."
-                  className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"/>
+                  className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"/>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs text-gray-400 mb-1">Nền tảng AI</label>
+                  <label className="block text-xs text-muted-foreground mb-1">Nền tảng AI</label>
                   <select value={platform} onChange={e => setPlatform(e.target.value)}
-                    className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
+                    className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-blue-500">
                     {PLATFORMS.map(p => (
                       <option key={p.value} value={p.value}>{p.icon} {p.label}</option>
                     ))}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-400 mb-1">Model</label>
+                  <label className="block text-xs text-muted-foreground mb-1">Model</label>
                   {(platform === '9router' || platform === 'openrouter') ? (
                     <div className="space-y-1.5">
                       <select value={isCustomModel && model !== '__custom__' ? '__custom__' : model}
@@ -680,7 +692,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                             setModel(e.target.value);
                           }
                         }}
-                        className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
+                        className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-blue-500">
                         {currentModels.map(m => (
                           <option key={m.value} value={m.value}>{m.label}</option>
                         ))}
@@ -689,12 +701,12 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                         <input type="text" value={customModelInput}
                           onChange={e => { setCustomModelInput(e.target.value); setModel(e.target.value); }}
                           placeholder="Nhập model name bất kỳ, VD: oc/llama-4, vertex/gemini-3-flash..."
-                          className="w-full bg-gray-700 border border-blue-600/50 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"/>
+                          className="w-full bg-muted border border-blue-600/50 rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"/>
                       )}
                     </div>
                   ) : (
                     <select value={model} onChange={e => setModel(e.target.value)}
-                      className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
+                      className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-blue-500">
                       {currentModels.map(m => (
                         <option key={m.value} value={m.value}>{m.label}</option>
                       ))}
@@ -707,20 +719,20 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
 
           {/* API Key */}
           <div>
-            <h2 className="text-sm font-semibold text-gray-300 mb-2"><KeyIcon className="w-4 h-4 inline" /> API Key</h2>
-            <div className="bg-gray-800 rounded-xl p-4">
+            <h2 className="text-sm font-semibold text-foreground/80 mb-2"><KeyIcon className="w-4 h-4 inline" /> API Key</h2>
+            <div className="bg-card rounded-xl p-4">
               <div className="relative">
                 <input type={showApiKey ? 'text' : 'password'}
                   value={apiKey} onChange={e => setApiKey(e.target.value)}
                   placeholder={savedId ? '••••••••  (để trống = giữ cũ)' : 'Nhập API Key...'}
-                  className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 pr-10"/>
+                  className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 pr-10"/>
                 <button type="button"
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white text-sm"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground text-sm"
                   onClick={() => setShowApiKey(!showApiKey)}>
                   {showApiKey ? '🙈' : '👁'}
                 </button>
               </div>
-              <p className="text-[10px] text-gray-400 mt-1.5">
+              <p className="text-[10px] text-muted-foreground mt-1.5">
                 {platform === 'openai' && 'Lấy tại: platform.openai.com/api-keys'}
                 {platform === 'gemini' && 'Lấy tại: aistudio.google.com/apikey'}
                 {platform === 'claude' && 'Lấy tại: console.anthropic.com/settings/keys'}
@@ -746,7 +758,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                   <button
                     type="button"
                     onClick={() => ipc.shell?.openExternal('http://localhost:20128')}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-300 transition-colors"
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-muted hover:bg-accent text-foreground/80 transition-colors"
                   ><LinkIcon className="w-4 h-4 inline" /> Mở Dashboard 9Router
                   </button>
                 </div>
@@ -757,7 +769,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
           {/* System prompt */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <h2 className="text-sm font-semibold text-gray-300"><ChatIcon className="w-4 h-4 inline" /> System Prompt</h2>
+              <h2 className="text-sm font-semibold text-foreground/80"><ChatIcon className="w-4 h-4 inline" /> System Prompt</h2>
               <div className="flex items-center gap-1.5">
                 {systemPrompt.trim().length > 20 && (
                   <button onClick={() => setShowPromptWizard(true)}
@@ -771,25 +783,25 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                 </button>
               </div>
             </div>
-            <div className="bg-gray-800 rounded-xl p-4">
+            <div className="bg-card rounded-xl p-4">
               <textarea value={systemPrompt} onChange={e => setSystemPrompt(e.target.value)}
                 rows={10}
                 placeholder="VD: Bạn là trợ lý bán hàng chuyên nghiệp..."
-                className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 resize-y min-h-[80px]"/>
+                className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 resize-y min-h-[80px]"/>
             </div>
           </div>
 
           {/* POS Integration */}
           <div>
-            <h2 className="text-sm font-semibold text-gray-300 mb-2"><ShoppingCartIcon className="w-4 h-4 inline" /> Liên kết POS</h2>
-            <div className="bg-gray-800 rounded-xl p-4 space-y-3">
+            <h2 className="text-sm font-semibold text-foreground/80 mb-2"><ShoppingCartIcon className="w-4 h-4 inline" /> Liên kết POS</h2>
+            <div className="bg-card rounded-xl p-4 space-y-3">
               <select value={posIntegrationId} onChange={e => {
                 setPosIntegrationId(e.target.value);
                 setPosProducts([]);
                 setPosPage(1);
                 setPosSearchQuery('');
                 setSelectedPosIds(new Set());
-              }} className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
+              }} className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-blue-500">
                 <option value="">- Bạn chưa liên kết POS -</option>
                 {posIntegrations.map(p => (
                   <option key={p.id} value={p.id}>{p.name} ({p.type})</option>
@@ -806,12 +818,12 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                       onChange={e => setPosSearchQuery(e.target.value)}
                       onKeyDown={e => { if (e.key === 'Enter') { setPosPage(1); handleSearchPosProducts(posSearchQuery, 1); } }}
                       placeholder="Tìm theo tên, mã sản phẩm..."
-                      className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                      className="flex-1 bg-muted border border-input rounded-lg px-3 py-1.5 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
                     />
                     <button
                       onClick={() => { setPosPage(1); handleSearchPosProducts(posSearchQuery, 1); }}
                       disabled={posProductsLoading}
-                      className="px-3 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors disabled:opacity-50 flex-shrink-0">
+                      className="px-3 py-1.5 text-xs bg-muted hover:bg-accent text-foreground rounded-lg transition-colors disabled:opacity-50 flex-shrink-0">
                       {posProductsLoading ? <Spinner size={3} /> : <><SearchIcon className="w-3.5 h-3.5 inline" /> Tải</>}
                     </button>
                   </div>
@@ -832,7 +844,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                           className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors">
                           {selectedPosIds.size === posProducts.length ? '☑ Bỏ chọn tất cả' : '☐ Chọn tất cả trang này'}
                         </button>
-                        <span className="text-[10px] text-gray-400">
+                        <span className="text-[10px] text-muted-foreground">
                           {selectedPosIds.size > 0 ? `${selectedPosIds.size} đã chọn · ` : ''}
                           {posTotal != null ? `~${posTotal} SP` : `${posProducts.length} SP`}
                         </span>
@@ -851,17 +863,17 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                                 return next;
                               })}
                               className={`flex items-center gap-2 rounded-lg px-2 py-1.5 cursor-pointer transition-colors border ${
-                                isSelected ? 'bg-blue-600/10 border-blue-500/30' : 'bg-gray-700/30 border-transparent hover:bg-gray-700/50'
+                                isSelected ? 'bg-blue-600/10 border-blue-500/30' : 'bg-muted/30 border-transparent hover:bg-muted/50'
                               }`}
                             >
                               {/* Checkbox */}
                               <div className={`w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center text-[9px] ${
-                                isSelected ? 'bg-blue-600 border-blue-500 text-white' : 'border-gray-500'
+                                isSelected ? 'bg-blue-600 border-blue-500 text-white' : 'border-border-strong'
                               }`}>
                                 {isSelected && '✓'}
                               </div>
                               {/* Image */}
-                              <div className="w-8 h-8 rounded bg-gray-600 flex-shrink-0 overflow-hidden border border-gray-500/30 flex items-center justify-center text-xs">
+                              <div className="w-8 h-8 rounded bg-accent flex-shrink-0 overflow-hidden border border-border-strong/30 flex items-center justify-center text-xs">
                                 {p._image
                                   ? <img src={p._image} alt="" className="w-full h-full object-cover"
                                       onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}/>
@@ -869,8 +881,8 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                               </div>
                               {/* Info */}
                               <div className="flex-1 min-w-0">
-                                <p className="text-xs text-white truncate">{p._name || '-'}</p>
-                                <p className="text-[10px] text-gray-400 truncate">{p._code}</p>
+                                <p className="text-xs text-foreground truncate">{p._name || '-'}</p>
+                                <p className="text-[10px] text-muted-foreground truncate">{p._code}</p>
                               </div>
                               <span className="text-[11px] text-green-400 flex-shrink-0 font-medium">
                                 {p._price ? p._price.toLocaleString('vi-VN') + 'đ' : ''}
@@ -882,18 +894,18 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
 
                       {/* Pagination */}
                       {(posPage > 1 || posHasNext) && (
-                        <div className="flex items-center justify-between gap-2 text-[10px] text-gray-400">
+                        <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
                           <button
                             onClick={() => { const p = Math.max(1, posPage - 1); setPosPage(p); handleSearchPosProducts(posSearchQuery, p); }}
                             disabled={posPage <= 1 || posProductsLoading}
-                            className="px-2.5 py-1 rounded bg-gray-700 border border-gray-600 disabled:opacity-40 hover:border-blue-500/40">
+                            className="px-2.5 py-1 rounded bg-muted border border-input disabled:opacity-40 hover:border-blue-500/40">
                             ← Trang trước
                           </button>
                           <span>Trang {posPage}</span>
                           <button
                             onClick={() => { const p = posPage + 1; setPosPage(p); handleSearchPosProducts(posSearchQuery, p); }}
                             disabled={!posHasNext || posProductsLoading}
-                            className="px-2.5 py-1 rounded bg-gray-700 border border-gray-600 disabled:opacity-40 hover:border-blue-500/40">
+                            className="px-2.5 py-1 rounded bg-muted border border-input disabled:opacity-40 hover:border-blue-500/40">
                             Trang sau →
                           </button>
                         </div>
@@ -914,34 +926,34 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
 
                   {/* ── Pinned products ── */}
                   {pinnedProducts.length > 0 && (
-                    <div className="bg-gray-900/50 rounded-xl border border-green-700/30 p-3 space-y-2">
+                    <div className="bg-card rounded-xl border border-green-700/30 p-3 space-y-2">
                       <div className="flex items-center justify-between">
                         <p className="text-xs font-semibold text-green-400"><PinIcon className="w-4 h-4 inline" /> Sản phẩm đã ghim cho AI ({pinnedProducts.length})</p>
                         <button onClick={handleUnpinAll} className="text-[10px] text-red-400/70 hover:text-red-400 transition-colors">Xóa tất cả</button>
                       </div>
                       <div className="space-y-1 max-h-48 overflow-y-auto pr-0.5">
                         {pinnedProducts.map((p: any) => (
-                          <div key={p.id} className="flex items-center gap-2 bg-gray-800/60 rounded-lg px-2 py-1.5 group">
-                            <div className="w-7 h-7 rounded bg-gray-700 flex-shrink-0 overflow-hidden border border-gray-600/30 flex items-center justify-center text-[10px]">
+                          <div key={p.id} className="flex items-center gap-2 bg-card rounded-lg px-2 py-1.5 group">
+                            <div className="w-7 h-7 rounded bg-muted flex-shrink-0 overflow-hidden border border-input/30 flex items-center justify-center text-[10px]">
                               {p.image
                                 ? <img src={p.image} alt="" className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                                 : '📦'}
                             </div>
                             <div className="flex-1 min-w-0">
-                              <p className="text-[11px] text-white truncate">{p.name || '-'}</p>
-                              <p className="text-[10px] text-gray-400">{p.code}</p>
+                              <p className="text-[11px] text-foreground truncate">{p.name || '-'}</p>
+                              <p className="text-[10px] text-muted-foreground">{p.code}</p>
                             </div>
                             <span className="text-[10px] text-green-400 flex-shrink-0">{p.price ? Number(p.price).toLocaleString('vi-VN') + 'đ' : ''}</span>
                             <button onClick={() => handleUnpinProduct(p.id)}
-                              className="text-gray-400 hover:text-red-400 transition-colors flex-shrink-0 text-xs opacity-0 group-hover:opacity-100">✕</button>
+                              className="text-muted-foreground hover:text-red-400 transition-colors flex-shrink-0 text-xs opacity-0 group-hover:opacity-100">✕</button>
                           </div>
                         ))}
                       </div>
-                      <p className="text-[10px] text-gray-400"><SunIcon className="w-4 h-4 inline" /> AI sẽ dùng danh sách này khi tư vấn. Nhớ bấm <strong className="text-gray-400">Lưu</strong> để áp dụng.</p>
+                      <p className="text-[10px] text-muted-foreground"><SunIcon className="w-4 h-4 inline" /> AI sẽ dùng danh sách này khi tư vấn. Nhớ bấm <strong className="text-muted-foreground">Lưu</strong> để áp dụng.</p>
                     </div>
                   )}
 
-                  <p className="text-[10px] text-gray-400">
+                  <p className="text-[10px] text-muted-foreground">
                     Tìm & ghim sản phẩm để AI biết thông tin khi tư vấn. Bấm ✕ để hủy sản phẩm đã ghim.
                   </p>
                 </div>
@@ -951,31 +963,31 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
 
           {/* Knowledge base files */}
           <div>
-            <h2 className="text-sm font-semibold text-gray-300 mb-2">📚 File kiến thức</h2>
-            <div className="bg-gray-800 rounded-xl p-4 space-y-2">
-              <p className="text-[10px] text-gray-400 leading-relaxed">
-                ℹ️ File được <strong className="text-gray-400">trích xuất nội dung text</strong> và lưu tại máy. Khi AI trả lời, nội dung text sẽ được nạp vào system prompt - <strong className="text-gray-400">không gửi file gốc lên AI</strong>. Hỗ trợ: TXT, MD, CSV, JSON, HTML, XML, YAML, LOG (tối đa ~100KB text/file).
+            <h2 className="text-sm font-semibold text-foreground/80 mb-2">📚 File kiến thức</h2>
+            <div className="bg-card rounded-xl p-4 space-y-2">
+              <p className="text-[10px] text-muted-foreground leading-relaxed">
+                ℹ️ File được <strong className="text-muted-foreground">trích xuất nội dung text</strong> và lưu tại máy. Khi AI trả lời, nội dung text sẽ được nạp vào system prompt - <strong className="text-muted-foreground">không gửi file gốc lên AI</strong>. Hỗ trợ: TXT, MD, CSV, JSON, HTML, XML, YAML, LOG (tối đa ~100KB text/file).
               </p>
               {files.length > 0 && (
                 <div className="space-y-1.5">
                   {files.map(f => (
-                    <div key={f.id} className="flex items-center gap-2 bg-gray-700/50 rounded-lg px-3 py-2">
+                    <div key={f.id} className="flex items-center gap-2 bg-muted/50 rounded-lg px-3 py-2">
                       <span className="text-sm"><FileTextIcon className="w-4 h-4" /></span>
-                      <span className="text-xs text-white flex-1 truncate">{f.fileName}</span>
-                      <span className="text-[10px] text-gray-400 flex-shrink-0">{formatFileSize(f.fileSize)}</span>
+                      <span className="text-xs text-foreground flex-1 truncate">{f.fileName}</span>
+                      <span className="text-[10px] text-muted-foreground flex-shrink-0">{formatFileSize(f.fileSize)}</span>
                       {f.contentText ? (
                         <span className="text-green-500 flex-shrink-0"><CheckIcon className="w-3.5 h-3.5" /></span>
                       ) : (
                         <span className="text-yellow-500 flex-shrink-0"><AlertIcon className="w-3.5 h-3.5" /></span>
                       )}
                       <button onClick={() => handleRemoveFile(f.id)}
-                        className="text-gray-400 hover:text-red-400 transition-colors flex-shrink-0 text-xs">✕</button>
+                        className="text-muted-foreground hover:text-red-400 transition-colors flex-shrink-0 text-xs">✕</button>
                     </div>
                   ))}
                 </div>
               )}
               <button onClick={handleUploadFile} disabled={uploadingFile || !savedId}
-                className="w-full py-2 border-2 border-dashed border-gray-600 hover:border-blue-500 rounded-lg text-xs text-gray-400 hover:text-blue-400 transition-colors disabled:opacity-50">
+                className="w-full py-2 border-2 border-dashed border-input hover:border-blue-500 rounded-lg text-xs text-muted-foreground hover:text-blue-400 transition-colors disabled:opacity-50">
                 {uploadingFile ? <><Spinner size={3} /> Đang tải...</> : savedId ? <><PaperclipIcon className="w-3.5 h-3.5 inline" /> Chọn file để tải lên</> : 'Lưu trợ lý trước'}
               </button>
             </div>
@@ -983,61 +995,61 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
 
           {/* Advanced settings */}
           <div>
-            <h2 className="text-sm font-semibold text-gray-300 mb-2"><SettingsIcon className="w-4 h-4 inline" /> Cài đặt nâng cao</h2>
-            <div className="bg-gray-800 rounded-xl p-4 space-y-4">
+            <h2 className="text-sm font-semibold text-foreground/80 mb-2"><SettingsIcon className="w-4 h-4 inline" /> Cài đặt nâng cao</h2>
+            <div className="bg-card rounded-xl p-4 space-y-4">
               {/* Temperature */}
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs text-gray-400">Temperature</label>
-                  <span className="text-xs text-white font-mono">{temperature.toFixed(1)}</span>
+                  <label className="text-xs text-muted-foreground">Temperature</label>
+                  <span className="text-xs text-foreground font-mono">{temperature.toFixed(1)}</span>
                 </div>
                 <input type="range" min="0" max="2" step="0.1" value={temperature}
                   onChange={e => setTemperature(parseFloat(e.target.value))}
                   className="w-full accent-blue-500"/>
-                <div className="flex justify-between text-[10px] text-gray-400">
+                <div className="flex justify-between text-[10px] text-muted-foreground">
                   <span>Chính xác (0)</span><span>Sáng tạo (2)</span>
                 </div>
               </div>
 
               {/* Max tokens */}
               <div>
-                <label className="block text-xs text-gray-400 mb-1">Max tokens</label>
+                <label className="block text-xs text-muted-foreground mb-1">Max tokens</label>
                 <input type="number" min={50} max={8000} step={50} value={maxTokens}
                   onChange={e => setMaxTokens(Math.max(50, parseInt(e.target.value) || 1000))}
-                  className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"/>
+                  className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-blue-500"/>
               </div>
 
               {/* Context message count */}
               <div>
-                <label className="block text-xs text-gray-400 mb-1">Số tin nhắn lịch sử (ngữ cảnh)</label>
+                <label className="block text-xs text-muted-foreground mb-1">Số tin nhắn lịch sử (ngữ cảnh)</label>
                 <input type="number" min={1} max={100} step={1} value={contextMessageCount}
                   onChange={e => setContextMessageCount(Math.max(1, Math.min(100, parseInt(e.target.value) || 30)))}
-                  className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"/>
-                <p className="text-[10px] text-gray-400 mt-1">
+                  className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-blue-500"/>
+                <p className="text-[10px] text-muted-foreground mt-1">
                   Số tin nhắn gần nhất được nạp làm ngữ cảnh cho AI khi gợi ý và trả lời. Mặc định 30.
                 </p>
               </div>
 
               {/* Base URL override */}
               <div>
-                <label className="block text-xs text-gray-400 mb-1">Base URL (tuỳ chọn)</label>
+                <label className="block text-xs text-muted-foreground mb-1">Base URL (tuỳ chọn)</label>
                 <input type="text" value={baseUrl} onChange={e => setBaseUrl(e.target.value)}
                   placeholder={platform === '9router' ? 'http://localhost:20128' : platform === 'openrouter' ? 'https://openrouter.ai/api' : 'https://api.custom-proxy.com'}
-                  className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"/>
-                <p className="text-[10px] text-gray-400 mt-1">
+                  className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"/>
+                <p className="text-[10px] text-muted-foreground mt-1">
                   Ghi đè endpoint API. Để trống để dùng URL mặc định. Hữu ích khi dùng proxy như 9Router, OpenRouter, hoặc các API gateway khác.
                 </p>
               </div>
 
               {/* Default toggle */}
               <label className="flex items-center gap-3 cursor-pointer py-1">
-                <div className={`relative w-10 h-5 rounded-full transition-colors ${isDefault ? 'bg-blue-600' : 'bg-gray-600'}`}
+                <div className={`relative w-10 h-5 rounded-full transition-colors ${isDefault ? 'bg-blue-600' : 'bg-accent'}`}
                   onClick={() => setIsDefault(!isDefault)}>
                   <div className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${isDefault ? 'translate-x-5' : ''}`}/>
                 </div>
                 <div>
-                  <span className="text-sm text-white">Đặt làm trợ lý mặc định</span>
-                  <p className="text-[10px] text-gray-400">Dùng khi tài khoản chưa được gán trợ lý riêng</p>
+                  <span className="text-sm text-foreground">Đặt làm trợ lý mặc định</span>
+                  <p className="text-[10px] text-muted-foreground">Dùng khi tài khoản chưa được gán trợ lý riêng</p>
                 </div>
               </label>
             </div>
@@ -1055,18 +1067,18 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
 
         {/* ─── RIGHT: Chat Preview (collapsible) ───────────────────── */}
         {showChatPanel && (
-        <div className="w-[320px] flex-shrink-0 border-l border-gray-700 flex flex-col bg-gray-900">
+        <div className="w-[320px] flex-shrink-0 border-l border-border flex flex-col bg-card">
           {/* Chat header */}
-          <div className="px-4 py-3 border-b border-gray-700 flex-shrink-0">
+          <div className="px-4 py-3 border-b border-border flex-shrink-0">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-white"><ChatIcon className="w-4 h-4 inline" /> Chat thử</h3>
+              <h3 className="text-sm font-semibold text-foreground"><ChatIcon className="w-4 h-4 inline" /> Chat thử</h3>
               {chatMessages.length > 0 && (
                 <button onClick={() => setChatMessages([])}
-                  className="text-[10px] text-gray-400 hover:text-gray-300 transition-colors"><TrashIcon className="w-4 h-4 inline" /> Xóa
+                  className="text-[10px] text-muted-foreground hover:text-foreground/80 transition-colors"><TrashIcon className="w-4 h-4 inline" /> Xóa
                 </button>
               )}
             </div>
-            <p className="text-[10px] text-gray-400 mt-0.5">
+            <p className="text-[10px] text-muted-foreground mt-0.5">
               {savedId ? 'Trò chuyện trực tiếp để kiểm tra trợ lý' : 'Lưu trợ lý trước để chat thử'}
             </p>
           </div>
@@ -1076,13 +1088,13 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
             {chatMessages.length === 0 && savedId && (
               <div className="text-center py-10">
                 <div className="text-3xl mb-2">{currentPlatform.icon}</div>
-                <p className="text-xs text-gray-400">Gửi tin nhắn để test trợ lý AI</p>
+                <p className="text-xs text-muted-foreground">Gửi tin nhắn để test trợ lý AI</p>
               </div>
             )}
             {!savedId && (
               <div className="text-center py-10">
                 <div className="text-3xl mb-2"><HardDriveIcon className="w-4 h-4" /></div>
-                <p className="text-xs text-gray-400">Lưu trợ lý trước để có thể chat thử</p>
+                <p className="text-xs text-muted-foreground">Lưu trợ lý trước để có thể chat thử</p>
               </div>
             )}
             {chatMessages.map((msg, i) => (
@@ -1090,7 +1102,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                 <div className={`max-w-[85%] rounded-xl px-3 py-2 text-sm leading-relaxed ${
                   msg.role === 'user'
                     ? 'bg-blue-600 text-white'
-                    : 'bg-gray-800 text-gray-200 border border-gray-700'
+                    : 'bg-card text-foreground border border-border'
                 }`}>
                   {/* Render structured segments (text + images) or plain text */}
                   {msg.segments && msg.segments.length > 0 ? (
@@ -1099,7 +1111,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                         seg.type === 'image' && Array.isArray(seg.content) ? (
                           <div key={si} className="flex flex-wrap gap-1.5">
                             {seg.content.map((url: string, ui: number) => (
-                              <img key={ui} src={url} alt="" className="max-w-full max-h-40 rounded-lg object-cover border border-gray-600/30"
+                              <img key={ui} src={url} alt="" className="max-w-full max-h-40 rounded-lg object-cover border border-input/30"
                                 onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                             ))}
                           </div>
@@ -1112,13 +1124,13 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                     <div className="whitespace-pre-wrap break-words">{msg.content}</div>
                   )}
                   {msg.role === 'assistant' && !msg.content.startsWith('Error:') && (
-                    <div className="mt-1.5 pt-1.5 border-t border-gray-700/50 space-y-1">
+                    <div className="mt-1.5 pt-1.5 border-t border-border/50 space-y-1">
                       {/* Token details */}
                       {(msg.totalTokens || 0) > 0 && (
                         <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[9px] font-mono">
                           <span className="text-blue-400">Prompt: {msg.promptTokens?.toLocaleString()} tk</span>
                           <span className="text-green-400">Response: {msg.completionTokens?.toLocaleString()} tk</span>
-                          <span className="text-gray-400">Tổng: {msg.totalTokens?.toLocaleString()} tk</span>
+                          <span className="text-muted-foreground">Tổng: {msg.totalTokens?.toLocaleString()} tk</span>
                         </div>
                       )}
                       <div className="flex items-center gap-1.5">
@@ -1128,17 +1140,17 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                             : msg.content;
                           navigator.clipboard.writeText(textToCopy);
                         }}
-                          className="text-[10px] px-2 py-0.5 rounded bg-gray-700 text-gray-400 hover:text-white transition-colors"><ClipboardListIcon className="w-4 h-4 inline" /> Copy
+                          className="text-[10px] px-2 py-0.5 rounded bg-muted text-muted-foreground hover:text-foreground transition-colors"><ClipboardListIcon className="w-4 h-4 inline" /> Copy
                         </button>
                         <button onClick={() => setExpandedMsgIdx(expandedMsgIdx === i ? null : i)}
-                          className="text-[10px] px-2 py-0.5 rounded bg-gray-700 text-gray-400 hover:text-white transition-colors">
+                          className="text-[10px] px-2 py-0.5 rounded bg-muted text-muted-foreground hover:text-foreground transition-colors">
                           {expandedMsgIdx === i ? <><ChevronUpIcon className="w-3 h-3 inline" /> Ẩn chi tiết</> : <><ChevronDownIcon className="w-3 h-3 inline" /> Chi tiết</>}
                         </button>
                       </div>
                       {expandedMsgIdx === i && (
-                        <div className="mt-1 p-2 rounded bg-gray-900 border border-gray-700 text-[10px] space-y-1 max-h-40 overflow-y-auto">
-                          <p className="text-gray-400 font-semibold">Prompt đã gửi:</p>
-                          <pre className="text-gray-400 whitespace-pre-wrap break-word text-[9px]">
+                        <div className="mt-1 p-2 rounded bg-card border border-border text-[10px] space-y-1 max-h-40 overflow-y-auto">
+                          <p className="text-muted-foreground font-semibold">Prompt đã gửi:</p>
+                          <pre className="text-muted-foreground whitespace-pre-wrap break-word text-[9px]">
                             {chatMessages.slice(0, i).map(m => `[${m.role}] ${m.content}`).join('\n')}
                           </pre>
                         </div>
@@ -1150,7 +1162,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
             ))}
             {chatLoading && (
               <div className="flex justify-start">
-                <div className="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2">
+                <div className="bg-card border border-border rounded-xl px-3 py-2">
                   <div className="flex items-center gap-1">
                     <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}/>
                     <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}/>
@@ -1164,14 +1176,14 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
           {/* Chat input */}
           {savedId && (
             <div className="px-3 pb-3 pt-1 flex-shrink-0">
-              <div className="flex items-end gap-2 bg-gray-800 border border-gray-700 rounded-xl px-3 py-2">
+              <div className="flex items-end gap-2 bg-card border border-border rounded-xl px-3 py-2">
                 <textarea ref={chatInputRef}
                   value={chatInput}
                   onChange={e => setChatInput(e.target.value)}
                   onKeyDown={handleChatKeyDown}
                   placeholder="Nhập tin nhắn thử..."
                   rows={1}
-                  className="flex-1 bg-transparent text-sm text-white placeholder-gray-500 resize-none outline-none max-h-20 overflow-y-auto"
+                  className="flex-1 bg-transparent text-sm text-foreground placeholder-subtle-foreground resize-none outline-none max-h-20 overflow-y-auto"
                   style={{ minHeight: '1.5rem' }}
                 />
                 <button onClick={handleChatSend} disabled={chatLoading || !chatInput.trim()}
@@ -1188,14 +1200,14 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
 
         {/* ─── RIGHT: Usage Report Panel ───────────────────────────── */}
         {showReport && savedId && (
-        <div className="w-[420px] flex-shrink-0 border-l border-gray-700 flex flex-col bg-gray-900">
-          <div className="px-4 py-3 border-b border-gray-700 flex-shrink-0">
+        <div className="w-[420px] flex-shrink-0 border-l border-border flex flex-col bg-card">
+          <div className="px-4 py-3 border-b border-border flex-shrink-0">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-white"><ChartIcon className="w-4 h-4 inline" /> Báo cáo sử dụng</h3>
-              <button onClick={() => loadReport()} className="text-[10px] text-gray-400 hover:text-gray-300 transition-colors"><RefreshIcon className="w-4 h-4 inline" /> Tải lại
+              <h3 className="text-sm font-semibold text-foreground"><ChartIcon className="w-4 h-4 inline" /> Báo cáo sử dụng</h3>
+              <button onClick={() => loadReport()} className="text-[10px] text-muted-foreground hover:text-foreground/80 transition-colors"><RefreshIcon className="w-4 h-4 inline" /> Tải lại
               </button>
             </div>
-            <p className="text-[10px] text-gray-400 mt-0.5">Token sử dụng theo ngày (30 ngày gần nhất)</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">Token sử dụng theo ngày (30 ngày gần nhất)</p>
           </div>
 
           <div className="flex-1 overflow-y-auto p-3 space-y-3">
@@ -1208,37 +1220,37 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                 {/* Summary */}
                 {usageStats.length > 0 && (
                   <div className="grid grid-cols-3 gap-2">
-                    <div className="bg-gray-800 rounded-lg p-2.5 text-center">
-                      <p className="text-lg font-bold text-white">{usageStats.reduce((s, r) => s + r.request_count, 0).toLocaleString()}</p>
-                      <p className="text-[10px] text-gray-400">Tổng requests</p>
+                    <div className="bg-card rounded-lg p-2.5 text-center">
+                      <p className="text-lg font-bold text-foreground">{usageStats.reduce((s, r) => s + r.request_count, 0).toLocaleString()}</p>
+                      <p className="text-[10px] text-muted-foreground">Tổng requests</p>
                     </div>
-                    <div className="bg-gray-800 rounded-lg p-2.5 text-center">
+                    <div className="bg-card rounded-lg p-2.5 text-center">
                       <p className="text-lg font-bold text-blue-400">{usageStats.reduce((s, r) => s + r.total_prompt_tokens, 0).toLocaleString()}</p>
-                      <p className="text-[10px] text-gray-400">Prompt tokens</p>
+                      <p className="text-[10px] text-muted-foreground">Prompt tokens</p>
                     </div>
-                    <div className="bg-gray-800 rounded-lg p-2.5 text-center">
+                    <div className="bg-card rounded-lg p-2.5 text-center">
                       <p className="text-lg font-bold text-green-400">{usageStats.reduce((s, r) => s + r.total_completion_tokens, 0).toLocaleString()}</p>
-                      <p className="text-[10px] text-gray-400">Response tokens</p>
+                      <p className="text-[10px] text-muted-foreground">Response tokens</p>
                     </div>
                   </div>
                 )}
 
                 {/* Daily breakdown */}
                 <div>
-                  <h4 className="text-xs font-semibold text-gray-400 mb-2">Theo ngày</h4>
+                  <h4 className="text-xs font-semibold text-muted-foreground mb-2">Theo ngày</h4>
                   {usageStats.length === 0 ? (
-                    <p className="text-xs text-gray-400 text-center py-4">Chưa có dữ liệu sử dụng</p>
+                    <p className="text-xs text-muted-foreground text-center py-4">Chưa có dữ liệu sử dụng</p>
                   ) : (
                     <div className="space-y-1">
                       {usageStats.map((s, i) => (
-                        <div key={i} className="flex items-center gap-2 bg-gray-800/60 rounded-lg px-3 py-2">
-                          <span className="text-[11px] text-gray-400 font-mono w-20 flex-shrink-0">{s.day}</span>
+                        <div key={i} className="flex items-center gap-2 bg-card rounded-lg px-3 py-2">
+                          <span className="text-[11px] text-muted-foreground font-mono w-20 flex-shrink-0">{s.day}</span>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 text-[10px]">
-                              <span className="text-white font-medium">{s.request_count} req</span>
+                              <span className="text-foreground font-medium">{s.request_count} req</span>
                               <span className="text-blue-400">{s.total_prompt_tokens.toLocaleString()} in</span>
                               <span className="text-green-400">{s.total_completion_tokens.toLocaleString()} out</span>
-                              <span className="text-gray-400">= {s.total_tokens.toLocaleString()} tk</span>
+                              <span className="text-muted-foreground">= {s.total_tokens.toLocaleString()} tk</span>
                             </div>
                           </div>
                         </div>
@@ -1249,29 +1261,29 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
 
                 {/* Recent logs */}
                 <div>
-                  <h4 className="text-xs font-semibold text-gray-400 mb-2">Lịch sử gần nhất</h4>
+                  <h4 className="text-xs font-semibold text-muted-foreground mb-2">Lịch sử gần nhất</h4>
                   {usageLogs.length === 0 ? (
-                    <p className="text-xs text-gray-400 text-center py-4">Chưa có lịch sử</p>
+                    <p className="text-xs text-muted-foreground text-center py-4">Chưa có lịch sử</p>
                   ) : (
                     <div className="space-y-1.5">
                       {usageLogs.map((log: any, i: number) => (
-                        <details key={i} className="bg-gray-800/60 rounded-lg overflow-hidden group">
-                          <summary className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-gray-800 transition-colors">
-                            <span className="text-[10px] text-gray-400 font-mono flex-shrink-0">
+                        <details key={i} className="bg-card rounded-lg overflow-hidden group">
+                          <summary className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-card transition-colors">
+                            <span className="text-[10px] text-muted-foreground font-mono flex-shrink-0">
                               {new Date(log.created_at).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })}
                             </span>
-                            <span className="text-[10px] text-gray-400 flex-1 truncate">{log.model}</span>
+                            <span className="text-[10px] text-muted-foreground flex-1 truncate">{log.model}</span>
                             <span className="text-[10px] text-blue-400 flex-shrink-0">{log.prompt_tokens}→</span>
                             <span className="text-[10px] text-green-400 flex-shrink-0">←{log.completion_tokens}</span>
                           </summary>
                           <div className="px-3 pb-2 space-y-1.5">
                             <div>
-                              <p className="text-[9px] text-gray-400 font-semibold">Prompt:</p>
-                              <pre className="text-[9px] text-gray-400 whitespace-pre-wrap break-word bg-gray-900/50 rounded p-1.5 max-h-24 overflow-y-auto">{log.prompt_text?.substring(0, 500)}</pre>
+                              <p className="text-[9px] text-muted-foreground font-semibold">Prompt:</p>
+                              <pre className="text-[9px] text-muted-foreground whitespace-pre-wrap break-word bg-card rounded p-1.5 max-h-24 overflow-y-auto">{log.prompt_text?.substring(0, 500)}</pre>
                             </div>
                             <div>
-                              <p className="text-[9px] text-gray-400 font-semibold">Response:</p>
-                              <pre className="text-[9px] text-gray-300 whitespace-pre-wrap break-word bg-gray-900/50 rounded p-1.5 max-h-24 overflow-y-auto">{log.response_text?.substring(0, 500)}</pre>
+                              <p className="text-[9px] text-muted-foreground font-semibold">Response:</p>
+                              <pre className="text-[9px] text-foreground/80 whitespace-pre-wrap break-word bg-card rounded p-1.5 max-h-24 overflow-y-auto">{log.response_text?.substring(0, 500)}</pre>
                             </div>
                           </div>
                         </details>
@@ -1287,7 +1299,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
       </div>
 
       {/* Footer */}
-      <div className="px-6 py-3 border-t border-gray-700 flex-shrink-0 flex items-center gap-3">
+      <div className="px-6 py-3 border-t border-border flex-shrink-0 flex items-center gap-3">
         {savedId && (
           <button onClick={handleDelete} disabled={deleting}
             className="px-3 py-2 text-sm rounded-lg text-red-400 hover:bg-red-900/30 border border-red-800/40 transition-colors">
@@ -1297,7 +1309,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
         <div className="flex-1"/>
         {savedId && (
           <button onClick={handleTest} disabled={testing}
-            className="px-4 py-2 text-sm rounded-lg bg-gray-700 hover:bg-gray-600 text-white transition-colors flex">
+            className="px-4 py-2 text-sm rounded-lg bg-muted hover:bg-accent text-foreground transition-colors flex">
             {testing ? <><Spinner size={3} className="mr-1" /> Đang test...</> : <><SearchIcon className="w-4 h-4 inline mr-1" /> Test kết nối</>}
           </button>
         )}

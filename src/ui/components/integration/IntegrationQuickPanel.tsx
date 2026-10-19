@@ -70,12 +70,12 @@ function PinIconPicker({ onSelect, onClose }: { onSelect: (icon: string) => void
     return () => document.removeEventListener('mousedown', h);
   }, [onClose]);
   return (
-    <div ref={ref} className="absolute right-0 top-full mt-1 bg-gray-850 bg-gray-800 border border-gray-600 rounded-xl shadow-2xl z-50 p-3 w-72" onClick={e => e.stopPropagation()}>
-      <p className="text-[11px] text-gray-400 mb-2 font-medium flex items-center gap-1"><PinIcon className="w-3 h-3" /> Chọn icon cho nut ghim:</p>
+    <div ref={ref} className="absolute right-0 top-full mt-1 bg-card border border-input rounded-xl shadow-2xl z-50 p-3 w-72" onClick={e => e.stopPropagation()}>
+      <p className="text-[11px] text-muted-foreground mb-2 font-medium flex items-center gap-1"><PinIcon className="w-3 h-3" /> Chọn icon cho nut ghim:</p>
       <div className="grid grid-cols-6 gap-1">
         {PIN_ICON_DEFS.map(def => (
           <button key={def.id} onClick={() => onSelect(def.id)}
-            className="w-9 h-9 flex items-center justify-center text-sm rounded-lg hover:bg-gray-700 transition-colors">
+            className="w-9 h-9 flex items-center justify-center text-sm rounded-lg hover:bg-muted transition-colors">
             {def.icon}
           </button>
         ))}
@@ -600,7 +600,7 @@ function normalizeOrderStatus(rawStatus: any, numericStatus: any): { text: strin
   if (['pending', 'processing', 'unpaid', 'waiting_for_payment', 'shipping', 'delivering', 'draft'].includes(normalizedKey) || numericStatus === 0) {
     return { text, color: 'bg-yellow-900/50 text-yellow-400' };
   }
-  return { text, color: 'bg-gray-700 text-gray-400' };
+  return { text, color: 'bg-muted text-muted-foreground' };
 }
 
 function resolveOrderPaymentMethod(order: any): string {
@@ -625,7 +625,7 @@ function normalizeOrderForDisplay(order: any) {
     const nhanhStatus = NHANH_STATUS_MAP[info?.status as number];
     const statusResult = nhanhStatus ?? {
       text: info?.status != null ? `#${info.status}` : '-',
-      color: 'bg-gray-700 text-gray-400',
+      color: 'bg-muted text-muted-foreground',
     };
 
     const items = products.map(normalizeOrderItem);
@@ -841,40 +841,40 @@ function OrderCard({ o }: { o: any }) {
     normalized.moneyToCollect > 0;
 
   return (
-    <div className="bg-gray-700/50 rounded-lg overflow-hidden border border-gray-600/30">
+    <div className="bg-muted/50 rounded-lg overflow-hidden border border-input/30">
       {/* ── Header ── */}
       <button
         onClick={() => hasDetail && setExpanded(v => !v)}
-        className={`w-full px-3 py-2 text-left ${hasDetail ? 'hover:bg-gray-700/60 transition-colors' : ''}`}
+        className={`w-full px-3 py-2 text-left ${hasDetail ? 'hover:bg-muted/60 transition-colors' : ''}`}
       >
         <div className="flex items-center justify-between mb-0.5">
-          <p className="text-xs font-semibold text-white font-mono">#{normalized.code || '-'}</p>
+          <p className="text-xs font-semibold text-foreground font-mono">#{normalized.code || '-'}</p>
           <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-medium ${normalized.statusColor}`}>
             {normalized.statusText}
           </span>
         </div>
         <div className="flex items-center justify-between gap-1">
-          <p className="text-[11px] text-gray-400 truncate">{normalized.customerSummary || '-'}</p>
+          <p className="text-[11px] text-muted-foreground truncate">{normalized.customerSummary || '-'}</p>
           <div className="flex items-center gap-1 flex-shrink-0">
             <span className="text-xs font-semibold text-blue-300">{normalized.total.toLocaleString('vi-VN')}đ</span>
             {hasDetail && (
-              <svg className={`w-3 h-3 text-gray-400 transition-transform ${expanded ? 'rotate-180' : ''}`}
+              <svg className={`w-3 h-3 text-muted-foreground transition-transform ${expanded ? 'rotate-180' : ''}`}
                 viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <polyline points="6 9 12 15 18 9"/>
               </svg>
             )}
           </div>
         </div>
-        {normalized.createdDate && <p className="text-[10px] text-gray-400 mt-0.5">{normalized.createdDate}</p>}
+        {normalized.createdDate && <p className="text-[10px] text-muted-foreground mt-0.5">{normalized.createdDate}</p>}
       </button>
 
       {/* ── Expandable detail ── */}
       {expanded && (
-        <div className="border-t border-gray-600/40 px-3 py-2 space-y-2 bg-gray-800/40">
+        <div className="border-t border-input/40 px-3 py-2 space-y-2 bg-card/40">
           {/* Items list */}
           {(normalized.items.length > 0 || normalized.itemCount > 0) && (
             <div>
-              <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide mb-1">
+              <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wide mb-1">
                 Sản phẩm ({normalized.itemCount || normalized.items.length})
               </p>
               {normalized.items.length > 0 ? (
@@ -883,10 +883,10 @@ function OrderCard({ o }: { o: any }) {
                     return (
                       <div key={j} className="flex items-start justify-between gap-2">
                         <div className="flex items-baseline gap-1 min-w-0 flex-1">
-                          <span className="text-[11px] text-gray-400 flex-shrink-0">{item.quantity}×</span>
-                          <span className="text-[11px] text-gray-200 leading-snug truncate">{item.name}</span>
+                          <span className="text-[11px] text-muted-foreground flex-shrink-0">{item.quantity}×</span>
+                          <span className="text-[11px] text-foreground leading-snug truncate">{item.name}</span>
                         </div>
-                        <span className="text-[11px] text-gray-400 flex-shrink-0">
+                        <span className="text-[11px] text-muted-foreground flex-shrink-0">
                           {(Number(item.price) * Number(item.quantity)).toLocaleString('vi-VN')}đ
                         </span>
                       </div>
@@ -894,23 +894,23 @@ function OrderCard({ o }: { o: any }) {
                   })}
                 </div>
               ) : (
-                <p className="text-[11px] text-gray-400">Có sản phẩm trong đơn nhưng API chưa trả chi tiết từng dòng.</p>
+                <p className="text-[11px] text-muted-foreground">Có sản phẩm trong đơn nhưng API chưa trả chi tiết từng dòng.</p>
               )}
             </div>
           )}
 
           {/* Fee summary */}
           {(normalized.shippingFee > 0 || normalized.discount > 0) && (
-            <div className="space-y-0.5 border-t border-gray-700/40 pt-1.5">
+            <div className="space-y-0.5 border-t border-border/40 pt-1.5">
               {normalized.shippingFee > 0 && (
                 <div className="flex justify-between">
-                  <span className="text-[11px] text-gray-400"><TruckIcon className="w-3 h-3 inline" /> Phi ship:</span>
-                  <span className="text-[11px] text-gray-300">+{normalized.shippingFee.toLocaleString('vi-VN')}đ</span>
+                  <span className="text-[11px] text-muted-foreground"><TruckIcon className="w-3 h-3 inline" /> Phí ship:</span>
+                  <span className="text-[11px] text-foreground/80">+{normalized.shippingFee.toLocaleString('vi-VN')}đ</span>
                 </div>
               )}
               {normalized.discount > 0 && (
                 <div className="flex justify-between">
-                  <span className="text-[11px] text-gray-400"><TagIcon className="w-3 h-3 inline" /> Giam gia:</span>
+                  <span className="text-[11px] text-muted-foreground"><TagIcon className="w-3 h-3 inline" /> Giảm giá:</span>
                   <span className="text-[11px] text-orange-400">-{normalized.discount.toLocaleString('vi-VN')}đ</span>
                 </div>
               )}
@@ -920,52 +920,52 @@ function OrderCard({ o }: { o: any }) {
           {/* Payment */}
           {normalized.payMethod && (
             <div className="flex items-center gap-1.5">
-<CreditCardIcon className="w-3 h-3 text-gray-400" />
-              <span className="text-[11px] text-gray-300">{PAY_LABEL[normalized.payMethod] || normalized.payMethod}</span>
+<CreditCardIcon className="w-3 h-3 text-muted-foreground" />
+              <span className="text-[11px] text-foreground/80">{PAY_LABEL[normalized.payMethod] || normalized.payMethod}</span>
             </div>
           )}
 
           {normalized.moneyToCollect > 0 && (
             <div className="flex items-center gap-1.5">
-              <DollarIcon className="w-3 h-3 text-gray-400" />
-              <span className="text-[11px] text-gray-300">Thu ho: {normalized.moneyToCollect.toLocaleString('vi-VN')}d</span>
+              <DollarIcon className="w-3 h-3 text-muted-foreground" />
+              <span className="text-[11px] text-foreground/80">Thu hộ: {normalized.moneyToCollect.toLocaleString('vi-VN')}đ</span>
             </div>
           )}
 
           {(normalized.sourceName || normalized.sellerName || normalized.deliveryPartner) && (
             <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
-              {normalized.sourceName && <p className="text-[11px] text-gray-400"><GlobeIcon className="w-3 h-3 inline" /> Nguon: {normalized.sourceName}</p>}
-              {normalized.sellerName && <p className="text-[11px] text-gray-400"><UserIcon className="w-3 h-3 inline" /> Phu trach: {normalized.sellerName}</p>}
-              {normalized.deliveryPartner && <p className="text-[11px] text-gray-400"><TruckIcon className="w-3 h-3 inline" /> DVVC: {normalized.deliveryPartner}</p>}
+              {normalized.sourceName && <p className="text-[11px] text-muted-foreground"><GlobeIcon className="w-3 h-3 inline" /> Nguồn: {normalized.sourceName}</p>}
+              {normalized.sellerName && <p className="text-[11px] text-muted-foreground"><UserIcon className="w-3 h-3 inline" /> Phụ trách: {normalized.sellerName}</p>}
+              {normalized.deliveryPartner && <p className="text-[11px] text-muted-foreground"><TruckIcon className="w-3 h-3 inline" /> DVVC: {normalized.deliveryPartner}</p>}
             </div>
           )}
 
           {/* Address */}
           {normalized.address && (
             <div className="flex items-start gap-1.5">
-              <MapPinIcon className="w-3 h-3 text-gray-400 mt-0.5 flex-shrink-0" />
-              <p className="text-[11px] text-gray-400 leading-snug">{normalized.address}</p>
+              <MapPinIcon className="w-3 h-3 text-muted-foreground mt-0.5 flex-shrink-0" />
+              <p className="text-[11px] text-muted-foreground leading-snug">{normalized.address}</p>
             </div>
           )}
 
           {/* Tracking */}
           {normalized.trackingCode && (
             <div className="flex items-center gap-1.5">
-              <PackageIcon className="w-3 h-3 text-gray-400 flex-shrink-0" />
+              <PackageIcon className="w-3 h-3 text-muted-foreground flex-shrink-0" />
               <span className="text-[11px] text-blue-400 font-mono">{normalized.trackingCode}</span>
             </div>
           )}
 
           {normalized.trackingLink && (
             <div className="flex items-start gap-1.5">
-              <LinkIcon className="w-3 h-3 text-gray-400 flex-shrink-0 mt-0.5" />
+              <LinkIcon className="w-3 h-3 text-muted-foreground flex-shrink-0 mt-0.5" />
               <p className="text-[11px] text-blue-400 break-word">{normalized.trackingLink}</p>
             </div>
           )}
 
           {normalized.orderLink && (
             <div className="flex items-start gap-1.5">
-              <FileTextIcon className="w-3 h-3 text-gray-400 flex-shrink-0 mt-0.5" />
+              <FileTextIcon className="w-3 h-3 text-muted-foreground flex-shrink-0 mt-0.5" />
               <p className="text-[11px] text-blue-400 break-word">{normalized.orderLink}</p>
             </div>
           )}
@@ -973,8 +973,8 @@ function OrderCard({ o }: { o: any }) {
           {/* Note */}
           {normalized.note && (
             <div className="flex items-start gap-1.5">
-              <EditIcon className="w-3 h-3 text-gray-400 flex-shrink-0 mt-0.5" />
-              <p className="text-[11px] text-gray-400 italic leading-snug">{normalized.note}</p>
+              <EditIcon className="w-3 h-3 text-muted-foreground flex-shrink-0 mt-0.5" />
+              <p className="text-[11px] text-muted-foreground italic leading-snug">{normalized.note}</p>
             </div>
           )}
 
@@ -1001,18 +1001,18 @@ function ProductCard({ p }: { p: any }) {
   const code  = normalized.code;
 
   return (
-    <div className="bg-gray-700/50 rounded-lg px-2.5 py-2 flex items-center gap-2.5 border border-gray-600/30">
+    <div className="bg-muted/50 rounded-lg px-2.5 py-2 flex items-center gap-2.5 border border-input/30">
       {/* Image or fallback */}
-      <div className="w-10 h-10 rounded-lg bg-gray-600 flex items-center justify-center flex-shrink-0 overflow-hidden border border-gray-600/40">
+      <div className="w-10 h-10 rounded-lg bg-accent flex items-center justify-center flex-shrink-0 overflow-hidden border border-input/40">
         {img
           ? <img src={img} alt={name} className="w-full h-full object-cover"
               onError={e => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).parentElement!.textContent = 'SP'; }} />
           : <PackageIcon className="w-5 h-5" />}
       </div>
       <div className="min-w-0 flex-1">
-        <p className="text-xs font-medium text-white leading-snug truncate" title={name}>{name}</p>
+        <p className="text-xs font-medium text-foreground leading-snug truncate" title={name}>{name}</p>
         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-          {code && <span className="text-[10px] text-gray-400">{code}</span>}
+          {code && <span className="text-[10px] text-muted-foreground">{code}</span>}
           {price != null && (
             <span className="text-[11px] text-blue-300 font-medium">{Number(price).toLocaleString('vi-VN')}đ</span>
           )}
@@ -1030,25 +1030,25 @@ function ProductCard({ p }: { p: any }) {
 // ─── Result Formatter ─────────────────────────────────────────────────────────
 
 function formatResult(_action: string, data: any): React.ReactNode {
-  if (!data) return <span className="text-gray-400 text-xs">Không có kết quả</span>;
+  if (!data) return <span className="text-muted-foreground text-xs">Không có kết quả</span>;
 
   // Customers
   if (data.customers !== undefined) {
     const customers: any[] = data.customers || [];
-    return <span className="text-yellow-400 text-xs"><AlertIcon className="w-3 h-3 inline" /> Khong tim thay khach hang</span>;
+    if (!customers.length) return <span className="text-yellow-400 text-xs"><AlertIcon className="w-3 h-3 inline" /> Không tìm thấy khách hàng</span>;
     return (
       <div className="space-y-1.5">
         {customers.map((c: any, i: number) => {
           const customer = normalizeCustomerForDisplay(c);
           return (
-            <div key={i} className="bg-gray-700/50 rounded-lg px-3 py-2 border border-gray-600/30">
-              <p className="text-xs font-medium text-white">{customer.name}</p>
-              <p className="text-[11px] text-gray-400">{compactJoin([customer.phone, customer.email], ' · ') || '-'}</p>
-              <p className="text-[10px] text-gray-400">
+            <div key={i} className="bg-muted/50 rounded-lg px-3 py-2 border border-input/30">
+              <p className="text-xs font-medium text-foreground">{customer.name}</p>
+              <p className="text-[11px] text-muted-foreground">{compactJoin([customer.phone, customer.email], ' · ') || '-'}</p>
+              <p className="text-[10px] text-muted-foreground">
                 ID: {customer.id || '-'} · Đơn: {customer.orderCount ?? '-'}
                 {customer.purchasedAmount > 0 ? ` · Mua: ${customer.purchasedAmount.toLocaleString('vi-VN')}đ` : ''}
               </p>
-              {customer.address && <p className="text-[10px] text-gray-400 mt-1 leading-snug"><MapPinIcon className="w-3 h-3 inline" /> {customer.address}</p>}
+              {customer.address && <p className="text-[10px] text-muted-foreground mt-1 leading-snug"><MapPinIcon className="w-3 h-3 inline" /> {customer.address}</p>}
             </div>
           );
         })}
@@ -1060,10 +1060,10 @@ function formatResult(_action: string, data: any): React.ReactNode {
   if (data.orders !== undefined || data.order !== undefined) {
     const orders: any[] = firstNonEmptyArray(data.orders, data.data?.orders, data.result?.orders, data.response?.orders);
     const normalizedOrders = orders.length > 0 ? orders : (data.order ? [data.order] : []);
-    if (!normalizedOrders.length) return <span className="text-yellow-400 text-xs"><AlertIcon className="w-3 h-3 inline" /> Khong tim thay don hang</span>;
+    if (!normalizedOrders.length) return <span className="text-yellow-400 text-xs"><AlertIcon className="w-3 h-3 inline" /> Không tìm thấy đơn hàng</span>;
     return (
       <div className="space-y-1.5">
-        <p className="text-[10px] text-gray-400">Nhấn vào đơn để xem chi tiết ↓</p>
+        <p className="text-[10px] text-muted-foreground">Nhấn vào đơn để xem chi tiết ↓</p>
         {normalizedOrders.map((o: any, i: number) => <OrderCard key={i} o={o} />)}
       </div>
     );
@@ -1072,7 +1072,7 @@ function formatResult(_action: string, data: any): React.ReactNode {
   // Products - dùng ProductCard có ảnh
   if (data.products !== undefined) {
     const products: any[] = data.products || [];
-    if (!products.length) return <span className="text-yellow-400 text-xs"><AlertIcon className="w-3 h-3 inline" /> Khong tim thay san pham</span>;
+    if (!products.length) return <span className="text-yellow-400 text-xs"><AlertIcon className="w-3 h-3 inline" /> Không tìm thấy sản phẩm</span>;
     return (
       <div className="space-y-1.5">
         {products.map((p: any, i: number) => <ProductCard key={i} p={p} />)}
@@ -1083,18 +1083,18 @@ function formatResult(_action: string, data: any): React.ReactNode {
   // Provinces / Districts / Wards
   if (data.provinces !== undefined || data.districts !== undefined || data.wards !== undefined) {
     const rows: any[] = data.provinces || data.districts || data.wards || [];
-    if (!rows.length) return <span className="text-yellow-400 text-xs"><AlertIcon className="w-3 h-3 inline" /> Khong co du lieu dia chi</span>;
+    if (!rows.length) return <span className="text-yellow-400 text-xs"><AlertIcon className="w-3 h-3 inline" /> Không có dữ liệu địa chỉ</span>;
     return (
       <div className="space-y-1.5">
         {rows.slice(0, 12).map((row: any, i: number) => (
-          <div key={i} className="bg-gray-700/50 rounded-lg px-3 py-2 border border-gray-600/30">
-            <p className="text-xs font-medium text-white">{row.ProvinceName || row.DistrictName || row.WardName || row.name || '-'}</p>
-            <p className="text-[11px] text-gray-400 font-mono">
+          <div key={i} className="bg-muted/50 rounded-lg px-3 py-2 border border-input/30">
+            <p className="text-xs font-medium text-foreground">{row.ProvinceName || row.DistrictName || row.WardName || row.name || '-'}</p>
+            <p className="text-[11px] text-muted-foreground font-mono">
               ID: {row.ProvinceID || row.DistrictID || row.WardCode || row.id || '-'}
             </p>
           </div>
         ))}
-        {rows.length > 12 && <p className="text-xs text-gray-400 text-center">+{rows.length - 12} mục khác</p>}
+        {rows.length > 12 && <p className="text-xs text-muted-foreground text-center">+{rows.length - 12} mục khác</p>}
       </div>
     );
   }
@@ -1102,13 +1102,13 @@ function formatResult(_action: string, data: any): React.ReactNode {
   // Services
   if (data.services !== undefined) {
     const services: any[] = data.services || [];
-    if (!services.length) return <span className="text-yellow-400 text-xs"><AlertIcon className="w-3 h-3 inline" /> Khong co dich vu phu hop</span>;
+    if (!services.length) return <span className="text-yellow-400 text-xs"><AlertIcon className="w-3 h-3 inline" /> Không có dịch vụ phù hợp</span>;
     return (
       <div className="space-y-1.5">
         {services.map((svc: any, i: number) => (
-          <div key={i} className="bg-gray-700/50 rounded-lg px-3 py-2 border border-gray-600/30">
-            <p className="text-xs font-medium text-white">{svc.short_name || svc.name || `Service #${svc.service_id || i + 1}`}</p>
-            <p className="text-[11px] text-gray-400 font-mono">
+          <div key={i} className="bg-muted/50 rounded-lg px-3 py-2 border border-input/30">
+            <p className="text-xs font-medium text-foreground">{svc.short_name || svc.name || `Service #${svc.service_id || i + 1}`}</p>
+            <p className="text-[11px] text-muted-foreground font-mono">
               service_id: {svc.service_id ?? '-'} · service_type_id: {svc.service_type_id ?? '-'}
             </p>
           </div>
@@ -1121,10 +1121,10 @@ function formatResult(_action: string, data: any): React.ReactNode {
   if (data.tracking !== undefined) {
     const t = data.tracking || {};
     return (
-      <div className="bg-gray-700/60 rounded-lg px-3 py-2 space-y-1">
-        <p className="text-sm font-medium text-white">Mã: {t.order_code || t.label || data.orderCode || data.trackingCode || '-'}</p>
+      <div className="bg-muted/60 rounded-lg px-3 py-2 space-y-1">
+        <p className="text-sm font-medium text-foreground">Mã: {t.order_code || t.label || data.orderCode || data.trackingCode || '-'}</p>
         <p className="text-xs text-blue-300">{data.status || t.status || t.status_text || '-'}</p>
-        {(t.updated_date || data.updatedDate) && <p className="text-[11px] text-gray-400">Cập nhật: {t.updated_date || data.updatedDate}</p>}
+        {(t.updated_date || data.updatedDate) && <p className="text-[11px] text-muted-foreground">Cập nhật: {t.updated_date || data.updatedDate}</p>}
       </div>
     );
   }
@@ -1132,18 +1132,18 @@ function formatResult(_action: string, data: any): React.ReactNode {
   // Transactions
   if (data.transactions !== undefined) {
     const txs: any[] = data.transactions || [];
-    if (!txs.length) return <span className="text-yellow-400 text-xs"><AlertIcon className="w-3 h-3 inline" /> Khong co giao dich</span>;
+    if (!txs.length) return <span className="text-yellow-400 text-xs"><AlertIcon className="w-3 h-3 inline" /> Không có giao dịch</span>;
     return (
       <div className="space-y-1.5">
         {txs.slice(0, 5).map((tx: any, i: number) => (
-          <div key={i} className="bg-gray-700/60 rounded-lg px-3 py-2">
+          <div key={i} className="bg-muted/60 rounded-lg px-3 py-2">
             <div className="flex justify-between">
-              <span className="text-xs text-gray-400">{tx.when || tx.transactionDate || tx.created_at || '-'}</span>
+              <span className="text-xs text-muted-foreground">{tx.when || tx.transactionDate || tx.created_at || '-'}</span>
               <span className={`text-xs font-medium ${(tx.in || tx.amount || 0) > 0 ? 'text-green-400' : 'text-red-400'}`}>
                 +{(tx.in || tx.amount || 0).toLocaleString('vi-VN')}đ
               </span>
             </div>
-            <p className="text-[11px] text-gray-300 truncate">{tx.description || tx.memo || tx.content || '-'}</p>
+            <p className="text-[11px] text-foreground/80 truncate">{tx.description || tx.memo || tx.content || '-'}</p>
           </div>
         ))}
       </div>
@@ -1154,9 +1154,9 @@ function formatResult(_action: string, data: any): React.ReactNode {
   if (data.fee !== undefined) {
     const f = data.fee;
     return (
-      <div className="bg-gray-700/60 rounded-lg px-3 py-2 space-y-1">
-        <p className="text-sm font-medium text-white">Phí dự kiến: {(f.total || f.fee || f.service_fee || 0).toLocaleString('vi-VN')}đ</p>
-        {f.insurance_fee !== undefined && <p className="text-xs text-gray-400">Bảo hiểm: {f.insurance_fee.toLocaleString('vi-VN')}đ</p>}
+      <div className="bg-muted/60 rounded-lg px-3 py-2 space-y-1">
+        <p className="text-sm font-medium text-foreground">Phí dự kiến: {(f.total || f.fee || f.service_fee || 0).toLocaleString('vi-VN')}đ</p>
+        {f.insurance_fee !== undefined && <p className="text-xs text-muted-foreground">Bảo hiểm: {f.insurance_fee.toLocaleString('vi-VN')}đ</p>}
       </div>
     );
   }
@@ -1166,7 +1166,7 @@ function formatResult(_action: string, data: any): React.ReactNode {
     const o = data.order;
     return (
       <div className="bg-green-900/30 border border-green-700/40 rounded-lg px-3 py-2">
-        <p className="text-sm font-medium text-green-300"><CheckIcon className="w-4 h-4 inline" /> Tao don thanh cong!</p>
+        <p className="text-sm font-medium text-green-300"><CheckIcon className="w-4 h-4 inline" /> Tạo đơn thành công!</p>
         <p className="text-xs text-green-400">Mã đơn: {o.code || o.id || o.orderId || '-'}</p>
       </div>
     );
@@ -1175,8 +1175,8 @@ function formatResult(_action: string, data: any): React.ReactNode {
   // Fallback
   return (
     <details className="text-xs">
-      <summary className="text-gray-400 cursor-pointer hover:text-gray-200">Xem dữ liệu thô</summary>
-      <pre className="bg-gray-900 rounded p-2 mt-1 overflow-x-auto text-green-300 text-[10px] max-h-40">{JSON.stringify(data, null, 2)}</pre>
+      <summary className="text-muted-foreground cursor-pointer hover:text-foreground">Xem dữ liệu thô</summary>
+      <pre className="bg-card rounded p-2 mt-1 overflow-x-auto text-green-300 text-[10px] max-h-40">{JSON.stringify(data, null, 2)}</pre>
     </details>
   );
 }
@@ -1271,7 +1271,7 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
   }, [selectedIntegration]);
 
   const executeStrict = useCallback(async (action: string, actionParams: Record<string, any>, fallbackMessage: string) => {
-    if (!selectedIntegration) throw new Error('Chua chon tich hop');
+    if (!selectedIntegration) throw new Error('Chưa chọn tích hợp');
 
     const res = DEV_MODE
       ? await fakeExecute(selectedIntegration.id, action, actionParams)
@@ -1321,7 +1321,7 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
         actionToExecute = 'getProducts';
       }
 
-      const res = await executeStrict(actionToExecute, cleanParams, 'Thao tac that bai');
+      const res = await executeStrict(actionToExecute, cleanParams, 'Thao tác thất bại');
       if (DEV_DEBUG) {
         console.log('[IntegrationQuickPanel] execute success data:', res?.data);
       }
@@ -1333,7 +1333,7 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
           : null,
       );
     } catch (e: any) {
-      const message = e?.message || 'Loi khong xac dinh';
+      const message = e?.message || 'Lỗi không xác định';
       const debugBlock = DEV_DEBUG && selectedIntegration && selectedAction
         ? buildDebugBlock(selectedAction.action, params)
         : '';
@@ -1365,14 +1365,14 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
   const showSidebar = !selectedAction;
 
   return (
-    <div className="h-full flex flex-col bg-gray-800 border-l border-gray-700 overflow-hidden" style={{ width: '20.625rem' }}>
+    <div className="h-full flex flex-col bg-card border-l border-border overflow-hidden" style={{ width: '20.625rem' }}>
         {/* ── Header ──────────────────────────────────────────── */}
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-700/60 flex-shrink-0 bg-gray-850">
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-border/60 flex-shrink-0 bg-card">
           <div className="flex items-center gap-3">
             <PluginIcon className="w-5 h-5" />
             <div>
-              <p className="text-sm font-semibold text-white">Tích hợp nhanh</p>
-              <p className="text-[11px] text-gray-400">
+              <p className="text-sm font-semibold text-foreground">Tích hợp nhanh</p>
+              <p className="text-[11px] text-muted-foreground">
                 {contextName ? <>Hội thoại: <span className="text-blue-400">{contextName}</span></> : 'Tra cứu đơn, sản phẩm, vận chuyển...'}
               </p>
             </div>
@@ -1380,10 +1380,10 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
           <div className="flex items-center gap-2">
             <button
               onClick={goToIntegrationPage}
-              className="text-[11px] px-3 py-1.5 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-blue-400 transition-colors border border-gray-600"
+              className="text-[11px] px-3 py-1.5 rounded-lg bg-muted hover:bg-accent text-foreground/80 hover:text-blue-400 transition-colors border border-input"
               title="Mở trang cấu hình Tích hợp"
             ><SettingsIcon className="w-4 h-4 inline" /></button>
-            <button onClick={onClose} className="text-gray-400 hover:text-blue-400 transition-colors p-1 rounded hover:bg-gray-700">
+            <button onClick={onClose} className="text-muted-foreground hover:text-blue-400 transition-colors p-1 rounded hover:bg-muted">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
               </svg>
@@ -1398,9 +1398,9 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
           </div>
         ) : !hasConnectedIntegrations ? (
           <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-            <div className="w-16 h-16 rounded-2xl bg-gray-800 flex items-center justify-center mb-4"><PluginIcon className="w-8 h-8" /></div>
-            <h3 className="text-base font-semibold text-white mb-2">Chưa có tích hợp nào được kết nối</h3>
-            <p className="text-sm text-gray-400 max-w-sm mb-6 leading-relaxed">
+            <div className="w-16 h-16 rounded-2xl bg-card flex items-center justify-center mb-4"><PluginIcon className="w-8 h-8" /></div>
+            <h3 className="text-base font-semibold text-foreground mb-2">Chưa có tích hợp nào được kết nối</h3>
+            <p className="text-sm text-muted-foreground max-w-sm mb-6 leading-relaxed">
               Hãy kết nối ít nhất một nền tảng (KiotViet, Haravan, Nhanh, Sepay, GHN…) để sử dụng tính năng tra cứu nhanh tại đây.
             </p>
             <button
@@ -1411,7 +1411,7 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
             </button>
             <div className="mt-6 flex flex-wrap gap-2 justify-center">
               {Object.entries(TYPE_META).map(([type, meta]) => (
-                <span key={type} className="flex items-center gap-1 px-2.5 py-1 bg-gray-800 rounded-lg text-xs text-gray-400 border border-gray-700/50">
+                <span key={type} className="flex items-center gap-1 px-2.5 py-1 bg-card rounded-lg text-xs text-muted-foreground border border-border/50">
                   <span className={`w-5 h-5 rounded ${meta.color} flex items-center justify-center text-white-important`}>{meta.icon}</span>
                   {meta.name}
                 </span>
@@ -1424,9 +1424,9 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
 
             {/* Left sidebar - icon-only compact list (ẩn khi đã chọn action) */}
             {showSidebar && (
-              <div className="w-12 flex-shrink-0 border-r border-gray-700/60 bg-gray-900/80 flex flex-col items-center py-2 gap-1">
+              <div className="w-12 flex-shrink-0 border-r border-border/60 bg-card/80 flex flex-col items-center py-2 gap-1">
                 {integrations.map(intg => {
-                  const meta = TYPE_META[intg.type] || { icon: <PluginIcon className="w-4 h-4" />, color: 'bg-gray-600', name: intg.type };
+                  const meta = TYPE_META[intg.type] || { icon: <PluginIcon className="w-4 h-4" />, color: 'bg-accent', name: intg.type };
                   const isActive = selectedIntegration?.id === intg.id;
                   return (
                     <div key={intg.id} className="relative">
@@ -1435,14 +1435,14 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
                         title={intg.name}
                         className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all
                           ${isActive
-                            ? `${meta.color} ring-2 ring-blue-400 ring-offset-1 ring-offset-gray-900`
+                            ? `${meta.color} ring-2 ring-blue-400 ring-offset-1 ring-offset-background`
                             : `${meta.color} opacity-60 hover:opacity-100`
                           }`}
                       >
                         {meta.icon}
                       </button>
                       {/* Green connected dot */}
-                      <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-green-500 border-2 border-gray-900 block" />
+                      <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-green-500 border-2 border-border block" />
                     </div>
                   );
                 })}
@@ -1450,7 +1450,7 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
                 <button
                   onClick={goToIntegrationPage}
                   title="Thêm tích hợp"
-                  className="mt-auto w-9 h-9 rounded-xl flex items-center justify-center text-gray-400 hover:text-blue-400 hover:bg-gray-800 transition-colors text-lg"
+                  className="mt-auto w-9 h-9 rounded-xl flex items-center justify-center text-muted-foreground hover:text-blue-400 hover:bg-card transition-colors text-lg"
                 >
                   +
                 </button>
@@ -1463,8 +1463,8 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
               {/* ── Action grid (chưa chọn action) ─────────────── */}
               {selectedIntegration && !selectedAction && (
                 <div className="flex-1 overflow-y-auto p-4">
-                  <p className="text-xs text-gray-400 mb-3">
-                    Chọn thao tác cho <span className="text-white font-medium">{selectedIntegration.name}</span>:
+                  <p className="text-xs text-muted-foreground mb-3">
+                    Chọn thao tác cho <span className="text-foreground font-medium">{selectedIntegration.name}</span>:
                   </p>
                   <div className="grid grid-cols-1 gap-2">
                     {actions.map(act => {
@@ -1476,12 +1476,12 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
                         <div key={act.action} className="relative group/act">
                           <button
                             onClick={() => setSelectedAction(act)}
-                            className="w-full flex items-center gap-3 p-3 pr-10 rounded-xl bg-gray-800 hover:bg-gray-750 border border-gray-700/60 hover:border-blue-500/50 transition-all text-left"
+                            className="w-full flex items-center gap-3 p-3 pr-10 rounded-xl bg-card hover:bg-muted border border-border/60 hover:border-blue-500/50 transition-all text-left"
                           >
                             <span className="flex-shrink-0">{ACTION_ICONS[act.action] || <span className="text-xl">{act.icon}</span>}</span>
                             <div className="min-w-0">
-                              <p className="text-sm font-medium text-gray-200 group-hover/act:text-blue-400">{act.label}</p>
-                              <p className="text-[11px] text-gray-400 leading-snug">{act.desc}</p>
+                              <p className="text-sm font-medium text-foreground group-hover/act:text-blue-400">{act.label}</p>
+                              <p className="text-[11px] text-muted-foreground leading-snug">{act.desc}</p>
                             </div>
                           </button>
                           {/* Pin button */}
@@ -1499,7 +1499,7 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
                             className={`absolute top-1/2 -translate-y-1/2 right-2.5 w-7 h-7 rounded-lg flex items-center justify-center text-sm transition-all
                               ${isPinned
                                 ? 'text-yellow-400 bg-yellow-400/10 hover:bg-red-500/15 hover:text-red-400'
-                                : 'text-gray-400 hover:text-yellow-400 hover:bg-yellow-400/10 opacity-0 group-hover/act:opacity-100'}`}
+                                : 'text-muted-foreground hover:text-yellow-400 hover:bg-yellow-400/10 opacity-0 group-hover/act:opacity-100'}`}
                           >
                             {isPinned ? <PinIcon className="w-4 h-4" /> : <MapPinIcon className="w-4 h-4" />}
                           </button>
@@ -1525,7 +1525,7 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
                     })}
                   </div>
                   {!actions.length && (
-                    <p className="text-sm text-gray-400 text-center py-10">Chưa có thao tác nào cho {selectedIntegration.name}</p>
+                    <p className="text-sm text-muted-foreground text-center py-10">Chưa có thao tác nào cho {selectedIntegration.name}</p>
                   )}
                 </div>
               )}
@@ -1538,10 +1538,10 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
                   integrationName={selectedIntegration.name}
                   onBack={handleBackToActions}
                   onExecuteSearch={async (action, searchParams) => {
-                    return executeStrict(action, searchParams, 'Tra cuu san pham that bai');
+                    return executeStrict(action, searchParams, 'Tra cứu sản phẩm thất bại');
                   }}
                   onSubmitOrder={async (orderData) => {
-                    return executeStrict('createOrder', orderData, 'Tao don that bai');
+                    return executeStrict('createOrder', orderData, 'Tạo đơn thất bại');
                   }}
                   contextPhone={contextPhone}
                   contextName={contextName}
@@ -1554,14 +1554,14 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
                   {/* Back + action header */}
                   <div className="flex items-center gap-2">
                     <button onClick={handleBackToActions}
-                      className="text-gray-400 hover:text-white transition-colors p-1 rounded hover:bg-gray-800">
+                      className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded hover:bg-card">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                         <polyline points="15 18 9 12 15 6"/>
                       </svg>
                     </button>
                     <div className="min-w-0 flex-1">
-                      <span className="text-base font-semibold text-white flex items-center gap-1.5">{ACTION_ICONS[selectedAction.action] || <span className="text-base">{selectedAction.icon}</span>} {selectedAction.label}</span>
-                      <span className="text-[10px] text-gray-400 ml-2">({selectedIntegration.name})</span>
+                      <span className="text-base font-semibold text-foreground flex items-center gap-1.5">{ACTION_ICONS[selectedAction.action] || <span className="text-base">{selectedAction.icon}</span>} {selectedAction.label}</span>
+                      <span className="text-[10px] text-muted-foreground ml-2">({selectedIntegration.name})</span>
                     </div>
                     {/* Pin button in detail view */}
                     <div className="relative flex-shrink-0">
@@ -1583,7 +1583,7 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
                               }}
                               title={isPinned ? 'Gỡ ghim khỏi toolbar' : 'Ghim tính năng này ra thanh toolbar'}
                               className={`w-7 h-7 rounded-lg flex items-center justify-center text-sm transition-colors
-                                ${isPinned ? 'text-yellow-400 bg-yellow-400/10 hover:bg-red-500/15 hover:text-red-400' : 'text-gray-400 hover:text-yellow-400 hover:bg-yellow-400/10'}`}
+                                ${isPinned ? 'text-yellow-400 bg-yellow-400/10 hover:bg-red-500/15 hover:text-red-400' : 'text-muted-foreground hover:text-yellow-400 hover:bg-yellow-400/10'}`}
                             >
                               {isPinned ? <PinIcon className="w-4 h-4" /> : <MapPinIcon className="w-4 h-4" />}
                             </button>
@@ -1613,15 +1613,15 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
                   <div className="space-y-3">
                     {selectedAction.fields.map(field => (
                       <div key={field.key}>
-                        <label className="block text-xs text-gray-400 mb-1.5 font-medium">
+                        <label className="block text-xs text-muted-foreground mb-1.5 font-medium">
                           {field.label}
-                          {field.optional && <span className="text-gray-400 font-normal ml-1">(tùy chọn)</span>}
+                          {field.optional && <span className="text-muted-foreground font-normal ml-1">(tùy chọn)</span>}
                         </label>
                         {field.type === 'select' ? (
                           <select
                             value={params[field.key] || ''}
                             onChange={e => setParams(p => ({ ...p, [field.key]: e.target.value }))}
-                            className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors"
+                            className="w-full bg-card border border-border rounded-xl px-3 py-2 text-sm text-foreground focus:outline-none focus:border-blue-500 transition-colors"
                           >
                             {field.options?.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
                           </select>
@@ -1632,7 +1632,7 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
                             onChange={e => setParams(p => ({ ...p, [field.key]: e.target.value }))}
                             placeholder={field.placeholder}
                             onKeyDown={e => { if (e.key === 'Enter') handleExecute(); }}
-                            className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500 transition-colors"
+                            className="w-full bg-card border border-border rounded-xl px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 transition-colors"
                             autoFocus={selectedAction.fields.indexOf(field) === 0}
                           />
                         )}
@@ -1648,7 +1648,7 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
                         <Spinner size={4} />
                         Đang thực hiện...
                       </span>
-                    ) : <span className="flex items-center gap-1.5">{ACTION_ICONS[selectedAction.action] || <span className="text-base">{selectedAction.icon}</span>} Thuc hien</span>}
+                    ) : <span className="flex items-center gap-1.5">{ACTION_ICONS[selectedAction.action] || <span className="text-base">{selectedAction.icon}</span>} Thực hiện</span>}
                   </button>
 
                   {/* Error */}
@@ -1661,14 +1661,14 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
                   {/* Result */}
                   {result !== null && !error && (
                     <div>
-                      <p className="text-xs text-gray-400 mb-2 font-medium"><ChartIcon className="w-4 h-4 inline" /> Ket qua:</p>
+                      <p className="text-xs text-muted-foreground mb-2 font-medium"><ChartIcon className="w-4 h-4 inline" /> Kết quả:</p>
                       {formatResult(selectedAction.action, result)}
                       {resultMeta && PAGED_ACTIONS.has(executedAction || selectedAction.action) && (
-                        <div className="mt-3 flex items-center justify-between gap-2 text-[11px] text-gray-400">
+                        <div className="mt-3 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
                           <button
                             onClick={() => handlePageChange(resultMeta.page - 1)}
                             disabled={executing || resultMeta.page <= 1}
-                            className="px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 disabled:opacity-40 hover:border-blue-500/40"
+                            className="px-3 py-1.5 rounded-lg bg-card border border-border disabled:opacity-40 hover:border-blue-500/40"
                           >
                             ← Trang trước
                           </button>
@@ -1679,7 +1679,7 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
                           <button
                             onClick={() => handlePageChange(resultMeta.page + 1)}
                             disabled={executing || !resultMeta.hasNext}
-                            className="px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 disabled:opacity-40 hover:border-blue-500/40"
+                            className="px-3 py-1.5 rounded-lg bg-card border border-border disabled:opacity-40 hover:border-blue-500/40"
                           >
                             Trang sau →
                           </button>
@@ -1692,7 +1692,7 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
 
               {!selectedIntegration && (
                 <div className="flex-1 flex items-center justify-center">
-                  <p className="text-sm text-gray-400">← Chọn một tích hợp</p>
+                  <p className="text-sm text-muted-foreground">← Chọn một tích hợp</p>
                 </div>
               )}
             </div>

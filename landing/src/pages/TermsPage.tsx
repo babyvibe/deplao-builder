@@ -164,18 +164,6 @@ export default function TermsPage() {
             </ul>
           </section>
 
-          {/* Section 7 */}
-          <section className="glass rounded-2xl border border-white/5 p-6 md:p-8">
-            <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
-              <span className="text-blue-400">7.</span> Sở hữu trí tuệ
-            </h2>
-            <p className="text-slate-400 text-sm leading-relaxed">
-              Deplao và tất cả tài liệu liên quan là tài sản trí tuệ của <strong className="text-white">DepLao Team</strong>.
-              Nghiêm cấm sao chép, phân phối lại, reverse-engineer hoặc bán lại phần mềm dưới bất kỳ hình thức nào
-              khi chưa có sự đồng ý bằng văn bản.
-            </p>
-          </section>
-
           {/* Section 8 */}
           <section className="glass rounded-2xl border border-white/5 p-6 md:p-8">
             <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">

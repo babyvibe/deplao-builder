@@ -1,6 +1,6 @@
 {
   "name": "Deplao",
-  "version": "26.10.0",
+  "version": "26.10.1",
   "description": "Phần mềm desktop quản lý Zalo, Facebook & Telegram cá nhân Đa tài khoản tích hợp CRM, ERP, POS, Workflow và AI Assistant giúp đội nhóm bán hàng, chăm sóc khách hàng và marketing trên Zalo vận hành tập trung trong một ứng dụng duy nhất.",
   "main": "dist-electron/electron/bootstrap.js",
   "scripts": {
@@ -18,13 +18,14 @@
   "homepage": "https://deplaoapp.com",
   "license": "MIT",
   "dependencies": {
+    "@ngrok/ngrok": "^1.7.0",
     "axios": "^1.7.8",
     "axios-cookiejar-support": "^5.0.3",
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^12.9.0",
     "bytenode": "^1.5.7",
-    "@ngrok/ngrok": "^1.7.0",
     "cloudflared": "^0.7.1",
+    "clsx": "^2.1.1",
     "dompurify": "^3.4.1",
     "electron-store": "^8.2.0",
     "electron-updater": "^6.8.3",
@@ -51,11 +52,13 @@
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
     "socks-proxy-agent": "^10.0.0",
+    "tailwind-merge": "^3.7.0",
     "telegram": "^2.26.22",
     "tough-cookie": "^5.0.0",
     "uuid": "^13.0.0",
     "xlsx": "^0.18.5",
-    "zca-js": "^2.1.2"
+    "xz-decompress": "^0.2.3",
+    "zca-js": "^2.2.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
@@ -134,7 +137,9 @@
       "node_modules/@ngrok/ngrok/**",
       "node_modules/better-sqlite3/**",
       "node_modules/cloudflared/**",
-      "node_modules/ffmpeg-static/**"
+      "node_modules/ffmpeg-static/**",
+      "dist-electron/src/services/plugins/plugin-worker.js",
+      "dist-electron/src/services/cloudflare/dbsync/**"
     ],
     "afterPack": "./scripts/after-pack.js",
     "win": {

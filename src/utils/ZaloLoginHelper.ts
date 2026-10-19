@@ -1,8 +1,9 @@
-import { API, CloseReason, Credentials, LoginQRCallbackEventType, ThreadType, Zalo } from "zca-js";
+import { API, CloseReason, Credentials, LoginQRCallbackEventType, Zalo } from "zca-js";
 import ConnectionManager from "./ConnectionManager";
 import Logger from "./Logger";
 import EventBroadcaster, { registerGroupCacheInvalidator } from "../services/event/EventBroadcaster";
 import DatabaseService from "../services/database/DatabaseService";
+import MobileSyncService from "../services/zalo/mobileSync/MobileSyncService";
 import * as fs from "fs";
 import { imageSize } from "image-size";
 import { extractUserProfile } from "./profileUtils";
@@ -668,20 +669,13 @@ class ZaloLoginHelper {
         return await zalo.login(credentials as Credentials);
     }
 
-    public async requestOldMessages(auth: { cookies: string; imei: string; userAgent: string }): Promise<boolean> {
+    /** ID hội thoại "My Documents" của tài khoản (zca-js `loginInfo.send2me_id`), '' nếu phiên không có. */
+    private static readSend2MeId(connection: any): string {
         try {
-            const connection = await ConnectionManager.getOrCreateConnection(auth, true);
-            const zaloId = connection.api.getOwnId();
-
-            if (ConnectionManager.isConnected(zaloId)) {
-                connection.api.listener.requestOldMessages(ThreadType.User, null);
-                connection.api.listener.requestOldMessages(ThreadType.Group, null);
-                return true;
-            }
-            return false;
-        } catch (error: any) {
-            Logger.error(`[ZaloLoginHelper] requestOldMessages failed: ${error.message}`);
-            return false;
+            const id = connection?.api?.getContext?.()?.loginInfo?.send2me_id;
+            return id ? String(id) : '';
+        } catch {
+            return '';
         }
     }
 
@@ -690,6 +684,12 @@ class ZaloLoginHelper {
      */
     private setupEventListeners(zaloId: string, connection: any): void {
         const { listener } = connection;
+        // My Documents của Zalo = hội thoại riêng có ID trong phiên đăng nhập (KHÔNG phải UID của chính mình)
+        const send2meId = ZaloLoginHelper.readSend2MeId(connection);
+        if (send2meId) {
+            try { DatabaseService.getInstance().setAccountSend2MeId(zaloId, send2meId); } catch {}
+        }
+        Logger.log(`[ZaloLoginHelper] ${zaloId} My Documents thread = ${send2meId || '(phiên không có send2me_id)'}`);
 
         listener.on("message", async (message: any) => {
             try {
@@ -913,31 +913,6 @@ class ZaloLoginHelper {
             } catch {}
         });
 
-        listener.on("old_messages", async (messages: any[]) => {
-            Logger.log(`[ZaloLoginHelper] 📩 RAW old_messages event: ${messages.length} messages`);
-            try {
-                // ⚠️ FIX: Xử lý theo batch thay vì tuần tự từng tin.
-                // Loop tuần tự 500+ tin → flood IPC → renderer unresponsive → màn đen.
-                // Giải pháp: batch 50 tin song song + yield event loop giữa các batch.
-                const BATCH_SIZE = 50;
-                for (let i = 0; i < messages.length; i += BATCH_SIZE) {
-                    const batch = messages.slice(i, i + BATCH_SIZE);
-                    await Promise.allSettled(
-                        batch.map((message: any) => {
-                            message.zaloId = zaloId;
-                            return EventBroadcaster.broadcastMessage(zaloId, message, { silent: true });
-                        })
-                    );
-                    // Yield event loop giữa các batch để main process xử lý IPC khác
-                    if (i + BATCH_SIZE < messages.length) {
-                        await new Promise<void>((r) => setTimeout(r, 30));
-                    }
-                }
-            } catch (error: any) {
-                Logger.error(`[ZaloLoginHelper] old_messages error: ${error.message}`);
-            }
-        });
-
         listener.on("friend_event", async (event: any) => {
             Logger.log(`[ZaloLoginHelper] 📩 RAW friend_event event: ${JSON.stringify(event)}`);
             try {
@@ -1070,7 +1045,7 @@ class ZaloLoginHelper {
             Logger.log(`[ZaloLoginHelper] ${zaloId} ✅ Connected`);
             ConnectionManager.setConnected(zaloId, true);
             DatabaseService.getInstance().setListenerActive(zaloId, true);
-            EventBroadcaster.broadcastConnected(zaloId, { zaloId });
+            EventBroadcaster.broadcastConnected(zaloId, { zaloId, send2meId });
         });
 
         const handleDisconnection = (eventType: string, code: CloseReason, reason: string) => {
@@ -1123,6 +1098,9 @@ class ZaloLoginHelper {
         listener.on("error", (error: any) => {
             Logger.error(`[ZaloLoginHelper] ${zaloId} error: ${error?.message || error}`);
         });
+
+        // Đồng bộ tin nhắn từ điện thoại: API pullMobile/znoise + control event "syncmsgmb"
+        MobileSyncService.getInstance().attachToApi(zaloId, connection.api);
 
         listener.start();
         ConnectionManager.setListenerStarted(zaloId, true);

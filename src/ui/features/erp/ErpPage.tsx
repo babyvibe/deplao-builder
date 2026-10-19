@@ -106,9 +106,9 @@ export default function ErpPage() {
   ];
 
   return (
-    <div className="flex flex-col h-full bg-gray-900 overflow-hidden">
+    <div className="flex flex-col h-full bg-background overflow-hidden">
       {/* ERP top navigation */}
-      <div className="flex items-center gap-1 px-4 py-2 border-b border-gray-700/60 bg-gray-900 flex-shrink-0">
+      <div className="flex items-center gap-1 px-4 py-2 border-b border-border/60 bg-card flex-shrink-0">
         <div className="flex items-center gap-1.5 mr-4">
           <span className="text-blue-400">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -119,7 +119,7 @@ export default function ErpPage() {
               <rect x="16" y="17" width="6" height="6" rx="1"/>
             </svg>
           </span>
-          <span className="text-white font-semibold text-sm">Quản lý công việc</span>
+          <span className="text-foreground font-semibold text-sm">Quản lý công việc</span>
         </div>
 
         {navItems.filter(i => i.show !== false).map(item => (
@@ -129,7 +129,7 @@ export default function ErpPage() {
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
               subView === item.id
                 ? 'bg-blue-600 text-white'
-                : 'text-gray-400 hover:bg-gray-700/60 hover:text-gray-200'
+                : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
             }`}
           >
             {item.icon}

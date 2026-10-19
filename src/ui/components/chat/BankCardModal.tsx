@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
-import ipc from '@/lib/ipc';
+import ipc, { buildZaloAuth } from '@/lib/ipc';
+import DataAccessor from '@/lib/data/DataAccessor';
 import { cacheSentBankCard } from '@/lib/bankCardCache';
 
 // Danh sách ngân hàng phổ biến Việt Nam (BinBankCard enum values)
@@ -82,7 +83,8 @@ export default function BankCardModal({ threadId, threadType, onClose }: Props) 
     if (!activeAccountId) return;
     setLoading(true);
     try {
-      const res = await ipc.db?.getBankCards({ zaloId: activeAccountId });
+      // DataAccessor: chế độ nhân viên đọc thẻ từ Boss (IPC trả stub rỗng → danh sách thẻ trống); lỗi giữ danh sách cũ
+      const res = await DataAccessor.getBankCards({ zaloId: activeAccountId });
       if (res?.success) setCards(res.cards || []);
     } catch { }
     setLoading(false);
@@ -114,6 +116,9 @@ export default function BankCardModal({ threadId, threadType, onClose }: Props) 
         setEditMode('list');
         setEditCard(null);
         loadCards();
+      } else {
+        // Nhân viên: thẻ lưu trên Boss — Boss từ chối / mất kết nối thì báo (trước đây im lặng)
+        showNotification('Lỗi lưu thẻ: ' + ((res as any)?.error || 'không lưu được'), 'error');
       }
     } catch (e: any) {
       showNotification('Lỗi lưu thẻ: ' + (e.message || ''), 'error');
@@ -123,7 +128,11 @@ export default function BankCardModal({ threadId, threadType, onClose }: Props) 
   const handleDelete = async (id: number) => {
     if (!activeAccountId) return;
     try {
-      await ipc.db?.deleteBankCard({ zaloId: activeAccountId, id });
+      const res: any = await ipc.db?.deleteBankCard({ zaloId: activeAccountId, id });
+      if (res?.success === false) {
+        showNotification('Lỗi xóa thẻ: ' + (res.error || 'không xóa được'), 'error');
+        return;
+      }
       showNotification('Đã xóa thẻ ngân hàng', 'success');
       loadCards();
     } catch { }
@@ -133,7 +142,7 @@ export default function BankCardModal({ threadId, threadType, onClose }: Props) 
     if (!activeAccountId || !threadId) return;
     const accObj = useAccountStore.getState().accounts.find(a => a.zalo_id === activeAccountId);
     if (!accObj) return;
-    const auth = { cookies: accObj.cookies, imei: accObj.imei, userAgent: accObj.user_agent };
+    const auth = buildZaloAuth(accObj);
     setSending(card.id ?? -1);
     try {
       // Cache bank data trước khi gửi → BankCardBubble dùng để render UI
@@ -179,10 +188,10 @@ export default function BankCardModal({ threadId, threadType, onClose }: Props) 
       className="fixed inset-0 z-[9999] bg-black/50 flex items-center justify-center"
       onClick={handleOverlayClick}
     >
-      <div className="bg-gray-800 rounded-xl border border-gray-700 shadow-xl w-[480px] max-h-[85vh] flex flex-col overflow-hidden">
+      <div className="bg-card rounded-xl border border-border shadow-xl w-[480px] max-h-[85vh] flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
-          <h3 className="text-white font-semibold text-sm flex items-center gap-2">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+          <h3 className="text-foreground font-semibold text-sm flex items-center gap-2">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-400">
               <rect x="2" y="4" width="20" height="16" rx="2" /><line x1="2" y1="10" x2="22" y2="10" />
               <line x1="6" y1="14" x2="10" y2="14" /><line x1="6" y1="17" x2="14" y2="17" />
@@ -198,7 +207,7 @@ export default function BankCardModal({ threadId, threadType, onClose }: Props) 
                 + Thêm thẻ
               </button>
             )}
-            <button onClick={onClose} className="text-gray-400 hover:text-white p-1 rounded transition-colors">
+            <button onClick={onClose} className="text-muted-foreground hover:text-foreground p-1 rounded transition-colors">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M18 6L6 18M6 6l12 12" />
               </svg>
@@ -213,7 +222,7 @@ export default function BankCardModal({ threadId, threadType, onClose }: Props) 
             <div className="space-y-3">
               {/* Ngân hàng */}
               <div className="space-y-1">
-                <label className="text-gray-400 text-xs">Ngân hàng *</label>
+                <label className="text-muted-foreground text-xs">Ngân hàng *</label>
                 <select
                   value={editCard.bin_bank || 0}
                   onChange={(e) => {
@@ -221,7 +230,7 @@ export default function BankCardModal({ threadId, threadType, onClose }: Props) 
                     const bankInfo = BANK_LIST.find(b => b.bin === bin);
                     setEditCard({ ...editCard, bin_bank: bin, bank_name: bankInfo?.name || '' });
                   }}
-                  className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+                  className="w-full bg-muted border border-input rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:border-blue-500"
                 >
                   <option value={0}>-- Chọn ngân hàng --</option>
                   {BANK_LIST.map(b => (
@@ -232,30 +241,30 @@ export default function BankCardModal({ threadId, threadType, onClose }: Props) 
 
               {/* Số tài khoản */}
               <div className="space-y-1">
-                <label className="text-gray-400 text-xs">Số tài khoản *</label>
+                <label className="text-muted-foreground text-xs">Số tài khoản *</label>
                 <input
                   type="text"
                   value={editCard.account_number || ''}
                   onChange={(e) => setEditCard({ ...editCard, account_number: e.target.value })}
                   placeholder="Nhập số tài khoản"
-                  className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+                  className="w-full bg-muted border border-input rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:border-blue-500"
                 />
               </div>
 
               {/* Tên chủ tài khoản */}
               <div className="space-y-1">
-                <label className="text-gray-400 text-xs">Tên chủ tài khoản</label>
+                <label className="text-muted-foreground text-xs">Tên chủ tài khoản</label>
                 <input
                   type="text"
                   value={editCard.account_name || ''}
                   onChange={(e) => setEditCard({ ...editCard, account_name: e.target.value.toUpperCase() })}
                   placeholder="VD: NGUYEN VAN A"
-                  className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-sm text-white uppercase focus:outline-none focus:border-blue-500"
+                  className="w-full bg-muted border border-input rounded-md px-3 py-2 text-sm text-foreground uppercase focus:outline-none focus:border-blue-500"
                 />
               </div>
 
               {/* Mặc định */}
-              <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+              <label className="flex items-center gap-2 text-sm text-foreground/80 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={!!editCard.is_default}
@@ -276,7 +285,7 @@ export default function BankCardModal({ threadId, threadType, onClose }: Props) 
                 </button>
                 <button
                   onClick={() => { setEditMode('list'); setEditCard(null); }}
-                  className="px-4 bg-gray-600 hover:bg-gray-500 text-white text-sm py-2 rounded-md transition-colors"
+                  className="px-4 bg-accent hover:bg-accent text-foreground text-sm py-2 rounded-md transition-colors"
                 >
                   Hủy
                 </button>
@@ -286,10 +295,10 @@ export default function BankCardModal({ threadId, threadType, onClose }: Props) 
             /* ─── Danh sách thẻ ───────────────────────── */
             <>
               {loading ? (
-                <div className="text-center text-gray-400 py-8 text-sm">Đang tải...</div>
+                <div className="text-center text-muted-foreground py-8 text-sm">Đang tải...</div>
               ) : cards.length === 0 ? (
                 <div className="text-center py-8">
-                  <div className="text-gray-400 text-sm mb-3">Chưa có thẻ ngân hàng nào</div>
+                  <div className="text-muted-foreground text-sm mb-3">Chưa có thẻ ngân hàng nào</div>
                   <button
                     onClick={() => { setEditCard({ bin_bank: 0, account_number: '', account_name: '', is_default: 0 }); setEditMode('form'); }}
                     className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-md transition-colors"
@@ -302,19 +311,19 @@ export default function BankCardModal({ threadId, threadType, onClose }: Props) 
                   {cards.map((card) => (
                     <div
                       key={card.id}
-                      className="bg-gray-700/60 border border-gray-600 rounded-lg p-3 hover:border-blue-500/50 transition-colors group"
+                      className="bg-muted/60 border border-input rounded-lg p-3 hover:border-blue-500/50 transition-colors group"
                     >
                       <div className="flex items-start justify-between">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-1">
-                            <span className="font-semibold text-white text-sm">{card.bank_name}</span>
+                            <span className="font-semibold text-foreground text-sm">{card.bank_name}</span>
                             {card.is_default === 1 && (
                               <span className="text-[10px] bg-blue-600/30 text-blue-300 px-1.5 py-0.5 rounded">Mặc định</span>
                             )}
                           </div>
-                          <div className="text-gray-300 text-sm font-mono">{card.account_number}</div>
+                          <div className="text-foreground/80 text-sm font-mono">{card.account_number}</div>
                           {card.account_name && (
-                            <div className="text-gray-400 text-xs mt-0.5">{card.account_name}</div>
+                            <div className="text-muted-foreground text-xs mt-0.5">{card.account_name}</div>
                           )}
                         </div>
                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -337,7 +346,7 @@ export default function BankCardModal({ threadId, threadType, onClose }: Props) 
                           </button>
                           <button
                             onClick={() => { setEditCard(card); setEditMode('form'); }}
-                            className="text-gray-400 hover:text-blue-400 p-1.5 rounded transition-colors"
+                            className="text-muted-foreground hover:text-blue-400 p-1.5 rounded transition-colors"
                             title="Sửa"
                           >
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -347,7 +356,7 @@ export default function BankCardModal({ threadId, threadType, onClose }: Props) 
                           </button>
                           <button
                             onClick={() => card.id && handleDelete(card.id)}
-                            className="text-gray-400 hover:text-red-400 p-1.5 rounded transition-colors"
+                            className="text-muted-foreground hover:text-red-400 p-1.5 rounded transition-colors"
                             title="Xóa"
                           >
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

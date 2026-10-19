@@ -89,20 +89,20 @@ export default function ScanResultTable({
   return (
     <div className="flex flex-col h-full">
       {/* Toolbar */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-700 bg-gray-800/40 flex-shrink-0">
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-card/40 flex-shrink-0">
         <div className="relative flex-1 max-w-xs">
           <input
             type="text"
             value={searchText}
             onChange={handleSearchChange}
             placeholder="🔍 Lọc kết quả..."
-            className="w-full bg-gray-700/60 text-gray-200 text-xs rounded-lg pl-8 pr-3 py-1.5 border border-gray-600/50 focus:outline-none focus:border-blue-500 placeholder-gray-500"
+            className="w-full bg-muted/60 text-foreground text-xs rounded-lg pl-8 pr-3 py-1.5 border border-input/50 focus:outline-none focus:border-blue-500 placeholder-subtle-foreground"
           />
-          <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
         </div>
-        <span className="text-xs text-gray-400">
+        <span className="text-xs text-muted-foreground">
           {totalItems !== undefined && totalItems !== items.length ? (
             <>{processed.length} / {items.length} (lọc từ {totalItems})</>
           ) : (
@@ -140,24 +140,24 @@ export default function ScanResultTable({
           <div className="flex items-center justify-center h-full">
             <div className="flex flex-col items-center gap-3">
               <Spinner size={8} />
-              <p className="text-sm text-gray-400">Đang quét dữ liệu...</p>
+              <p className="text-sm text-muted-foreground">Đang quét dữ liệu...</p>
             </div>
           </div>
         ) : items.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-gray-400">
+          <div className="flex items-center justify-center h-full text-muted-foreground">
             <p className="text-sm">Chưa có dữ liệu. Nhập thông tin và nhấn "Bắt đầu quét".</p>
           </div>
         ) : (
           <table className="w-full text-xs">
-            <thead className="sticky top-0 bg-gray-800/90 backdrop-blur z-10">
-              <tr className="border-b border-gray-700">
+            <thead className="sticky top-0 bg-card/90 backdrop-blur z-10">
+              <tr className="border-b border-border">
                 {/* Copy UID column */}
-                <th className="px-2 py-2 text-left font-medium text-gray-400 w-8"><LinkIcon className="w-4 h-4" /></th>
+                <th className="px-2 py-2 text-left font-medium text-muted-foreground w-8"><LinkIcon className="w-4 h-4" /></th>
                 {columns.map(col => (
                   <th
                     key={col.key}
                     onClick={() => handleSort(col.key)}
-                    className="px-3 py-2 text-left font-medium text-gray-400 cursor-pointer hover:text-white whitespace-nowrap select-none"
+                    className="px-3 py-2 text-left font-medium text-muted-foreground cursor-pointer hover:text-foreground whitespace-nowrap select-none"
                   >
                     <span className="inline-flex items-center gap-1">
                       {col.label}
@@ -174,7 +174,7 @@ export default function ScanResultTable({
                 ))}
                 {/* Batch source column (if any item has _batchSource) */}
                 {items.some((i: any) => i._batchSource) && (
-                  <th className="px-3 py-2 text-left font-medium text-gray-400 whitespace-nowrap">Nguồn</th>
+                  <th className="px-3 py-2 text-left font-medium text-muted-foreground whitespace-nowrap">Nguồn</th>
                 )}
               </tr>
             </thead>
@@ -183,13 +183,13 @@ export default function ScanResultTable({
                 const uid = item.uid || item.commentId || item.postId || item.authorId || item.reactorId || '';
                 return (
                   <tr key={uid || idx}
-                    className="border-b border-gray-700/50 hover:bg-gray-700/30 transition-colors">
+                    className="border-b border-border/50 hover:bg-muted/30 transition-colors">
                     {/* Copy UID button */}
                     <td className="px-2 py-2">
                       {uid && (
                         <button
                           onClick={(e) => { e.stopPropagation(); copyUid(uid); }}
-                          className="p-1 rounded hover:bg-blue-700/40 text-gray-400 hover:text-blue-300 transition-colors"
+                          className="p-1 rounded hover:bg-blue-700/40 text-muted-foreground hover:text-blue-300 transition-colors"
                           title={`Copy ${uid}`}
                         >
                           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -199,7 +199,7 @@ export default function ScanResultTable({
                       )}
                     </td>
                     {columns.map(col => (
-                      <td key={col.key} className="px-3 py-2 text-gray-300 max-w-[300px] truncate">
+                      <td key={col.key} className="px-3 py-2 text-foreground/80 max-w-[300px] truncate">
                         {col.key === 'index' ? page * pageSize + idx + 1
                           : col.key === 'timestamp' ? formatTimestamp(item[col.key])
                           : col.key === 'picture' || col.key === 'reactorAvatar' || col.key === 'authorAvatar' ? (
@@ -221,14 +221,14 @@ export default function ScanResultTable({
                             </button>
                           )
                           : col.key === 'postId' && item[col.key] ? (
-                            <span className="font-mono text-[10px] text-gray-400">{item[col.key]}</span>
+                            <span className="font-mono text-[10px] text-muted-foreground">{item[col.key]}</span>
                           )
                           : item[col.key] ?? ''}
                       </td>
                     ))}
                     {/* Batch source */}
                     {item._batchSource && (
-                      <td className="px-3 py-2 text-gray-400 max-w-[120px] truncate text-[10px]" title={item._batchSource}>
+                      <td className="px-3 py-2 text-muted-foreground max-w-[120px] truncate text-[10px]" title={item._batchSource}>
                         {item._batchSource}
                       </td>
                     )}
@@ -241,22 +241,22 @@ export default function ScanResultTable({
       </div>
 
       {/* Pagination + Load More */}
-      <div className="flex items-center justify-between px-4 py-2 border-t border-gray-700 bg-gray-800/40 flex-shrink-0">
+      <div className="flex items-center justify-between px-4 py-2 border-t border-border bg-card/40 flex-shrink-0">
         <div className="flex items-center gap-2">
           <button
             onClick={() => handlePageChange(page - 1)}
             disabled={page === 0}
-            className="px-2.5 py-1 rounded text-xs bg-gray-700 text-gray-300 hover:bg-gray-600 disabled:opacity-30"
+            className="px-2.5 py-1 rounded text-xs bg-muted text-foreground/80 hover:bg-accent disabled:opacity-30"
           >
             ◀ Trước
           </button>
-          <span className="text-xs text-gray-400">
+          <span className="text-xs text-muted-foreground">
             {page + 1} / {totalPages}
           </span>
           <button
             onClick={() => handlePageChange(page + 1)}
             disabled={page >= totalPages - 1}
-            className="px-2.5 py-1 rounded text-xs bg-gray-700 text-gray-300 hover:bg-gray-600 disabled:opacity-30"
+            className="px-2.5 py-1 rounded text-xs bg-muted text-foreground/80 hover:bg-accent disabled:opacity-30"
           >
             Sau ▶
           </button>

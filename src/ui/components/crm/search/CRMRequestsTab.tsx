@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
 import { useCRMStore } from '@/store/crmStore';
-import DataAccessor from '@/lib/data/DataAccessor';
+import DataAccessor, { isReadFailure } from '@/lib/data/DataAccessor';
+import { useEmployeeResync } from '@/hooks/useEmployeeResync';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
 import { extractApiError } from '@/utils/apiError';
 import { UserProfilePopup } from '../../common/UserProfilePopup';
@@ -42,13 +43,14 @@ export default function CRMRequestsTab() {
         DataAccessor.getFriendRequests({ zaloId: activeAccountId, direction: 'received' }),
         DataAccessor.getFriendRequests({ zaloId: activeAccountId, direction: 'sent' }),
       ]);
-      if (recRes?.requests) {
+      // Lỗi đọc (employee: mất kết nối BOSS) ≠ 0 lời mời: giữ danh sách + số + chấm đỏ đang hiện
+      if (recRes?.requests && !isReadFailure(recRes)) {
         setRequests(recRes.requests);
         setRequestCount(recRes.requests.length);
         if (recRes.requests.length === 0) clearCRMRequestUnseen(activeAccountId);
         count += recRes.requests.length;
       }
-      if (sentRes?.requests) { setSentRequests(sentRes.requests); count += sentRes.requests.length; }
+      if (sentRes?.requests && !isReadFailure(sentRes)) { setSentRequests(sentRes.requests); count += sentRes.requests.length; }
     } catch {}
     setRequestsLoading(false);
     return count;
@@ -217,12 +219,31 @@ export default function CRMRequestsTab() {
       }
     });
 
+    // Đã thành bạn bè (chấp nhận ở máy khác / trên điện thoại): Boss xoá cả lời mời gửi + nhận của người này
+    const unsubAccepted = ipc.on?.('event:friendAccepted', (data: any) => {
+      if (!activeAccountId || data?.zaloId !== activeAccountId) return;
+      const userId = String(data?.userId || '');
+      if (!userId) return;
+      setRequests(prev => {
+        if (!prev.some(r => r.userId === userId)) return prev;
+        const next = prev.filter(r => r.userId !== userId);
+        setRequestCount(next.length);
+        if (next.length === 0) clearCRMRequestUnseen(activeAccountId);
+        return next;
+      });
+      setSentRequests(prev => (prev.some(r => r.userId === userId) ? prev.filter(r => r.userId !== userId) : prev));
+    });
+
     return () => {
       unsubIncoming?.();
       unsubSent?.();
       unsubRemoved?.();
+      unsubAccepted?.();
     };
   }, [activeAccountId]);
+
+  // Chế độ nhân viên: kết nối BOSS phục hồi → đọc lại lời mời (đổi trong lúc mất kết nối không có event)
+  useEmployeeResync(() => (initialLoaded ? loadRequestsFromDb() : undefined));
 
   // ─── Nav event: click desktop notification → chuyển sang tab Lời mời ─
   useEffect(() => {
@@ -235,14 +256,14 @@ export default function CRMRequestsTab() {
     <div className="h-full flex flex-col">
 
       {/* ── Sticky header: sub-tabs + toolbar ────────────────────────── */}
-      <div className="flex-shrink-0 px-4 pt-4 pb-2 border-b border-gray-700/60">
+      <div className="flex-shrink-0 px-4 pt-4 pb-2 border-b border-border/60">
         {/* Sub-tabs */}
-        <div className="flex bg-gray-800 rounded-lg p-0.5 mb-3">
+        <div className="flex bg-card rounded-lg p-0.5 mb-3">
           <button onClick={() => setRequestSubTab('received')}
-            className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors ${requestSubTab === 'received' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}><InboxIcon className="w-4 h-4 inline" /> Nhận được{requests.length > 0 ? ` (${requests.length})` : ''}
+            className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors ${requestSubTab === 'received' ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}><InboxIcon className="w-4 h-4 inline" /> Nhận được{requests.length > 0 ? ` (${requests.length})` : ''}
           </button>
           <button onClick={() => setRequestSubTab('sent')}
-            className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors ${requestSubTab === 'sent' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}><SendIcon className="w-4 h-4 inline" /> Đã gửi{sentRequests.length > 0 ? ` (${sentRequests.length})` : ''}
+            className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors ${requestSubTab === 'sent' ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}><SendIcon className="w-4 h-4 inline" /> Đã gửi{sentRequests.length > 0 ? ` (${sentRequests.length})` : ''}
           </button>
         </div>
 
@@ -250,19 +271,19 @@ export default function CRMRequestsTab() {
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
+              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none">
               <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
             </svg>
             <input type="text" value={requestSearch} onChange={e => setRequestSearch(e.target.value)}
               placeholder="Tên, SĐT, UID..."
-              className="w-full bg-gray-700 border border-gray-600 rounded-full pl-7 pr-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500" />
+              className="w-full bg-muted border border-input rounded-full pl-7 pr-3 py-1.5 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500" />
           </div>
-          <span className="text-xs text-gray-400 flex-shrink-0">
+          <span className="text-xs text-muted-foreground flex-shrink-0">
             {requestsLoading ? '...' : (requestSubTab === 'received' ? requests.length : sentRequests.length)} lời mời
           </span>
           <button onClick={refreshRequestsFromApi} disabled={requestsRefreshing}
             title="Cập nhật từ Zalo"
-            className="w-7 h-7 rounded-full flex items-center justify-center text-blue-400 hover:text-blue-300 hover:bg-gray-700 disabled:opacity-40 transition-colors flex-shrink-0">
+            className="w-7 h-7 rounded-full flex items-center justify-center text-blue-400 hover:text-blue-300 hover:bg-muted disabled:opacity-40 transition-colors flex-shrink-0">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
               className={requestsRefreshing ? 'animate-spin' : ''}>
               <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
@@ -274,12 +295,12 @@ export default function CRMRequestsTab() {
       {/* ── Scrollable list ───────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-1.5">
         {requestsLoading ? (
-          <div className="text-center text-gray-400 py-10 text-sm">Đang tải...</div>
+          <div className="text-center text-muted-foreground py-10 text-sm">Đang tải...</div>
         ) : requestSubTab === 'received' ? (
           requests.length === 0 ? (
             <div className="text-center py-10">
               <p className="text-3xl mb-2 justify-items-center"><UsersIcon className="w-4 h-4" /></p>
-              <p className="text-gray-400 text-sm mb-3">Không có lời mời nào</p>
+              <p className="text-muted-foreground text-sm mb-3">Không có lời mời nào</p>
               <button onClick={refreshRequestsFromApi} disabled={requestsRefreshing}
                 className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors">
                 {requestsRefreshing ? 'Đang tải...' : 'Tải từ Zalo'}
@@ -300,7 +321,7 @@ export default function CRMRequestsTab() {
                 const msgText = req.msg || '';
                 return (
                   <div key={uid}
-                    className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-gray-800 border border-gray-700/60 hover:border-gray-600 transition-colors">
+                    className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-card border border-border/60 hover:border-input transition-colors">
                     {/* Avatar */}
                     <button
                       onClick={(e) => setProfilePopup({ userId: uid, x: e.clientX, y: e.clientY })}
@@ -315,10 +336,10 @@ export default function CRMRequestsTab() {
                     </button>
                     {/* Info */}
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-gray-100 truncate">{name}</p>
+                      <p className="text-sm font-medium text-foreground truncate">{name}</p>
                       {msgText
-                        ? <p className="text-[11px] text-gray-400 italic truncate mt-0.5">"{msgText}"</p>
-                        : <p className="text-[11px] text-gray-400 mt-0.5">Muốn kết bạn với bạn</p>}
+                        ? <p className="text-[11px] text-muted-foreground italic truncate mt-0.5">"{msgText}"</p>
+                        : <p className="text-[11px] text-muted-foreground mt-0.5">Muốn kết bạn với bạn</p>}
                     </div>
                     {/* Actions */}
                     <div className="flex gap-1.5 flex-shrink-0">
@@ -327,7 +348,7 @@ export default function CRMRequestsTab() {
                         Đồng ý
                       </button>
                       <button onClick={() => handleRejectRequest(uid)}
-                        className="bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs px-3 py-1.5 rounded-lg transition-colors">
+                        className="bg-muted hover:bg-accent text-foreground/80 text-xs px-3 py-1.5 rounded-lg transition-colors">
                         Từ chối
                       </button>
                     </div>
@@ -339,7 +360,7 @@ export default function CRMRequestsTab() {
           sentRequests.length === 0 ? (
             <div className="text-center py-10">
               <p className="text-3xl mb-2"><SendIcon className="w-4 h-4" /></p>
-              <p className="text-gray-400 text-sm mb-3">Chưa gửi lời mời nào</p>
+              <p className="text-muted-foreground text-sm mb-3">Chưa gửi lời mời nào</p>
               <button onClick={refreshRequestsFromApi} disabled={requestsRefreshing}
                 className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors">
                 {requestsRefreshing ? 'Đang tải...' : 'Tải từ Zalo'}
@@ -360,7 +381,7 @@ export default function CRMRequestsTab() {
                 const msgText = req.msg || '';
                 return (
                   <div key={uid}
-                    className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-gray-800 border border-gray-700/60 hover:border-gray-600 transition-colors">
+                    className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-card border border-border/60 hover:border-input transition-colors">
                     {/* Avatar */}
                     <button
                       onClick={(e) => setProfilePopup({ userId: uid, x: e.clientX, y: e.clientY })}
@@ -369,21 +390,21 @@ export default function CRMRequestsTab() {
                     >
                       {req.avatar
                         ? <img src={req.avatar} alt="" className="w-10 h-10 rounded-full object-cover hover:ring-2 hover:ring-blue-400 transition-all" />
-                        : <div className="w-10 h-10 rounded-full bg-gray-600 flex items-center justify-center text-white font-bold hover:ring-2 hover:ring-blue-400 transition-all">
+                        : <div className="w-10 h-10 rounded-full bg-accent flex items-center justify-center text-foreground font-bold hover:ring-2 hover:ring-blue-400 transition-all">
                             {(name || 'U').charAt(0).toUpperCase()}
                           </div>}
                     </button>
                     {/* Info */}
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-gray-100 truncate">{name}</p>
+                      <p className="text-sm font-medium text-foreground truncate">{name}</p>
                       <div className="flex items-center gap-1.5 mt-0.5">
                         <span className="text-[11px] text-yellow-500">⏳ Chờ chấp nhận</span>
-                        {msgText && <span className="text-[11px] text-gray-400 italic truncate">· "{msgText}"</span>}
+                        {msgText && <span className="text-[11px] text-muted-foreground italic truncate">· "{msgText}"</span>}
                       </div>
                     </div>
                     {/* Action */}
                     <button onClick={() => handleCancelSentRequest(uid)}
-                      className="flex-shrink-0 bg-gray-700 hover:bg-red-700 text-gray-300 hover:text-white text-xs px-3 py-1.5 rounded-lg transition-colors">
+                      className="flex-shrink-0 bg-muted hover:bg-red-700 text-foreground/80 hover:text-white text-xs px-3 py-1.5 rounded-lg transition-colors">
                       Hủy
                     </button>
                   </div>

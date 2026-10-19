@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
-import DataAccessor from '@/lib/data/DataAccessor';
+import DataAccessor, { isReadFailure, readFailureMessage } from '@/lib/data/DataAccessor';
+import { useAppStore } from '@/store/appStore';
 import { useAccountStore } from '@/store/accountStore';
 
 interface UseGroupMemberSyncOptions {
@@ -48,6 +49,13 @@ export function useGroupMemberSync({
     // by the local group-info sync. Keep a known owner/admin role when a scan
     // response does not include it.
     const existing = await DataAccessor.getGroupMembers({ zaloId: accountId, groupId });
+    // Không đọc được vai trò hiện có (employee: mất kết nối BOSS) → không ghi: lưu lúc này sẽ hạ trưởng / phó nhóm
+    // thành thành viên thường
+    if (isReadFailure(existing)) {
+      console.warn('[useGroupMemberSync] skip save — cannot read existing members:', readFailureMessage(existing));
+      useAppStore.getState().showNotification('Chưa lưu thành viên nhóm: không đọc được danh sách hiện có (mất kết nối). Thử lại sau.', 'warning');
+      return;
+    }
     const existingRoles = new Map(
       (existing?.members || []).map((member: any) => [
         String(member.member_id || member.memberId || member.user_id || member.userId || ''),

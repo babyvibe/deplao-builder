@@ -11,6 +11,7 @@
 import ipc from '@/lib/ipc';
 import { useWorkspaceStore } from '@/store/workspaceStore';
 import { useChatStore } from '@/store/chatStore';
+import { useEmployeeStore } from '@/store/employeeStore';
 
 // ── Public types (compatible with zaloInitUtils) ──────────────────────────────
 
@@ -75,6 +76,9 @@ export function markFBAccountInitDone(accountId: string): void {
 // ── Needs check ───────────────────────────────────────────────────────────────
 
 export async function checkFBAccountInitNeeds(accountId: string): Promise<FBInitNeeds> {
+  // Nhân viên không giữ phiên Facebook (Boss giữ) — đồng bộ hội thoại là việc của Boss. Trước đây máy nhân viên mới
+  // (chưa có cờ "đã init" trong localStorage) mở bảng đồng bộ và gọi fb:getThreads không có phiên.
+  if (useEmployeeStore.getState().mode === 'employee') return { threads: false, any: false };
   if (!isFBAccountInitDone(accountId)) {
     return { threads: true, any: true };
   }

@@ -15,6 +15,112 @@ interface VersionEntry {
 // ─── Changelog data - thêm entry mới vào ĐẦU mảng khi có bản cập nhật ────────
 const CHANGELOG: VersionEntry[] = [
   {
+    version: '26.10.1',
+    date: '10/2026',
+    type: 'major',
+    highlights: [
+      '📱 Đồng bộ tin nhắn cũ Zalo từ điện thoại — kéo lịch sử chat trên điện thoại về app theo khoảng thời gian (1 tuần / chọn ngày / toàn bộ), ghép đúng vào hội thoại sẵn có.',
+      '💬 Facebook nâng cấp bridge fbchat-v2 2.3.3 — Messenger ổn định hơn; đồng bộ tin nhắn theo khoảng thời gian với nhịp tải như người thật, cuộn lên tải tin cũ, tin mẫu của Page hiện đủ thẻ + nút.',
+      '🧩 Ứng dụng tự phát triển — cài và tự viết ứng dụng chạy ngay trong Deplao (trang riêng, panel chat, nút ô soạn tin, node workflow) tại Công cụ → Ứng dụng, API & Webhook; kèm SDK + CLI.',
+      '🔌 Public API v1 gần 300 thao tác + tài liệu đầy đủ — API key theo quyền / tài khoản, sự kiện realtime và webhook gửi ra để kết nối phần mềm khác.',
+      '☁️ Internet & Đám mây — địa chỉ Internet cố định qua Cloudflare của bạn; lưu media, sao lưu + đồng bộ DB (mã hoá trên máy) lên Cloudflare R2 hoặc Google Drive (Google One); xem mức dùng và phí ước tính; khôi phục sang máy mới hoặc máy dự phòng.',
+      '👥 Boss – nhân viên ổn định và an toàn hơn — tự phục hồi kết nối, đồng bộ realtime 2 chiều đầy đủ, nhân viên dùng được Facebook / Telegram qua máy Boss, siết quyền truy cập tài khoản và file.',
+      '📣 CRM Chiến dịch làm lại — xem trước nội dung như khung chat, thống kê realtime, tuỳ chọn gửi ảnh trước / chữ trước hoặc gộp ảnh + chữ thành 1 tin.',
+      '🎨 Giao diện mới — bảng màu và bộ thành phần thống nhất cho theme Sáng / Tối, thanh điều hướng gọn với nhóm "Công cụ"; bong bóng chat, Cài đặt, CRM, Workflow làm lại.',
+      '💬 Chat nhiều nâng cấp — Tin đánh dấu, My Documents, Thao tác nhanh, thả cảm xúc dạng dọc, mốc ngày + nhãn ngày khi cuộn, tự động đánh dấu đã đọc, chuyển tiếp đúng mọi loại tin Zalo.',
+      '✈️ Telegram đầy đủ hơn — Nhóm / Kênh mới, Danh bạ, Cuộc gọi, quản lý nhóm / kênh, bảng Sticker · GIF đồng bộ tài khoản, cảm xúc đủ bộ và đồng bộ 2 chiều, video trong link xem ngay.',
+      '⚙️ Workflow — sơ đồ + panel mới, bộ lọc trigger mới, sắp xếp tự động, AI copilot dạng chat và chế độ Mô phỏng không gửi tin thật.',
+    ],
+    changes: [
+      {
+        category: 'new',
+        items: [
+          'Đồng bộ tin nhắn từ điện thoại (Zalo): nút trên thanh trên cùng, chọn tài khoản (cả khi Gộp trang) và khoảng thời gian, chạy nền có tiến độ; hội thoại chỉ có trên điện thoại được tạo kèm tên / ảnh; hiển thị bản tin OA và media đã hết hạn.',
+          'Facebook: popup "Đồng bộ tin nhắn Facebook" theo tài khoản + khoảng thời gian, không giới hạn số tin, chạy nền và huỷ được; cuộn lên tải tin cũ qua bridge.',
+          'Facebook: tin mẫu của Page hiện thành thẻ (ảnh, tiêu đề, carousel) với nút bấm được — mở link, sao chép số điện thoại, gửi lựa chọn cho Trang.',
+          'Ứng dụng (plugin): cài từ file zip hoặc thư mục kèm bước duyệt quyền; chạy dạng web, tiến trình riêng hoặc máy chủ ngoài; gắn được trang riêng, panel trong khung chat, nút ở ô soạn tin, cài đặt, node workflow và lịch chạy. Có SDK `@deplao/plugin-sdk`, lệnh `deplao-plugin`, ứng dụng mẫu và ngăn "Phát triển ứng dụng".',
+          'Public API v1 (cổng 9900, mặc định tắt): ~293 thao tác cho tài khoản, chat Zalo / Facebook / Telegram, nhóm, nhãn, danh bạ, CRM, workflow, tích hợp, ERP, AI, báo cáo, media, nhân viên; API key theo quyền / tài khoản / IP / hạn dùng; nhật ký request; trang tài liệu + hướng dẫn tích hợp.',
+          'Sự kiện realtime (Socket.IO, SSE, polling) và webhook gửi ra có chữ ký HMAC, tự thử lại; trang Webhook gom "Nhận dữ liệu vào" và "Gửi sự kiện ra ngoài".',
+          'Cài đặt → Internet & Đám mây: kết nối tài khoản Cloudflare; một chỗ duy nhất cấu hình địa chỉ Internet (Địa chỉ tạm / Cloudflare tự động / ngrok / Cloudflare thủ công) cho nhân viên ở xa, webhook và thanh toán.',
+          'Lưu media lên Cloudflare R2 hoặc Google Drive: tải lên chạy nền, tự lấy lại khi file trên máy thiếu, tuỳ chọn giải phóng ổ máy, phạm vi theo tài khoản và ngày, công cụ dọn file trên kho (quét trước, xác nhận mới xoá).',
+          'Sao lưu & đồng bộ DB lên R2 hoặc Google Drive: mã hoá trên máy bằng mật khẩu sao lưu, chế độ Theo giờ / Realtime; khôi phục từng bước sang máy mới, máy dự phòng tự theo dõi bản sao; tự tạm dừng chiến dịch / workflow sau khôi phục để không gửi trùng.',
+          'Chọn kho lưu Cloudflare R2 hoặc Google Drive (Google One): đăng nhập Google trên trình duyệt, Deplao chỉ được quyền với file do chính nó tạo (thư mục "Deplao" trong Drive); dùng client Google chung của Deplao hoặc client OAuth riêng; đổi kho khi đồng bộ đang tắt, bản trên kho cũ vẫn giữ.',
+          'Mức sử dụng & chi phí: % phần miễn phí và ngưỡng tính phí — R2: dung lượng (GB-tháng), Ghi (Class A), Đọc (Class B), tải xuống; Google Drive: dung lượng tài khoản, đơn vị Drive API, tải lên / tải xuống trong ngày — kèm phí ước tính tháng này + dự kiến cả tháng (USD, quy đổi ₫) và giải thích từng mục; số toàn tài khoản R2 khi token có quyền "Account Analytics: Read".',
+          'Chat: Tin đánh dấu cho mọi kênh, Lưu vào My Documents (Zalo, luôn ghim đầu danh sách), Copy hình ảnh, xem bộ sưu tập ảnh từ cũ đến mới.',
+          'Thao tác nhanh "+" cạnh ô tìm kiếm hội thoại: tạo nhóm Zalo / Telegram / Messenger, tham gia nhóm bằng link (có xem trước), thêm bạn, thêm lịch hẹn và ghi chú nhanh.',
+          'Tự động đánh dấu đã đọc theo khoảng thời gian (menu ⋮ → Tự động), đồng bộ lên Zalo, Telegram, Facebook.',
+          'Telegram: Nhóm mới, Kênh mới (công khai / riêng tư), Danh bạ, nhật ký cuộc gọi + báo cuộc gọi đến; màn Quản lý nhóm / kênh (mô tả, link mời, nhóm thảo luận, tự xoá tin…).',
+          'Telegram: bảng Sticker · GIF đồng bộ với tài khoản (bộ đã thêm, gần đây, yêu thích, GIF đã lưu), tìm bộ sticker / GIF; bấm sticker trong chat để xem và thêm cả bộ.',
+          'Telegram: lưới đầy đủ cảm xúc của Telegram khi chuột phải, dòng "Đã xem" (ai đã xem trong nhóm), thẻ "Chuyển tiếp từ…", trích dẫn hiện tên người gửi.',
+          'Telegram: link có video (TikTok…) phát ngay trong thẻ — tự phát không tiếng, bật tiếng tại chỗ; thẻ link hiện tên trang, tiêu đề, mô tả.',
+          'Mốc ngày trong khung chat ("Hôm nay", "Hôm qua", "5 ngày trước, 12-10"…) và nhãn ngày nổi khi cuộn.',
+          'Workflow: AI copilot dạng chat để thiết kế / sửa kịch bản; chế độ Mô phỏng chạy thử không gửi tin thật; nút "Sắp xếp tự động" cho sơ đồ; bộ lọc trigger mới (vai trò người gửi trong nhóm, loại trừ người gửi / hội thoại, chỉ khi được @nhắc…).',
+          'CRM Chiến dịch: tuỳ chọn "Ảnh kèm chữ" — gửi ảnh trước / chữ trước hoặc gộp thành 1 tin (Telegram gửi album có chú thích).',
+          'Tin nhắn nhanh và Nhãn Local áp dụng được cho nhiều tài khoản cùng lúc.',
+          'Đăng nhập lại Facebook ngay từ Dashboard khi hết phiên (giữ nguyên dữ liệu chat); form đăng nhập có nút hiện mật khẩu, Enter để đăng nhập.',
+        ],
+      },
+      {
+        category: 'improved',
+        items: [
+          'Bridge Facebook lên fbchat-v2 2.3.3 (mautrix-meta 8/2026): hết lỗi socket Messenger kẹt ở bước đồng bộ ban đầu; E2EE dùng thư viện mới; đăng nhập chạy bằng bridge riêng tương thích trang đăng nhập hiện tại của Facebook.',
+          'Facebook tải lịch sử theo nhịp người thật (nghỉ ngẫu nhiên, ≤ 10 trang/phút, ≤ 240 trang/giờ), tự dừng 30 phút khi có dấu hiệu checkpoint; popup nhắc rủi ro trước mỗi lượt.',
+          'Kết nối nhân viên: trạng thái hiển thị đúng, tự kết nối lại và tự chuyển khi địa chỉ Boss đổi, nhận bù sự kiện bị lỡ; mất kết nối thì giữ dữ liệu đang có thay vì trắng trang.',
+          'Nhân viên dùng được thao tác Facebook / Telegram (chạy trên máy Boss); đồng bộ realtime cả sửa, xoá, cảm xúc; quyền ERP của nhân viên kiểm tra trên Boss.',
+          'Giao diện: bảng màu mới cho cả Sáng / Tối, thanh điều hướng còn Dashboard · Chat · CRM · Báo cáo · Công cụ · Cài đặt, bong bóng chat có giờ bên trong; Cài đặt, CRM, Workflow, Tích hợp, ERP theo kiểu mới; bộ thành phần giao diện dùng chung (xem ở Cài đặt → Giao diện).',
+          'Workflow: thẻ node và panel cài đặt thiết kế lại (gom nhóm trường, kéo rộng panel), ô chọn liên hệ tìm không dấu + phân trang, "Chèn biến" đúng theo trigger; sửa loạt mẫu trong kho mẫu.',
+          'CRM Chiến dịch: danh sách gọn, màn chi tiết hiện nội dung gửi theo từng bước như khung chat (thay chuỗi JSON), thống kê realtime, tìm / lọc liên hệ.',
+          'Danh sách hội thoại: cuộn và đổi tài khoản mượt hơn, ảnh nhóm chỉ tải cho hàng đang hiện, giữ vị trí cuộn theo từng thư mục, hội thoại ghim luôn ở đầu.',
+          'Khung chat mượt hơn: bớt render lại toàn app khi có tin mới / đang gõ, tải tin cũ sớm hơn và giữ đúng vị trí cuộn.',
+          'Chuyển tiếp hỗ trợ đúng mọi loại tin Zalo (chữ định dạng, link, danh thiếp, sticker, tin thoại, video, album, ảnh chưa tải về).',
+          'Trả lời (trích dẫn) giữ theo từng hội thoại; đang sửa tin mà đổi hội thoại thì huỷ sửa.',
+          'Thả cảm xúc dạng thanh dọc dễ chọn, tự mở lên / xuống theo chỗ trống; Zalo / Facebook giữ 6 cảm xúc quen thuộc.',
+          'Panel Thành viên nhóm lấy đủ danh sách như CRM (cả thành viên quét ẩn / thu thập từ Telegram), phân trang và tìm không dấu; chỉ gọi API khi mở lần đầu.',
+          'Telegram kênh: bài đăng gửi từ app hiện đúng ngay, tin hệ thống thành dòng thông báo, ảnh nhóm / kênh mới hiện ngay.',
+          'Báo cáo chia theo ngày lịch — điểm "hôm nay" có số liệu đúng; khoảng 7 / 30 / 90 ngày tính từ 00:00.',
+          'Zalo: ảnh JPEG XL hiển thị được (tự đổi sang JPG), media hết hạn báo rõ kèm "Thử tải lại"; nâng thư viện zca-js 2.2.0.',
+          'CRM liên hệ Zalo tự làm mới tên / ảnh cũ hoặc lỗi; tích hợp Sapo đăng nhập đúng bằng API Key + Secret của ứng dụng riêng.',
+          'Giới thiệu & Hướng dẫn sử dụng viết lại theo bản mới: đủ Zalo, Facebook, Telegram, Telegram Bot; thêm mục Đồng bộ tin nhắn cũ, Ứng dụng, API & Webhook, Internet & Đám mây; hướng dẫn trong trang Báo cáo, bảng Công cụ và tài liệu API (/docs) theo đúng giao diện và đường dẫn hiện tại.',
+        ],
+      },
+      {
+        category: 'fixed',
+        items: [
+          'Sửa bản cài báo "SyntaxError" và không mở được — bước bỏ console khi build làm hỏng main.js; nay dùng parser và chặn đóng gói nếu có lỗi cú pháp.',
+          'Sửa reaction Telegram bị lưu thành "1 đống icon", reaction từ Telegram không về app, reaction Zalo bị đếm gấp đôi.',
+          'Sửa xoá / thu hồi tin trong chat riêng Telegram làm bài kênh trùng mã bị đánh dấu "đã thu hồi".',
+          'Sửa link YouTube trên Telegram tải nhầm cả video và vỡ ảnh xem trước; chú thích ảnh / file Telegram gửi qua workflow / API bị mất.',
+          'Sửa đánh dấu đã đọc Telegram vẫn còn dấu @ / ❤ trên app Telegram; đổi ảnh nhóm và cấp quyền quản trị siêu nhóm Telegram luôn lỗi.',
+          'Sửa Facebook tải lịch sử ra 0 tin, tin mẫu của Page bị rỗng; đăng nhập lại Facebook không còn xoá tin cũ.',
+          'Sửa ảnh JPEG XL của Zalo không hiện kèm vòng lặp tải lại vô hạn; bấm trích dẫn ảnh trong album báo "Không tìm thấy tin nhắn".',
+          'Sửa chuyển tiếp album chỉ gửi 1 ảnh, video chuyển tiếp thành file .mp4.',
+          'Sửa nhãn Trưởng nhóm / Phó nhóm Zalo bị đảo ở panel thành viên; avatar nhóm mới kẹt chữ cái.',
+          'Sửa hội thoại ghim không hiện ở đầu khi nằm ở trang sau của danh sách.',
+          'Sửa "Tạo bình chọn" trong khung chat luôn báo lỗi ở mọi kênh.',
+          'Sửa workflow Telegram (tài khoản cá nhân) gửi tin rỗng khi nội dung lấy từ node AI.',
+        ],
+      },
+      {
+        category: 'security',
+        items: [
+          'Chặn trang web / iframe trong app đọc file bất kỳ trên máy qua `local-media://`; giới hạn kích thước request relay trước khi xác thực.',
+          'Nhân viên chỉ đọc / ghi được tài khoản được giao; không còn đọc được khoá ký token và token tunnel qua API cài đặt.',
+          'File trên Boss cần phiên nhân viên hợp lệ; thu hồi token khi khoá / xoá / đổi mật khẩu nhân viên, thêm "Đăng xuất tất cả nhân viên".',
+          'Proxy nhân viên chỉ gọi được các thao tác cho phép, không gửi được file ngoài thư mục media; chặn tải URL vào mạng nội bộ (SSRF).',
+        ],
+      },
+      {
+        category: 'removed',
+        items: [
+          'Gỡ "Tải tin nhắn cũ" của Zalo — thay bằng Đồng bộ tin nhắn từ điện thoại.',
+          'Cài đặt bỏ tab API và Webhooks (chuyển sang Công cụ → Ứng dụng, API & Webhook); cấu hình địa chỉ / tunnel chuyển về Cài đặt → Internet & Đám mây.',
+          'Dashboard bỏ "Cập nhật cookie" Facebook — hết phiên thì đăng nhập lại.',
+          'Gỡ màn đăng nhập nhân viên cũ không còn dùng.',
+        ],
+      },
+    ],
+  },
+  {
     version: '26.10.0',
     date: '10/2026',
     type: 'major',
@@ -115,7 +221,6 @@ const CHANGELOG: VersionEntry[] = [
     date: '09/2026',
     type: 'major',
     highlights: [
-      '👥 Quét thành viên nhóm ẩn Zalo public API cho tất cả mọi người sử dụng miễn phí - chi tiết API đọc ở readme dự án.',
       '💬 Facebook cá nhân nâng cấp thư viện fbchat-v2 lên bản mới nhất — thay đổi đăng nhập tài khoản có 2FA, chat riêng tư E2EE và trạng thái thiết bị ổn định hơn sau khi mở lại ứng dụng.',
       '✈️ Đồng bộ Telegram User đáng tin cậy hơn — phục hồi tin nhắn của channel, supergroup và topic sau khi mất mạng; tiến trình tiếp tục được sau khi khởi động lại app.',
       '🤖 Workflow Telegram Bot hoàn thiện — thêm đầy đủ trigger, hành động quản trị nhóm, gửi media, reaction, poll và Reply Keyboard hoặc Inline Button trực quan.',
@@ -1415,7 +1520,7 @@ const CHANGELOG: VersionEntry[] = [
 const TYPE_STYLES: Record<VersionEntry['type'], { label: string; cls: string }> = {
   major:  { label: 'Major',  cls: 'bg-purple-600/30 text-purple-500 border border-purple-500/30' },
   minor:  { label: 'Minor',  cls: 'bg-blue-600/30 text-blue-500 border border-blue-500/30' },
-  patch:  { label: 'Patch',  cls: 'bg-gray-600/40 text-gray-400 border border-gray-500/30' },
+  patch:  { label: 'Patch',  cls: 'bg-accent/40 text-muted-foreground border border-border-strong/30' },
   hotfix: { label: 'Hotfix', cls: 'bg-red-600/30 text-red-500 border border-red-500/30' },
 };
 
@@ -1448,14 +1553,14 @@ export default function ChangelogSettings() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-base font-semibold text-white"><ClipboardListIcon className="w-4 h-4 inline" /> Log phiên bản</h2>
+        <h2 className="text-base font-semibold text-foreground"><ClipboardListIcon className="w-4 h-4 inline" /> Log phiên bản</h2>
         <div className="flex gap-2">
           <button onClick={expandAll}
-            className="text-xs text-gray-400 hover:text-gray-300 transition-colors px-2 py-1 rounded-lg hover:bg-gray-700">
+            className="text-xs text-muted-foreground hover:text-foreground/80 transition-colors px-2 py-1 rounded-lg hover:bg-muted">
             Mở rộng tất cả
           </button>
           <button onClick={collapseAll}
-            className="text-xs text-gray-400 hover:text-gray-300 transition-colors px-2 py-1 rounded-lg hover:bg-gray-700">
+            className="text-xs text-muted-foreground hover:text-foreground/80 transition-colors px-2 py-1 rounded-lg hover:bg-muted">
             Thu gọn
           </button>
         </div>
@@ -1479,17 +1584,17 @@ export default function ChangelogSettings() {
           return (
             <div key={entry.version}
               className={`border rounded-xl overflow-hidden transition-colors ${
-                isLatest ? 'border-blue-700/50 bg-blue-900/10' : 'border-gray-700 bg-gray-800/40'
+                isLatest ? 'border-blue-700/50 bg-card' : 'border-border bg-card'
               }`}>
               {/* Header */}
               <button
-                className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-white/5 transition-colors"
+                className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-foreground/5 transition-colors"
                 onClick={() => toggle(entry.version)}
               >
                 <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${typeStyle.cls}`}>
                   {typeStyle.label}
                 </span>
-                <span className="text-white font-bold text-sm flex-1">
+                <span className="text-foreground font-bold text-sm flex-1">
                   v{entry.version}
                   {isLatest && (
                     <span className="ml-2 text-[11px] bg-green-600/30 text-green-400 border border-green-500/30 px-1.5 py-0.5 rounded-full font-normal align-middle">
@@ -1497,22 +1602,22 @@ export default function ChangelogSettings() {
                     </span>
                   )}
                 </span>
-                <span className="text-gray-400 text-xs mr-2">{entry.date}</span>
+                <span className="text-muted-foreground text-xs mr-2">{entry.date}</span>
                 <svg
                   width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-                  className={`text-gray-400 flex-shrink-0 transition-transform ${isExpanded ? 'rotate-180' : ''}`}>
+                  className={`text-muted-foreground flex-shrink-0 transition-transform ${isExpanded ? 'rotate-180' : ''}`}>
                   <polyline points="6 9 12 15 18 9" />
                 </svg>
               </button>
 
               {/* Body */}
               {isExpanded && (
-                <div className="px-4 pb-4 space-y-3 border-t border-gray-700/50 pt-3">
+                <div className="px-4 pb-4 space-y-3 border-t border-border/50 pt-3">
                   {/* Highlights */}
                   {entry.highlights && entry.highlights.length > 0 && (
-                    <div className="bg-gray-700/30 rounded-lg px-3 py-2.5 space-y-1">
+                    <div className="bg-muted rounded-lg px-3 py-2.5 space-y-1">
                       {entry.highlights.map((h, i) => (
-                        <p key={i} className="text-gray-200 text-xs font-medium">{h}</p>
+                        <p key={i} className="text-foreground text-xs font-medium">{h}</p>
                       ))}
                     </div>
                   )}
@@ -1528,8 +1633,8 @@ export default function ChangelogSettings() {
                         </p>
                         <ul className="space-y-1 pl-1">
                           {group.items.map((item, ii) => (
-                            <li key={ii} className="flex items-start gap-2 text-gray-400 text-xs">
-                              <span className="text-gray-400 mt-0.5 flex-shrink-0">-</span>
+                            <li key={ii} className="flex items-start gap-2 text-muted-foreground text-xs">
+                              <span className="text-muted-foreground mt-0.5 flex-shrink-0">-</span>
                               {item}
                             </li>
                           ))}

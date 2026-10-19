@@ -180,6 +180,19 @@ export default class ZaloService {
         return this.zaloId;
     }
 
+    /**
+     * Gửi trạng thái "đang gõ". Giống node workflow zalo.sendTyping:
+     * threadType 0 = DM (destType = 3), 1 = nhóm (không cần destType).
+     */
+    public async sendTypingEvent(threadId: string, type?: ThreadType | number): Promise<any> {
+        if (!this.api) {
+            throw new Error("API not initialized. Please ensure you've called initialize() first.");
+        }
+        const threadType = Number(type) === 1 ? 1 : 0;
+        const destType = threadType === 0 ? 3 : undefined;
+        return (this.api as any).sendTypingEvent(threadId, threadType, destType);
+    }
+
 
     /**
      * Gửi tin nhắn
@@ -913,7 +926,10 @@ export default class ZaloService {
         try {
             return await this.api.getUserInfo(userId);
         } catch (error: any) {
-            throw new Error(error.message || error);
+            // Giữ mã lỗi Zalo (ZaloApiError.code) để caller phân loại hết phiên / giới hạn tần suất.
+            const wrapped: any = new Error(error?.message || error);
+            if (error?.code !== undefined && error?.code !== null) wrapped.code = error.code;
+            throw wrapped;
         }
     }
 
@@ -1519,6 +1535,8 @@ export default class ZaloService {
         // Nếu chỉ 1 ảnh, dùng sendImage thông thường
         if (filePaths.length === 1) return this.sendImage(filePaths[0], normalizedThreadId, threadType, undefined, quote);
         try {
+            // Các lỗi kiểm tra file dưới đây (trước khi upload) được chuyển tiếp album nhận diện để gửi lại
+            // từng ảnh — đổi câu chữ thì sửa cả FORWARD_ALBUM_PRECHECK_ERROR_RE trong ChatWindow.tsx.
             const attachments = filePaths.map(filePath => {
                 if (!filePath || !fs.existsSync(filePath)) throw new Error('Không tìm thấy một trong các tệp ảnh để gửi');
                 const buffer = fs.readFileSync(filePath);

@@ -389,11 +389,76 @@ func (ds *DeviceStore) GetMessageSecret(ctx context.Context, chat, sender waType
 }
 
 func (ds *DeviceStore) PutPrivacyTokens(ctx context.Context, tokens ...store.PrivacyToken) error {
-	return unsupportedStoreOperation(ctx, "PutPrivacyTokens")
+	return ds.mutateAndSave(ctx, func() {
+		if ds.privacyTokens == nil {
+			ds.privacyTokens = make(map[string]store.PrivacyToken)
+		}
+		for _, token := range tokens {
+			token.User = token.User.ToNonAD()
+			key := token.User.String()
+			existing, exists := ds.privacyTokens[key]
+			if exists && token.Timestamp.Before(existing.Timestamp) {
+				continue
+			}
+			if token.SenderTimestamp.IsZero() && exists {
+				token.SenderTimestamp = existing.SenderTimestamp
+			}
+			token.Token = cloneBytes(token.Token)
+			ds.privacyTokens[key] = token
+		}
+	})
 }
 
 func (ds *DeviceStore) GetPrivacyToken(ctx context.Context, user waTypes.JID) (*store.PrivacyToken, error) {
-	return nil, unsupportedStoreOperation(ctx, "GetPrivacyToken")
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
+	ds.mu.RLock()
+	defer ds.mu.RUnlock()
+	token, ok := ds.privacyTokens[user.ToNonAD().String()]
+	if !ok {
+		return nil, nil
+	}
+	token.Token = cloneBytes(token.Token)
+	return &token, nil
+}
+
+func (ds *DeviceStore) DeleteExpiredPrivacyTokens(ctx context.Context, cutoff time.Time) (int64, error) {
+	var deleted int64
+	err := ds.mutateAndSave(ctx, func() {
+		for user, token := range ds.privacyTokens {
+			if token.Timestamp.Before(cutoff) {
+				delete(ds.privacyTokens, user)
+				deleted++
+			}
+		}
+	})
+	return deleted, err
+}
+
+func (ds *DeviceStore) PutNCTSalt(ctx context.Context, salt []byte) error {
+	return ds.mutateAndSave(ctx, func() {
+		ds.nctSalt = cloneBytes(salt)
+	})
+}
+
+func (ds *DeviceStore) GetNCTSalt(ctx context.Context) ([]byte, error) {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
+	ds.mu.RLock()
+	defer ds.mu.RUnlock()
+	return cloneBytes(ds.nctSalt), nil
+}
+
+func (ds *DeviceStore) DeleteNCTSalt(ctx context.Context) error {
+	return ds.mutateAndSave(ctx, func() {
+		ds.nctSalt = nil
+	})
 }
 
 func (ds *DeviceStore) PutLIDMapping(ctx context.Context, lid, pn waTypes.JID) error {

@@ -1,5 +1,6 @@
 // Node type configurations: default configs, labels, descriptions
-import { CHANNEL } from '@/lib/channelHelper';
+// Import tương đối (không dùng alias @/) để main process cũng import được danh mục node (Public API v1).
+import { CHANNEL } from '../../lib/channelHelper';
 
 type ChannelTag = 'zalo' | 'facebook' | 'telegram_user' | 'telegram_bot' | 'both';
 type NodeGroupItem = { type: string; label: string; desc: string; channel?: ChannelTag };
@@ -19,7 +20,9 @@ export const NODE_GROUPS: NodeGroup[] = [
       { type: 'trigger.schedule',      label: 'Chạy theo lịch hẹn',          desc: 'Tự động kích hoạt theo lịch (hàng ngày, hàng giờ...)', channel: 'both' },
       { type: 'trigger.manual',        label: 'Chạy thủ công',               desc: 'Kích hoạt bằng tay từ giao diện, dùng để test workflow', channel: 'both' },
       { type: 'trigger.payment',       label: 'Khi nhận thanh toán',         desc: 'Kích hoạt khi nhận webhook thanh toán từ Casso / SePay (VietQR)', channel: 'both' },
+      { type: 'trigger.posWebhook',    label: 'Khi phần mềm bán hàng gửi webhook', desc: 'Kích hoạt khi KiotViet / Haravan / Sapo / Nhanh.vn / Pancake POS gửi đơn hàng, khách hàng, sản phẩm… (chỉ webhook đã xác thực khoá)', channel: 'both' },
       { type: 'trigger.webhook',       label: 'Webhook bên ngoài',           desc: 'Kích hoạt khi nhận dữ liệu từ webhook bên thứ 3 gửi sang', channel: 'both' },
+      { type: 'trigger.api',           label: 'Khi API/ứng dụng gọi',        desc: 'Kích hoạt khi hệ thống ngoài hoặc ứng dụng đã cài gọi POST /api/v1/workflows/events/{tên sự kiện}', channel: 'both' },
       // Telegram triggers (the legacy `trigger.telegramCommand` integration is
       // intentionally not shown here; native Telegram Bot workflows use the
       // dedicated Bot triggers below).
@@ -78,7 +81,7 @@ export const NODE_GROUPS: NodeGroup[] = [
       { type: 'tg.sendPoll',        label: 'Tạo bình chọn',             desc: 'Tạo cuộc bình chọn (poll) trong nhóm Telegram', channel: 'telegram_user' },
       { type: 'tg.sendSticker',     label: 'Gửi sticker',               desc: 'Gửi sticker từ sticker set đến hội thoại Telegram', channel: 'telegram_user' },
       { type: 'tg.sendTyping',      label: 'Hiệu ứng đang gõ',         desc: 'Hiển thị trạng thái đang gõ trên Telegram', channel: 'telegram_user' },
-      { type: 'tg.banMember',       label: 'Khỏi thành viên',           desc: 'Khỏi (ban) thành viên khỏi nhóm Telegram', channel: 'telegram_user' },
+      { type: 'tg.banMember',       label: 'Cấm thành viên',            desc: 'Cấm (ban) thành viên khỏi nhóm Telegram', channel: 'telegram_user' },
       { type: 'tg.promoteMember',   label: 'Thăng quyền thành viên',    desc: 'Thăng/hạ quyền admin cho thành viên trong nhóm Telegram', channel: 'telegram_user' },
       { type: 'tg.addMember',       label: 'Thêm thành viên',           desc: 'Thêm thành viên vào nhóm Telegram', channel: 'telegram_user' },
       { type: 'tg.removeMember',    label: 'Xóa thành viên',            desc: 'Xóa thành viên khỏi nhóm Telegram', channel: 'telegram_user' },
@@ -88,7 +91,7 @@ export const NODE_GROUPS: NodeGroup[] = [
       { type: 'tg.unblockUser',     label: 'Bỏ chặn người dùng',       desc: 'Bỏ chặn người dùng trên Telegram', channel: 'telegram_user' },
       { type: 'tg.changeGroupName', label: 'Đổi tên nhóm',             desc: 'Đổi tên nhóm Telegram', channel: 'telegram_user' },
       { type: 'tg.leaveGroup',      label: 'Rời nhóm',                 desc: 'Rời khỏi nhóm Telegram', channel: 'telegram_user' },
-      { type: 'tg.exportInviteLink', label: 'Lấy link mời',             desc: 'Lấy link邀请 tham gia nhóm Telegram', channel: 'telegram_user' },
+      { type: 'tg.exportInviteLink', label: 'Lấy link mời',             desc: 'Lấy link mời tham gia nhóm Telegram', channel: 'telegram_user' },
       { type: 'tg.createForumTopic', label: 'Tạo topic mới',            desc: 'Tạo topic mới trong nhóm Telegram Forum', channel: 'telegram_user' },
       // Telegram Bot actions
       { type: 'tgbot.action.sendMessage', label: 'Gửi tin nhắn / Keyboard', desc: 'Gửi text, Reply Keyboard hoặc Inline Button từ Bot', channel: 'telegram_bot' },
@@ -137,7 +140,8 @@ export const NODE_GROUPS: NodeGroup[] = [
       { type: 'logic.wait',        label: 'Tạm dừng chờ N giây',     desc: 'Dừng workflow trong vài giây trước khi tiếp tục' },
       { type: 'logic.setVariable', label: 'Lưu giá trị vào biến',    desc: 'Lưu dữ liệu để dùng ở các bước sau (VD: tên, số điện thoại...)' },
       { type: 'logic.stopIf',      label: 'Dừng workflow nếu...',     desc: 'Dừng toàn bộ workflow nếu điều kiện đúng' },
-      { type: 'logic.forEach',     label: 'Lặp qua danh sách',       desc: 'Lặp từng phần tử trong mảng dữ liệu và chạy bước tiếp cho mỗi phần tử' },
+      { type: 'logic.forEach',     label: 'Lặp qua danh sách',       desc: 'Chạy các bước nối từ cổng "Mỗi phần tử" cho từng phần tử (tối đa 100, dùng {{ $var.item }}); cổng "Xong" chạy một lần sau đó' },
+      { type: 'logic.forEachContact', label: 'Chọn đối tượng nhận tin', desc: 'Lấy danh sách bạn bè / thành viên nhóm / nhãn / CRM liên hệ để gửi tin hàng loạt' },
     ],
   },
   {
@@ -311,7 +315,7 @@ export const DEFAULT_CONFIGS: Record<string, Record<string, any>> = {
   'logic.wait':            { delaySeconds: 3 },
   'logic.setVariable':     { name: '', value: '' },
   'logic.stopIf':          { left: '', operator: 'equals', right: '' },
-  'logic.forEach':         { array: '[]', itemVariable: 'item' },
+  'logic.forEach':         { array: '', itemVariable: 'item', maxItems: 20 },
   'data.textFormat':       { template: '' },
   'data.randomPick':       { options: '' },
   'data.dateFormat':       { format: 'datetime' },
@@ -332,7 +336,10 @@ export const DEFAULT_CONFIGS: Record<string, Record<string, any>> = {
   'notify.notion':   { apiKey: '', databaseId: '', properties: '{"Tên": {"title": [{"text": {"content": "{{ $trigger.fromName }}"}}]}}' },
   // Trigger: payment
   'trigger.payment': { integrationId: '', minAmount: 0, descContains: '' },
+  // Trigger: webhook phần mềm bán hàng (services/integrations/posWebhook.ts) — ô trống = không lọc
+  'trigger.posWebhook': { integrationType: 'all', integrationId: '', entity: 'order', eventContains: '', statusContains: '' },
   'trigger.webhook':   { webhookToken: '', secretKey: '', method: 'POST', allowedIps: '' },
+  'trigger.api':       { eventName: '', requiredKeyId: '' },
   'kiotviet.lookupCustomer': { phone: '{{ $trigger.fromPhone }}' },
   'kiotviet.lookupOrder':    { phone: '{{ $trigger.fromPhone }}', orderId: '' },
   'kiotviet.lookupProduct':  { keyword: '{{ $trigger.content }}', limit: 10 },
@@ -353,7 +360,7 @@ export const DEFAULT_CONFIGS: Record<string, Record<string, any>> = {
   'pancake.lookupCustomer':  { phone: '{{ $trigger.fromPhone }}' },
   'pancake.lookupOrder':     { phone: '{{ $trigger.fromPhone }}', orderId: '' },
   'pancake.lookupProduct':   { keyword: '{{ $trigger.content }}', code: '', limit: 10 },
-  'pancake.createOrder':     { order: '{"customer":{"name":"","phone":""},"items":[{"productId":"","quantity":1,"unitPrice":0}],"paymentMethod":"cod"}' },
+  'pancake.createOrder':     { order: '{"bill_full_name":"","bill_phone_number":"","shipping_address":{"full_name":"","phone_number":"","address":"","commune_name":"","district_name":"","province_name":""},"items":[{"variation_id":"","quantity":1}],"shipping_fee":0,"cod":0,"note":""}' },
   // Payment actions
   'payment.getTransactions': { integrationId: '', limit: 20 },
   // Vận chuyển
@@ -426,9 +433,12 @@ export const NODE_LABEL_MAP: Record<string, string> = (() => {
   return map;
 })();
 
+/** Nhãn node của plugin đang bật (pluginNodes.ts điền khi editor tải danh sách). */
+export const PLUGIN_NODE_LABELS: Record<string, string> = {};
+
 /** Get friendly Vietnamese label for a node type. Falls back to the raw type if not found. */
 export function getNodeLabel(type: string): string {
-  return NODE_LABEL_MAP[type] || type;
+  return NODE_LABEL_MAP[type] || PLUGIN_NODE_LABELS[type] || type;
 }
 
 export function nodeTypeGroup(type: string): string {

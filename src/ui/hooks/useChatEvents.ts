@@ -13,11 +13,19 @@ import ipc from '../lib/ipc'
 import { messageQueue } from '@/lib/MessageQueue';
 import DataAccessor from '../lib/data/DataAccessor';;
 import { useChatStore, type MessageItem } from '@/store/chatStore';
+import { FB_TEMPLATE_MSG_TYPE, fbTemplateText } from '../../shared/facebookTemplate';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
+import { useEmployeeStore } from '@/store/employeeStore';
+import { reloadAccountContacts } from '@/lib/chat/accountContacts';
 import { playNotificationSound, showDesktopNotification } from '../utils/NotificationService';
 import { getFilteredUnreadCount } from '@/lib/badgeUtils';
 import { ImageIcon, PaletteIcon, PaperclipIcon } from '@/components/common/icons';
+
+/** Chế độ nhân viên: event Facebook là bản relay từ Boss (phiên Facebook chỉ chạy trên Boss). */
+function isEmployeeMode(): boolean {
+  return useEmployeeStore.getState().mode === 'employee';
+}
 
 /**
  * Lấy tên hiển thị của account từ accountStore.
@@ -36,6 +44,7 @@ function getAccountDisplayName(zaloId: string): string {
  */
 function fbAttachmentPreview(attachType: string, attObj: any): string {
   if (attachType === 'system') return ''; // System notifications use body text (admin msg), not a preview
+  if (attachType === 'template' || attachType === FB_TEMPLATE_MSG_TYPE) return fbTemplateText(attObj?.template) || '📎 Tin nhắn mẫu';
   if (attachType === 'image' || attachType === 'photo') return '🖼️ Hình ảnh';
   if (attachType === 'video') return '🎬 Video';
   if (attachType === 'audio') return '🎵 Audio';
@@ -63,7 +72,8 @@ function normalizeFBMessage(fbAccountId: string, msg: any): MessageItem {
   // Cho phép backend override msg_type (vd 'system' cho admin notification)
   const rawType = msg.msg_type || (!hasAttachment ? 'text' : (msg.attachments.attachmentType || 'image'));
   // KHÔNG map sticker→image ở đây - để MessageBubbles.isStickerType xử lý
-  const msgType = rawType;
+  // Tin mẫu của Page (thẻ + nút) → fb.template, giống hàng main lưu trong DB
+  const msgType = rawType === 'template' ? FB_TEMPLATE_MSG_TYPE : rawType;
 
   if (rawType === 'sticker') {
     console.log(`[useChatEvents] [STICKER] normalizeFBMessage: fbAccountId=${fbAccountId} msgId=${msg.messageID} threadId=${threadId} rawType=${rawType} msgType=${msgType} url=${(msg.attachments?.url || '').slice(0,100)}`);
@@ -88,6 +98,7 @@ function normalizeFBMessage(fbAccountId: string, msg: any): MessageItem {
     ...(a.mediaKey ? { mediaKey: a.mediaKey } : {}),
     ...(a.mediaSha256 ? { mediaSha256: a.mediaSha256 } : {}),
     ...(a.mediaEncSha256 ? { mediaEncSha256: a.mediaEncSha256 } : {}),
+    ...(a.template ? { ...a.template, type: 'template' } : {}),
   });
 
   const attachments = msg.allAttachments && msg.allAttachments.length > 1
@@ -235,7 +246,7 @@ export function useChatEvents(): void {
 
       // Nếu là self-image → báo cho MessageQueue để đếm batch
       if (isSelf && (normalized.msg_type === 'image' || normalized.msg_type === 'photo')) {
-        messageQueue.onImageMessageReceived(fbAccountId, threadId);
+        messageQueue.onImageMessageReceived(fbAccountId, threadId, String(normalized.msg_id || ''));
       }
 
       // If this message has reply_to_id but no quote_data, try looking up
@@ -295,7 +306,8 @@ export function useChatEvents(): void {
       // Pages display the same account avatar.
       const threadContact = (useChatStore.getState().contacts[fbAccountId] || [])
         .find(c => c.contact_id === threadId);
-      if (threadContact?.contact_type !== 'group' && /^\d+$/.test(String(threadId))) {
+      // Nhân viên: phiên Facebook chỉ có trên máy Boss — Boss tự lấy tên / ảnh rồi phát fb:onContactUpdate (relay)
+      if (!isEmployeeMode() && threadContact?.contact_type !== 'group' && /^\d+$/.test(String(threadId))) {
         const contactsList = useChatStore.getState().contacts[fbAccountId] || [];
         const conversationContact = contactsList.find(c => c.contact_id === threadId);
         const missingName = !conversationContact?.display_name;
@@ -377,14 +389,9 @@ export function useChatEvents(): void {
         case 'connected':
           updateAccountStatus(data.fbAccountId, true, true);
           updateListenerActive(data.fbAccountId, true);
-          // Reload contacts from DB after FB connects
-          ipc.db?.getContacts(data.fbAccountId)
-            .then((res: any) => {
-              if (res?.contacts) {
-                useChatStore.getState().setContacts(data.fbAccountId, res.contacts);
-              }
-            })
-            .catch(() => {});
+          // Reload contacts after FB connects — Boss: DB; nhân viên (event relay): BOSS REST (ipc.db.getContacts ở máy
+          // nhân viên chỉ là stub, lỗi đọc giữ danh sách)
+          reloadAccountContacts(data.fbAccountId).catch(() => {});
           break;
 
         case 'connecting':
@@ -402,7 +409,7 @@ export function useChatEvents(): void {
             const acc = accounts.find((a: any) => a.zalo_id === data.fbAccountId || a.facebook_id === data.fbAccountId);
             const name = acc?.full_name || acc?.zalo_id || data.fbAccountId;
             useAppStore.getState().showNotification(
-              `⚠️ Tài khoản Facebook "${name}" bị ngắt kết nối (FB phát hiện bot hoặc cookie hết hạn). Vui lòng đăng nhập lại FB để lấy cookie mới.`,
+              `⚠️ Tài khoản Facebook "${name}" đã hết phiên đăng nhập (FB phát hiện bất thường hoặc cookie hết hạn). Vào Dashboard → "Đăng nhập lại" để đăng nhập lại.`,
               'error'
             );
           }
@@ -536,6 +543,8 @@ export function useChatEvents(): void {
       actorFbId?: string;
     }) => {
       if (!data?.fbAccountId || !data?.threadId) return;
+      // Nhân viên: không có phiên / DB Facebook cục bộ — getThreads ở máy nhân viên chỉ thử kết nối lại vô ích
+      if (isEmployeeMode()) return;
       // Refresh contacts list so participant count gets synced
       ipc.fb?.getThreads({ accountId: data.fbAccountId, forceRefresh: false })
         .catch(() => {});

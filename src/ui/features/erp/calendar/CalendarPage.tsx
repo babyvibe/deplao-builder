@@ -149,13 +149,13 @@ export default function CalendarPage() {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Controls */}
-      <div className="flex items-center flex-wrap gap-2 px-4 py-2 border-b border-gray-700/60 flex-shrink-0">
-        <button onClick={goPrev}        className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-700 hover:text-white">←</button>
+      <div className="flex items-center flex-wrap gap-2 px-4 py-2 border-b border-border/60 flex-shrink-0">
+        <button onClick={goPrev}        className="p-1.5 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground">←</button>
         <button onClick={() => setCurrentDate(Date.now())}
-                className="px-2 py-1 text-xs text-gray-400 hover:bg-gray-700 rounded-lg">Hôm nay</button>
-        <button onClick={goNext}        className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-700 hover:text-white">→</button>
+                className="px-2 py-1 text-xs text-muted-foreground hover:bg-muted rounded-lg">Hôm nay</button>
+        <button onClick={goNext}        className="p-1.5 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground">→</button>
 
-        <span className="text-sm text-gray-300 font-medium ml-1 min-w-[130px]">
+        <span className="text-sm text-foreground/80 font-medium ml-1 min-w-[130px]">
           {new Date(currentDate).toLocaleDateString('vi-VN', { month: 'long', year: 'numeric' })}
         </span>
 
@@ -169,7 +169,7 @@ export default function CalendarPage() {
             const d = new Date(currentDate); d.setFullYear(y, (m || 1) - 1, 1); d.setHours(0, 0, 0, 0);
             setCurrentDate(d.getTime());
           }}
-          className="bg-gray-700 border border-gray-600 rounded-lg px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-blue-500"
+          className="bg-muted border border-input rounded-lg px-2 py-1 text-xs text-foreground focus:outline-none focus:border-blue-500"
           title="Chọn tháng"
         />
         <input
@@ -180,14 +180,14 @@ export default function CalendarPage() {
             const d = new Date(e.target.value); d.setHours(12, 0, 0, 0);
             setCurrentDate(d.getTime());
           }}
-          className="bg-gray-700 border border-gray-600 rounded-lg px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-blue-500"
+          className="bg-muted border border-input rounded-lg px-2 py-1 text-xs text-foreground focus:outline-none focus:border-blue-500"
           title="Đi tới ngày"
         />
 
         <div className="flex gap-1 ml-auto">
           {(['week', 'month', 'list'] as ViewMode[]).map(v => (
             <button key={v} onClick={() => setViewMode(v)}
-              className={`px-2.5 py-1 text-xs rounded-lg ${viewMode === v ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700'}`}>
+              className={`px-2.5 py-1 text-xs rounded-lg ${viewMode === v ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:bg-muted'}`}>
               {v === 'week' ? 'Tuần' : v === 'month' ? 'Tháng' : 'Danh sách'}
             </button>
           ))}
@@ -201,7 +201,7 @@ export default function CalendarPage() {
       {viewMode !== 'list' && (
         <div className="grid grid-cols-7 gap-2 px-4 pt-3 flex-shrink-0">
           {DAYS_VN.map(d => (
-            <div key={d} className="text-[11px] uppercase tracking-wider text-gray-400 text-center">{d}</div>
+            <div key={d} className="text-[11px] uppercase tracking-wider text-muted-foreground text-center">{d}</div>
           ))}
         </div>
       )}
@@ -211,26 +211,26 @@ export default function CalendarPage() {
         {viewMode === 'list' ? (
           <div className="space-y-3">
             {listEvents.length === 0 ? (
-              <div className="h-40 rounded-xl border border-gray-700/60 bg-gray-800/40 flex items-center justify-center text-sm text-gray-400">
+              <div className="h-40 rounded-xl border border-border/60 bg-card flex items-center justify-center text-sm text-muted-foreground">
                 Chưa có sự kiện trong phạm vi đang chọn
               </div>
             ) : (
               listEvents.map(ev => (
-                <div key={ev.id} className="group rounded-xl border border-gray-700/60 bg-gray-800/50 px-4 py-3 flex items-start justify-between gap-3">
+                <div key={ev.id} className="group rounded-xl border border-border/60 bg-card px-4 py-3 flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="text-xs text-gray-400 mb-1">{new Date(ev.start_at).toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' })}</div>
-                    <button onClick={() => setSelectedEvent(ev)} className="text-left text-sm font-medium text-white hover:text-blue-300 truncate max-w-full">{ev.title}</button>
-                    <div className="text-xs text-gray-400 mt-1">
+                    <div className="text-xs text-muted-foreground mb-1">{new Date(ev.start_at).toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' })}</div>
+                    <button onClick={() => setSelectedEvent(ev)} className="text-left text-sm font-medium text-foreground hover:text-blue-300 truncate max-w-full">{ev.title}</button>
+                    <div className="text-xs text-muted-foreground mt-1">
                       {new Date(ev.start_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
                       {ev.end_at && ev.end_at > ev.start_at ? ` → ${new Date(ev.end_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}` : ''}
                     </div>
-                    {ev.location && <div className="text-xs text-gray-400 mt-1">📍 {ev.location}</div>}
+                    {ev.location && <div className="text-xs text-muted-foreground mt-1">📍 {ev.location}</div>}
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <span className="w-2.5 h-2.5 rounded-full" style={{ background: ev.color || '#3b82f6' }} />
                     <button
                       onClick={() => setDeleteTarget(ev)}
-                      className="inline-flex items-center gap-1 rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-300 opacity-0 pointer-events-none transition-all group-hover:opacity-100 group-hover:pointer-events-auto focus:opacity-100 focus:pointer-events-auto hover:border-red-400/50 hover:bg-red-500/20 hover:text-white"
+                      className="inline-flex items-center gap-1 rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-300 opacity-0 pointer-events-none transition-all group-hover:opacity-100 group-hover:pointer-events-auto focus:opacity-100 focus:pointer-events-auto hover:border-red-400/50 hover:bg-red-500/20 hover:text-foreground"
                     ><TrashIcon className="w-4 h-4 inline" /> Xóa
                     </button>
                   </div>
@@ -251,8 +251,8 @@ export default function CalendarPage() {
                 key={dayTs}
                 className={`h-[136px] rounded-xl p-2 border transition-colors flex flex-col overflow-hidden ${
                   isToday ? 'border-blue-500/60 bg-blue-900/10'
-                  : isOther ? 'border-gray-800 bg-gray-900/40 opacity-60'
-                  : 'border-gray-700/60 bg-gray-800/40'
+                  : isOther ? 'border-border bg-background/40 opacity-60'
+                  : 'border-border/60 bg-card/40'
                 }`}
                 onDoubleClick={() => {
                   // quick-create on double-click: pre-fill start/end for that day.
@@ -262,7 +262,7 @@ export default function CalendarPage() {
                 }}
               >
                 <p className={`text-xs font-semibold mb-1.5 ${
-                  isToday ? 'text-blue-400' : isOther ? 'text-gray-400' : 'text-gray-400'
+                  isToday ? 'text-blue-400' : isOther ? 'text-muted-foreground' : 'text-muted-foreground'
                 }`}>
                   {new Date(dayTs).getDate()}
                 </p>
@@ -306,24 +306,24 @@ export default function CalendarPage() {
       {showModal && (
         <ErpOverlay onClose={closeEventModal} className="z-50">
           <ErpModalCard className="w-full max-w-md p-5">
-            <h3 className="text-sm font-bold text-white mb-4">{editingEventId ? 'Chỉnh sửa sự kiện' : 'Tạo sự kiện mới'}</h3>
+            <h3 className="text-sm font-bold text-foreground mb-4">{editingEventId ? 'Chỉnh sửa sự kiện' : 'Tạo sự kiện mới'}</h3>
             <div className="space-y-3">
               <input
                 placeholder="Tiêu đề sự kiện"
                 value={newEvent.title ?? ''}
                 onChange={e => setNewEvent(v => ({ ...v, title: e.target.value }))}
-                className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
               />
               <div>
-                <label className="text-[11px] text-gray-400 mb-1 block">Bắt đầu</label>
+                <label className="text-[11px] text-muted-foreground mb-1 block">Bắt đầu</label>
                 <input
                   type="datetime-local"
                   value={newEvent.start_at ? new Date(newEvent.start_at - new Date(newEvent.start_at).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''}
                   onChange={e => setNewEvent(v => ({ ...v, start_at: e.target.value ? new Date(e.target.value).getTime() : undefined }))}
-                  className="w-full bg-gray-700 border border-gray-600 rounded-lg px-2 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-blue-500"
+                  className="w-full bg-muted border border-input rounded-lg px-2 py-1.5 text-xs text-foreground focus:outline-none focus:border-blue-500"
                 />
               </div>
-              <label className="flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-900/40 px-3 py-2 text-xs text-gray-300 cursor-pointer">
+              <label className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs text-foreground/80 cursor-pointer">
                 <input type="checkbox" checked={hasEndTime} onChange={e => {
                   const checked = e.target.checked;
                   setHasEndTime(checked);
@@ -333,12 +333,12 @@ export default function CalendarPage() {
               </label>
               {hasEndTime && (
                 <div>
-                  <label className="text-[11px] text-gray-400 mb-1 block">Kết thúc</label>
+                  <label className="text-[11px] text-muted-foreground mb-1 block">Kết thúc</label>
                   <input
                     type="datetime-local"
                     value={newEvent.end_at ? new Date(newEvent.end_at - new Date(newEvent.end_at).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''}
                     onChange={e => setNewEvent(v => ({ ...v, end_at: e.target.value ? new Date(e.target.value).getTime() : undefined }))}
-                    className="w-full bg-gray-700 border border-gray-600 rounded-lg px-2 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-blue-500"
+                    className="w-full bg-muted border border-input rounded-lg px-2 py-1.5 text-xs text-foreground focus:outline-none focus:border-blue-500"
                   />
                 </div>
               )}
@@ -346,14 +346,14 @@ export default function CalendarPage() {
                 placeholder="Địa điểm (tùy chọn)"
                 value={newEvent.location ?? ''}
                 onChange={e => setNewEvent(v => ({ ...v, location: e.target.value }))}
-                className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
               />
               <textarea
                 placeholder="Ghi chú / note thông tin thêm (tùy chọn)"
                 value={newEvent.description ?? ''}
                 onChange={e => setNewEvent(v => ({ ...v, description: e.target.value }))}
                 rows={3}
-                className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500 resize-y"
+                className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 resize-y"
               />
             </div>
             <div className="flex gap-2 mt-4">
@@ -374,7 +374,7 @@ export default function CalendarPage() {
                 disabled={!newEvent.title?.trim() || !newEvent.start_at || (hasEndTime && !newEvent.end_at)}
                 className="flex-1 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-sm rounded-lg"
               >{editingEventId ? 'Lưu' : 'Tạo'}</button>
-              <button onClick={closeEventModal} className="px-4 py-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg text-sm">Huỷ</button>
+              <button onClick={closeEventModal} className="px-4 py-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg text-sm">Huỷ</button>
             </div>
           </ErpModalCard>
         </ErpOverlay>
@@ -384,15 +384,15 @@ export default function CalendarPage() {
       {selectedEvent && (
         <ErpOverlay onClose={() => setSelectedEvent(null)} className="z-50" backdropClassName="bg-black/50">
           <ErpModalCard className="w-full max-w-sm p-5">
-            <h3 className="text-sm font-bold text-white mb-2">{selectedEvent.title}</h3>
-            <p className="text-xs text-gray-400">
+            <h3 className="text-sm font-bold text-foreground mb-2">{selectedEvent.title}</h3>
+            <p className="text-xs text-muted-foreground">
               {new Date(selectedEvent.start_at).toLocaleString('vi-VN')}
               {selectedEvent.end_at && selectedEvent.end_at > selectedEvent.start_at
                 ? ` → ${new Date(selectedEvent.end_at).toLocaleString('vi-VN')}`
                 : ''}
             </p>
-            {selectedEvent.location && <p className="text-xs text-gray-400 mt-1">📍 {selectedEvent.location}</p>}
-            {selectedEvent.description && <p className="text-xs text-gray-300 mt-2 whitespace-pre-wrap">{selectedEvent.description}</p>}
+            {selectedEvent.location && <p className="text-xs text-muted-foreground mt-1">📍 {selectedEvent.location}</p>}
+            {selectedEvent.description && <p className="text-xs text-foreground/80 mt-2 whitespace-pre-wrap">{selectedEvent.description}</p>}
             <div className="flex gap-2 mt-4 justify-end">
               <button
                 onClick={() => openEditEventModal(selectedEvent)}
@@ -403,7 +403,7 @@ export default function CalendarPage() {
                 className="px-3 py-1.5 text-xs font-medium text-red-300 border border-red-500/30 bg-red-500/10 hover:text-white hover:bg-red-600 rounded-lg"
               >Xoá</button>
               <button onClick={() => setSelectedEvent(null)}
-                className="px-3 py-1.5 text-xs text-gray-300 hover:text-white hover:bg-gray-700 rounded-lg">Đóng</button>
+                className="px-3 py-1.5 text-xs text-foreground/80 hover:text-foreground hover:bg-muted rounded-lg">Đóng</button>
             </div>
           </ErpModalCard>
         </ErpOverlay>
@@ -422,23 +422,23 @@ export default function CalendarPage() {
         <ErpOverlay onClose={() => setSelectedDayTs(null)} className="z-50" backdropClassName="bg-black/50">
           <ErpModalCard className="w-full max-w-lg p-5">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-bold text-white">Danh sách sự kiện ngày {new Date(selectedDayTs).toLocaleDateString('vi-VN')}</h3>
-              <button onClick={() => setSelectedDayTs(null)} className="text-gray-400 hover:text-white">✕</button>
+              <h3 className="text-sm font-bold text-foreground">Danh sách sự kiện ngày {new Date(selectedDayTs).toLocaleDateString('vi-VN')}</h3>
+              <button onClick={() => setSelectedDayTs(null)} className="text-muted-foreground hover:text-foreground">✕</button>
             </div>
             <div className="space-y-2 max-h-[60vh] overflow-auto">
               {selectedDayEvents.map(ev => (
-                <div key={ev.id} className="rounded-xl border border-gray-700/60 bg-gray-900/40 px-3 py-2 flex items-start justify-between gap-3">
+                <div key={ev.id} className="rounded-xl border border-border/60 bg-card px-3 py-2 flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <button onClick={() => { setSelectedEvent(ev); setSelectedDayTs(null); }} className="text-left text-sm text-white hover:text-blue-300 truncate max-w-full">{ev.title}</button>
-                    <div className="text-xs text-gray-400 mt-1">
+                    <button onClick={() => { setSelectedEvent(ev); setSelectedDayTs(null); }} className="text-left text-sm text-foreground hover:text-blue-300 truncate max-w-full">{ev.title}</button>
+                    <div className="text-xs text-muted-foreground mt-1">
                       {new Date(ev.start_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
                       {ev.end_at && ev.end_at > ev.start_at ? ` → ${new Date(ev.end_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}` : ''}
                     </div>
-                    {ev.description && <div className="text-[11px] text-gray-400 mt-1 whitespace-pre-wrap">{ev.description}</div>}
+                    {ev.description && <div className="text-[11px] text-muted-foreground mt-1 whitespace-pre-wrap">{ev.description}</div>}
                   </div>
                   <button
                     onClick={() => setDeleteTarget(ev)}
-                    className="inline-flex items-center gap-1 rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-300 hover:border-red-400/50 hover:bg-red-500/20 hover:text-white"
+                    className="inline-flex items-center gap-1 rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-300 hover:border-red-400/50 hover:bg-red-500/20 hover:text-foreground"
                   ><TrashIcon className="w-4 h-4 inline" /> Xóa
                   </button>
                 </div>

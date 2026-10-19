@@ -1,8 +1,87 @@
 // Typed wrappers quanh window.electronAPI
 // Dùng trong React components thay vì gọi trực tiếp
 
+import type { FbHistorySyncStatus } from '../../shared/facebookHistorySync';
+import type { PosWebhookListResponse } from '../../shared/posWebhookTopics';
 import { useAppStore } from '../store/appStore';
 import type { TelegramForumTopicContext } from '../../models/telegram';
+import type { ContactsInfoRefreshResult } from '../../models/contact';
+import type {
+  TelegramCallHistoryItem, TelegramChatSettings, TelegramContactItem, TelegramCreateChannelResult, TelegramMissingInvitee,
+} from '../../shared/telegramQuickModel';
+import type { TelegramCoveredStickerSet, TelegramStickerFileKind, TelegramStickerItem, TelegramStickerSetInfo } from '../../shared/telegramStickers';
+import type {
+  EmployeeCredentialsEvent,
+  EmployeeResyncEvent,
+  WorkspaceConnectionStatusEvent,
+} from '../../shared/employeeConnection';
+import type {
+  BossAddressInfo,
+  BossProbeEvidence,
+  BossProbeVerdict,
+  EmployeeBossUrlChangedPayload,
+  RelayTunnelStatus,
+} from '../../shared/tunnelAddress';
+import type {
+  CloudflareIpc,
+  CloudChangedPayload,
+  RestoreProgress,
+  R2CleanupProgress,
+  CLOUD_CHANGED_EVENT,
+  CLOUD_CLEANUP_PROGRESS_EVENT,
+  CLOUD_RESTORE_PROGRESS_EVENT,
+} from '../../shared/cloudContracts';
+
+export type { EmployeeCredentialsEvent, EmployeeResyncEvent, WorkspaceConnectionStatusEvent };
+export type { EmployeeBossUrlChangedPayload, RelayTunnelStatus };
+
+/** relay:probeBossAddress — thăm dò địa chỉ Boss (DNS + GET /api/health, không gửi token). */
+export interface BossAddressProbeResponse {
+  success: boolean;
+  url?: string;
+  info?: BossAddressInfo;
+  verdict?: BossProbeVerdict;
+  /** Lý do tiếng Việt (describeBossProbe). */
+  reason?: string;
+  evidence?: BossProbeEvidence;
+  elapsedMs?: number;
+  error?: string;
+}
+
+/** Trạng thái phiên "Đồng bộ tin nhắn từ điện thoại" (khớp MobileSyncStatus ở main process). */
+export type MobileSyncStage =
+  | 'idle' | 'requesting' | 'waiting_confirm' | 'waiting_backup' | 'mobile_idle'
+  | 'downloading' | 'decrypting' | 'resolving_ids' | 'importing'
+  | 'completed' | 'failed' | 'cancelled';
+
+/** Khoảng thời gian đồng bộ (TimeStamp ms); null = không giới hạn phía đó. */
+export interface MobileSyncRange {
+  fromTs: number | null;
+  toTs: number | null;
+}
+
+export interface MobileSyncStatus {
+  zaloId: string;
+  stage: MobileSyncStage;
+  progress: number;
+  message: string;
+  pcName?: string;
+  range?: MobileSyncRange;
+  error?: string;
+  stats?: {
+    conversations: number;
+    conversationsResolved: number;
+    conversationsUnresolved: number;
+    messagesRead: number;
+    messagesImported: number;
+    messagesSkipped: number;
+    /** Tin có trong bản sao lưu nhưng ngoài khoảng thời gian đã chọn. */
+    messagesOutOfRange?: number;
+    durationMs: number;
+  };
+  startedAt?: number;
+  updatedAt: number;
+}
 
 export interface NativeLoginIpcField {
   id: string;
@@ -23,14 +102,22 @@ export interface NativeLoginIpcStep {
   user_input?: {
     fields: NativeLoginIpcField[];
     attachments?: Array<{ content?: string; info?: { mimetype?: string } }>;
+    /** "Thử cách khác" is available (backMessengerLiteLogin). */
+    can_cancel?: boolean;
   };
-  display_and_wait?: { can_cancel?: boolean };
+  display_and_wait?: { type?: string; data?: string; can_cancel?: boolean };
+  /** Verification page (Google reCAPTCHA) run by runMessengerLiteWebStep. */
+  cookies?: { url: string };
 }
 
 export interface NativeLoginIpcResult {
   success: boolean;
   sessionId?: string;
   step?: NativeLoginIpcStep;
+  /** The approval on another device is still pending: wait again. */
+  waiting?: boolean;
+  /** The wait was interrupted by "Thử cách khác" or cancel. */
+  cancelled?: boolean;
   account?: any;
   facebookId?: string;
   name?: string;
@@ -39,9 +126,234 @@ export interface NativeLoginIpcResult {
 }
 
 
+// ─── Public API & Plugin (Công cụ → Ứng dụng, API & Webhook) ─────────────────────
+export interface ApiScopeInfo { id: string; group: string; label: string }
+export interface ApiScopePreset { label: string; scopes: string[] }
+export interface ApiKeyRecord {
+  id: string;
+  name: string;
+  key_prefix: string;
+  scopes: string[];
+  account_ids: string[] | null;
+  allowed_ips: string[] | null;
+  rate_limit_per_min: number;
+  erp_role: 'owner' | 'admin' | 'manager' | 'member' | 'guest';
+  plugin_id: string | null;
+  note: string;
+  created_by: string;
+  created_at: number;
+  last_used_at: number | null;
+  last_used_ip: string | null;
+  expires_at: number | null;
+  revoked_at: number | null;
+}
+export interface ApiKeyCreateInput {
+  name: string;
+  scopes: string[];
+  accountIds?: string[] | null;
+  allowedIps?: string[] | null;
+  rateLimitPerMin?: number;
+  erpRole?: ApiKeyRecord['erp_role'];
+  note?: string;
+  expiresAt?: number | null;
+}
+export interface ApiWebhookRecord {
+  id: string;
+  key_id: string | null;
+  owner: string;
+  name: string;
+  url: string;
+  events: string[];
+  account_ids: string[] | null;
+  active: boolean;
+  allow_private: boolean;
+  consecutive_failures: number;
+  disabled_reason: string | null;
+  last_delivery_at: number | null;
+  created_at: number;
+  updated_at: number;
+}
+export interface ApiWebhookDelivery {
+  id: string;
+  event_seq: number;
+  event_type: string;
+  attempt: number;
+  status: 'pending' | 'delivered' | 'failed';
+  response_status: number | null;
+  response_body: string | null;
+  error: string | null;
+  next_retry_at: number | null;
+  created_at: number;
+  delivered_at: number | null;
+}
+export interface ApiRequestLogRow {
+  id: number;
+  principal_id: string;
+  method: string;
+  route: string;
+  status: number;
+  took_ms: number;
+  ip: string;
+  request_id: string;
+  error_code: string | null;
+  created_at: number;
+}
+export interface ApiStatusResult {
+  success: boolean;
+  error?: string;
+  server?: { running: boolean; port: number; localIPs: string[]; tunnelActive: boolean; tunnelUrl: string | null; connectedEmployees: number };
+  platform?: {
+    enabled: boolean;
+    initialized: boolean;
+    routes: number;
+    ipc: { active: number; queued: number; limit: number };
+    metrics: { requests_per_min: number; p95_ms: number; errors_5xx: number; window_sec: number };
+    blocked_ips: string[];
+    events: { capturing: boolean; listeners: number; sockets: number };
+  };
+  settings?: Record<string, string>;
+  defaults?: Record<string, string>;
+  scopes?: ApiScopeInfo[];
+  presets?: Record<string, ApiScopePreset>;
+  employeeMachine?: boolean;
+}
+type ApiResult<T = {}> = Promise<{ success: boolean; error?: string; code?: string } & Partial<T>>;
+export interface ApiIpc {
+  status: () => Promise<ApiStatusResult>;
+  startServer: (port?: number) => ApiResult<{ port: number }>;
+  stopServer: () => ApiResult;
+  setSetting: (key: string, value: string) => ApiResult<{ settings: Record<string, string> }>;
+  listKeys: (includeRevoked?: boolean) => ApiResult<{ keys: ApiKeyRecord[] }>;
+  createKey: (input: ApiKeyCreateInput) => ApiResult<{ key: string; record: ApiKeyRecord }>;
+  updateKey: (id: string, patch: Partial<ApiKeyCreateInput>) => ApiResult<{ record: ApiKeyRecord }>;
+  revokeKey: (id: string) => ApiResult;
+  revokeAllKeys: () => ApiResult<{ count: number }>;
+  purgeKey: (id: string) => ApiResult;
+  keyUsage: (id: string, hours?: number) => ApiResult<{ usage: { total: number; errors: number; last_at: number | null; by_status: Record<string, number> } }>;
+  listLogs: (limit?: number, principalId?: string) => ApiResult<{ logs: ApiRequestLogRow[] }>;
+  /** Mở /docs trong trình duyệt (tự bật API server). hash: mục cần mở, vd '#guide/plugins'. */
+  openDocs: (hash?: string) => ApiResult<{ started: boolean; port: number }>;
+  listWebhooks: () => ApiResult<{ webhooks: ApiWebhookRecord[] }>;
+  createWebhook: (input: { name?: string; url: string; events?: string[]; accountIds?: string[] | null }) => ApiResult<{ webhook: ApiWebhookRecord; secret: string }>;
+  updateWebhook: (id: string, patch: { name?: string; url?: string; events?: string[]; accountIds?: string[] | null; active?: boolean }) => ApiResult<{ webhook: ApiWebhookRecord }>;
+  deleteWebhook: (id: string) => ApiResult;
+  testWebhook: (id: string) => ApiResult<{ result: { ok: boolean; status: number | null; body: string; error: string | null; took_ms: number } }>;
+  webhookDeliveries: (id: string, status?: string, limit?: number) => ApiResult<{ deliveries: ApiWebhookDelivery[] }>;
+  retryDelivery: (deliveryId: string) => ApiResult;
+  eventTypes: () => ApiResult<{ types: Array<{ type: string; description: string; ephemeral?: boolean; global?: boolean }> }>;
+}
+
+// ─── Plugin ──────────────────────────────────────────────────────────────────
+export interface PluginPermissionInfo { id: string; label: string; group: string; risky: boolean }
+export interface PluginSettingsField {
+  type: 'string' | 'number' | 'integer' | 'boolean';
+  title?: string;
+  description?: string;
+  default?: any;
+  enum?: Array<string | number>;
+  minimum?: number;
+  maximum?: number;
+  maxLength?: number;
+  'x-secret'?: boolean;
+  'x-multiline'?: boolean;
+}
+export interface PluginSettingsSchema { properties: Record<string, PluginSettingsField>; required?: string[] }
+export interface PluginManifestInfo {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  author?: string;
+  homepage?: string;
+  icon?: string;
+  runtime: 'web' | 'local' | 'remote';
+  permissions: string[];
+  remote?: { baseUrl: string };
+  contributes?: Record<string, any>;
+}
+export interface PluginInfo {
+  id: string;
+  name: string;
+  version: string;
+  runtime: 'web' | 'local' | 'remote';
+  source_type: 'zip' | 'dev';
+  install_path: string;
+  manifest: PluginManifestInfo;
+  granted_permissions: string[];
+  account_ids: string[] | null;
+  status: 'enabled' | 'disabled' | 'invalid' | 'disabled_crash';
+  status_reason: string | null;
+  installed_at: number;
+  updated_at: number;
+  running: boolean;
+  stats: {
+    running: boolean; pid?: number; restarts: number; startedAt?: number; memoryMb?: number; lastError?: string;
+    remote?: { baseUrl: string; connected: boolean | null; lastOkAt?: number; calls: number };
+  } | null;
+  permissions: PluginPermissionInfo[];
+  /** Biểu tượng (data URL) từ manifest.icon, null nếu không có. */
+  icon: string | null;
+}
+export interface PluginInstallPreview {
+  token: string;
+  source: 'zip' | 'dev';
+  manifest: PluginManifestInfo;
+  permissions: PluginPermissionInfo[];
+  readme: string | null;
+  hasBackend: boolean;
+  existing: { version: string; status: string; source: string } | null;
+  newPermissions: string[];
+  files?: number;
+  bytes?: number;
+}
+export interface PluginUiContribution {
+  pluginId: string;
+  pluginName: string;
+  id: string;
+  title: string;
+  icon?: string;
+  url: string;
+  origin: string;
+  width?: number;
+  target?: 'ui' | 'backend';
+  permissions: string[];
+}
+export interface PluginContributions {
+  pages: PluginUiContribution[];
+  chatPanels: PluginUiContribution[];
+  composerButtons: PluginUiContribution[];
+}
+type PlResult<T = {}> = Promise<{ success: boolean; error?: string; code?: string; status?: number; details?: any } & Partial<T>>;
+export interface PluginsIpc {
+  list: () => PlResult<{ plugins: PluginInfo[]; contributions: PluginContributions }>;
+  contributions: () => PlResult<{ contributions: PluginContributions }>;
+  pickZip: () => PlResult<{ canceled: boolean; preview: PluginInstallPreview }>;
+  inspectZip: (path: string) => PlResult<{ preview: PluginInstallPreview }>;
+  pickDevFolder: () => PlResult<{ canceled: boolean; preview: PluginInstallPreview }>;
+  confirmInstall: (token: string, accountIds?: string[] | null) => PlResult<{ record: PluginInfo; remoteCredentials: { apiKey: string; secret: string; baseUrl: string } | null }>;
+  cancelInstall: (token: string) => PlResult;
+  enable: (id: string) => PlResult<{ record: PluginInfo }>;
+  disable: (id: string) => PlResult<{ record: PluginInfo }>;
+  reload: (id: string) => PlResult<{ record: PluginInfo }>;
+  uninstall: (id: string, deleteData?: boolean) => PlResult;
+  getSettings: (id: string) => PlResult<{ schema: PluginSettingsSchema | null; values: Record<string, any> }>;
+  setSettings: (id: string, values: Record<string, any>) => PlResult<{ values: Record<string, any> }>;
+  logs: (id: string, limit?: number) => PlResult<{ logs: Array<{ id: number; level: string; message: string; created_at: number }> }>;
+  openFolder: (id: string, kind?: 'code' | 'data') => PlResult;
+  nodeTypes: () => PlResult<{ nodes: any[] }>;
+  invoke: (pluginId: string, method: string, params?: any) => PlResult<{ result: any }>;
+  subscribeEvents: (pluginId: string, types: string[]) => PlResult;
+  unsubscribeEvents: (pluginId?: string) => PlResult;
+  command: (pluginId: string, buttonId: string, context?: any) => PlResult<{ result: any }>;
+}
+
 declare global {
   interface Window {
     electronAPI: {
+      api: ApiIpc;
+      plugins: PluginsIpc;
+      /** Internet & Đám mây (Cloudflare) — chỉ máy chủ; token / mật khẩu sao lưu không bao giờ quay về renderer. */
+      cloudflare?: CloudflareIpc;
       window: {
         minimize: () => void;
         maximize: () => void;
@@ -69,10 +381,14 @@ declare global {
         removeAccount: (zaloId: string, deleteData?: boolean) => Promise<any>;
         checkHealth: (zaloIds: string | string[]) => Promise<{ success: boolean; results: Array<{ zaloId: string; healthy: boolean; readyState: number | null; reason?: string }>; error?: string }>;
         checkAndRefreshAvatar: (zaloId: string) => Promise<{ success: boolean; refreshed: boolean; avatar_url?: string; full_name?: string; reason?: string; error?: string }>;
-        requestOldMessages: (zaloId: string) => Promise<{ success: boolean; error?: string }>;
         getMediaAutoDelete: (zaloId: string) => Promise<{ success: boolean; config: { enabled: boolean; days: number } | null; error?: string }>;
         setMediaAutoDelete: (zaloId: string, enabled: boolean, days: number) => Promise<{ success: boolean; config?: { enabled: boolean; days: number }; cleanedDirs?: number; message?: string; error?: string }>;
         runAllMediaCleanup: () => Promise<{ success: boolean; results?: Array<{ zaloId: string; cleaned: number; config: any }>; error?: string }>;
+      };
+      mobileSync: {
+        start: (zaloId: string, range?: Partial<MobileSyncRange>) => Promise<{ success: boolean; status?: MobileSyncStatus; error?: string }>;
+        cancel: (zaloId: string) => Promise<{ success: boolean; status?: MobileSyncStatus }>;
+        getStatus: (zaloId: string) => Promise<{ success: boolean; status: MobileSyncStatus | null }>;
       };
       zalo: {
         sendMessage: (params: any) => Promise<any>;
@@ -92,6 +408,12 @@ declare global {
         getFriends: (auth: any) => Promise<any>;
         getGroups: (auth: any) => Promise<any>;
         getUserInfo: (params: any) => Promise<any>;
+        /** Làm mới tên/avatar hàng loạt theo UID (getUserInfo lô 50, tuần tự). Kết quả nằm trong `response`. */
+        refreshContactsInfo: (params: { auth: any; userIds: string[] }) => Promise<{
+          success: boolean;
+          response?: ContactsInfoRefreshResult;
+          error?: string;
+        }>;
         getContext: (params: any) => Promise<any>;
         findUser: (params: any) => Promise<any>;
         sendFriendRequest: (params: any) => Promise<any>;
@@ -170,11 +492,26 @@ declare global {
         getMessages: (params: any) => Promise<any>;
         getMessagesAround: (params: { zaloId: string; threadId: string; timestamp: number; limit?: number }) => Promise<any>;
         getContacts: (zaloId: string) => Promise<any>;
-        getContactsFiltered: (params: { zaloId: string; channel?: string; search?: string; othersOnly?: boolean; excludeOthers?: boolean; unreadOnly?: boolean; limit?: number; offset?: number }) => Promise<{ success: boolean; contacts: any[] }>;
+        getContactsFiltered: (params: { zaloId: string; channel?: string; search?: string; othersOnly?: boolean; excludeOthers?: boolean; unreadOnly?: boolean; contactIds?: string[]; limit?: number; offset?: number }) => Promise<{ success: boolean; contacts: any[] }>;
+        /** Ô chọn liên hệ workflow: tìm không dấu + lọc loại + phân trang ở main process */
+        searchContactsForPicker: (params: { zaloId: string; search?: string; type?: 'user' | 'group' | 'all'; limit?: number; offset?: number; ids?: string[] }) => Promise<{
+          success: boolean;
+          error?: string;
+          items: Array<{ id: string; name: string; originalName?: string; avatar?: string; phone?: string; type: 'user' | 'group'; isFriend: boolean; lastActivity: number }>;
+          total: number;
+          counts: { all: number; user: number; group: number };
+        }>;
         saveAccount: (account: any) => Promise<{ success: boolean; error?: string }>;
         searchContactByPhone: (params: { zaloId: string; phone: string }) => Promise<{ success: boolean; contact: any | null }>;
         searchMessages: (params: any) => Promise<any>;
-        getMediaMessages: (params: { zaloId: string; threadId?: string; limit?: number; offset?: number }) => Promise<any>;
+        /**
+         * Ảnh/video của hội thoại, mới → cũ. `offset`: trang cũ. `beforeTs`/`afterTs` (+ `beforeMsgId`/`afterMsgId`):
+         * trang keyset theo (timestamp, msg_id) — chặt (không gồm mốc) khi có msgId; khi có cursor thì bỏ qua `offset`.
+         */
+        getMediaMessages: (params: {
+          zaloId: string; threadId?: string; limit?: number; offset?: number;
+          beforeTs?: number; beforeMsgId?: string; afterTs?: number; afterMsgId?: string;
+        }) => Promise<any>;
         getFileMessages: (params: { zaloId: string; threadId: string; limit?: number; offset?: number }) => Promise<any>;
         getUnreadCount: (zaloId: string) => Promise<any>;
         markAsRead: (params: any) => Promise<any>;
@@ -202,6 +539,8 @@ declare global {
         getLinks: (params: { zaloId: string; threadId: string; limit?: number; offset?: number }) => Promise<{ success: boolean; links: any[] }>;
         saveLink: (params: any) => Promise<{ success: boolean }>;
         getGroupMembers: (params: { zaloId: string; groupId: string }) => Promise<{ success: boolean; members: Array<{ member_id: string; display_name: string; avatar: string; role: number; username?: string; updated_at: number }> }>;
+        /** Một trang thành viên nhóm + tổng (lọc theo `query`, không phân biệt dấu); `ownerRole` = role chủ nhóm của kênh. */
+        getGroupMembersPage: (params: { zaloId: string; groupId: string; query?: string; limit?: number; offset?: number; ownerRole?: number }) => Promise<{ success: boolean; members: Array<{ member_id: string; display_name: string; avatar: string; role: number; username?: string; updated_at: number }>; total: number; error?: string }>;
         getAllGroupMembers: (params: { zaloId: string }) => Promise<{ success: boolean; rows: Array<{ group_id: string; member_id: string; display_name: string; avatar: string; role: number; updated_at: number }> }>;
         saveGroupMembers: (params: { zaloId: string; groupId: string; members: Array<{ memberId: string; displayName: string; avatar: string; role: number }> }) => Promise<{ success: boolean }>;
         upsertGroupMember: (params: { zaloId: string; groupId: string; member: { memberId: string; displayName: string; avatar: string; role: number } }) => Promise<{ success: boolean }>;
@@ -247,6 +586,12 @@ declare global {
         // Local Pinned Conversations
         getLocalPinnedConversations: (params: { zaloId: string }) => Promise<{ success: boolean; threadIds: string[] }>;
         setLocalPinnedConversation: (params: { zaloId: string; threadId: string; isPinned: boolean }) => Promise<{ success: boolean }>;
+        // Tự động đánh dấu đã đọc: hội thoại chưa đọc (lọc thời gian tin cuối)
+        getUnreadConversations: (params: { zaloId: string; from?: number; to?: number; includeOthers?: boolean; channel?: string }) => Promise<{ success: boolean; conversations: Array<{ contact_id: string; contact_type: string; channel: string; display_name: string; alias: string; unread_count: number; has_mention: number; last_message_time: number; is_in_others: number; telegram_membership_state: string | null }>; error?: string }>;
+        // Starred messages ("Tin đánh dấu")
+        getStarredMessageKeys: (params: { zaloId: string }) => Promise<{ success: boolean; keys: Array<{ thread_id: string; msg_id: string }>; error?: string }>;
+        getStarredMessages: (params: { zaloIds: string[]; limit?: number; offset?: number }) => Promise<{ success: boolean; items: any[]; hasMore: boolean; error?: string }>;
+        setMessageStarred: (params: { zaloId: string; threadId: string; msgId: string; starred: boolean; snapshot?: any }) => Promise<{ success: boolean; error?: string }>;
         // Per-account Notification Settings
         getNotifSettings: (zaloId: string) => Promise<{ success: boolean; settings: any | null; error?: string }>;
         setNotifSettings: (zaloId: string, settings: any) => Promise<{ success: boolean; error?: string }>;
@@ -314,7 +659,8 @@ declare global {
           success: boolean; totalSent: number; totalReceived: number;
           timeline: Array<{ bucket: string; sent: number; received: number }>;
         }>;
-        workflowAnalytics: (params: { zaloId: string; sinceTs: number; untilTs: number }) => Promise<{
+        /** zaloIds: several accounts in one query (a workflow attached to several counts once). */
+        workflowAnalytics: (params: { zaloId?: string; zaloIds?: string[]; sinceTs: number; untilTs: number }) => Promise<{
           success: boolean; totalRuns: number; successRuns: number; errorRuns: number; successRate: number;
           avgDuration: number;
           topWorkflows: Array<{ workflowName: string; runs: number; successRate: number }>;
@@ -326,7 +672,8 @@ declare global {
           byAssistant: Array<{ assistantName: string; requests: number; tokens: number }>;
           timeline: Array<{ bucket: string; requests: number; tokens: number }>;
         }>;
-        responseTime: (params: { zaloId: string; sinceTs: number; untilTs: number; threadType?: number }) => Promise<{
+        /** zaloIds: several accounts in one query (exact median / min / max over all their replies). */
+        responseTime: (params: { zaloId?: string; zaloIds?: string[]; sinceTs: number; untilTs: number; threadType?: number }) => Promise<{
           success: boolean; avgSeconds: number; medianSeconds: number; minSeconds: number; maxSeconds: number;
           totalConversations: number; totalReplies: number;
           distribution: Array<{ bucket: string; count: number }>;
@@ -349,7 +696,11 @@ declare global {
         saveTempBlob: (params: { base64: string; ext: string; filename?: string }) => Promise<{ success: boolean; filePath?: string; error?: string }>;
         getVideoMeta: (params: { filePath: string }) => Promise<{ success: boolean; thumbPath: string; duration: number; width: number; height: number; error?: string }>;
         readImageAsBase64: (params: { localPath?: string; remoteUrl?: string }) => Promise<{ success: boolean; base64?: string; mimeType?: string; error?: string }>;
-        repairImage: (params: { zaloId: string; msgId: string; threadId?: string; localPath?: string; remoteUrl?: string }) => Promise<{ success: boolean; newLocalPath?: string; error?: string }>;
+        repairImage: (params: { zaloId: string; msgId: string; threadId?: string; localPath?: string; remoteUrl?: string; force?: boolean }) => Promise<{ success: boolean; newLocalPath?: string; expired?: boolean; error?: string }>;
+        /** Kiểm tra media Zalo còn trên CDN không (video / ảnh trong album). expired=true → đã lưu cờ media_expired. */
+        checkMediaExpired: (params: { zaloId: string; msgId: string; urls: string[]; force?: boolean }) => Promise<{ success: boolean; expired: boolean; unknown?: boolean; error?: string }>;
+        /** Tải media của 1 tin Zalo về máy (chuyển tiếp tin chưa tải), cập nhật local_paths */
+        downloadMessageMedia: (params: { zaloId: string; msgId: string; threadId?: string; kind: 'image' | 'gif' | 'file' | 'voice' | 'video' }) => Promise<{ success: boolean; localPath?: string; localPaths?: Record<string, string>; error?: string }>;
         ensureFaststart: (params: { filePath: string }) => Promise<{ success: boolean; fixed?: boolean; reason?: string; error?: string }>;
         validateLocalImages: (items: Array<{ zaloId: string; msgId: string; threadId?: string; localPath: string; remoteUrl?: string }>) => Promise<{ success: boolean; corrupted: Array<{ zaloId: string; msgId: string; threadId?: string; localPath: string; remoteUrl?: string; reason: string }> }>;
         captureScreenshot: () => Promise<{ success: boolean; screenshots?: Array<{ name: string; id: string; displayId: string; thumbnail: string; width: number; height: number }>; error?: string }>;
@@ -389,7 +740,20 @@ declare global {
         updateItem:  (uuid: string, params: any) => Promise<any>;
       };
 
-      on: (channel: string, callback: (...args: any[]) => void) => () => void;
+      on: {
+        // Sự kiện vòng đời kết nối nhân viên ↔ Boss (payload: src/shared/employeeConnection.ts)
+        (channel: 'employee:credentials', callback: (data: EmployeeCredentialsEvent) => void): () => void;
+        (channel: 'employee:resync', callback: (data: EmployeeResyncEvent) => void): () => void;
+        (channel: 'workspace:connectionStatus', callback: (data: WorkspaceConnectionStatusEvent) => void): () => void;
+        // Địa chỉ WAN của Boss (payload: src/shared/tunnelAddress.ts)
+        (channel: 'employee:bossUrlChanged', callback: (data: EmployeeBossUrlChangedPayload) => void): () => void;
+        (channel: 'relay:tunnelStatusUpdate', callback: (data: RelayTunnelStatus) => void): () => void;
+        // Cloudflare (payload: src/shared/cloudContracts.ts)
+        (channel: typeof CLOUD_CHANGED_EVENT, callback: (data: CloudChangedPayload) => void): () => void;
+        (channel: typeof CLOUD_RESTORE_PROGRESS_EVENT, callback: (data: RestoreProgress) => void): () => void;
+        (channel: typeof CLOUD_CLEANUP_PROGRESS_EVENT, callback: (data: R2CleanupProgress) => void): () => void;
+        (channel: string, callback: (...args: any[]) => void): () => void;
+      };
       removeAllListeners: (channel: string) => void;
       update: {
         download: () => void;
@@ -398,6 +762,11 @@ declare global {
       logs: {
         getBuffer: () => Promise<{ ts: number; level: string; msg: string }[]>;
         clear:     () => Promise<boolean>;
+        /**
+         * Ghi 1 dòng log renderer vào Nhật ký của main (IPC 'log:append', prefix [renderer]).
+         * Thường không gọi trực tiếp — Logger (src/utils/Logger) tự gửi warn/error/notice.
+         */
+        append:    (level: 'log' | 'info' | 'warn' | 'error' | 'debug', msg: string) => void;
       };
       workflow: {
         list: () => Promise<{ success: boolean; workflows: any[]; error?: string }>;
@@ -406,6 +775,7 @@ declare global {
         delete: (id: string) => Promise<{ success: boolean; error?: string }>;
         toggle: (id: string, enabled: boolean) => Promise<{ success: boolean; error?: string }>;
         runManual: (id: string, triggerData?: any) => Promise<{ success: boolean; log?: any; error?: string }>;
+        simulate: (id: string, triggerData?: any, triggeredBy?: string) => Promise<{ success: boolean; log?: { simulated?: boolean; simulatedMessages?: Array<{ nodeId: string; label: string; type: string; text: string; threadId?: string }>; nodeResults?: any[]; status?: string; errorMessage?: string }; error?: string }>;
         getLogs: (id: string, limit?: number) => Promise<{ success: boolean; logs: any[]; error?: string }>;
         deleteLogs: (id: string) => Promise<{ success: boolean; error?: string }>;
         clone: (id: string, targetZaloId: string) => Promise<{ success: boolean; newId?: string; error?: string }>;
@@ -428,6 +798,13 @@ declare global {
         execute:        (id: string, action: string, params?: any) => Promise<{ success: boolean; data?: any; error?: string }>;
         executeByType:  (type: string, action: string, params?: any) => Promise<{ success: boolean; data?: any; error?: string }>;
         getWebhookPort: () => Promise<{ success: boolean; port?: number }>;
+        /** Đăng ký webhook tự động KiotViet / Sapo (services/integrations/posWebhookRegistration.ts). */
+        listWebhooks?: (id: string) => Promise<PosWebhookListResponse>;
+        registerWebhooks?: (id: string, events: string[]) => Promise<PosWebhookListResponse & {
+          created?: string[]; updated?: string[]; kept?: string[]; removed?: number;
+          errors?: Array<{ event: string; message: string }>; notes?: string[];
+        }>;
+        removeWebhook?: (id: string, webhookId: string) => Promise<PosWebhookListResponse>;
       };
       ai: {
         listAssistants:  () => Promise<{ success: boolean; assistants: any[]; error?: string }>;
@@ -441,6 +818,8 @@ declare global {
         removeFile:      (fileId: number) => Promise<{ success: boolean; error?: string }>;
         suggest:         (assistantId: string, chatHistory: any[]) => Promise<{ success: boolean; suggestions: string[]; error?: string }>;
         chat:            (assistantId: string, messages: any[], structured?: boolean, maxTokens?: number) => Promise<{ success: boolean; result?: string; totalTokens?: number; promptTokens?: number; completionTokens?: number; error?: string }>;
+        /** Chỉ dùng messages của caller (không chèn persona / kiến thức của trợ lý) - AI Workflow Builder */
+        chatRaw?:        (params: { assistantId: string; messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>; maxTokens?: number; temperature?: number }) => Promise<{ success: boolean; result?: string; totalTokens?: number; promptTokens?: number; completionTokens?: number; error?: string }>;
         getAccountAssistant:  (zaloId: string, role: string) => Promise<{ success: boolean; assistant?: any | null; error?: string }>;
         setAccountAssistant:  (zaloId: string, role: string, assistantId: string | null) => Promise<{ success: boolean; error?: string }>;
         getAccountAssistants: (zaloId: string) => Promise<{ success: boolean; suggestion?: string | null; panel?: string | null; error?: string }>;
@@ -465,6 +844,8 @@ declare global {
         create: (params: { username: string; password: string; display_name: string; avatar_url?: string; role?: string }) => Promise<{ success: boolean; employee?: any; error?: string }>;
         update: (employeeId: string, updates: { display_name?: string; avatar_url?: string; password?: string; is_active?: number; role?: string; group_id?: string | null }) => Promise<{ success: boolean; error?: string }>;
         delete: (employeeId: string) => Promise<{ success: boolean; error?: string }>;
+        /** Boss: đổi khoá ký token → mọi nhân viên phải đăng nhập lại; `notified` = số nhân viên đang nối được báo. */
+        logoutAll: () => Promise<{ success: boolean; notified?: number; error?: string }>;
         setPermissions: (employeeId: string, permissions: Array<{ module: string; can_access: boolean }>) => Promise<{ success: boolean; error?: string }>;
         getPermissions: (employeeId: string) => Promise<{ success: boolean; permissions?: Record<string, boolean>; error?: string }>;
         assignAccounts: (employeeId: string, zaloIds: string[]) => Promise<{ success: boolean; error?: string }>;
@@ -472,11 +853,9 @@ declare global {
         getStats: (employeeId: string, sinceTs?: number, untilTs?: number) => Promise<{ success: boolean; stats?: any; error?: string }>;
         getSessions: (employeeId: string, limit?: number) => Promise<{ success: boolean; sessions?: any[]; error?: string }>;
         login: (username: string, password: string) => Promise<{ success: boolean; token?: string; employee?: any; error?: string }>;
-        validateToken: (token: string) => Promise<{ valid: boolean; employee_id?: string; username?: string; role?: string }>;
+        validateToken: (token: string) => Promise<{ valid: boolean; employee_id?: string; username?: string; role?: string; reason?: 'expired' | 'revoked' | 'inactive' | 'invalid' | 'unavailable' }>;
         setMode: (mode: string) => Promise<{ success: boolean; error?: string }>;
         getMode: () => Promise<{ mode: string }>;
-        connectToBoss: (bossUrl: string, token: string) => Promise<{ success: boolean; error?: string }>;
-        disconnectFromBoss: () => Promise<{ success: boolean; error?: string }>;
         getConnectionStatus: () => Promise<{ connected: boolean; bossUrl: string; latency: number }>;
         proxyAction: (channel: string, params: any) => Promise<any>;
         // Groups
@@ -484,12 +863,13 @@ declare global {
         createGroup: (name: string, color?: string) => Promise<{ success: boolean; group?: any; error?: string }>;
         updateGroup: (groupId: string, updates: { name?: string; color?: string; sort_order?: number }) => Promise<{ success: boolean; error?: string }>;
         deleteGroup: (groupId: string) => Promise<{ success: boolean; error?: string }>;
-        // Analytics
-        analyticsComparison: (sinceTs: number, untilTs: number) => Promise<{ success: boolean; data: any[]; error?: string }>;
-        analyticsMessageTimeline: (sinceTs: number, untilTs: number) => Promise<{ success: boolean; data: any[]; error?: string }>;
+        // Analytics — zaloIds: only activity on these accounts (omitted = every account).
+        // Online hours come from login sessions, which are not per account.
+        analyticsComparison: (sinceTs: number, untilTs: number, zaloIds?: string[]) => Promise<{ success: boolean; data: any[]; error?: string }>;
+        analyticsMessageTimeline: (sinceTs: number, untilTs: number, zaloIds?: string[]) => Promise<{ success: boolean; data: any[]; error?: string }>;
         analyticsOnlineTimeline: (sinceTs: number, untilTs: number) => Promise<{ success: boolean; data: any[]; error?: string }>;
-        analyticsResponseDist: (sinceTs: number, untilTs: number) => Promise<{ success: boolean; data: any[]; error?: string }>;
-        analyticsHourlyActivity: (sinceTs: number, untilTs: number) => Promise<{ success: boolean; data: any[]; error?: string }>;
+        analyticsResponseDist: (sinceTs: number, untilTs: number, zaloIds?: string[]) => Promise<{ success: boolean; data: any[]; error?: string }>;
+        analyticsHourlyActivity: (sinceTs: number, untilTs: number, zaloIds?: string[]) => Promise<{ success: boolean; data: any[]; error?: string }>;
       };
       workspace: {
         list: () => Promise<{ success: boolean; workspaces: any[]; error?: string }>;
@@ -500,22 +880,45 @@ declare global {
         switch: (id: string) => Promise<{ success: boolean; workspace?: any; error?: string }>;
         isMulti: () => Promise<{ isMulti: boolean }>;
         getDbPath: (id: string) => Promise<{ success: boolean; dbPath?: string; error?: string }>;
-        connectRemote: (id: string, bossUrl: string, token: string) => Promise<{ success: boolean; error?: string }>;
+        /** Lưu CẢ URL + token vào cấu hình workspace rồi kết nối qua main (main phát employee:credentials). */
+        connectRemote: (id: string, bossUrl: string, token: string) => Promise<{ success: boolean; error?: string; authExpired?: boolean }>;
+        /** Dừng heartbeat + Socket.IO + lịch thử lại của workspace (người dùng ngắt). */
         disconnectRemote: (id: string) => Promise<{ success: boolean; error?: string }>;
-        getConnectionStatus: (id: string) => Promise<{ success: boolean; connected: boolean; bossUrl: string; latency: number; error?: string }>;
-        getAllStatuses: () => Promise<{ success: boolean; statuses: Record<string, { connected: boolean; bossUrl: string; latency: number }>; error?: string }>;
-        loginRemote: (bossUrl: string, username: string, password: string) => Promise<{ success: boolean; token?: string; employee?: any; error?: string }>;
+        getConnectionStatus: (id: string) => Promise<{ success: boolean; connected: boolean; bossUrl: string; latency: number; authExpired?: boolean; retrying?: boolean; connecting?: boolean; error?: string }>;
+        getAllStatuses: () => Promise<{ success: boolean; statuses: Record<string, { connected: boolean; bossUrl: string; latency: number; authExpired?: boolean; retrying?: boolean; connecting?: boolean }>; error?: string }>;
+        loginRemote: (bossUrl: string, username: string, password: string) => Promise<{ success: boolean; token?: string; employee?: any; error?: string; code?: string }>;
+        /**
+         * Lưu mật khẩu nhân viên cho remote workspace — main mã hoá bằng safeStorage (Windows DPAPI), không bao giờ trả
+         * lại renderer. `saved: false` khi máy không mã hoá được (không lưu).
+         */
+        rememberPassword: (id: string, password: string) => Promise<{ success: boolean; saved?: boolean; error?: string }>;
+        hasSavedPassword: (id: string) => Promise<{ success: boolean; saved: boolean; error?: string }>;
+        /**
+         * Đăng nhập bằng mật khẩu đã lưu (main giải mã, cùng kết quả với loginRemote). Boss báo sai mật khẩu → main quên
+         * mật khẩu đã lưu (`savedPasswordCleared`). `code: 'NO_SAVED_PASSWORD'` = không dùng được mật khẩu đã lưu.
+         */
+        loginRemoteSaved: (id: string, bossUrl: string, username: string) => Promise<{ success: boolean; token?: string; employee?: any; error?: string; code?: string; savedPasswordCleared?: boolean }>;
+        forgetPassword: (id: string) => Promise<{ success: boolean; error?: string }>;
+        /** window 'online' → main kiểm tra kết nối Boss ngay (thử lại workspace lỗi, heartbeat ngay). */
+        networkOnline: () => Promise<{ success: boolean; error?: string }>;
+        /** Lấy lại snapshot quyền / tài khoản được giao → 'workspace:initialState' { forced: true }. */
+        refreshSnapshot: (id: string, reason?: string) => Promise<{ success: boolean; error?: string }>;
       };
       relay: {
         startServer: (port?: number) => Promise<{ success: boolean; port?: number; host?: string; error?: string }>;
         stopServer: () => Promise<{ success: boolean; error?: string }>;
-        getServerStatus: () => Promise<{ success: boolean; running?: boolean; port?: number; connectedEmployees?: any[]; localIPs?: string[]; tunnelActive?: boolean; tunnelUrl?: string | null; error?: string }>;
+        getServerStatus: () => Promise<{ success: boolean; running?: boolean; port?: number; connectedEmployees?: any[]; localIPs?: string[]; tunnelActive?: boolean; tunnelUrl?: string | null; tunnel?: RelayTunnelStatus; error?: string }>;
         kickEmployee: (employeeId: string) => Promise<{ success: boolean; error?: string }>;
         startTunnel: () => Promise<{ success: boolean; tunnelUrl?: string; error?: string }>;
         stopTunnel: () => Promise<{ success: boolean; error?: string }>;
-        getTunnelStatus: () => Promise<{ success: boolean; active?: boolean; tunnelUrl?: string | null; error?: string }>;
-        getTunnelConfig: () => Promise<{ success: boolean; provider?: string; authtoken?: string; domain?: string; error?: string }>;
-        setTunnelConfig: (cfg: { provider?: string; authtoken?: string; domain?: string }) => Promise<{ success: boolean; error?: string }>;
+        /** Áp dụng cấu hình tunnel mới khi đang chạy, không ngắt nhân viên (make-before-break). */
+        restartTunnel: () => Promise<{ success: boolean; tunnelUrl?: string; error?: string }>;
+        getTunnelStatus: () => Promise<{ success: boolean; error?: string } & Partial<RelayTunnelStatus>>;
+        /** Token ngrok / Cloudflare không trả về renderer — chỉ báo đã lưu hay chưa. */
+        getTunnelConfig: () => Promise<{ success: boolean; provider?: string; ngrokTokenSet?: boolean; domain?: string; cfTokenSet?: boolean; cfPublicUrl?: string; autoStart?: boolean; error?: string }>;
+        setTunnelConfig: (cfg: { provider?: string; authtoken?: string; domain?: string; cfToken?: string; cfPublicUrl?: string; autoStart?: boolean }) => Promise<{ success: boolean; error?: string }>;
+        /** Nhân viên: thăm dò địa chỉ Boss (url, hoặc địa chỉ đã lưu của workspace). */
+        probeBossAddress: (params: { url?: string; workspaceId?: string }) => Promise<BossAddressProbeResponse>;
       };
       // ─── Facebook ─────────────────────────────────────────────────────
       fb: {
@@ -523,6 +926,9 @@ declare global {
         addAccountWithCredentials: (params: { username: string; password: string; twoFASecret?: string; proxyId?: number | null }) => Promise<{ success: boolean; need2FA?: boolean; account?: any; facebookId?: string; name?: string; error?: string; errorTitle?: string }>;
         startMessengerLiteLogin: (params: { proxyId?: number | null }) => Promise<NativeLoginIpcResult>;
         submitMessengerLiteLogin: (params: { sessionId: string; input: Record<string, string>; proxyId?: number | null }) => Promise<NativeLoginIpcResult>;
+        waitMessengerLiteLogin: (params: { sessionId: string }) => Promise<NativeLoginIpcResult>;
+        backMessengerLiteLogin: (params: { sessionId: string }) => Promise<NativeLoginIpcResult>;
+        runMessengerLiteWebStep: (params: { sessionId: string }) => Promise<NativeLoginIpcResult>;
         cancelMessengerLiteLogin: (params: { sessionId: string }) => Promise<{ success: boolean }>;
         removeAccount:        (params: { accountId: string }) => Promise<{ success: boolean; error?: string }>;
         updateCookie:         (params: { accountId: string; cookie: string }) => Promise<{ success: boolean; error?: string }>;
@@ -532,7 +938,7 @@ declare global {
         disconnect:           (params: { accountId: string }) => Promise<{ success: boolean; error?: string }>;
         checkHealth:          (params: { accountId: string }) => Promise<{ success: boolean; alive: boolean; listenerConnected: boolean; reason?: string }>;
         sendMessage:          (params: { accountId: string; threadId: string; body: string; options?: any }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
-        sendAttachment:       (params: { accountId: string; threadId: string; filePath: string; body?: string; typeChat?: 'user' | null; fileType?: 'image' | 'video' | 'audio' | 'file' }) => Promise<{ success: boolean; error?: string }>;
+        sendAttachment:       (params: { accountId: string; threadId: string; filePath: string; body?: string; typeChat?: 'user' | null; fileType?: 'image' | 'video' | 'audio' | 'file'; _libraryUuid?: string }) => Promise<{ success: boolean; error?: string }>;
         sendAttachments:      (params: { accountId: string; threadId: string; filePaths: string[]; body?: string; typeChat?: 'user' | null }) => Promise<{ success: boolean; uploadedCount?: number; totalCount?: number; error?: string }>;
         unsendMessage:        (params: { accountId: string; messageId: string }) => Promise<{ success: boolean; error?: string }>;
         addReaction:          (params: { accountId: string; messageId: string; emoji: string; action: 'add' | 'remove' }) => Promise<{ success: boolean; error?: string }>;
@@ -544,6 +950,17 @@ declare global {
         changeNickname:       (params: { accountId: string; threadId: string; userId: string; nickname: string }) => Promise<{ success: boolean; error?: string }>;
         loginWithCredentials: (params: { username: string; password: string; twoFASecret?: string }) => Promise<{ success: boolean; result?: any; error?: string }>;
         fetchThreadMessages: (params: { accountId: string; threadId: string; limit?: number; beforeCursor?: string | null }) => Promise<{ success: boolean; messages?: any[]; cursor?: { before: string | null; hasMore: boolean } | null; error?: string }>;
+        /**
+         * Một trang tin cũ hơn mốc, đã lưu DB: qua bridge (FetchMessagesTask, neo vào tin Messenger có thật) hoặc — hội thoại
+         * chưa có tin nào làm mốc — trang mới nhất qua GraphQL (`source`). code: BRIDGE_DOWN / BRIDGE_OLD / E2EE / FETCH / NOT_CONNECTED
+         */
+        fetchOlderMessages: (params: { accountId: string; threadId: string; beforeTimestampMs?: number; beforeMessageId?: string }) => Promise<
+          | { success: true; saved: number; received: number; stored: number; count: number; hasMoreBefore: boolean; minTimestampMs: number; minMessageId?: string; source: 'lightspeed' | 'graphql' }
+          | { success: false; code?: string; error?: string; source?: 'lightspeed' | 'graphql' }>;
+        /** Đồng bộ tin nhắn Facebook theo khoảng thời gian (chạy nền, tiến độ qua event:fbHistorySync) */
+        startHistorySync: (params: { accountId: string; fromTs: number | null; toTs: number | null }) => Promise<{ success: boolean; status?: FbHistorySyncStatus | null; error?: string }>;
+        cancelHistorySync: (params: { accountId: string }) => Promise<{ success: boolean; status?: FbHistorySyncStatus | null }>;
+        getHistorySyncStatus: (params: { accountId: string }) => Promise<{ success: boolean; status?: FbHistorySyncStatus | null }>;
         refreshContactAvatar: (params: { accountId: string; userId: string }) => Promise<{ success: boolean; avatarUrl?: string; error?: string }>;
         sendTyping:           (params: { accountId: string; threadId: string; isTyping: boolean; isGroup?: boolean }) => Promise<{ success: boolean; error?: string }>;
         blockUser:            (params: { accountId: string; userId: string }) => Promise<{ success: boolean; error?: string }>;
@@ -559,8 +976,9 @@ declare global {
         toggleE2EE:           (params: { accountId: string; enable: boolean }) => Promise<{ success: boolean; error?: string }>;
         sendSeen:             (params: { accountId: string; threadId: string }) => Promise<{ success: boolean; error?: string }>;
         changeThreadTheme:    (params: { accountId: string; threadId: string; theme: string }) => Promise<{ success: boolean; error?: string }>;
-        createNote:           (params: { accountId: string; text: string; backgroundColor?: string; textColor?: string }) => Promise<{ success: boolean; noteId?: string; error?: string }>;
+        createNote:           (params: { accountId: string; text: string; privacy?: string }) => Promise<{ success: boolean; noteId?: string; error?: string }>;
         addGroupAdmin:        (params: { accountId: string; threadId: string; userId: string }) => Promise<{ success: boolean; error?: string }>;
+        createGroup:          (params: { accountId: string; participants: string[]; name: string }) => Promise<{ success: boolean; threadId?: string; renameError?: string; error?: string }>;
         removeGroupAdmin:     (params: { accountId: string; threadId: string; userId: string }) => Promise<{ success: boolean; error?: string }>;
         changeApprovalMode:   (params: { accountId: string; threadId: string; approved: boolean }) => Promise<{ success: boolean; error?: string }>;
         approvePendingMember: (params: { accountId: string; threadId: string; userId: string; approve: boolean }) => Promise<{ success: boolean; error?: string }>;
@@ -626,6 +1044,8 @@ declare global {
         signIn2FA:      (password: string) => Promise<{ success: boolean; stringSession?: string; accountId?: string; userInfo?: { firstName: string; lastName: string; phone: string }; error?: string }>;
         startListener:  (account: { accountId: string; phoneNumber: string; stringSession: string }) => Promise<{ success: boolean; error?: string }>;
         stopListener:   (accountId: string) => Promise<{ success: boolean; error?: string }>;
+        /** OS reports connectivity again: main process rebuilds dead MTProto connections now. */
+        networkOnline:  () => Promise<{ success: boolean; error?: string }>;
         sendMessage:    (params: { accountId: string; chatId: string; text: string; mentions?: Array<{ uid: string; pos: number; len: number }> }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
         isConnected:    (accountId: string) => Promise<{ success: boolean; connected: boolean; error?: string }>;
         getActive:      () => Promise<{ success: boolean; listeners: any[]; error?: string }>;
@@ -642,15 +1062,48 @@ declare global {
         sendTopicFile:  (params: TelegramForumTopicContext & { filePath: string; caption?: string }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
         sendTyping:     (params: { accountId: string; chatId: string }) => Promise<{ success: boolean; error?: string }>;
         sendReaction:   (params: { accountId: string; chatId: string; messageId: string; emoji?: string }) => Promise<{ success: boolean; error?: string }>;
+        /** Reaction dùng được trong hội thoại, hay dùng trước (chuỗi đúng như Telegram, không U+FE0F) */
+        getAvailableReactions?: (params: { accountId: string; chatId: string }) => Promise<{ success: boolean; reactions?: string[]; error?: string }>;
+        /** Lấy lại reaction chính thức (GetMessagesReactions) và lưu đè */
+        refreshReactions?: (params: { accountId: string; chatId: string; messageIds: string[] }) => Promise<{ success: boolean; applied?: number; error?: string }>;
         // Group management
         getGroupInfo:      (params: { accountId: string; chatId: string }) => Promise<{ success: boolean; info?: any; error?: string }>;
         joinGroup:         (params: { accountId: string; chatId: string }) => Promise<{ success: boolean; requested?: boolean; info?: any; error?: string }>;
+        createGroup:       (params: { accountId: string; title: string; userIds?: string[]; photoPath?: string; ttlPeriod?: number }) => Promise<{ success: boolean; chatId?: string; title?: string; missing?: number; missingInvitees?: TelegramMissingInvitee[]; supergroup?: boolean; photoError?: string; error?: string }>;
+        previewJoinLink:   (params: { accountId: string; link: string }) => Promise<{ success: boolean; title?: string; about?: string; membersCount?: number; isChannel?: boolean; alreadyMember?: boolean; requestNeeded?: boolean; chatId?: string; error?: string }>;
+        joinByLink:        (params: { accountId: string; link: string }) => Promise<{ success: boolean; chatId?: string; title?: string; requested?: boolean; already?: boolean; error?: string }>;
+        addContact:        (params: { accountId: string; phone?: string; username?: string; firstName?: string; lastName?: string }) => Promise<{ success: boolean; userId?: string; displayName?: string; username?: string; phone?: string; error?: string }>;
+        createChannel:     (params: { accountId: string; title: string; about?: string; photoPath?: string; username?: string; userIds?: string[] }) => Promise<TelegramCreateChannelResult>;
+        checkChatUsername: (params: { accountId: string; chatId?: string; username: string }) => Promise<{ success: boolean; available?: boolean; username?: string; error?: string }>;
+        setChatUsername:   (params: { accountId: string; chatId: string; username: string }) => Promise<{ success: boolean; username?: string; link?: string; error?: string }>;
+        getChatSettings:   (params: { accountId: string; chatId: string }) => Promise<{ success: boolean; settings?: TelegramChatSettings; error?: string }>;
+        editChatAbout:     (params: { accountId: string; chatId: string; about: string }) => Promise<{ success: boolean; error?: string }>;
+        revokeInviteLink:  (params: { accountId: string; chatId: string }) => Promise<{ success: boolean; link?: string; error?: string }>;
+        toggleSignatures:  (params: { accountId: string; chatId: string; enabled: boolean }) => Promise<{ success: boolean; error?: string }>;
+        getDiscussionGroups: (params: { accountId: string }) => Promise<{ success: boolean; groups?: Array<{ id: string; title: string; membersCount: number; basicGroup: boolean }>; error?: string }>;
+        setDiscussionGroup: (params: { accountId: string; chatId: string; groupId?: string | null; showHistory?: boolean }) => Promise<{ success: boolean; needsHistory?: boolean; error?: string }>;
+        setHistoryTtl:     (params: { accountId: string; chatId: string; period: number }) => Promise<{ success: boolean; ttlPeriod?: number; error?: string }>;
+        deleteChat:        (params: { accountId: string; chatId: string }) => Promise<{ success: boolean; error?: string }>;
+        inviteUsers:       (params: { accountId: string; chatId: string; userIds: string[] }) => Promise<{ success: boolean; invited?: number; missingInvitees?: TelegramMissingInvitee[]; error?: string }>;
+        getContacts:       (params: { accountId: string }) => Promise<{ success: boolean; contacts?: TelegramContactItem[]; error?: string }>;
+        deleteContacts:    (params: { accountId: string; userIds: string[] }) => Promise<{ success: boolean; error?: string }>;
+        getCallHistory:    (params: { accountId: string; missed?: boolean; offsetId?: number; limit?: number }) => Promise<{ success: boolean; items?: TelegramCallHistoryItem[]; nextOffsetId?: number; hasMore?: boolean; error?: string }>;
+        declineCall:       (params: { accountId: string; callId: string; accessHash: string; video?: boolean }) => Promise<{ success: boolean; error?: string }>;
         getGroupMembers:   (params: { accountId: string; chatId: string; limit?: number }) => Promise<{ success: boolean; members?: any[]; error?: string }>;
         hydrateMessageSenders: (params: { accountId: string; chatId: string; messageIds: string[]; senderIds?: string[] }) => Promise<{ success: boolean; members?: any[]; error?: string }>;
         setDialogMute:     (params: { accountId: string; chatId: string; muteUntil: number }) => Promise<{ success: boolean; muteUntil?: number; error?: string }>;
         setDialogArchived: (params: { accountId: string; chatId: string; archived: boolean }) => Promise<{ success: boolean; folderId?: number; error?: string }>;
         setDialogPin:      (params: { accountId: string; chatId: string; pinned: boolean }) => Promise<{ success: boolean; error?: string }>;
         getMessageReactions: (params: { accountId: string; chatId: string; messageId: string; reaction?: string; offset?: string; limit?: number }) => Promise<{ success: boolean; reactions?: Array<{ userId: string; emoji: string; date: number }>; count?: number; nextOffset?: string; error?: string }>;
+        /** "Đã xem" của tin mình gửi: nhóm → danh sách người xem; chat riêng → readAt (ms). */
+        getMessageReadParticipants?: (params: { accountId: string; chatId: string; messageId: string }) => Promise<{
+          success: boolean;
+          kind?: 'group' | 'private';
+          participants?: Array<{ userId: string; date: number; name: string }>;
+          readAt?: number;
+          reason?: 'too_big' | 'too_old' | 'privacy' | 'not_read' | 'error';
+          error?: string;
+        }>;
         addChatUser:       (params: { accountId: string; chatId: string; userId: string }) => Promise<{ success: boolean; error?: string }>;
         deleteChatUser:    (params: { accountId: string; chatId: string; userId: string; revokeHistory?: boolean }) => Promise<{ success: boolean; error?: string }>;
         editChatTitle:     (params: { accountId: string; chatId: string; title: string }) => Promise<{ success: boolean; error?: string }>;
@@ -664,6 +1117,10 @@ declare global {
         readForumTopic:    (params: { accountId: string; chatId: string; topMsgId: string; readMaxId?: string }) => Promise<{ success: boolean; error?: string }>;
         getMessages:       (params: { accountId: string; chatId: string; limit?: number; offsetId?: number; topicRootMessageId?: string; returnMessages?: boolean }) => Promise<{ success: boolean; messages?: any[]; count?: number; error?: string }>;
         repairMessageMedia:(params: { accountId: string; chatId: string; messageId: string }) => Promise<{ success: boolean; localPaths?: Record<string, string>; attachments?: any[]; msgType?: string; error?: string }>;
+        /** Thẻ link của bản ghi cũ: lấy lại attachments theo lô (≤ 100 tin / hội thoại), không tải media */
+        refreshMessageAttachments?: (params: { accountId: string; chatId: string; messageIds: string[] }) => Promise<{
+          success: boolean; messages?: Array<{ messageId: string; attachments: any[] }>; error?: string;
+        }>;
         repairEmptyMessages:(params: { accountId: string; chatId: string; messageIds: string[] }) => Promise<{ success: boolean; results?: Array<{ messageId: string; resolved: boolean; content: string; msgType: string; attachments: any[]; mediaClass: string }>; error?: string }>;
         repairMessageQuotes:(params: { accountId: string; chatId: string; items: Array<{ messageId: string; replyToId: string }> }) => Promise<{ success: boolean; results?: Array<{ messageId: string; replyToId: string; status: 'repaired' | 'topic_routing' | 'not_found' | 'deferred' | 'invalid'; quoteData?: string }>; error?: string }>;
         getFullChat:       (params: { accountId: string; chatId: string }) => Promise<{ success: boolean; info?: any; error?: string }>;
@@ -683,11 +1140,22 @@ declare global {
         getStickerSets:       (params: { accountId: string }) => Promise<{ success: boolean; sets?: any[]; error?: string }>;
         getStickerSetStickers:(params: { accountId: string; setId: string; accessHash?: string; shortName?: string }) => Promise<{ success: boolean; stickers?: any[]; error?: string }>;
         getRecentStickers:    (params: { accountId: string }) => Promise<{ success: boolean; stickers?: any[]; error?: string }>;
-        getGifs:              (params: { accountId: string }) => Promise<{ success: boolean; gifs?: any[]; error?: string }>;
-        searchGifs:           (params: { accountId: string; query: string }) => Promise<{ success: boolean; gifs?: any[]; error?: string }>;
-        sendSticker:          (params: { accountId: string; chatId: string; stickerId: string; accessHash?: string }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
-        sendGif:              (params: { accountId: string; chatId: string; documentId: string }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
+        /** GIF đã lưu của tài khoản. */
+        getGifs:              (params: { accountId: string }) => Promise<{ success: boolean; gifs?: TelegramStickerItem[]; error?: string }>;
+        /** Tìm GIF qua @gif (query rỗng = thịnh hành); nextOffset rỗng = hết. */
+        searchGifs:           (params: { accountId: string; query: string; offset?: string }) => Promise<{ success: boolean; gifs?: TelegramStickerItem[]; nextOffset?: string; error?: string }>;
+        sendSticker:          (params: { accountId: string; chatId: string; stickerId: string; accessHash?: string; replyToMsgId?: string; topicRootMessageId?: string }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
+        sendGif:              (params: { accountId: string; chatId: string; documentId: string; replyToMsgId?: string; topicRootMessageId?: string }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
         downloadSticker:      (params: { accountId: string; stickerId: string; accessHash?: string }) => Promise<{ success: boolean; localPath?: string; error?: string }>;
+        /** Bảng sticker đồng bộ tài khoản: bộ đã cài + gần đây + yêu thích. */
+        getStickerPanel:      (params: { accountId: string }) => Promise<{ success: boolean; sets?: TelegramStickerSetInfo[]; recent?: TelegramStickerItem[]; faved?: TelegramStickerItem[]; error?: string }>;
+        getStickerSet:        (params: { accountId: string; setId?: string; accessHash?: string; shortName?: string }) => Promise<{ success: boolean; set?: TelegramStickerSetInfo; stickers?: TelegramStickerItem[]; error?: string }>;
+        getStickerSetOfMessage:(params: { accountId: string; chatId: string; messageId: string }) => Promise<{ success: boolean; set?: TelegramStickerSetInfo; stickers?: TelegramStickerItem[]; error?: string }>;
+        setStickerSetInstalled:(params: { accountId: string; setId?: string; accessHash?: string; shortName?: string; installed: boolean }) => Promise<{ success: boolean; installed?: boolean; error?: string }>;
+        getStickerFile:       (params: { accountId: string; docId: string; variant?: 'thumb' | 'full' }) => Promise<{ success: boolean; localPath?: string; kind?: TelegramStickerFileKind; error?: string }>;
+        saveGif:              (params: { accountId: string; docId: string; saved?: boolean }) => Promise<{ success: boolean; saved?: boolean; error?: string }>;
+        /** Tìm bộ sticker; query rỗng = bộ thịnh hành. */
+        searchStickerSets:    (params: { accountId: string; query?: string }) => Promise<{ success: boolean; sets?: TelegramCoveredStickerSet[]; error?: string }>;
       };
       // ─── Proxy ───────────────────────────────────────────────────────────
       proxy: {
@@ -778,7 +1246,8 @@ declare global {
 }
 }
 
-function isErpPermissionDeniedResponse(result: any): boolean {
+/** Kết quả ERP bị từ chối quyền (IPC withErpAuth hoặc REST nhân viên → Boss: `code: 'permission_denied'`). */
+export function isErpPermissionDeniedResponse(result: any): boolean {
   if (!result || result.success !== false) return false;
   const errorText = String(result.error || '');
   return result.code === 'permission_denied' || /permission denied/i.test(errorText);
@@ -803,7 +1272,8 @@ function normalizeErpPermissionMessage(rawError?: string): string {
   return 'Tài khoản hiện tại không có quyền thực hiện thao tác ERP này. Vui lòng liên hệ quản trị viên để được cấp quyền phù hợp.';
 }
 
-function reportErpPermissionDenied(result: any) {
+/** Hộp thoại "không có quyền ERP" (dùng chung cho ipc.erp và lệnh ERP qua DataAccessor ở chế độ nhân viên). */
+export function reportErpPermissionDenied(result: any) {
   const state = useAppStore.getState();
   state.showErpPermissionDialog({
     title: 'Bạn không có quyền thao tác ERP',
@@ -835,6 +1305,7 @@ const erp = wrapErpApi(window.electronAPI?.erp);
 
 export const ipc = {
   login: window.electronAPI?.login,
+  mobileSync: window.electronAPI?.mobileSync,
   zalo: window.electronAPI?.zalo,
   db: window.electronAPI?.db,
   file: window.electronAPI?.file,
@@ -851,6 +1322,9 @@ export const ipc = {
   employee: window.electronAPI?.employee,
   workspace: window.electronAPI?.workspace,
   relay: window.electronAPI?.relay,
+  api: window.electronAPI?.api,
+  plugins: window.electronAPI?.plugins,
+  cloudflare: window.electronAPI?.cloudflare,
   fb: window.electronAPI?.fb,
   telegram: window.electronAPI?.telegram,
   telegramUser: window.electronAPI?.telegramUser,

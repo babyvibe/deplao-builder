@@ -45,6 +45,8 @@ export interface WorkspaceInfo {
         is_business?: number;
         is_active?: number;
         listener_active?: number;
+        /** zalo | facebook | telegram_user | telegram_bot (snapshot Boss) */
+        channel?: string;
     }>;
 }
 

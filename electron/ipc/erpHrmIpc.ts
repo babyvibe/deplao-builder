@@ -1,10 +1,21 @@
 import { ipcMain } from 'electron';
 import ErpEmployeeService from '../../src/services/erp/ErpEmployeeService';
 import HttpRelayService from '../../src/services/http/HttpRelayService';
-import { withErpAuth, erpValidate } from './erpIpcMiddleware';
+import type { ErpAuthCtx } from '../../src/services/erp/ErpAuthContext';
+import { ERP_ROLE_NAMES, profileDeleteAction, profilePatchActions } from '../../src/services/erp/erpAccessRules';
+import { withErpAuth, erpValidate, requireErpPermission } from './erpIpcMiddleware';
 
 const LEAVE_STATUS = ['approved', 'rejected'] as const;
 const LEAVE_TYPE = ['annual', 'sick', 'unpaid', 'other'] as const;
+
+/**
+ * Phần nhạy cảm của bản sửa hồ sơ ERP (erpAccessRules.profilePatchActions — chỉ xét trường THẬT SỰ đổi): đổi vai trò /
+ * quyền riêng → settings.erp; tự đổi trường tổ chức của chính mình → employee.edit_others.
+ */
+function ensureProfilePatchAllowed(patch: Record<string, any>, current: Record<string, any> | undefined, isSelf: boolean, ctx: ErpAuthCtx) {
+  if (patch.erp_role !== undefined) erpValidate.enum(patch.erp_role, 'erp_role', ERP_ROLE_NAMES);
+  for (const action of profilePatchActions(patch, current, isSelf)) requireErpPermission(action, ctx);
+}
 
 export function registerErpHrmIpc(): void {
   const svc = () => ErpEmployeeService.getInstance();
@@ -52,20 +63,21 @@ export function registerErpHrmIpc(): void {
   }));
 
   // ─── Profiles ────────────────────────────────────────────────────────────
+  // Hồ sơ người khác (SĐT, email, địa chỉ, ngày sinh) cần employee.view_others — như danh sách hồ sơ theo phòng ban
   ipcMain.handle('erp:employee:getProfile', withErpAuth('erp.access', async (input: any, ctx) => {
     const eid = input?.employeeId || ctx.employeeId;
     erpValidate.string(eid, 'employeeId');
+    if (eid !== ctx.employeeId) requireErpPermission('employee.view_others', ctx);
     return { profile: svc().getProfile(eid) };
   }));
 
   ipcMain.handle('erp:employee:updateProfile', withErpAuth(null, async (input: any, ctx) => {
     erpValidate.string(input?.employeeId, 'employeeId');
     const isSelf = input.employeeId === ctx.employeeId;
-    const action = isSelf ? 'employee.edit_self' : 'employee.edit_others';
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { erpCan } = require('../../src/services/erp/permissions');
-    if (!erpCan(ctx.role, action)) throw new Error(`Permission denied: ${action}`);
-    const profile = svc().upsertProfile(input.employeeId, input.patch ?? {});
+    requireErpPermission(isSelf ? 'employee.edit_self' : 'employee.edit_others', ctx);
+    const patch = input.patch && typeof input.patch === 'object' ? input.patch : {};
+    ensureProfilePatchAllowed(patch, svc().getProfile(input.employeeId) as any, isSelf, ctx);
+    const profile = svc().upsertProfile(input.employeeId, patch);
     HttpRelayService.getInstance().refreshEmployeeState(input.employeeId, 'erp-profile-updated');
     return { profile };
   }));
@@ -74,8 +86,11 @@ export function registerErpHrmIpc(): void {
     profiles: svc().listProfilesByDepartment(input?.departmentId),
   })));
 
-  ipcMain.handle('erp:employee:deleteProfile', withErpAuth('employee.edit_others', async (input: any) => {
+  ipcMain.handle('erp:employee:deleteProfile', withErpAuth('employee.edit_others', async (input: any, ctx) => {
     erpValidate.string(input?.employeeId, 'employeeId');
+    // Xoá hồ sơ của người có vai trò trên member = hạ vai trò của họ → cần quyền cấu hình ERP như khi đổi vai trò
+    const action = profileDeleteAction(svc().getProfile(input.employeeId)?.erp_role);
+    if (action) requireErpPermission(action, ctx);
     svc().deleteProfile(input.employeeId);
     HttpRelayService.getInstance().refreshEmployeeState(input.employeeId, 'erp-profile-deleted');
     return {};
@@ -95,17 +110,13 @@ export function registerErpHrmIpc(): void {
   })));
 
   ipcMain.handle('erp:attendance:list', withErpAuth(null, async (input: any, ctx) => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { erpCan } = require('../../src/services/erp/permissions');
     // Special mode: renderer requests ALL employees (boss/manager dashboard)
     if (input?.all === true) {
-      if (!erpCan(ctx.role, 'attendance.view_others')) throw new Error('Permission denied: attendance.view_others');
+      requireErpPermission('attendance.view_others', ctx);
       return { list: svc().listAttendance({ from: input?.from, to: input?.to }) };
     }
     const targetEmp = input?.employeeId || ctx.employeeId;
-    if (targetEmp !== ctx.employeeId) {
-      if (!erpCan(ctx.role, 'attendance.view_others')) throw new Error('Permission denied: attendance.view_others');
-    }
+    if (targetEmp !== ctx.employeeId) requireErpPermission('attendance.view_others', ctx);
     return { list: svc().listAttendance({ employeeId: targetEmp, from: input?.from, to: input?.to }) };
   }));
 
@@ -125,10 +136,11 @@ export function registerErpHrmIpc(): void {
     leaves: svc().listPendingForManager(ctx.employeeId),
   })));
 
+  // Chỉ quản lý trực tiếp của người xin nghỉ (hoặc Boss) — cùng phạm vi với listPending
   ipcMain.handle('erp:leave:decide', withErpAuth('leave.approve', async (input: any, ctx) => {
     erpValidate.int(input?.id, 'id');
     erpValidate.enum(input?.status, 'status', LEAVE_STATUS);
-    return { leave: svc().decideLeave(Number(input.id), input.status, ctx.employeeId, input.note) };
+    return { leave: svc().decideLeaveForEmployee(Number(input.id), input.status, ctx.employeeId, input.note) };
   }));
 
   ipcMain.handle('erp:leave:cancel', withErpAuth('leave.create', async (input: any, ctx) => {

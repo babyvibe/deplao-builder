@@ -104,11 +104,11 @@ export default function EmployeeLoginModal({ onClose }: Props) {
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-gray-800 rounded-2xl w-full max-w-md shadow-2xl border border-gray-700" onClick={e => e.stopPropagation()}>
+      <div className="bg-card rounded-2xl w-full max-w-md shadow-2xl border border-border" onClick={e => e.stopPropagation()}>
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
-          <h2 className="text-white font-semibold"><UserIcon className="w-4 h-4 inline" /> Đăng nhập nhân viên</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-white">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+          <h2 className="text-foreground font-semibold"><UserIcon className="w-4 h-4 inline" /> Đăng nhập nhân viên</h2>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
             <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
               <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"/>
             </svg>
@@ -117,62 +117,62 @@ export default function EmployeeLoginModal({ onClose }: Props) {
 
         {/* Body */}
         <div className="px-6 py-5 space-y-4">
-          <p className="text-gray-400 text-sm">
+          <p className="text-muted-foreground text-sm">
             Nhập thông tin kết nối tới máy Boss để đăng nhập dưới vai trò nhân viên.
           </p>
 
           <div>
-            <label className="text-xs text-gray-400 font-medium mb-1 block">Tên workspace (tùy chọn)</label>
+            <label className="text-xs text-muted-foreground font-medium mb-1 block">Tên workspace (tùy chọn)</label>
             <input
               value={name}
               onChange={e => setName(e.target.value)}
               placeholder="VD: NV Công ty ABC"
-              className="w-full text-sm bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+              className="w-full text-sm bg-muted border border-input rounded-lg px-3 py-2 text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
             />
           </div>
 
           <div className="flex gap-2">
             <div className="flex-1">
-              <label className="text-xs text-gray-400 font-medium mb-1 block">Địa chỉ BOSS</label>
+              <label className="text-xs text-muted-foreground font-medium mb-1 block">Địa chỉ BOSS</label>
               <input
                 value={ip}
                 onChange={e => setIp(e.target.value)}
                 placeholder="192.168.1.100 hoặc https://xxxx.loca.lt"
-                className="w-full text-sm bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                className="w-full text-sm bg-muted border border-input rounded-lg px-3 py-2 text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
               />
             </div>
             {!ip.startsWith('http') && (
             <div className="w-20">
-              <label className="text-xs text-gray-400 font-medium mb-1 block">Port</label>
+              <label className="text-xs text-muted-foreground font-medium mb-1 block">Port</label>
               <input
                 value={port}
                 onChange={e => setPort(e.target.value)}
                 placeholder="9900"
-                className="w-full text-sm bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                className="w-full text-sm bg-muted border border-input rounded-lg px-3 py-2 text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
               />
             </div>
             )}
           </div>
 
           <div>
-            <label className="text-xs text-gray-400 font-medium mb-1 block">Tên đăng nhập</label>
+            <label className="text-xs text-muted-foreground font-medium mb-1 block">Tên đăng nhập</label>
             <input
               value={username}
               onChange={e => setUsername(e.target.value)}
               placeholder="username"
-              className="w-full text-sm bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+              className="w-full text-sm bg-muted border border-input rounded-lg px-3 py-2 text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
             />
           </div>
 
           <div>
-            <label className="text-xs text-gray-400 font-medium mb-1 block">Mật khẩu</label>
+            <label className="text-xs text-muted-foreground font-medium mb-1 block">Mật khẩu</label>
             <input
               value={password}
               onChange={e => setPassword(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') handleLogin(); }}
               placeholder="••••••••"
               type="password"
-              className="w-full text-sm bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+              className="w-full text-sm bg-muted border border-input rounded-lg px-3 py-2 text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
             />
           </div>
 

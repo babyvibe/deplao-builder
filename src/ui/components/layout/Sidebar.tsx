@@ -1,15 +1,17 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
+import ipc from '@/lib/ipc';
 import { useAccountStore } from '@/store/accountStore';
+import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from '@/store/appStore';
 import { useChatStore } from '@/store/chatStore';
 import { useEmployeeStore } from '@/store/employeeStore';
 import ChannelBadge, { ZaloIcon, FacebookIcon, TelegramIcon } from '../common/ChannelBadge';
 import { isZalo, isFacebook, isTelegram } from '@/lib/channelHelper';
 import { useVisibleAccounts } from '@/hooks/useVisibleAccounts';
-import { hasUnseenSettingsTabs } from '@/utils/settingsSeenTabs';
+import { hasUnseenSettingsTabs, markFeatureSeen, useFeatureSeen } from '@/utils/settingsSeenTabs';
 import { useErpPermissions } from '@/hooks/erp/useErpContext';
 import { toLocalMediaUrl } from '@/lib/localMedia';
-import { BellIcon, BookIcon, BotIcon, BrainIcon, CampaignIcon, ChartIcon, ChatIcon, CheckIcon, CloudIcon, CreditCardIcon, DiamondIcon, DollarIcon, EditIcon, FileTextIcon, FolderIcon, GlobeIcon, HelpCircleIcon, LightningIcon, LinkIcon, LightbulbIcon, MailIcon, MessageCircleIcon, PackageIcon, RefreshIcon, SaveIcon, SearchIcon, SettingsIcon, ShoppingCartIcon, SmartphoneIcon, StoreIcon, SunIcon, TagIcon, TrendingUpIcon, TruckIcon, UserIcon, UsersIcon, WaveIcon } from '@/components/common/icons';
+import { BellIcon, BookIcon, BotIcon, BrainIcon, CampaignIcon, ChartIcon, ChatIcon, CheckIcon, CloudIcon, CreditCardIcon, DiamondIcon, DollarIcon, EditIcon, FileTextIcon, FolderIcon, GlobeIcon, HelpCircleIcon, LightningIcon, LinkIcon, LightbulbIcon, MailIcon, MessageCircleIcon, PackageIcon, RefreshIcon, SaveIcon, SearchIcon, SettingsIcon, ShoppingCartIcon, SmartphoneIcon, StoreIcon, SunIcon, TagIcon, TrendingUpIcon, TruckIcon, UserIcon, UsersIcon, WaveIcon, PluginIcon } from '@/components/common/icons';
 import { CHANNEL } from '@/lib/channelHelper';
 import { useFeatureVisibilityStore } from '@/store/featureVisibilityStore';
 
@@ -18,11 +20,35 @@ interface SidebarProps {
   onAddAccount: () => void;
 }
 
+/**
+ * Tài khoản chưa kết nối: huy hiệu cam có biểu tượng nguồn (tắt) ở góc phải dưới; avatar đồng thời xám + mờ.
+ * Màu dùng giá trị cố định (không phải lớp màu Tailwind) để lớp ánh xạ theme sáng không đổi màu huy hiệu.
+ * Đỏ dành cho tin chưa đọc / listener chết ("!") — không trùng ý nghĩa.
+ */
+function DisconnectedBadge() {
+  return (
+    <span
+      className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-[rgb(234_88_12)] ring-2 ring-sidebar flex items-center justify-center z-10 pointer-events-none"
+      title="Chưa kết nối"
+      aria-label="Chưa kết nối"
+    >
+      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M18.4 6.6a9 9 0 1 1-12.8 0" />
+        <line x1="12" y1="2" x2="12" y2="12" />
+      </svg>
+    </span>
+  );
+}
+
 export default function Sidebar({ onAddAccount }: SidebarProps) {
-  const { activeAccountId, setActiveAccount, reorderAccounts } = useAccountStore();
+  const { activeAccountId, setActiveAccount, reorderAccounts } = useAccountStore(useShallow(s => ({
+    activeAccountId: s.activeAccountId, setActiveAccount: s.setActiveAccount,
+    reorderAccounts: s.reorderAccounts,
+  })));
   const visibleAccounts = useVisibleAccounts();
   const previewEmployeeId = useEmployeeStore(s => s.previewEmployeeId);
   const empMode = useEmployeeStore(s => s.mode);
+  const openPluginHub = useAppStore(s => s.openPluginHub);
   // Subscribe so Sidebar re-renders when permissions / employees list changes
   const empPermissions = useEmployeeStore(s => s.permissions);
   const employees = useEmployeeStore(s => s.employees);
@@ -49,11 +75,21 @@ export default function Sidebar({ onAddAccount }: SidebarProps) {
   const canErpAccess = canErp('erp.access');
   // Use visible (filtered) accounts for rendering
   const accounts = visibleAccounts;
-  const { view, setView, mergedInboxMode, mergedInboxAccounts, mergedInboxFilterAccount, setMergedInboxFilter, exitMergedInbox, sidebarExpanded, toggleSidebarExpanded } = useAppStore();
+  const { view, setView, mergedInboxMode, mergedInboxAccounts, mergedInboxFilterAccount, setMergedInboxFilter, exitMergedInbox, sidebarExpanded, toggleSidebarExpanded } = useAppStore(useShallow(s => ({
+    view: s.view, setView: s.setView, mergedInboxMode: s.mergedInboxMode,
+    mergedInboxAccounts: s.mergedInboxAccounts, mergedInboxFilterAccount: s.mergedInboxFilterAccount,
+    setMergedInboxFilter: s.setMergedInboxFilter, exitMergedInbox: s.exitMergedInbox,
+    sidebarExpanded: s.sidebarExpanded, toggleSidebarExpanded: s.toggleSidebarExpanded,
+  })));
   const featureVisibility = useFeatureVisibilityStore(state => state.enabled);
   const crmRequestUnseenByAccount = useAppStore(s => s.crmRequestUnseenByAccount);
-  const { contacts, activeThreadId, activeThreadType, saveAccountThread } = useChatStore();
-  const { othersConversations: allOthers } = useAppStore();
+  const { contacts, activeThreadId, activeThreadType, saveAccountThread } = useChatStore(useShallow(s => ({
+    contacts: s.contacts, activeThreadId: s.activeThreadId, activeThreadType: s.activeThreadType,
+    saveAccountThread: s.saveAccountThread,
+  })));
+  const { othersConversations: allOthers } = useAppStore(useShallow(s => ({
+    othersConversations: s.othersConversations,
+  })));
 
   const dragIndexRef = useRef<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
@@ -72,6 +108,15 @@ export default function Sidebar({ onAddAccount }: SidebarProps) {
     window.addEventListener('settings:tabSeen', handler);
     return () => window.removeEventListener('settings:tabSeen', handler);
   }, []);
+
+  // Chấm đỏ "mới" trên Công cụ → Ứng dụng, API & Webhook: tắt khi đã mở trang Ứng dụng (view 'plugin')
+  // và đã xem phần "API" và "Webhook" trong trang đó (PluginHub đánh dấu 'api' / 'webhooks').
+  const pluginsSeen = useFeatureSeen('plugins');
+  const apiSeen = useFeatureSeen('api');
+  const webhooksSeen = useFeatureSeen('webhooks');
+  useEffect(() => {
+    if (view === 'plugin') markFeatureSeen('plugins');
+  }, [view]);
 
   const handleDragStart = (e: React.DragEvent, index: number) => {
     dragIndexRef.current = index;
@@ -97,7 +142,7 @@ export default function Sidebar({ onAddAccount }: SidebarProps) {
   const showExpanded = sidebarExpanded && view === 'chat';
 
   return (
-    <div className="flex flex-col w-16 bg-gray-900 border-r border-gray-700 h-full">
+    <div className="flex flex-col w-16 bg-sidebar border-r border-sidebar-foreground/15 h-full">
       {/* ─── Toggle expand/collapse - chỉ hiện ở màn hình Chat ─── */}
       {view === 'chat' && (
         <div className="pt-2 pb-1 flex justify-center">
@@ -106,8 +151,8 @@ export default function Sidebar({ onAddAccount }: SidebarProps) {
             title={showExpanded ? 'Ẩn danh sách tài khoản đầy đủ' : 'Hiện danh sách tài khoản đầy đủ'}
             className={`font-semibold w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
               showExpanded
-                ? 'bg-blue-600/20 text-blue-400 hover:bg-blue-600/30'
-                : 'bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 hover:text-white'
+                ? 'bg-sidebar-foreground/15 text-sidebar-foreground hover:bg-sidebar-hover'
+                : 'bg-sidebar-foreground/15 text-sidebar-foreground/70 hover:bg-sidebar-hover hover:text-sidebar-foreground'
             }`}
           >
             {showExpanded ? (
@@ -138,8 +183,8 @@ export default function Sidebar({ onAddAccount }: SidebarProps) {
               title="Chọn tất cả tài khoản"
               className={`w-8 h-8 rounded-full flex items-center justify-center transition-all flex-shrink-0 ring-2 ${
                 mergedInboxFilterAccount === null
-                  ? 'bg-blue-600 text-white ring-blue-400'
-                  : 'bg-gray-700 text-gray-400 hover:bg-gray-600 ring-transparent'
+                  ? 'bg-sidebar-active text-sidebar-active-foreground ring-sidebar-foreground'
+                  : 'bg-sidebar-foreground/15 text-sidebar-foreground/70 hover:bg-sidebar-hover hover:text-sidebar-foreground ring-transparent'
               }`}
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -153,7 +198,7 @@ export default function Sidebar({ onAddAccount }: SidebarProps) {
             <button
               onClick={exitMergedInbox}
               title="Thoát chế độ Gộp tài khoản"
-              className="absolute -top-2 -right-3 w-5 h-5 rounded-full bg-gray-700 flex items-center justify-center text-gray-400 hover:bg-gray-600 hover:text-gray-200 transition-colors z-10"
+              className="absolute -top-2 -right-3 w-5 h-5 rounded-full bg-sidebar-foreground/15 flex items-center justify-center text-sidebar-foreground/70 hover:bg-sidebar-hover hover:text-sidebar-foreground transition-colors z-10"
             >
               <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
                 <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -175,19 +220,20 @@ export default function Sidebar({ onAddAccount }: SidebarProps) {
             const isAllMode = mergedInboxFilterAccount === null;
             return (
               <div key={zaloId} className="relative flex-shrink-0">
+                {isSelected && <span className="absolute -left-3 top-0.5 bottom-0.5 w-[3px] rounded-r-full bg-sidebar-active pointer-events-none" />}
                 <button
                   onClick={() => setMergedInboxFilter(isSelected ? null : zaloId)}
-                  title={`${account.full_name || zaloId}${isSelected ? ' - đang lọc' : ' - nhấn để lọc'}`}
+                  title={`${account.full_name || zaloId}${account.isConnected ? '' : ' · Chưa kết nối'}${isSelected ? ' - đang lọc' : ' - nhấn để lọc'}`}
                   className={`w-10 h-10 rounded-full overflow-hidden ring-2 transition-all flex-shrink-0 ${
                     isSelected
-                      ? 'ring-blue-500 scale-110'
+                      ? 'ring-[3px] ring-sidebar-active scale-110'
                       : isAllMode
-                        ? 'ring-transparent opacity-90 hover:ring-gray-500'
-                        : 'ring-transparent opacity-40 hover:opacity-80 hover:ring-gray-500'
+                        ? 'ring-transparent opacity-90 hover:ring-sidebar-foreground/60'
+                        : 'ring-transparent opacity-40 hover:opacity-80 hover:ring-sidebar-foreground/60'
                   }`}
                 >
                   {account.avatar_url ? (
-                    <img src={toLocalMediaUrl(account.avatar_url)} alt={account.full_name} className="w-full h-full object-cover"
+                    <img src={toLocalMediaUrl(account.avatar_url)} alt={account.full_name} className={`w-full h-full object-cover${account.isConnected ? '' : ' grayscale opacity-60'}`}
                       onError={(e) => {
                         const img = e.target as HTMLImageElement;
                         img.style.display = 'none';
@@ -207,7 +253,7 @@ export default function Sidebar({ onAddAccount }: SidebarProps) {
                         });
                       }} />
                   ) : (
-                    <div className={`w-full h-full flex items-center justify-center text-white font-bold text-sm ${isFacebook(account.channel) ? 'bg-blue-800' : isTelegram(account.channel) ? 'bg-blue-500' : 'bg-blue-600'}`}>
+                    <div className={`w-full h-full flex items-center justify-center text-white font-bold text-sm ${isFacebook(account.channel) ? 'bg-blue-800' : isTelegram(account.channel) ? 'bg-blue-500' : 'bg-blue-600'}${account.isConnected ? '' : ' grayscale opacity-60'}`}>
                       {isFacebook(account.channel) ? (
                         <FacebookIcon size={16} />
                       ) : isTelegram(account.channel) ? (
@@ -227,14 +273,8 @@ export default function Sidebar({ onAddAccount }: SidebarProps) {
                 <div className="absolute -top-2 -left-0.5 z-10 pointer-events-none">
                   <ChannelBadge channel={(account.channel as any) || CHANNEL.ZALO} size="sm" />
                 </div>
-                {/* Disconnected indicator (merged inbox) */}
-                {!account.isConnected && (
-                  <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-gray-800 rounded-full border-2 border-gray-900 flex items-center justify-center z-10 pointer-events-none" title="Chưa kết nối">
-                    <svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="text-red-400">
-                      <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-                    </svg>
-                  </span>
-                )}
+                {/* Chưa kết nối (gộp tài khoản) */}
+                {!account.isConnected && <DisconnectedBadge />}
               </div>
             );
           })}
@@ -257,6 +297,7 @@ export default function Sidebar({ onAddAccount }: SidebarProps) {
               account.full_name || account.zalo_id,
               account.is_business ? '💼 Tài khoản Zalo Business' : null,
               listenerDead ? '⚠ Listener chết' : null,
+              !account.isConnected ? '⚠ Chưa kết nối' : null,
             ].filter(Boolean).join('\n');
 
             return (
@@ -281,14 +322,15 @@ export default function Sidebar({ onAddAccount }: SidebarProps) {
                   title={tooltipLines}
                   className={`relative w-10 h-10 rounded-full overflow-visible ring-2 transition-all flex-shrink-0 ${
                     activeAccountId === account.zalo_id
-                      ? 'ring-blue-500'
+                      ? 'ring-[3px] ring-sidebar-active'
                       : listenerDead
                         ? 'ring-red-600'
-                          : 'ring-transparent hover:ring-gray-500'
+                          : 'ring-transparent hover:ring-sidebar-foreground/60'
                   }`}
                   style={{ cursor: 'pointer' }}
                 >
-                  <div className="w-10 h-10 rounded-full overflow-hidden">
+                  {activeAccountId === account.zalo_id && <span className="absolute -left-3 top-0.5 bottom-0.5 w-[3px] rounded-r-full bg-sidebar-active pointer-events-none" />}
+                  <div className={`w-10 h-10 rounded-full overflow-hidden transition-[filter,opacity]${account.isConnected ? '' : ' grayscale opacity-60'}`}>
                     {account.avatar_url ? (
                       <img
                         src={toLocalMediaUrl(account.avatar_url)}
@@ -327,7 +369,7 @@ export default function Sidebar({ onAddAccount }: SidebarProps) {
 
                   {/* ── Top-right: listener dead / unread badge ── */}
                   {listenerDead ? (
-                    <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full border-2 border-gray-900 flex items-center justify-center z-10">
+                    <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full border-2 border-sidebar flex items-center justify-center z-10">
                       <span className="text-white text-[8px] font-bold leading-none">!</span>
                     </span>
                   ) : unreadConvCount > 0 ? (
@@ -339,7 +381,7 @@ export default function Sidebar({ onAddAccount }: SidebarProps) {
                   {/* ── Bottom-left: Zalo Business badge ── */}
                   {account.is_business ? (
                     <span
-                      className="absolute -bottom-1 -left-1 bg-amber-500 text-white text-[7px] font-bold rounded-full border border-gray-900 z-10 leading-none flex items-center justify-center"
+                      className="absolute -bottom-1 -left-1 bg-amber-500 text-white text-[7px] font-bold rounded-full border border-sidebar z-10 leading-none flex items-center justify-center"
                       style={{ minWidth: '0.875rem', height: '0.875rem', padding: '0 0.125rem' }}
                       title="Zalo Business"
                     ><FolderIcon className="w-4 h-4 inline" /> </span>
@@ -350,14 +392,8 @@ export default function Sidebar({ onAddAccount }: SidebarProps) {
                     <ChannelBadge channel={(account.channel as any) || CHANNEL.ZALO} size="sm" />
                   </div>
 
-                  {/* ── Disconnected indicator (bottom-right) ── */}
-                  {!account.isConnected && !listenerDead ? (
-                    <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-gray-800 rounded-full border-2 border-gray-900 flex items-center justify-center z-10" title="Chưa kết nối">
-                      <svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="text-red-400">
-                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-                      </svg>
-                    </span>
-                  ) : null}
+                  {/* ── Chưa kết nối (góc phải dưới) ── */}
+                  {!account.isConnected && !listenerDead ? <DisconnectedBadge /> : null}
                 </button>
               </div>
             );
@@ -368,7 +404,7 @@ export default function Sidebar({ onAddAccount }: SidebarProps) {
           <button
             onClick={onAddAccount}
             title="Thêm tài khoản"
-            className="w-10 h-10 rounded-full bg-gray-700 hover:bg-gray-600 flex items-center justify-center text-gray-400 hover:text-white transition-colors border-2 border-dashed border-gray-600"
+            className="w-10 h-10 rounded-full bg-sidebar-foreground/15 hover:bg-sidebar-hover flex items-center justify-center text-sidebar-foreground/70 hover:text-sidebar-foreground transition-colors border-2 border-dashed border-sidebar-foreground/40"
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
               <path d="M8 2a.75.75 0 0 1 .75.75v4.5h4.5a.75.75 0 0 1 0 1.5h-4.5v4.5a.75.75 0 0 1-1.5 0v-4.5h-4.5a.75.75 0 0 1 0-1.5h4.5v-4.5A.75.75 0 0 1 8 2Z" />
@@ -379,7 +415,7 @@ export default function Sidebar({ onAddAccount }: SidebarProps) {
       )}
 
       {/* Nav bottom */}
-      <div className="border-t border-gray-700 py-2 flex flex-col items-center gap-1">
+      <div className="border-t border-sidebar-foreground/15 py-2 flex flex-col items-center gap-1">
         {featureVisibility.dashboard && <NavBtn icon="dashboard"  label="Dashboard"   active={view === 'dashboard'}  onClick={() => setView('dashboard')} />}
         {featureVisibility.chat && hasPerm('chat') && (
         <NavBtn icon="chat"       label="Chat"         active={view === 'chat'}       onClick={() => setView('chat')} />
@@ -387,27 +423,30 @@ export default function Sidebar({ onAddAccount }: SidebarProps) {
         {featureVisibility.crm && hasPerm('crm') && (
         <NavBtn icon="crm"        label="CRM"          active={view === 'crm'}        onClick={() => setView('crm')} dot={hasNewCRMRequests || hasScanNewDot} />
         )}
-        {((featureVisibility.workflow && hasPerm('workflow')) || (featureVisibility.integration && hasPerm('integration'))) && (
-        <NavFlyout
-          icon="tools"
-          label="Công cụ"
-          active={view === 'workflow' || view === 'integration'}
-          items={[
-            ...(featureVisibility.workflow && hasPerm('workflow') ? [{ icon: 'workflow' as const, label: 'Workflow (n8n)', active: view === 'workflow', onClick: () => setView('workflow') }] : []),
-            ...(featureVisibility.integration && hasPerm('integration') ? [{ icon: 'integration' as const, label: 'Tích hợp', active: view === 'integration', onClick: () => setView('integration') }] : []),
-          ]}
-          onGuide={() => setShowToolsGuide(true)}
-        />
-        )}
         {featureVisibility.analytics && hasPerm('analytics') && (
         <NavBtn icon="analytics"  label="Báo cáo"      active={view === 'analytics'}  onClick={() => setView('analytics')} />
         )}
-        {/* ERP - gated by module permission AND ERP RBAC (`erp.access`).
-            Inside ERP, fine-grained writes enforced via `useErpPermissions().can(...)` +
-            IPC middleware `withErpAuth`. */}
-        {featureVisibility.erp && hasPerm('erp') && canErpAccess && (
-        <NavBtn icon="erp"        label="Quản lý công việc"   active={view === 'erp'}        onClick={() => setView('erp')} />
-        )}
+        {/* Công cụ: Workflow, Tích hợp, Quản lý công việc (ERP) và Ứng dụng gom vào một flyout để rail ngắn.
+            ERP gated by module permission AND ERP RBAC (`erp.access`); fine-grained writes enforced via
+            `useErpPermissions().can(...)` + IPC middleware `withErpAuth`. */}
+        {(() => {
+          const toolItems: FlyoutItem[] = [
+            ...(featureVisibility.workflow && hasPerm('workflow') ? [{ icon: 'workflow', label: 'Workflow (n8n)', active: view === 'workflow', onClick: () => setView('workflow') }] : []),
+            ...(featureVisibility.integration && hasPerm('integration') ? [{ icon: 'integration', label: 'Tích hợp', active: view === 'integration', onClick: () => setView('integration') }] : []),
+            ...(featureVisibility.erp && hasPerm('erp') && canErpAccess ? [{ icon: 'erp', label: 'Quản lý công việc', active: view === 'erp', onClick: () => setView('erp') }] : []),
+            ...(featureVisibility.plugins && empMode !== 'employee' && ipc.plugins ? [{ icon: 'plugin', label: 'Ứng dụng, API & Webhook', active: view === 'plugin', onClick: openPluginHub, dot: !pluginsSeen || !apiSeen || !webhooksSeen }] : []),
+          ];
+          if (toolItems.length === 0) return null;
+          return (
+            <NavFlyout
+              icon="tools"
+              label="Công cụ"
+              active={toolItems.some((i) => i.active)}
+              items={toolItems}
+              onGuide={() => setShowToolsGuide(true)}
+            />
+          );
+        })()}
         {featureVisibility.settings && <NavBtn icon="settings"   label="Cài đặt"      active={view === 'settings'}   onClick={() => setView('settings')} dot={hasNewSettings} />}
       </div>
 
@@ -417,37 +456,40 @@ export default function Sidebar({ onAddAccount }: SidebarProps) {
   );
 }
 
+/** Chấm đỏ "mới" ở góc nút trên rail - dùng chung cho NavBtn và NavFlyout để các chấm giống hệt nhau. */
+const RAIL_DOT_CLASS = 'absolute top-1 right-1 w-2 h-2 bg-destructive rounded-full border border-sidebar pointer-events-none';
+
 function NavBtn({ icon, label, active, onClick, dot }: { icon: string; label: string; active: boolean; onClick: () => void; dot?: boolean }) {
   const icons: Record<string, React.ReactNode> = {
     dashboard: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" />
         <rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
       </svg>
     ),
     chat: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
       </svg>
     ),
     friends: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" />
         <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
       </svg>
     ),
     crm: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
            stroke="currentColor" strokeWidth="1.8"
            strokeLinecap="round" strokeLinejoin="round">
-        <rect x="3" y="3" width="18" height="18" rx="3"/>
-        <path d="M7 14v3"/>
-        <path d="M12 10v7"/>
-        <path d="M17 7v10"/>
+        <rect x="2.5" y="4.5" width="19" height="15" rx="2.5"/>
+        <circle cx="9" cy="10.5" r="2.25"/>
+        <path d="M5.5 16c.7-1.6 2-2.4 3.5-2.4s2.8.8 3.5 2.4"/>
+        <path d="M14.5 9.5h4M14.5 13h4"/>
       </svg>
     ),
     workflow: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
            stroke="currentColor" strokeWidth="1.8"
            strokeLinecap="round" strokeLinejoin="round">
         <circle cx="5" cy="6" r="2"/><circle cx="19" cy="6" r="2"/>
@@ -456,7 +498,7 @@ function NavBtn({ icon, label, active, onClick, dot }: { icon: string; label: st
       </svg>
     ),
     integration: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
            stroke="currentColor" strokeWidth="1.8"
            strokeLinecap="round" strokeLinejoin="round">
         <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
@@ -464,7 +506,7 @@ function NavBtn({ icon, label, active, onClick, dot }: { icon: string; label: st
       </svg>
     ),
     tools: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
            stroke="currentColor" strokeWidth="1.8"
            strokeLinecap="round" strokeLinejoin="round">
         <rect x="2" y="7" width="20" height="14" rx="2" ry="2"/>
@@ -473,19 +515,19 @@ function NavBtn({ icon, label, active, onClick, dot }: { icon: string; label: st
       </svg>
     ),
     analytics: (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <path d="M21 21H4.6c-.56 0-.84 0-1.054-.109a1 1 0 0 1-.437-.437C3 20.24 3 19.96 3 19.4V3"/>
           <path d="M7 14l4-4 4 4 6-6"/>
         </svg>
     ),
     settings: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <circle cx="12" cy="12" r="3" />
         <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
       </svg>
     ),
     bot: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <rect x="3" y="11" width="18" height="10" rx="2" />
         <circle cx="12" cy="5" r="2" />
         <path d="M12 7v4" />
@@ -494,7 +536,7 @@ function NavBtn({ icon, label, active, onClick, dot }: { icon: string; label: st
       </svg>
     ),
     erp: (
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
       </svg>
     ),
@@ -502,11 +544,10 @@ function NavBtn({ icon, label, active, onClick, dot }: { icon: string; label: st
 
   return (
     <button onClick={onClick} title={label}
-      className={`relative w-10 h-10 rounded-lg flex items-center justify-center transition-colors ${active ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white'}`}>
+      className={`relative w-11 h-11 rounded-xl flex items-center justify-center transition-colors ${active ? 'bg-sidebar-active text-sidebar-active-foreground shadow-md shadow-sidebar-active/40' : 'text-sidebar-foreground/90 hover:bg-sidebar-hover hover:text-sidebar-foreground'}`}>
       {icons[icon]}
-      {dot && (
-        <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full border border-gray-900 pointer-events-none" />
-      )}
+      {active && <span className="absolute -left-2.5 top-1.5 bottom-1.5 w-[3px] rounded-r-full bg-sidebar-active pointer-events-none" />}
+      {dot && <span className={RAIL_DOT_CLASS} />}
     </button>
   );
 }
@@ -518,6 +559,8 @@ interface FlyoutItem {
   label: string;
   active: boolean;
   onClick: () => void;
+  /** Chấm đỏ "mới" trên mục; nút rail của flyout cũng hiện chấm khi có mục bất kỳ có chấm. */
+  dot?: boolean;
 }
 
 function NavFlyout({ icon, label, active, items, onGuide }: { icon: string; label: string; active: boolean; items: FlyoutItem[]; onGuide?: () => void }) {
@@ -536,6 +579,7 @@ function NavFlyout({ icon, label, active, items, onGuide }: { icon: string; labe
 
   // Reuse the same icon lookup as NavBtn
   const btnRef = useRef<HTMLButtonElement>(null);
+  const hasDot = items.some((item) => item.dot);
 
   return (
     <div
@@ -547,21 +591,23 @@ function NavFlyout({ icon, label, active, items, onGuide }: { icon: string; labe
       <button
         ref={btnRef}
         title={label}
-        className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors ${
-          active ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white'
+        className={`relative w-11 h-11 rounded-xl flex items-center justify-center transition-colors ${
+          active ? 'bg-sidebar-active text-sidebar-active-foreground shadow-md shadow-sidebar-active/40' : 'text-sidebar-foreground/90 hover:bg-sidebar-hover hover:text-sidebar-foreground'
         }`}
       >
         <NavIcon name={icon} />
+        {active && <span className="absolute -left-2.5 top-1.5 bottom-1.5 w-[3px] rounded-r-full bg-sidebar-active pointer-events-none" />}
+        {hasDot && <span className={RAIL_DOT_CLASS} />}
       </button>
 
       {/* Flyout submenu - appears to the right */}
       {open && (
         <div
-          className="absolute left-full -bottom-12 ml-1.5 z-[9999] min-w-[160px] bg-gray-800 border border-gray-600 rounded-xl shadow-2xl py-1.5 animate-in fade-in slide-in-from-left-2 duration-150"
+          className="absolute left-full -bottom-12 ml-1.5 z-[9999] min-w-[160px] bg-card border border-input rounded-xl shadow-2xl py-1.5 animate-in fade-in slide-in-from-left-2 duration-150"
         >
           {/* Header */}
-          <div className="px-3 py-1.5 border-b border-gray-700/60 mb-1">
-            <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">{label}</span>
+          <div className="px-3 py-1.5 border-b border-border/60 mb-1">
+            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">{label}</span>
           </div>
           {items.map((item) => (
             <button
@@ -569,26 +615,29 @@ function NavFlyout({ icon, label, active, items, onGuide }: { icon: string; labe
               onClick={() => { item.onClick(); setOpen(false); }}
               className={`w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors ${
                 item.active
-                  ? 'bg-blue-600/20 text-blue-400'
-                  : 'text-gray-300 hover:bg-gray-700 hover:text-white'
+                  ? 'bg-selected text-primary'
+                  : 'text-foreground/80 hover:bg-muted hover:text-foreground'
               }`}
             >
               <span className="w-5 h-5 flex items-center justify-center flex-shrink-0">
-                <NavIcon name={item.icon} />
+                <NavIcon name={item.icon} size={16} />
               </span>
               <span className="text-xs font-medium whitespace-nowrap">{item.label}</span>
+              {item.dot && (
+                <span className="ml-auto w-2 h-2 rounded-full bg-destructive flex-shrink-0" />
+              )}
               {item.active && (
-                <span className="ml-auto w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0" />
+                <span className={`${item.dot ? '' : 'ml-auto '}w-1.5 h-1.5 rounded-full bg-primary flex-shrink-0`} />
               )}
             </button>
           ))}
           {/* Guide button */}
           {onGuide && (
             <>
-              <div className="border-t border-gray-700/60 my-1" />
+              <div className="border-t border-border/60 my-1" />
               <button
                 onClick={() => { onGuide(); setOpen(false); }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-gray-400 hover:bg-gray-700 hover:text-gray-200 transition-colors"
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
               >
                 <span className="w-5 h-5 flex items-center justify-center flex-shrink-0 text-sm"><BookIcon className="w-4 h-4" /></span>
                 <span className="text-xs font-medium whitespace-nowrap">Hướng dẫn sử dụng</span>
@@ -603,42 +652,42 @@ function NavFlyout({ icon, label, active, items, onGuide }: { icon: string; labe
 
 // ─── Shared icon component ────────────────────────────────────────────────────
 
-function NavIcon({ name }: { name: string }) {
+function NavIcon({ name, size = 20 }: { name: string; size?: number }) {
   switch (name) {
     case 'dashboard':
       return (
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" />
           <rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
         </svg>
       );
     case 'chat':
       return (
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
         </svg>
       );
     case 'friends':
       return (
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" />
           <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
         </svg>
       );
     case 'crm':
       return (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
            stroke="currentColor" strokeWidth="1.8"
            strokeLinecap="round" strokeLinejoin="round">
-        <rect x="3" y="3" width="18" height="18" rx="3"/>
-        <path d="M7 14v3"/>
-        <path d="M12 10v7"/>
-        <path d="M17 7v10"/>
+        <rect x="2.5" y="4.5" width="19" height="15" rx="2.5"/>
+        <circle cx="9" cy="10.5" r="2.25"/>
+        <path d="M5.5 16c.7-1.6 2-2.4 3.5-2.4s2.8.8 3.5 2.4"/>
+        <path d="M14.5 9.5h4M14.5 13h4"/>
       </svg>
       );
     case 'workflow':
       return (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
            stroke="currentColor" strokeWidth="1.8"
            strokeLinecap="round" strokeLinejoin="round">
         <circle cx="5" cy="6" r="2"/><circle cx="19" cy="6" r="2"/>
@@ -648,7 +697,7 @@ function NavIcon({ name }: { name: string }) {
       );
     case 'integration':
       return (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
            stroke="currentColor" strokeWidth="1.8"
            strokeLinecap="round" strokeLinejoin="round">
         <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
@@ -657,33 +706,35 @@ function NavIcon({ name }: { name: string }) {
       );
     case 'analytics':
       return (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <path d="M21 21H4.6c-.56 0-.84 0-1.054-.109a1 1 0 0 1-.437-.437C3 20.24 3 19.96 3 19.4V3"/>
           <path d="M7 14l4-4 4 4 6-6"/>
         </svg>
       );
     case 'facebook':
       return (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"/>
         </svg>
       );
     case 'tools':
       return (
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/>
           <line x1="12" y1="12" x2="12" y2="12.01"/>
         </svg>
       );
     case 'erp':
       return (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
         </svg>
       );
+    case 'plugin':
+      return <span className="inline-flex [&_svg]:w-full [&_svg]:h-full" style={{ width: size, height: size }}><PluginIcon className="w-full h-full" /></span>;
     case 'settings':
       return (
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <circle cx="12" cy="12" r="3" />
           <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
       </svg>
@@ -701,47 +752,48 @@ const TOOLS_GUIDE = [
     id: 'crm' as const,
     icon: <ChartIcon className="w-4 h-4" />, title: 'CRM - Quản lý khách hàng',
     color: 'border-blue-500/40 bg-blue-900/30',
-    badgeColor: 'bg-gray-800 text-gray-300',
-    purpose: 'Quản lý toàn bộ danh sách liên hệ Zalo, phân loại khách hàng bằng nhãn, ghi chú nội bộ, và chạy chiến dịch nhắn tin hàng loạt - biến Zalo thành CRM chuyên nghiệp.',
+    badgeColor: 'bg-card text-foreground/80',
+    purpose: 'Quản lý liên hệ của các tài khoản Zalo, Facebook, Telegram: phân loại bằng nhãn, ghi chú nội bộ, chạy chiến dịch gửi tin / kết bạn / mời vào nhóm và quét thành viên nhóm Zalo để tìm khách mới.',
     sections: [
       {
         icon: <UsersIcon className="w-4 h-4 inline" />,
         title: 'Quản lý liên hệ',
         items: [
-          'Xem tất cả liên hệ theo tài khoản Zalo: bạn bè, nhóm, stranger (người lạ)',
-          'Bộ lọc nâng cao: theo nhãn, trạng thái (đã nhắn / chưa nhắn), loại liên hệ, thời gian',
-          'Xem thông tin chi tiết: avatar, tên, SĐT, nhãn, ghi chú, lịch sử tương tác',
-          'Dashboard tổng quan: thống kê số lượng liên hệ, tương tác, nhãn phân bố',
+          'Xem liên hệ theo từng tài khoản (chọn tài khoản ở góc phải): bạn bè, người chưa kết bạn, nhóm',
+          'Lọc theo nhãn, loại (bạn bè / chưa là bạn bè / nhóm / có SĐT / có ghi chú), giới tính, sinh nhật; sắp xếp theo tên hoặc tin nhắn cuối',
+          'Panel chi tiết: SĐT, giới tính, sinh nhật, nhãn, ghi chú và lịch sử gửi tin của từng liên hệ',
+          'Xuất danh sách ra file CSV; xem số liệu ở trang Báo cáo (nút biểu đồ ở góc trên)',
         ],
       },
       {
         icon: <TagIcon className="w-4 h-4 inline" />,
         title: 'Hệ thống nhãn kép',
         items: [
-          'Nhãn Zalo (Zalo Label): đồng bộ 2 chiều với app Zalo trên điện thoại - gán từ Deplao, thấy trên Zalo và ngược lại',
-          'Nhãn Local: nhãn riêng của Deplao, tùy biến màu sắc + emoji, không giới hạn số lượng',
-          'Dùng nhãn làm điều kiện lọc trong chiến dịch (chỉ gửi cho khách có nhãn "VIP")',
-          'Dùng nhãn làm Trigger trong Workflow: khi gắn nhãn → tự động chạy luồng xử lý',
+          'Nhãn Zalo: đồng bộ 2 chiều với app Zalo - gán từ Deplao, thấy trên Zalo và ngược lại',
+          'Nhãn Local: nhãn riêng của Deplao, chọn màu + emoji, dùng chung cho nhiều tài khoản',
+          'Chọn người nhận chiến dịch theo nhãn (vd. chỉ gửi cho khách có nhãn "VIP")',
+          'Dùng nhãn làm Trigger trong Workflow: "Khi gán hoặc gỡ nhãn" → tự động chạy luồng xử lý',
         ],
       },
       {
         icon: <FileTextIcon className="w-4 h-4 inline" />,
-        title: 'Ghi chú nội bộ (Notes)',
+        title: 'Ghi chú nội bộ',
         items: [
           'Thêm ghi chú riêng cho từng liên hệ - khách hàng không thấy được',
-          'Chỉnh sửa / xóa ghi chú bất kỳ lúc nào',
-          'Xem lại toàn bộ ghi chú theo dòng thời gian trong panel chi tiết',
+          'Sửa / xoá ghi chú bất kỳ lúc nào ở tab Nhãn/Ghi chú của panel chi tiết',
+          'Nhóm Zalo: xem thêm ghi chú nhóm của Zalo (chỉ đọc)',
         ],
       },
       {
         icon: <CampaignIcon className="w-4 h-4 inline" />,
-        title: 'Chiến dịch nhắn tin hàng loạt',
+        title: 'Chiến dịch & tìm khách mới',
         items: [
-          'Tạo chiến dịch: chọn đối tượng theo nhãn / bộ lọc → soạn mẫu tin → gửi',
-          'Hỗ trợ biến động: chèn tên khách, SĐT, nhãn... vào nội dung tin nhắn tự động',
-          'Giới hạn tốc độ gửi tự động: tối đa 60 tin/giờ, delay giữa mỗi tin (tránh spam)',
-          'Theo dõi realtime: đã gửi / thất bại / phản hồi - dừng/tiếp tục chiến dịch mọi lúc',
-          'Lịch sử gửi chi tiết: xem từng tin đã gửi, trạng thái, thời gian',
+          'Loại chiến dịch: Tin nhắn, Kết bạn, Mời nhóm, Hỗn hợp (Telegram: chỉ Tin nhắn)',
+          'Chọn người nhận: thủ công, theo nhãn, SĐT, UID, bạn bè, nhóm, thành viên nhóm',
+          'Chèn tên người nhận bằng {name}; xem trước nội dung như khung chat; chọn chữ trước / ảnh trước hoặc gộp ảnh + chữ thành 1 tin',
+          'Tự giãn cách ngẫu nhiên giữa các liên hệ (tối thiểu 30 giây), tối đa 60 tin/giờ mỗi tài khoản để tránh bị coi là spam',
+          'Theo dõi realtime: đã gửi / đang chờ / lỗi - tạm dừng, tiếp tục bất cứ lúc nào; tab Lịch sử xem từng tin đã gửi',
+          'Tab Nhóm → Quét thành viên: lấy thành viên nhóm Zalo (cả nhóm ẩn danh sách, nhóm đang chờ duyệt) vào CRM',
         ],
       },
     ],
@@ -750,65 +802,71 @@ const TOOLS_GUIDE = [
     id: 'workflow' as const,
     icon: <LightningIcon className="w-4 h-4" />, title: 'Workflow - Tự động hoá',
     color: 'border-purple-500/40 bg-purple-900/30',
-    badgeColor: 'bg-gray-800 text-gray-300',
-    purpose: 'Tạo các luồng xử lý tự động bằng giao diện kéo-thả trực quan: nhận sự kiện → xử lý logic → thực hiện hành động. Không cần viết code, có sẵn 20+ mẫu workflow.',
+    badgeColor: 'bg-card text-foreground/80',
+    purpose: 'Tạo luồng xử lý tự động bằng kéo-thả: nhận sự kiện → xử lý logic → thực hiện hành động trên Zalo, Facebook, Telegram. Không cần viết code; Kho mẫu có hơn 100 mẫu và nút AI giúp thiết kế bằng câu lệnh.',
     sections: [
       {
         icon: <LightningIcon className="w-4 h-4 inline" />,
-        title: 'Trigger - 8 loại sự kiện kích hoạt',
+        title: 'Trigger - sự kiện kích hoạt',
         items: [
-          'Khi nhận tin nhắn: lọc theo từ khóa, loại hội thoại (cá nhân/nhóm), regex',
-          'Khi có lời mời kết bạn → tự động chấp nhận + gửi lời chào',
-          'Khi có sự kiện nhóm: thành viên vào/rời, đổi admin, đổi avatar nhóm',
-          'Khi có người react tin nhắn (like, heart, haha...)',
-          'Khi gắn/gỡ nhãn: liên kết CRM → Workflow liền mạch',
-          'Chạy theo lịch hẹn (cron): hàng ngày, hàng giờ, ngày cụ thể',
-          'Khi nhận thanh toán (webhook từ Casso/SePay)',
-          'Chạy thủ công: nút bấm test từ giao diện',
+          'Zalo: Khi nhận tin nhắn (lọc từ khóa / regex, cá nhân / nhóm, vai trò người gửi), lời mời kết bạn, sự kiện nhóm, react tin nhắn, gán / gỡ nhãn',
+          'Facebook Messenger: tin nhắn (chữ, ảnh, video, file, sticker), reaction, thu hồi, sự kiện nhóm',
+          'Telegram: tin nhắn, thu hồi, sự kiện nhóm; Telegram Bot: tin nhắn, lệnh, nút bấm, yêu cầu vào nhóm…',
+          'Dùng chung: Chạy theo lịch hẹn (mỗi ngày, mỗi giờ, mỗi tuần… hoặc tự đặt), Chạy thủ công, Khi nhận thanh toán (Casso / SePay), Khi phần mềm bán hàng gửi webhook (KiotViet / Haravan / Sapo / Nhanh.vn / Pancake, cần khoá xác thực), Webhook bên ngoài, Khi API/ứng dụng gọi',
         ],
       },
       {
         icon: <MessageCircleIcon className="w-4 h-4 inline" />,
-        title: 'Action - 15+ thao tác trên Zalo',
+        title: 'Hành động trên Zalo, Facebook, Telegram',
         items: [
-          'Gửi tin nhắn văn bản (hỗ trợ biến động {{ tên }}, {{ sdt }}...)',
-          'Hiệu ứng "đang gõ..." + delay → tạo cảm giác tự nhiên như người thật',
-          'Gửi ảnh (từ file hoặc URL), gửi file đính kèm (PDF, Excel...)',
-          'Tìm user bằng SĐT, lấy thông tin người dùng (avatar, tên, giới tính)',
-          'Chấp nhận / Từ chối / Gửi lời mời kết bạn tự động',
-          'Quản lý nhóm: thêm/xóa thành viên, tạo bình chọn (poll)',
-          'Gắn/gỡ nhãn, thu hồi tin nhắn, chuyển tiếp tin nhắn, thả cảm xúc',
+          'Gửi tin nhắn - chèn tên người gửi, nội dung tin… bằng nút "Chèn biến"',
+          'Hiệu ứng "đang gõ..." + chờ vài giây → trả lời tự nhiên như người thật',
+          'Gửi ảnh, file đính kèm (PDF, Excel...); tìm user bằng SĐT, lấy thông tin người dùng',
+          'Chấp nhận / từ chối / gửi lời mời kết bạn; thêm / xoá thành viên nhóm, tạo bình chọn',
+          'Gắn / gỡ nhãn, thu hồi, chuyển tiếp, thả cảm xúc, đổi tên gợi nhớ',
+          'Facebook, Telegram và Telegram Bot có bộ hành động riêng; "Chuyển tiếp đa kênh" gửi lại tin sang kênh khác',
         ],
       },
       {
         icon: <BrainIcon className="w-4 h-4 inline" />,
         title: 'Logic & Dữ liệu',
         items: [
-          'Rẽ nhánh IF/ELSE: kiểm tra điều kiện → chạy nhánh tương ứng',
-          'Switch: phân nhiều nhánh theo giá trị (VD: phân loại câu hỏi)',
-          'Lặp forEach: lặp qua danh sách rồi xử lý từng item',
-          'Lưu biến, dừng workflow nếu điều kiện đúng, chờ N giây',
-          'Ghép nội dung văn bản, chọn ngẫu nhiên, định dạng ngày giờ, đọc JSON',
+          'Rẽ nhánh Đúng/Sai (IF) và Phân nhiều nhánh (Switch) theo giá trị',
+          'Lưu giá trị vào biến, Dừng workflow nếu…, Tạm dừng chờ N giây',
+          'Lặp qua danh sách: chạy các bước cho từng sản phẩm / đơn / dòng tồn kho (tối đa 100), nhánh "Xong" chạy một lần sau cùng',
+          'Chọn đối tượng nhận tin: lấy bạn bè / thành viên nhóm / nhãn / liên hệ CRM để gửi hàng loạt (tự giãn cách 5-10 giây giữa từng người nhận)',
+          'Ghép nội dung văn bản, chọn ngẫu nhiên 1 mục, định dạng ngày giờ, đọc dữ liệu JSON',
         ],
       },
       {
         icon: <BotIcon className="w-4 h-4 inline" />,
         title: 'AI & Tích hợp ngoài',
         items: [
-          'AI tạo nội dung: ChatGPT, Gemini, Deepseek, Grok - chatbot thông minh',
-          'AI phân loại tin nhắn: tự nhận diện hỏi giá / khiếu nại / hỗ trợ kỹ thuật...',
-          'Google Sheets: ghi dữ liệu, đọc dữ liệu, cập nhật ô - biến Sheets thành database',
-          'Gửi thông báo Telegram, Discord, Email, ghi vào Notion Database',
-          'Gọi API/Webhook HTTP bên ngoài: kết nối bất kỳ hệ thống nào',
+          'Tạo nội dung bằng AI: dùng Trợ lý AI đã tạo hoặc tự chọn OpenAI, Gemini, Claude, DeepSeek, Grok, Mistral, OpenRouter',
+          'Phân loại văn bản bằng AI: tự nhận diện hỏi giá / khiếu nại / hỗ trợ...',
+          'Google Sheets: ghi thêm dòng, đọc dữ liệu, cập nhật ô',
+          'Gửi tin qua Telegram, Discord, Email; ghi vào Notion Database',
+          'Gọi API bên ngoài (HTTP) để kết nối hệ thống khác',
         ],
       },
       {
         icon: <StoreIcon className="w-4 h-4 inline" />,
-        title: 'POS & Vận chuyển trong Workflow',
+        title: 'POS, Thanh toán & Vận chuyển',
         items: [
-          'KiotViet / Haravan / Sapo / Nhanh: tra cứu KH, đơn hàng, sản phẩm, tạo đơn',
-          'GHN / GHTK: tạo đơn vận chuyển, tra cứu vận đơn - ngay trong luồng tự động',
-          'Casso / SePay (VietQR): lấy lịch sử giao dịch, đối soát thanh toán',
+          'KiotViet / Haravan / Sapo / Nhanh.vn / Pancake: tra cứu khách hàng, đơn hàng, sản phẩm, tạo đơn (Sapo có thêm tồn kho); webhook đơn mới / đổi trạng thái kích hoạt "Khi phần mềm bán hàng gửi webhook"',
+          'Tra cứu theo SĐT đã lưu của người nhắn; khách chưa lưu SĐT thì không tra cứu (tránh trả nhầm đơn của khách khác)',
+          'GHN / GHTK: tạo đơn vận chuyển, tra cứu vận đơn',
+          'Casso / SePay: kích hoạt "Khi nhận thanh toán" (báo nhóm nội bộ, Telegram, ghi Sheets), lấy lịch sử giao dịch',
+        ],
+      },
+      {
+        icon: <SettingsIcon className="w-4 h-4 inline" />,
+        title: 'Soạn & chạy thử',
+        items: [
+          'Kho mẫu: hơn 100 workflow mẫu, chọn rồi sửa theo nhu cầu',
+          'Nút AI trong trình sửa: trò chuyện với Trợ lý AI để thiết kế hoặc sửa workflow',
+          'Mô phỏng: chạy thử không gửi tin thật, xem luồng dạng khung chat',
+          'Lịch sử chạy: xem từng lần chạy và lỗi để kiểm tra',
         ],
       },
     ],
@@ -817,55 +875,56 @@ const TOOLS_GUIDE = [
     id: 'integration' as const,
     icon: <LinkIcon className="w-4 h-4" />, title: 'Tích hợp - Kết nối bên thứ 3',
     color: 'border-green-500/40 bg-green-900/30',
-    badgeColor: 'bg-gray-800 text-gray-300',
-    purpose: 'Kết nối Deplao với hệ sinh thái bán hàng, thanh toán, vận chuyển Việt Nam. Tra cứu dữ liệu ngay trong khung chat, nhận webhook tự động, kết hợp Workflow để xử lý end-to-end.',
+    badgeColor: 'bg-card text-foreground/80',
+    purpose: 'Kết nối Deplao với phần mềm bán hàng, cổng thanh toán và đơn vị vận chuyển. Tra cứu dữ liệu ngay trong khung chat, nhận thông báo chuyển khoản tự động, kết hợp Workflow để xử lý trọn quy trình.',
     sections: [
       {
         icon: <ShoppingCartIcon className="w-4 h-4 inline" />,
-        title: 'POS / Bán hàng (4 nền tảng)',
+        title: 'POS / Bán hàng (5 nền tảng)',
         items: [
-          'KiotViet: tra cứu khách hàng, đơn hàng, sản phẩm, tạo đơn - phổ biến nhất VN',
-          'Haravan: nền tảng TMĐT, tra cứu đơn hàng online, khách hàng',
-          'Sapo: quản lý bán hàng đa kênh, tra cứu đơn/khách theo SĐT',
-          'Nhanh.vn: tra cứu đơn, sản phẩm, khách hàng, tạo đơn',
-          '→ Tất cả đều tra cứu trực tiếp từ khung chat bằng nút tắt hoặc shortcut',
+          'KiotViet, Haravan, Sapo, Nhanh.vn, Pancake POS',
+          'Tra cứu khách hàng, đơn hàng, sản phẩm (giá, tồn kho) và tạo đơn ngay trong hội thoại qua bảng Tích hợp nhanh',
+          'Kết nối ở Công cụ → Tích hợp → POS / Bán hàng; bấm Test kết nối để nền tảng hiện trong Tích hợp nhanh',
+          'Nhận webhook: KiotViet / Sapo bấm Đăng ký webhook tự động trong trang nền tảng; nền tảng khác đặt khoá xác thực webhook rồi dán Địa chỉ nhận webhook vào phần mềm bán hàng → workflow "Khi phần mềm bán hàng gửi webhook" chạy (webhook sai / thiếu khoá bị từ chối)',
         ],
       },
       {
         icon: <CreditCardIcon className="w-4 h-4 inline" />,
         title: 'Thanh toán (2 nền tảng)',
         items: [
-          'Casso: kết nối ngân hàng, nhận webhook khi có chuyển khoản mới - realtime',
-          'SePay (VietQR): tương tự Casso, hỗ trợ nhiều ngân hàng VN',
-          'Webhook tự nhận về app tại http://127.0.0.1:9888/webhook/{type}',
-          'Kết hợp Workflow trigger.payment → gửi tin cảm ơn + xác nhận đơn tự động',
+          'Casso, SePay (VietQR): nhận thông báo ngay khi có chuyển khoản vào tài khoản',
+          'Workflow "Khi nhận thanh toán": tự ghi sổ, báo nhân viên khi có tiền vào (lọc theo số tiền, nội dung chuyển khoản)',
+          'Trong hội thoại: Tích hợp nhanh → Lịch sử giao dịch để xem nhanh giao dịch gần nhất',
         ],
       },
       {
         icon: <TruckIcon className="w-4 h-4 inline" />,
         title: 'Vận chuyển (2 nền tảng)',
         items: [
-          'GHN Express: tạo đơn giao hàng, tra cứu mã vận đơn + trạng thái',
-          'GHTK: tạo đơn + tra cứu tracking - đối soát COD',
+          'GHN Express: tra cứu vận đơn, tính phí, xem mã tỉnh / quận / phường của GHN',
+          'GHTK: tra cứu vận đơn, tính phí',
+          'Tạo đơn vận chuyển GHN / GHTK bằng Workflow',
         ],
       },
       {
         icon: <GlobeIcon className="w-4 h-4 inline" />,
-        title: 'Tunnel - Mở kết nối ra internet',
+        title: 'Địa chỉ Internet - nhận thông báo từ bên ngoài',
         items: [
-          'Bật thủ công khi cần: tạo URL công khai (https://xxx.loca.lt) trỏ về app',
-          'Cho phép bên ngoài (Casso, SePay, n8n cloud...) gửi webhook về Deplao',
-          'Không bật = webhook chỉ hoạt động trên localhost (cùng máy)',
-          'Tắt bất cứ lúc nào - không ảnh hưởng các tính năng khác',
+          'Casso / SePay gửi thông báo qua Internet: bật dòng "Thanh toán, tích hợp" ở Cài đặt → Internet & Đám mây → Địa chỉ Internet',
+          'Cloudflare tự động: địa chỉ cố định; Địa chỉ tạm đổi mỗi lần khởi động lại - phải dán lại vào Casso / SePay',
+          'Địa chỉ nhận của từng kết nối nằm ngay trong trang Casso / SePay (nút sao chép)',
+          'Website / dịch vụ ngoài kích hoạt Workflow qua dòng "Webhook workflow" ở cùng trang',
+          'Chỉ nhận được khi Deplao đang mở',
         ],
       },
       {
         icon: <LightningIcon className="w-4 h-4 inline" />,
-        title: 'Shortcut tra cứu nhanh',
+        title: 'Tích hợp nhanh trong hội thoại',
         items: [
-          'Ghim các nút tra cứu POS/vận chuyển ngay trên thanh công cụ chat',
-          'Bấm 1 lần → tra cứu đơn hàng / khách hàng theo SĐT người đang chat',
-          'Kết quả hiển thị ngay trong popup - không cần rời khung chat',
+          'Mở bằng nút hình mắt xích trên thanh tiêu đề hội thoại (hoặc ⋯ Thêm tính năng → Tích hợp nhanh)',
+          'Ghim thao tác hay dùng ra thanh công cụ ô soạn tin - bấm một lần là mở đúng thao tác, SĐT điền sẵn nếu hội thoại có số',
+          'Kết quả hiện ngay trong bảng bên phải - không cần rời khung chat',
+          'Máy nhân viên: tra cứu chạy trên máy Boss (kết nối nằm ở Boss), cần quyền Tích hợp',
         ],
       },
     ],
@@ -877,17 +936,16 @@ const TOOLS_GUIDE = [
 const COMBO_SCENARIOS = [
   {
     icon: <DollarIcon className="w-4 h-4" />,
-    title: 'Xác nhận thanh toán tự động',
+    title: 'Xác nhận chuyển khoản tự động',
     tags: ['Tích hợp', 'Workflow'],
     color: 'border-emerald-500/30',
     flow: [
-      { icon: <LinkIcon className="w-3 h-3" />, text: 'SePay/Casso nhận CK' },
-      { icon: <SettingsIcon className="w-3 h-3" />, text: 'Trigger payment' },
-      { icon: <EditIcon className="w-3 h-3" />, text: 'Ghép tin "Cảm ơn {tên}, đơn #{mã} đã nhận {số tiền}"' },
-      { icon: <MessageCircleIcon className="w-3 h-3" />, text: 'Gửi tin Zalo' },
-      { icon: <TagIcon className="w-3 h-3" />, text: 'Gắn nhãn "Đã TT"' },
+      { icon: <LinkIcon className="w-3 h-3" />, text: 'Casso / SePay báo có CK' },
+      { icon: <SettingsIcon className="w-3 h-3" />, text: 'Khi nhận thanh toán' },
+      { icon: <TrendingUpIcon className="w-3 h-3" />, text: 'Ghi Google Sheets' },
+      { icon: <MessageCircleIcon className="w-3 h-3" />, text: 'Báo nhóm Zalo nội bộ' },
     ],
-    desc: 'Khách chuyển khoản → Deplao nhận webhook từ ngân hàng → Workflow tự động gửi tin xác nhận + gắn nhãn CRM.',
+    desc: 'Khách chuyển khoản → Casso / SePay báo về Deplao → Workflow ghi sổ và báo ngay cho nhân viên để xác nhận đơn, không cần ngồi soát sao kê.',
   },
   {
     icon: <BotIcon className="w-4 h-4" />,
@@ -897,11 +955,11 @@ const COMBO_SCENARIOS = [
     flow: [
       { icon: <MessageCircleIcon className="w-3 h-3" />, text: 'Khách nhắn hỏi' },
       { icon: <BrainIcon className="w-3 h-3" />, text: 'AI phân loại (hỏi giá / CSKH / khiếu nại)' },
-      { icon: <BotIcon className="w-3 h-3" />, text: 'ChatGPT trả lời theo ngữ cảnh' },
-      { icon: <EditIcon className="w-3 h-3" />, text: 'Typing + delay' },
+      { icon: <BotIcon className="w-3 h-3" />, text: 'AI soạn câu trả lời' },
+      { icon: <EditIcon className="w-3 h-3" />, text: 'Hiệu ứng đang gõ' },
       { icon: <MessageCircleIcon className="w-3 h-3" />, text: 'Gửi phản hồi' },
     ],
-    desc: 'Khách nhắn tin → AI tự phân loại câu hỏi → ChatGPT sinh nội dung trả lời phù hợp → gửi tự động với hiệu ứng đang gõ.',
+    desc: 'Khách nhắn tin → AI phân loại câu hỏi → Trợ lý AI soạn câu trả lời phù hợp → gửi tự động kèm hiệu ứng đang gõ.',
   },
   {
     icon: <WaveIcon className="w-4 h-4" />,
@@ -910,67 +968,66 @@ const COMBO_SCENARIOS = [
     color: 'border-blue-500/30',
     flow: [
       { icon: <UserIcon className="w-3 h-3" />, text: 'Nhận lời mời KB' },
-      { icon: <CheckIcon className="w-3 h-3" />, text: 'Auto chấp nhận' },
+      { icon: <CheckIcon className="w-3 h-3" />, text: 'Tự chấp nhận' },
       { icon: <MessageCircleIcon className="w-3 h-3" />, text: 'Gửi tin chào' },
       { icon: <TagIcon className="w-3 h-3" />, text: 'Gắn nhãn "Khách mới"' },
       { icon: <TrendingUpIcon className="w-3 h-3" />, text: 'Ghi Google Sheets' },
     ],
-    desc: 'Khi có người gửi kết bạn → auto accept → gửi lời chào + menu dịch vụ → gắn nhãn CRM → ghi thông tin vào Sheets.',
+    desc: 'Có người gửi lời mời kết bạn → tự chấp nhận → gửi lời chào + giới thiệu dịch vụ → gắn nhãn CRM → ghi thông tin vào Sheets.',
   },
   {
     icon: <ShoppingCartIcon className="w-4 h-4" />,
-    title: 'Tra cứu đơn hàng ngay trong chat',
+    title: 'Tra cứu đơn hàng qua tin nhắn',
     tags: ['Tích hợp', 'Workflow'],
     color: 'border-orange-500/30',
     flow: [
-      { icon: <MessageCircleIcon className="w-3 h-3" />, text: 'Khách nhắn "đơn hàng"' },
-      { icon: <SearchIcon className="w-3 h-3" />, text: 'KiotViet tra SĐT' },
-      { icon: <EditIcon className="w-3 h-3" />, text: 'Ghép kết quả' },
-      { icon: <MessageCircleIcon className="w-3 h-3" />, text: 'Gửi thông tin đơn' },
+      { icon: <MessageCircleIcon className="w-3 h-3" />, text: 'Khách nhắn SĐT đặt hàng' },
+      { icon: <SearchIcon className="w-3 h-3" />, text: 'Tra cứu đơn hàng (POS)' },
+      { icon: <SettingsIcon className="w-3 h-3" />, text: 'Rẽ nhánh: tìm thấy?' },
+      { icon: <MessageCircleIcon className="w-3 h-3" />, text: 'Gửi trạng thái đơn' },
     ],
-    desc: 'Khách hỏi về đơn hàng → Workflow tự tra cứu KiotViet/Haravan theo SĐT → gửi lại thông tin đơn chi tiết.',
+    desc: 'Khách gửi số điện thoại đặt hàng (hoặc đã lưu SĐT trong thông tin liên hệ) → Workflow tra đơn trên KiotViet / Haravan / Sapo / Nhanh.vn / Pancake → trả lời trạng thái đơn ngay. Nhân viên cũng tra tay được bằng bảng Tích hợp nhanh.',
   },
   {
     icon: <CampaignIcon className="w-4 h-4" />,
     title: 'Chiến dịch remarketing theo nhãn',
-    tags: ['CRM', 'Workflow'],
+    tags: ['CRM'],
     color: 'border-pink-500/30',
     flow: [
-      { icon: <ChartIcon className="w-3 h-3" />, text: 'Lọc KH nhãn "Chưa mua"' },
+      { icon: <ChartIcon className="w-3 h-3" />, text: 'Chọn KH nhãn "Chưa mua"' },
       { icon: <CampaignIcon className="w-3 h-3" />, text: 'Tạo chiến dịch' },
-      { icon: <EditIcon className="w-3 h-3" />, text: 'Soạn tin ưu đãi' },
-      { icon: <MessageCircleIcon className="w-3 h-3" />, text: 'Gửi hàng loạt (60 tin/h)' },
-      { icon: <TrendingUpIcon className="w-3 h-3" />, text: 'Theo dõi phản hồi' },
+      { icon: <EditIcon className="w-3 h-3" />, text: 'Soạn tin ưu đãi + {name}' },
+      { icon: <MessageCircleIcon className="w-3 h-3" />, text: 'Gửi giãn cách (≤ 60 tin/giờ)' },
+      { icon: <TrendingUpIcon className="w-3 h-3" />, text: 'Theo dõi đã gửi / lỗi' },
     ],
-    desc: 'Lọc danh sách khách có nhãn cụ thể → tạo chiến dịch với nội dung cá nhân hóa → gửi tự động + theo dõi kết quả.',
+    desc: 'Chọn người nhận theo nhãn → tạo chiến dịch với nội dung có tên từng khách → gửi tự động, giãn cách để tránh spam → theo dõi tiến độ realtime.',
   },
   {
     icon: <PackageIcon className="w-4 h-4" />,
-    title: 'Đặt hàng + giao hàng tự động',
+    title: 'Đơn từ website → vận đơn GHN',
     tags: ['Tích hợp', 'Workflow'],
     color: 'border-cyan-500/30',
     flow: [
-      { icon: <MessageCircleIcon className="w-3 h-3" />, text: 'Khách nhắn "MUA"' },
-      { icon: <ShoppingCartIcon className="w-3 h-3" />, text: 'Tạo đơn KiotViet' },
-      { icon: <TruckIcon className="w-3 h-3" />, text: 'Tạo vận đơn GHN' },
-      { icon: <MessageCircleIcon className="w-3 h-3" />, text: 'Gửi mã tracking' },
+      { icon: <LinkIcon className="w-3 h-3" />, text: 'Website gửi đơn (Webhook)' },
+      { icon: <TruckIcon className="w-3 h-3" />, text: 'GHN: Tạo đơn vận chuyển' },
+      { icon: <BellIcon className="w-3 h-3" />, text: 'Báo mã vận đơn qua Telegram' },
       { icon: <TrendingUpIcon className="w-3 h-3" />, text: 'Ghi Sheets' },
     ],
-    desc: 'Khách nhắn từ khóa → Workflow tạo đơn trên POS → tạo vận đơn GHN/GHTK → gửi mã tracking cho khách.',
+    desc: 'Website gửi đơn mới về Deplao (Webhook bên ngoài) → Workflow tạo vận đơn GHN từ thông tin người nhận → báo mã vận đơn cho kho và ghi sổ.',
   },
   {
     icon: <BellIcon className="w-4 h-4" />,
-    title: 'Thông báo đa kênh khi có đơn mới',
+    title: 'Thông báo đa kênh khi có tiền vào',
     tags: ['Workflow', 'Tích hợp'],
     color: 'border-amber-500/30',
     flow: [
       { icon: <DollarIcon className="w-3 h-3" />, text: 'Nhận thanh toán' },
-      { icon: <MessageCircleIcon className="w-3 h-3" />, text: 'Gửi tin Zalo cho KH' },
-      { icon: <BellIcon className="w-3 h-3" />, text: 'Thông báo Telegram cho admin' },
+      { icon: <MessageCircleIcon className="w-3 h-3" />, text: 'Báo nhóm Zalo nội bộ' },
+      { icon: <BellIcon className="w-3 h-3" />, text: 'Telegram cho admin' },
       { icon: <MailIcon className="w-3 h-3" />, text: 'Email cho kế toán' },
       { icon: <EditIcon className="w-3 h-3" />, text: 'Ghi Notion' },
     ],
-    desc: 'Một sự kiện → nhiều hành động: xác nhận cho khách trên Zalo + thông báo admin qua Telegram + ghi log vào Notion/Email.',
+    desc: 'Một giao dịch → nhiều hành động cùng lúc: báo nhóm Zalo nội bộ, Telegram cho admin, email cho kế toán và ghi vào Notion.',
   },
   {
     icon: <TagIcon className="w-4 h-4" />,
@@ -993,24 +1050,24 @@ function ToolsGuideModal({ onClose }: { onClose: () => void }) {
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[9999]" onClick={onClose}>
       <div
-        className="bg-gray-800 rounded-2xl border border-gray-600 shadow-2xl w-full max-w-3xl mx-4 max-h-[88vh] flex flex-col"
+        className="bg-card rounded-2xl border border-input shadow-2xl w-full max-w-3xl mx-4 max-h-[88vh] flex flex-col"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-700/60 flex-shrink-0">
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-border/60 flex-shrink-0">
           <div>
-            <h2 className="text-base font-bold text-white flex items-center gap-2">
+            <h2 className="text-base font-bold text-foreground flex items-center gap-2">
               <span><BookIcon className="w-4 h-4" /></span> Hướng dẫn - Công cụ nâng cao
             </h2>
-            <p className="text-[11px] text-gray-400 mt-0.5">Mô tả chi tiết tính năng và cách phối hợp các công cụ</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">Mô tả chi tiết tính năng và cách phối hợp các công cụ</p>
           </div>
-          <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-gray-700 flex items-center justify-center text-gray-400 hover:text-white transition-colors">
+          <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors">
             ✕
           </button>
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b border-gray-700/60 px-2 flex-shrink-0 overflow-x-auto gap-0.5">
+        <div className="flex border-b border-border/60 px-2 flex-shrink-0 overflow-x-auto gap-0.5">
           {([
             { id: 'overview', icon: <LightbulbIcon className="w-3.5 h-3.5" />, label: 'Tổng quan' },
             { id: 'crm', icon: <ChartIcon className="w-3.5 h-3.5" />, label: 'CRM' },
@@ -1024,7 +1081,7 @@ function ToolsGuideModal({ onClose }: { onClose: () => void }) {
               className={`px-3 py-2.5 text-[11px] flex font-medium whitespace-nowrap border-b-2 transition-colors ${
                 activeTab === tab.id
                   ? 'border-blue-500 text-blue-400'
-                  : 'border-transparent text-gray-400 hover:text-gray-200'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
               }`}
             >
               {tab.icon} <span className="ml-1">{tab.label}</span>
@@ -1038,18 +1095,18 @@ function ToolsGuideModal({ onClose }: { onClose: () => void }) {
           {/* ── Overview Tab ── */}
           {activeTab === 'overview' && (
             <>
-              <div className="bg-gray-700/30 rounded-xl p-4 flex items-start gap-3">
+              <div className="bg-muted/30 rounded-xl p-4 flex items-start gap-3">
                 <span className="text-2xl leading-none"><SunIcon className="w-4 h-4" /></span>
                 <div className="space-y-2">
-                  <p className="text-gray-300 text-xs leading-relaxed">
-                    Ba công cụ <strong className="text-white">CRM</strong>, <strong className="text-white">Workflow</strong> và <strong className="text-white">Tích hợp</strong> phối
+                  <p className="text-foreground/80 text-xs leading-relaxed">
+                    Ba công cụ <strong className="text-foreground">CRM</strong>, <strong className="text-foreground">Workflow</strong> và <strong className="text-foreground">Tích hợp</strong> phối
                     hợp với nhau tạo thành hệ thống tự động hoá hoàn chỉnh:
                   </p>
                   <div className="flex items-center gap-2 text-[11px] flex-wrap">
-                    <span className="bg-green-900/30 text-white px-2.5 py-1 rounded-lg border border-green-700/40"><LinkIcon className="w-4 h-4 inline" /> Tích hợp nhận dữ liệu</span>
-                    <span className="text-gray-400">→</span>
-                    <span className="bg-purple-900/30 text-white px-2.5 py-1 rounded-lg border border-purple-700/40"><SettingsIcon className="w-3.5 h-3.5 inline" /> Workflow xử lý logic</span>
-                    <span className="text-gray-400">→</span>
+                    <span className="bg-green-900/30 text-foreground px-2.5 py-1 rounded-lg border border-green-700/40"><LinkIcon className="w-4 h-4 inline" /> Tích hợp nhận dữ liệu</span>
+                    <span className="text-muted-foreground">→</span>
+                    <span className="bg-purple-900/30 text-foreground px-2.5 py-1 rounded-lg border border-purple-700/40"><SettingsIcon className="w-3.5 h-3.5 inline" /> Workflow xử lý logic</span>
+                    <span className="text-muted-foreground">→</span>
                     <span className="bg-blue-900/30 text-blue-300 px-2.5 py-1 rounded-lg border border-blue-700/40"><ChartIcon className="w-4 h-4 inline" /> CRM quản lý KH</span>
                   </div>
                 </div>
@@ -1060,14 +1117,14 @@ function ToolsGuideModal({ onClose }: { onClose: () => void }) {
                 <button
                   key={i}
                   onClick={() => setActiveTab(tool.id)}
-                  className={`w-full border rounded-xl p-4 text-left transition-colors hover:bg-gray-700/30 ${tool.color}`}
+                  className={`w-full border rounded-xl p-4 text-left transition-colors hover:bg-muted/30 ${tool.color}`}
                 >
                   <div className="flex items-center gap-2 mb-2">
                     <span className="text-lg">{tool.icon}</span>
-                    <h3 className="text-sm font-bold text-white">{tool.title}</h3>
-                    <span className="text-gray-400 ml-auto text-[10px]">Bấm để xem chi tiết →</span>
+                    <h3 className="text-sm font-bold text-foreground">{tool.title}</h3>
+                    <span className="text-muted-foreground ml-auto text-[10px]">Bấm để xem chi tiết →</span>
                   </div>
-                  <p className="text-sm text-gray-400 leading-relaxed">{tool.purpose}</p>
+                  <p className="text-sm text-muted-foreground leading-relaxed">{tool.purpose}</p>
                   <div className="flex flex-wrap gap-1.5 mt-2">
                     {tool.sections.map((s, j) => (
                       <span key={j} className={`text-[12px] px-2 py-0.5 rounded-full ${tool.badgeColor}`}>
@@ -1085,10 +1142,10 @@ function ToolsGuideModal({ onClose }: { onClose: () => void }) {
               >
                 <div className="flex items-center gap-2 mb-2">
                   <span className="text-lg"><RefreshIcon className="w-4 h-4" /></span>
-                  <h3 className="text-sm font-bold text-white">{COMBO_SCENARIOS.length} kịch bản kết hợp thực tế</h3>
-                  <span className="text-gray-400 ml-auto text-[10px]">Bấm để xem →</span>
+                  <h3 className="text-sm font-bold text-foreground">{COMBO_SCENARIOS.length} kịch bản kết hợp thực tế</h3>
+                  <span className="text-muted-foreground ml-auto text-[10px]">Bấm để xem →</span>
                 </div>
-                <p className="text-xs text-gray-400">Xem các ví dụ phối hợp CRM + Workflow + Tích hợp trong thực tế kinh doanh.</p>
+                <p className="text-xs text-muted-foreground">Xem các ví dụ phối hợp CRM + Workflow + Tích hợp trong thực tế kinh doanh.</p>
               </button>
             </>
           )}
@@ -1101,17 +1158,17 @@ function ToolsGuideModal({ onClose }: { onClose: () => void }) {
                 <div className={`border rounded-xl p-4 ${tool.color}`}>
                   <div className="flex items-center gap-2 mb-1">
                     <span className="text-lg">{tool.icon}</span>
-                    <h3 className="text-sm font-bold text-white">{tool.title}</h3>
+                    <h3 className="text-sm font-bold text-foreground">{tool.title}</h3>
                   </div>
-                  <p className="text-xs text-gray-300 leading-relaxed">{tool.purpose}</p>
+                  <p className="text-xs text-foreground/80 leading-relaxed">{tool.purpose}</p>
                 </div>
 
                 {tool.sections.map((section, i) => (
                   <div key={i} className="space-y-2">
-                    <h4 className="text-xs font-bold text-gray-300 flex items-center gap-1.5">{section.icon} {section.title}</h4>
+                    <h4 className="text-xs font-bold text-foreground/80 flex items-center gap-1.5">{section.icon} {section.title}</h4>
                     <ul className="space-y-1 pl-1">
                       {section.items.map((item, j) => (
-                        <li key={j} className="flex items-start gap-2 text-xs text-gray-400">
+                        <li key={j} className="flex items-start gap-2 text-xs text-muted-foreground">
                           <span className="text-blue-400 mt-0.5 flex-shrink-0">•</span>
                           <span className="leading-relaxed">{item}</span>
                         </li>
@@ -1121,25 +1178,25 @@ function ToolsGuideModal({ onClose }: { onClose: () => void }) {
                 ))}
 
                 {/* Related combos */}
-                <div className="border-t border-gray-700/60 pt-4 mt-2">
-                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2"><RefreshIcon className="w-4 h-4 inline" /> Kịch bản kết hợp liên quan</p>
+                <div className="border-t border-border/60 pt-4 mt-2">
+                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2"><RefreshIcon className="w-4 h-4 inline" /> Kịch bản kết hợp liên quan</p>
                   <div className="space-y-2">
                     {COMBO_SCENARIOS.filter(c =>
                       (activeTab === 'crm' && c.tags.includes('CRM')) ||
                       (activeTab === 'workflow' && c.tags.includes('Workflow')) ||
                       (activeTab === 'integration' && c.tags.includes('Tích hợp'))
                     ).slice(0, 3).map((combo, i) => (
-                      <div key={i} className={`border rounded-lg p-3 bg-gray-700/20 ${combo.color}`}>
+                      <div key={i} className={`border rounded-lg p-3 bg-muted/20 ${combo.color}`}>
                         <div className="flex items-center gap-2 mb-1">
                           <span>{combo.icon}</span>
-                          <span className="text-xs font-semibold text-white">{combo.title}</span>
+                          <span className="text-xs font-semibold text-foreground">{combo.title}</span>
                           <div className="flex gap-1 ml-auto">
                             {combo.tags.map(t => (
-                              <span key={t} className="text-[9px] px-1.5 py-0.5 rounded bg-gray-600/50 text-gray-400">{t}</span>
+                              <span key={t} className="text-[9px] px-1.5 py-0.5 rounded bg-accent/50 text-muted-foreground">{t}</span>
                             ))}
                           </div>
                         </div>
-                        <p className="text-[11px] text-gray-400 leading-relaxed">{combo.desc}</p>
+                        <p className="text-[11px] text-muted-foreground leading-relaxed">{combo.desc}</p>
                       </div>
                     ))}
                   </div>
@@ -1151,31 +1208,31 @@ function ToolsGuideModal({ onClose }: { onClose: () => void }) {
           {/* ── Combo Tab ── */}
           {activeTab === 'combo' && (
             <>
-              <div className="bg-gray-700/30 rounded-xl p-4">
-                <p className="text-xs text-gray-300 leading-relaxed">
-                  Sức mạnh thực sự nằm ở việc <strong className="text-white">kết hợp</strong> các công cụ. Dưới đây là {COMBO_SCENARIOS.length} kịch bản thực tế
+              <div className="bg-muted/30 rounded-xl p-4">
+                <p className="text-xs text-foreground/80 leading-relaxed">
+                  Sức mạnh thực sự nằm ở việc <strong className="text-foreground">kết hợp</strong> các công cụ. Dưới đây là {COMBO_SCENARIOS.length} kịch bản thực tế
                   giúp bạn hình dung cách ứng dụng vào kinh doanh.
                 </p>
               </div>
 
               {COMBO_SCENARIOS.map((combo, i) => (
-                <div key={i} className={`border rounded-xl p-4 space-y-2.5 bg-gray-700/10 ${combo.color}`}>
+                <div key={i} className={`border rounded-xl p-4 space-y-2.5 bg-muted/10 ${combo.color}`}>
                   <div className="flex items-center gap-2">
                     <span className="text-lg">{combo.icon}</span>
-                    <h3 className="text-xs font-bold text-white">{combo.title}</h3>
+                    <h3 className="text-xs font-bold text-foreground">{combo.title}</h3>
                     <div className="flex gap-1 ml-auto">
                       {combo.tags.map(t => (
-                        <span key={t} className="text-[9px] px-1.5 py-0.5 rounded bg-gray-600/50 text-gray-400">{t}</span>
+                        <span key={t} className="text-[9px] px-1.5 py-0.5 rounded bg-accent/50 text-muted-foreground">{t}</span>
                       ))}
                     </div>
                   </div>
-                  <p className="text-[11px] text-gray-400 leading-relaxed">{combo.desc}</p>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">{combo.desc}</p>
                   {/* Flow diagram */}
                   <div className="flex items-center gap-1.5 text-[10px] flex-wrap pt-1">
                     {combo.flow.map((step, j) => (
                       <React.Fragment key={j}>
-                        {j > 0 && <span className="text-gray-400">→</span>}
-                        <span className="bg-gray-800 text-gray-300 px-2 py-0.5 rounded-md border border-gray-700/60 whitespace-nowrap inline-flex items-center gap-1">{step.icon} {step.text}</span>
+                        {j > 0 && <span className="text-muted-foreground">→</span>}
+                        <span className="bg-card text-foreground/80 px-2 py-0.5 rounded-md border border-border/60 whitespace-nowrap inline-flex items-center gap-1">{step.icon} {step.text}</span>
                       </React.Fragment>
                     ))}
                   </div>
@@ -1187,7 +1244,7 @@ function ToolsGuideModal({ onClose }: { onClose: () => void }) {
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-3 border-t border-gray-700/60 flex-shrink-0 flex justify-end">
+        <div className="px-5 py-3 border-t border-border/60 flex-shrink-0 flex justify-end">
           <button
             onClick={onClose}
             className="px-4 py-1.5 text-xs font-medium bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors"

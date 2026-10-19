@@ -46,7 +46,7 @@ export default function ScanStatsTab({ accountId }: Props) {
 
   if (!stats) {
     return (
-      <div className="flex items-center justify-center h-full text-gray-400 text-sm">Không có dữ liệu</div>
+      <div className="flex items-center justify-center h-full text-muted-foreground text-sm">Không có dữ liệu</div>
     );
   }
 
@@ -64,8 +64,8 @@ export default function ScanStatsTab({ accountId }: Props) {
   return (
     <div className="flex-1 overflow-y-auto p-5 space-y-5">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-bold text-white"><ChartIcon className="w-4 h-4 inline" /> Thống kê quét dữ liệu</h2>
-        <button onClick={loadStats} className="p-1.5 rounded hover:bg-gray-700 text-gray-400 hover:text-white" title="Làm mới">
+        <h2 className="text-lg font-bold text-foreground"><ChartIcon className="w-4 h-4 inline" /> Thống kê quét dữ liệu</h2>
+        <button onClick={loadStats} className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground" title="Làm mới">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M21 2v6h-6M3 12a9 9 0 0115.36-6.36L21 8M3 22v-6h6M21 12a9 9 0 01-15.36 6.36L3 16"/>
           </svg>
@@ -73,7 +73,7 @@ export default function ScanStatsTab({ accountId }: Props) {
       </div>
 
       {/* ── Overview chart ────────────────────────────────────── */}
-      <div className="bg-gray-800 rounded-xl p-5 border border-gray-700/50">
+      <div className="bg-card rounded-xl p-5 border border-border/50">
         <div className="flex items-center gap-8">
           {/* Donut chart: tỷ lệ thành công */}
           <div className="flex-shrink-0 relative w-28 h-28">
@@ -119,7 +119,7 @@ export default function ScanStatsTab({ accountId }: Props) {
               <span className={`text-lg font-bold ${successRate >= 80 ? 'text-green-400' : successRate >= 50 ? 'text-yellow-400' : 'text-red-400'}`}>
                 {successRate}%
               </span>
-              <span className="text-[9px] text-gray-400 -mt-0.5">thành công</span>
+              <span className="text-[9px] text-muted-foreground -mt-0.5">thành công</span>
             </div>
           </div>
 
@@ -128,10 +128,10 @@ export default function ScanStatsTab({ accountId }: Props) {
             {/* Tabs */}
             <div>
               <div className="flex items-center justify-between mb-1">
-                <span className="text-xs text-gray-400">📂 Tổng số tab</span>
-                <span className="text-sm font-bold text-white">{stats.totalTabs}</span>
+                <span className="text-xs text-muted-foreground">📂 Tổng số tab</span>
+                <span className="text-sm font-bold text-foreground">{stats.totalTabs}</span>
               </div>
-              <div className="w-full h-2.5 bg-gray-700 rounded-full overflow-hidden">
+              <div className="w-full h-2.5 bg-muted rounded-full overflow-hidden">
                 <div className="h-full rounded-full bg-gradient-to-r from-blue-500 to-blue-400 transition-all duration-700"
                   style={{ width: `${Math.min(100, stats.totalTabs * 15)}%` }} />
               </div>
@@ -139,10 +139,10 @@ export default function ScanStatsTab({ accountId }: Props) {
             {/* Items */}
             <div>
               <div className="flex items-center justify-between mb-1">
-                <span className="text-xs text-gray-400"><PackageIcon className="w-4 h-4 inline" /> Dữ liệu đã quét</span>
+                <span className="text-xs text-muted-foreground"><PackageIcon className="w-4 h-4 inline" /> Dữ liệu đã quét</span>
                 <span className="text-sm font-bold text-purple-400">{stats.totalItems.toLocaleString()}</span>
               </div>
-              <div className="w-full h-2.5 bg-gray-700 rounded-full overflow-hidden">
+              <div className="w-full h-2.5 bg-muted rounded-full overflow-hidden">
                 <div className="h-full rounded-full bg-gradient-to-r from-purple-500 to-purple-400 transition-all duration-700"
                   style={{ width: `${Math.min(100, stats.totalItems > 0 ? (stats.totalItems / Math.max(stats.totalItems, 1000)) * 100 : 0)}%` }} />
               </div>
@@ -150,10 +150,10 @@ export default function ScanStatsTab({ accountId }: Props) {
             {/* Success requests */}
             <div>
               <div className="flex items-center justify-between mb-1">
-                <span className="text-xs text-gray-400">✅ Request thành công</span>
+                <span className="text-xs text-muted-foreground">✅ Request thành công</span>
                 <span className="text-sm font-bold text-green-400">{stats.successCount.toLocaleString()}</span>
               </div>
-              <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden">
+              <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
                 <div className="h-full rounded-full bg-gradient-to-r from-green-500 to-green-400 transition-all duration-700"
                   style={{ width: `${totalRequests > 0 ? (stats.successCount / totalRequests) * 100 : 0}%` }} />
               </div>
@@ -161,10 +161,10 @@ export default function ScanStatsTab({ accountId }: Props) {
             {/* Error requests */}
             <div>
               <div className="flex items-center justify-between mb-1">
-                <span className="text-xs text-gray-400">❌ Request thất bại</span>
+                <span className="text-xs text-muted-foreground">❌ Request thất bại</span>
                 <span className="text-sm font-bold text-red-400">{stats.errorCount.toLocaleString()}</span>
               </div>
-              <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden">
+              <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
                 <div className="h-full rounded-full bg-gradient-to-r from-red-500 to-red-400 transition-all duration-700"
                   style={{ width: `${totalRequests > 0 ? (stats.errorCount / totalRequests) * 100 : 0}%` }} />
               </div>
@@ -175,24 +175,24 @@ export default function ScanStatsTab({ accountId }: Props) {
 
       {/* Row 1: Summary cards */}
       <div className="grid grid-cols-4 gap-4">
-        <div className="bg-gray-800 rounded-xl p-4 border border-gray-700/50">
-          <div className="text-[11px] text-gray-400 uppercase tracking-wider">Tổng số tab</div>
-          <div className="text-2xl font-bold text-white mt-1">{stats.totalTabs}</div>
+        <div className="bg-card rounded-xl p-4 border border-border/50">
+          <div className="text-[11px] text-muted-foreground uppercase tracking-wider">Tổng số tab</div>
+          <div className="text-2xl font-bold text-foreground mt-1">{stats.totalTabs}</div>
         </div>
-        <div className="bg-gray-800 rounded-xl p-4 border border-gray-700/50">
-          <div className="text-[11px] text-gray-400 uppercase tracking-wider">Dữ liệu đã quét</div>
+        <div className="bg-card rounded-xl p-4 border border-border/50">
+          <div className="text-[11px] text-muted-foreground uppercase tracking-wider">Dữ liệu đã quét</div>
           <div className="text-2xl font-bold text-blue-400 mt-1">{stats.totalItems.toLocaleString()}</div>
         </div>
-        <div className="bg-gray-800 rounded-xl p-4 border border-gray-700/50">
-          <div className="text-[11px] text-gray-400 uppercase tracking-wider">Tổng request</div>
+        <div className="bg-card rounded-xl p-4 border border-border/50">
+          <div className="text-[11px] text-muted-foreground uppercase tracking-wider">Tổng request</div>
           <div className="text-2xl font-bold text-purple-400 mt-1">{totalRequests.toLocaleString()}</div>
         </div>
-        <div className="bg-gray-800 rounded-xl p-4 border border-gray-700/50">
-          <div className="text-[11px] text-gray-400 uppercase tracking-wider">Tỷ lệ thành công</div>
+        <div className="bg-card rounded-xl p-4 border border-border/50">
+          <div className="text-[11px] text-muted-foreground uppercase tracking-wider">Tỷ lệ thành công</div>
           <div className={`text-2xl font-bold mt-1 ${successRate >= 80 ? 'text-green-400' : successRate >= 50 ? 'text-yellow-400' : 'text-red-400'}`}>
             {successRate}%
           </div>
-          <div className="text-[10px] text-gray-400 mt-0.5">
+          <div className="text-[10px] text-muted-foreground mt-0.5">
             <span className="text-green-400">✓ {stats.successCount}</span>
             {' / '}
             <span className="text-red-400">✗ {stats.errorCount}</span>
@@ -203,10 +203,10 @@ export default function ScanStatsTab({ accountId }: Props) {
       {/* Row 2: By type + Top tabs */}
       <div className="grid grid-cols-2 gap-4">
         {/* By type */}
-        <div className="bg-gray-800 rounded-xl p-4 border border-gray-700/50">
-          <h3 className="text-sm font-semibold text-gray-200 mb-3">📂 Theo loại quét</h3>
+        <div className="bg-card rounded-xl p-4 border border-border/50">
+          <h3 className="text-sm font-semibold text-foreground mb-3">📂 Theo loại quét</h3>
           {Object.keys(stats.byType).length === 0 ? (
-            <p className="text-xs text-gray-400 py-4 text-center">Chưa có dữ liệu</p>
+            <p className="text-xs text-muted-foreground py-4 text-center">Chưa có dữ liệu</p>
           ) : (
             <>
               {/* Vertical bar chart */}
@@ -220,11 +220,11 @@ export default function ScanStatsTab({ accountId }: Props) {
                     const colorIdx = Object.keys(stats.byType).indexOf(type) % colors.length;
                     return (
                       <div key={type} className="flex-1 flex flex-col items-center gap-1 min-w-0">
-                        <span className="text-[10px] text-gray-400 font-mono">{count}</span>
+                        <span className="text-[10px] text-muted-foreground font-mono">{count}</span>
                         <div className="w-full rounded-t-md overflow-hidden" style={{ height: `${heightPct}%` }}>
                           <div className={`w-full h-full ${colors[colorIdx]} opacity-80 hover:opacity-100 transition-opacity`} />
                         </div>
-                        <span className="text-[9px] text-gray-400 truncate w-full text-center leading-tight" title={typeLabels[type] || type}>
+                        <span className="text-[9px] text-muted-foreground truncate w-full text-center leading-tight" title={typeLabels[type] || type}>
                           {(typeLabels[type] || type).split(' ').pop()}
                         </span>
                       </div>
@@ -232,13 +232,13 @@ export default function ScanStatsTab({ accountId }: Props) {
                   })}
               </div>
               {/* List */}
-              <div className="space-y-1.5 border-t border-gray-700/30 pt-2">
+              <div className="space-y-1.5 border-t border-border/30 pt-2">
                 {Object.entries(stats.byType)
                   .sort(([, a], [, b]) => b - a)
                   .map(([type, count]) => (
                     <div key={type} className="flex items-center justify-between">
-                      <span className="text-xs text-gray-300">{typeLabels[type] || type}</span>
-                      <span className="text-xs text-gray-400 font-mono">{count}</span>
+                      <span className="text-xs text-foreground/80">{typeLabels[type] || type}</span>
+                      <span className="text-xs text-muted-foreground font-mono">{count}</span>
                     </div>
                   ))}
               </div>
@@ -247,10 +247,10 @@ export default function ScanStatsTab({ accountId }: Props) {
         </div>
 
         {/* Top tabs */}
-        <div className="bg-gray-800 rounded-xl p-4 border border-gray-700/50">
-          <h3 className="text-sm font-semibold text-gray-200 mb-3"><AwardIcon className="w-4 h-4 inline" /> Top tab nhiều dữ liệu nhất</h3>
+        <div className="bg-card rounded-xl p-4 border border-border/50">
+          <h3 className="text-sm font-semibold text-foreground mb-3"><AwardIcon className="w-4 h-4 inline" /> Top tab nhiều dữ liệu nhất</h3>
           {stats.topTabs.length === 0 ? (
-            <p className="text-xs text-gray-400 py-4 text-center">Chưa có dữ liệu</p>
+            <p className="text-xs text-muted-foreground py-4 text-center">Chưa có dữ liệu</p>
           ) : (
             <div className="space-y-2.5">
               {stats.topTabs.map((tab, idx) => {
@@ -260,14 +260,14 @@ export default function ScanStatsTab({ accountId }: Props) {
                   <div key={tab.id}>
                     <div className="flex items-center justify-between mb-1">
                       <div className="flex items-center gap-2 min-w-0">
-                        <span className={`text-xs font-mono ${idx === 0 ? 'text-yellow-400' : idx === 1 ? 'text-gray-300' : idx === 2 ? 'text-orange-400' : 'text-gray-400'}`}>
+                        <span className={`text-xs font-mono ${idx === 0 ? 'text-yellow-400' : idx === 1 ? 'text-foreground/80' : idx === 2 ? 'text-orange-400' : 'text-muted-foreground'}`}>
                           #{idx + 1}
                         </span>
-                        <span className="text-xs text-gray-300 truncate">{tab.name}</span>
+                        <span className="text-xs text-foreground/80 truncate">{tab.name}</span>
                       </div>
                       <span className="text-xs text-blue-400 font-mono flex-shrink-0">{(tab.itemsCount || 0).toLocaleString()} items</span>
                     </div>
-                    <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden">
+                    <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
                       <div
                         className={`h-full rounded-full transition-all duration-500 ${idx === 0 ? 'bg-gradient-to-r from-yellow-500 to-yellow-400' : idx === 1 ? 'bg-gradient-to-r from-gray-400 to-gray-300' : idx === 2 ? 'bg-gradient-to-r from-orange-500 to-orange-400' : 'bg-blue-500/60'}`}
                         style={{ width: `${pct}%` }}
@@ -283,9 +283,9 @@ export default function ScanStatsTab({ accountId }: Props) {
 
       {/* Row 3: Success/Error bar */}
       {totalRequests > 0 && (
-        <div className="bg-gray-800 rounded-xl p-4 border border-gray-700/50">
-          <h3 className="text-sm font-semibold text-gray-200 mb-3"><TrendingUpIcon className="w-4 h-4 inline" /> Tỷ lệ thành công / thất bại</h3>
-          <div className="h-6 bg-gray-700 rounded-full overflow-hidden flex">
+        <div className="bg-card rounded-xl p-4 border border-border/50">
+          <h3 className="text-sm font-semibold text-foreground mb-3"><TrendingUpIcon className="w-4 h-4 inline" /> Tỷ lệ thành công / thất bại</h3>
+          <div className="h-6 bg-muted rounded-full overflow-hidden flex">
             {stats.successCount > 0 && (
               <div
                 className="h-full bg-gradient-to-r from-green-500 to-green-400 transition-all duration-500 flex items-center justify-center"

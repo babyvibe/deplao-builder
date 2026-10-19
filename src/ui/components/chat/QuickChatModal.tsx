@@ -69,7 +69,7 @@ function AccountSelector({ accounts, selectedId, onSelect }: {
         {sel.avatar_url
           ? <img src={sel.avatar_url} alt="" className="w-5 h-5 rounded-full object-cover flex-shrink-0"/>
           : <div className="w-5 h-5 rounded-full bg-blue-600 flex items-center justify-center text-white text-[9px] font-bold flex-shrink-0">{name.charAt(0)}</div>}
-        <span className="text-xs text-gray-400 truncate">{name}{sub && sub !== name ? ` · ${sub}` : ''}</span>
+        <span className="text-xs text-muted-foreground truncate">{name}{sub && sub !== name ? ` · ${sub}` : ''}</span>
       </div>
     );
   }
@@ -77,39 +77,39 @@ function AccountSelector({ accounts, selectedId, onSelect }: {
   return (
     <div ref={ref} className="relative flex-shrink-0">
       <button onClick={() => setOpen(v => !v)}
-        className={`flex items-center gap-1.5 px-2 py-1 rounded-lg border text-xs transition-colors max-w-[175px] ${open ? 'border-blue-500 bg-gray-700' : 'border-gray-600 hover:border-gray-500 bg-gray-800'}`}
+        className={`flex items-center gap-1.5 px-2 py-1 rounded-lg border text-xs transition-colors max-w-[175px] ${open ? 'border-blue-500 bg-muted' : 'border-input hover:border-border-strong bg-card'}`}
         title="Chọn tài khoản gửi">
         {sel ? (
           <>
             {sel.avatar_url
               ? <img src={sel.avatar_url} alt="" className="w-5 h-5 rounded-full object-cover flex-shrink-0"/>
               : <div className="w-5 h-5 rounded-full bg-blue-600 flex items-center justify-center text-white text-[9px] font-bold flex-shrink-0">{info(sel).name.charAt(0)}</div>}
-            <span className="text-gray-300 truncate max-w-[100px]">{info(sel).name}</span>
+            <span className="text-foreground/80 truncate max-w-[100px]">{info(sel).name}</span>
           </>
-        ) : <span className="text-gray-400">Chọn TK</span>}
+        ) : <span className="text-muted-foreground">Chọn TK</span>}
         <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"
-          className={`flex-shrink-0 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`}>
+          className={`flex-shrink-0 text-muted-foreground transition-transform ${open ? 'rotate-180' : ''}`}>
           <polyline points="6 9 12 15 18 9"/>
         </svg>
       </button>
 
       {open && (
-        <div className="absolute top-full right-0 mt-1 bg-gray-800 border border-gray-600 rounded-xl shadow-2xl z-[200] min-w-[220px] py-1 overflow-hidden">
-          <p className="text-[11px] text-gray-400 px-3 pt-2 pb-1.5 font-semibold uppercase tracking-wide">Gửi từ tài khoản</p>
+        <div className="absolute top-full right-0 mt-1 bg-card border border-input rounded-xl shadow-2xl z-[200] min-w-[220px] py-1 overflow-hidden">
+          <p className="text-[11px] text-muted-foreground px-3 pt-2 pb-1.5 font-semibold uppercase tracking-wide">Gửi từ tài khoản</p>
           {accounts.map(a => {
             const { name, sub } = info(a);
             return (
               <button key={a.zalo_id} onClick={() => { onSelect(a.zalo_id); setOpen(false); }}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 hover:bg-gray-700 transition-colors text-left ${selectedId === a.zalo_id ? 'bg-gray-700/50' : ''}`}>
+                className={`w-full flex items-center gap-2.5 px-3 py-2 hover:bg-muted transition-colors text-left ${selectedId === a.zalo_id ? 'bg-muted/50' : ''}`}>
                 <div className="relative flex-shrink-0">
                   {a.avatar_url
                     ? <img src={a.avatar_url} alt="" className="w-8 h-8 rounded-full object-cover"/>
                     : <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white text-sm font-bold">{name.charAt(0)}</div>}
-                  <span className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-gray-800 ${a.isConnected ? 'bg-green-400' : 'bg-gray-500'}`}/>
+                  <span className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-border ${a.isConnected ? 'bg-green-400' : 'bg-accent'}`}/>
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm text-gray-200 font-medium truncate">{name}</p>
-                  <p className="text-[11px] text-gray-400 truncate">{sub}</p>
+                  <p className="text-sm text-foreground font-medium truncate">{name}</p>
+                  <p className="text-[11px] text-muted-foreground truncate">{sub}</p>
                 </div>
                 {selectedId === a.zalo_id && (
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-blue-400 flex-shrink-0">
@@ -166,34 +166,34 @@ function QuickMsgPicker({ getAuth, accountId, onSelect, onClose }: {
 
   return (
     <div ref={ref}
-      className="absolute bottom-full left-0 mb-2 bg-gray-800 border border-gray-600 rounded-xl shadow-2xl z-[200] w-72 flex flex-col overflow-hidden"
+      className="absolute bottom-full left-0 mb-2 bg-card border border-input rounded-xl shadow-2xl z-[200] w-72 flex flex-col overflow-hidden"
       style={{ maxHeight: '16.25rem' }}
       onClick={e => e.stopPropagation()}>
-      <div className="px-3 pt-2.5 pb-2 border-b border-gray-700 flex-shrink-0">
+      <div className="px-3 pt-2.5 pb-2 border-b border-border flex-shrink-0">
         <p className="text-[11px] text-yellow-400 font-semibold uppercase tracking-wide mb-1.5 flex items-center gap-1">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
           Tin nhắn nhanh
         </p>
         <input autoFocus value={filter} onChange={e => setFilter(e.target.value)}
           placeholder="Tìm theo từ khoá..." onKeyDown={e => { if(e.key==='Escape') onClose(); }}
-          className="w-full bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"/>
+          className="w-full bg-muted border border-input rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"/>
       </div>
       <div className="flex-1 overflow-y-auto py-1">
         {loading && <div className="flex justify-center py-5"><div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"/></div>}
-        {!loading && filtered.length === 0 && <p className="text-xs text-gray-400 text-center py-5">Không có tin nhắn nhanh</p>}
+        {!loading && filtered.length === 0 && <p className="text-xs text-muted-foreground text-center py-5">Không có tin nhắn nhanh</p>}
         {filtered.map(item => {
           const hasLocalMedia = item._localMedia && item._localMedia.length > 0;
           const imgCount = hasLocalMedia ? item._localMedia!.filter(f => f.type === 'image').length : (item.media?.items?.length ?? 0);
           const vidCount = hasLocalMedia ? item._localMedia!.filter(f => f.type === 'video').length : 0;
           return (
             <button key={item.id} onClick={() => { onSelect(item); onClose(); }}
-              className="w-full flex flex-col px-3 py-2 hover:bg-gray-700 text-left transition-colors gap-0.5">
+              className="w-full flex flex-col px-3 py-2 hover:bg-muted text-left transition-colors gap-0.5">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-[11px] text-blue-400 font-mono bg-blue-500/10 px-1.5 py-0.5 rounded flex-shrink-0">/{item.keyword}</span>
-                {imgCount > 0 && <span className="text-[11px] text-gray-400">🖼 {imgCount} ảnh</span>}
-                {vidCount > 0 && <span className="text-[11px] text-gray-400">🎬 {vidCount} video</span>}
+                {imgCount > 0 && <span className="text-[11px] text-muted-foreground">🖼 {imgCount} ảnh</span>}
+                {vidCount > 0 && <span className="text-[11px] text-muted-foreground">🎬 {vidCount} video</span>}
               </div>
-              <p className="text-xs text-gray-300 line-clamp-2 leading-snug">{item.message.title}</p>
+              <p className="text-xs text-foreground/80 line-clamp-2 leading-snug">{item.message.title}</p>
             </button>
           );
         })}
@@ -241,28 +241,28 @@ function RecipientRow({ zaloId, contacts, accounts, onSelect }: {
   ];
 
   return (
-    <div className="relative border-b border-gray-700 bg-gray-900 flex-shrink-0">
+    <div className="relative border-b border-border bg-card flex-shrink-0">
       <div className="flex items-center gap-2 px-3 py-2.5">
-        <span className="text-xs text-gray-400 font-semibold flex-shrink-0">Đến:</span>
+        <span className="text-xs text-muted-foreground font-semibold flex-shrink-0">Đến:</span>
         <input ref={inputRef} value={query} onChange={e => setQuery(e.target.value)}
           placeholder="Nhập tên, số điện thoại, UID…"
-          className="flex-1 bg-transparent text-sm text-white placeholder-gray-600 focus:outline-none min-w-0"/>
+          className="flex-1 bg-transparent text-sm text-foreground placeholder-subtle-foreground focus:outline-none min-w-0"/>
         {searching && <div className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin flex-shrink-0"/>}
-        {query && <button onClick={() => setQuery('')} className="text-gray-400 hover:text-gray-300 flex-shrink-0">
+        {query && <button onClick={() => setQuery('')} className="text-muted-foreground hover:text-foreground/80 flex-shrink-0">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>}
       </div>
       {all.length > 0 && (
-        <div className="absolute top-full left-0 right-0 bg-gray-800 border-x border-b border-gray-600 rounded-b-xl shadow-2xl z-[200] max-h-52 overflow-y-auto">
+        <div className="absolute top-full left-0 right-0 bg-card border-x border-b border-input rounded-b-xl shadow-2xl z-[200] max-h-52 overflow-y-auto">
           {all.map(c => (
             <button key={c.contact_id} onClick={() => { onSelect(c); setQuery(''); }}
-              className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-gray-700 text-left transition-colors">
+              className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-muted text-left transition-colors">
               {c.avatar_url
                 ? <img src={c.avatar_url} alt="" className="w-8 h-8 rounded-full object-cover flex-shrink-0"/>
                 : <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0 ${c.contact_type==='group'?'bg-purple-600':'bg-blue-600'}`}>{(c.alias||c.display_name||'?').charAt(0).toUpperCase()}</div>}
               <div className="flex-1 min-w-0">
-                <p className="text-sm text-gray-100 truncate">{c.alias||c.display_name||c.contact_id}</p>
-                <p className="text-[11px] text-gray-400 truncate">{c.contact_type==='group'?'Nhóm':(c.phone||c.contact_id)}</p>
+                <p className="text-sm text-foreground truncate">{c.alias||c.display_name||c.contact_id}</p>
+                <p className="text-[11px] text-muted-foreground truncate">{c.contact_type==='group'?'Nhóm':(c.phone||c.contact_id)}</p>
               </div>
             </button>
           ))}
@@ -577,12 +577,12 @@ export default function QuickChatModal() {
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
       onClick={closeQuickChat}>
       <div
-        className="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl flex flex-col overflow-visible"
+        className="bg-popover border border-border rounded-2xl shadow-2xl flex flex-col overflow-visible"
         style={{ width: '38.75rem', height: '42.5rem', maxWidth: '95vw', maxHeight: '92vh' }}
         onClick={e => e.stopPropagation()}
       >
         {/* ── Header ──────────────────────────────────────────────────── */}
-        <div className="flex items-center gap-2 px-3 py-2.5 border-b border-gray-700 flex-shrink-0 rounded-t-2xl bg-gray-900/95">
+        <div className="flex items-center gap-2 px-3 py-2.5 border-b border-border flex-shrink-0 rounded-t-2xl bg-card">
           {/* Chat icon */}
           <div className="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center flex-shrink-0">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -598,19 +598,19 @@ export default function QuickChatModal() {
                   ? <img src={target.avatarUrl} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0"/>
                   : <div className={`w-7 h-7 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0 ${target.threadType===1?'bg-purple-600':'bg-blue-600'}`}>{target.displayName.charAt(0).toUpperCase()}</div>}
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold text-gray-100 truncate leading-tight">{target.displayName}</p>
+                  <p className="text-sm font-semibold text-foreground truncate leading-tight">{target.displayName}</p>
                   {(() => {
                     const phone = target.phone || allContacts.find(c => c.contact_id === target.userId)?.phone || '';
-                    return phone ? <p className="text-[11px] text-gray-400 leading-none truncate mt-0.5">{formatPhone(phone)}</p> : null;
+                    return phone ? <p className="text-[11px] text-muted-foreground leading-none truncate mt-0.5">{formatPhone(phone)}</p> : null;
                   })()}
                 </div>
                 <button onClick={() => { setTarget(null); setLocalMsgs([]); }}
-                  className="text-[11px] text-gray-400 hover:text-gray-300 px-1.5 py-0.5 rounded hover:bg-gray-700 transition-colors flex-shrink-0 whitespace-nowrap">
+                  className="text-[11px] text-muted-foreground hover:text-foreground/80 px-1.5 py-0.5 rounded hover:bg-muted transition-colors flex-shrink-0 whitespace-nowrap">
                   đổi
                 </button>
               </>
             ) : (
-              <span className="text-sm font-semibold text-gray-300">Nhắn tin nhanh</span>
+              <span className="text-sm font-semibold text-foreground/80">Nhắn tin nhanh</span>
             )}
           </div>
 
@@ -620,7 +620,7 @@ export default function QuickChatModal() {
           {/* Go to full conversation */}
           {target && (
             <button onClick={handleGoToConversation} title="Mở hội thoại đầy đủ"
-              className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-blue-400 hover:bg-gray-700 transition-colors">
+              className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-blue-400 hover:bg-muted transition-colors">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/>
                 <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
@@ -630,7 +630,7 @@ export default function QuickChatModal() {
 
           {/* Close */}
           <button onClick={closeQuickChat}
-            className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 transition-colors"
+            className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
             title="Đóng (Esc)">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -653,7 +653,7 @@ export default function QuickChatModal() {
           {msgsLoading && <div className="flex justify-center py-8"><div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"/></div>}
 
           {!target && !msgsLoading && (
-            <div className="flex flex-col items-center justify-center h-full text-gray-400">
+            <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
               <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" className="mb-2 opacity-20">
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
               </svg>
@@ -662,10 +662,10 @@ export default function QuickChatModal() {
           )}
 
           {target && !msgsLoading && localMsgs.length === 0 && (
-            <div className="flex flex-col items-center justify-center h-full text-gray-400">
+            <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
               <MessageCircleIcon className="w-8 h-8 mb-2 opacity-40" />
               <p className="text-sm">Chưa có tin nhắn</p>
-              <p className="text-xs mt-1 text-gray-400">Gửi tin nhắn đầu tiên cho {target.displayName}</p>
+              <p className="text-xs mt-1 text-muted-foreground">Gửi tin nhắn đầu tiên cho {target.displayName}</p>
             </div>
           )}
 
@@ -677,7 +677,7 @@ export default function QuickChatModal() {
               const showTime = idx === 0 || (msg.timestamp - localMsgs[idx - 1].timestamp > 5 * 60 * 1000);
               return (
                 <div key={msg.msg_id}>
-                  {showTime && <div className="text-center text-[11px] text-gray-400 py-1">{fmtTime(msg.timestamp)}</div>}
+                  {showTime && <div className="text-center text-[11px] text-muted-foreground py-1">{fmtTime(msg.timestamp)}</div>}
                   <SharedMessageContent
                     msg={msg}
                     isSelf={isSelf}
@@ -691,7 +691,7 @@ export default function QuickChatModal() {
 
         {/* ── Pending QM media preview ─────────────────────────────── */}
         {pendingQMMedia && (pendingQMMedia.imagePaths.length > 0 || pendingQMMedia.videoPaths.length > 0) && (
-          <div className="flex gap-2 px-3 py-1.5 border-t border-gray-700 bg-yellow-500/5 flex-shrink-0 flex-wrap items-center">
+          <div className="flex gap-2 px-3 py-1.5 border-t border-border bg-yellow-500/5 flex-shrink-0 flex-wrap items-center">
             <span className="text-[11px] text-yellow-400 flex-shrink-0 flex items-center gap-1">
               <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
               Kèm:
@@ -702,21 +702,21 @@ export default function QuickChatModal() {
               </div>
             ))}
             {pendingQMMedia.videoPaths.map((fp, i) => (
-              <div key={`qm_vid_${i}`} className="relative w-11 h-11 bg-gray-700 rounded-lg border border-yellow-600/40 flex items-center justify-center flex-shrink-0">
+              <div key={`qm_vid_${i}`} className="relative w-11 h-11 bg-muted rounded-lg border border-yellow-600/40 flex items-center justify-center flex-shrink-0">
                 <span className="text-lg">🎬</span>
               </div>
             ))}
             <button onClick={() => setPendingQMMedia(null)}
-              className="ml-auto text-[11px] text-gray-400 hover:text-red-400 transition-colors px-1">✕</button>
+              className="ml-auto text-[11px] text-muted-foreground hover:text-red-400 transition-colors px-1">✕</button>
           </div>
         )}
 
         {/* ── Clipboard image previews ──────────────────────────────── */}
         {clipImgs.length > 0 && (
-          <div className="flex gap-2 px-3 py-1.5 border-t border-gray-700 bg-gray-800/40 flex-shrink-0 flex-wrap">
+          <div className="flex gap-2 px-3 py-1.5 border-t border-border bg-card/40 flex-shrink-0 flex-wrap">
             {clipImgs.map(img => (
               <div key={img.id} className="relative">
-                <img src={img.dataUrl} alt="" className="w-11 h-11 object-cover rounded-lg border border-gray-600"/>
+                <img src={img.dataUrl} alt="" className="w-11 h-11 object-cover rounded-lg border border-input"/>
                 <button onClick={() => setClipImgs(p => p.filter(i => i.id !== img.id))}
                   className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center text-white text-[9px] hover:bg-red-400">✕</button>
               </div>
@@ -725,10 +725,10 @@ export default function QuickChatModal() {
         )}
 
         {/* ── Composer ─────────────────────────────────────────────────── */}
-        <div className="border-t border-gray-700 bg-gray-900 flex-shrink-0 rounded-b-2xl">
+        <div className="border-t border-border bg-card flex-shrink-0 rounded-b-2xl">
           {/* Action toolbar row */}
           {target && (
-            <div className="flex items-center justify-between px-3 py-2 border-b border-gray-700/50">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-border/50">
               <div className="flex items-center gap-1">
                 {/* Image */}
                 <button onClick={async () => {
@@ -753,7 +753,7 @@ export default function QuickChatModal() {
                   try { await ipc.zalo?.sendImages({ auth, threadId: target.userId, type: target.threadType, filePaths: r.filePaths }); } catch{}
                   setSending(false);
                 }} title="Gửi ảnh"
-                  className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 transition-colors">
+                  className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
                     <polyline points="21 15 16 10 5 21"/>
@@ -768,7 +768,7 @@ export default function QuickChatModal() {
                   try { await ipc.zalo?.sendFile({ auth, threadId: target.userId, type: target.threadType, filePath: r.filePaths[0] }); } catch{}
                   setSending(false);
                 }} title="Gửi file"
-                  className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 transition-colors">
+                  className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
                   </svg>
@@ -777,7 +777,7 @@ export default function QuickChatModal() {
                 <div className="relative">
                   <button onClick={() => setShowQM(v=>!v)}
                     title="Tin nhắn nhanh"
-                    className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${showQM?'bg-yellow-500/20 text-yellow-400':'text-gray-400 hover:text-white hover:bg-gray-700'}`}>
+                    className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${showQM?'bg-yellow-500/20 text-yellow-400':'text-muted-foreground hover:text-foreground hover:bg-muted'}`}>
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
                     </svg>
@@ -807,17 +807,17 @@ export default function QuickChatModal() {
                 <div className="relative" ref={emojiRef}>
                   <button onMouseDown={e => { e.preventDefault(); setShowEmoji(v=>!v); }}
                     title="Emoji"
-                    className={`w-8 h-8 rounded-lg flex items-center justify-center text-lg transition-colors ${showEmoji?'bg-blue-600':'hover:bg-gray-700'}`}>😊</button>
+                    className={`w-8 h-8 rounded-lg flex items-center justify-center text-lg transition-colors ${showEmoji?'bg-blue-600':'hover:bg-muted'}`}>😊</button>
                   {showEmoji && (
-                    <div className="absolute bottom-10 left-0 bg-gray-800 border border-gray-600 rounded-2xl shadow-2xl z-50 w-72 overflow-hidden">
+                    <div className="absolute bottom-10 left-0 bg-card border border-input rounded-2xl shadow-2xl z-50 w-72 overflow-hidden">
                       <div className="max-h-64 overflow-y-auto p-2 space-y-2.5">
                         {Object.entries(EMOJI_CATEGORIES).map(([category, emojis]) => (
                           <div key={category}>
-                            <p className="text-[10px] text-gray-400 font-medium mb-1 px-1">{category}</p>
+                            <p className="text-[10px] text-muted-foreground font-medium mb-1 px-1">{category}</p>
                             <div className="grid grid-cols-8 gap-0.5">
                               {emojis.map((em, idx) => (
                                 <button key={`${category}-${em}-${idx}`} onMouseDown={e => { e.preventDefault(); insertText(em); setShowEmoji(false); }}
-                                  className="text-lg hover:bg-gray-700 rounded-lg p-0.5 transition-colors aspect-square flex items-center justify-center hover:scale-110">{em}</button>
+                                  className="text-lg hover:bg-muted rounded-lg p-0.5 transition-colors aspect-square flex items-center justify-center hover:scale-110">{em}</button>
                               ))}
                             </div>
                           </div>
@@ -848,7 +848,7 @@ export default function QuickChatModal() {
                   }
                 }}
                 data-placeholder={target ? 'Nhập tin nhắn… (Enter gửi)' : 'Chọn người nhận trước…'}
-                className={`min-h-[40px] max-h-[120px] overflow-y-auto bg-gray-800 border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors leading-relaxed empty:before:content-[attr(data-placeholder)] empty:before:text-gray-400 empty:before:pointer-events-none ${!target?'opacity-40 cursor-not-allowed':''}`}
+                className={`min-h-[40px] max-h-[120px] overflow-y-auto bg-card border border-border rounded-xl px-3 py-2.5 text-sm text-foreground focus:outline-none focus:border-blue-500 transition-colors leading-relaxed empty:before:content-[attr(data-placeholder)] empty:before:text-muted-foreground empty:before:pointer-events-none ${!target?'opacity-40 cursor-not-allowed':''}`}
               />
             </div>
 
@@ -868,11 +868,11 @@ export default function QuickChatModal() {
                   const m: MessageItem = { msg_id:`qc_like_${Date.now()}`, owner_zalo_id:selectedZaloId, thread_id:target.userId, thread_type:target.threadType, sender_id:selectedZaloId, content:'👍', msg_type:'text', timestamp:Date.now(), is_sent:1, status:'sent' };
                   setLocalMsgs(p=>[...p,m]); addMessage(selectedZaloId,target.userId,m);
                 }}
-                className="w-9 h-9 rounded-lg hover:bg-gray-700 flex items-center justify-center text-blue-400 hover:text-blue-300 disabled:opacity-30 transition-colors text-xl flex-shrink-0">👍</button>
+                className="w-9 h-9 rounded-lg hover:bg-muted flex items-center justify-center text-blue-400 hover:text-blue-300 disabled:opacity-30 transition-colors text-xl flex-shrink-0">👍</button>
             )}
           </div>
 
-          <div className="text-[11px] text-gray-400 px-3 py-1">
+          <div className="text-[11px] text-muted-foreground px-3 py-1">
             Shift+Enter xuống dòng · Ctrl + Shift + N mở tính năng nhanh
           </div>
         </div>

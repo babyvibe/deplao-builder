@@ -59,7 +59,7 @@ export default function EmployeeConnectionBanner() {
                 {/* Exit button */}
                 <button
                     onClick={() => useEmployeeStore.getState().setPreviewEmployeeId(null)}
-                    className="flex items-center gap-1.5 text-[11px] font-medium text-amber-300 hover:text-white px-2.5 py-1 bg-amber-800/30 rounded-lg hover:bg-amber-700/50 transition-colors border border-amber-700/40"
+                    className="flex items-center gap-1.5 text-[11px] font-medium text-amber-300 hover:text-foreground px-2.5 py-1 bg-amber-800/30 rounded-lg hover:bg-amber-700/50 transition-colors border border-amber-700/40"
                 >
                     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                         <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>

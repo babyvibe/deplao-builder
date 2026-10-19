@@ -1,6 +1,10 @@
 import { create } from 'zustand';
-import ipc from '@/lib/ipc';
+import DataAccessor from '@/lib/data/DataAccessor';
 import type { ErpNote, ErpNoteFolder, ErpNoteTag } from '../../../models/erp';
+import { withErpDeniedNotice } from './erpStoreHelpers';
+
+// Ghi chú nằm trên DB Boss: nhân viên đọc / ghi qua DataAccessor (REST → Boss lọc theo tác giả / chia sẻ / workspace).
+// Trước đây gọi IPC trên máy nhân viên → note chỉ có ở máy đó, chia sẻ cho người khác không tới ai.
 
 interface ErpNoteState {
   folders: ErpNoteFolder[];
@@ -31,14 +35,15 @@ export const useErpNoteStore = create<ErpNoteState>((set, get) => ({
   loading: false,
   lastFilter: {},
 
+  // Đọc lỗi → giữ danh sách đang hiện (isReadFailure), chỉ tắt loading
   loadFolders: async () => {
-    const res = await ipc.erp?.noteListFolders({});
+    const res: any = await DataAccessor.erpNoteFolders();
     if (res?.success) set({ folders: normalizeFolders(res.folders) });
   },
 
   loadNotes: async (filter = {}) => {
     set({ loading: true, lastFilter: filter });
-    const res = await ipc.erp?.noteList(filter);
+    const res: any = await DataAccessor.erpNotes(filter);
     if (res?.success) set({ notes: normalizeNotes(res.notes), loading: false });
     else set({ loading: false });
   },
@@ -51,12 +56,12 @@ export const useErpNoteStore = create<ErpNoteState>((set, get) => ({
   },
 
   loadTags: async () => {
-    const res = await ipc.erp?.noteListTags();
-    if (res?.success) set({ tags: res.tags });
+    const res: any = await DataAccessor.erpNoteTags();
+    if (res?.success && Array.isArray(res.tags)) set({ tags: res.tags });
   },
 
   createNote: async (input) => {
-    const res = await ipc.erp?.noteCreate({ input });
+    const res: any = withErpDeniedNotice(await DataAccessor.erpCreateNote(input));
     if (res?.success && res.note) {
       set(s => ({ notes: normalizeNotes([res.note, ...s.notes]) }));
       return res.note;
@@ -65,7 +70,7 @@ export const useErpNoteStore = create<ErpNoteState>((set, get) => ({
   },
 
   updateNote: async (id, patch) => {
-    const res = await ipc.erp?.noteUpdate({ id, patch });
+    const res: any = withErpDeniedNotice(await DataAccessor.erpUpdateNote(id, patch));
     if (res?.success && res.note) {
       set(s => ({ notes: normalizeNotes(s.notes.map(n => n.id === id ? res.note : n)) }));
       return res.note;
@@ -73,8 +78,10 @@ export const useErpNoteStore = create<ErpNoteState>((set, get) => ({
     return null;
   },
 
+  // Boss từ chối / mất kết nối → giữ note trong danh sách
   deleteNote: async (id) => {
-    await ipc.erp?.noteDelete({ id });
+    const res: any = withErpDeniedNotice(await DataAccessor.erpDeleteNote(id));
+    if (res && res.success === false) return;
     set(s => ({ notes: s.notes.filter(n => n.id !== id), activeNoteId: s.activeNoteId === id ? null : s.activeNoteId }));
   },
 

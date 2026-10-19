@@ -3,12 +3,15 @@ import FileStorageService from '../../src/services/file/FileStorageService';
 import DatabaseService from '../../src/services/database/DatabaseService';
 import EventBroadcaster from '../../src/services/event/EventBroadcaster';
 import MediaCacheService from '../../src/services/cache/MediaCacheService';
+import { bossAuthHeaders } from '../../src/services/http/bossSessionAuth';
+import { classifyMediaError, probeMediaUrl } from '../../src/services/file/MediaExpiryService';
+import { toZaloJpgUrl } from '../../src/utils/zaloImageUrl';
 import Logger from '../../src/utils/Logger';
 import * as fs from 'fs';
 import * as path from 'path';
 
 /** Repair queue: dedup concurrent repairs for the same file */
-const pendingRepairs = new Map<string, Promise<{ success: boolean; newLocalPath?: string; error?: string }>>();
+const pendingRepairs = new Map<string, Promise<{ success: boolean; newLocalPath?: string; expired?: boolean; error?: string }>>();
 /** Faststart repair queue: dedup concurrent ensureFaststart calls for the same file */
 const pendingFaststart = new Map<string, Promise<{ success: boolean; fixed?: boolean; reason?: string; error?: string }>>();
 
@@ -235,7 +238,8 @@ export function registerFileIpc() {
             }
             if (remoteUrl) {
                 const response = await net.fetch(remoteUrl, {
-                    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+                    // URL file của Boss (nhân viên) cần token phiên; URL khác (CDN) không gắn gì
+                    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', ...bossAuthHeaders(remoteUrl) },
                 });
                 if (!response.ok) return { success: false, error: `HTTP ${response.status}` };
                 const arrayBuffer = await response.arrayBuffer();
@@ -350,9 +354,15 @@ export function registerFileIpc() {
         threadId?: string;
         localPath?: string;
         remoteUrl?: string;
+        /** true = bỏ qua cờ "đã hết hạn" (người dùng bấm Thử tải lại) */
+        force?: boolean;
     }) => {
-        const { zaloId, msgId, threadId, localPath, remoteUrl } = params;
+        const { zaloId, msgId, threadId, localPath, remoteUrl, force } = params;
         if (!zaloId || !msgId) return { success: false, error: 'Missing zaloId or msgId' };
+        // Đã biết ảnh hết hạn → không gọi mạng nữa (tránh tải lại liên tục mỗi lần render)
+        if (!force && DatabaseService.getInstance().isMediaExpired(zaloId, msgId)) {
+            return { success: false, expired: true, error: 'Media expired' };
+        }
 
         // Dedup: nếu đang repair file này rồi → chờ kết quả hiện tại
         const queueKey = localPath || `${zaloId}:${msgId}`;
@@ -384,20 +394,52 @@ export function registerFileIpc() {
                 }
 
                 if (!imgUrl) return { success: false, error: 'No image URL available' };
+                // Ảnh JPEG XL của Zalo → bản JPG (Chromium không hiển thị JXL)
+                imgUrl = toZaloJpgUrl(imgUrl);
 
                 // 3. Tải lại bằng session của đúng tài khoản. CDN Zalo có thể
                 // trả 403 cho request không mang Cookie/User-Agent dù URL vẫn mở
                 // được trong trình duyệt.
                 const account = DatabaseService.getInstance().getAccounts()
                     .find(item => item.zalo_id === zaloId);
-                const newLocalPath = await FileStorageService.downloadImage(
-                    zaloId,
-                    imgUrl,
-                    undefined,
-                    account?.cookies,
-                    account?.user_agent,
-                );
-                if (!newLocalPath) return { success: false, error: 'Download returned empty (CDN expired?)' };
+                let newLocalPath = '';
+                try {
+                    newLocalPath = await FileStorageService.downloadImage(
+                        zaloId,
+                        imgUrl,
+                        undefined,
+                        account?.cookies,
+                        account?.user_agent,
+                    );
+                } catch (downloadErr: any) {
+                    // CDN trả 404 / host CDN cũ không còn tồn tại → ảnh đã hết hạn
+                    if (await classifyMediaError(imgUrl, downloadErr) === 'expired') {
+                        DatabaseService.getInstance().setMediaExpired(zaloId, msgId, true);
+                        Logger.warn(`[fileIpc] repairImage: ảnh đã hết hạn ${msgId} (${downloadErr?.code || downloadErr?.response?.status || downloadErr?.message})`);
+                        return { success: false, expired: true, error: 'Media expired' };
+                    }
+                    throw downloadErr;
+                }
+                if (!newLocalPath) {
+                    // downloadImage trả rỗng khi CDN trả 401/403/409/410 — chỉ 410 là hết hạn thật,
+                    // 401/403 thường do cookie phiên cũ → kiểm tra lại trước khi đánh dấu.
+                    if (await probeMediaUrl(imgUrl, account?.cookies, account?.user_agent) === 'expired') {
+                        DatabaseService.getInstance().setMediaExpired(zaloId, msgId, true);
+                        return { success: false, expired: true, error: 'Media expired' };
+                    }
+                    return { success: false, error: 'Download returned empty (CDN 401/403/409)' };
+                }
+                // File tải về phải là ảnh hiển thị được (vd JPEG XL thì Chromium không đọc được). Không báo
+                // "thành công" cho file lỗi — nếu không, bubble đổi đường dẫn → lỗi lại → tải lại vô hạn.
+                // ('truncated' vẫn cho qua như trước: Chromium hiển thị được JPEG thiếu marker kết thúc.)
+                const newAbsPath = FileStorageService.resolveAbsolutePath(newLocalPath);
+                const check = FileStorageService.validateImageFile(newAbsPath);
+                if (!check.valid && check.reason !== 'truncated') {
+                    try { fs.unlinkSync(newAbsPath); } catch {}
+                    Logger.warn(`[fileIpc] repairImage: file tải về không hiển thị được (${check.reason}) ${msgId} ← ${imgUrl}`);
+                    return { success: false, error: `Ảnh tải về không đọc được (${check.reason})` };
+                }
+                if (force) DatabaseService.getInstance().setMediaExpired(zaloId, msgId, false);
 
                 // 4. Cập nhật DB
                 DatabaseService.getInstance().updateLocalPaths(zaloId, msgId, { main: newLocalPath });
@@ -427,6 +469,129 @@ export function registerFileIpc() {
         pendingRepairs.set(queueKey, repairPromise);
         repairPromise.finally(() => pendingRepairs.delete(queueKey));
         return repairPromise;
+    });
+
+    /**
+     * Tải media của 1 tin Zalo về máy — dùng khi chuyển tiếp tin chưa tải: zca-js chỉ gửi lại ảnh / GIF / file từ file
+     * local, mà tin đồng bộ từ điện thoại / tin cũ không tự tải media. Tên file + key local_paths giống lúc tự tải khi
+     * nhận tin (EventBroadcaster) → bubble hiện "đã có trên máy", lần sau dùng lại không tải nữa.
+     */
+    ipcMain.handle('file:downloadMessageMedia', async (_event, params: {
+        zaloId: string;
+        msgId: string;
+        threadId?: string;
+        kind: 'image' | 'gif' | 'file' | 'voice' | 'video';
+    }) => {
+        const { zaloId, msgId, threadId, kind } = params || ({} as any);
+        if (!zaloId || !msgId || !kind) return { success: false, error: 'Thiếu thông tin tin nhắn' };
+        const isHttp = (value: unknown): value is string => typeof value === 'string' && /^https?:\/\//i.test(value);
+        const parseObject = (value: unknown): any => {
+            if (value && typeof value === 'object') return value;
+            if (typeof value !== 'string' || !value.trimStart().startsWith('{')) return null;
+            try { return JSON.parse(value); } catch { return null; }
+        };
+        try {
+            const db = DatabaseService.getInstance();
+            const row: any = db.getMessageById(zaloId, String(msgId), threadId);
+            if (!row) return { success: false, error: 'Không tìm thấy tin nhắn' };
+            const content = parseObject(row.content);
+            const contentParams = parseObject(content?.params) || {};
+            // Tin định dạng cũ để link ở cột attachments
+            const attachment = (() => {
+                try {
+                    const list = JSON.parse(row.attachments || '[]');
+                    return (Array.isArray(list) ? list[0] : list) || {};
+                } catch { return {}; }
+            })();
+            const legacyUrl = [attachment.hd, attachment.href, ...(Array.isArray(attachment.urls) ? attachment.urls : [])].find(isHttp) || '';
+            const account = db.getAccounts().find(item => item.zalo_id === zaloId);
+            const cookies = account?.cookies;
+            const userAgent = account?.user_agent;
+            const id = String(row.msg_id || msgId).replace(/[^\w-]/g, '_');
+
+            let localPaths: Record<string, string> = {};
+            if (kind === 'image') {
+                const url = toZaloJpgUrl(DatabaseService.extractImageUrlFromContent(content) || legacyUrl);
+                if (isHttp(url)) {
+                    const urlExt = (() => { try { return path.extname(new URL(url).pathname).toLowerCase(); } catch { return ''; } })();
+                    const ext = ['.jpg', '.jpeg', '.png', '.webp', '.gif'].includes(urlExt) ? urlExt : '.jpg';
+                    const rel = await FileStorageService.downloadImage(zaloId, url, `img_${id}${ext}`, cookies, userAgent);
+                    if (rel) localPaths = { main: rel };
+                }
+            } else if (kind === 'gif') {
+                // Link dự phòng ở attachments chỉ dùng cho ảnh / file: tin cũ loại khác để icon / link bản tin ở đó
+                const url = [content?.href].find(isHttp);
+                const rel = url ? await FileStorageService.downloadImage(zaloId, url, `gif_${id}.gif`, cookies, userAgent) : '';
+                if (rel) localPaths = { main: rel };
+            } else if (kind === 'voice') {
+                const url = [contentParams.m4a, content?.href, attachment.m4a].find(isHttp);
+                const rel = url ? await FileStorageService.downloadFile(zaloId, url, `voice_${id}.m4a`, cookies, userAgent) : '';
+                if (rel) localPaths = { file: rel };
+            } else if (kind === 'video') {
+                const url = [content?.href].find(isHttp);
+                const rel = url ? await FileStorageService.downloadVideo(zaloId, url, `vid_${id}.mp4`, cookies, userAgent) : '';
+                if (rel) localPaths = { file: rel };
+            } else if (kind === 'file') {
+                const url = [content?.href, legacyUrl].find(isHttp);
+                if (url) {
+                    const title = String(content?.title || '').trim() || String(row.content || '').replace(/^\[File\]\s*/i, '').trim();
+                    const ext = contentParams.fileExt ? `.${contentParams.fileExt}` : path.extname(title);
+                    const fileName = (title.includes('.') ? title : `${title || `file_${id}`}${ext}`)
+                        .replace(/[/\\?%*:|"<>]/g, '_').replace(/[. ]+$/, '').trim() || `file_${id}${ext}`;
+                    // Thư mục con theo msgId: giữ tên file gốc (người nhận thấy đúng tên) mà không đụng file trùng tên
+                    const rel = await FileStorageService.downloadFile(zaloId, url, fileName, cookies, userAgent, `fw_${id}`);
+                    if (rel) localPaths = { file: rel, fileName };
+                }
+            }
+
+            const mainPath = localPaths.main || localPaths.file;
+            if (!mainPath) return { success: false, error: 'Không tải được tệp từ Zalo (không có link hoặc link đã hết hạn)' };
+            if (kind === 'image' || kind === 'gif') {
+                const absPath = FileStorageService.resolveAbsolutePath(mainPath);
+                const check = FileStorageService.validateImageFile(absPath);
+                if (!check.valid && check.reason !== 'truncated') {
+                    try { fs.unlinkSync(absPath); } catch { /* đã xoá */ }
+                    return { success: false, error: `Ảnh tải về không đọc được (${check.reason})` };
+                }
+            }
+            db.updateLocalPaths(zaloId, String(row.msg_id || msgId), localPaths);
+            return { success: true, localPath: mainPath, localPaths };
+        } catch (error: any) {
+            Logger.warn(`[fileIpc] downloadMessageMedia ${kind} ${msgId}: ${error.message}`);
+            return { success: false, error: error.message };
+        }
+    });
+
+    /**
+     * Kiểm tra media (video / ảnh trong album) còn trên CDN Zalo không. Hết hạn → lưu cờ media_expired.
+     * Trả { expired: true } nếu đã hết hạn; { expired: false, unknown: true } nếu không xác định được (mất mạng…).
+     */
+    ipcMain.handle('file:checkMediaExpired', async (_event, params: {
+        zaloId: string;
+        msgId: string;
+        urls: string[];
+        force?: boolean;
+    }) => {
+        const { zaloId, msgId, force } = params || ({} as any);
+        if (!zaloId || !msgId) return { success: false, expired: false, error: 'Missing zaloId or msgId' };
+        try {
+            const db = DatabaseService.getInstance();
+            const wasExpired = db.isMediaExpired(zaloId, msgId);
+            if (wasExpired && !force) return { success: true, expired: true };
+            const url = (params.urls || []).find(u => /^https?:\/\//i.test(String(u || '')));
+            if (!url) return { success: true, expired: false, unknown: true };
+            const account = db.getAccounts().find(item => item.zalo_id === zaloId);
+            const result = await probeMediaUrl(url, account?.cookies, account?.user_agent);
+            if (result === 'expired') {
+                if (!wasExpired) db.setMediaExpired(zaloId, msgId, true);
+                return { success: true, expired: true };
+            }
+            if (result === 'ok' && wasExpired) db.setMediaExpired(zaloId, msgId, false);
+            return { success: true, expired: false, unknown: result === 'unknown' };
+        } catch (error: any) {
+            Logger.warn(`[fileIpc] checkMediaExpired error: ${error.message}`);
+            return { success: false, expired: false, error: error.message };
+        }
     });
 
     /**
@@ -522,11 +687,12 @@ export function registerFileIpc() {
                 const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff', 'avif'];
                 if (!imageExts.includes(ext)) continue; // Chỉ validate ảnh
 
-                const v = FileStorageService.validateImageFile(absPath);
+                // I/O bất đồng bộ: chạy mỗi lần mở hội thoại — bản đồng bộ chặn main, các IPC khác (tải tin…) phải chờ
+                const v = await FileStorageService.validateImageFileAsync(absPath);
                 if (!v.valid) {
                     corrupted.push({ ...item, reason: v.reason || 'unknown' });
                     // Xóa file lỗi ngay
-                    try { fs.unlinkSync(absPath); } catch {}
+                    await fs.promises.unlink(absPath).catch(() => {});
                 }
             } catch {}
         }
@@ -631,6 +797,10 @@ export function registerFileIpc() {
                     }
                 } catch { localPath = ''; }
             }
+            // Ưu tiên bản sao đúng tên + đuôi trong thư mục media: file cache hash không có đuôi → openPath không chọn
+            // được app. (File Boss giờ cần token nên không mở URL Boss bằng trình duyệt ngoài được nữa.)
+            const namedCopy = cache.getLocalCopyPath(bossUrl);
+            if (namedCopy) localPath = namedCopy;
 
             return {
                 success: true,

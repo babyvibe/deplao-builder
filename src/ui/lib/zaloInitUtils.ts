@@ -1,8 +1,10 @@
 /**
  * zaloInitUtils.ts
  *
- * Account first-run initialization - syncs 6 data types when a
- * new (or previously-unseen) account first accesses the Chat view.
+ * Account first-run initialization - syncs friends, labels, quick messages and
+ * groups when a new (or previously-unseen) account first accesses the Chat view.
+ * Lịch sử tin nhắn KHÔNG tải ở đây: người dùng chủ động bấm "Đồng bộ tin nhắn từ điện thoại"
+ * trên topbar (AccountInitPanel hiện gợi ý). "Tin nhắn cũ" (requestOldMessages) đã bỏ.
  *
  * ┌─ runAccountInit ──────────────────────────────────────────────────────────┐
  * │  checks localStorage guard → checkAccountInitNeeds (fast DB reads)       │
@@ -10,18 +12,18 @@
  * │      friends          (getFriends API → saveFriends DB)                  │
  * │      labels           (getLabels API  → appStore.setLabels)              │
  * │      quickMessages    (getQuickMessageList API → bulkReplaceLocalQM DB)  │
- * │      oldMessages      (requestOldMessages - fire-and-forget via listener)│
- * │                                 then getGroupChatHistory per group)      │
+ * │      groups           (syncZaloGroups: nhóm → thành viên)                │
  * │  → marks account as initialized in localStorage                          │
  * └───────────────────────────────────────────────────────────────────────────┘
  */
 
-import DataAccessor from '@/lib/data/DataAccessor';
+import DataAccessor, { isReadFailure } from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import { DEFAULT_NON_ZALO_LABELS, createDefaultLabels } from './defaultLabels';
 import { useAppStore } from '@/store/appStore';
 import { useChatStore } from '@/store/chatStore';
 import { useWorkspaceStore } from '@/store/workspaceStore';
+import { useEmployeeStore } from '@/store/employeeStore';
 import { syncZaloGroups, SyncGroupsProgress } from './zaloGroupUtils';
 import { syncZaloLabelsToLocalDB } from './labelUtils';
 import { extractUserProfile } from '../../utils/profileUtils';
@@ -29,7 +31,7 @@ import { fetchAllAliases } from './zaloAliasUtils';
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
-export type InitTask = 'friends' | 'labels' | 'quickMessages' | 'groups' | 'oldMessages';
+export type InitTask = 'friends' | 'labels' | 'quickMessages' | 'groups';
 export type InitTaskStatus = 'pending' | 'running' | 'done' | 'error' | 'skipped';
 
 export interface InitTaskProgress {
@@ -50,7 +52,6 @@ export interface InitNeeds {
   labels: boolean;
   quickMessages: boolean;
   groups: boolean;
-  oldMessages: boolean;
   any: boolean;
 }
 
@@ -161,6 +162,12 @@ function _wasLocalDataRecentlyVerified(zaloId: string): boolean {
  * the check is skipped for the next 24 h.
  */
 export async function checkAccountInitNeeds(zaloId: string): Promise<InitNeeds> {
+  // Nhân viên: đồng bộ ban đầu (bạn bè, nhãn, tin nhắn nhanh, nhóm) là việc của Boss — dữ liệu đọc từ Boss.
+  // Trước đây "không chạy" chỉ nhờ ipc.db.getContacts trả stub làm `.filter` ném lỗi bị nuốt.
+  if (useEmployeeStore.getState().mode === 'employee') {
+    return { friends: false, labels: false, quickMessages: false, groups: false, any: false };
+  }
+
   // ── Stage 1: never done / outdated version ────────────────────────────────
   if (!isAccountInitDone(zaloId)) {
   }
@@ -194,19 +201,23 @@ export async function checkAccountInitNeeds(zaloId: string): Promise<InitNeeds> 
     ? (localLabelsRes.value?.labels?.length ?? 0)
     : 0;
 
+  // Lỗi đọc (employee: mất kết nối BOSS) ≠ bảng trống: không kích hoạt đồng bộ lại (đồng bộ có thể thay / sao chép
+  // dữ liệu thật trên BOSS) và không đóng dấu "đã kiểm tra" — lần sau kiểm tra lại.
+  const readFailed = (r: PromiseSettledResult<any>) => r.status === 'fulfilled' && isReadFailure(r.value);
+  const unverified = readFailed(friendsRes) || readFailed(qmRes) || readFailed(localLabelsRes);
+
   const needs = {
-    friends:       friendCount === 0,
-    labels:        localLabelCount === 0,  // local_labels DB (includes global labels visible to this account)
-    quickMessages: qmCount === 0,
+    friends:       friendCount === 0 && !readFailed(friendsRes),
+    labels:        localLabelCount === 0 && !readFailed(localLabelsRes),  // local_labels DB (includes global labels visible to this account)
+    quickMessages: qmCount === 0 && !readFailed(qmRes),
     groups:        groupCount === 0,
-    oldMessages:       false,  // Session-based - only runs on first init (Stage 1)
   };
-  const any = needs.friends || needs.labels || needs.quickMessages || needs.groups || needs.oldMessages;
+  const any = needs.friends || needs.labels || needs.quickMessages || needs.groups;
 
 
   // If everything is present, stamp the verification timestamp now
   // so we skip this Stage-3 pass for the next 24 h.
-  if (!any) _markLocalDataVerified(zaloId);
+  if (!any && !unverified) _markLocalDataVerified(zaloId);
 
   return { ...needs, any };
 }
@@ -447,33 +458,11 @@ async function _syncQuickMessages(
 // ── Main init runner ──────────────────────────────────────────────────────────
 
 /**
- * Tải tin nhắn cũ toàn phiên đăng nhập qua listener.requestOldMessages
- * (fire-and-forget - messages arrive async via old_messages event)
- */
-async function _syncOldMessages(
-  activeAccountId: string,
-  onProgress: (u: InitTaskProgress) => void,
-): Promise<void> {
-  onProgress({ task: 'oldMessages', status: 'running', detail: 'Đang yêu cầu tin nhắn cũ...' });
-  try {
-    const res = await ipc.login?.requestOldMessages(activeAccountId);
-    if (res?.success) {
-      onProgress({ task: 'oldMessages', status: 'done', detail: 'Đang tải tin nhắn cũ… (nền)' });
-    } else {
-      onProgress({ task: 'oldMessages', status: 'error', detail: res?.error || 'Lỗi tải tin nhắn cũ' });
-    }
-  } catch (err: any) {
-    onProgress({ task: 'oldMessages', status: 'error', detail: err?.message || 'Lỗi tải tin nhắn cũ' });
-  }
-}
-
-
-/**
- * Runs all 6 sync tasks for the given account.
+ * Runs all init sync tasks for the given account.
  * Tasks already satisfied (data exists in DB/store) are marked 'skipped'.
  * Records completion in localStorage so it never runs again for this account.
  *
- *   friends, labels, quickMessages, oldMessages - run concurrently
+ *   friends, labels, quickMessages, groups - run concurrently
  */
 export async function runAccountInit(opts: AccountInitOptions): Promise<void> {
   const { activeAccountId, auth, onProgress, groupStopRef } = opts;
@@ -486,7 +475,7 @@ export async function runAccountInit(opts: AccountInitOptions): Promise<void> {
   }
 
   // Announce initial status for every task
-  const allTasks: InitTask[] = ['friends', 'labels', 'quickMessages', 'groups', 'oldMessages'];
+  const allTasks: InitTask[] = ['friends', 'labels', 'quickMessages', 'groups'];
   for (const task of allTasks) {
     onProgress(task, {
       task,
@@ -511,13 +500,6 @@ export async function runAccountInit(opts: AccountInitOptions): Promise<void> {
   if (needs.quickMessages) {
     promises.push(
       _syncQuickMessages(activeAccountId, auth, (u) => onProgress('quickMessages', u)),
-    );
-  }
-
-  // ── Old messages (fire-and-forget via listener) ─────────────────────────
-  if (needs.oldMessages) {
-    promises.push(
-      _syncOldMessages(activeAccountId, (u) => onProgress('oldMessages', u)),
     );
   }
 

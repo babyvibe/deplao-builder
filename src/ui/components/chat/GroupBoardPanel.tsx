@@ -8,6 +8,8 @@ import { PollDetailView as SharedPollDetailView } from './PollView';
 import { Spinner } from '@/components/common/PageLoading';
 import { toLocalMediaUrl } from '@/lib/localMedia';
 
+
+const EMPTY_BOARD_LIST: any[] = [];
 // ─── Types ─────────────────────────────────────────────────────────────────
 
 interface BoardItem {
@@ -108,7 +110,7 @@ export default function GroupBoardPanel({
     setLoading(true);
     try {
       const [pinsRes, pollsRes] = await Promise.all([
-        ipc.db?.getPinnedMessages({ zaloId, threadId }),
+        DataAccessor.getPinnedMessages({ zaloId, threadId }),
         DataAccessor.getMessagesByType({ zaloId, threadId, msgType: 'group.poll', limit: 100 }),
       ]);
 
@@ -178,21 +180,21 @@ export default function GroupBoardPanel({
   const displayed = tab === 'all' ? [...pinItems, ...noteItems, ...pollItems].sort((a, b) => b.sortKey - a.sortKey) : tab === 'pin' ? pinItems : tab === 'note' ? noteItems : pollItems;
 
   return (
-    <div className="flex flex-col h-full bg-gray-900">
+    <div className="flex flex-col h-full bg-background">
       {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-700 bg-gray-800 flex-shrink-0">
+      <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-card flex-shrink-0">
         <button
           onClick={onBack}
-          className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-white hover:bg-gray-700 transition-colors flex-shrink-0"
+          className="w-8 h-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors flex-shrink-0"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
             <polyline points="15 18 9 12 15 6"/>
           </svg>
         </button>
-        <span className="flex-1 font-semibold text-white text-base">Bảng tin nhóm</span>
+        <span className="flex-1 font-semibold text-foreground text-base">Bảng tin nhóm</span>
         <button
           onClick={onCreateNote}
-          className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-white hover:bg-gray-700 transition-colors"
+          className="w-8 h-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
           title="Tạo ghi chú"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -203,7 +205,7 @@ export default function GroupBoardPanel({
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-gray-700 bg-gray-800 flex-shrink-0">
+      <div className="flex border-b border-border bg-card flex-shrink-0">
         {(['all', 'pin', 'note', 'poll'] as Tab[]).map(key => {
           const label = key === 'all' ? 'Tất cả' : key === 'pin' ? 'Tin ghim' : key === 'note' ? 'Ghi chú' : 'Bình chọn';
           return (
@@ -213,12 +215,12 @@ export default function GroupBoardPanel({
               className={`flex-1 py-2.5 text-xs font-medium transition-colors border-b-2 ${
                 tab === key
                   ? 'text-blue-400 border-blue-500'
-                  : 'text-gray-400 border-transparent hover:text-gray-300'
+                  : 'text-muted-foreground border-transparent hover:text-foreground/80'
               }`}
             >
               {label}
               {counts[key] > 0 && (
-                <span className={`ml-1 text-[11px] ${tab === key ? 'text-blue-400' : 'text-gray-400'}`}>
+                <span className={`ml-1 text-[11px] ${tab === key ? 'text-blue-400' : 'text-muted-foreground'}`}>
                   ({counts[key]})
                 </span>
               )}
@@ -234,7 +236,7 @@ export default function GroupBoardPanel({
             <Spinner size={6} />
           </div>
         ) : displayed.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-gray-400 gap-2">
+          <div className="flex flex-col items-center justify-center py-16 text-muted-foreground gap-2">
             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" className="opacity-30">
               <rect x="3" y="3" width="18" height="18" rx="2"/>
               <line x1="9" y1="9" x2="15" y2="9"/>
@@ -281,12 +283,12 @@ function BoardCard({ item, onNoteClick, onScrollToMsg, zaloId, threadId }: {
     const note = item.note;
     return (
       <div
-        className="bg-gray-800 border border-gray-700 rounded-2xl overflow-hidden cursor-pointer hover:border-gray-600 transition-colors"
+        className="bg-card border border-border rounded-2xl overflow-hidden cursor-pointer hover:border-input transition-colors"
         onClick={() => onNoteClick?.(note)}
       >
         <div className="flex items-center gap-2.5 px-4 pt-3 pb-2">
           {note.creatorName ? (
-            <div className="w-9 h-9 rounded-full bg-gray-600 flex items-center justify-center text-white text-sm font-bold flex-shrink-0">
+            <div className="w-9 h-9 rounded-full bg-accent flex items-center justify-center text-foreground text-sm font-bold flex-shrink-0">
               {(note.creatorName || 'U').charAt(0).toUpperCase()}
             </div>
           ) : (
@@ -300,7 +302,7 @@ function BoardCard({ item, onNoteClick, onScrollToMsg, zaloId, threadId }: {
             </div>
           )}
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-gray-100 truncate">{note.creatorName || 'Thành viên'}</p>
+            <p className="text-sm font-semibold text-foreground truncate">{note.creatorName || 'Thành viên'}</p>
             <div className="flex items-center gap-1">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#f97316" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
@@ -311,10 +313,10 @@ function BoardCard({ item, onNoteClick, onScrollToMsg, zaloId, threadId }: {
           </div>
         </div>
         <div className="px-4 pb-2">
-          <p className="text-sm text-gray-100 font-medium leading-snug whitespace-pre-wrap line-clamp-3">{note.title}</p>
+          <p className="text-sm text-foreground font-medium leading-snug whitespace-pre-wrap line-clamp-3">{note.title}</p>
         </div>
         <div className="flex items-center justify-between px-4 pb-3 pt-1">
-          <span className="text-xs text-gray-400">{formatTime(note.createTime)}</span>
+          <span className="text-xs text-muted-foreground">{formatTime(note.createTime)}</span>
           <button
             onClick={e => { e.stopPropagation(); onNoteClick?.(note); }}
             className="text-xs text-blue-400 hover:text-blue-300 font-semibold transition-colors"
@@ -330,7 +332,7 @@ function BoardCard({ item, onNoteClick, onScrollToMsg, zaloId, threadId }: {
     const pin = item.pin;
     const previewText = pin.preview_text?.trim() || renderPinPreview(pin);
     return (
-      <div className="bg-gray-800 border border-gray-700 rounded-2xl overflow-hidden hover:border-gray-600 transition-colors">
+      <div className="bg-card border border-border rounded-2xl overflow-hidden hover:border-input transition-colors">
         <div className="flex items-center gap-2.5 px-4 pt-3 pb-2">
           <div className="w-9 h-9 rounded-full bg-blue-500/15 flex items-center justify-center flex-shrink-0">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" strokeWidth="1.8" strokeLinecap="round">
@@ -338,7 +340,7 @@ function BoardCard({ item, onNoteClick, onScrollToMsg, zaloId, threadId }: {
             </svg>
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-gray-100 truncate">{pin.sender_name || 'Thành viên'}</p>
+            <p className="text-sm font-semibold text-foreground truncate">{pin.sender_name || 'Thành viên'}</p>
             <div className="flex items-center gap-1">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" strokeWidth="2">
                 <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
@@ -358,11 +360,11 @@ function BoardCard({ item, onNoteClick, onScrollToMsg, zaloId, threadId }: {
           </div>
         ) : (
           <div className="px-4 pb-2">
-            <p className="text-sm text-gray-200 leading-snug line-clamp-3">{previewText}</p>
+            <p className="text-sm text-foreground leading-snug line-clamp-3">{previewText}</p>
           </div>
         )}
         <div className="flex items-center justify-between px-4 pb-3 pt-1">
-          <span className="text-xs text-gray-400">{formatTime(pin.timestamp)}</span>
+          <span className="text-xs text-muted-foreground">{formatTime(pin.timestamp)}</span>
           <button
             disabled={opening}
             onClick={async () => {
@@ -371,7 +373,7 @@ function BoardCard({ item, onNoteClick, onScrollToMsg, zaloId, threadId }: {
               try { await onScrollToMsg(pin.msg_id); }
               finally { setOpening(false); }
             }}
-            className="text-xs text-blue-400 hover:text-blue-300 disabled:text-gray-500 font-semibold transition-colors"
+            className="text-xs text-blue-400 hover:text-blue-300 disabled:text-subtle-foreground font-semibold transition-colors"
           >
             {opening ? 'Đang tải...' : 'Xem tin nhắn'}
           </button>
@@ -389,8 +391,9 @@ function PollBoardCard({ poll, zaloId, threadId }: { poll: NonNullable<BoardItem
   const [detail, setDetail] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  const contacts = useChatStore(s => s.contacts[zaloId] || []);
-  const groupMembers: any[] = useAppStore(s => s.groupInfoCache?.[zaloId]?.[threadId]?.members || []);
+  // Fallback ngoài selector: `|| []` trong selector tạo mảng mới mỗi lần → zustand 5 render lặp
+  const contacts = useChatStore(s => s.contacts[zaloId]) ?? EMPTY_BOARD_LIST;
+  const groupMembers: any[] = useAppStore(s => s.groupInfoCache?.[zaloId]?.[threadId]?.members) ?? EMPTY_BOARD_LIST;
 
   // Merge contacts + group members → đủ thông tin voter
   const allContacts = React.useMemo(() => {
@@ -441,7 +444,7 @@ function PollBoardCard({ poll, zaloId, threadId }: { poll: NonNullable<BoardItem
   const isExpired: boolean = (detail?.expired_time || 0) > 0 && (detail?.expired_time * 1000) < Date.now();
 
   return (
-    <div className="bg-gray-800 border border-gray-700 rounded-2xl overflow-hidden hover:border-gray-600 transition-colors">
+    <div className="bg-card border border-border rounded-2xl overflow-hidden hover:border-input transition-colors">
       {/* Header */}
       <div className="flex items-center gap-2.5 px-4 pt-3 pb-2">
         <div className="w-9 h-9 rounded-full bg-green-500/15 flex items-center justify-center flex-shrink-0">
@@ -456,16 +459,16 @@ function PollBoardCard({ poll, zaloId, threadId }: { poll: NonNullable<BoardItem
           }
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold text-gray-100 truncate">{creatorName || 'Thành viên'}</p>
+          <p className="text-sm font-semibold text-foreground truncate">{creatorName || 'Thành viên'}</p>
           <div className="flex items-center gap-1">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <rect x="3" y="3" width="18" height="18" rx="2"/>
               <line x1="8" y1="9" x2="16" y2="9"/>
             </svg>
             <span className="text-[11px] text-green-400 font-medium">Bình chọn</span>
-            {isAnon && <span className="text-[11px] text-gray-400 bg-gray-700 px-1.5 py-0.5 rounded ml-1">Ẩn danh</span>}
+            {isAnon && <span className="text-[11px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded ml-1">Ẩn danh</span>}
             {(isClosed || isExpired) && (
-              <span className="text-[11px] text-gray-400 bg-gray-700 px-1.5 py-0.5 rounded ml-1">
+              <span className="text-[11px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded ml-1">
                 {isClosed ? 'Đã khoá' : 'Hết hạn'}
               </span>
             )}
@@ -475,8 +478,8 @@ function PollBoardCard({ poll, zaloId, threadId }: { poll: NonNullable<BoardItem
 
       {/* Question */}
       <div className="px-4 pb-2">
-        <p className="text-sm font-bold text-gray-100">{poll.question}</p>
-        {allowMulti && <p className="text-xs text-gray-400 mt-0.5">Chọn nhiều phương án</p>}
+        <p className="text-sm font-bold text-foreground">{poll.question}</p>
+        {allowMulti && <p className="text-xs text-muted-foreground mt-0.5">Chọn nhiều phương án</p>}
         {totalVotes > 0 && <p className="text-xs text-blue-400 font-semibold mt-0.5">{totalVotes} lượt bình chọn</p>}
       </div>
 
@@ -499,13 +502,13 @@ function PollBoardCard({ poll, zaloId, threadId }: { poll: NonNullable<BoardItem
             showAddOption={true}
           />
         ) : (
-          <p className="text-xs text-gray-400 py-2 text-center px-4">Không có dữ liệu</p>
+          <p className="text-xs text-muted-foreground py-2 text-center px-4">Không có dữ liệu</p>
         )
       )}
 
       {/* Footer */}
       <div className="flex items-center justify-between px-4 pb-3 pt-1">
-        <span className="text-xs text-gray-400">{formatTime(poll.timestamp)}</span>
+        <span className="text-xs text-muted-foreground">{formatTime(poll.timestamp)}</span>
         <button
           onClick={handleExpand}
           className="text-xs text-blue-400 hover:text-blue-300 font-semibold transition-colors flex items-center gap-1"

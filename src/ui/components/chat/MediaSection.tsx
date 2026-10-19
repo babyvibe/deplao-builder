@@ -7,16 +7,28 @@
  *
  * Chế độ detail (thay thế toàn bộ panel - giống MembersPanel):
  *   - Pagination 50 item/trang, scroll đến cuối → tự load trang tiếp
+ *
+ * Chế độ nhân viên (mất kết nối BOSS): trang tải lỗi KHÔNG kết thúc danh sách, không nhảy trang (offset tính theo số
+ * dòng đã nhận), hiện "Không tải được — Thử lại" (tự thử lại theo backoff / khi cuộn tới cuối / kết nối lại);
+ * xem trước giữ các ô đang có. Trình xem ảnh mở qua bộ sưu tập phân trang (MediaGalleryViewer) như khung chat.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAccountStore } from '@/store/accountStore';
+import { useShallow } from 'zustand/react/shallow';
 import { useEmployeeStore } from '@/store/employeeStore';
-import DataAccessor from '@/lib/data/DataAccessor';
+import DataAccessor, {
+  nextConversationPaging, retryDelayMs, type ConversationPage, type ConversationPaging,
+} from '@/lib/data/DataAccessor';
+import { useEmployeeResync } from '@/hooks/useEmployeeResync';
 import ipc from '@/lib/ipc';
 import { Spinner } from '@/components/common/PageLoading';
+import { Button } from '@/components/ui';
 import { toLocalMediaUrl } from '@/lib/localMedia';
 import { ensureMediaLocal } from '@/lib/employeeMediaSync';
-import MediaViewer, { MediaViewerImage } from './MediaViewer';
+import type { MediaViewerImage } from './MediaViewer';
+import MediaGalleryViewer, { type MediaGalleryViewerHandle } from './MediaGalleryViewer';
+import { sortGalleryChronologically } from '@/lib/chat/mediaGallery';
+import { appendMediaPanelRows, prependMediaPanelRows, toMediaPanelPage } from '@/lib/chat/chatLoadFailures';
 import { ChartIcon, EditIcon, FileTextIcon } from '@/components/common/icons';
 import { getFirstAttachment, getFileMetadata, getRemoteMediaUrl, getLocalMediaPath, getVideoRemoteUrl } from '@/lib/mediaResolver';
 import { isFacebook, isTelegram as isTelegramCh } from '@/lib/channelHelper';
@@ -25,6 +37,11 @@ import { isFacebook, isTelegram as isTelegramCh } from '@/lib/channelHelper';
 const PAGE_SIZE = 50;
 const PREVIEW_IMAGE = 6;
 const PREVIEW_LIST  = 3;
+
+/** Panel chi tiết trước trang đầu: offset 0, "có thể còn" (trang lỗi giữ nguyên các cờ này). */
+const INITIAL_PANEL_PAGING: ConversationPaging = { nextOffset: 0, hasMore: true, exhausted: false, failures: 0, failedPage: null };
+/** Ngay sau một lần tải lỗi, cuộn tới cuối chỉ thử lại sau chừng này (nút "Thử lại" thử ngay, backoff tự thử tiếp). */
+const SCROLL_RETRY_COOLDOWN_MS = 2_000;
 
 // ─── Helper utils ─────────────────────────────────────────────────────────────
 
@@ -79,15 +96,22 @@ function extractVideoRemoteUrl(msg: any): string {
   try { return JSON.parse(msg.content || '{}').href || ''; } catch { return ''; }
 }
 
-/** Build a list of MediaViewerImage from non-video messages for the in-app viewer */
+/**
+ * Build a list of MediaViewerImage from non-video messages for the in-app viewer.
+ * The panel lists media newest-first; the viewer shows them like Zalo: oldest → newest (newest last).
+ */
 function buildViewerImages(msgs: any[]): MediaViewerImage[] {
+  return sortGalleryChronologically(buildViewerImagesNewestFirst(msgs).reverse());
+}
+
+function buildViewerImagesNewestFirst(msgs: any[]): MediaViewerImage[] {
   return msgs
     .filter(msg => msg.msg_type !== 'chat.video.msg' && msg.msg_type !== 'video')
     .map(msg => {
       // FB: use CDN URL directly
       const fb = extractFBAttachment(msg);
       if (fb && ['image', 'photo', 'sticker', 'animated_image'].includes(fb.type)) {
-        return { src: fb.url, displaySrc: fb.url, defaultName: fb.name || `image_${msg?.msg_id || Date.now()}.jpg`, msgId: msg?.msg_id ? String(msg.msg_id) : undefined, threadId: msg?.thread_id ? String(msg.thread_id) : undefined };
+        return { src: fb.url, displaySrc: fb.url, defaultName: fb.name || `image_${msg?.msg_id || Date.now()}.jpg`, msgId: msg?.msg_id ? String(msg.msg_id) : undefined, threadId: msg?.thread_id ? String(msg.thread_id) : undefined, timestamp: Number(msg?.timestamp) || undefined };
       }
       const displaySrc = extractImgUrl(msg); // local-media:// or remote URL
       const localPath = extractLocalFilePath(msg);
@@ -107,9 +131,22 @@ function buildViewerImages(msgs: any[]): MediaViewerImage[] {
         defaultName: localPath ? localPath.replace(/.*[/\\]/, '') : `image_${msg?.msg_id || Date.now()}.jpg`,
         msgId: msg?.msg_id ? String(msg.msg_id) : undefined,
         threadId: msg?.thread_id ? String(msg.thread_id) : undefined,
+        timestamp: Number(msg?.timestamp) || undefined,
       };
     })
     .filter(img => img.src || img.displaySrc);
+}
+
+/** Dòng DB → ô của bộ sưu tập (null = video / không hiển thị được). Hàm cấp module: tham chiếu ổn định cho buildEntry. */
+function buildViewerEntry(msg: any): MediaViewerImage | null {
+  return buildViewerImagesNewestFirst([msg])[0] ?? null;
+}
+
+/** Một trang của tab (offset, mới → cũ). */
+function fetchMediaPanelPage(t: Tab, params: { zaloId: string; threadId: string; limit: number; offset: number }): Promise<any> {
+  if (t === 'image') return DataAccessor.getMediaMessages(params);
+  if (t === 'file') return DataAccessor.getFileMessages(params);
+  return DataAccessor.getLinks(params);
 }
 
 export function getFileIcon(ext: string): string {
@@ -143,15 +180,24 @@ export default function MediaSection({ threadId, onOpenDetail }: {
   threadId: string;
   onOpenDetail?: (tab: Tab) => void;
 }) {
-  const { activeAccountId } = useAccountStore();
+  const { activeAccountId } = useAccountStore(useShallow(s => ({
+    activeAccountId: s.activeAccountId,
+  })));
   const [tab, setTab] = useState<Tab>('image');
   const [detailTab, setDetailTab] = useState<Tab | null>(null);
-  const [viewerState, setViewerState] = useState<{ images: MediaViewerImage[]; index: number } | null>(null);
+  const galleryRef = useRef<MediaGalleryViewerHandle>(null);
 
   const [previewImages, setPreviewImages] = useState<any[]>([]);
   const [previewFiles,  setPreviewFiles]  = useState<any[]>([]);
   const [previewLinks,  setPreviewLinks]  = useState<any[]>([]);
-  const [previewLoading, setPreviewLoading] = useState(false);
+  // Tab đang chờ tải xem trước (vòng xoay chỉ hiện ở đúng tab đó, lần tải mới nhất của tab mới tắt được)
+  const [previewLoadingTab, setPreviewLoadingTab] = useState<Tab | null>(null);
+  // Tab có lần tải xem trước gần nhất bị lỗi (chế độ nhân viên: mất kết nối BOSS): giữ các ô đang có + "Thử lại"
+  const [previewFailed, setPreviewFailed] = useState<Partial<Record<Tab, boolean>>>({});
+  // Hội thoại đang hiển thị + lần tải mới nhất của từng tab: bỏ phản hồi muộn của hội thoại / lần tải trước
+  const previewOwnerRef = useRef('');
+  previewOwnerRef.current = `${activeAccountId || ''}:${threadId}`;
+  const previewSeqRef = useRef<Record<Tab, number>>({ image: 0, file: 0, link: 0 });
 
   // Reset khi đổi thread
   useEffect(() => {
@@ -159,7 +205,36 @@ export default function MediaSection({ threadId, onOpenDetail }: {
     setPreviewImages([]);
     setPreviewFiles([]);
     setPreviewLinks([]);
+    setPreviewFailed({});
+    setPreviewLoadingTab(null);
   }, [threadId, activeAccountId]);
+
+  /**
+   * Tải xem trước của tab `t`. Lỗi → GIỮ các ô đang có (không thay bằng "Chưa có …"), đánh dấu lỗi để hiện "Thử lại".
+   * `silent`: tải lại nền (kết nối BOSS phục hồi) — không thay lưới bằng vòng xoay.
+   */
+  const loadPreview = useCallback(async (t: Tab, opts: { silent?: boolean } = {}) => {
+    if (!activeAccountId || !threadId) return;
+    const owner = `${activeAccountId}:${threadId}`;
+    const seq = ++previewSeqRef.current[t];
+    if (!opts.silent) setPreviewLoadingTab(t);
+    const limit = (t === 'image' ? PREVIEW_IMAGE : PREVIEW_LIST) + 1;
+    let res: any = null;
+    try {
+      res = await fetchMediaPanelPage(t, { zaloId: activeAccountId, threadId, limit, offset: 0 });
+    } catch (err) {
+      console.warn('[MediaSection] preview load failed:', err);
+    }
+    if (previewOwnerRef.current !== owner || previewSeqRef.current[t] !== seq) return; // đã đổi hội thoại / có lần tải mới hơn
+    const page = toMediaPanelPage(t, res, limit);
+    if (page.success) {
+      if (t === 'image') setPreviewImages(page.items);
+      else if (t === 'file') setPreviewFiles(page.items);
+      else setPreviewLinks(page.items);
+    }
+    setPreviewFailed(prev => (!!prev[t] === !page.success ? prev : { ...prev, [t]: !page.success }));
+    setPreviewLoadingTab(cur => (cur === t ? null : cur));
+  }, [activeAccountId, threadId]);
 
   // Load preview khi đổi tab
   useEffect(() => {
@@ -167,23 +242,13 @@ export default function MediaSection({ threadId, onOpenDetail }: {
     loadPreview(tab);
   }, [tab, threadId, activeAccountId, detailTab]);
 
-  const loadPreview = async (t: Tab) => {
-    if (!activeAccountId) return;
-    setPreviewLoading(true);
-    try {
-      if (t === 'image') {
-        const r = await DataAccessor.getMediaMessages({ zaloId: activeAccountId, threadId, limit: PREVIEW_IMAGE + 1, offset: 0 });
-        setPreviewImages(r?.messages || []);
-      } else if (t === 'file') {
-        const r = await DataAccessor.getFileMessages({ zaloId: activeAccountId, threadId, limit: PREVIEW_LIST + 1, offset: 0 });
-        setPreviewFiles(r?.messages || []);
-      } else {
-        const r = await DataAccessor.getLinks({ zaloId: activeAccountId, threadId, limit: PREVIEW_LIST + 1, offset: 0 });
-        setPreviewLinks(r?.links || []);
-      }
-    } catch {}
-    setPreviewLoading(false);
-  };
+  // Chế độ nhân viên: kết nối BOSS phục hồi → làm mới xem trước của tab đang mở (nền, giữ lưới đang hiện)
+  useEmployeeResync(() => {
+    if (detailTab !== null || !activeAccountId || !threadId) return;
+    return loadPreview(tab, { silent: true });
+  });
+
+  const retryPreview = useCallback(() => { void loadPreview(tab); }, [loadPreview, tab]);
 
   // ── Detail view chiếm toàn panel ──────────────────────────────────────────
   if (detailTab !== null && !onOpenDetail) {
@@ -217,6 +282,7 @@ export default function MediaSection({ threadId, onOpenDetail }: {
   const hasMoreFiles  = previewFiles.length > PREVIEW_LIST;
   const links        = previewLinks.slice(0, PREVIEW_LIST);
   const hasMoreLinks  = previewLinks.length > PREVIEW_LIST;
+  const previewFailedNow = !!previewFailed[tab];
 
   // Build viewer images list (non-video only) from current preview batch
   const previewViewerImages = buildViewerImages(images);
@@ -230,13 +296,13 @@ export default function MediaSection({ threadId, onOpenDetail }: {
   };
 
   return (
-    <div className="border-t border-gray-700">
+    <div className="border-t border-border">
       {/* Tab bar */}
-      <div className="flex border-b border-gray-700">
+      <div className="flex border-b border-border">
         {(['image', 'file', 'link'] as Tab[]).map(t => (
           <button key={t} onClick={() => setTab(t)}
             className={`flex-1 py-2 text-xs font-medium transition-colors ${
-              tab === t ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-gray-300'
+              tab === t ? 'text-blue-400 border-b-2 border-blue-400' : 'text-muted-foreground hover:text-foreground/80'
             }`}>
             {TAB_LABELS[t]}
           </button>
@@ -244,13 +310,13 @@ export default function MediaSection({ threadId, onOpenDetail }: {
       </div>
 
       <div className="p-2">
-        {previewLoading ? (
+        {previewLoadingTab === tab ? (
           <div className="flex justify-center py-6">
             <Spinner size={4} />
           </div>
         ) : tab === 'image' ? (
           images.length === 0
-            ? <EmptyState label="ảnh/video" />
+            ? (previewFailedNow ? <LoadFailedRow onRetry={retryPreview} /> : <EmptyState label="ảnh/video" />)
             : <>
                 <div className="grid grid-cols-3 gap-1">
                   {images.map((msg, i) => {
@@ -263,57 +329,69 @@ export default function MediaSection({ threadId, onOpenDetail }: {
                     });
                     return (
                       <ImageThumb key={i} msg={msg}
-                        onClickImage={() => setViewerState({ images: previewViewerImages, index: viewerIdx >= 0 ? viewerIdx : 0 })}
+                        onClickImage={() => galleryRef.current?.open(previewViewerImages, viewerIdx >= 0 ? viewerIdx : 0)}
                       />
                     );
                   })}
                 </div>
+                {previewFailedNow && <LoadFailedRow text="Không tải được ảnh/video mới nhất" onRetry={retryPreview} />}
                 {hasMoreImages && <ViewAllBtn onClick={() => openDetail('image')} />}
               </>
         ) : tab === 'file' ? (
           files.length === 0
-            ? <EmptyState label="file đính kèm" />
+            ? (previewFailedNow ? <LoadFailedRow onRetry={retryPreview} /> : <EmptyState label="file đính kèm" />)
             : <>
                 <div className="space-y-0.5">
                   {files.map((msg, i) => <FileRow key={i} msg={msg} />)}
                 </div>
+                {previewFailedNow && <LoadFailedRow text="Không tải được file mới nhất" onRetry={retryPreview} />}
                 {hasMoreFiles && <ViewAllBtn onClick={() => openDetail('file')} />}
               </>
         ) : (
           links.length === 0
-            ? <EmptyState label="link" />
+            ? (previewFailedNow ? <LoadFailedRow onRetry={retryPreview} /> : <EmptyState label="link" />)
             : <>
                 <div className="space-y-0.5">
                   {links.map((link, i) => <LinkRow key={i} link={link} />)}
                 </div>
+                {previewFailedNow && <LoadFailedRow text="Không tải được link mới nhất" onRetry={retryPreview} />}
                 {hasMoreLinks && <ViewAllBtn onClick={() => openDetail('link')} />}
               </>
         )}
       </div>
 
-      {/* In-app image viewer */}
-      {viewerState && (
-        <MediaViewer
-          images={viewerState.images}
-          initialIndex={viewerState.index}
-          zaloId={activeAccountId || undefined}
-          onClose={() => setViewerState(null)}
-        />
-      )}
+      {/* In-app image viewer: bộ sưu tập phân trang như khung chat (tải thêm ảnh cũ / mới quanh ảnh được bấm) */}
+      <MediaGalleryViewer
+        ref={galleryRef}
+        accountId={activeAccountId}
+        threadId={threadId}
+        buildEntry={buildViewerEntry}
+      />
     </div>
   );
 }
 
 // ─── Empty state ──────────────────────────────────────────────────────────────
 function EmptyState({ label }: { label: string }) {
-  return <p className="text-xs text-gray-400 text-center py-6">Chưa có {label}</p>;
+  return <p className="text-xs text-muted-foreground text-center py-6">Chưa có {label}</p>;
+}
+
+// ─── Lỗi tải (chế độ nhân viên: mất kết nối BOSS) ─────────────────────────────
+/** Báo gọn ngay trong danh sách + "Thử lại" — lỗi mạng không được trông như "Chưa có …". */
+function LoadFailedRow({ text = 'Không tải được', onRetry }: { text?: string; onRetry: () => void }) {
+  return (
+    <div role="status" className="flex items-center justify-center gap-2 px-3 py-2 text-xs text-muted-foreground">
+      <span>{text}</span>
+      <Button variant="link" size="sm" className="text-xs" onClick={() => onRetry()}>Thử lại</Button>
+    </div>
+  );
 }
 
 // ─── "Xem tất cả" button ──────────────────────────────────────────────────────
 function ViewAllBtn({ onClick }: { onClick: () => void }) {
   return (
     <button onClick={onClick}
-      className="w-full mt-2 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs font-medium transition-colors">
+      className="w-full mt-2 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-muted hover:bg-accent text-foreground/80 text-xs font-medium transition-colors">
       Xem tất cả
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
         <polyline points="9 18 15 12 9 6"/>
@@ -366,79 +444,150 @@ function MediaDetailPanel({ threadId, activeAccountId, tab, onBack }: {
   const [activeTab, setActiveTab] = useState<Tab>(tab);
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
-  const [viewerState, setViewerState] = useState<{ images: MediaViewerImage[]; index: number } | null>(null);
-  const pageRef    = useRef(0);
+  // Phân trang theo số dòng đã NHẬN (offset), không theo số trang đã thử: trang lỗi giữ offset + hasMore để thử lại
+  // đúng trang đó (trước đây trang lỗi = hasMore false → danh sách dừng hẳn; hoặc trang sau nhảy qua trang lỗi).
+  const [paging, setPaging] = useState<ConversationPaging>(INITIAL_PANEL_PAGING);
+  const hasMore = paging.hasMore;
+  const galleryRef = useRef<MediaGalleryViewerHandle>(null);
+  const pagingRef  = useRef<ConversationPaging>(INITIAL_PANEL_PAGING);
+  const itemsRef   = useRef<any[]>(items);
+  itemsRef.current = items;
+  const activeTabRef = useRef<Tab>(activeTab);
+  activeTabRef.current = activeTab;
   const loadingRef = useRef(false);
+  const generationRef = useRef(0); // đổi tab / hội thoại → bỏ phản hồi của lần tải trước
+  const lastFailureAtRef = useRef(0);
   const bottomRef  = useRef<HTMLDivElement>(null);
 
-  const loadPage = useCallback(async (t: Tab, pageNum: number) => {
-    if (!activeAccountId || loadingRef.current) return;
+  const applyPaging = useCallback((next: ConversationPaging) => {
+    pagingRef.current = next;
+    setPaging(next);
+  }, []);
+
+  /**
+   * Trang đầu ('first': thay danh sách) hoặc trang tiếp theo ('more': offset = số dòng đã nhận).
+   * Lỗi → giữ danh sách + hasMore, đếm lỗi: backoff / cuộn tới cuối / "Thử lại" / kết nối lại thử lại đúng trang đó.
+   */
+  const loadPage = useCallback(async (t: Tab, kind: ConversationPage) => {
+    if (!activeAccountId || !threadId || loadingRef.current) return;
+    const generation = generationRef.current;
+    const offset = kind === 'first' ? 0 : pagingRef.current.nextOffset;
     loadingRef.current = true;
     setLoading(true);
-    const offset = pageNum * PAGE_SIZE;
+    let res: any = null;
     try {
-      let newItems: any[] = [];
-      if (t === 'image') {
-        const r = await DataAccessor.getMediaMessages({ zaloId: activeAccountId, threadId, limit: PAGE_SIZE, offset });
-        newItems = r?.messages || [];
-      } else if (t === 'file') {
-        const r = await DataAccessor.getFileMessages({ zaloId: activeAccountId, threadId, limit: PAGE_SIZE, offset });
-        newItems = r?.messages || [];
-      } else {
-        const r = await DataAccessor.getLinks({ zaloId: activeAccountId, threadId, limit: PAGE_SIZE, offset });
-        newItems = r?.links || [];
-      }
-      setItems(prev => pageNum === 0 ? newItems : [...prev, ...newItems]);
-      setHasMore(newItems.length === PAGE_SIZE);
-    } catch {}
+      res = await fetchMediaPanelPage(t, { zaloId: activeAccountId, threadId, limit: PAGE_SIZE, offset });
+    } catch (err) {
+      console.warn('[MediaSection] page load failed:', err);
+    }
+    if (generation !== generationRef.current) return; // đã đổi tab / hội thoại: lần tải mới đang giữ cờ loading
     loadingRef.current = false;
     setLoading(false);
-  }, [activeAccountId, threadId]);
+    const page = toMediaPanelPage(t, res, PAGE_SIZE);
+    if (page.success) {
+      setItems(prev => (kind === 'first' ? page.items : appendMediaPanelRows(t, prev, page.items)));
+    } else {
+      lastFailureAtRef.current = Date.now();
+      console.warn(`[MediaSection] Không tải được ${TAB_LABELS[t]} (offset ${offset}): ${page.error || 'không rõ lỗi'}`);
+    }
+    applyPaging(nextConversationPaging(pagingRef.current, page, kind));
+  }, [activeAccountId, threadId, applyPaging]);
 
-  // Load lại từ đầu khi đổi tab
-  useEffect(() => {
-    pageRef.current = 0;
+  /** Kết nối phục hồi, danh sách đang ổn: thêm media mới (trong lúc mất kết nối) lên đầu, giữ phần đã tải + vị trí cuộn. */
+  const refreshNewest = useCallback(async (t: Tab) => {
+    if (!activeAccountId || !threadId || loadingRef.current) return;
+    const generation = generationRef.current;
+    loadingRef.current = true;
+    let res: any = null;
+    try {
+      res = await fetchMediaPanelPage(t, { zaloId: activeAccountId, threadId, limit: PAGE_SIZE, offset: 0 });
+    } catch (err) {
+      console.warn('[MediaSection] refresh failed:', err);
+    }
+    if (generation !== generationRef.current) return;
     loadingRef.current = false;
+    const page = toMediaPanelPage(t, res, PAGE_SIZE);
+    if (!page.success) return; // lỗi: giữ nguyên danh sách
+    const merged = prependMediaPanelRows(t, itemsRef.current, page.items, PAGE_SIZE);
+    if (merged.gap) {
+      // Cả trang đều mới → có thể hụt giữa trang này và danh sách cũ: bắt đầu lại từ chính trang vừa nhận
+      setItems(page.items);
+      applyPaging(nextConversationPaging(INITIAL_PANEL_PAGING, page, 'first'));
+      return;
+    }
+    if (merged.added === 0) return;
+    setItems(merged.items);
+    applyPaging({ ...pagingRef.current, nextOffset: pagingRef.current.nextOffset + merged.added });
+  }, [activeAccountId, threadId, applyPaging]);
+
+  // Load lại từ đầu khi đổi tab / hội thoại
+  useEffect(() => {
+    generationRef.current += 1;
+    loadingRef.current = false;
+    lastFailureAtRef.current = 0;
     setItems([]);
-    setHasMore(true);
-    loadPage(activeTab, 0);
+    setLoading(false);
+    applyPaging(INITIAL_PANEL_PAGING);
+    void loadPage(activeTab, 'first');
   }, [activeTab, activeAccountId, threadId]);
 
-  // Infinite scroll - sentinel
+  /** Thử lại trang vừa lỗi (nút "Thử lại", backoff, kết nối lại). Danh sách trống → tải lại trang đầu. */
+  const retryFailedPage = useCallback((): Promise<void> => {
+    const kind: ConversationPage = pagingRef.current.failedPage === 'first' || itemsRef.current.length === 0 ? 'first' : 'more';
+    return loadPage(activeTabRef.current, kind);
+  }, [loadPage]);
+
+  // Tự thử lại trang lỗi: 2 s → 4 → 8 → 16 → 30 s (5 lần); sau đó chờ cuộn / "Thử lại" / kết nối lại
+  useEffect(() => {
+    if (paging.failures === 0) return;
+    const delay = retryDelayMs(paging.failures);
+    if (delay == null) return;
+    const timer = setTimeout(() => { void retryFailedPage(); }, delay);
+    return () => clearTimeout(timer);
+  }, [paging.failures, retryFailedPage]);
+
+  // Chế độ nhân viên: kết nối BOSS phục hồi → thử lại trang lỗi / tải lại danh sách trống, hoặc thêm media mới lên đầu
+  useEmployeeResync(() => {
+    if (pagingRef.current.failedPage || itemsRef.current.length === 0) return retryFailedPage();
+    return refreshNewest(activeTabRef.current);
+  });
+
+  // Infinite scroll - sentinel (cũng thử lại trang lỗi; ngay sau một lần lỗi chờ ≥ 2 s để cuộn qua lại không dồn yêu cầu)
   useEffect(() => {
     const el = bottomRef.current;
-    if (!el) return;
+    if (!el || !hasMore) return;
     const obs = new IntersectionObserver(entries => {
-      if (entries[0].isIntersecting && hasMore && !loadingRef.current) {
-        const next = pageRef.current + 1;
-        pageRef.current = next;
-        loadPage(activeTab, next);
-      }
+      if (!entries[0]?.isIntersecting || loadingRef.current) return;
+      const p = pagingRef.current;
+      if (!p.hasMore) return;
+      if (p.failures > 0 && Date.now() - lastFailureAtRef.current < SCROLL_RETRY_COOLDOWN_MS) return;
+      void loadPage(activeTabRef.current, p.failedPage === 'first' ? 'first' : 'more');
     }, { threshold: 0.1 });
     obs.observe(el);
     return () => obs.disconnect();
   }, [hasMore, loadPage, activeTab]);
 
+  const firstLoadFailed = items.length === 0 && paging.failures > 0;
+
   return (
-    <div className="w-72 h-full flex-shrink-0 bg-gray-800 border-l border-gray-700 flex flex-col overflow-hidden">
+    <div className="w-72 h-full flex-shrink-0 bg-card border-l border-border flex flex-col overflow-hidden">
       {/* Header - giống MembersPanel */}
-      <div className="flex items-center gap-2 px-3 py-3 border-b border-gray-700">
+      <div className="flex items-center gap-2 px-3 py-3 border-b border-border">
         <button onClick={onBack}
-          className="p-1 rounded-lg hover:bg-gray-700 text-gray-400 hover:text-white transition-colors">
+          className="p-1 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <polyline points="15 18 9 12 15 6"/>
           </svg>
         </button>
-        <span className="text-sm font-semibold text-white flex-1 text-center pr-6">{TAB_LABELS[activeTab]}</span>
+        <span className="text-sm font-semibold text-foreground flex-1 text-center pr-6">{TAB_LABELS[activeTab]}</span>
       </div>
 
       {/* Sub-tab bar */}
-      <div className="flex border-b border-gray-700 flex-shrink-0">
+      <div className="flex border-b border-border flex-shrink-0">
         {(['image', 'file', 'link'] as Tab[]).map(t => (
           <button key={t} onClick={() => setActiveTab(t)}
             className={`flex-1 py-2 text-xs font-medium transition-colors ${
-              activeTab === t ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-gray-300'
+              activeTab === t ? 'text-blue-400 border-b-2 border-blue-400' : 'text-muted-foreground hover:text-foreground/80'
             }`}>
             {TAB_LABELS[t]}
           </button>
@@ -447,9 +596,11 @@ function MediaDetailPanel({ threadId, activeAccountId, tab, onBack }: {
 
       {/* Count label */}
       <div className="px-4 py-2 flex-shrink-0">
-        <span className="text-xs text-gray-400 font-medium">
+        <span className="text-xs text-muted-foreground font-medium">
           {loading && items.length === 0
             ? 'Đang tải...'
+            : firstLoadFailed
+              ? 'Không tải được'
             : activeTab === 'image'
               ? `${items.length} ảnh/video${hasMore ? '+' : ''}`
               : `${items.length} ${TAB_LABELS[activeTab].toLowerCase()}${hasMore ? '+' : ''}`
@@ -474,16 +625,18 @@ function MediaDetailPanel({ threadId, activeAccountId, tab, onBack }: {
           return (
             <div className="px-2 pb-2">
               {displayableItems.length === 0 && !loading ? (
-                <p className="text-xs text-gray-400 text-center py-8">Chưa có ảnh/video</p>
+                firstLoadFailed
+                  ? <LoadFailedRow onRetry={retryFailedPage} />
+                  : <p className="text-xs text-muted-foreground text-center py-8">Chưa có ảnh/video</p>
               ) : (
                 groupByDateLabel(displayableItems).map(group => (
                   <div key={group.label} className="mb-3">
                     {/* Date header */}
-                    <div className="flex items-center gap-2 py-1.5 sticky top-0 bg-gray-800 z-10">
-                      <span className="text-[11px] font-semibold text-gray-400 whitespace-nowrap">
+                    <div className="flex items-center gap-2 py-1.5 sticky top-0 bg-card z-10">
+                      <span className="text-[11px] font-semibold text-muted-foreground whitespace-nowrap">
                         {group.label}
                       </span>
-                      <div className="flex-1 h-px bg-gray-700" />
+                      <div className="flex-1 h-px bg-muted" />
                     </div>
                     {/* Grid for this date group */}
                     <div className="grid grid-cols-3 gap-1">
@@ -494,7 +647,7 @@ function MediaDetailPanel({ threadId, activeAccountId, tab, onBack }: {
                         const viewerIdx = allViewerImages.findIndex(vi => vi.displaySrc === ds || vi.src === ds);
                         return (
                           <ImageThumb key={i} msg={msg}
-                            onClickImage={() => setViewerState({ images: allViewerImages, index: viewerIdx >= 0 ? viewerIdx : 0 })}
+                            onClickImage={() => galleryRef.current?.open(allViewerImages, viewerIdx >= 0 ? viewerIdx : 0)}
                           />
                         );
                       })}
@@ -509,14 +662,18 @@ function MediaDetailPanel({ threadId, activeAccountId, tab, onBack }: {
         {/* File list */}
         {activeTab === 'file' && (
           items.length === 0 && !loading
-            ? <p className="text-xs text-gray-400 text-center py-8">Chưa có file đính kèm</p>
+            ? (firstLoadFailed
+                ? <LoadFailedRow onRetry={retryFailedPage} />
+                : <p className="text-xs text-muted-foreground text-center py-8">Chưa có file đính kèm</p>)
             : items.map((msg, i) => <FileRow key={i} msg={msg} />)
         )}
 
         {/* Link list */}
         {activeTab === 'link' && (
           items.length === 0 && !loading
-            ? <p className="text-xs text-gray-400 text-center py-8">Chưa có link</p>
+            ? (firstLoadFailed
+                ? <LoadFailedRow onRetry={retryFailedPage} />
+                : <p className="text-xs text-muted-foreground text-center py-8">Chưa có link</p>)
             : items.map((link, i) => <LinkRow key={i} link={link} />)
         )}
 
@@ -527,20 +684,22 @@ function MediaDetailPanel({ threadId, activeAccountId, tab, onBack }: {
             <Spinner size={4} />
           </div>
         )}
+        {/* Trang tiếp theo tải lỗi: giữ danh sách + hasMore, báo gọn (dưới sentinel: hiện ra không làm sentinel nhảy) */}
+        {!loading && paging.failures > 0 && items.length > 0 && (
+          <LoadFailedRow text="Không tải được thêm" onRetry={retryFailedPage} />
+        )}
         {!hasMore && items.length > 0 && (
-          <p className="text-[11px] text-gray-400 text-center py-3">Đã hiển thị tất cả</p>
+          <p className="text-[11px] text-muted-foreground text-center py-3">Đã hiển thị tất cả</p>
         )}
       </div>
 
-      {/* In-app image viewer */}
-      {viewerState && (
-        <MediaViewer
-          images={viewerState.images}
-          initialIndex={viewerState.index}
-          zaloId={activeAccountId || undefined}
-          onClose={() => setViewerState(null)}
-        />
-      )}
+      {/* In-app image viewer: bộ sưu tập phân trang như khung chat */}
+      <MediaGalleryViewer
+        ref={galleryRef}
+        accountId={activeAccountId}
+        threadId={threadId}
+        buildEntry={buildViewerEntry}
+      />
     </div>
   );
 }
@@ -608,10 +767,10 @@ function ImageThumb({ msg, onClickImage }: { msg: any; onClickImage?: () => void
     <div className="relative group/img cursor-pointer" onClick={handleClick}>
       {url ? (
         <img src={url} alt=""
-          className="w-full aspect-square object-cover rounded hover:opacity-80 transition-opacity bg-gray-900"
+          className="w-full aspect-square object-cover rounded hover:opacity-80 transition-opacity bg-card"
           onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
       ) : (
-        <div className="w-full aspect-square rounded bg-gray-900 hover:bg-gray-700 transition-colors" />
+        <div className="w-full aspect-square rounded bg-card hover:bg-muted transition-colors" />
       )}
       {isVideo && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -698,7 +857,7 @@ function FileRow({ msg }: { msg: any }) {
   const dateStr = new Date(msg.timestamp).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: '2-digit' });
 
   return (
-    <div className="flex items-center gap-2 px-3 py-2 hover:bg-gray-700 transition-colors group/file">
+    <div className="flex items-center gap-2 px-3 py-2 hover:bg-muted transition-colors group/file">
       <button
         onClick={async () => {
           const mode = useEmployeeStore.getState().mode;
@@ -717,8 +876,8 @@ function FileRow({ msg }: { msg: any }) {
       >
         <span className="text-xl flex-shrink-0">{getFileIcon(ext)}</span>
         <div className="flex-1 min-w-0">
-          <p className="text-sm text-gray-200 truncate font-medium">{title}</p>
-          <p className="text-[11px] text-gray-400">{sizeStr && `${sizeStr} · `}{dateStr}</p>
+          <p className="text-sm text-foreground truncate font-medium">{title}</p>
+          <p className="text-[11px] text-muted-foreground">{sizeStr && `${sizeStr} · `}{dateStr}</p>
         </div>
       </button>
       {/* FB: download button pointing to CDN */}
@@ -726,7 +885,7 @@ function FileRow({ msg }: { msg: any }) {
         <button
           onClick={() => ipc.shell?.openExternal(href)}
           title="Tải về"
-          className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-600 opacity-0 group-hover/file:opacity-100 transition-all flex-shrink-0"
+          className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent opacity-0 group-hover/file:opacity-100 transition-all flex-shrink-0"
         >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
@@ -750,7 +909,7 @@ function FileRow({ msg }: { msg: any }) {
             ipc.file?.showItemInFolder(localPath);
           }}
           title="Mở thư mục"
-          className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-600 opacity-0 group-hover/file:opacity-100 transition-all flex-shrink-0"
+          className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent opacity-0 group-hover/file:opacity-100 transition-all flex-shrink-0"
         >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
@@ -765,17 +924,17 @@ function FileRow({ msg }: { msg: any }) {
 function LinkRow({ link }: { link: any }) {
   const dateStr = new Date(link.timestamp).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: '2-digit' });
   return (
-    <div className="flex items-center gap-2.5 px-3 py-2 hover:bg-gray-700 transition-colors group/link cursor-pointer"
+    <div className="flex items-center gap-2.5 px-3 py-2 hover:bg-muted transition-colors group/link cursor-pointer"
       onClick={() => link.url && ipc.shell?.openExternal(link.url)}
       title={link.url}
     >
       {/* Thumbnail */}
-      <div className="w-9 h-9 rounded-lg flex-shrink-0 overflow-hidden bg-gray-700 flex items-center justify-center border border-gray-600/50">
+      <div className="w-9 h-9 rounded-lg flex-shrink-0 overflow-hidden bg-muted flex items-center justify-center border border-input/50">
         {link.thumb_url ? (
           <img src={link.thumb_url} alt="" className="w-full h-full object-cover"
             onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
         ) : (
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-400">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-muted-foreground">
             <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/>
             <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>
           </svg>
@@ -783,13 +942,13 @@ function LinkRow({ link }: { link: any }) {
       </div>
       {/* Text */}
       <div className="flex-1 min-w-0">
-        <p className="text-sm text-gray-200 truncate font-medium">{link.title || link.url}</p>
-        <p className="text-[11px] text-gray-400 truncate">{link.domain || link.url}</p>
-        <p className="text-[11px] text-gray-400">{dateStr}</p>
+        <p className="text-sm text-foreground truncate font-medium">{link.title || link.url}</p>
+        <p className="text-[11px] text-muted-foreground truncate">{link.domain || link.url}</p>
+        <p className="text-[11px] text-muted-foreground">{dateStr}</p>
       </div>
       {/* External icon */}
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-        className="flex-shrink-0 text-gray-400 group-hover/link:text-gray-400 transition-colors">
+        className="flex-shrink-0 text-muted-foreground group-hover/link:text-muted-foreground transition-colors">
         <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/>
         <polyline points="15 3 21 3 21 9"/>
         <line x1="10" y1="14" x2="21" y2="3"/>

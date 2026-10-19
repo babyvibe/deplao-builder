@@ -8,7 +8,9 @@ import WorkspaceManager from '../../src/utils/WorkspaceManager';
 import Logger from '../../src/utils/Logger';
 import EventBroadcaster from '../../src/services/event/EventBroadcaster';
 import FileStorageService from '../../src/services/file/FileStorageService';
-import { uploadEmployeeMedia } from './proxyHelper';
+// Upload file của máy nhân viên lên Boss trước khi proxy — dùng chung với Facebook / Telegram (cùng danh sách trường Boss kiểm tra)
+import { prepareLocalFilesForProxy } from './proxyHelper';
+import type { ContactsInfoRefreshResult } from '../../src/models/contact';
 
 /**
  * Registry of IPC handler functions.
@@ -36,12 +38,10 @@ function resolveZaloId(auth: any, allowSingleConnectionFallback = true): string 
             }
 
             // Fallback: look up zaloId from DB by cookies, then check if connection exists
-            // (handles case where cookies in DB are stale but the account IS connected)
+            // (handles case where cookies in DB are stale but the account IS connected).
+            // So trên bản đã giải mã: accounts.cookies lưu mã hoá (ngẫu nhiên) nên WHERE cookies = ? không bao giờ khớp.
             try {
-                const rows = (DatabaseService.getInstance() as any).query(
-                    `SELECT zalo_id FROM accounts WHERE cookies = ? LIMIT 1`, [cookies]
-                );
-                const dbZaloId = rows?.[0]?.zalo_id;
+                const dbZaloId = DatabaseService.getInstance().getAccounts().find(a => a.cookies === cookies)?.zalo_id;
                 if (dbZaloId && ConnectionManager.isConnected(dbZaloId)) {
                     return dbZaloId;
                 }
@@ -95,32 +95,73 @@ function getExplicitAccountId(auth: any): string {
     }
 }
 
+// ─── Làm mới tên/avatar liên hệ hàng loạt theo UID ──────────────────────────
+const CONTACT_REFRESH_BATCH_SIZE = 50;
+const CONTACT_REFRESH_BATCH_DELAY_MS = 300;
+const CONTACT_REFRESH_MAX_IDS = 500;
+
+/** Lỗi khiến gọi tiếp là vô ích (hết phiên, cookie sai, bị giới hạn tần suất, mất mạng). */
+function isContactRefreshStopError(err: any): boolean {
+    const msg = String(err?.message || err || '').toLowerCase();
+    return /rate.?limit|too many|quá nhiều|spam|session|expired|hết hạn|đăng nhập|login|unauthor|forbidden|cookie|not initialized|chưa kết nối|fetch failed|network|econn|timeout|\b(401|403|429)\b/.test(msg);
+}
+
 /**
- * Upload local media files from Employee machine to Boss storage before proxying.
- * Employee's local file paths are invalid on Boss - reads each file on the
- * Employee side, sends as base64 via uploadEmployeeMedia(), returns Boss-resolved paths.
- * In standalone/boss mode (no-op) returns original params unchanged.
+ * zalo:refreshContactsInfo — gọi getUserInfo theo lô 50 (tuần tự, nghỉ 300 ms giữa các lô) rồi ghi
+ * tên/avatar vào contacts + friends theo UID của tài khoản đang đăng nhập (chỉ UPDATE dòng đã có).
+ * Gặp lỗi hết phiên / giới hạn tần suất (hoặc 2 lô lỗi liên tiếp) thì dừng và trả kết quả một phần.
  */
-async function prepareLocalFilesForProxy(params: any): Promise<any> {
-    const singleFields = ['filePath', 'videoPath', 'thumbPath', 'voicePath', 'avatarPath', 'mediaPath'];
-    let result = { ...params };
+async function refreshContactsInfo(service: ZaloService, params: any): Promise<ContactsInfoRefreshResult> {
+    const ownerZaloId = service.getZaloId() || '';
+    const rawIds: unknown[] = Array.isArray(params?.userIds) ? params.userIds : [];
+    const ids = Array.from(new Set(
+        rawIds.map(id => String(id ?? '').trim()).filter(id => id && id !== 'undefined' && !id.includes('_'))
+    )).slice(0, CONTACT_REFRESH_MAX_IDS);
+    const result: ContactsInfoRefreshResult = { updated: 0, failed: [], checked: 0, profiles: [] };
+    if (ids.length === 0) return result;
+    if (!ownerZaloId) {
+        result.failed = ids;
+        result.error = 'Không xác định được tài khoản Zalo.';
+        return result;
+    }
 
-    for (const field of singleFields) {
-        if (result[field] && typeof result[field] === 'string' && result[field].length > 0) {
-            const bossPaths = await uploadEmployeeMedia([result[field]]);
-            if (bossPaths && bossPaths[0]) {
-                result[field] = bossPaths[0];
+    const db = DatabaseService.getInstance();
+    let consecutiveErrors = 0;
+    for (let i = 0; i < ids.length; i += CONTACT_REFRESH_BATCH_SIZE) {
+        const batch = ids.slice(i, i + CONTACT_REFRESH_BATCH_SIZE);
+        if (i > 0) await new Promise(resolve => setTimeout(resolve, CONTACT_REFRESH_BATCH_DELAY_MS));
+        let response: any;
+        try {
+            response = await service.getUserInfo(batch);
+        } catch (err: any) {
+            consecutiveErrors++;
+            const msg = err?.message || String(err);
+            result.failed.push(...batch);
+            if (isContactRefreshStopError(err) || consecutiveErrors >= 2) {
+                result.failed.push(...ids.slice(i + CONTACT_REFRESH_BATCH_SIZE));
+                result.error = msg;
+                Logger.warn(`[zaloIpc] zalo:refreshContactsInfo ${ownerZaloId}: dừng sau ${i + batch.length}/${ids.length} UID (${msg})`);
+                break;
             }
+            Logger.warn(`[zaloIpc] zalo:refreshContactsInfo ${ownerZaloId}: lô ${Math.floor(i / CONTACT_REFRESH_BATCH_SIZE) + 1} lỗi, thử lô tiếp: ${msg}`);
+            continue;
         }
-    }
-
-    if (result.filePaths && Array.isArray(result.filePaths) && result.filePaths.length > 0) {
-        const bossPaths = await uploadEmployeeMedia(result.filePaths);
-        if (bossPaths && bossPaths.length > 0) {
-            result.filePaths = bossPaths;
+        consecutiveErrors = 0;
+        const changed: Record<string, any> = response?.changed_profiles || {};
+        const profiles: ContactsInfoRefreshResult['profiles'] = [];
+        for (const id of batch) {
+            // zca-js gửi "<uid>_0"; key trả về có thể kèm hoặc không kèm hậu tố.
+            const profile = changed[id] ?? changed[`${id}_0`] ?? null;
+            const displayName = String(profile?.displayName || profile?.zaloName || '').trim();
+            const avatarUrl = String(profile?.avatar || '').trim();
+            if (profile && (displayName || avatarUrl)) profiles.push({ contactId: id, displayName, avatarUrl });
+            else result.failed.push(id);
         }
+        result.updated += db.applyContactInfoRefresh(ownerZaloId, profiles, batch);
+        result.profiles.push(...profiles);
+        result.checked += batch.length;
     }
-
+    Logger.log(`[zaloIpc] zalo:refreshContactsInfo ${ownerZaloId}: ${result.updated} dòng DB cập nhật, ${result.profiles.length} profile, ${result.checked}/${ids.length} UID đã hỏi, ${result.failed.length} không có dữ liệu`);
     return result;
 }
 
@@ -151,7 +192,7 @@ function wrap(channel: string, fn: (service: ZaloService, params: any) => Promis
             // let stale credentials from that UI work be redirected to the
             // only active Zalo connection; it is both misleading and can call
             // the wrong account while a non-Zalo channel is syncing.
-            const requiresStrictAccount = channel === 'zalo:getUserInfo';
+            const requiresStrictAccount = channel === 'zalo:getUserInfo' || channel === 'zalo:refreshContactsInfo';
             const explicitAccountId = getExplicitAccountId(auth);
             let zaloId = resolveZaloId(auth, !requiresStrictAccount);
 
@@ -205,7 +246,10 @@ function wrap(channel: string, fn: (service: ZaloService, params: any) => Promis
         } catch (error: any) {
             const errorMsg = error?.message || error?.toString() || 'Unknown error';
             Logger.error(`[zaloIpc] ${channel} error:`, error);
-            return { success: false, error: errorMsg };
+            // Mã lỗi Zalo (ZaloApiError.code — vd joinGroupLink: 178 đã là thành viên, 172 nhóm đầy) để UI phân loại;
+            // trước đây bị bỏ nên các màn kiểm tra `res.errorCode` không bao giờ khớp
+            const errorCode = typeof error?.code === 'number' ? error.code : undefined;
+            return { success: false, error: errorMsg, ...(errorCode !== undefined ? { errorCode } : {}) };
         }
     };
 
@@ -244,19 +288,20 @@ export function registerZaloIpc() {
     );
 
     wrap('zalo:uploadVoiceFile', (s, p) =>
-        s.uploadVoiceFile(p.voicePath, p.threadId, p.type)
+        s.uploadVoiceFile(FileStorageService.resolveAbsolutePath(p.voicePath), p.threadId, p.type)
     );
 
     wrap('zalo:sendVideo', (s, p) =>
         s.sendVideo(p.options, p.threadId, p.type, p.quote)
     );
 
+    // Đường dẫn tương đối lưu trong DB (media/…) như sendImage/sendFile — chuyển tiếp video đã tải về dùng dạng này.
     wrap('zalo:uploadVideoThumb', (s, p) =>
-        s.uploadVideoThumb(p.thumbPath, p.threadId, p.type)
+        s.uploadVideoThumb(FileStorageService.resolveAbsolutePath(p.thumbPath), p.threadId, p.type)
     );
 
     wrap('zalo:uploadVideoFile', (s, p) =>
-        s.uploadVideoFile(p.videoPath, p.threadId, p.type)
+        s.uploadVideoFile(FileStorageService.resolveAbsolutePath(p.videoPath), p.threadId, p.type)
     );
 
     wrap('zalo:sendLink', (s, p) =>
@@ -337,6 +382,9 @@ export function registerZaloIpc() {
     wrap('zalo:getUserInfo', (s, p) =>
         s.getUserInfo(p.userId)
     );
+
+    // Làm mới tên/avatar hàng loạt cho liên hệ đã có trong DB (theo UID) — xem refreshContactsInfo().
+    wrap('zalo:refreshContactsInfo', (s, p) => refreshContactsInfo(s, p));
 
     // Lấy context của phiên đăng nhập (uid, phone, loginInfo, ...)
     {
@@ -731,6 +779,11 @@ export function registerZaloIpc() {
     // ─── Sự kiện đã đọc ────────────────────────────────────────────────────
     wrap('zalo:sendSeenEvent', (s, p) =>
         s.sendSeenEvent(p.messages, p.type)
+    );
+
+    // Trạng thái "đang gõ" — dùng chung cho UI, Public API v1 và plugin.
+    wrap('zalo:sendTyping', (s, p) =>
+        s.sendTypingEvent(p.threadId, p.type ?? p.threadType)
     );
 
     // ─── Gửi thẻ ngân hàng ─────────────────────────────────────────────────

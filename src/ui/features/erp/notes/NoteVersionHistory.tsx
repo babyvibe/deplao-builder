@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import ipc from '@/lib/ipc';
+import DataAccessor from '@/lib/data/DataAccessor';
+import { withErpDeniedNotice } from '@/store/erp/erpStoreHelpers';
 import type { ErpNote, ErpNoteVersion } from '../../../../models/erp';
 import { EmployeeAvatar } from '../shared/ErpBadges';
 import { ConfirmDialog } from '../shared/ErpDialogs';
@@ -20,7 +21,7 @@ export default function NoteVersionHistory({ note, onClose, onRestored }: Props)
 
   useEffect(() => {
     (async () => {
-      const res = await ipc.erp?.noteVersions({ noteId: note.id });
+      const res: any = await DataAccessor.erpNoteVersions(note.id);
       if (res?.success) {
         const list = (res.versions ?? []) as ErpNoteVersion[];
         setVersions(list);
@@ -34,7 +35,7 @@ export default function NoteVersionHistory({ note, onClose, onRestored }: Props)
     if (!restoreTarget) return;
     setRestoring(true);
     try {
-      const res = await ipc.erp?.noteRestoreVersion({ noteId: note.id, versionId: restoreTarget.id });
+      const res: any = withErpDeniedNotice(await DataAccessor.erpRestoreNoteVersion(restoreTarget.id, note.id));
       if (res?.success && res.note) onRestored?.(res.note);
       setRestoreTarget(null);
       onClose();
@@ -43,22 +44,22 @@ export default function NoteVersionHistory({ note, onClose, onRestored }: Props)
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[9999]" onClick={onClose}>
-      <div className="bg-gray-800 border border-gray-700 rounded-2xl w-[800px] h-[560px] flex flex-col shadow-2xl"
+      <div className="bg-card border border-border rounded-2xl w-[800px] h-[560px] flex flex-col shadow-2xl"
            onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-700/60">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-border/60">
           <div>
-            <h3 className="text-base font-semibold text-white">Lịch sử phiên bản</h3>
-            <p className="text-xs text-gray-400 truncate max-w-[600px]">"{note.title}"</p>
+            <h3 className="text-base font-semibold text-foreground">Lịch sử phiên bản</h3>
+            <p className="text-xs text-muted-foreground truncate max-w-[600px]">"{note.title}"</p>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-white text-lg">×</button>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-lg">×</button>
         </div>
 
         <div className="flex-1 flex min-h-0">
           {/* Version list */}
-          <div className="w-60 border-r border-gray-700/60 overflow-y-auto bg-gray-900/40">
+          <div className="w-60 border-r border-border/60 overflow-y-auto bg-background/40">
             {loading && <PageLoading variant="inline" size="sm" />}
             {!loading && versions.length === 0 && (
-              <p className="text-xs text-gray-400 p-3 text-center">Chưa có phiên bản nào.</p>
+              <p className="text-xs text-muted-foreground p-3 text-center">Chưa có phiên bản nào.</p>
             )}
             {versions.map(v => {
               const isActive = active?.id === v.id;
@@ -66,15 +67,15 @@ export default function NoteVersionHistory({ note, onClose, onRestored }: Props)
                 <button
                   key={v.id}
                   onClick={() => setActive(v)}
-                  className={`w-full text-left px-3 py-2.5 border-b border-gray-700/40 transition-colors ${
-                    isActive ? 'bg-blue-600/15 border-l-2 border-l-blue-500' : 'hover:bg-gray-700/30'
+                  className={`w-full text-left px-3 py-2.5 border-b border-border/40 transition-colors ${
+                    isActive ? 'bg-blue-600/15 border-l-2 border-l-blue-500' : 'hover:bg-muted/30'
                   }`}
                 >
                   <div className="flex items-center gap-1.5 mb-0.5">
                     <EmployeeAvatar employeeId={v.editor_id} size={18} />
-                    <span className="text-[11px] text-gray-300 truncate">{v.editor_id}</span>
+                    <span className="text-[11px] text-foreground/80 truncate">{v.editor_id}</span>
                   </div>
-                  <p className="text-[10px] text-gray-400">
+                  <p className="text-[10px] text-muted-foreground">
                     {new Date(v.created_at).toLocaleString('vi-VN')}
                   </p>
                 </button>
@@ -86,8 +87,8 @@ export default function NoteVersionHistory({ note, onClose, onRestored }: Props)
           <div className="flex-1 flex flex-col min-w-0">
             {active ? (
               <>
-                <div className="px-5 py-2 border-b border-gray-700/40 flex items-center justify-between flex-shrink-0">
-                  <p className="text-xs text-gray-400">
+                <div className="px-5 py-2 border-b border-border/40 flex items-center justify-between flex-shrink-0">
+                  <p className="text-xs text-muted-foreground">
                     {new Date(active.created_at).toLocaleString('vi-VN')} · {active.content_snapshot.length} ký tự
                   </p>
                   <button
@@ -97,12 +98,12 @@ export default function NoteVersionHistory({ note, onClose, onRestored }: Props)
                     ↩ Khôi phục phiên bản này
                   </button>
                 </div>
-                <pre className="flex-1 overflow-auto px-5 py-4 text-xs text-gray-300 whitespace-pre-wrap font-mono leading-relaxed">
+                <pre className="flex-1 overflow-auto px-5 py-4 text-xs text-foreground/80 whitespace-pre-wrap font-mono leading-relaxed">
                   {active.content_snapshot}
                 </pre>
               </>
             ) : (
-              <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
+              <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
                 Chọn phiên bản ở cột trái để xem
               </div>
             )}

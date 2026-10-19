@@ -78,22 +78,22 @@ export default function SharedGroupsSection({ activeAccountId, onJoinGroup }: Sh
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Header */}
-      <div className="px-5 py-3 border-b border-gray-700 flex-shrink-0">
+      <div className="px-5 py-3 border-b border-border flex-shrink-0">
         <div className="flex items-center justify-between mb-2">
-          <h3 className="text-sm font-semibold text-white">Nhóm chung</h3>
+          <h3 className="text-sm font-semibold text-foreground">Nhóm chung</h3>
           {loading && SpinIcon}
         </div>
-        <p className="text-[11px] text-gray-400">Danh sách nhóm đã được chia sẻ và duyệt bởi admin</p>
+        <p className="text-[11px] text-muted-foreground">Danh sách nhóm đã được chia sẻ và duyệt bởi admin</p>
       </div>
 
       {/* Category filter tabs */}
-      <div className="px-4 py-2 border-b border-gray-700/50 flex-shrink-0 overflow-x-auto">
+      <div className="px-4 py-2 border-b border-border/50 flex-shrink-0 overflow-x-auto">
         <div className="flex gap-1.5 min-w-max">
           <button onClick={() => setSelectedCategoryId(null)}
             className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap
               ${selectedCategoryId === null
                 ? 'bg-blue-600 text-white'
-                : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
+                : 'bg-muted text-muted-foreground hover:bg-accent'}`}>
             Tất cả
           </button>
           {categories.filter(c => (c.count ?? 0) > 0).map(cat => (
@@ -101,7 +101,7 @@ export default function SharedGroupsSection({ activeAccountId, onJoinGroup }: Sh
               className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap flex items-center gap-1
                 ${selectedCategoryId === cat.id
                   ? 'bg-blue-600 text-white'
-                  : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
+                  : 'bg-muted text-muted-foreground hover:bg-accent'}`}>
               <span>{cat.icon}</span>
               <span>{cat.name}</span>
               <span className="text-[10px] opacity-60">({cat.count ?? 0})</span>
@@ -111,38 +111,38 @@ export default function SharedGroupsSection({ activeAccountId, onJoinGroup }: Sh
       </div>
 
       {/* Search */}
-      <div className="px-4 py-2 border-b border-gray-700/50 flex-shrink-0">
+      <div className="px-4 py-2 border-b border-border/50 flex-shrink-0">
         <div className="relative">
-          <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">{SearchIcon}</div>
+          <div className="absolute left-3 top-1/2 -translate-y-1/2 text-subtle-foreground">{SearchIcon}</div>
           <input type="text" value={searchText} onChange={e => setSearchText(e.target.value)}
             placeholder="Tìm nhóm theo tên hoặc ID..."
-            className="w-full bg-gray-800 border border-gray-600 rounded-lg pl-9 pr-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500" />
+            className="w-full bg-card border border-input rounded-lg pl-9 pr-3 py-1.5 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500" />
         </div>
       </div>
 
       {/* Group list */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto bg-card">
         {groups.length === 0 && !loading ? (
           <div className="flex flex-col items-center justify-center h-full px-5 py-8 text-center">
-            <div className="w-12 h-12 rounded-full bg-gray-800 flex items-center justify-center mb-3 opacity-70">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-400">
+            <div className="w-12 h-12 rounded-full bg-card flex items-center justify-center mb-3 opacity-70">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-muted-foreground">
                 <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
                 <circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
                 <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
               </svg>
             </div>
-            <p className="text-sm text-gray-300 font-medium mb-1">Chưa có nhóm nào</p>
-            <p className="text-xs text-gray-400">Các nhóm được chia sẻ sẽ hiển thị ở đây</p>
+            <p className="text-sm text-foreground/80 font-medium mb-1">Chưa có nhóm nào</p>
+            <p className="text-xs text-muted-foreground">Các nhóm được chia sẻ sẽ hiển thị ở đây</p>
           </div>
         ) : filteredGroups.length === 0 ? (
-          <div className="flex items-center justify-center h-16 text-xs text-gray-400">
+          <div className="flex items-center justify-center h-16 text-xs text-muted-foreground">
             Không tìm thấy nhóm
           </div>
         ) : (
           <div className="p-2 space-y-1">
             {filteredGroups.map(group => (
               <div key={group.shareId}
-                className="flex items-center gap-3 px-3 py-3 rounded-xl hover:bg-gray-800/60 transition-colors border border-transparent hover:border-gray-700">
+                className="flex items-center gap-3 px-3 py-3 rounded-xl hover:bg-card/60 transition-colors border border-transparent hover:border-border">
                 {/* Avatar */}
                 {group.groupAvatar ? (
                   <img src={group.groupAvatar} alt={group.groupName}
@@ -157,13 +157,13 @@ export default function SharedGroupsSection({ activeAccountId, onJoinGroup }: Sh
                 {/* Info */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5">
-                    <p className="text-sm text-white font-medium truncate">{group.groupName}</p>
+                    <p className="text-sm text-foreground font-medium truncate">{group.groupName}</p>
                     <span className="text-xs">{group.category.icon}</span>
                   </div>
-                  <p className="text-[11px] text-gray-400 mt-0.5">
+                  <p className="text-[11px] text-muted-foreground mt-0.5">
                     {group.memberCount.toLocaleString('vi-VN')} thành viên
                     <span className="mx-1.5">·</span>
-                    <span className="text-gray-500">Chia sẻ bởi {group.submittedBy}</span>
+                    <span className="text-subtle-foreground">Chia sẻ bởi {group.submittedBy}</span>
                   </p>
                 </div>
 
@@ -177,7 +177,7 @@ export default function SharedGroupsSection({ activeAccountId, onJoinGroup }: Sh
                     const url = `https://zalo.me/g/${group.groupId}`;
                     window.open(url, '_blank');
                   }}
-                    className="w-8 h-8 rounded-lg bg-gray-700 hover:bg-gray-600 flex items-center justify-center text-gray-400 transition-colors"
+                    className="w-8 h-8 rounded-lg bg-muted hover:bg-accent flex items-center justify-center text-muted-foreground transition-colors"
                     title="Mở link nhóm">
                     {ExternalLinkIcon}
                   </button>

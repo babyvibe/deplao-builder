@@ -73,6 +73,29 @@ Python: `sendReaction`, `editMessage`, `unsendMessage`, `sendTyping`,
 `SendE2EEAudio`. To expose, add a `case "..."` in `handle(req)` of `main.go`
 and rebuild.
 
+## Deplao: credential login helper (`login/`)
+
+`login/` is a separate Go module (its own `go.mod`) that
+`scripts/build-bridge-e2ee.js` builds into `build/fbchat-login-bridge[.exe]`
+next to the E2EE bridge. It was split off when fbchat-v2 2.3.2 pinned mautrix-meta
+3ed7bfa, whose Bloks interpreter crashes on Facebook's current Messenger Lite login
+pages. The E2EE bridge now pins cea2e38 (fbchat-v2 2.3.3), still older than the
+helper's mautrix-meta, so the helper keeps its own newer copy and only runs the
+login wizard. It returns session cookies; the account then connects through the
+E2EE bridge.
+
+Methods: `hello`, `startNativeLogin`, `submitNativeLogin`, `waitNativeLogin`
+(approval on another device), `backNativeLogin` ("Try another way"),
+`cancelNativeLogin`, `disconnect`. Errors carry `errorCode` (mautrix login
+error codes).
+
+To move it to another mautrix-meta revision: run
+`go get go.mau.fi/mautrix-meta@<commit>` and `go mod tidy` inside `login/`
+only, copy any `replace` lines from mautrix-meta's own `go.mod` (currently
+`github.com/imroc/req/v3 => github.com/beeper/req/v3`), and update
+`loginHelper` in `docs/fbchat-v2.3.3-vendor-manifest.json`; the build checks
+that the two agree.
+
 ## License
 
 The `bridge/` directory contains code copied from

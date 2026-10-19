@@ -1,16 +1,17 @@
 import { create } from 'zustand';
 import { useAccountStore } from './accountStore';
 import { useEmployeeStore } from './employeeStore';
-import DataAccessor from '@/lib/data/DataAccessor';
+import DataAccessor, { isReadFailure } from '@/lib/data/DataAccessor';
+import { isZalo } from '@/lib/channelHelper';
 
-type AppView = 'chat' | 'friends' | 'settings' | 'dashboard' | 'crm' | 'workflow' | 'integration' | 'analytics' | 'erp';
+type AppView = 'chat' | 'friends' | 'settings' | 'dashboard' | 'crm' | 'workflow' | 'integration' | 'analytics' | 'erp' | 'plugin';
 export type AppTheme = 'dark' | 'light';
 
 export interface GroupMember {
   userId: string;
   displayName: string;
   avatar: string;
-  role: number; // 0=member, 1=owner, 2=deputy
+  role: number; // 0 = thành viên; chủ / phó nhóm tuỳ kênh (Zalo 2 / 1, Telegram 1 / 2) — đọc qua shared/groupMemberRoles
   username?: string; // Telegram @username
   status?: string;
   statusText?: string;
@@ -72,11 +73,26 @@ export interface PinnedIntegrationShortcut {
 
 interface AppStore {
   view: AppView;
+  /** Trang plugin đang mở khi view === 'plugin'. */
+  activePluginPage: { pluginId: string; pageId: string } | null;
+  openPluginPage: (pluginId: string, pageId: string) => void;
+  /** Trang "Ứng dụng": lưới các ứng dụng (plugin) đã cài. */
+  openPluginHub: () => void;
+  /** Ngăn đang mở ở trang Ứng dụng (installed | dev = Phát triển ứng dụng). */
+  pluginHubTab: 'installed' | 'dev';
+  setPluginHubTab: (tab: 'installed' | 'dev') => void;
+  /** Phần đang mở ở trang Ứng dụng, API & Webhook (Công cụ → Ứng dụng, API & Webhook). */
+  pluginHubSection: 'plugins' | 'api' | 'webhooks';
+  setPluginHubSection: (section: 'plugins' | 'api' | 'webhooks') => void;
+  /** Panel plugin bên phải màn chat (đóng các panel phải khác khi mở). */
+  activePluginPanel: { pluginId: string; panelId: string } | null;
+  setActivePluginPanel: (panel: { pluginId: string; panelId: string } | null) => void;
   isLoading: boolean;
   notification: { message: string; type: 'success' | 'error' | 'info' | 'warning' } | null;
   erpPermissionDialog: { title: string; message: string; details?: string } | null;
   addAccountModalOpen: boolean;
   addAccountInitialChannel: string | null;  // Channel to pre-select when opening Add Account modal (e.g., re-login)
+  addAccountInitialProxyId: number | null;  // Proxy to pre-select on re-login (keeps the account's current proxy)
   showConversationInfo: boolean;
   showGroupBoard: boolean;
   showIntegrationQuickPanel: boolean;
@@ -136,7 +152,7 @@ interface AppStore {
   hideNotification: () => void;
   showErpPermissionDialog: (payload?: { title?: string; message?: string; details?: string }) => void;
   hideErpPermissionDialog: () => void;
-  setAddAccountModalOpen: (open: boolean, initialChannel?: string) => void;
+  setAddAccountModalOpen: (open: boolean, initialChannel?: string, initialProxyId?: number | null) => void;
   toggleConversationInfo: () => void;
   setShowGroupBoard: (open: boolean) => void;
   toggleIntegrationQuickPanel: () => void;
@@ -159,8 +175,16 @@ interface AppStore {
   /**
    * Bulk-load mute + others flags from DB into in-memory cache.
    * Call this whenever the active account changes.
+   * A failed read keeps the cached flags (never replaced with an empty set).
    */
   loadFlags: (zaloId: string) => Promise<void>;
+
+  /**
+   * Employee mode: tải lại cờ (tắt tiếng / "Khác") + nhãn của các tài khoản đang xem sau khi kết nối BOSS
+   * phục hồi (useEmployeeResync). Không có `zaloIds` → tài khoản đang mở / các tài khoản gộp trang.
+   * Chế độ chủ/standalone: không làm gì.
+   */
+  reloadEmployeeData: (zaloIds?: string[]) => Promise<void>;
 
   /** Mute a contact. Persists to DB + updates in-memory cache. */
   setMuted: (zaloId: string, contactId: string, until: number) => void;
@@ -185,6 +209,11 @@ interface AppStore {
   removeFromOthers: (zaloId: string, contactId: string) => void;
   /** Fast in-memory check. */
   isInOthers: (zaloId: string, contactId: string) => boolean;
+  /**
+   * Áp dụng cờ tắt tiếng / "Khác" vừa đổi ở nơi khác (db:contactFlagsChanged — Boss hoặc nhân viên khác, hoặc tiếng
+   * vọng thay đổi của chính mình) vào bộ nhớ đệm. KHÔNG ghi DB. Giá trị như đang có → không đổi state (không render lại).
+   */
+  applyContactFlags: (zaloId: string, contactId: string, flags: { is_muted?: number; mute_until?: number; is_in_others?: number }) => void;
 
   // Group info cache
   groupInfoCache: Record<string, Record<string, CachedGroupInfo>>;
@@ -344,17 +373,44 @@ function loadAiThreadAssistantMap(): Record<string, string> {
 }
 
 // ─── Helper: write flag to DB via IPC (fire-and-forget) ─────────────────────
-function persistFlag(zaloId: string, contactId: string, flags: { is_muted?: number; mute_until?: number; is_in_others?: number }) {
-  DataAccessor.setContactFlags({ zaloId, contactId, flags }).catch(() => {});
+/**
+ * Lưu cờ tắt thông báo / "Khác". UI đã đổi trước (optimistic); ghi lỗi (nhân viên mất kết nối Boss, không có quyền…)
+ * → `revert()` trả lại trạng thái cũ + báo lỗi. Trước đây lỗi bị bỏ qua: UI báo đã tắt thông báo nhưng Boss không lưu.
+ */
+function persistFlag(
+  zaloId: string,
+  contactId: string,
+  flags: { is_muted?: number; mute_until?: number; is_in_others?: number },
+  revert: () => void,
+) {
+  const fail = (error?: string) => {
+    revert();
+    useAppStore.getState().showNotification(`Không lưu được thay đổi${error ? `: ${error}` : ''}`, 'error');
+  };
+  DataAccessor.setContactFlags({ zaloId, contactId, flags })
+    .then((res: any) => { if (res && res.success === false) fail(res.error); })
+    .catch((err: any) => fail(err?.message));
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
   view: 'dashboard',
+  activePluginPage: null,
+  openPluginPage: (pluginId, pageId) => set({ view: 'plugin', activePluginPage: { pluginId, pageId } }),
+  openPluginHub: () => set({ view: 'plugin', activePluginPage: null }),
+  pluginHubTab: 'installed',
+  setPluginHubTab: (tab) => set({ pluginHubTab: tab }),
+  pluginHubSection: 'plugins',
+  setPluginHubSection: (section) => set({ pluginHubSection: section }),
+  activePluginPanel: null,
+  setActivePluginPanel: (panel) => set(panel
+    ? { activePluginPanel: panel, showConversationInfo: false, showGroupBoard: false, showIntegrationQuickPanel: false, showAIQuickPanel: false }
+    : { activePluginPanel: null }),
   isLoading: false,
   notification: null,
   erpPermissionDialog: null,
   addAccountModalOpen: false,
   addAccountInitialChannel: null,
+  addAccountInitialProxyId: null,
   showConversationInfo: false,
   showGroupBoard: false,
   showIntegrationQuickPanel: false,
@@ -418,7 +474,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
     },
   }),
   hideErpPermissionDialog: () => set({ erpPermissionDialog: null }),
-  setAddAccountModalOpen: (addAccountModalOpen, initialChannel) => set({ addAccountModalOpen, addAccountInitialChannel: initialChannel || null }),
+  setAddAccountModalOpen: (addAccountModalOpen, initialChannel, initialProxyId) => set({
+    addAccountModalOpen,
+    addAccountInitialChannel: initialChannel || null,
+    addAccountInitialProxyId: initialProxyId ?? null,
+  }),
   toggleConversationInfo: () => set((s) => ({
     showConversationInfo: !s.showConversationInfo,
     showGroupBoard: !s.showConversationInfo ? false : s.showGroupBoard,
@@ -518,9 +578,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
 
     // Employee mode: labels from Boss REST API
-    try {
-      if (useEmployeeStore.getState().mode === 'employee') {
+    if (useEmployeeStore.getState().mode === 'employee') {
+      try {
         const res = await DataAccessor.getLocalLabels({ zaloId });
+        // Lỗi: KHÔNG cache (trước đây lỗi = nhãn rỗng suốt 12 h) và giữ nhãn đang có. Không đóng dấu
+        // labelsFetchedAt → lần đổi tài khoản / kết nối lại sau hỏi lại BOSS.
+        if (isReadFailure(res)) return { labels: cached || [], version: cachedVersion };
         const labels = (res?.labels || []).map((l: any) => ({
           id: l.id,
           text: l.name || '',
@@ -537,8 +600,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
           labelsFetchedAt: { ...s.labelsFetchedAt, [zaloId]: Date.now() },
         }));
         return { labels, version: 0 };
+      } catch {
+        // Máy nhân viên không có phiên Zalo: không rơi xuống gọi Zalo API (lỗi đó lại bị cache 5 phút)
+        return { labels: cached || [], version: cachedVersion };
       }
-    } catch {}
+    }
 
     // Fetch from Zalo API
     try {
@@ -586,6 +652,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   loadFlags: async (zaloId) => {
     try {
       const res = await DataAccessor.getContactsWithFlags(zaloId);
+      // Lỗi (employee: mất kết nối BOSS) → giữ cờ đang có: thay bằng rỗng làm "Khác" trống và hội thoại
+      // đang tắt tiếng kêu lại. reloadEmployeeData tải lại khi kết nối phục hồi.
       if (!res?.success) return;
 
       const newMuted: Record<string, number> = {};
@@ -611,27 +679,60 @@ export const useAppStore = create<AppStore>((set, get) => ({
     } catch {}
   },
 
+  reloadEmployeeData: async (zaloIds) => {
+    if (useEmployeeStore.getState().mode !== 'employee') return;
+    const s = get();
+    const activeId = useAccountStore.getState().activeAccountId;
+    const ids = (zaloIds && zaloIds.length > 0)
+      ? zaloIds
+      : (s.mergedInboxMode && s.mergedInboxAccounts.length > 0 ? s.mergedInboxAccounts : (activeId ? [activeId] : []));
+    const unique = [...new Set(ids.filter(Boolean))];
+    if (unique.length === 0) return;
+    const accounts = useAccountStore.getState().accounts;
+    await Promise.allSettled(unique.flatMap((zaloId) => {
+      const tasks: Promise<unknown>[] = [get().loadFlags(zaloId)];
+      // Nhãn chỉ nạp cho tài khoản Zalo (như ConversationList). `force`: nhãn đã cache trước lúc mất kết nối có
+      // thể đã đổi trên BOSS; nhánh nhân viên không dùng auth.
+      if (isZalo(accounts.find((a) => a.zalo_id === zaloId)?.channel)) {
+        tasks.push(get().fetchLabelsWithCache(zaloId, null, true));
+      }
+      return tasks;
+    }));
+  },
+
   // ─── Mute ────────────────────────────────────────────────────────────
   setMuted: (zaloId, contactId, until) => {
+    const previous = get().mutedThreads[zaloId]?.[contactId];
     // until=0 → indefinite, until>0 → epoch ms expiry
     set((s) => ({
       mutedThreads: { ...s.mutedThreads, [zaloId]: { ...(s.mutedThreads[zaloId] || {}), [contactId]: until } },
     }));
+    // Lỗi lưu → trả về giá trị trước (nếu chưa ai đổi tiếp)
+    const revert = () => set((s) => {
+      if (s.mutedThreads[zaloId]?.[contactId] !== until) return {};
+      const next = { ...(s.mutedThreads[zaloId] || {}) };
+      if (previous === undefined) delete next[contactId]; else next[contactId] = previous;
+      return { mutedThreads: { ...s.mutedThreads, [zaloId]: next } };
+    });
     // Persist: is_muted=1 for indefinite, mute_until=epoch for timed
     if (until === 0) {
-      persistFlag(zaloId, contactId, { is_muted: 1, mute_until: 0 });
+      persistFlag(zaloId, contactId, { is_muted: 1, mute_until: 0 }, revert);
     } else {
-      persistFlag(zaloId, contactId, { is_muted: 0, mute_until: until });
+      persistFlag(zaloId, contactId, { is_muted: 0, mute_until: until }, revert);
     }
   },
 
   clearMuted: (zaloId, contactId) => {
+    const previous = get().mutedThreads[zaloId]?.[contactId];
     set((s) => {
       const prev = { ...(s.mutedThreads[zaloId] || {}) };
       delete prev[contactId];
       return { mutedThreads: { ...s.mutedThreads, [zaloId]: prev } };
     });
-    persistFlag(zaloId, contactId, { is_muted: 0, mute_until: 0 });
+    persistFlag(zaloId, contactId, { is_muted: 0, mute_until: 0 }, () => set((s) => {
+      if (previous === undefined || s.mutedThreads[zaloId]?.[contactId] !== undefined) return {};
+      return { mutedThreads: { ...s.mutedThreads, [zaloId]: { ...(s.mutedThreads[zaloId] || {}), [contactId]: previous } } };
+    }));
   },
 
   isMuted: (zaloId, contactId) => {
@@ -695,25 +796,74 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   // ─── Others folder ───────────────────────────────────────────────────
   addToOthers: (zaloId, contactId) => {
+    const wasIn = (get().othersConversations[zaloId] || new Set()).has(contactId);
     set((s) => {
       const prev = new Set(s.othersConversations[zaloId] || []);
       prev.add(contactId);
       return { othersConversations: { ...s.othersConversations, [zaloId]: prev } };
     });
-    persistFlag(zaloId, contactId, { is_in_others: 1 });
+    persistFlag(zaloId, contactId, { is_in_others: 1 }, () => {
+      if (wasIn) return;
+      set((s) => {
+        const prev = new Set(s.othersConversations[zaloId] || []);
+        prev.delete(contactId);
+        return { othersConversations: { ...s.othersConversations, [zaloId]: prev } };
+      });
+    });
   },
 
   removeFromOthers: (zaloId, contactId) => {
+    const wasIn = (get().othersConversations[zaloId] || new Set()).has(contactId);
     set((s) => {
       const prev = new Set(s.othersConversations[zaloId] || []);
       prev.delete(contactId);
       return { othersConversations: { ...s.othersConversations, [zaloId]: prev } };
     });
-    persistFlag(zaloId, contactId, { is_in_others: 0 });
+    persistFlag(zaloId, contactId, { is_in_others: 0 }, () => {
+      if (!wasIn) return;
+      set((s) => {
+        const prev = new Set(s.othersConversations[zaloId] || []);
+        prev.add(contactId);
+        return { othersConversations: { ...s.othersConversations, [zaloId]: prev } };
+      });
+    });
   },
 
   isInOthers: (zaloId, contactId) => {
     return (get().othersConversations[zaloId] || new Set()).has(contactId);
+  },
+
+  applyContactFlags: (zaloId, contactId, flags) => {
+    if (!zaloId || !contactId || !flags) return;
+    set((s) => {
+      const patch: Partial<AppStore> = {};
+      // Tắt tiếng: is_muted=1 → vô thời hạn (0); mute_until > now → có hạn; còn lại → bỏ tắt tiếng.
+      // Thiếu một nửa (chỉ is_muted / chỉ mute_until) → nửa còn lại lấy theo giá trị đang có.
+      if (flags.is_muted !== undefined || flags.mute_until !== undefined) {
+        const accountMuted = s.mutedThreads[zaloId] || {};
+        const current = accountMuted[contactId];
+        const isMuted = flags.is_muted !== undefined ? Number(flags.is_muted) === 1 : current === 0;
+        const until = flags.mute_until !== undefined ? Number(flags.mute_until) || 0 : (current && current > 0 ? current : 0);
+        const next = isMuted ? 0 : (until > Date.now() ? until : undefined);
+        if (next !== current) {
+          const updated = { ...accountMuted };
+          if (next === undefined) delete updated[contactId];
+          else updated[contactId] = next;
+          patch.mutedThreads = { ...s.mutedThreads, [zaloId]: updated };
+        }
+      }
+      if (flags.is_in_others !== undefined) {
+        const others = s.othersConversations[zaloId];
+        const inOthers = Number(flags.is_in_others) === 1;
+        if (!!others?.has(contactId) !== inOthers) {
+          const updated = new Set(others || []);
+          if (inOthers) updated.add(contactId);
+          else updated.delete(contactId);
+          patch.othersConversations = { ...s.othersConversations, [zaloId]: updated };
+        }
+      }
+      return Object.keys(patch).length > 0 ? patch : s;
+    });
   },
 
   // ─── Merged inbox ────────────────────────────────────────────────────

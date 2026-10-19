@@ -10,7 +10,7 @@
  */
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import ipc from '@/lib/ipc';
-import { toLocalMediaUrl } from '@/lib/localMedia';
+import { toLocalMediaUrl, withCloudWaitHint } from '@/lib/localMedia';
 import { Spinner } from '@/components/common/PageLoading';
 
 export interface VideoPlayerProps {
@@ -62,7 +62,8 @@ export default function VideoPlayer({
   const [repairing, setRepairing] = useState(false);
 
   // Resolve video source
-  const localMediaUrl = localPath ? toLocalMediaUrl(localPath) : '';
+  // Không có link CDN của kênh → nếu file đã được dọn lên Cloudflare R2 thì chờ R2 tải về (không trả lỗi sớm).
+  const localMediaUrl = localPath ? (remoteUrl ? toLocalMediaUrl(localPath) : withCloudWaitHint(toLocalMediaUrl(localPath))) : '';
   const videoSrc = localMediaUrl || remoteUrl || '';
 
   // ─── Video event handlers ───────────────────────────────────────────
@@ -342,7 +343,7 @@ export default function VideoPlayer({
       {/* ── Buffering spinner ── */}
       {isBuffering && !loadError && !repairing && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <div className="w-12 h-12 rounded-full border-3 border-white/20 border-t-white animate-spin" />
+          <div className="w-12 h-12 rounded-full border-3 border-foreground/20 border-t-white animate-spin" />
         </div>
       )}
 
@@ -356,7 +357,7 @@ export default function VideoPlayer({
 
       {/* ── Load error ── */}
       {loadError && !repairing && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-white/60">
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-foreground/60">
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
             <circle cx="12" cy="12" r="10"/>
             <line x1="15" y1="9" x2="9" y2="15"/>
@@ -405,7 +406,7 @@ export default function VideoPlayer({
             onClick={handleSaveAs}
             disabled={saving}
             title="Lưu về máy"
-            className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center text-white/80 hover:text-white transition-colors disabled:opacity-40"
+            className="w-8 h-8 rounded-lg bg-foreground/10 hover:bg-foreground/20 flex items-center justify-center text-foreground/80 hover:text-foreground transition-colors disabled:opacity-40"
           >
             {saving ? (
               <Spinner size={3} />
@@ -453,7 +454,7 @@ export default function VideoPlayer({
           {/* Play/Pause */}
           <button
             onClick={togglePlay}
-            className="w-9 h-9 flex items-center justify-center text-white hover:text-blue-400 transition-colors"
+            className="w-9 h-9 flex items-center justify-center text-foreground hover:text-blue-400 transition-colors"
             title={isPlaying ? 'Tạm dừng (Space)' : 'Phát (Space)'}
           >
             {isPlaying ? (
@@ -471,7 +472,7 @@ export default function VideoPlayer({
           {/* Volume */}
           <button
             onClick={toggleMute}
-            className="w-8 h-8 flex items-center justify-center text-white/70 hover:text-white transition-colors"
+            className="w-8 h-8 flex items-center justify-center text-foreground/70 hover:text-foreground transition-colors"
             title={isMuted ? 'Bật tiếng (M)' : 'Tắt tiếng (M)'}
           >
             {isMuted || volume === 0 ? (
@@ -494,7 +495,7 @@ export default function VideoPlayer({
           </button>
 
           {/* Time */}
-          <span className="text-white/70 text-xs font-mono min-w-[80px]">
+          <span className="text-foreground/70 text-xs font-mono min-w-[80px]">
             {fmt(currentTime)} / {fmt(totalDuration)}
           </span>
 
@@ -503,7 +504,7 @@ export default function VideoPlayer({
           {/* Fullscreen */}
           <button
             onClick={toggleFullscreen}
-            className="w-8 h-8 flex items-center justify-center text-white/70 hover:text-white transition-colors"
+            className="w-8 h-8 flex items-center justify-center text-foreground/70 hover:text-foreground transition-colors"
             title={isFullscreen ? 'Thoát fullscreen (F)' : 'Fullscreen (F)'}
           >
             {isFullscreen ? (

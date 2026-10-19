@@ -37,7 +37,7 @@ export function ErpOverlay({
 export function ErpModalCard({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   return (
     <div
-      className={`bg-gray-800 border border-gray-700 rounded-2xl shadow-2xl ${className}`}
+      className={`bg-card border border-border rounded-2xl shadow-2xl ${className}`}
       onClick={event => event.stopPropagation()}
     >
       {children}
@@ -75,7 +75,7 @@ export function ErpModal({
           <div className="flex items-center justify-between gap-3 mb-4">
             <div className="min-w-0">{title}</div>
             {showCloseButton && (
-              <button onClick={onClose} className="text-gray-400 hover:text-white w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-700/70">
+              <button onClick={onClose} className="text-muted-foreground hover:text-foreground w-8 h-8 flex items-center justify-center rounded-lg hover:bg-muted/70">
                 ✕
               </button>
             )}
@@ -105,10 +105,10 @@ export function ConfirmDialog({ message, onConfirm, onCancel, confirmLabel = 'X�
       panelClassName="w-80 p-5"
       bodyClassName="space-y-4"
     >
-      <p className="text-sm text-gray-200 leading-relaxed">{message}</p>
+      <p className="text-sm text-foreground leading-relaxed">{message}</p>
       <div className="flex gap-2 justify-end">
         <button onClick={onCancel}
-          className="px-4 py-1.5 text-sm text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-colors">
+          className="px-4 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors">
           Huỷ
         </button>
         <button onClick={onConfirm}
@@ -143,7 +143,7 @@ export function PromptDialog({ title, placeholder = '', defaultValue = '', onCon
 
   return (
     <ErpModal
-      title={<p className="text-sm font-semibold text-white">{title}</p>}
+      title={<p className="text-sm font-semibold text-foreground">{title}</p>}
       onClose={onCancel}
       panelClassName="w-80 p-5"
       bodyClassName="space-y-3"
@@ -154,11 +154,11 @@ export function PromptDialog({ title, placeholder = '', defaultValue = '', onCon
           onChange={e => setValue(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') handleSubmit(); if (e.key === 'Escape') onCancel(); }}
           placeholder={placeholder}
-          className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+          className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
         />
         <div className="flex gap-2 justify-end">
           <button onClick={onCancel}
-            className="px-4 py-1.5 text-sm text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-colors">
+            className="px-4 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors">
             Huỷ
           </button>
           <button onClick={handleSubmit} disabled={!value.trim()}

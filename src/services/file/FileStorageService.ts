@@ -3,6 +3,9 @@ import * as path from 'path';
 import axios from 'axios';
 import { app } from 'electron';
 import Logger from '../../utils/Logger';
+import { toZaloJpgUrl } from '../../utils/zaloImageUrl';
+import { bossAuthHeaders } from '../http/bossSessionAuth';
+import { toSafeFileName } from './safeFileName';
 
 class FileStorageService {
     private static baseDir: string = '';
@@ -52,6 +55,16 @@ class FileStorageService {
     public static resetBaseDir(): void {
         this.baseDir = '';
         Logger.log('[FileStorageService] Base dir cache cleared, will re-resolve on next access');
+    }
+
+    /**
+     * Lưu media lên R2 (Cloudflare): báo file vừa ghi xong để sao lưu (chỉ đưa vào bộ đệm; tắt đồng bộ → không làm gì).
+     * require lười — không kéo module Cloudflare vào lúc nạp file này; lỗi không bao giờ ảnh hưởng việc lưu file.
+     */
+    private static noteCloudMediaWrite(absPath: string): void {
+        try {
+            require('../cloudflare/media').cloudMedia.noteFileWritten(absPath);
+        } catch { /* tính năng R2 chưa sẵn sàng → bỏ qua */ }
     }
 
     /**
@@ -112,86 +125,113 @@ class FileStorageService {
             const stat = fs.statSync(filePath);
             if (stat.size === 0) return { valid: false, reason: 'empty' };
 
-            // Đọc 12 bytes đầu để check magic bytes
+            // 12 bytes đầu (magic bytes) + 12 bytes cuối (dấu kết thúc), một lần mở file
             const headBuf = Buffer.alloc(12);
+            const tailBuf = Buffer.alloc(12);
             const fd = fs.openSync(filePath, 'r');
             let bytesRead = 0;
+            let tailBytesRead = 0;
             try {
                 bytesRead = fs.readSync(fd, headBuf, 0, 12, 0);
+                tailBytesRead = fs.readSync(fd, tailBuf, 0, 12, Math.max(0, stat.size - 12));
             } finally {
                 fs.closeSync(fd);
             }
-            if (bytesRead < 2) return { valid: false, reason: 'not_image_content' };
-
-            // Detect HTML error page (CDN trả 200 nhưng nội dung là HTML)
-            const headStr = headBuf.slice(0, Math.min(bytesRead, 6)).toString('ascii').toLowerCase();
-            if (headStr.startsWith('<html') || headStr.startsWith('<!doc')) {
-                return { valid: false, reason: 'not_image_content' };
-            }
-
-            // Check magic bytes cho các định dạng ảnh phổ biến
-            const isJpeg = headBuf[0] === 0xFF && headBuf[1] === 0xD8 && headBuf[2] === 0xFF;
-            const isPng = headBuf[0] === 0x89 && headBuf[1] === 0x50 && headBuf[2] === 0x4E && headBuf[3] === 0x47;
-            const isGif = headBuf.slice(0, 6).toString('ascii') === 'GIF87a'
-                       || headBuf.slice(0, 6).toString('ascii') === 'GIF89a';
-            const isWebP = headBuf.slice(0, 4).toString('ascii') === 'RIFF'
-                        && headBuf.slice(8, 12).toString('ascii') === 'WEBP';
-            const isBmp = headBuf[0] === 0x42 && headBuf[1] === 0x4D;
-            const isTiff = (headBuf[0] === 0x49 && headBuf[1] === 0x49 && headBuf[2] === 0x2A && headBuf[3] === 0x00)
-                        || (headBuf[0] === 0x4D && headBuf[1] === 0x4D && headBuf[2] === 0x00 && headBuf[3] === 0x2A);
-            // SVG is text, so it has no binary magic bytes. SVG media is
-            // common in Zalo attachments and must not be deleted as corrupt.
-            const isSvg = path.extname(filePath).toLowerCase() === '.svg'
-                        && headBuf.slice(0, bytesRead).toString('utf8').toLowerCase().includes('<svg');
-            // AVIF/HEIF: ftyp box at offset 4
-            const isAvif = bytesRead >= 8
-                        && headBuf[4] === 0x66 && headBuf[5] === 0x74
-                        && headBuf[6] === 0x79 && headBuf[7] === 0x70;
-
-            if (!isJpeg && !isPng && !isGif && !isWebP && !isBmp && !isTiff && !isAvif && !isSvg) {
-                return { valid: false, reason: 'not_image_content' };
-            }
-
-            // Tier 3: Kiểm tra end marker (bắt file bị cắt cụt)
-            if (stat.size >= 2) {
-                const tailBuf = Buffer.alloc(12);
-                const fdTail = fs.openSync(filePath, 'r');
-                try {
-                    const readFrom = Math.max(0, stat.size - 12);
-                    const tailBytesRead = fs.readSync(fdTail, tailBuf, 0, 12, readFrom);
-
-                    if (isJpeg) {
-                        // JPEG phải kết thúc bằng FF D9
-                        if (tailBytesRead >= 2) {
-                            const last = tailBuf[tailBytesRead - 2];
-                            const last2 = tailBuf[tailBytesRead - 1];
-                            if (last !== 0xFF || last2 !== 0xD9) {
-                                return { valid: false, reason: 'truncated' };
-                            }
-                        }
-                    } else if (isPng) {
-                        // PNG phải có IEND chunk ở cuối cùng
-                        // Cấu trúc 12 bytes cuối: [len:4][type:4][crc:4]
-                        //   len=0x00000000, type="IEND", crc=CRC32("IEND")
-                        // Cần check 8 bytes cuối: type("IEND") + CRC
-                        if (tailBytesRead >= 8) {
-                            const iendSig = Buffer.from([0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82]);
-                            const tailSlice = tailBuf.slice(tailBytesRead - 8);
-                            if (!tailSlice.equals(iendSig)) {
-                                return { valid: false, reason: 'truncated' };
-                            }
-                        }
-                    }
-                } finally {
-                    fs.closeSync(fdTail);
-                }
-            }
-
-            return { valid: true };
+            return this.checkImageBytes(filePath, stat.size, headBuf, bytesRead, tailBuf, tailBytesRead);
         } catch {
             // Nếu không đọc được file → coi như invalid
             return { valid: false, reason: 'read_error' };
         }
+    }
+
+    /**
+     * validateImageFile với I/O bất đồng bộ: kiểm tra hàng loạt (file:validateLocalImages khi mở hội thoại) không chặn
+     * main — bản đồng bộ mở/đọc từng file trên luồng chính, mọi IPC khác (kể cả tải tin) phải chờ.
+     */
+    public static async validateImageFileAsync(filePath: string): Promise<{ valid: boolean; reason?: string }> {
+        let handle: fs.promises.FileHandle;
+        try {
+            handle = await fs.promises.open(filePath, 'r');
+        } catch (err: any) {
+            return { valid: false, reason: err?.code === 'ENOENT' ? 'not_found' : 'read_error' };
+        }
+        try {
+            const { size } = await handle.stat();
+            if (size === 0) return { valid: false, reason: 'empty' };
+            const headBuf = Buffer.alloc(12);
+            const tailBuf = Buffer.alloc(12);
+            const { bytesRead } = await handle.read(headBuf, 0, 12, 0);
+            const { bytesRead: tailBytesRead } = await handle.read(tailBuf, 0, 12, Math.max(0, size - 12));
+            return this.checkImageBytes(filePath, size, headBuf, bytesRead, tailBuf, tailBytesRead);
+        } catch {
+            return { valid: false, reason: 'read_error' };
+        } finally {
+            await handle.close().catch(() => {});
+        }
+    }
+
+    /** Phần kiểm tra nội dung của validateImageFile / validateImageFileAsync (đã đọc 12 bytes đầu + 12 bytes cuối). */
+    private static checkImageBytes(
+        filePath: string, size: number, headBuf: Buffer, bytesRead: number, tailBuf: Buffer, tailBytesRead: number,
+    ): { valid: boolean; reason?: string } {
+        if (bytesRead < 2) return { valid: false, reason: 'not_image_content' };
+
+        // Detect HTML error page (CDN trả 200 nhưng nội dung là HTML)
+        const headStr = headBuf.slice(0, Math.min(bytesRead, 6)).toString('ascii').toLowerCase();
+        if (headStr.startsWith('<html') || headStr.startsWith('<!doc')) {
+            return { valid: false, reason: 'not_image_content' };
+        }
+
+        // Check magic bytes cho các định dạng ảnh phổ biến
+        const isJpeg = headBuf[0] === 0xFF && headBuf[1] === 0xD8 && headBuf[2] === 0xFF;
+        const isPng = headBuf[0] === 0x89 && headBuf[1] === 0x50 && headBuf[2] === 0x4E && headBuf[3] === 0x47;
+        const isGif = headBuf.slice(0, 6).toString('ascii') === 'GIF87a'
+                   || headBuf.slice(0, 6).toString('ascii') === 'GIF89a';
+        const isWebP = headBuf.slice(0, 4).toString('ascii') === 'RIFF'
+                    && headBuf.slice(8, 12).toString('ascii') === 'WEBP';
+        const isBmp = headBuf[0] === 0x42 && headBuf[1] === 0x4D;
+        const isTiff = (headBuf[0] === 0x49 && headBuf[1] === 0x49 && headBuf[2] === 0x2A && headBuf[3] === 0x00)
+                    || (headBuf[0] === 0x4D && headBuf[1] === 0x4D && headBuf[2] === 0x00 && headBuf[3] === 0x2A);
+        // SVG is text, so it has no binary magic bytes. SVG media is
+        // common in Zalo attachments and must not be deleted as corrupt.
+        const isSvg = path.extname(filePath).toLowerCase() === '.svg'
+                    && headBuf.slice(0, bytesRead).toString('utf8').toLowerCase().includes('<svg');
+        // AVIF/HEIF: ftyp box at offset 4
+        const isAvif = bytesRead >= 8
+                    && headBuf[4] === 0x66 && headBuf[5] === 0x74
+                    && headBuf[6] === 0x79 && headBuf[7] === 0x70;
+
+        if (!isJpeg && !isPng && !isGif && !isWebP && !isBmp && !isTiff && !isAvif && !isSvg) {
+            return { valid: false, reason: 'not_image_content' };
+        }
+
+        // Tier 3: Kiểm tra end marker (bắt file bị cắt cụt)
+        if (size >= 2) {
+            if (isJpeg) {
+                // JPEG phải kết thúc bằng FF D9
+                if (tailBytesRead >= 2) {
+                    const last = tailBuf[tailBytesRead - 2];
+                    const last2 = tailBuf[tailBytesRead - 1];
+                    if (last !== 0xFF || last2 !== 0xD9) {
+                        return { valid: false, reason: 'truncated' };
+                    }
+                }
+            } else if (isPng) {
+                // PNG phải có IEND chunk ở cuối cùng
+                // Cấu trúc 12 bytes cuối: [len:4][type:4][crc:4]
+                //   len=0x00000000, type="IEND", crc=CRC32("IEND")
+                // Cần check 8 bytes cuối: type("IEND") + CRC
+                if (tailBytesRead >= 8) {
+                    const iendSig = Buffer.from([0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82]);
+                    const tailSlice = tailBuf.slice(tailBytesRead - 8);
+                    if (!tailSlice.equals(iendSig)) {
+                        return { valid: false, reason: 'truncated' };
+                    }
+                }
+            }
+        }
+
+        return { valid: true };
     }
 
     /**
@@ -252,6 +292,7 @@ class FileStorageService {
 
         if (path.resolve(candidatePath) !== path.resolve(resolvedSource)) {
             fs.copyFileSync(resolvedSource, candidatePath);
+            this.noteCloudMediaWrite(candidatePath);
         }
 
         const stat = fs.statSync(candidatePath);
@@ -275,6 +316,7 @@ class FileStorageService {
      * Download và lưu file đính kèm với tên file đúng (không dùng img_ prefix)
      * @param cookiesJson - cookies JSON string từ auth (tough-cookie SerializedCookieJar)
      * @param userAgent   - User-Agent string của account
+     * @param subDir      - thư mục con riêng (vd theo msgId): giữ đúng tên file gốc mà không lấy nhầm file trùng tên của tin khác
      */
     public static async downloadFile(
         zaloId: string,
@@ -282,9 +324,12 @@ class FileStorageService {
         filename: string,
         cookiesJson?: string,
         userAgent?: string,
+        subDir?: string,
     ): Promise<string> {
         try {
-            const dir = this.getAccountDir(zaloId);
+            const accountDir = this.getAccountDir(zaloId);
+            const dir = subDir ? path.join(accountDir, subDir.replace(/[^\w.-]/g, '_')) : accountDir;
+            if (subDir && !fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
             // Sanitize filename: remove illegal chars, trailing dots/spaces (Windows rejects "file.")
             const safeFilename = filename.replace(/[/\\?%*:|"<>]/g, '_').replace(/[. ]+$/, '').trim() || `file_${Date.now()}`;
             const localPath = path.join(dir, safeFilename);
@@ -302,6 +347,8 @@ class FileStorageService {
                 'User-Agent': userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
                 // Facebook CDN can require facebook.com Referer (403 without it)
                 'Referer': cookiesJson ? 'https://www.facebook.com/' : 'https://chat.zalo.me/',
+                // File của Boss (máy nhân viên) cần token phiên nhân viên; URL khác không gắn gì
+                ...bossAuthHeaders(url),
             };
             if (cookiesJson) {
                 const cookieHeader = this.buildCookieHeader(cookiesJson);
@@ -314,6 +361,7 @@ class FileStorageService {
                 headers,
             });
             fs.writeFileSync(localPath, Buffer.from(response.data));
+            this.noteCloudMediaWrite(localPath);
             Logger.log(`[FileStorageService] Saved file: ${safeFilename}`);
             return this.toRelativePath(localPath);
         } catch (error: any) {
@@ -330,7 +378,7 @@ class FileStorageService {
     /**
      * Chuyển đổi cookies JSON (tough-cookie SerializedCookieJar) sang header Cookie string
      */
-    private static buildCookieHeader(cookiesJson: string): string {
+    public static buildCookieHeader(cookiesJson: string): string {
         try {
             const jar = typeof cookiesJson === 'string' ? JSON.parse(cookiesJson) : cookiesJson;
             // tough-cookie SerializedCookieJar format: { cookies: [{key, value, ...}] }
@@ -360,9 +408,12 @@ class FileStorageService {
         referer?: string,
     ): Promise<string> {
         try {
+            // Ảnh JPEG XL của Zalo → tải bản JPG (Chromium không hiển thị được JXL)
+            imageUrl = toZaloJpgUrl(imageUrl);
             const dir = this.getAccountDir(zaloId);
             const ext = this.getExtFromUrl(imageUrl) || '.jpg';
-            const fname = filename || `img_${Date.now()}${ext}`;
+            // Tên do nơi gọi truyền vào chỉ được là tên file (không thư mục, không "..")
+            const fname = filename ? toSafeFileName(filename, `img_${Date.now()}${ext}`, { decodeUri: false }) : `img_${Date.now()}${ext}`;
             const localPath = path.join(dir, fname);
 
             if (fs.existsSync(localPath)) {
@@ -376,6 +427,8 @@ class FileStorageService {
             const headers: Record<string, string> = {
                 'User-Agent': userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
                 'Referer': referer || 'https://chat.zalo.me/',
+                // Ảnh của Boss (máy nhân viên lưu ảnh từ MediaViewer) cần token phiên nhân viên
+                ...bossAuthHeaders(imageUrl),
             };
             if (cookiesJson) {
                 const cookieHeader = this.buildCookieHeader(cookiesJson);
@@ -389,6 +442,7 @@ class FileStorageService {
             });
 
             fs.writeFileSync(localPath, Buffer.from(response.data));
+            this.noteCloudMediaWrite(localPath);
             Logger.log(`[FileStorageService] Saved image: ${fname}`);
             // Store as relative path (folder-agnostic - resolves via local-media:// handler)
             return this.toRelativePath(localPath);
@@ -429,8 +483,9 @@ class FileStorageService {
      */
     public static async saveBuffer(zaloId: string, buffer: Buffer, filename: string): Promise<string> {
         const dir = this.getAccountDir(zaloId);
-        const localPath = path.join(dir, filename);
+        const localPath = path.join(dir, toSafeFileName(filename, `file_${Date.now()}`, { decodeUri: false }));
         fs.writeFileSync(localPath, buffer);
+        this.noteCloudMediaWrite(localPath);
         return localPath;
     }
 
@@ -484,7 +539,7 @@ class FileStorageService {
             const urlExt = path.extname(urlPath) || '';
             const ext = ['.mp4', '.avi', '.mov', '.mkv', '.webm', '.m4v', '.3gp'].includes(urlExt.toLowerCase())
                 ? urlExt.toLowerCase() : '.mp4';
-            const fname = filename || `vid_${Date.now()}${ext}`;
+            const fname = filename ? toSafeFileName(filename, `vid_${Date.now()}${ext}`, { decodeUri: false }) : `vid_${Date.now()}${ext}`;
             const localPath = path.join(dir, fname);
 
             if (fs.existsSync(localPath)) {
@@ -500,6 +555,8 @@ class FileStorageService {
             const headers: Record<string, string> = {
                 'User-Agent': userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
                 'Referer': 'https://chat.zalo.me/',
+                // Video của Boss (máy nhân viên) cần token phiên nhân viên
+                ...bossAuthHeaders(videoUrl),
             };
             if (cookiesJson) {
                 const cookieHeader = this.buildCookieHeader(cookiesJson);
@@ -513,6 +570,7 @@ class FileStorageService {
                 maxContentLength: 200 * 1024 * 1024, // 200MB max
             });
             fs.writeFileSync(localPath, Buffer.from(response.data));
+            this.noteCloudMediaWrite(localPath);
             Logger.log(`[FileStorageService] Saved video: ${fname}`);
             // Store as relative path (folder-agnostic)
             return this.toRelativePath(localPath);
@@ -550,6 +608,12 @@ class FileStorageService {
      * @returns số lượng thư mục ngày đã xoá
      */
     public static cleanupOldMedia(zaloId: string, olderThanDays: number): number {
+        // Lưu media lên R2 đang bật VÀ bật "giải phóng ổ đĩa" VÀ tài khoản trong phạm vi lưu: chỉ dọn file đã xác minh có
+        // trên R2 (chạy nền, HEAD trước khi xoá) — file chưa sao lưu được giữ lại, không xoá cả thư mục ngày như cũ. Trả 0
+        // vì lúc này chưa xoá gì. Còn lại (R2 tắt, giữ file trên máy — mặc định, tài khoản ngoài phạm vi) → dọn như trước.
+        try {
+            if (require('../cloudflare/media').evictOldAccountMedia(zaloId, olderThanDays)) return 0;
+        } catch { /* module R2 lỗi → dọn như cũ */ }
         const accountDir = path.join(this.getBaseDir(), zaloId);
         if (!fs.existsSync(accountDir)) return 0;
 

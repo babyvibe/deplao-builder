@@ -89,6 +89,20 @@ function getMode(): string {
   }
 }
 
+/** Thêm tham số vào URL (dùng & khi đã có ?). */
+export function appendUrlParam(url: string, key: string, value: string): string {
+  if (!url) return url;
+  return url + (url.includes('?') ? '&' : '?') + encodeURIComponent(key) + '=' + encodeURIComponent(value);
+}
+
+/**
+ * local-media:// khi file có thể phải lấy lại từ Cloudflare R2 mà KHÔNG còn nguồn nào khác (link CDN của kênh đã hết
+ * hạn / không có): báo main chờ R2 lâu hơn (`cw=long`) thay vì trả 404 sau vài giây. URL khác giữ nguyên.
+ */
+export function withCloudWaitHint(url: string): string {
+  return url.startsWith('local-media://') ? appendUrlParam(url, 'cw', 'long') : url;
+}
+
 /**
  * Check if a path is a local file path (not a remote URL)
  */

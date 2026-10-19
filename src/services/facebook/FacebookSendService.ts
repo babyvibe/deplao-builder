@@ -157,6 +157,7 @@ export class FacebookSendService {
       success: result?.success === true,
       messageId: result?.messageId,
       ...(result?.error ? { error: result.error } : {}),
+      ...(result?.uncertain ? { uncertain: true } : {}),
     };
   }
 

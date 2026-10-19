@@ -6,7 +6,7 @@ import { useEmployeeStore } from '@/store/employeeStore';
 import { playNotificationSound, requestNotificationPermission, showDesktopNotification } from '@/utils/NotificationService';
 import { showConfirm } from '../common/ConfirmDialog';
 import { extractApiError } from '@/utils/apiError';
-import { AlertIcon, ArrowRightIcon, BellIcon, BookIcon, ClipboardIcon, FolderIcon, HardDriveIcon, LightningIcon, LinkIcon, LockIcon, MessageIcon, MonitorIcon, PackageIcon, PaletteIcon, RefreshIcon, ShieldIcon, UserIcon, UsersIcon, ClipboardListIcon, GlobeIcon, MinimizeIcon, SmartphoneIcon, StarIcon, SunIcon } from '../common/icons';
+import { AlertIcon, ArrowRightIcon, BellIcon, BookIcon, ClipboardIcon, CloudIcon, FolderIcon, HardDriveIcon, LightningIcon, LockIcon, MessageIcon, MonitorIcon, PackageIcon, PaletteIcon, RefreshIcon, ShieldIcon, UserIcon, UsersIcon, ClipboardListIcon, GlobeIcon, MinimizeIcon, SmartphoneIcon, StarIcon, SunIcon } from '../common/icons';
 import IntroductionSettings from './IntroductionSettings';
 import ChangelogSettings from './ChangelogSettings';
 import ConversationSettings from './ConversationSettings';
@@ -15,16 +15,24 @@ import WorkspaceSettings from './WorkspaceSettings';
 import ProxySettings from './ProxySettings';
 import LockScreenSettings from './LockScreenSettings';
 import AccountSettings from './AccountSettings';
-import TunnelSettings from './TunnelSettings';
 import LogViewer from './LogViewer';
+import CloudSettings, { type CloudSection } from './cloud/CloudSettings';
+import CloudMediaSummary from './cloud/CloudMediaSummary';
+import { toCloudSection } from './cloud/cloudUi';
+import { useCloudAlert } from './cloud/useCloudAlert';
 import { loadSeenTabs, markTabSeen, SETTINGS_WATCHLIST, hasUnseenChangelog, markChangelogSeen } from '@/utils/settingsSeenTabs';
+import { Button } from '@/components/ui/button';
+import { DesignSystemPage } from '@/components/ui/DesignSystemPage';
 import { isZalo, isFacebook, isTelegram } from '@/lib/channelHelper';
 
-type SettingsTab = 'notifications' | 'accounts' | 'storage' | 'conversation' | 'employees' | 'workspace' | 'introduction' | 'changelog' | 'appearance' | 'proxy' | 'security' | 'webhooks' | 'logs';
+type SettingsTab = 'notifications' | 'accounts' | 'storage' | 'cloud' | 'conversation' | 'employees' | 'workspace' | 'introduction' | 'changelog' | 'appearance' | 'proxy' | 'security' | 'logs';
 
 export default function Settings() {
   const [activeTab, setActiveTab] = useState<SettingsTab>('conversation');
+  const [showDesignSystem, setShowDesignSystem] = useState(false);
   const [introSubtab, setIntroSubtab] = useState<string | null>(null);
+  // Internet & Đám mây: phần mở sẵn theo nav:settings { tab: 'cloud', subtab: 'address' | 'sync' } ('media' / 'db' cũ → 'sync')
+  const [cloudSubtab, setCloudSubtab] = useState<CloudSection | null>(null);
   const [seenTabs, setSeenTabs] = useState<Set<string>>(() => loadSeenTabs());
   const [unreadChangelog, setUnreadChangelog] = useState(() => hasUnseenChangelog());
   const [storagePath, setStoragePath] = useState<string>('');
@@ -62,8 +70,18 @@ export default function Settings() {
   useEffect(() => {
     const handler = (e: Event) => {
       const { tab, subtab } = (e as CustomEvent).detail || {};
+      // Webhooks đã chuyển sang Công cụ → Ứng dụng, API & Webhook (link cũ vẫn tới đúng chỗ).
+      if (tab === 'webhooks') {
+        const app = useAppStore.getState();
+        app.setPluginHubSection('webhooks');
+        app.openPluginHub();
+        return;
+      }
       if (tab) setActiveTab(tab as SettingsTab);
-      if (subtab) setIntroSubtab(subtab);
+      if (subtab) {
+        if (tab === 'cloud') setCloudSubtab(toCloudSection(subtab));
+        else setIntroSubtab(subtab);
+      }
     };
     window.addEventListener('nav:settings', handler);
     return () => window.removeEventListener('nav:settings', handler);
@@ -164,10 +182,10 @@ export default function Settings() {
     { id: 'accounts',      icon: <UserIcon className="w-4 h-4" />, label: 'Tài khoản', requiredPerm: 'settings_accounts' },
     { id: 'proxy',         icon: <LockIcon className="w-4 h-4" />, label: 'Proxy' },
     { id: 'security',      icon: <ShieldIcon className="w-4 h-4" />, label: 'Bảo mật' },
-    { id: 'webhooks',      icon: <LinkIcon className="w-4 h-4" />, label: 'Webhooks' },
     { id: 'employees',     icon: <UsersIcon className="w-4 h-4" />, label: 'Nhân viên', requiredPerm: 'settings_employees' },
     { id: 'workspace',     icon: <FolderIcon className="w-4 h-4" />, label: 'Workspace' },
     { id: 'storage',       icon: <FolderIcon className="w-4 h-4" />, label: 'Lưu trữ' },
+    { id: 'cloud',         icon: <CloudIcon className="w-4 h-4" />, label: 'Internet & Đám mây' },
     { id: 'introduction',  icon: <BookIcon className="w-4 h-4" />, label: 'Giới thiệu' },
     { id: 'changelog',     icon: <ClipboardIcon className="w-4 h-4" />, label: 'Log phiên bản' },
     { id: 'logs',          icon: <ClipboardListIcon className="w-4 h-4" />, label: 'Nhật ký' },
@@ -179,7 +197,11 @@ export default function Settings() {
     if (!perm) return true; // no permission required
     return useEmployeeStore.getState().hasPermission(perm);
   };
-  const visibleNavItems = NAV_ITEMS.filter(item => hasSettingsPerm(item.requiredPerm));
+  // Internet & Đám mây (Cloudflare) chỉ dành cho máy chủ — máy nhân viên không thấy.
+  const hideCloud = isEmployee || empMode === 'employee';
+  const visibleNavItems = NAV_ITEMS.filter(item => hasSettingsPerm(item.requiredPerm) && (item.id !== 'cloud' || !hideCloud));
+  // Chấm đỏ khi phần Cloudflare cần xem (lỗi token / địa chỉ / media / đồng bộ DB, hoặc vừa khôi phục).
+  const cloudAlert = useCloudAlert(!hideCloud);
 
   // Guard: nếu activeTab không còn trong visibleNavItems (do đổi workspace/quyền) → reset về tab đầu tiên
   useEffect(() => {
@@ -187,21 +209,21 @@ export default function Settings() {
     if (!isVisible && visibleNavItems.length > 0) {
       setActiveTab(visibleNavItems[0].id);
     }
-  }, [empMode, empPermissions]);
+  }, [empMode, empPermissions, hideCloud]);
 
   return (
     <>
     <div className="flex h-full overflow-hidden">
       {/* ─── Left sidebar ─── */}
-      <div className="w-44 flex-shrink-0 border-r border-gray-700 bg-gray-850 flex flex-col py-3 gap-0.5 overflow-y-auto">
-        <p className="px-4 pb-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">Cài đặt</p>
+      <div className="w-44 flex-shrink-0 border-r border-border bg-card flex flex-col py-3 gap-0.5 overflow-y-auto">
+        <p className="px-4 pb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Cài đặt</p>
         {visibleNavItems.map((item, idx) => (
           <React.Fragment key={item.id}>
-            <button onClick={() => setActiveTab(item.id)}
+            <button onClick={() => { setActiveTab(item.id); setCloudSubtab(null); }}
               className={`flex items-center gap-2.5 w-full px-4 py-2.5 text-sm rounded-none transition-colors text-left ${
                 activeTab === item.id
-                  ? 'bg-blue-600/20 text-blue-400 border-r-2 border-blue-500'
-                  : 'text-gray-400 hover:bg-gray-700 hover:text-gray-200'
+                  ? 'bg-selected text-primary border-r-2 border-primary'
+                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
               }`}>
               <span className="text-base leading-none">{item.icon}</span>
               <span className="font-medium">{item.label}</span>
@@ -212,6 +234,13 @@ export default function Settings() {
               {/* Chấm đỏ cho changelog - hiện khi có bản cập nhật chưa đọc */}
               {item.id === 'changelog' && unreadChangelog && (
                 <span className="ml-auto w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
+              )}
+              {item.id === 'cloud' && cloudAlert.reasons.length > 0 && (
+                <span
+                  className="ml-auto w-2 h-2 rounded-full bg-destructive flex-shrink-0"
+                  title={cloudAlert.reasons.join(' · ')}
+                  aria-label={cloudAlert.reasons.join(' · ')}
+                />
               )}
             </button>
           </React.Fragment>
@@ -224,11 +253,11 @@ export default function Settings() {
         {/* ── Appearance ── */}
         {activeTab === 'appearance' && (
           <>
-            <h2 className="text-base font-semibold text-white flex items-center gap-2"><PaletteIcon className="w-4 h-4" /> Giao diện</h2>
+            <h2 className="text-base font-semibold text-foreground flex items-center gap-2"><PaletteIcon className="w-4 h-4" /> Giao diện</h2>
             <Section>
               <div className="space-y-4">
                 <div>
-                  <p className="text-sm text-gray-200 font-medium mb-3">Chủ đề màu sắc</p>
+                  <p className="text-sm text-foreground font-medium mb-3">Chủ đề màu sắc</p>
                   <div className="flex gap-3">
                     {/* Dark theme option */}
                     <button
@@ -236,15 +265,15 @@ export default function Settings() {
                       className={`flex-1 flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all ${
                         theme === 'dark'
                           ? 'border-blue-500 bg-blue-600/10'
-                          : 'border-gray-600 hover:border-gray-500'
+                          : 'border-input hover:border-border-strong'
                       }`}
                     >
-                      <div className="w-full h-14 rounded-lg bg-gray-900 border border-gray-700 flex items-end p-1.5 gap-1 overflow-hidden">
-                        <div className="w-6 h-10 rounded bg-gray-800 flex-shrink-0" />
+                      <div className="w-full h-14 rounded-lg bg-background border border-border flex items-end p-1.5 gap-1 overflow-hidden">
+                        <div className="w-6 h-10 rounded bg-card flex-shrink-0" />
                         <div className="flex-1 flex flex-col gap-1">
-                          <div className="h-3 rounded bg-gray-700 w-3/4" />
+                          <div className="h-3 rounded bg-muted w-3/4" />
                           <div className="h-2 rounded bg-blue-600 w-1/2 self-end" />
-                          <div className="h-2 rounded bg-gray-700 w-2/3" />
+                          <div className="h-2 rounded bg-muted w-2/3" />
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5">
@@ -253,7 +282,7 @@ export default function Settings() {
                             <path d="M20 6L9 17l-5-5" stroke="currentColor" fill="none" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
                           </svg>
                         )}
-                        <span className={`text-xs font-medium ${theme === 'dark' ? 'text-blue-400' : 'text-gray-400'}`}><MinimizeIcon className="w-4 h-4 inline" /> Tối</span>
+                        <span className={`text-xs font-medium ${theme === 'dark' ? 'text-blue-400' : 'text-muted-foreground'}`}><MinimizeIcon className="w-4 h-4 inline" /> Tối</span>
                       </div>
                     </button>
 
@@ -263,7 +292,7 @@ export default function Settings() {
                       className={`flex-1 flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all ${
                         theme === 'light'
                           ? 'border-blue-500 bg-blue-600/10'
-                          : 'border-gray-600 hover:border-gray-500'
+                          : 'border-input hover:border-border-strong'
                       }`}
                     >
                       <div className="w-full h-14 rounded-lg border border-stone-200 flex items-end p-1.5 gap-1 overflow-hidden" style={{ backgroundColor: '#f7f6f3' }}>
@@ -280,15 +309,31 @@ export default function Settings() {
                             <path d="M20 6L9 17l-5-5" stroke="currentColor" fill="none" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
                           </svg>
                         )}
-                        <span className={`text-xs font-medium ${theme === 'light' ? 'text-blue-400' : 'text-gray-400'}`}><SunIcon className="w-4 h-4 inline" /> Sáng</span>
+                        <span className={`text-xs font-medium ${theme === 'light' ? 'text-blue-400' : 'text-muted-foreground'}`}><SunIcon className="w-4 h-4 inline" /> Sáng</span>
                       </div>
                     </button>
                   </div>
                 </div>
-                <p className="text-xs text-gray-400 leading-relaxed">
+                <p className="text-xs text-muted-foreground leading-relaxed">
                   Thay đổi giao diện áp dụng ngay lập tức và được lưu tự động.
                 </p>
               </div>
+            </Section>
+            <Section>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm text-foreground font-medium">Hệ thống giao diện</p>
+                  <p className="text-xs text-muted-foreground">Token màu và bộ component dùng chung của Deplao, xem được ở cả hai theme.</p>
+                </div>
+                <Button variant="outline" size="sm" onClick={() => setShowDesignSystem(v => !v)}>
+                  {showDesignSystem ? 'Ẩn' : 'Xem'}
+                </Button>
+              </div>
+              {showDesignSystem && (
+                <div className="mt-5">
+                  <DesignSystemPage />
+                </div>
+              )}
             </Section>
           </>
         )}
@@ -296,15 +341,15 @@ export default function Settings() {
         {/* ── Notifications ── */}
         {activeTab === 'notifications' && (
           <>
-            <h2 className="text-base font-semibold text-white"><BellIcon className="w-4 h-4 inline" /> Cài đặt thông báo</h2>
+            <h2 className="text-base font-semibold text-foreground"><BellIcon className="w-4 h-4 inline" /> Cài đặt thông báo</h2>
 
             {/* Account selector */}
             <div className="mb-2">
-              <label className="text-sm text-gray-400 block mb-1">Áp dụng cho tài khoản</label>
+              <label className="text-sm text-muted-foreground block mb-1">Áp dụng cho tài khoản</label>
               <select
                 value={selectedNotifAccount}
                 onChange={e => setSelectedNotifAccount(e.target.value)}
-                className="w-full bg-gray-700 text-white rounded-lg p-2 text-sm border border-gray-600"
+                className="w-full bg-muted text-foreground rounded-lg p-2 text-sm border border-input"
               >
                 <option value="__global__"><GlobeIcon className="w-4 h-4 inline" /> Mặc định (tất cả tài khoản)</option>
                 {accounts.filter(a => isZalo(a.channel)).map(acc => (
@@ -356,8 +401,8 @@ export default function Settings() {
                       {settings.soundEnabled && (
                         <div className="space-y-1.5">
                           <div className="flex items-center justify-between">
-                            <p className="text-sm text-gray-400">Âm lượng</p>
-                            <span className="text-xs text-gray-400">{Math.round(settings.volume * 100)}%</span>
+                            <p className="text-sm text-muted-foreground">Âm lượng</p>
+                            <span className="text-xs text-muted-foreground">{Math.round(settings.volume * 100)}%</span>
                           </div>
                           <input type="range" min="0" max="100" step="5"
                             value={Math.round(settings.volume * 100)}
@@ -367,21 +412,21 @@ export default function Settings() {
                       )}
                       <div className="flex gap-2 pt-1">
                         <button onClick={() => { if (settings.soundEnabled) playNotificationSound(settings.volume); else showNotification('Hãy bật âm thanh trước', 'info'); }}
-                          className="flex-1 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg transition-colors"><BellIcon className="w-4 h-4 inline" /> Test âm thanh
+                          className="flex-1 py-1.5 text-xs bg-muted hover:bg-accent text-foreground/80 rounded-lg transition-colors"><BellIcon className="w-4 h-4 inline" /> Test âm thanh
                         </button>
                         <button onClick={() => {
                           requestNotificationPermission().then(granted => {
                             if (!granted) { showNotification('Cần cấp quyền thông báo', 'warning'); return; }
                             showDesktopNotification('Deplao', 'Đây là thông báo thử nghiệm 🎉');
                           });
-                        }} className="flex-1 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg transition-colors">
+                        }} className="flex-1 py-1.5 text-xs bg-muted hover:bg-accent text-foreground/80 rounded-lg transition-colors">
                           <MonitorIcon className="w-4 h-4 inline" /> Test popup
                         </button>
                       </div>
                     </>
                   );
                 })()}
-                <p className="text-xs text-gray-400 leading-relaxed">
+                <p className="text-xs text-muted-foreground leading-relaxed">
                   * Thông báo không hiện với những hội thoại đã tắt thông báo.<br />
                   * <strong>Windows:</strong> Kiểm tra quyền trong Settings &gt; Notifications.<br />
                   * <strong>macOS:</strong> Kiểm tra trong System Settings &gt; Notifications &gt; Deplao.<br />
@@ -398,7 +443,7 @@ export default function Settings() {
         {/* ── Storage ── */}
         {activeTab === 'storage' && (
           <>
-            <h2 className="text-base font-semibold text-white"><FolderIcon className="w-4 h-4 inline" /> Thư mục lưu trữ dữ liệu</h2>
+            <h2 className="text-base font-semibold text-foreground"><FolderIcon className="w-4 h-4 inline" /> Thư mục lưu trữ dữ liệu</h2>
 
             {isEmployee ? (
               // ── Employee mode: chỉ hiển thị cache local, không đổi được Boss storage ──
@@ -418,17 +463,17 @@ export default function Settings() {
                 <Section>
                   <div className="space-y-3">
                     <div>
-                      <p className="text-xs text-gray-400 mb-1">📍 Cache media (máy nhân viên):</p>
+                      <p className="text-xs text-muted-foreground mb-1">📍 Cache media (máy nhân viên):</p>
                       <div className="flex items-center gap-2">
-                        <code className="flex-1 text-xs bg-gray-700 text-green-300 px-2 py-1.5 rounded truncate block">{mediaCachePath || 'Đang tải...'}</code>
+                        <code className="flex-1 text-xs bg-muted text-green-300 px-2 py-1.5 rounded truncate block">{mediaCachePath || 'Đang tải...'}</code>
                         {mediaCachePath && (
                           <button onClick={() => ipc.file?.openPath(mediaCachePath)} className="text-xs text-blue-400 hover:text-blue-300 flex-shrink-0" title="Mở thư mục"><FolderIcon className="w-4 h-4" /></button>
                         )}
                       </div>
                     </div>
                     <div>
-                      <p className="text-xs text-gray-400 mb-1"><HardDriveIcon className="w-4 h-4 inline" /> Dung lượng cache:</p>
-                      <p className="text-sm text-gray-200 font-medium">
+                      <p className="text-xs text-muted-foreground mb-1"><HardDriveIcon className="w-4 h-4 inline" /> Dung lượng cache:</p>
+                      <p className="text-sm text-foreground font-medium">
                         {mediaCacheSize > 0
                           ? mediaCacheSize > 1024 * 1024 * 1024
                             ? `${(mediaCacheSize / 1024 / 1024 / 1024).toFixed(1)} GB`
@@ -436,7 +481,7 @@ export default function Settings() {
                           : 'Đang tính...'}
                       </p>
                     </div>
-                    <p className="text-xs text-gray-400">
+                    <p className="text-xs text-muted-foreground">
                       Ảnh, video, file được tự động tải về cache khi bạn xem hoặc khi mở hội thoại.
                       Cache tự động xóa file cũ nhất khi quá 2GB. Có thể xóa thủ công bằng cách mở thư mục cache bên trên.
                     </p>
@@ -473,16 +518,16 @@ export default function Settings() {
             <Section>
               <div className="space-y-3">
                 <div>
-                  <p className="text-xs text-gray-400 mb-1">Thư mục cấu hình:</p>
+                  <p className="text-xs text-muted-foreground mb-1">Thư mục cấu hình:</p>
                   <div className="flex items-center gap-2">
-                    <code className="flex-1 text-xs bg-gray-700 text-green-300 px-2 py-1.5 rounded truncate block">{storagePath || 'Đang tải...'}</code>
+                    <code className="flex-1 text-xs bg-muted text-green-300 px-2 py-1.5 rounded truncate block">{storagePath || 'Đang tải...'}</code>
                     <button onClick={() => ipc.file?.openPath(storagePath)} className="text-xs text-blue-400 hover:text-blue-300 flex-shrink-0" title="Mở thư mục"><FolderIcon className="w-4 h-4" /></button>
                   </div>
                 </div>
                 {actualDbPath && (
                   <div>
-                    <p className="text-xs text-gray-400 mb-1">File DB đang dùng:</p>
-                    <code className="w-full text-xs bg-gray-700 text-yellow-300 px-2 py-1.5 rounded truncate block">{actualDbPath}</code>
+                    <p className="text-xs text-muted-foreground mb-1">File DB đang dùng:</p>
+                    <code className="w-full text-xs bg-muted text-yellow-300 px-2 py-1.5 rounded truncate block">{actualDbPath}</code>
                   </div>
                 )}
                 {/* Cảnh báo nếu DB thực tế khác với config (thường xảy ra sau khi cài lại) */}
@@ -495,13 +540,13 @@ export default function Settings() {
                     </p>
                   </div>
                 )}
-                <p className="text-xs text-gray-400">
+                <p className="text-xs text-muted-foreground">
                   Dữ liệu tin nhắn, liên hệ và cài đặt được lưu trong thư mục này.
                   Khi thay đổi, dữ liệu được sao chép sang vị trí mới và áp dụng ngay (không cần khởi động lại).
                 </p>
                 <div className="flex gap-2">
                   <button onClick={handleChangeStorageFolder} disabled={changingStorage}
-                    className="btn-primary text-white text-sm flex-1 disabled:opacity-50">
+                    className="btn-primary text-white-important text-sm flex-1 disabled:opacity-50">
                     {changingStorage
                       ? copyProgress > 0
                         ? <><FolderIcon className="w-4 h-4 inline" /> {copyProgress.toLocaleString()}{copyTotal > 0 ? ` / ${copyTotal.toLocaleString()}` : ''} files…</>
@@ -514,6 +559,8 @@ export default function Settings() {
                 </div>
               </div>
             </Section>
+            {/* Media trên đám mây (Cloudflare R2) — chỉ máy chủ, bản app có module Cloudflare */}
+            <CloudMediaSummary />
             </>
           )} {/* end ternary isEmployee */}
           </>
@@ -529,9 +576,11 @@ export default function Settings() {
 
         {/* ── Employees ── */}
         {activeTab === 'proxy' && <ProxySettings />}
-        {activeTab === 'webhooks' && <TunnelSettings />}
         {activeTab === 'employees' && <EmployeeSettings />}
         {activeTab === 'workspace' && <WorkspaceSettings />}
+
+        {/* ── Internet & Đám mây (Cloudflare, chỉ máy chủ) ── */}
+        {activeTab === 'cloud' && !hideCloud && <CloudSettings initialSubtab={cloudSubtab} />}
 
         {/* ── Introduction ── */}
         {activeTab === 'introduction' && <IntroductionSettings initialSubtab={introSubtab as any} />}
@@ -546,18 +595,18 @@ export default function Settings() {
     {pendingFolder && (
       <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
         onClick={() => !changingStorage && setPendingFolder(null)}>
-        <div className="bg-gray-800 border border-gray-600 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden"
+        <div className="bg-card border border-input rounded-2xl w-full max-w-md shadow-2xl overflow-hidden"
           onClick={e => e.stopPropagation()}>
           {/* Header */}
-          <div className="px-5 pt-5 pb-3 border-b border-gray-700">
+          <div className="px-5 pt-5 pb-3 border-b border-border">
             <div className="flex items-center gap-3 mb-1">
               <FolderIcon className="w-6 h-6" />
-              <h3 className="text-base font-semibold text-white">Thư mục đã có dữ liệu</h3>
+              <h3 className="text-base font-semibold text-foreground">Thư mục đã có dữ liệu</h3>
             </div>
-            <p className="text-xs text-gray-400 break-word leading-relaxed mt-1">
+            <p className="text-xs text-muted-foreground break-word leading-relaxed mt-1">
               <span className="font-mono text-green-300">{pendingFolder}</span>
             </p>
-            <p className="text-xs text-gray-400 mt-2 leading-relaxed">
+            <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
               Thư mục này đã có file dữ liệu (<code className="text-yellow-300">deplao-tool.db</code>).
               Bạn muốn làm gì?
             </p>
@@ -574,7 +623,7 @@ export default function Settings() {
               <HardDriveIcon className="w-5 h-5 flex-shrink-0 mt-0.5" />
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-blue-300">Dùng dữ liệu cũ tại đây</p>
-                <p className="text-xs text-gray-400 mt-0.5 leading-relaxed">
+                <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
                   Chuyển sang DB có sẵn trong thư mục này. Dữ liệu hiện tại giữ nguyên ở vị trí cũ, không bị xóa.
                 </p>
               </div>
@@ -593,12 +642,12 @@ export default function Settings() {
                 if (!ok) return;
                 await applyStorageChange(pendingFolder, false);
               }}
-              className="w-full flex items-start gap-3 p-3.5 rounded-xl border border-gray-600 hover:bg-gray-700 transition-colors text-left disabled:opacity-50"
+              className="w-full flex items-start gap-3 p-3.5 rounded-xl border border-input hover:bg-muted transition-colors text-left disabled:opacity-50"
             >
               <span className="text-xl flex-shrink-0 mt-0.5"><ClipboardListIcon className="w-4 h-4" /></span>
               <div className="min-w-0">
-                <p className="text-sm font-semibold text-gray-200">Sao chép dữ liệu hiện tại vào đây</p>
-                <p className="text-xs text-gray-400 mt-0.5 leading-relaxed">
+                <p className="text-sm font-semibold text-foreground">Sao chép dữ liệu hiện tại vào đây</p>
+                <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
                   Sao chép DB + toàn bộ ảnh, video, file đính kèm sang thư mục mới.{' '}
                   <span className="text-red-400">Dữ liệu cũ tại đây sẽ bị ghi đè.</span>
                 </p>
@@ -610,7 +659,7 @@ export default function Settings() {
           <div className="px-4 pb-4">
             {/* Progress khi đang copy media */}
             {changingStorage && (
-              <div className="mb-3 bg-gray-700/60 rounded-xl px-3 py-3">
+              <div className="mb-3 bg-muted rounded-xl px-3 py-3">
                 {copyProgress > 0 ? (
                   <>
                     <div className="flex items-center justify-between mb-1.5">
@@ -618,20 +667,20 @@ export default function Settings() {
                         <div className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
                         <span className="text-xs text-blue-300 font-medium">Đang sao chép media...</span>
                       </div>
-                      <span className="text-xs text-gray-300 font-mono tabular-nums">
+                      <span className="text-xs text-foreground/80 font-mono tabular-nums">
                         {copyProgress.toLocaleString()}
-                        {copyTotal > 0 && <span className="text-gray-400"> / {copyTotal.toLocaleString()}</span>}
+                        {copyTotal > 0 && <span className="text-muted-foreground"> / {copyTotal.toLocaleString()}</span>}
                       </span>
                     </div>
                     {/* Progress bar */}
-                    <div className="w-full h-1.5 bg-gray-600 rounded-full overflow-hidden">
+                    <div className="w-full h-1.5 bg-accent rounded-full overflow-hidden">
                       <div
                         className="h-full bg-blue-500 rounded-full transition-all duration-200"
                         style={{ width: copyTotal > 0 ? `${Math.min(100, (copyProgress / copyTotal) * 100).toFixed(1)}%` : '100%' }}
                       />
                     </div>
                     {copyTotal > 0 && (
-                      <p className="text-[11px] text-gray-400 mt-1">
+                      <p className="text-[11px] text-muted-foreground mt-1">
                         {((copyProgress / copyTotal) * 100).toFixed(0)}% - vui lòng không đóng ứng dụng
                       </p>
                     )}
@@ -639,7 +688,7 @@ export default function Settings() {
                 ) : (
                   <div className="flex items-center gap-2">
                     <div className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
-                    <span className="text-xs text-gray-400">Đang chuẩn bị...</span>
+                    <span className="text-xs text-muted-foreground">Đang chuẩn bị...</span>
                   </div>
                 )}
               </div>
@@ -647,7 +696,7 @@ export default function Settings() {
             <button
               disabled={changingStorage}
               onClick={() => setPendingFolder(null)}
-              className="w-full py-2 text-sm text-gray-400 hover:text-gray-200 hover:bg-gray-700 rounded-xl transition-colors disabled:opacity-50"
+              className="w-full py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-xl transition-colors disabled:opacity-50"
             >
               {changingStorage ? (
                 copyProgress > 0
@@ -665,7 +714,7 @@ export default function Settings() {
 
 function Section({ children }: { children: React.ReactNode }) {
   return (
-    <div className="bg-gray-800 rounded-xl p-4">
+    <div className="bg-card rounded-xl p-4">
       {children}
     </div>
   );
@@ -675,8 +724,8 @@ function ToggleRow({ title, desc, value, onChange }: { title: string; desc?: str
   return (
     <div className="flex items-center justify-between gap-4">
       <div className="flex-1">
-        <p className="text-sm text-gray-200 font-medium">{title}</p>
-        {desc && <p className="text-xs text-gray-400 mt-0.5">{desc}</p>}
+        <p className="text-sm text-foreground font-medium">{title}</p>
+        {desc && <p className="text-xs text-muted-foreground mt-0.5">{desc}</p>}
       </div>
       <Toggle value={value} onChange={onChange} />
     </div>
@@ -686,7 +735,7 @@ function ToggleRow({ title, desc, value, onChange }: { title: string; desc?: str
 function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
   return (
     <button onClick={() => onChange(!value)}
-      className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${value ? 'bg-blue-600' : 'bg-gray-600'}`}>
+      className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${value ? 'bg-blue-600' : 'bg-accent'}`}>
       <span className={`absolute top-0.5 left-0 w-5 h-5 bg-white rounded-full shadow transition-transform ${value ? 'translate-x-5' : 'translate-x-0.5'}`} />
     </button>
   );

@@ -1,12 +1,16 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import PageLoading, { Spinner } from '@/components/common/PageLoading';
+import PageLoading from '@/components/common/PageLoading';
 import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
+import { cn } from '@/lib/cn';
 import { useEmployeeStore } from '@/store/employeeStore';
 import { useWorkspaceStore } from '@/store/workspaceStore';
-import IntegrationDetailPage from './IntegrationDetailPage';
+import PublicAddressCard, { usePublicAddresses } from '@/components/common/PublicAddressCard';
+import { navigateSettings } from '@/components/settings/cloud/cloudUi';
+import IntegrationDetailPage, { type IntegrationWebhookInfo } from './IntegrationDetailPage';
 import AIAssistantPage from './AIAssistantPage';
-import { AlertIcon, BotIcon, ChatIcon, CheckCircleIcon, CreditCardIcon, DollarIcon, GlobeIcon, LightningIcon, LockIcon, MenuIcon, PackageIcon, PinIcon, PluginIcon, RefreshIcon, RocketIcon, ShoppingCartIcon, ShuffleIcon, SparklesIcon, StoreIcon, TargetIcon, TruckIcon , CheckIcon } from '@/components/common/icons';
+import type { CredentialAlternative } from './credentialRules';
+import { AlertIcon, BotIcon, ChatIcon, CheckCircleIcon, CreditCardIcon, DollarIcon, GlobeIcon, LightningIcon, MenuIcon, PackageIcon, PinIcon, PluginIcon, RefreshIcon, RocketIcon, ShoppingCartIcon, ShuffleIcon, SparklesIcon, StoreIcon, TargetIcon, TruckIcon } from '@/components/common/icons';
 
 // ─── Catalog definition ───────────────────────────────────────────────────────
 
@@ -17,7 +21,9 @@ interface CatalogItem {
   icon: React.ReactNode;
   color: string;
   priority: 'p0' | 'p1' | 'p2';
-  credentialFields: { key: string; label: string; secret?: boolean; placeholder?: string }[];
+  credentialFields: { key: string; label: string; secret?: boolean; placeholder?: string; optional?: boolean }[];
+  /** Nhiều cách đăng nhập: phải điền đủ ít nhất một nhóm (credentialRules.ts). */
+  credentialAlternatives?: CredentialAlternative[];
   settingFields?: { key: string; label: string; type?: string; options?: { value: string; label: string }[] }[];
 }
 
@@ -68,6 +74,8 @@ const CATALOG: Record<string, CatalogItem[]> = {
         { key: 'clientId',     label: 'Client ID',     placeholder: 'KiotViet client_id' },
         { key: 'clientSecret', label: 'Client Secret', secret: true, placeholder: 'KiotViet client_secret' },
         { key: 'retailerName', label: 'Tên gian hàng (Retailer)', placeholder: 'vd: myshop' },
+        // Khoá xác thực webhook (posWebhook.ts) — chỉ cần khi nhận webhook; trống = webhook bị từ chối
+        { key: 'webhookSecret', label: 'Webhook Secret (không bắt buộc)', secret: true, optional: true, placeholder: 'Secret (chuỗi Base64) đã dùng khi đăng ký webhook KiotViet — cần khi nhận webhook' },
       ],
       settingFields: [
         { key: 'defaultBranchId', label: 'Branch ID mặc định (tùy chọn)' },
@@ -77,11 +85,17 @@ const CATALOG: Record<string, CatalogItem[]> = {
       type: 'haravan', name: 'Haravan', priority: 'p0',
       icon: <StoreIcon className="w-4 h-4" />, color: 'bg-indigo-500',
       desc: 'Nền tảng TMĐT Việt Nam. Tra cứu đơn hàng, khách hàng Haravan trong chat.',
+      // Đăng nhập bằng Access Token (Custom App) HOẶC API Key + Password (ứng dụng riêng) — HaravanAdapter.getHeaders
       credentialFields: [
-        { key: 'accessToken',   label: 'Access Token (khuyên dùng)', secret: true, placeholder: 'Haravan Access Token từ Custom App' },
-        { key: 'apiKey',        label: 'API Key (legacy)', placeholder: 'Bỏ trống nếu dùng Access Token' },
-        { key: 'password',      label: 'Password (legacy)', secret: true, placeholder: 'Bỏ trống nếu dùng Access Token' },
+        { key: 'accessToken',   label: 'Access Token (khuyên dùng)', secret: true, placeholder: 'Access Token từ Custom App — bỏ trống nếu dùng API Key + Password', optional: true },
+        { key: 'apiKey',        label: 'API Key (ứng dụng riêng)', placeholder: 'Bỏ trống nếu dùng Access Token', optional: true },
+        { key: 'password',      label: 'Password (ứng dụng riêng)', secret: true, placeholder: 'Bỏ trống nếu dùng Access Token', optional: true },
         { key: 'retailerDomain', label: 'Tên shop (subdomain)', placeholder: 'vd: myshop hoặc myshop.myharavan.com' },
+        { key: 'webhookSecret', label: 'Mã xác thực webhook (không bắt buộc)', secret: true, optional: true, placeholder: 'Mã xác thực ở Cài đặt → Thông báo → Webhook (app: Client Secret) — cần khi nhận webhook' },
+      ],
+      credentialAlternatives: [
+        { label: 'Access Token', keys: ['accessToken'] },
+        { label: 'API Key + Password', keys: ['apiKey', 'password'] },
       ],
     },
     {
@@ -89,8 +103,13 @@ const CATALOG: Record<string, CatalogItem[]> = {
       icon: <CheckCircleIcon className="w-4 h-4" />, color: 'bg-emerald-500',
       desc: 'Quản lý bán hàng đa kênh Sapo. Tra cứu đơn, khách hàng theo SĐT.',
       credentialFields: [
-        { key: 'accessToken',  label: 'Access Token', secret: true, placeholder: 'Lấy từ SAPO Admin → Cài đặt → Phát triển → Quản lý API → Token' },
-        { key: 'storeDomain', label: 'Tên store (subdomain)', placeholder: 'vd: myshop (myshop.mysapo.net)' },
+        // Ứng dụng riêng (Private App): API Key + API Secret, xác thực Basic — không cần domain / Redirect URL.
+        // Access Token chỉ có khi đi luồng OAuth của ứng dụng Partner (support.sapo.vn/oauth).
+        { key: 'storeDomain', label: 'Tên cửa hàng', placeholder: 'vd: myshop hoặc myshop.mysapo.net' },
+        { key: 'apiKey',      label: 'API Key', placeholder: 'Sapo Web → Ứng dụng → Ứng dụng riêng → Tạo ứng dụng riêng' },
+        { key: 'apiSecret',   label: 'API Secret', secret: true, placeholder: 'Mật khẩu đi kèm API Key của ứng dụng riêng' },
+        { key: 'accessToken', label: 'Access Token OAuth (không bắt buộc)', secret: true, placeholder: 'Bỏ trống nếu dùng API Key + API Secret', optional: true },
+        { key: 'webhookSecret', label: 'Khoá xác thực webhook (không bắt buộc)', secret: true, optional: true, placeholder: 'Bỏ trống = dùng API Secret (Sapo ký webhook bằng API Secret của ứng dụng riêng)' },
       ],
     },
     {
@@ -101,6 +120,7 @@ const CATALOG: Record<string, CatalogItem[]> = {
         { key: 'appId',       label: 'App ID',       placeholder: 'Nhanh.vn Open API App ID' },
         { key: 'businessId',  label: 'Business ID',  placeholder: 'Nhanh.vn Business ID' },
         { key: 'accessToken', label: 'Access Token v3', secret: true, placeholder: 'Lấy từ open.nhanh.vn → Ứng dụng của tôi' },
+        { key: 'webhookSecret', label: 'Webhooks verify token (không bắt buộc)', secret: true, optional: true, placeholder: 'Token tự đặt trong phần Webhooks của ứng dụng Nhanh.vn — cần khi nhận webhook' },
       ],
     },
     {
@@ -110,6 +130,7 @@ const CATALOG: Record<string, CatalogItem[]> = {
       credentialFields: [
         { key: 'accessToken', label: 'API Key (api_key)', secret: true, placeholder: 'Pancake Open API key' },
         { key: 'shopId', label: 'Shop ID', placeholder: 'Mã shop Pancake' },
+        { key: 'webhookSecret', label: 'Khoá webhook X-API-KEY (không bắt buộc)', secret: true, optional: true, placeholder: 'Chuỗi bí mật tự đặt, khai báo làm header X-API-KEY khi cấu hình webhook Pancake' },
       ],
     },
   ],
@@ -120,7 +141,8 @@ const CATALOG: Record<string, CatalogItem[]> = {
       desc: 'Nhận webhook khi có giao dịch chuyển khoản VietQR. Tự động xác nhận đơn.',
       credentialFields: [
         { key: 'apiKey',    label: 'API Key', secret: true, placeholder: 'Casso API Key' },
-        { key: 'secretKey', label: 'Secret Key (webhook)', secret: true, placeholder: 'Để trống nếu không dùng' },
+        // Có khoá → Deplao chỉ nhận webhook có chữ ký hợp lệ (X-Casso-Signature / secure-token)
+        { key: 'secretKey', label: 'Secret Key (webhook)', secret: true, optional: true, placeholder: 'Key bảo mật của tích hợp Webhook V2 trong Casso (khuyên dùng)' },
       ],
     },
     {
@@ -129,7 +151,8 @@ const CATALOG: Record<string, CatalogItem[]> = {
       desc: 'Nhận webhook giao dịch từ SePay. Kích hoạt workflow tự động khi nhận tiền.',
       credentialFields: [
         { key: 'apiKey',          label: 'API Key', secret: true, placeholder: 'SePay API Key' },
-        { key: 'webhookSecretKey', label: 'Webhook Secret', secret: true, placeholder: 'Để trống nếu không cần' },
+        // Có khoá → Deplao chỉ nhận webhook có chữ ký hợp lệ (X-SePay-Signature / Authorization: Apikey)
+        { key: 'webhookSecretKey', label: 'Webhook Secret', secret: true, optional: true, placeholder: 'Secret Key (HMAC-SHA256, khuyên dùng) hoặc API Key ở bước Bảo mật của webhook SePay' },
       ],
     },
   ],
@@ -183,6 +206,8 @@ interface SavedIntegration {
   connectedAt?: number;
   createdAt: number;
   updatedAt: number;
+  /** Casso / SePay / phần mềm bán hàng: đã đặt khoá bảo mật webhook chưa + lần nhận / từ chối gần nhất (IntegrationRegistry.listConfigs) */
+  webhook?: IntegrationWebhookInfo;
 }
 
 // ─── Tunnel Status Card ───────────────────────────────────────────────────────
@@ -212,12 +237,12 @@ function AISection({ onNavigateAi }: { onNavigateAi: () => void }) {
   return (
     <div id="section-ai" className="scroll-mt-20">
       {/* 🚀 9Router FREE Banner */}
-      <div className="mb-4 bg-gray-900/60 border-l-4 border-l-blue-500 border border-gray-700/60 rounded-xl p-3.5">
+      <div className="mb-4 bg-card border-l-4 border-l-blue-500 border border-border/60 rounded-xl p-3.5">
         <div className="flex items-start gap-3">
           <div className="w-8 h-8 rounded-lg bg-blue-600/20 flex items-center justify-center text-lg flex-shrink-0 border border-blue-500/30"><RocketIcon className="w-4 h-4 inline" /> </div>
           <div className="flex-1 min-w-0">
-            <p className="text-gray-300 text-xs font-semibold mb-1.5">
-              Cài đặt <strong className="text-white">9Router</strong> để dùng AI <strong className="text-green-400">FREE</strong> cho:
+            <p className="text-foreground/80 text-xs font-semibold mb-1.5">
+              Cài đặt <strong className="text-foreground">9Router</strong> để dùng AI <strong className="text-green-400">FREE</strong> cho:
             </p>
             <div className="grid grid-cols-2 gap-x-4 gap-y-1">
               {[
@@ -226,7 +251,7 @@ function AISection({ onNavigateAi }: { onNavigateAi: () => void }) {
                 'Dùng AI tạo workflow bằng câu lệnh',
                 'Node AI trả lời - tạo chatbot 24/7',
               ].map((text, i) => (
-                <p key={i} className="text-gray-300 text-[11px] flex items-center gap-1.5">
+                <p key={i} className="text-foreground/80 text-[11px] flex items-center gap-1.5">
                   <span className="text-blue-500/70">▸</span>
                   {text}
                 </p>
@@ -252,13 +277,13 @@ function AISection({ onNavigateAi }: { onNavigateAi: () => void }) {
         <div className="w-8 h-8 rounded-lg bg-amber-600 flex items-center justify-center text-base text-white-important"><BotIcon className="w-4 h-4 inline" /> </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <h2 className="text-sm font-semibold text-white">Trợ lý AI</h2>
+            <h2 className="text-sm font-semibold text-foreground">Trợ lý AI</h2>
             {hasAssistants && (
-              <span className="text-[10px] text-gray-400 ml-1">({assistants.length} trợ lý)</span>
+              <span className="text-[10px] text-muted-foreground ml-1">({assistants.length} trợ lý)</span>
             )}
           </div>
-          <p className="text-[10px] text-gray-400">
-            5 nền tảng · Tự động gợi ý trả lời, chat với AI, knowledge base
+          <p className="text-[10px] text-muted-foreground">
+            Nhiều nền tảng AI · Tự động gợi ý trả lời, chat với AI, knowledge base
           </p>
         </div>
         <button
@@ -280,7 +305,7 @@ function AISection({ onNavigateAi }: { onNavigateAi: () => void }) {
               <button
                 key={a.id}
                 onClick={onNavigateAi}
-                className="text-left p-4 rounded-xl border border-gray-700 hover:border-blue-500 bg-gray-800 hover:bg-gray-750 transition-all group"
+                className="text-left p-4 rounded-xl border border-border hover:border-blue-500 bg-card hover:bg-muted transition-all group"
               >
                 <div className="flex items-start gap-3">
                   <div className={`w-10 h-10 rounded-lg ${meta.color} flex items-center justify-center text-lg flex-shrink-0 text-white-important`}>
@@ -288,17 +313,17 @@ function AISection({ onNavigateAi }: { onNavigateAi: () => void }) {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="font-medium text-white text-sm truncate">{a.name}</span>
+                      <span className="font-medium text-foreground text-sm truncate">{a.name}</span>
                       {a.isDefault && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-900/50 text-blue-400 font-bold flex-shrink-0">MẶC ĐỊNH</span>
                       )}
                     </div>
-                    <p className="text-xs text-gray-400">{meta.label} - {a.model}</p>
+                    <p className="text-xs text-muted-foreground">{meta.label} - {a.model}</p>
                   </div>
                 </div>
                 <div className="mt-3 flex items-center justify-between">
-                  <span className={`text-xs flex items-center gap-1 ${a.enabled ? 'text-green-400' : 'text-gray-400'}`}>
-                    <span className={`w-1.5 h-1.5 rounded-full ${a.enabled ? 'bg-green-400' : 'bg-gray-600'}`}/>
+                  <span className={`text-xs flex items-center gap-1 ${a.enabled ? 'text-green-400' : 'text-muted-foreground'}`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${a.enabled ? 'bg-green-400' : 'bg-accent'}`}/>
                     {a.enabled ? 'Đang bật' : 'Đã tắt'}
                   </span>
                   <span className="text-xs text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity">Cấu hình →</span>
@@ -314,15 +339,15 @@ function AISection({ onNavigateAi }: { onNavigateAi: () => void }) {
             <button
               key={platform.key}
               onClick={onNavigateAi}
-              className="p-4 rounded-xl border border-gray-700 hover:border-blue-500 bg-gray-800/60 hover:bg-gray-750 transition-all group text-left"
+              className="p-4 rounded-xl border border-border hover:border-blue-500 bg-card hover:bg-muted transition-all group text-left"
             >
               <div className="flex items-start gap-3">
                 <div className={`w-10 h-10 rounded-lg ${platform.color} flex items-center justify-center text-xl flex-shrink-0 text-white-important`}>
                   {platform.icon}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="font-medium text-white text-sm mb-1">{platform.label}</div>
-                  <p className="text-xs text-gray-400 leading-snug">{platform.desc}</p>
+                  <div className="font-medium text-foreground text-sm mb-1">{platform.label}</div>
+                  <p className="text-xs text-muted-foreground leading-snug">{platform.desc}</p>
                 </div>
               </div>
             </button>
@@ -333,111 +358,83 @@ function AISection({ onNavigateAi }: { onNavigateAi: () => void }) {
   );
 }
 
-function TunnelStatusCard({ webhookPort, tunnelUrl, tunnelLoading, onToggle, savedList }: {
+/**
+ * Địa chỉ nhận webhook thanh toán / tích hợp (cổng 9888) — CHỈ XEM. Bật / tắt / đổi địa chỉ ở
+ * Cài đặt → Internet & Đám mây → Địa chỉ Internet.
+ */
+function WebhookAddressCard({ webhookPort, tunnelUrl, savedList }: {
   webhookPort: number;
+  /** Địa chỉ đang nhận (tunnel:status) — dùng khi bản app không có module Cloudflare. */
   tunnelUrl: string | null;
-  tunnelLoading: boolean;
-  onToggle: () => void;
   savedList: SavedIntegration[];
 }) {
-  const hasPaymentIntegration = savedList.some(s => (s.type === 'casso' || s.type === 'sepay') && s.connectedAt);
+  const pub = usePublicAddresses();
+  const payments = pub.get('payments');
+  // Đã bật (kể cả đang khởi động / lỗi — thẻ địa chỉ tự báo); bản app không có module Cloudflare thì theo tunnel:status
+  const enabled = payments ? payments.enabled : !!tunnelUrl;
+  const isPaymentType = (type: string) => type === 'casso' || type === 'sepay';
+  // Cần địa chỉ nhận: thanh toán đã kết nối, phần mềm bán hàng đã đặt khoá webhook (muốn nhận webhook)
+  const receivers = savedList
+    .filter(s => (isPaymentType(s.type) && s.connectedAt) || (!isPaymentType(s.type) && s.enabled && s.webhook?.secretConfigured))
+    .map(s => s.name);
+  const paymentIntegrations = savedList.filter(s => isPaymentType(s.type) && s.enabled && s.webhook);
+  // Chưa đặt khoá → ai biết địa chỉ cũng gửi được giao dịch giả (phần mềm bán hàng chưa đặt khoá thì webhook bị từ chối)
+  const unsecured = paymentIntegrations.filter(s => !s.webhook!.secretConfigured).map(s => s.name);
+  // Đang từ chối (chưa đặt khoá / thiếu / sai chữ ký) → workflow thanh toán / webhook bán hàng không chạy
+  const rejecting = savedList.filter(s => s.enabled && s.webhook).filter(s => {
+    const { lastAccepted, lastRejected } = s.webhook!;
+    return !!lastRejected && lastRejected.reason !== 'disabled' && (!lastAccepted || lastRejected.at >= lastAccepted.at);
+  }).map(s => s.name);
 
   return (
-    <div className="bg-gray-700 dark:bg-gray-800 border border-gray-200 dark:border-gray-700/60 rounded-2xl p-5">
-      {/* Header */}
-      <div className="flex items-start justify-between mb-3">
-        <div>
-          <h3 className="text-sm font-semibold flex items-center gap-2">
-            <span><GlobeIcon className="w-4 h-4" /></span> Webhook Tunnel - Kết nối Internet
-          </h3>
-          <p className="text-xs mt-1">
-            Tunnel expose server local ra internet để nhận webhook thanh toán,
-            tự động xác nhận đơn hàng, kích hoạt workflow từ bên ngoài.
-          </p>
-        </div>
-        <button
-          onClick={onToggle}
-          disabled={tunnelLoading}
-          className={`flex-shrink-0 px-4 py-2 text-xs rounded-xl font-semibold transition-colors ${
-            tunnelUrl
-              ? 'bg-green-100 dark:bg-green-700/50 hover:bg-red-100 dark:hover:bg-red-700/50 text-green-700 dark:text-green-300 hover:text-red-700 dark:hover:text-red-300 border border-green-300 dark:border-green-600/50 hover:border-red-300 dark:hover:border-red-600/50'
-              : 'bg-blue-600 hover:bg-blue-500 text-white border border-blue-500/50'
-          }`}
-        >
-          {tunnelLoading ? (
-            <span className="flex items-center gap-1.5">
-              <Spinner size={3} />
-              Đang kết nối...
-            </span>
-          ) : tunnelUrl ? <><GlobeIcon className="w-4 h-4 inline" /> Đang Online</> : <><LockIcon className="w-4 h-4 inline" /> Bật Tunnel</>}
-        </button>
+    <div className="space-y-3 rounded-2xl border border-border bg-card p-5">
+      <div>
+        <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+          <GlobeIcon className="h-4 w-4" /> Địa chỉ nhận webhook
+        </h3>
+        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+          Casso và SePay gửi giao dịch chuyển khoản vào Deplao qua địa chỉ Internet này để chạy workflow
+          “Khi nhận thanh toán”; KiotViet, Haravan, Sapo, Nhanh.vn, Pancake POS gửi đơn hàng / khách hàng để chạy workflow
+          “Khi phần mềm bán hàng gửi webhook” (cần đặt khoá xác thực webhook trong trang tích hợp). Đơn vị vận chuyển không gửi
+          dữ liệu vào đây — Deplao tự hỏi khi bạn tra cứu. Chỉ chạy khi Deplao đang mở.
+          {!pub.serverManaged && (
+            <> Bật, tắt hoặc đổi địa chỉ ở <strong className="text-foreground">Cài đặt → Internet &amp; Đám mây → Địa chỉ Internet</strong>.</>
+          )}
+        </p>
       </div>
 
-      {/* URL display */}
-      <div className="flex items-center gap-2 bg-gray-200/80 dark:bg-gray-900/60 rounded-xl px-4 py-3 border border-gray-300 dark:border-gray-700/40">
-        <div className="flex-1 min-w-0">
-          <p className="text-[10px] text-gray-400 dark:text-gray-400 mb-0.5 font-medium">
-            {tunnelUrl ? 'URL công khai (internet):' : <><AlertIcon className="w-4 h-4 inline" /> URL local (chỉ hoạt động nội bộ):</>}
-          </p>
-          <p className={`text-xs font-mono truncate ${tunnelUrl ? 'text-green-600 dark:text-green-400' : 'text-yellow-700 dark:text-yellow-500'}`}>
-            {tunnelUrl || `http://127.0.0.1:${webhookPort}`}
-          </p>
-        </div>
-        {tunnelUrl && (
-          <button
-            onClick={() => navigator.clipboard.writeText(tunnelUrl)}
-            title="Copy URL"
-            className="flex-shrink-0 w-8 h-8 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-400 dark:text-gray-400 hover:text-gray-800 dark:hover:text-white flex items-center justify-center transition-colors"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-            </svg>
-          </button>
-        )}
-      </div>
+      <PublicAddressCard service="payments" title="Thanh toán, tích hợp" pathSuffix="/webhook/<loại>" anyMode compact />
 
-      {/* Billing explanation - always visible */}
-      <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div className="bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700/30 rounded-xl p-3">
-          <p className="text-xs font-semibold text-blue-700 dark:text-blue-300 mb-1"><CreditCardIcon className="w-4 h-4 inline" /> Khi nào cần bật Tunnel?</p>
-          <ul className="text-[11px] text-blue-600/80 dark:text-blue-200/80 space-y-1">
-            <li>• Dùng <strong>Casso</strong> hoặc <strong>SePay</strong> để nhận thông báo chuyển khoản tự động</li>
-            <li>• Hệ thống thanh toán <strong>cần server công khai</strong> để gửi webhook về</li>
-            <li>• Khi nhận được tiền → tự động xác nhận đơn, kích hoạt workflow</li>
-            <li>• <strong>Bắt buộc</strong> nếu muốn tự động hoá xác nhận thanh toán</li>
-          </ul>
-        </div>
-        <div className="bg-purple-50 dark:bg-purple-900 border border-purple-200 dark:border-purple-700/30 rounded-xl p-3">
-          <p className="text-xs font-semibold text-purple-700 dark:text-purple-300 mb-1">🧪 Tunnel hoạt động thế nào?</p>
-          <ul className="text-[11px] text-purple-600/80 dark:text-purple-200/80 space-y-1">
-            <li>• Tạo một <strong>URL công khai</strong> (VD: abc.loca.lt) trỏ về máy bạn</li>
-            <li>• Casso/SePay gửi dữ liệu giao dịch đến URL này</li>
-            <li>• Phần mềm nhận được → cập nhật trạng thái đơn hàng</li>
-            <li>• Dùng <strong>miễn phí</strong>, không cần đăng ký tài khoản bên thứ ba</li>
-          </ul>
-        </div>
-      </div>
+      <p className="text-[11px] leading-relaxed text-subtle-foreground">
+        Trên máy này (chỉ dùng nội bộ): <code className="font-mono">http://127.0.0.1:{webhookPort}/webhook/&lt;loại&gt;</code>.
+        Đường dẫn đầy đủ để dán vào từng nền tảng nằm trong trang tích hợp của nền tảng đó.
+      </p>
 
-      {/* Warning if no tunnel but has payment integration connected */}
-      {!tunnelUrl && hasPaymentIntegration && (
-        <div className="mt-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-700/40 rounded-xl px-4 py-3">
-          <p className="text-xs text-yellow-800 dark:text-yellow-400 font-medium mb-1"><AlertIcon className="w-4 h-4 inline" /> Bạn đang dùng Casso/SePay nhưng Tunnel chưa bật</p>
-          <p className="text-[11px] text-yellow-700 dark:text-yellow-500">
-            Thanh toán tự động sẽ không hoạt động. Hãy bật Tunnel ở nút bên trên để nhận webhook từ internet.
+      {!enabled && receivers.length > 0 && !pub.serverManaged && (
+        <div role="alert" className="rounded-xl border border-warning/40 bg-warning/10 px-4 py-3">
+          <p className="text-xs font-medium text-foreground">
+            <AlertIcon className="inline h-4 w-4 text-warning" /> Đã kết nối {receivers.join(', ')} nhưng chưa bật địa chỉ nhận
+          </p>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">
+            Webhook chưa vào được Deplao (thanh toán tự động, workflow theo webhook chưa chạy). Bật ở Cài đặt → Internet &amp; Đám mây → Địa chỉ Internet.
           </p>
         </div>
       )}
 
-      {/* How to use in billing flow */}
-      {tunnelUrl && (
-        <div className="mt-3 bg-green-50 dark:bg-green-900/15 border border-green-300 dark:border-green-700/30 rounded-xl px-4 py-3">
-          <div className="flex items-center gap-2">
-            <span className="text-green-600 dark:text-green-400"><CheckIcon className="w-4 h-4" /></span>
-            <p className="text-xs text-green-800 dark:text-green-300 font-medium">Tunnel đang hoạt động - sẵn sàng nhận webhook thanh toán</p>
-          </div>
-          <p className="text-[11px] text-green-700/70 dark:text-green-400/70 mt-1 ml-5">
-            Casso/SePay sẽ gửi thông báo giao dịch qua URL công khai bên trên. Khi có chuyển khoản, hệ thống tự động xử lý.
-          </p>
+      {(unsecured.length > 0 || rejecting.length > 0) && (
+        <div role="alert" className="space-y-0.5 rounded-xl border border-warning/40 bg-warning/10 px-4 py-3">
+          {unsecured.length > 0 && (
+            <p className="text-[11px] text-foreground">
+              <AlertIcon className="inline h-4 w-4 text-warning" /> {unsecured.join(', ')} chưa đặt khoá bảo mật webhook — ai biết địa chỉ
+              cũng gửi được giao dịch giả. Mở trang tích hợp để đặt khoá.
+            </p>
+          )}
+          {rejecting.length > 0 && (
+            <p className="text-[11px] text-foreground">
+              <AlertIcon className="inline h-4 w-4 text-warning" /> {rejecting.join(', ')} đang từ chối webhook (chưa đặt khoá hoặc thiếu / sai
+              chữ ký) — xem mục Bảo mật webhook trong trang tích hợp.
+            </p>
+          )}
         </div>
       )}
     </div>
@@ -465,8 +462,8 @@ function IntegrationSection({ sectionKey, catalog, savedList, onSelect }: {
           {meta.icon}
         </div>
         <div>
-          <h2 className="text-sm font-semibold text-white">{meta.label}</h2>
-          <p className="text-[10px] text-gray-400">
+          <h2 className="text-sm font-semibold text-foreground">{meta.label}</h2>
+          <p className="text-[10px] text-muted-foreground">
             {catalog.length} nền tảng
             {connectedCount > 0 && <span className="text-green-500"> · {connectedCount} đã kết nối</span>}
           </p>
@@ -482,7 +479,7 @@ function IntegrationSection({ sectionKey, catalog, savedList, onSelect }: {
             <button
               key={item.type}
               onClick={() => onSelect(item, saved)}
-              className="text-left p-4 rounded-xl border border-gray-700 hover:border-blue-500 bg-gray-800 hover:bg-gray-750 transition-all group"
+              className="text-left p-4 rounded-xl border border-border hover:border-blue-500 bg-card hover:bg-muted transition-all group"
             >
               <div className="flex items-start gap-3">
                 <div className={`w-10 h-10 rounded-lg ${item.color} flex items-center justify-center text-xl flex-shrink-0 text-white-important`}>
@@ -490,21 +487,14 @@ function IntegrationSection({ sectionKey, catalog, savedList, onSelect }: {
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="font-medium text-white text-sm">{item.name}</span>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase ${
-                      item.priority === 'p0' ? 'bg-red-900/50 text-red-400' :
-                      item.priority === 'p1' ? 'bg-orange-900/50 text-orange-400' :
-                      'bg-gray-700 text-gray-400'
-                    }`}>
-                      {item.priority.toUpperCase()}
-                    </span>
+                    <span className="font-medium text-foreground text-sm">{item.name}</span>
                   </div>
-                  <p className="text-xs text-gray-400 leading-snug">{item.desc}</p>
+                  <p className="text-xs text-muted-foreground leading-snug">{item.desc}</p>
                 </div>
               </div>
               <div className="mt-3 flex items-center justify-between">
-                <span className={`text-xs flex items-center gap-1 ${connected ? 'text-green-400' : 'text-gray-400'}`}>
-                  <span className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-green-400' : 'bg-gray-600'}`}/>
+                <span className={`text-xs flex items-center gap-1 ${connected ? 'text-green-400' : 'text-muted-foreground'}`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-green-400' : 'bg-accent'}`}/>
                   {connected ? 'Đã kết nối' : saved ? 'Chưa xác nhận' : 'Chưa kết nối'}
                 </span>
                 <span className="text-xs text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -530,8 +520,8 @@ export default function IntegrationPage() {
   const [selectedDetail, setSelectedDetail] = useState<{ catalogItem: CatalogItem; saved?: SavedIntegration } | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>('all');
   const [webhookPort, setWebhookPort] = useState<number>(9888);
+  // Địa chỉ nhận webhook đang chạy (chỉ đọc) — bật / tắt ở Cài đặt → Internet & Đám mây → Địa chỉ Internet
   const [tunnelUrl, setTunnelUrl] = useState<string | null>(null);
-  const [tunnelLoading, setTunnelLoading] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
 
   const workspaceId = useWorkspaceStore(s => s.activeWorkspaceId);
@@ -558,7 +548,7 @@ export default function IntegrationPage() {
     } catch {}
     try {
       const ts = await ipc.tunnel?.status();
-      if (ts?.active) setTunnelUrl(ts.url);
+      setTunnelUrl(ts?.active ? ts.url ?? null : null);
     } catch {}
     setLoading(false);
   }, [workspaceId]); // ← reload khi chuyển workspace
@@ -571,23 +561,6 @@ export default function IntegrationPage() {
     });
     return () => { if (typeof unsub === 'function') unsub(); };
   }, []);
-
-  const handleTunnelToggle = async () => {
-    setTunnelLoading(true);
-    try {
-      if (tunnelUrl) {
-        await ipc.tunnel?.stop();
-        setTunnelUrl(null);
-      } else {
-        const res = await ipc.tunnel?.start();
-        if (res?.success && res.url) setTunnelUrl(res.url);
-        else alert('Không thể mở Tunnel: ' + (res?.error || 'Lỗi không xác định'));
-      }
-    } catch (e: any) {
-      alert('Lỗi tunnel: ' + e.message);
-    }
-    setTunnelLoading(false);
-  };
 
   const handleNavigateAi = () => {
     setActiveTab('ai');
@@ -612,7 +585,6 @@ export default function IntegrationPage() {
         catalogItem={selectedDetail.catalogItem}
         saved={selectedDetail.saved}
         webhookPort={webhookPort}
-        tunnelUrl={tunnelUrl}
         onBack={() => { setSelectedDetail(null); loadList(); }}
       />
     );
@@ -620,9 +592,9 @@ export default function IntegrationPage() {
 
   if (activeTab === 'ai') {
     return (
-      <div className="flex flex-col h-full overflow-hidden bg-gray-900">
+      <div className="flex flex-col h-full overflow-hidden bg-background">
         {/* Top bar */}
-        <TopBar activeTab={activeTab} onTabChange={scrollToSection} tunnelUrl={tunnelUrl} tunnelLoading={tunnelLoading} onTunnelToggle={handleTunnelToggle} />
+        <TopBar activeTab={activeTab} onTabChange={scrollToSection} tunnelUrl={tunnelUrl} />
         <div className="flex-1 overflow-hidden">
           <AIAssistantPage />
         </div>
@@ -631,22 +603,22 @@ export default function IntegrationPage() {
   }
 
   return (
-    <div className="flex flex-col h-full overflow-hidden bg-gray-900">
+    <div className="flex flex-col h-full overflow-hidden bg-background">
       {/* Top horizontal tab bar */}
-      <TopBar activeTab={activeTab} onTabChange={scrollToSection} tunnelUrl={tunnelUrl} tunnelLoading={tunnelLoading} onTunnelToggle={handleTunnelToggle} />
+      <TopBar activeTab={activeTab} onTabChange={scrollToSection} tunnelUrl={tunnelUrl} />
 
       {/* Scrollable content */}
       <div ref={contentRef} className="flex-1 overflow-y-auto">
         <div className="px-6 py-6 space-y-2">
 
           {isOfflineEmployee ? (
-            <div className="flex flex-col items-center justify-center h-full py-20 text-center text-gray-400">
-              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" className="text-gray-400 mb-4">
+            <div className="flex flex-col items-center justify-center h-full py-20 text-center text-muted-foreground">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" className="text-muted-foreground mb-4">
                 <rect x="2" y="2" width="20" height="20" rx="3" />
                 <path d="M9 12h6M12 9v6" />
               </svg>
-              <p className="text-gray-400 font-semibold mb-1">Không có dữ liệu</p>
-              <p className="text-gray-400 text-sm">Mất kết nối tới Boss. Dữ liệu tích hợp không khả dụng.</p>
+              <p className="text-muted-foreground font-semibold mb-1">Không có dữ liệu</p>
+              <p className="text-muted-foreground text-sm">Mất kết nối tới Boss. Dữ liệu tích hợp không khả dụng.</p>
             </div>
           ) : loading ? (
             <PageLoading variant="inline" text="Đang tải tích hợp..." />
@@ -665,15 +637,9 @@ export default function IntegrationPage() {
                 />
               ))}
 
-              {/* Divider before tunnel */}
-              <div className="border-t border-gray-700/40 pt-6">
-                <TunnelStatusCard
-                  webhookPort={webhookPort}
-                  tunnelUrl={tunnelUrl}
-                  tunnelLoading={tunnelLoading}
-                  onToggle={handleTunnelToggle}
-                  savedList={savedList}
-                />
+              {/* Divider before webhook address */}
+              <div className="border-t border-border/40 pt-6">
+                <WebhookAddressCard webhookPort={webhookPort} tunnelUrl={tunnelUrl} savedList={savedList} />
               </div>
             </>
           ) : (
@@ -686,16 +652,10 @@ export default function IntegrationPage() {
                 onSelect={handleSelectItem}
               />
 
-              {/* Tunnel card for payment section */}
+              {/* Webhook address card for payment section */}
               {activeTab === 'payment' && (
                 <div className="pt-4">
-                  <TunnelStatusCard
-                    webhookPort={webhookPort}
-                    tunnelUrl={tunnelUrl}
-                    tunnelLoading={tunnelLoading}
-                    onToggle={handleTunnelToggle}
-                    savedList={savedList}
-                  />
+                  <WebhookAddressCard webhookPort={webhookPort} tunnelUrl={tunnelUrl} savedList={savedList} />
                 </div>
               )}
             </>
@@ -708,42 +668,53 @@ export default function IntegrationPage() {
 
 // ─── Top Navigation Bar ───────────────────────────────────────────────────────
 
-function TopBar({ activeTab, onTabChange, tunnelUrl, tunnelLoading, onTunnelToggle }: {
+/**
+ * Trạng thái địa chỉ nhận webhook (một dòng, chỉ xem). Bấm → Cài đặt → Internet & Đám mây → Địa chỉ Internet;
+ * máy nhân viên không hiện, bản app không có module Cloudflare thì chỉ hiện chữ.
+ */
+function WebhookStatusPill({ tunnelUrl }: { tunnelUrl: string | null }) {
+  const pub = usePublicAddresses();
+  if (pub.serverManaged) return null;
+  const payments = pub.get('payments');
+  // Bản app không có module Cloudflare: theo tunnel:status (chỉ có địa chỉ khi đang chạy)
+  const url = payments ? (payments.enabled && payments.state === 'active' ? payments.url : null) : tunnelUrl;
+  const pending = !url && !!payments?.enabled;
+  const className = 'flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-[11px] font-medium text-muted-foreground';
+  const content = (
+    <>
+      <span className={cn('h-2 w-2 rounded-full', url ? 'bg-success' : pending ? 'bg-warning' : 'bg-accent')} aria-hidden="true" />
+      <span>{url ? 'Đang nhận webhook' : pending ? 'Webhook chưa sẵn sàng' : 'Webhook chưa bật'}</span>
+    </>
+  );
+  if (!pub.canConfigure) return <span className={className} title={url || undefined}>{content}</span>;
+  return (
+    <button
+      type="button"
+      onClick={() => navigateSettings('cloud', 'address')}
+      className={cn(className, 'transition-colors hover:bg-muted hover:text-foreground')}
+      title={url ? `${url} — đổi ở Cài đặt → Internet & Đám mây` : 'Bật ở Cài đặt → Internet & Đám mây → Địa chỉ Internet'}
+    >
+      {content}
+    </button>
+  );
+}
+
+function TopBar({ activeTab, onTabChange, tunnelUrl }: {
   activeTab: TabKey;
   onTabChange: (key: TabKey) => void;
   tunnelUrl: string | null;
-  tunnelLoading: boolean;
-  onTunnelToggle: () => void;
 }) {
   return (
-    <div className="flex-shrink-0 border-b border-gray-700 bg-gray-900/95">
+    <div className="flex-shrink-0 border-b border-border bg-card/95">
       <div className="px-6">
         {/* Title row */}
         <div className="flex items-center justify-between py-3">
           <div className="flex items-center gap-3">
-            <h1 className="text-base font-semibold text-white"><PluginIcon className="w-4 h-4 inline" /> Tích hợp</h1>
-            <p className="text-[11px] text-gray-400">Kết nối nền tảng bên ngoài</p>
+            <h1 className="text-base font-semibold text-foreground"><PluginIcon className="w-4 h-4 inline" /> Tích hợp</h1>
+            <p className="text-[11px] text-muted-foreground">Kết nối nền tảng bên ngoài</p>
           </div>
-          {/* Compact tunnel toggle in top bar */}
-          <button
-            onClick={onTunnelToggle}
-            disabled={tunnelLoading}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-[11px] rounded-lg font-medium transition-colors ${
-              tunnelUrl
-                ? 'bg-green-800/40 text-green-300 border border-green-700/50 hover:bg-red-800/40 hover:text-red-300 hover:border-red-700/50'
-                : 'bg-gray-700/60 text-gray-400 border border-gray-600/50 hover:bg-gray-700 hover:text-white'
-            }`}
-            title={tunnelUrl ? 'Nhấn để tắt Tunnel' : 'Bật Tunnel để nhận webhook từ internet'}
-          >
-            {tunnelLoading ? (
-              <Spinner size={3} />
-            ) : tunnelUrl ? (
-              <span className="w-2 h-2 rounded-full bg-green-400"/>
-            ) : (
-              <span className="w-2 h-2 rounded-full bg-gray-500"/>
-            )}
-            <span>{tunnelUrl ? 'Online' : 'Tunnel'}</span>
-          </button>
+          {/* Địa chỉ nhận webhook — chỉ xem, bật / tắt ở Cài đặt → Internet & Đám mây */}
+          <WebhookStatusPill tunnelUrl={tunnelUrl} />
         </div>
 
         {/* Horizontal tabs */}
@@ -755,7 +726,7 @@ function TopBar({ activeTab, onTabChange, tunnelUrl, tunnelLoading, onTunnelTogg
               className={`flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium rounded-t-lg border-b-2 transition-colors ${
                 activeTab === tab.key
                   ? 'text-blue-400 border-blue-500 bg-blue-600/10'
-                  : 'text-gray-400 border-transparent hover:text-gray-200 hover:border-gray-500'
+                  : 'text-muted-foreground border-transparent hover:text-foreground hover:border-border-strong'
               }`}
             >
               <span>{tab.icon}</span>

@@ -1,0 +1,736 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/rs/zerolog"
+
+	"go.mau.fi/util/exhttp"
+
+	"go.mau.fi/mautrix-meta/pkg/messagix"
+	"go.mau.fi/mautrix-meta/pkg/messagix/bloks"
+	"go.mau.fi/mautrix-meta/pkg/messagix/cookies"
+	"go.mau.fi/mautrix-meta/pkg/messagix/crypto"
+	"go.mau.fi/mautrix-meta/pkg/messagix/types"
+)
+
+var filename = flag.String("file", "", "Bloks response to parse")
+var doPrint = flag.Bool("print", false, "Pretty-print the bundle")
+var doExport = flag.Bool("export", false, "Print the bundle in a format that can be parsed again")
+var doHTML = flag.Bool("html", false, "Print as HTML")
+var doLogin = flag.Bool("login", false, "Click the login button")
+var do2FA = flag.String("2fa", "", "Submit a two-factor code")
+var doMethods = flag.Bool("methods", false, "Print the available 2FA methods")
+var selectedMethod = flag.String("method", "", "Select one of the 2FA methods")
+var afad = flag.Bool("afad", false, "Run the AFAD handlers")
+var doAction = flag.Bool("action", false, "Run the action script")
+var logLevel = flag.String("log-level", "debug", "How much logging (zerolog)")
+var doRPC = flag.String("rpc", "", "Make a Bloks RPC network request")
+var rpcParams = flag.String("rpc-params", "", "JSON body for Bloks RPC")
+var captcha = flag.Bool("captcha", false, "Extract information from the captcha page")
+var doWeirdAction = flag.Bool("weird-action", false, "Do the weird page-embedded action")
+var anotherWay = flag.Bool("another-way", false, "Click the alternate MFA method button")
+var doSMS = flag.Bool("sms", false, "Trigger sending SMS code")
+var doSMSCode = flag.String("sms-code", "", "Submit SMS code")
+var doBackupCode = flag.String("backup-code", "", "Submit backup code")
+var doEncrypt = flag.String("encrypt", "", "Encrypt a password")
+var deviceID = flag.String("device-id", "", "Device ID for password encryption")
+var familyDeviceID = flag.String("family-device-id", "", "Family device ID for headers")
+var doCaptcha = flag.String("captcha-code", "", "Captcha code to submit")
+var captchaResponse = flag.String("captcha-resp", "", "Bloks response for captcha submission")
+var doWhatsAppNumbers = flag.Bool("whatsapp-numbers", false, "Print the available WhatsApp numbers")
+var selectedWhatsAppNumber = flag.String("whatsapp-number", "", "Pick a WhatsApp number and submit")
+var cancelPasskey = flag.Bool("cancel-passkey", false, "Tap the 'try another way' passkey button")
+var isAndroid = flag.Bool("android", false, "Use Android instead of iOS")
+var doPageFromAction = flag.Bool("new-page", false, "Act on new page rendered by action")
+var exchangeToken = flag.String("exchange-token", "", "Exchange an access token for session cookies (auth/create_session_for_app)")
+var machineID = flag.String("machine-id", "", "Machine ID to send with -exchange-token")
+var sessionEndpoint = flag.String("session-endpoint", "", "Override the create_session_for_app endpoint")
+var newAppID = flag.String("new-app-id", "", "Request the session for this app instead of our own")
+var appAuth = flag.Bool("app-auth", false, "Send the first-party app authorization header with -exchange-token")
+var sweepAppIDs = flag.Bool("sweep-app-ids", false, "Try -exchange-token against every known first-party app ID")
+var doRecaptcha = flag.Bool("recaptcha", false, "Extract the recaptcha webview url")
+var doContinue = flag.Bool("continue", false, "Just tap the continue button")
+var doPassword = flag.Bool("password", false, "Fill the password field and click log in (account-recovery password form)")
+
+// Known first-party app IDs, for finding one that the session exchange accepts.
+var knownAppIDs = []struct{ ID, Name string }{
+	{"", "ourselves"},
+	{"350685531728", "Facebook Android"},
+	{"6628568379", "Facebook iPhone"},
+	{"275254692598279", "Facebook Lite"},
+	{"256002347743983", "Messenger Android"},
+	{"237759909591655", "Messenger iPhone"},
+	{"200424423651082", "Messenger Lite"},
+	{"437626316973788", "Messenger Lite iOS"},
+	{"165907476854626", "Pages Manager iOS"},
+	{"121876164619130", "Pages Manager Android"},
+	{"124024574287414", "Instagram"},
+}
+
+func main() {
+	err := mainE()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fatal: %s\n", err.Error())
+		os.Exit(1)
+	}
+}
+
+func readAndParse[T any](filename string) (*T, error) {
+	if filename == "-" {
+		filename = "/dev/stdin"
+	}
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	fileB, err := io.ReadAll(file)
+	if err != nil {
+		return nil, err
+	}
+	var data T
+	err = json.Unmarshal(fileB, &data)
+	if err != nil {
+		return nil, fmt.Errorf("parse: %w", err)
+	}
+	return &data, nil
+}
+
+// This code is liable to be out of date and crappy, because it is
+// just for manual testing. See the actual login flow integrating with
+// bridgev2 for the latest best practices.
+func mainE() error {
+	ctx := context.Background()
+
+	flag.Parse()
+
+	logLevel, err := zerolog.ParseLevel(*logLevel)
+	if err != nil {
+		return err
+	}
+	log := zerolog.New(zerolog.NewConsoleWriter()).Level(logLevel)
+	ctx = log.WithContext(ctx)
+
+	plat := types.MessengerLiteIOS
+	if *isAndroid {
+		plat = types.MessengerLiteAndroid
+	}
+
+	if *doEncrypt != "" {
+		if *deviceID == "" {
+			return fmt.Errorf("must give -device-id to use -encrypt")
+		}
+		cook := &cookies.Cookies{
+			Platform: plat,
+		}
+		cl := messagix.NewClient(cook, log, &messagix.Config{
+			ClientSettings: exhttp.SensibleClientSettings,
+		})
+		cl.MessengerLite.SetDeviceIdentifiers(uuid.MustParse(*deviceID))
+		key, err := cl.FetchLightspeedKey(ctx)
+		if err != nil {
+			return err
+		}
+		enc, err := crypto.EncryptPassword(plat, key.KeyID, key.PublicKey, *doEncrypt)
+		if err != nil {
+			return err
+		}
+
+		fmt.Println(enc)
+		return nil
+	}
+	if *exchangeToken != "" {
+		cl := messagix.NewClient(&cookies.Cookies{
+			Platform: plat,
+		}, log, &messagix.Config{
+			ClientSettings: exhttp.SensibleClientSettings,
+		})
+		if *deviceID != "" {
+			cl.MessengerLite.SetDeviceIdentifiers(uuid.MustParse(*deviceID))
+		}
+		cl.MessengerLite.SetMachineID(*machineID)
+
+		apps := []struct{ ID, Name string }{{*newAppID, "requested app"}}
+		if *sweepAppIDs {
+			apps = knownAppIDs
+		}
+		for _, app := range apps {
+			resp, err := cl.MessengerLite.GetSessionForApp(ctx, *exchangeToken, messagix.SessionForAppOptions{
+				Endpoint: *sessionEndpoint,
+				NewAppID: app.ID,
+				AppAuth:  *appAuth,
+			})
+			if err != nil {
+				fmt.Printf("%s %s: %v\n", app.ID, app.Name, err)
+				continue
+			}
+			cookieNames := make([]string, len(resp.SessionCookies))
+			for i, cookie := range resp.SessionCookies {
+				cookieNames[i] = cookie.Name
+			}
+			fmt.Printf("%s %s: uid=%s cookies=[%s]\n", app.ID, app.Name, resp.UID, strings.Join(cookieNames, " "))
+			// The token may well be single use, so don't keep going once
+			// something has worked.
+			break
+		}
+		return nil
+	}
+	if *doRPC != "" {
+		if *rpcParams == "" {
+			return fmt.Errorf("-rpc-params is mandatory when using -rpc")
+		}
+
+		var paramsOuter map[string]string
+		err := json.Unmarshal([]byte(*rpcParams), &paramsOuter)
+		if err != nil {
+			return fmt.Errorf("parsing outer params: %w", err)
+		}
+
+		var paramsInner bloks.BloksParamsInner
+		err = json.Unmarshal([]byte(paramsOuter["params"]), &paramsInner)
+		if err != nil {
+			return fmt.Errorf("parsing inner params: %w", err)
+		}
+
+		mcl := messagix.NewClient(&cookies.Cookies{
+			Platform: plat,
+		}, log, &messagix.Config{})
+		doc, err := bloks.GetBloksAppDoc(plat)
+		if err != nil {
+			return err
+		}
+		mcl.GetHTTP().MakeBloksRequest(ctx, doc, *doRPC, paramsInner, *deviceID, *familyDeviceID)
+
+		return nil
+	}
+
+	if *filename == "" {
+		return fmt.Errorf("-file is mandatory")
+	}
+
+	bundle, err := readAndParse[bloks.BloksBundle](*filename)
+	if err != nil {
+		return err
+	}
+	lastURL := ""
+	bridge := bloks.InterpBridge{
+		DoPageRPC: func(ctx context.Context, name string, params map[string]string) (*bloks.BloksBundle, error) {
+			fmt.Printf("%s type=page\n", name)
+			payload, err := json.Marshal(params)
+			if err != nil {
+				return nil, err
+			}
+			fmt.Printf("%s\n", string(payload))
+			return nil, nil
+		},
+		DoActionRPC: func(ctx context.Context, name string, params map[string]string) (*bloks.BloksScriptNode, error) {
+			fmt.Printf("%s type=action\n", name)
+			payload, err := json.Marshal(params)
+			if err != nil {
+				return nil, err
+			}
+			fmt.Printf("%s\n", string(payload))
+			if *captchaResponse != "" {
+				bundle, err := readAndParse[bloks.BloksBundle](*captchaResponse)
+				if err != nil {
+					return nil, err
+				}
+				fmt.Printf("(providing response from %s)\n", *captchaResponse)
+				return bundle.Action(), nil
+			}
+			return &bloks.BloksScriptNode{
+				Content: bloks.BloksNull,
+			}, nil
+		},
+		HandleLoginResponse: func(ctx context.Context, data string) error {
+			fmt.Printf("%s\n", data)
+			return nil
+		},
+		StartTimer: func(name string, interval time.Duration, callback func() error) error {
+			for range 3 {
+				err := callback()
+				if err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+		CancelTimer: func(name string) error {
+			fmt.Printf("timer cancelled: %s\n", name)
+			return nil
+		},
+		OpenURL: func(url string) error {
+			if lastURL != "" {
+				return fmt.Errorf("already opened a url this session")
+			}
+			lastURL = url
+			return nil
+		},
+		HandleVariableChange: func(ctx context.Context, name string, value *bloks.BloksScriptLiteral) error {
+			log.Trace().Str("variable", name).Any("value", value.Flatten(false)).Msg("Handling variable value change")
+			return nil
+		},
+	}
+	interp, err := bloks.NewInterpreter(ctx, bundle, &bridge, nil, true)
+	if err != nil {
+		return err
+	}
+	if *doWeirdAction {
+		action := bundle.FindDescendant(bloks.FilterByComponent("action")).GetScript("on_load")
+		if action == nil {
+			return fmt.Errorf("page-embedded action not found")
+		}
+		_, err := interp.Evaluate(ctx, &action.AST)
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+	if *anotherWay {
+		err := bundle.
+			FindDescendant(bloks.FilterByAttribute("bk.data.TextSpan", "text", "Try another way")).
+			FindContainingButton().
+			TapButton(ctx, interp)
+		if err != nil {
+			return fmt.Errorf("tapping method selection button: %w", err)
+		}
+		return nil
+	}
+	if *doSMS {
+		for _, mount := range bundle.FindDescendants(bloks.FilterByComponent("bk.components.OnMount")) {
+			script := mount.GetScript("on_first_mount")
+			if script == nil {
+				continue
+			}
+			_, err := interp.Evaluate(bloks.InterpBindThis(ctx, mount), &script.AST)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	if *doAction {
+		gotNewScreen := false
+		if *doPageFromAction {
+			interp.Bridge.DisplayNewScreen = func(ctx context.Context, name string, newBundle *bloks.BloksBundle) error {
+				bundle = newBundle
+				interp, err = bloks.NewInterpreter(ctx, bundle, &bridge, interp, true)
+				if err != nil {
+					return err
+				}
+				gotNewScreen = true
+				return nil
+			}
+		}
+		_, err := interp.Evaluate(ctx, &bundle.Layout.Payload.Action.AST)
+		if err != nil {
+			return err
+		}
+		if !*doPageFromAction {
+			return nil
+		}
+		if !gotNewScreen {
+			return fmt.Errorf("didn't get new screen from action")
+		}
+	}
+	if *doPrint {
+		return bundle.Print(os.Stdout, "")
+	}
+	if *doExport {
+		out, err := json.Marshal(bundle)
+		if err != nil {
+			return err
+		}
+		os.Stdout.Write(out)
+		fmt.Println()
+		return nil
+	}
+	if *doHTML {
+		return bundle.PrintHTML(os.Stdout, "")
+	}
+	fillTextInput := func(fieldName string, fillText string) error {
+		input := bundle.FindDescendant(func(comp *bloks.BloksTreeComponent) bool {
+			if comp.ComponentID != "bk.components.TextInput" {
+				return false
+			}
+			name, ok := comp.Attributes["html_name"].BloksTreeNodeContent.(*bloks.BloksTreeLiteral)
+			if !ok {
+				return false
+			}
+			str, ok := name.BloksJavaScriptValue.(string)
+			if !ok {
+				return false
+			}
+			return str == fieldName
+		})
+		if input == nil {
+			return fmt.Errorf("couldn't find %s field", fieldName)
+		}
+		err := input.SetTextContent(fillText)
+		if err != nil {
+			return err
+		}
+		onChanged, ok := input.Attributes["on_text_change"].BloksTreeNodeContent.(*bloks.BloksTreeScript)
+		if !ok {
+			return fmt.Errorf("%s field doesn't have on_text_change script", fieldName)
+		}
+		_, err = interp.Evaluate(bloks.InterpBindThis(ctx, input), &onChanged.AST)
+		if err != nil {
+			return fmt.Errorf("%s on_text_changed: %w", fieldName, err)
+		}
+		return nil
+	}
+	tapButton := func(buttonText string) error {
+		textComp := bundle.FindDescendant(func(comp *bloks.BloksTreeComponent) bool {
+			if comp.ComponentID != "bk.data.TextSpan" {
+				return false
+			}
+			if comp.Attributes["text"] == nil {
+				return false
+			}
+			text, ok := comp.Attributes["text"].BloksTreeNodeContent.(*bloks.BloksTreeLiteral)
+			if !ok {
+				return false
+			}
+			str, ok := text.BloksJavaScriptValue.(string)
+			if !ok {
+				return false
+			}
+			return str == buttonText
+		})
+		if textComp == nil {
+			return fmt.Errorf("couldn't find %s button", buttonText)
+		}
+		var buttonExtension *bloks.BloksTreeComponent
+		textComp.FindAncestor(func(comp *bloks.BloksTreeComponent) bool {
+			buttonExtension = comp.FindDescendant(func(comp *bloks.BloksTreeComponent) bool {
+				return comp.ComponentID == "bk.components.FoaTouchExtension"
+			})
+			return buttonExtension != nil
+		})
+		if buttonExtension == nil {
+			return fmt.Errorf("couldn't find %s button extension", buttonText)
+		}
+		onTouchDown, ok := buttonExtension.Attributes["on_touch_down"].BloksTreeNodeContent.(*bloks.BloksTreeScript)
+		if !ok {
+			return fmt.Errorf("%s button doesn't have on_touch_down script", buttonText)
+		}
+		onTouchUp, ok := buttonExtension.Attributes["on_touch_up"].BloksTreeNodeContent.(*bloks.BloksTreeScript)
+		if !ok {
+			return fmt.Errorf("%s button doesn't have on_touch_up script", buttonText)
+		}
+		_, err = interp.Evaluate(bloks.InterpBindThis(ctx, buttonExtension), &onTouchDown.AST)
+		if err != nil {
+			return fmt.Errorf("%s on_touch_down: %w", buttonText, err)
+		}
+		_, err = interp.Evaluate(bloks.InterpBindThis(ctx, buttonExtension), &onTouchUp.AST)
+		if err != nil {
+			return fmt.Errorf("%s on_touch_up: %w", buttonText, err)
+		}
+		return nil
+	}
+	if *doLogin {
+		err = fillTextInput("email", "hello@example.com")
+		if err != nil {
+			return err
+		}
+		err = fillTextInput("password", "correct horse battery staple")
+		if err != nil {
+			return err
+		}
+		err = tapButton("Log in")
+		if err != nil {
+			return err
+		}
+	} else if *doPassword {
+		err = fillTextInput("password", "correct horse battery staple")
+		if err != nil {
+			return err
+		}
+		err = tapButton("Log in")
+		if err != nil {
+			return err
+		}
+	} else if *do2FA != "" {
+		codeInput := bundle.FindDescendant(func(comp *bloks.BloksTreeComponent) bool {
+			if comp.ComponentID != "bk.components.TextInput" {
+				return false
+			}
+			return comp.FindDescendant(func(comp *bloks.BloksTreeComponent) bool {
+				if comp.ComponentID != "bk.components.AccessibilityExtension" {
+					return false
+				}
+				label, ok := comp.Attributes["label"].BloksTreeNodeContent.(*bloks.BloksTreeLiteral)
+				if !ok {
+					return false
+				}
+				str, ok := label.BloksJavaScriptValue.(string)
+				if !ok {
+					return false
+				}
+				return str == "Code" || str == "Enter code"
+			}) != nil
+		})
+		err := codeInput.SetTextContent(*do2FA)
+		if err != nil {
+			return err
+		}
+		onChanged, ok := codeInput.Attributes["on_text_change"].BloksTreeNodeContent.(*bloks.BloksTreeScript)
+		if !ok {
+			return fmt.Errorf("code field doesn't have on_text_change script")
+		}
+		_, err = interp.Evaluate(bloks.InterpBindThis(ctx, codeInput), &onChanged.AST)
+		if err != nil {
+			return fmt.Errorf("code on_text_changed: %w", err)
+		}
+		err = tapButton("Continue")
+		if err != nil {
+			return err
+		}
+	} else if *doMethods {
+		log := zerolog.Ctx(ctx)
+		foundMethods, methodNames, _ := bundle.FindMFAMethods(log)
+
+		fmt.Printf("Found %d MFA method(s):\n", len(foundMethods))
+		for _, methodName := range methodNames {
+			fmt.Printf("- %s\n", methodName)
+		}
+		if len(foundMethods) == 0 {
+			fmt.Printf("  (none)\n")
+			return nil
+		}
+		if *selectedMethod == "" {
+			return nil
+		}
+		err := foundMethods[*selectedMethod].FindContainingButton().TapButton(ctx, interp)
+		if err != nil {
+			return fmt.Errorf("tap selected method: %w", err)
+		}
+		err = bundle.
+			FindDescendant(bloks.FilterByAttribute("bk.data.TextSpan", "text", "Continue")).
+			FindContainingButton().
+			TapButton(ctx, interp)
+		if err != nil {
+			return fmt.Errorf("tap continue: %w", err)
+		}
+	} else if *afad {
+		notif := bundle.FindDescendant(func(comp *bloks.BloksTreeComponent) bool {
+			if comp.ComponentID != "bk.data.TextSpan" {
+				return false
+			}
+			for _, prefix := range []string{
+				"We sent a",
+				"Open the notification",
+				"You need to sign in on",
+				"Check your notifications",
+			} {
+				if strings.HasPrefix(comp.GetAttribute("text"), prefix) {
+					return true
+				}
+			}
+			return false
+		})
+		if notif == nil {
+			return fmt.Errorf("couldn't find AFAD notification info")
+		}
+		fmt.Println(notif.GetAttribute("text"))
+		for _, comp := range bundle.FindDescendants(func(comp *bloks.BloksTreeComponent) bool {
+			if comp.ComponentID != "bk.components.VisibilityExtension" {
+				return false
+			}
+			return comp.GetScript("on_appear") != nil
+		}) {
+			script := comp.GetScript("on_appear")
+			_, err := interp.Evaluate(ctx, &script.AST)
+			if err != nil {
+				return fmt.Errorf("on_appear: %w", err)
+			}
+		}
+	} else if *captcha {
+		getURLs := func() (string, string, error) {
+			img := bundle.FindDescendant(bloks.FilterByAttribute("bk.components.Image", "unique_id", "i:com.bloks.www.two_step_verification.enter_text_captcha_code/p:captcha_image"))
+			if img == nil {
+				img = bundle.FindDescendant(bloks.FilterByAttribute("bk.components.Image", "scale_type", "stretch"))
+			}
+			if img == nil {
+				return "", "", fmt.Errorf("can't find captcha image")
+			}
+			imageURL := img.GetDynamicAttribute(ctx, interp, "url")
+			if imageURL == "" {
+				return "", "", fmt.Errorf("captcha image has no url")
+			}
+			audio := bundle.FindDescendant(func(comp *bloks.BloksTreeComponent) bool {
+				if comp.ComponentID != "bk.data.TextSpan" {
+					return false
+				}
+				return strings.EqualFold(comp.GetAttribute("text"), "play audio")
+			})
+			if audio == nil {
+				return "", "", fmt.Errorf("can't find audio text")
+			}
+			clickable := audio.FindDescendant(bloks.FilterByComponent("bk.style.textspan.ClickableStyle"))
+			if clickable == nil {
+				return "", "", fmt.Errorf("audio text is not clickable")
+			}
+			onClick := clickable.GetScript("on_click")
+			if onClick == nil {
+				return "", "", fmt.Errorf("no on_click on audio text")
+			}
+			_, err := interp.Evaluate(ctx, &onClick.AST)
+			if err != nil {
+				return "", "", fmt.Errorf("clicking on audio text: %w", err)
+			}
+			if lastURL == "" {
+				return "", "", fmt.Errorf("clicking on audio text failed to open url")
+			}
+			audioURL := strings.Replace(lastURL, "/player/", "/", 1)
+			lastURL = ""
+			return imageURL, audioURL, nil
+		}
+		imageURL, audioURL, err := getURLs()
+		if err != nil {
+			return err
+		}
+		fmt.Println("Image:", imageURL)
+		fmt.Println("Audio:", audioURL)
+		if *doCaptcha != "" {
+			input := bundle.
+				FindDescendant(func(comp *bloks.BloksTreeComponent) bool {
+					if comp.ComponentID != "bk.components.TextInput" {
+						return false
+					}
+					return comp.FindDescendant(bloks.FilterByAttribute(
+						"bk.components.AccessibilityExtension", "label", "Enter characters",
+					)) != nil
+				})
+			if input == nil {
+				input = bundle.FindDescendant(bloks.FilterByComponent("bk.components.TextInput"))
+			}
+			err := input.
+				FillInput(ctx, interp, *doCaptcha)
+			if err != nil {
+				return fmt.Errorf("filling captcha code input: %w", err)
+			}
+			err = bundle.
+				FindDescendant(bloks.FilterByAttribute("bk.data.TextSpan", "text", "Continue")).
+				FindContainingButton().
+				TapButton(ctx, interp)
+			if err != nil {
+				return fmt.Errorf("tapping continue: %w", err)
+			}
+		}
+		newImageURL, newAudioURL, err := getURLs()
+		if err != nil {
+			return err
+		}
+		if newImageURL != imageURL {
+			fmt.Println("New image:", newImageURL)
+		}
+		if newAudioURL != audioURL {
+			fmt.Println("New audio:", newAudioURL)
+		}
+	} else if *doSMSCode != "" {
+		err := bundle.
+			FindDescendant(func(comp *bloks.BloksTreeComponent) bool {
+				if comp.ComponentID != "bk.components.TextInput" {
+					return false
+				}
+				return comp.FindDescendant(bloks.FilterByAttribute(
+					"bk.components.AccessibilityExtension", "label", "Code",
+				)) != nil
+			}).
+			FillInput(ctx, interp, *doSMSCode)
+		if err != nil {
+			return fmt.Errorf("filling sms code input: %w", err)
+		}
+
+		err = bundle.
+			FindDescendant(bloks.FilterByAttribute("bk.data.TextSpan", "text", "Continue")).
+			FindContainingButton().
+			TapButton(ctx, interp)
+		if err != nil {
+			return fmt.Errorf("tapping continue: %w", err)
+		}
+	} else if *doBackupCode != "" {
+		err := bundle.
+			FindDescendant(func(comp *bloks.BloksTreeComponent) bool {
+				if comp.ComponentID != "bk.components.TextInput" {
+					return false
+				}
+				return comp.FindDescendant(bloks.FilterByAttribute(
+					"bk.components.AccessibilityExtension", "label", "Code",
+				)) != nil
+			}).
+			FillInput(ctx, interp, *doBackupCode)
+		if err != nil {
+			return fmt.Errorf("filling backup code input: %w", err)
+		}
+
+		err = bundle.
+			FindDescendant(bloks.FilterByAttribute("bk.data.TextSpan", "text", "Continue")).
+			FindContainingButton().
+			TapButton(ctx, interp)
+		if err != nil {
+			return fmt.Errorf("tapping continue: %w", err)
+		}
+	} else if *doWhatsAppNumbers {
+		buttons := bundle.
+			FindDescendants(func(comp *bloks.BloksTreeComponent) bool {
+				switch comp.ComponentID {
+				case "bk.components.AccessibilityExtension", "accessibilityExtension":
+					return strings.HasPrefix(comp.GetAttribute("label"), "+") || strings.Contains(comp.GetAttribute("label"), "@")
+				}
+				return false
+			})
+		foundNumbers := map[string]*bloks.BloksTreeComponent{}
+		fmt.Printf("Found %d WhatsApp number(s):\n", len(buttons))
+		for _, btn := range buttons {
+			number := btn.GetAttribute("label")
+			foundNumbers[number] = btn
+			fmt.Printf("- %s\n", number)
+		}
+		if *selectedWhatsAppNumber == "" {
+			return nil
+		}
+		err := foundNumbers[*selectedWhatsAppNumber].FindContainingButton().TapButton(ctx, interp)
+		if err != nil {
+			return fmt.Errorf("tap selected number: %w", err)
+		}
+		err = bundle.
+			FindDescendant(bloks.FilterByAttribute("bk.data.TextSpan", "text", "Continue")).
+			FindContainingButton().
+			TapButton(ctx, interp)
+		if err != nil {
+			return fmt.Errorf("tap continue: %w", err)
+		}
+	} else if *cancelPasskey {
+		btn := bundle.
+			FindDescendant(bloks.FilterByAttribute("bk.data.TextSpan", "text", "Try another way")).
+			FindContainingButton()
+		err := btn.TapButton(ctx, interp)
+		if err != nil {
+			return fmt.Errorf("tapping try another way button: %w", err)
+		}
+	} else if *doRecaptcha {
+		webview := bundle.FindDescendantIncludingEmbedded(bloks.FilterByComponent("webview"))
+		fmt.Println(webview)
+		fmt.Println("URL:", webview.GetAttribute("url"))
+	} else if *doContinue {
+		err = bundle.
+			FindDescendant(bloks.FilterByAttribute("bk.data.TextSpan", "text", "Continue")).
+			FindContainingButton().
+			TapButton(ctx, interp)
+		if err != nil {
+			return fmt.Errorf("tap continue: %w", err)
+		}
+	}
+	return nil
+}

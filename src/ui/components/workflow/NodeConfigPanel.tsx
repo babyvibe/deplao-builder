@@ -6,70 +6,40 @@ import { useAppStore } from '@/store/appStore';
 import { Spinner } from '@/components/common/PageLoading';
 import { CHANNEL } from '@/lib/channelHelper';
 import { AI_MODEL_OPTIONS } from '../../../shared/aiModelCatalog';
+import PublicAddressCard from '@/components/common/PublicAddressCard';
 
 // ─── Webhook URL field component ─────────────────────────────────────
+// Địa chỉ webhook chỉ để xem (mọi cách tạo địa chỉ, PublicAddressCard): bật / tắt / đổi địa chỉ ở
+// Cài đặt → Internet & Đám mây → Địa chỉ Internet. Ở đây chỉ còn token + tạo token mới.
 function WebhookUrlField({ field, config, workflowId, update }: {
   field: any; config: any; workflowId?: string; update: (key: string, val: any) => void;
 }) {
-  const [webhookUrl, setWebhookUrl] = React.useState<string | null>(null);
   const [webhookToken, setWebhookToken] = React.useState<string>(config.webhookToken || '');
-  const [tunnelLoading, setTunnelLoading] = React.useState(false);
   React.useEffect(() => {
-    const token = config.webhookToken || '';
-    setWebhookToken(token);
-    if (!token || !ipc.workflow || !workflowId) { setWebhookUrl(null); return; }
-    ipc.workflow?.getWebhookUrl?.(workflowId).then(res => {
-      if (res?.success) {
-        setWebhookUrl(res.webhookUrl || null);
-      }
-    }).catch(() => {});
-  }, [config.webhookToken, workflowId]);
+    setWebhookToken(config.webhookToken || '');
+  }, [config.webhookToken]);
+  // The field label is rendered by renderField's header row, so the card starts with the URL.
   return (
     <div className="space-y-2">
       {webhookToken ? (
-        <div className="bg-gray-800/60 border border-gray-700/50 rounded-xl p-3">
-          <div className="text-xs text-gray-400 mb-1">{field.label}</div>
-          {webhookUrl ? (
-            <div className="flex items-center gap-2">
-              <code className="flex-1 text-xs bg-gray-900/80 px-2 py-1.5 rounded-lg break-word select-all">
-                {webhookUrl}
-              </code>
-              <button onClick={() => { navigator.clipboard.writeText(webhookUrl); }}
-                className="px-2 py-1 bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 rounded-lg text-xs transition-colors" title="Copy URL"><ClipboardListIcon className="w-4 h-4 inline" /> </button>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              <div className="text-yellow-400 text-xs">
-                ⚠️ Tunnel Workflow chưa được bật. URL webhook sẽ không hoạt động.
-              </div>
-              <div className="flex items-center gap-2">
-                <button onClick={async () => {
-                  setTunnelLoading(true);
-                  try {
-                    const res = await ipc.workflow?.startTunnel();
-                    if (res?.success && res.tunnelUrl) {
-                      setWebhookUrl(res.tunnelUrl + '/api/workflow/webhook/' + webhookToken);
-                    }
-                  } finally {
-                    setTunnelLoading(false);
-                  }
-                }} disabled={tunnelLoading}
-                  className="px-2.5 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/50 disabled:cursor-wait text-white rounded-lg transition-colors flex items-center gap-1.5">
-                  {tunnelLoading ? (
-                    <><span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" /> Đang bật...</>
-                  ) : '🔌 Bật Tunnel'}
-                </button>
-                <button onClick={() => {
-                  useAppStore.getState().setView('settings');
-                  setTimeout(() => window.dispatchEvent(new CustomEvent('nav:settings', { detail: { tab: 'webhooks' } })), 100);
-                }} className="px-2.5 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg transition-colors"><BookIcon className="w-4 h-4 inline" /> Hướng dẫn
-                </button>
-              </div>
-            </div>
-          )}
-          <div className="flex items-center gap-2 mt-2 text-xs text-gray-400">
-            <span>Token: <code className="text-gray-400">{webhookToken.substring(0, 8)}...</code></span>
-            <button onClick={async () => {
+        <div className="wf-card p-3 space-y-2.5">
+          <PublicAddressCard
+            service="workflow"
+            title="Địa chỉ webhook"
+            pathSuffix={`/api/workflow/webhook/${webhookToken}`}
+            anyMode
+            compact
+          />
+          <div className="flex items-center gap-2 text-xs wf-muted">
+            <span className="min-w-0 truncate">Token: <code className="wf-var">{webhookToken.substring(0, 8)}...</code></span>
+            <button type="button" onClick={() => {
+              // Hướng dẫn nhận webhook: Công cụ → Ứng dụng, API & Webhook → Webhook → Nhận dữ liệu vào.
+              const app = useAppStore.getState();
+              app.setPluginHubSection('webhooks');
+              app.openPluginHub();
+            }} className="wf-btn wf-btn--sm wf-btn--ghost ml-auto flex-shrink-0"><BookIcon className="w-3.5 h-3.5" /> Hướng dẫn
+            </button>
+            <button type="button" onClick={async () => {
               const confirmed = await showConfirm({
                 title: 'Tạo token mới?',
                 message: 'Token mới sẽ làm URL webhook cũ không còn hoạt động. Các bên thứ 3 đang dùng URL cũ sẽ cần được cập nhật.',
@@ -79,36 +49,44 @@ function WebhookUrlField({ field, config, workflowId, update }: {
               if (!confirmed) return;
               const res = await ipc.workflow?.regenerateWebhookToken?.(workflowId);
               if (res?.success) {
-                setWebhookUrl(res.webhookUrl || null);
                 setWebhookToken(res.token || '');
                 update('webhookToken', res.token || '');
               }
-            }} className="text-blue-400 hover:text-blue-300 underline" title="Tạo token mới nếu URL bị lộ"><RefreshIcon className="w-4 h-4 inline" /> Regenerate
+            }} className="wf-btn wf-btn--sm wf-btn--ghost flex-shrink-0" title="Tạo token mới nếu URL bị lộ"><RefreshIcon className="w-3.5 h-3.5" /> Regenerate
             </button>
           </div>
         </div>
       ) : (
-        <div className="bg-gray-800/60 border border-gray-700/50 rounded-xl p-3 text-yellow-400 text-xs"><SunIcon className="w-4 h-4 inline" /> Lưu workflow để tạo URL webhook tự động.
+        <div className="wf-callout" data-tone="warn"><SunIcon className="w-3.5 h-3.5" /><span>Lưu workflow để tạo URL webhook tự động.</span>
         </div>
       )}
-      <p className="text-xs text-gray-400 mt-1">{field.desc}</p>
+      <p className="wf-help">{field.desc}</p>
     </div>
   );
 }
 import { showConfirm } from '@/components/common/ConfirmDialog';
 
 import { getNodeLabel } from './workflowConfig';
-import GroupAvatar from '@/components/common/GroupAvatar';
+import { CHANNEL_NAME, NodeIconTile, accentStyle, getNodeDescription, getNodeVisual } from './nodeVisuals';
 import TemplateVarPopup from './TemplateVarPopup';
-import { AlertIcon, ArrowDownIcon, BellIcon, BellOffIcon, BookIcon, BotIcon, CalendarIcon, ChatIcon, ClipboardIcon, ClipboardListIcon, ClockIcon, CloseIcon, DiamondIcon, FlagIcon, GlobeIcon, HardDriveIcon, HelpCircleIcon, InboxIcon, LightningIcon, LinkIcon, PaletteIcon, PluginIcon, RefreshIcon, SearchIcon, SendIcon, ShuffleIcon, StarIcon, SunIcon, TagIcon, TargetIcon, TrashIcon, UserIcon, UsersIcon } from '@/components/common/icons';
+import { ContactPickerField } from './ContactPicker';
+import { isTriggerType, isVarAvailable, upstreamNodeIds, VarNode } from './templateVars';
+import { pluginFieldsFor } from './pluginNodes';
+import { AlertIcon, ArrowDownIcon, BellIcon, BellOffIcon, BookIcon, BotIcon, CalendarIcon, ChatIcon, CheckCircleIcon, CheckIcon, ChevronDownIcon, ClipboardIcon, ClipboardListIcon, ClockIcon, CloseIcon, CopyIcon, DatabaseIcon, DiamondIcon, EditIcon, EyeIcon, FilterIcon, FlagIcon, GlobeIcon, HardDriveIcon, HelpCircleIcon, ImageIcon, InboxIcon, InfoIcon, LightbulbIcon, LightningIcon, LinkIcon, MaximizeIcon, MessageSquareIcon, MinimizeIcon, PaletteIcon, PaperclipIcon, PlusIcon, RefreshIcon, SearchIcon, SendIcon, SettingsIcon, ShieldIcon, ShuffleIcon, SlidersIcon, StarIcon, SunIcon, TagIcon, TargetIcon, TrashIcon, UserIcon, UsersIcon } from '@/components/common/icons';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type FieldType = 'text' | 'textarea' | 'select' | 'number' | 'boolean' | 'json' | 'multiline' | 'cron' | 'html' | 'info' | 'label-picker' | 'assistant-picker' | 'integration-picker' | 'contact-picker' | 'account-picker' | 'file-picker';
+/**
+ * UI-only types added with the settings panel v2:
+ * - 'chips'       multi-select pills, value string[] (missing → [] = "all")
+ * - 'choice'      single-select pills/segmented control, same value semantics as 'select'
+ * - 'time-window' active-hours editor, value { mode, start, end, days } (see TimeWindowField)
+ */
+type FieldType = 'text' | 'textarea' | 'select' | 'number' | 'boolean' | 'json' | 'multiline' | 'cron' | 'html' | 'info' | 'label-picker' | 'assistant-picker' | 'integration-picker' | 'contact-picker' | 'account-picker' | 'file-picker' | 'case-list' | 'chips' | 'choice' | 'time-window';
 
 interface SelectOption { value: string; label: string }
 
-interface Field {
+export interface Field {
   key: string;
   label: string;
   type: FieldType;
@@ -118,8 +96,14 @@ interface Field {
   hint?: string;
   /** Mô tả rõ ràng cho newbie - hiển thị bên dưới ô nhập */
   desc?: string;
-  /** Ẩn trong mục "Nâng cao" (collapsed mặc định) */
+  /** Đưa vào mục "Nâng cao" (luôn nằm cuối, mở sẵn mặc định). Bỏ qua khi đã đặt `section`. */
   advanced?: boolean;
+  /**
+   * Tên nhóm (thẻ section) chứa field trong bảng cài đặt, vd: 'Phạm vi', 'Người gửi', 'Nội dung'.
+   * Các section hiện theo thứ tự field đầu tiên xuất hiện trong schema. Không đặt →
+   * 'Cấu hình' (hoặc 'Nâng cao' nếu `advanced`). Icon của section lấy theo tên (SECTION_ICONS).
+   */
+  section?: string;
   /**
    * Biến gợi ý (tên variable, VD: '$trigger.fromName').
    * Nếu có field này, UI sẽ hiện nút "Chèn biến động" để mở popup
@@ -212,7 +196,13 @@ function cronToHuman(expr: string): string {
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
-const CONFIG_SCHEMA: Record<string, Field[]> = {
+// Ô SĐT / mã đơn của các node tra cứu POS. Điều kiện trống → engine không tra cứu, trả found = false
+// (services/workflow/posLookupGuard.ts) vì vài nền tảng trả danh sách không lọc.
+const POS_PHONE_HINT = 'Mặc định {{ $trigger.fromPhone }} = SĐT đã lưu của người nhắn (Zalo / Telegram, lưu ở Thông tin hội thoại hoặc CRM); khách tự gửi số thì chèn Nội dung tin nhắn.';
+const POS_CUSTOMER_EMPTY_NOTE = 'Ô trống → không tra cứu (found = false) để không trả về khách hàng khác.';
+const POS_ORDER_EMPTY_NOTE = 'SĐT và mã đơn đều trống → không tra cứu (found = false) để không trả về đơn của khách khác.';
+
+export const CONFIG_SCHEMA: Record<string, Field[]> = {
   'action.forwardCrossChannel': [
     { key: 'sourceChannel', label: 'Kênh tài khoản nguồn', type: 'select', options: [
       { value: '', label: 'Tự lấy từ trigger workflow' },
@@ -232,7 +222,7 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
   ],
   'trigger.message': [
     {
-      key: 'threadType', label: 'Nguồn tin nhắn', type: 'select',
+      key: 'threadType', label: 'Nguồn tin nhắn', type: 'choice', section: 'Phạm vi',
       desc: 'Workflow sẽ lắng nghe tin nhắn từ đâu?',
       options: [
         { value: 'all', label: 'Tất cả (cá nhân + nhóm)' },
@@ -241,12 +231,55 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       ],
     },
     {
-      key: 'keyword', label: 'Từ khóa kích hoạt', type: 'text',
+      key: 'groupId', label: 'Chỉ nhận từ nhóm cụ thể', type: 'contact-picker', contactType: 'group', section: 'Phạm vi',
+      placeholder: 'Để trống = tất cả các nhóm',
+      desc: 'Chọn một nhóm cụ thể. Để trống = nhận từ tất cả nhóm.',
+      advanced: true,
+    },
+    {
+      key: 'excludeThreadIds', label: 'Loại trừ hội thoại / nhóm', type: 'contact-picker', section: 'Phạm vi',
+      contactType: 'all', contactMode: 'multi',
+      placeholder: 'Để trống = không loại trừ',
+      desc: 'Không kích hoạt với các hội thoại hoặc nhóm được chọn.',
+    },
+    {
+      key: 'senderRole', label: 'Vai trò người gửi trong nhóm', type: 'choice', section: 'Người gửi',
+      desc: 'Chỉ áp dụng cho tin nhắn nhóm (vai trò lấy từ thông tin nhóm Zalo). Khi chọn khác "Tất cả", tin nhắn cá nhân sẽ không kích hoạt workflow.',
+      options: [
+        { value: 'all',     label: 'Tất cả' },
+        { value: 'owner',   label: 'Trưởng nhóm' },
+        { value: 'deputy',  label: 'Phó nhóm' },
+        { value: 'admins',  label: 'Trưởng + phó nhóm' },
+        { value: 'members', label: 'Thành viên thường' },
+      ],
+    },
+    {
+      key: 'fromId', label: 'Chỉ nhận từ người dùng cụ thể', type: 'contact-picker', contactType: 'user', section: 'Người gửi',
+      placeholder: 'Để trống = tất cả mọi người',
+      desc: 'Chọn một người cụ thể. Để trống = nhận từ tất cả.',
+      advanced: true,
+    },
+    {
+      key: 'excludeSenderIds', label: 'Loại trừ người gửi', type: 'contact-picker', section: 'Người gửi',
+      contactType: 'user', contactMode: 'multi',
+      placeholder: 'Để trống = không loại trừ ai',
+      desc: 'Tin nhắn từ những người được chọn sẽ không kích hoạt workflow.',
+    },
+    {
+      key: 'ignoreOwn', label: 'Bỏ qua tin nhắn do mình gửi', type: 'boolean', section: 'Người gửi',
+      desc: 'Bật để tránh workflow tự kích hoạt khi tài khoản này tự gửi tin.',
+    },
+    {
+      key: 'onlyOwn', label: 'Chỉ xử lý tin mình tự gửi', type: 'boolean', section: 'Người gửi',
+      desc: 'Ngược lại - chỉ chạy với tin nhắn từ chính tài khoản này.',
+    },
+    {
+      key: 'keyword', label: 'Từ khóa kích hoạt', type: 'text', section: 'Nội dung',
       placeholder: 'giá, báo giá, order',
       desc: 'Workflow chỉ chạy khi tin nhắn chứa một trong các từ khóa này. Nhập nhiều từ khóa cách nhau bằng dấu phẩy. Để trống = mọi tin nhắn đều kích hoạt.',
     },
     {
-      key: 'keywordMode', label: 'Cách khớp từ khóa', type: 'select',
+      key: 'keywordMode', label: 'Cách khớp từ khóa', type: 'select', section: 'Nội dung',
       desc: 'Quy tắc áp dụng khi kiểm tra từ khóa trong tin nhắn.',
       options: [
         { value: 'contains_any', label: 'Chứa ít nhất 1 từ khóa (phổ biến nhất)' },
@@ -257,27 +290,34 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       ],
     },
     {
-      key: 'ignoreOwn', label: 'Bỏ qua tin nhắn do mình gửi', type: 'boolean',
-      desc: 'Bật để tránh workflow tự kích hoạt khi tài khoản này tự gửi tin.',
+      key: 'messageTypes', label: 'Loại tin nhắn', type: 'chips', section: 'Nội dung',
+      desc: 'Chỉ kích hoạt với các loại tin được chọn, vd. chỉ chọn "Văn bản" để bỏ qua sticker và hình ảnh.',
+      options: [
+        { value: 'text',    label: 'Văn bản' },
+        { value: 'image',   label: 'Hình ảnh' },
+        { value: 'sticker', label: 'Sticker' },
+        { value: 'file',    label: 'Tệp' },
+        { value: 'voice',   label: 'Ghi âm' },
+        { value: 'video',   label: 'Video' },
+        { value: 'link',    label: 'Liên kết' },
+        { value: 'other',   label: 'Khác' },
+      ],
     },
     {
-      key: 'onlyOwn', label: 'Chỉ xử lý tin mình tự gửi', type: 'boolean',
-      desc: 'Ngược lại - chỉ chạy với tin nhắn từ chính tài khoản này.',
+      key: 'onlyWhenMentioned', label: 'Chỉ khi được @nhắc tên trong nhóm', type: 'boolean', section: 'Nội dung',
+      desc: 'Tin nhắn nhóm chỉ kích hoạt khi @nhắc đến tài khoản này hoặc @Tất cả. Tin nhắn cá nhân không bị ảnh hưởng.',
     },
     {
-      key: 'fromId', label: 'Chỉ nhận từ người dùng cụ thể', type: 'contact-picker', contactType: 'user',
-      placeholder: 'Để trống = tất cả mọi người',
-      desc: 'Chọn một người cụ thể. Để trống = nhận từ tất cả.',
-      advanced: true,
+      key: 'activeHours', label: 'Khung giờ hoạt động', type: 'time-window', section: 'Thời gian & tần suất',
+      desc: 'Trong khung giờ: chỉ chạy trong giờ đã chọn. Ngoài khung giờ: chỉ chạy ngoài giờ đó, vd. tự động trả lời ngoài giờ làm việc.',
     },
     {
-      key: 'groupId', label: 'Chỉ nhận từ nhóm cụ thể', type: 'contact-picker', contactType: 'group',
-      placeholder: 'Để trống = tất cả các nhóm',
-      desc: 'Chọn một nhóm cụ thể. Để trống = nhận từ tất cả nhóm.',
-      advanced: true,
+      key: 'cooldownMinutes', label: 'Giới hạn tần suất (phút)', type: 'number', section: 'Thời gian & tần suất',
+      placeholder: '0', min: 0,
+      desc: 'Sau khi workflow chạy cho một hội thoại, các tin nhắn tiếp theo từ hội thoại đó bị bỏ qua trong N phút (vd. 60 = tối đa 1 lần mỗi giờ). 0 = tắt. Bộ đếm được đặt lại khi khởi động lại ứng dụng.',
     },
     {
-      key: 'debounceSeconds', label: 'Gom tin nhắn liên tiếp (giây)', type: 'number',
+      key: 'debounceSeconds', label: 'Gom tin nhắn liên tiếp (giây)', type: 'number', section: 'Thời gian & tần suất',
       placeholder: '0',
       desc: 'Chờ N giây sau tin nhắn cuối cùng rồi mới chạy workflow (gom tất cả tin nhắn liên tiếp thành 1 lần xử lý). 0 = chạy ngay mỗi tin. Khuyến nghị 10-15s khi dùng AI trả lời tự động, tránh AI phản hồi từng tin khi khách gõ liên tục.',
       advanced: true,
@@ -387,20 +427,27 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
   ],
   'zalo.sendMessage': [
     {
-      key: 'message', label: 'Nội dung tin nhắn', type: 'textarea',
+      key: 'message', label: 'Nội dung tin nhắn', type: 'textarea', section: 'Nội dung',
       placeholder: 'Xin chào {{ $trigger.fromName }}! Mình có thể giúp gì?',
       desc: 'Nội dung tin nhắn gửi đi. Dùng {{ }} để chèn dữ liệu động như tên người dùng.',
       templateVars: ['$trigger.fromName', '$trigger.content', '$trigger.threadId'],
     },
     {
-      key: 'threadIds', label: 'Gửi đến hội thoại', type: 'contact-picker', contactType: 'all',
+      key: 'threadIds', label: 'Gửi đến hội thoại', type: 'contact-picker', contactType: 'all', section: 'Người nhận',
       contactMode: 'multi',
       placeholder: '{{ $trigger.threadId }}',
-      desc: 'Chọn một hoặc nhiều hội thoại để gửi. Nếu không chọn, sẽ dùng hội thoại từ trigger. Với webhook (?) dùng $trigger.body.threadId. Bình thường dùng $trigger.threadId.',
+      desc: 'Chọn một hoặc nhiều hội thoại để gửi. Nếu không chọn, sẽ dùng hội thoại từ trigger. Bình thường dùng $trigger.threadId; với trigger Webhook dùng $trigger.body.threadId.',
       templateVars: ['$trigger.threadId', '$trigger.body.threadId'],
     },
     {
-      key: 'threadType', label: 'Loại hội thoại', type: 'select',
+      key: 'threadIdsExpr', label: 'Danh sách hội thoại động (nâng cao)', type: 'text', section: 'Người nhận',
+      placeholder: '{{ $node.Chọn đối tượng nhận tin.result }}',
+      desc: 'Nhập danh sách ID hội thoại dạng JSON, hoặc tham chiếu node "Chọn đối tượng nhận tin" để gửi hàng loạt. Ưu tiên hơn trường chọn hội thoại ở trên.',
+      templateVars: ['$trigger.threadId'],
+      advanced: true,
+    },
+    {
+      key: 'threadType', label: 'Loại hội thoại', type: 'select', section: 'Người nhận',
       desc: 'Loại hội thoại đang gửi. Giữ "Tự động" để hệ thống tự nhận biết.',
       options: [
         { value: '{{ $trigger.threadType }}', label: 'Tự động (theo trigger - khuyến nghị)' },
@@ -410,19 +457,19 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       advanced: true,
     },
     {
-      key: 'sendDelayMinSeconds', label: 'Giãn cách gửi tối thiểu (giây)', type: 'number',
+      key: 'sendDelayMinSeconds', label: 'Giãn cách gửi tối thiểu (giây)', type: 'number', section: 'Tùy chọn',
       placeholder: '1',
-      desc: 'Khi nhiều khách nhắn cùng lúc trên CÙNG 1 tài khoản, các tin trả lời gửi lần lượt, cách nhau ít nhất bấy nhiêu giây. Tránh bắn hàng loạt bị Zalo nghi spam. 0 = gửi ngay.',
+      desc: 'Khi nhiều khách nhắn cùng lúc trên CÙNG 1 tài khoản, các tin trả lời gửi lần lượt, cách nhau ít nhất bấy nhiêu giây. Tránh bắn hàng loạt bị Zalo nghi spam. 0 = gửi ngay. Gửi cho nhiều hội thoại trong một bước: giữa hai người nhận luôn chờ ngẫu nhiên, tối thiểu 5 giây (mặc định 5-10 giây; đặt cao hơn thì theo khoảng này).',
       advanced: true,
     },
     {
-      key: 'sendDelayMaxSeconds', label: 'Giãn cách gửi tối đa (giây)', type: 'number',
+      key: 'sendDelayMaxSeconds', label: 'Giãn cách gửi tối đa (giây)', type: 'number', section: 'Tùy chọn',
       placeholder: '3',
       desc: 'Khoảng giãn cách tối đa. Hệ thống chọn ngẫu nhiên giữa tối thiểu và tối đa cho tự nhiên.',
       advanced: true,
     },
     {
-      key: 'continueOnError', label: 'Tiếp tục workflow dù gửi thất bại', type: 'boolean',
+      key: 'continueOnError', label: 'Tiếp tục workflow dù gửi thất bại', type: 'boolean', section: 'Tùy chọn',
       desc: 'Bật nếu muốn các bước sau vẫn chạy ngay cả khi tin nhắn này gửi lỗi.',
       advanced: true,
     },
@@ -456,23 +503,23 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
   ],
   'zalo.sendImage': [
     {
-      key: 'filePath', label: 'Ảnh cần gửi', type: 'file-picker', fileType: 'image',
+      key: 'filePath', label: 'Ảnh cần gửi', type: 'file-picker', fileType: 'image', section: 'Nội dung',
       desc: 'Chọn ảnh từ máy tính để gửi.',
     },
     {
-      key: 'message', label: 'Chú thích ảnh (tuỳ chọn)', type: 'text',
+      key: 'message', label: 'Chú thích ảnh (tuỳ chọn)', type: 'text', section: 'Nội dung',
       placeholder: 'Đây là bảng giá mới nhất!',
       desc: 'Dòng chữ hiển thị kèm ảnh. Có thể để trống.',
     },
     {
-      key: 'threadIds', label: 'Gửi đến hội thoại', type: 'contact-picker', contactType: 'all',
+      key: 'threadIds', label: 'Gửi đến hội thoại', type: 'contact-picker', contactType: 'all', section: 'Người nhận',
       contactMode: 'multi',
       placeholder: '{{ $trigger.threadId }}',
       desc: 'Chọn một hoặc nhiều hội thoại để gửi ảnh. Nếu không chọn, sẽ dùng hội thoại từ trigger.',
       templateVars: ['$trigger.threadId'],
     },
     {
-      key: 'threadType', label: 'Loại hội thoại', type: 'select',
+      key: 'threadType', label: 'Loại hội thoại', type: 'select', section: 'Người nhận',
       desc: 'Loại hội thoại đang gửi.',
       options: [
         { value: '{{ $trigger.threadType }}', label: 'Tự động (theo trigger)' },
@@ -481,37 +528,37 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       advanced: true,
     },
     {
-      key: 'sendDelayMinSeconds', label: 'Giãn cách gửi tối thiểu (giây)', type: 'number',
+      key: 'sendDelayMinSeconds', label: 'Giãn cách gửi tối thiểu (giây)', type: 'number', section: 'Tùy chọn',
       placeholder: '1',
-      desc: 'Khi nhiều khách nhắn cùng lúc trên CÙNG 1 tài khoản, các tin gửi lần lượt, cách nhau ít nhất bấy nhiêu giây. 0 = gửi ngay.',
+      desc: 'Khi nhiều khách nhắn cùng lúc trên CÙNG 1 tài khoản, các tin gửi lần lượt, cách nhau ít nhất bấy nhiêu giây. 0 = gửi ngay. Gửi cho nhiều hội thoại trong một bước: giữa hai người nhận luôn chờ ngẫu nhiên, tối thiểu 5 giây (mặc định 5-10 giây; đặt cao hơn thì theo khoảng này).',
       advanced: true,
     },
     {
-      key: 'sendDelayMaxSeconds', label: 'Giãn cách gửi tối đa (giây)', type: 'number',
+      key: 'sendDelayMaxSeconds', label: 'Giãn cách gửi tối đa (giây)', type: 'number', section: 'Tùy chọn',
       placeholder: '3',
       desc: 'Khoảng giãn cách tối đa. Chọn ngẫu nhiên giữa tối thiểu và tối đa cho tự nhiên.',
       advanced: true,
     },
     {
-      key: 'continueOnError', label: 'Tiếp tục workflow dù gửi thất bại', type: 'boolean',
+      key: 'continueOnError', label: 'Tiếp tục workflow dù gửi thất bại', type: 'boolean', section: 'Tùy chọn',
       desc: 'Bật nếu muốn các bước sau vẫn chạy ngay cả khi gửi ảnh lỗi.',
       advanced: true,
     },
   ],
   'zalo.sendFile': [
     {
-      key: 'filePath', label: 'File cần gửi', type: 'file-picker', fileType: 'file',
+      key: 'filePath', label: 'File cần gửi', type: 'file-picker', fileType: 'file', section: 'Nội dung',
       desc: 'Chọn file từ máy tính để gửi.',
     },
     {
-      key: 'threadIds', label: 'Gửi đến hội thoại', type: 'contact-picker', contactType: 'all',
+      key: 'threadIds', label: 'Gửi đến hội thoại', type: 'contact-picker', contactType: 'all', section: 'Người nhận',
       contactMode: 'multi',
       placeholder: '{{ $trigger.threadId }}',
       desc: 'Chọn một hoặc nhiều hội thoại để gửi file. Nếu không chọn, sẽ dùng hội thoại từ trigger.',
       templateVars: ['$trigger.threadId'],
     },
     {
-      key: 'threadType', label: 'Loại hội thoại', type: 'select',
+      key: 'threadType', label: 'Loại hội thoại', type: 'select', section: 'Người nhận',
       desc: 'Loại hội thoại đang gửi.',
       options: [
         { value: '{{ $trigger.threadType }}', label: 'Tự động (theo trigger)' },
@@ -520,21 +567,120 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       advanced: true,
     },
     {
-      key: 'sendDelayMinSeconds', label: 'Giãn cách gửi tối thiểu (giây)', type: 'number',
+      key: 'sendDelayMinSeconds', label: 'Giãn cách gửi tối thiểu (giây)', type: 'number', section: 'Tùy chọn',
       placeholder: '1',
-      desc: 'Khi nhiều khách nhắn cùng lúc trên CÙNG 1 tài khoản, các tin gửi lần lượt, cách nhau ít nhất bấy nhiêu giây. 0 = gửi ngay.',
+      desc: 'Khi nhiều khách nhắn cùng lúc trên CÙNG 1 tài khoản, các tin gửi lần lượt, cách nhau ít nhất bấy nhiêu giây. 0 = gửi ngay. Gửi cho nhiều hội thoại trong một bước: giữa hai người nhận luôn chờ ngẫu nhiên, tối thiểu 5 giây (mặc định 5-10 giây; đặt cao hơn thì theo khoảng này).',
       advanced: true,
     },
     {
-      key: 'sendDelayMaxSeconds', label: 'Giãn cách gửi tối đa (giây)', type: 'number',
+      key: 'sendDelayMaxSeconds', label: 'Giãn cách gửi tối đa (giây)', type: 'number', section: 'Tùy chọn',
       placeholder: '3',
       desc: 'Khoảng giãn cách tối đa. Chọn ngẫu nhiên giữa tối thiểu và tối đa cho tự nhiên.',
       advanced: true,
     },
     {
-      key: 'continueOnError', label: 'Tiếp tục workflow dù gửi thất bại', type: 'boolean',
+      key: 'continueOnError', label: 'Tiếp tục workflow dù gửi thất bại', type: 'boolean', section: 'Tùy chọn',
       desc: 'Bật nếu muốn các bước sau vẫn chạy ngay cả khi gửi file lỗi.',
       advanced: true,
+    },
+  ],
+  'zalo.sendVoice': [
+    {
+      key: 'filePath', label: 'File âm thanh cần gửi', type: 'file-picker', fileType: 'file', section: 'Nội dung',
+      desc: 'Chọn file tin thoại (m4a/mp3) từ máy tính để gửi.',
+    },
+    {
+      key: 'threadIds', label: 'Gửi đến hội thoại', type: 'contact-picker', contactType: 'all', section: 'Người nhận',
+      contactMode: 'multi',
+      placeholder: '{{ $trigger.threadId }}',
+      desc: 'Chọn một hoặc nhiều hội thoại để gửi tin thoại. Nếu không chọn, sẽ dùng hội thoại từ trigger.',
+      templateVars: ['$trigger.threadId'],
+    },
+    {
+      key: 'threadType', label: 'Loại hội thoại', type: 'select', section: 'Người nhận',
+      options: [
+        { value: '{{ $trigger.threadType }}', label: 'Tự động (theo trigger)' },
+        { value: '0', label: 'Cá nhân' }, { value: '1', label: 'Nhóm' },
+      ],
+      advanced: true,
+    },
+    {
+      key: 'sendDelayMinSeconds', label: 'Giãn cách gửi tối thiểu (giây)', type: 'number', section: 'Tùy chọn',
+      placeholder: '1', advanced: true,
+      desc: 'Khi nhiều khách nhắn cùng lúc trên CÙNG 1 tài khoản, các tin gửi lần lượt, cách nhau ít nhất bấy nhiêu giây. Gửi cho nhiều hội thoại trong một bước: giữa hai người nhận luôn chờ ngẫu nhiên, tối thiểu 5 giây (mặc định 5-10 giây; đặt cao hơn thì theo khoảng này).',
+    },
+    {
+      key: 'sendDelayMaxSeconds', label: 'Giãn cách gửi tối đa (giây)', type: 'number', section: 'Tùy chọn',
+      placeholder: '3', advanced: true,
+      desc: 'Khoảng giãn cách tối đa. Chọn ngẫu nhiên giữa tối thiểu và tối đa cho tự nhiên.',
+    },
+    {
+      key: 'continueOnError', label: 'Tiếp tục workflow dù gửi thất bại', type: 'boolean', section: 'Tùy chọn',
+      advanced: true,
+      desc: 'Bật nếu muốn các bước sau vẫn chạy ngay cả khi gửi tin thoại lỗi.',
+    },
+  ],
+  'zalo.sendVideo': [
+    {
+      key: 'filePath', label: 'File video cần gửi', type: 'file-picker', fileType: 'file', section: 'Nội dung',
+      desc: 'Chọn file video (mp4) từ máy tính để gửi.',
+    },
+    {
+      key: 'threadIds', label: 'Gửi đến hội thoại', type: 'contact-picker', contactType: 'all', section: 'Người nhận',
+      contactMode: 'multi',
+      placeholder: '{{ $trigger.threadId }}',
+      desc: 'Chọn một hoặc nhiều hội thoại để gửi video. Nếu không chọn, sẽ dùng hội thoại từ trigger.',
+      templateVars: ['$trigger.threadId'],
+    },
+    {
+      key: 'threadType', label: 'Loại hội thoại', type: 'select', section: 'Người nhận',
+      options: [
+        { value: '{{ $trigger.threadType }}', label: 'Tự động (theo trigger)' },
+        { value: '0', label: 'Cá nhân' }, { value: '1', label: 'Nhóm' },
+      ],
+      advanced: true,
+    },
+    {
+      key: 'sendDelayMinSeconds', label: 'Giãn cách gửi tối thiểu (giây)', type: 'number', section: 'Tùy chọn',
+      placeholder: '1', advanced: true,
+      desc: 'Khi nhiều khách nhắn cùng lúc trên CÙNG 1 tài khoản, các tin gửi lần lượt, cách nhau ít nhất bấy nhiêu giây. Gửi cho nhiều hội thoại trong một bước: giữa hai người nhận luôn chờ ngẫu nhiên, tối thiểu 5 giây (mặc định 5-10 giây; đặt cao hơn thì theo khoảng này).',
+    },
+    {
+      key: 'sendDelayMaxSeconds', label: 'Giãn cách gửi tối đa (giây)', type: 'number', section: 'Tùy chọn',
+      placeholder: '3', advanced: true,
+      desc: 'Khoảng giãn cách tối đa. Chọn ngẫu nhiên giữa tối thiểu và tối đa cho tự nhiên.',
+    },
+    {
+      key: 'continueOnError', label: 'Tiếp tục workflow dù gửi thất bại', type: 'boolean', section: 'Tùy chọn',
+      advanced: true,
+      desc: 'Bật nếu muốn các bước sau vẫn chạy ngay cả khi gửi video lỗi.',
+    },
+  ],
+  'zalo.sendSticker': [
+    {
+      key: 'stickerId', label: 'ID sticker cần gửi', type: 'text',
+      placeholder: 'Nhập ID sticker Zalo (số)',
+      desc: 'ID của sticker trong bộ sưu tập Zalo. Bạn có thể lấy ID từ thư viện sticker Zalo.',
+    },
+    {
+      key: 'threadIds', label: 'Gửi đến hội thoại', type: 'contact-picker', contactType: 'all',
+      contactMode: 'multi',
+      placeholder: '{{ $trigger.threadId }}',
+      desc: 'Chọn một hoặc nhiều hội thoại để gửi sticker. Nếu không chọn, sẽ dùng hội thoại từ trigger.',
+      templateVars: ['$trigger.threadId'],
+    },
+    {
+      key: 'threadType', label: 'Loại hội thoại', type: 'select',
+      options: [
+        { value: '{{ $trigger.threadType }}', label: 'Tự động (theo trigger)' },
+        { value: '0', label: 'Cá nhân' }, { value: '1', label: 'Nhóm' },
+      ],
+      advanced: true,
+    },
+    {
+      key: 'continueOnError', label: 'Tiếp tục workflow dù gửi thất bại', type: 'boolean',
+      advanced: true,
+      desc: 'Bật nếu muốn các bước sau vẫn chạy ngay cả khi gửi sticker lỗi.',
     },
   ],
   'zalo.findUser': [
@@ -809,13 +955,13 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
   ],
   'logic.if': [
     {
-      key: 'left', label: 'Giá trị cần kiểm tra', type: 'text',
+      key: 'left', label: 'Giá trị cần kiểm tra', type: 'text', section: 'Điều kiện',
       placeholder: '{{ $trigger.content }}',
       desc: 'Giá trị bên trái để so sánh. Thường là nội dung tin nhắn hoặc một biến đã lưu.',
       templateVars: ['$trigger.content', '$trigger.fromName', '$trigger.fromId'],
     },
     {
-      key: 'operator', label: 'Điều kiện so sánh', type: 'select',
+      key: 'operator', label: 'Điều kiện so sánh', type: 'select', section: 'Điều kiện',
       desc: 'Quy tắc so sánh giữa hai giá trị.',
       options: [
         { value: 'contains',     label: 'Có chứa chuỗi' },
@@ -832,25 +978,24 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       ],
     },
     {
-      key: 'right', label: 'So sánh với giá trị', type: 'text',
+      key: 'right', label: 'So sánh với giá trị', type: 'text', section: 'Điều kiện',
       placeholder: 'Nhập từ khóa hoặc giá trị cần so sánh',
       desc: 'Giá trị bên phải. Ví dụ: nếu trái là nội dung tin nhắn thì phải là từ khóa cần tìm.',
     },
   ],
   'logic.switch': [
     {
-      key: 'value', label: 'Giá trị để phân nhánh', type: 'text',
+      key: 'value', label: 'Giá trị để phân nhánh', type: 'text', section: 'Điều kiện',
       placeholder: '{{ $trigger.content }}',
       desc: 'Giá trị này sẽ được so sánh với từng case để quyết định chạy nhánh nào.',
       templateVars: ['$trigger.content', '$trigger.fromId'],
     },
     {
-      key: 'cases', label: 'Danh sách các nhánh', type: 'json',
-      hint: '[{"match":"xin chào","label":"case_chao"},{"match":"giá","label":"case_gia"}]',
-      desc: 'Mỗi case có "match" (giá trị khớp) và "label" (tên nhánh). Nhánh đúng sẽ được chạy.',
+      key: 'cases', label: 'Danh sách các nhánh', type: 'case-list', section: 'Các nhánh',
+      desc: 'Mỗi nhánh có giá trị khớp (match) và tên nhánh (label). Nhánh có giá trị khớp sẽ được chạy; tên nhánh là tay cầm nối trên canvas.',
     },
     {
-      key: 'defaultLabel', label: 'Nhánh mặc định (không khớp case nào)', type: 'text',
+      key: 'defaultLabel', label: 'Nhánh mặc định (không khớp case nào)', type: 'text', section: 'Các nhánh',
       placeholder: 'default',
       desc: 'Nếu không có case nào khớp, workflow chạy theo nhánh có tên này.',
       advanced: true,
@@ -859,8 +1004,8 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
   'logic.wait': [
     {
       key: 'delaySeconds', label: 'Thời gian chờ (giây)', type: 'number',
-      desc: 'Tạm dừng workflow trước khi tiếp tục bước tiếp theo.',
-      hint: '5 = 5 giây  •  60 = 1 phút  •  3600 = 1 giờ',
+      desc: 'Tạm dừng workflow trước khi tiếp tục bước tiếp theo (tối đa 5 phút).',
+      hint: '5 = 5 giây  •  60 = 1 phút  •  300 = 5 phút (tối đa)',
     },
   ],
   'logic.setVariable': [
@@ -901,14 +1046,60 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
   'logic.forEach': [
     {
       key: 'array', label: 'Danh sách cần lặp qua', type: 'text',
-      placeholder: '{{ $node.GetHistory.messages }}',
-      desc: 'Một mảng dữ liệu. Workflow lặp qua từng phần tử và chạy các bước tiếp theo cho mỗi phần tử.',
-      templateVars: ['$node.GetHistory.messages'],
+      placeholder: '{{ $node.<id node>.products }}',
+      desc: 'Chèn đúng một biến là danh sách của bước trước (vd. sản phẩm, đơn hàng, tin nhắn), hoặc nhập JSON ["a","b"] / mỗi dòng một mục. Các bước nối từ cổng "Mỗi phần tử" chạy lại cho từng phần tử; cổng "Xong" chạy một lần sau khi lặp hết.',
+      templateVars: [],
     },
     {
       key: 'itemVariable', label: 'Tên biến cho từng phần tử', type: 'text',
       placeholder: 'item',
-      desc: 'Trong mỗi vòng lặp, phần tử hiện tại lưu vào biến này. Dùng {{ $var.item }} ở bước trong vòng lặp.',
+      desc: 'Phần tử đang xét lưu vào {{ $var.item }} (lấy một trường: {{ $var.item.name }}), số thứ tự từ 1 ở {{ $var.itemIndex }}. Chỉ dùng chữ không dấu, số, dấu _.',
+    },
+    {
+      key: 'maxItems', label: 'Tối đa số phần tử', type: 'number', placeholder: '100', min: 1,
+      desc: 'Chỉ lặp tối đa bấy nhiêu phần tử đầu (tối đa 100). Mỗi lần chạy workflow có tối đa 1.000 lượt lặp.',
+      advanced: true,
+    },
+  ],
+  'logic.forEachContact': [
+    {
+      key: 'source', label: 'Nguồn đối tượng', type: 'choice', section: 'Nguồn',
+      options: [
+        { value: 'friends', label: 'Bạn bè (danh bạ Zalo)' },
+        { value: 'group_members', label: 'Thành viên nhóm Zalo' },
+        { value: 'labels', label: 'Hội thoại theo nhãn (Local)' },
+        { value: 'crm_contacts', label: 'Liên hệ CRM' },
+      ],
+      desc: 'Chọn danh sách người sẽ nhận tin. Nối node này vào node gửi tin rồi đặt trường "Gửi đến hội thoại" thành {{ $node.<tên node này>.result }}.',
+    },
+    {
+      key: 'accountId', label: 'Tài khoản Zalo', type: 'account-picker', channel: 'zalo', section: 'Nguồn',
+      placeholder: 'Để trống = tài khoản đang chạy workflow',
+      desc: 'Tài khoản chứa danh sách đối tượng cần lấy.',
+      advanced: true,
+    },
+    {
+      key: 'groupId', label: 'ID nhóm Zalo', type: 'text', section: 'Nguồn',
+      placeholder: 'Nhập ID nhóm (dùng khi nguồn = Thành viên nhóm)',
+      desc: 'Chỉ cần điền khi chọn nguồn "Thành viên nhóm Zalo".',
+      advanced: true,
+    },
+    {
+      key: 'labelIds', label: 'Nhãn cần lọc', type: 'label-picker', labelMode: 'multi', section: 'Nguồn',
+      desc: 'Chỉ lấy hội thoại đã gán các nhãn Local này. Chỉ cần điền khi chọn nguồn "Hội thoại theo nhãn".',
+      advanced: true,
+    },
+    {
+      key: 'limit', label: 'Giới hạn số người', type: 'number', section: 'Người nhận',
+      placeholder: '500', min: 1,
+      desc: 'Số người tối đa sẽ lấy. Giảm để tránh gửi quá nhiều.',
+      advanced: true,
+    },
+    {
+      key: 'excludeIds', label: 'Loại trừ người nhận', type: 'contact-picker', section: 'Người nhận',
+      contactType: 'all', contactMode: 'multi',
+      placeholder: 'Để trống = không loại trừ ai',
+      desc: 'Những người/hội thoại này sẽ không nhận tin dù có trong danh sách.',
     },
   ],
   'data.textFormat': [
@@ -954,12 +1145,12 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
   ],
   'output.httpRequest': [
     {
-      key: 'url', label: 'Địa chỉ API (URL)', type: 'text',
+      key: 'url', label: 'Địa chỉ API (URL)', type: 'text', section: 'Kết nối API',
       placeholder: 'https://api.example.com/webhook',
       desc: 'Địa chỉ URL của API hoặc webhook cần gọi. Phải bắt đầu bằng https:// hoặc http://',
     },
     {
-      key: 'method', label: 'Phương thức gửi', type: 'select',
+      key: 'method', label: 'Phương thức gửi', type: 'select', section: 'Kết nối API',
       desc: 'Cách gửi dữ liệu. POST = gửi dữ liệu lên, GET = lấy dữ liệu về.',
       options: [
         { value: 'POST',   label: 'POST - Gửi dữ liệu (phổ biến nhất cho webhook)' },
@@ -970,26 +1161,26 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       ],
     },
     {
-      key: 'body', label: 'Dữ liệu gửi kèm (Body)', type: 'textarea',
-      placeholder: '{\n  "name": "{{ $trigger.fromName }}",\n  "msg": "{{ $trigger.content }}"\n}',
-      desc: 'Nội dung gửi kèm (định dạng JSON). Dùng {{ }} để chèn dữ liệu động. Chỉ cần điền khi dùng POST/PUT/PATCH.',
-      templateVars: ['$trigger.fromName', '$trigger.content', '$trigger.threadId'],
-    },
-    {
-      key: 'continueOnError', label: 'Tiếp tục dù gọi API thất bại', type: 'boolean',
-      desc: 'Bật nếu muốn workflow vẫn chạy tiếp dù API trả về lỗi.',
-    },
-    {
-      key: 'headers', label: 'Headers (xác thực / nâng cao)', type: 'textarea',
+      key: 'headers', label: 'Headers (xác thực / nâng cao)', type: 'textarea', section: 'Kết nối API',
       placeholder: '{"Authorization": "Bearer your-token"}',
       desc: 'HTTP Headers gửi kèm. Thường dùng để xác thực (Authorization token). Để trống nếu không cần.',
       hint: 'Ví dụ: {"Authorization": "Bearer abc123", "Content-Type": "application/json"}',
       advanced: true,
     },
     {
-      key: 'timeout', label: 'Timeout (mili-giây)', type: 'number',
+      key: 'body', label: 'Dữ liệu gửi kèm (Body)', type: 'textarea', section: 'Nội dung',
+      placeholder: '{\n  "name": "{{ $trigger.fromName }}",\n  "msg": "{{ $trigger.content }}"\n}',
+      desc: 'Nội dung gửi kèm (định dạng JSON). Dùng {{ }} để chèn dữ liệu động. Chỉ cần điền khi dùng POST/PUT/PATCH.',
+      templateVars: ['$trigger.fromName', '$trigger.content', '$trigger.threadId'],
+    },
+    {
+      key: 'timeout', label: 'Timeout (mili-giây)', type: 'number', section: 'Tùy chọn',
       desc: 'Nếu API không phản hồi sau thời gian này sẽ bị coi là lỗi. Mặc định 30000 = 30 giây.',
       advanced: true,
+    },
+    {
+      key: 'continueOnError', label: 'Tiếp tục dù gọi API thất bại', type: 'boolean', section: 'Tùy chọn',
+      desc: 'Bật nếu muốn workflow vẫn chạy tiếp dù API trả về lỗi.',
     },
   ],
   'output.log': [
@@ -1083,7 +1274,7 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
 
   'ai.generateText': [
     {
-      key: 'aiConfigMode', label: 'Cách cấu hình AI', type: 'select',
+      key: 'aiConfigMode', label: 'Cách cấu hình AI', type: 'select', section: 'Trợ lý AI',
       desc: 'Chọn trợ lý đã tạo sẵn (nhanh, tiện) hoặc tự nhập API key & model thủ công.',
       options: [
         { value: 'assistant', label: 'Chọn trợ lý AI đã tạo' },
@@ -1091,12 +1282,12 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       ],
     },
     {
-      key: 'assistantId', label: 'Chọn trợ lý AI', type: 'assistant-picker',
+      key: 'assistantId', label: 'Chọn trợ lý AI', type: 'assistant-picker', section: 'Trợ lý AI',
       desc: 'Chọn trợ lý đã tạo trong Tích hợp → Trợ lý AI. Sẽ dùng API key, model, system prompt từ trợ lý đó.',
       hideWhenKey: 'aiConfigMode', hideWhenValue: 'manual',
     },
     {
-      key: 'platform', label: 'Nền tảng AI', type: 'select',
+      key: 'platform', label: 'Nền tảng AI', type: 'select', section: 'Trợ lý AI',
       desc: 'Chọn nhà cung cấp AI. Mỗi nền tảng cần API key riêng.',
       options: [
         { value: 'openai',   label: 'OpenAI (ChatGPT)' },
@@ -1111,7 +1302,7 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       clearsKeyOnChange: ['model'],
     },
     {
-      key: 'model', label: 'Model AI', type: 'select',
+      key: 'model', label: 'Model AI', type: 'select', section: 'Trợ lý AI',
       desc: 'Chọn model phù hợp với nền tảng đã chọn ở trên.',
       options: [
         // OpenAI
@@ -1181,42 +1372,42 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       hideWhenKey: 'aiConfigMode', hideWhenValue: 'assistant',
     },
     {
-      key: 'apiKey', label: 'API Key', type: 'text',
+      key: 'apiKey', label: 'API Key', type: 'text', section: 'Trợ lý AI',
       placeholder: 'sk-proj-... / AIza... / sk-ant-... / sk-...',
       desc: 'API key của nền tảng đã chọn. OpenAI: platform.openai.com | Gemini: aistudio.google.com | Claude: console.anthropic.com | Deepseek: platform.deepseek.com | Grok: console.x.ai | Mistral: console.mistral.ai | OpenRouter: openrouter.ai/settings/keys',
       hideWhenKey: 'aiConfigMode', hideWhenValue: 'assistant',
     },
     {
-      key: 'systemPrompt', label: 'Ngữ cảnh / Vai trò của AI', type: 'textarea',
+      key: 'systemPrompt', label: 'Ngữ cảnh / Vai trò của AI', type: 'textarea', section: 'Nội dung',
       placeholder: 'Bạn là nhân viên tư vấn bán hàng của shop [TÊN]. Trả lời ngắn gọn, thân thiện.',
       desc: 'Mô tả vai trò và phong cách trả lời của AI. Không hiển thị với người dùng.',
       hideWhenKey: 'aiConfigMode', hideWhenValue: 'assistant',
     },
     {
-      key: 'prompt', label: 'Câu hỏi / Yêu cầu cho AI', type: 'textarea',
+      key: 'prompt', label: 'Câu hỏi / Yêu cầu cho AI', type: 'textarea', section: 'Nội dung',
       placeholder: 'Khách hỏi: {{ $trigger.content }}\n\nHãy trả lời ngắn gọn, thân thiện bằng tiếng Việt.',
       desc: 'Nội dung gửi đến AI để nhận câu trả lời. Dùng {{ }} để chèn tin nhắn từ khách hàng.',
       templateVars: ['$trigger.content', '$trigger.fromName', '$trigger.fromId'],
     },
     {
-      key: 'chatHistory', label: 'Lịch sử chat (cho AI nhớ ngữ cảnh)', type: 'textarea',
+      key: 'chatHistory', label: 'Lịch sử chat (cho AI nhớ ngữ cảnh)', type: 'textarea', section: 'Nội dung',
       placeholder: '{{ $node.GetHistory.messages }}',
       desc: 'Truyền lịch sử hội thoại để AI nhớ ngữ cảnh. Có thể là mảng JSON [{role:"user",content:"..."},...] hoặc lịch sử Zalo từ node "Lấy lịch sử tin nhắn". Để trống nếu không cần nhớ ngữ cảnh.',
       templateVars: ['$node.GetHistory.messages'],
     },
     {
-      key: 'maxHistoryMessages', label: 'Số tin nhắn lịch sử tối đa', type: 'number',
+      key: 'maxHistoryMessages', label: 'Số tin nhắn lịch sử tối đa', type: 'number', section: 'Nội dung',
       placeholder: '20', min: 1,
       desc: 'Giới hạn bao nhiêu tin nhắn lịch sử được gửi kèm (để tiết kiệm token). Mặc định 20.',
     },
     {
-      key: 'maxTokens', label: 'Độ dài tối đa (tokens)', type: 'number',
+      key: 'maxTokens', label: 'Độ dài tối đa (tokens)', type: 'number', section: 'Tùy chọn',
       placeholder: '500',
       desc: 'Giới hạn độ dài câu trả lời. 1 token ≈ 0.75 từ. 500 = ~375 từ.',
       hideWhenKey: 'aiConfigMode', hideWhenValue: 'assistant',
     },
     {
-      key: 'temperature', label: 'Mức độ sáng tạo (0.0 – 1.0)', type: 'number',
+      key: 'temperature', label: 'Mức độ sáng tạo (0.0 – 1.0)', type: 'number', section: 'Tùy chọn',
       placeholder: '0.7',
       desc: '0 = trả lời chính xác, ổn định. 1 = sáng tạo, đa dạng hơn. Khuyến nghị 0.7 cho chat bán hàng.',
       hideWhenKey: 'aiConfigMode', hideWhenValue: 'assistant',
@@ -1225,7 +1416,7 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
 
   'ai.classify': [
     {
-      key: 'aiConfigMode', label: 'Cách cấu hình AI', type: 'select',
+      key: 'aiConfigMode', label: 'Cách cấu hình AI', type: 'select', section: 'Trợ lý AI',
       desc: 'Chọn trợ lý đã tạo sẵn (nhanh, tiện) hoặc tự nhập API key & model thủ công.',
       options: [
         { value: 'assistant', label: 'Chọn trợ lý AI đã tạo' },
@@ -1233,12 +1424,12 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       ],
     },
     {
-      key: 'assistantId', label: 'Chọn trợ lý AI', type: 'assistant-picker',
+      key: 'assistantId', label: 'Chọn trợ lý AI', type: 'assistant-picker', section: 'Trợ lý AI',
       desc: 'Chọn trợ lý đã tạo trong Tích hợp → Trợ lý AI. Sẽ dùng API key, model, system prompt từ trợ lý đó.',
       hideWhenKey: 'aiConfigMode', hideWhenValue: 'manual',
     },
     {
-      key: 'platform', label: 'Nền tảng AI', type: 'select',
+      key: 'platform', label: 'Nền tảng AI', type: 'select', section: 'Trợ lý AI',
       desc: 'Chọn nhà cung cấp AI.',
       options: [
         { value: 'openai',   label: 'OpenAI (ChatGPT)' },
@@ -1253,24 +1444,7 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       clearsKeyOnChange: ['model'],
     },
     {
-      key: 'input', label: 'Văn bản cần phân loại', type: 'text',
-      placeholder: '{{ $trigger.content }}',
-      desc: 'Nội dung tin nhắn cần được AI phân loại.',
-      templateVars: ['$trigger.content'],
-    },
-    {
-      key: 'categories', label: 'Danh sách danh mục', type: 'text',
-      placeholder: 'hỏi giá, đặt hàng, khiếu nại, hỏi thông tin, khác',
-      desc: 'Các danh mục cách nhau bằng dấu phẩy. AI sẽ trả về tên một danh mục phù hợp nhất. Kết quả lưu vào output.category.',
-    },
-    {
-      key: 'apiKey', label: 'API Key', type: 'text',
-      placeholder: 'sk-proj-... / AIza... / sk-ant-... / sk-...',
-      desc: 'API key của nền tảng đã chọn.',
-      hideWhenKey: 'aiConfigMode', hideWhenValue: 'assistant',
-    },
-    {
-      key: 'model', label: 'Model AI', type: 'select',
+      key: 'model', label: 'Model AI', type: 'select', section: 'Trợ lý AI',
       desc: 'Chọn model phù hợp với nền tảng đã chọn ở trên.',
       options: [
         { value: 'gpt-6-astra',      label: 'GPT-6 Astra - Reasoning, công việc phức tạp (OpenAI)' },
@@ -1307,6 +1481,23 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
         openrouter: ['openrouter/auto', 'deepseek/deepseek-v4-flash'],
       }},
       hideWhenKey: 'aiConfigMode', hideWhenValue: 'assistant',
+    },
+    {
+      key: 'apiKey', label: 'API Key', type: 'text', section: 'Trợ lý AI',
+      placeholder: 'sk-proj-... / AIza... / sk-ant-... / sk-...',
+      desc: 'API key của nền tảng đã chọn.',
+      hideWhenKey: 'aiConfigMode', hideWhenValue: 'assistant',
+    },
+    {
+      key: 'input', label: 'Văn bản cần phân loại', type: 'text', section: 'Nội dung',
+      placeholder: '{{ $trigger.content }}',
+      desc: 'Nội dung tin nhắn cần được AI phân loại.',
+      templateVars: ['$trigger.content'],
+    },
+    {
+      key: 'categories', label: 'Danh sách danh mục', type: 'text', section: 'Nội dung',
+      placeholder: 'hỏi giá, đặt hàng, khiếu nại, hỏi thông tin, khác',
+      desc: 'Các danh mục cách nhau bằng dấu phẩy. AI sẽ trả về tên một danh mục phù hợp nhất. Kết quả lưu vào output.category.',
     },
   ],
 
@@ -1461,6 +1652,68 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
     },
   ],
 
+  // ─── Trigger: Webhook phần mềm bán hàng (services/integrations/posWebhook.ts) ─────────
+  'trigger.posWebhook': [
+    {
+      key: 'posWebhookSetup', label: 'Cách nhận webhook', type: 'info', section: 'Nguồn',
+      desc: 'Vào Tích hợp → mở kết nối KiotViet / Haravan / Sapo / Nhanh.vn / Pancake → đặt "Khoá xác thực webhook" → dán "Địa chỉ nhận webhook" vào phần cấu hình webhook của phần mềm bán hàng. Webhook thiếu khoá hoặc sai chữ ký bị từ chối, không chạy workflow.',
+    },
+    {
+      key: 'integrationType', label: 'Phần mềm bán hàng', type: 'select', section: 'Nguồn',
+      options: [
+        { value: 'all',      label: 'Tất cả phần mềm đã kết nối' },
+        { value: 'kiotviet', label: 'KiotViet' },
+        { value: 'haravan',  label: 'Haravan' },
+        { value: 'sapo',     label: 'Sapo' },
+        { value: 'nhanh',    label: 'Nhanh.vn' },
+        { value: 'pancake',  label: 'Pancake POS' },
+      ],
+      desc: 'Chỉ chạy với webhook của phần mềm này.',
+    },
+    {
+      key: 'entity', label: 'Loại dữ liệu', type: 'choice', section: 'Bộ lọc',
+      options: [
+        { value: 'order',     label: 'Đơn hàng' },
+        { value: 'invoice',   label: 'Hoá đơn (KiotViet)' },
+        { value: 'customer',  label: 'Khách hàng' },
+        { value: 'product',   label: 'Sản phẩm' },
+        { value: 'inventory', label: 'Tồn kho' },
+        { value: 'all',       label: 'Tất cả' },
+      ],
+      desc: 'Mỗi đơn / khách / sản phẩm trong webhook chạy workflow một lần; nền tảng gửi lại cùng dữ liệu thì bỏ qua.',
+    },
+    {
+      key: 'eventContains', label: 'Tên sự kiện chứa', type: 'text', section: 'Bộ lọc',
+      placeholder: 'vd: create, paid, orderAdd (để trống = mọi sự kiện)',
+      desc: 'Tên sự kiện của nền tảng ($trigger.event): KiotViet order.update / invoice.update, Haravan & Sapo orders/create / orders/paid / orders/cancelled, Nhanh.vn orderAdd / orderUpdate, Pancake orders. Nhiều từ cách nhau dấu phẩy = khớp một trong các từ.',
+    },
+    {
+      key: 'statusContains', label: 'Trạng thái chứa', type: 'text', section: 'Bộ lọc',
+      placeholder: 'vd: Hoàn thành, paid, Giao thành công',
+      desc: 'Trạng thái đơn ($trigger.status): KiotViet StatusValue, Haravan / Sapo financial_status / fulfillment_status, Nhanh.vn tên trạng thái, Pancake status_name. Nhiều từ cách nhau dấu phẩy, không phân biệt hoa / thường.',
+    },
+    {
+      key: 'integrationId', label: 'Chỉ một kết nối', type: 'text', advanced: true,
+      placeholder: 'Để trống = mọi kết nối của phần mềm đã chọn',
+      desc: 'ID kết nối khi có nhiều cửa hàng cùng phần mềm — phần cuối "Địa chỉ nhận webhook" (/webhook/<ID>) ở trang tích hợp.',
+    },
+  ],
+
+  // ─── Trigger: Public API v1 / plugin ─────────────────────────────────────
+  'trigger.api': [
+    {
+      key: 'eventName', label: 'Tên sự kiện', type: 'text',
+      placeholder: 'vd: don_hang_moi',
+      desc: 'Hệ thống ngoài hoặc ứng dụng đã cài gọi POST /api/v1/workflows/events/<tên sự kiện> với body { "payload": {...} }. Để trống = nhận mọi sự kiện. Dùng {{ $trigger.payload.<trường> }} trong các bước sau.',
+    },
+    {
+      key: 'requiredKeyId', label: 'Chỉ nhận từ API key (tùy chọn)', type: 'text',
+      placeholder: 'ID của API key (Công cụ → Ứng dụng, API & Webhook → API)',
+      desc: 'Nếu điền, chỉ key này kích hoạt được workflow.',
+      advanced: true,
+    },
+  ],
+
   // ─── Trigger: Webhook bên ngoài ──────────────────────────────────────────
   'trigger.webhook': [
     {
@@ -1496,7 +1749,7 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
     {
       key: 'phone', label: 'Số điện thoại khách hàng', type: 'text',
       placeholder: '{{ $trigger.fromPhone }}',
-      desc: 'SĐT để tra cứu khách hàng trong KiotViet. Thường dùng SĐT Zalo của người nhắn tin.',
+      desc: `SĐT để tra cứu khách hàng trong KiotViet. ${POS_PHONE_HINT} ${POS_CUSTOMER_EMPTY_NOTE}`,
       templateVars: ['$trigger.fromPhone', '$trigger.content'],
     },
   ],
@@ -1504,8 +1757,8 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
     {
       key: 'phone', label: 'SĐT khách hàng', type: 'text',
       placeholder: '{{ $trigger.fromPhone }}',
-      desc: 'Tìm đơn hàng theo SĐT. Nếu có cả orderId thì orderId được ưu tiên.',
-      templateVars: ['$trigger.fromPhone'],
+      desc: `Tìm đơn hàng theo SĐT; có cả mã đơn thì mã đơn được ưu tiên. ${POS_PHONE_HINT} ${POS_ORDER_EMPTY_NOTE}`,
+      templateVars: ['$trigger.fromPhone', '$trigger.content'],
     },
     {
       key: 'orderId', label: 'Mã đơn hàng (nếu biết)', type: 'text',
@@ -1564,7 +1817,7 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
     {
       key: 'phone', label: 'Số điện thoại khách hàng', type: 'text',
       placeholder: '{{ $trigger.fromPhone }}',
-      desc: 'SĐT để tìm khách hàng trong Haravan.',
+      desc: `SĐT để tìm khách hàng trong Haravan. ${POS_PHONE_HINT} ${POS_CUSTOMER_EMPTY_NOTE}`,
       templateVars: ['$trigger.fromPhone', '$trigger.content'],
     },
   ],
@@ -1572,7 +1825,8 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
     {
       key: 'phone', label: 'SĐT khách hàng', type: 'text',
       placeholder: '{{ $trigger.fromPhone }}',
-      templateVars: ['$trigger.fromPhone'],
+      desc: `Tìm đơn hàng theo SĐT; có cả mã đơn thì mã đơn được ưu tiên. ${POS_PHONE_HINT} ${POS_ORDER_EMPTY_NOTE}`,
+      templateVars: ['$trigger.fromPhone', '$trigger.content'],
     },
     {
       key: 'orderId', label: 'Mã đơn hàng (Order ID)', type: 'text',
@@ -1604,6 +1858,7 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
     {
       key: 'phone', label: 'Số điện thoại khách hàng', type: 'text',
       placeholder: '{{ $trigger.fromPhone }}',
+      desc: `SĐT để tìm khách hàng trong Sapo. ${POS_PHONE_HINT} ${POS_CUSTOMER_EMPTY_NOTE}`,
       templateVars: ['$trigger.fromPhone', '$trigger.content'],
     },
   ],
@@ -1611,7 +1866,8 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
     {
       key: 'phone', label: 'SĐT khách hàng', type: 'text',
       placeholder: '{{ $trigger.fromPhone }}',
-      templateVars: ['$trigger.fromPhone'],
+      desc: `Tìm đơn hàng theo SĐT; có cả mã đơn (ID số của đơn) thì mã đơn được ưu tiên. ${POS_PHONE_HINT} ${POS_ORDER_EMPTY_NOTE}`,
+      templateVars: ['$trigger.fromPhone', '$trigger.content'],
     },
     {
       key: 'orderId', label: 'Mã đơn hàng', type: 'text',
@@ -1644,6 +1900,7 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
     {
       key: 'phone', label: 'Số điện thoại khách hàng', type: 'text',
       placeholder: '{{ $trigger.fromPhone }}',
+      desc: `SĐT để tìm khách hàng trong Nhanh.vn. ${POS_PHONE_HINT} ${POS_CUSTOMER_EMPTY_NOTE}`,
       templateVars: ['$trigger.fromPhone', '$trigger.content'],
     },
   ],
@@ -1651,7 +1908,8 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
     {
       key: 'phone', label: 'SĐT khách hàng', type: 'text',
       placeholder: '{{ $trigger.fromPhone }}',
-      templateVars: ['$trigger.fromPhone'],
+      desc: `Tìm đơn hàng theo SĐT người nhận; có cả mã đơn thì lọc thêm theo mã đơn. ${POS_PHONE_HINT} ${POS_ORDER_EMPTY_NOTE}`,
+      templateVars: ['$trigger.fromPhone', '$trigger.content'],
     },
     {
       key: 'orderId', label: 'Mã đơn hàng', type: 'text',
@@ -1678,6 +1936,53 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       key: 'order', label: 'Dữ liệu đơn hàng (JSON)', type: 'json',
       hint: '{"customerName":"Nguyễn Văn A","customerMobile":"0901234567","customerAddress":"123 Đường ABC, Hà Nội","productList":{"123":1},"productDetails":[{"productId":"123","quantity":1,"price":150000}],"paymentMethod":"COD","description":"Đặt hàng qua Zalo"}',
       desc: 'Payload hiện tại đang theo builder nội bộ `toNhanh()` - dùng `productList` và có thể kèm `productDetails` để giữ thêm thông tin sản phẩm. Cần verify sâu hơn với docs/account Nhanh thực tế trước khi mở rộng.',
+    },
+  ],
+
+  // ─── Pancake POS ──────────────────────────────────────────────────────────
+  'pancake.lookupCustomer': [
+    {
+      key: 'phone', label: 'Số điện thoại khách hàng', type: 'text',
+      placeholder: '{{ $trigger.fromPhone }}',
+      desc: `SĐT để tìm khách hàng trong Pancake POS. ${POS_PHONE_HINT} ${POS_CUSTOMER_EMPTY_NOTE}`,
+      templateVars: ['$trigger.fromPhone', '$trigger.content'],
+    },
+  ],
+  'pancake.lookupOrder': [
+    {
+      key: 'phone', label: 'SĐT khách hàng', type: 'text',
+      placeholder: '{{ $trigger.fromPhone }}',
+      desc: `Tìm đơn hàng theo SĐT; có cả mã đơn thì mã đơn được ưu tiên. ${POS_PHONE_HINT} ${POS_ORDER_EMPTY_NOTE}`,
+      templateVars: ['$trigger.fromPhone', '$trigger.content'],
+    },
+    {
+      key: 'orderId', label: 'Mã đơn hàng (nếu biết)', type: 'text',
+      placeholder: '{{ $trigger.content }}',
+      desc: 'Mã đơn Pancake POS. Ưu tiên hơn SĐT; không có đơn đúng mã này thì tìm theo SĐT (nếu có) hoặc theo chính mã này.',
+      templateVars: ['$trigger.content'],
+      advanced: true,
+    },
+  ],
+  'pancake.lookupProduct': [
+    {
+      key: 'keyword', label: 'Tên sản phẩm', type: 'text',
+      placeholder: '{{ $trigger.content }}',
+      desc: 'Tìm sản phẩm theo tên trong Pancake POS (có / không dấu đều được).',
+      templateVars: ['$trigger.content'],
+    },
+    {
+      key: 'code', label: 'Mã sản phẩm (tùy chọn)', type: 'text',
+      placeholder: 'SP001',
+      desc: 'Biết chính xác mã sản phẩm thì tra thẳng theo mã.',
+      advanced: true,
+    },
+    { key: 'limit', label: 'Số kết quả tối đa', type: 'number', placeholder: '10', advanced: true },
+  ],
+  'pancake.createOrder': [
+    {
+      key: 'order', label: 'Dữ liệu đơn hàng (JSON)', type: 'json',
+      hint: '{"bill_full_name":"Nguyễn Văn A","bill_phone_number":"0901234567","shipping_address":{"full_name":"Nguyễn Văn A","phone_number":"0901234567","address":"123 Đường ABC","commune_name":"Phường Bến Nghé","district_name":"Quận 1","province_name":"Hồ Chí Minh"},"items":[{"variation_id":"123456","quantity":1}],"shipping_fee":30000,"cod":180000,"note":"Đặt hàng qua Zalo"}',
+      desc: 'Đơn hàng theo Open API của Pancake POS (cùng dạng với form Tạo đơn hàng trong Tích hợp nhanh). items[].variation_id = id phiên bản lấy từ bước "Pancake: Tra cứu sản phẩm"; cod = tiền thu hộ.',
     },
   ],
 
@@ -1817,7 +2122,7 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
   // ─── Facebook triggers ──────────────────────────────────────────────────────
   'fb.trigger.message': [
     {
-      key: 'threadType', label: 'Nguồn tin nhắn', type: 'select',
+      key: 'threadType', label: 'Nguồn tin nhắn', type: 'choice', section: 'Phạm vi',
       desc: 'Workflow sẽ lắng nghe tin nhắn từ đâu?',
       options: [
         { value: 'all', label: 'Tất cả (cá nhân + nhóm)' },
@@ -1826,12 +2131,50 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       ],
     },
     {
-      key: 'keyword', label: 'Từ khóa kích hoạt', type: 'text',
+      key: 'groupId', label: 'Chỉ nhận từ nhóm cụ thể', type: 'contact-picker', contactType: 'group', section: 'Phạm vi',
+      placeholder: 'Để trống = tất cả các nhóm',
+      desc: 'Chọn một nhóm cụ thể để lắng nghe. Để trống = nhận từ tất cả nhóm.',
+      advanced: true,
+    },
+    {
+      key: 'threadId', label: 'Chỉ nhận từ hội thoại cụ thể', type: 'contact-picker', contactType: 'all', section: 'Phạm vi',
+      placeholder: 'Để trống = tất cả hội thoại',
+      desc: 'ID hội thoại Facebook muốn lắng nghe. Để trống = nhận từ tất cả hội thoại.',
+      advanced: true,
+    },
+    {
+      key: 'excludeThreadIds', label: 'Loại trừ hội thoại / nhóm', type: 'contact-picker', section: 'Phạm vi',
+      contactType: 'all', contactMode: 'multi', channel: 'facebook',
+      placeholder: 'Để trống = không loại trừ',
+      desc: 'Không kích hoạt với các hội thoại hoặc nhóm Facebook được chọn.',
+    },
+    {
+      key: 'fromId', label: 'Chỉ nhận từ người dùng cụ thể', type: 'contact-picker', contactType: 'user', section: 'Người gửi',
+      placeholder: 'Để trống = tất cả mọi người',
+      desc: 'Chọn một người cụ thể để lắng nghe. Để trống = nhận từ tất cả.',
+      advanced: true,
+    },
+    {
+      key: 'excludeSenderIds', label: 'Loại trừ người gửi', type: 'contact-picker', section: 'Người gửi',
+      contactType: 'user', contactMode: 'multi', channel: 'facebook',
+      placeholder: 'Để trống = không loại trừ ai',
+      desc: 'Tin nhắn từ những người được chọn sẽ không kích hoạt workflow.',
+    },
+    {
+      key: 'ignoreOwn', label: 'Bỏ qua tin nhắn do mình gửi', type: 'boolean', section: 'Người gửi',
+      desc: 'Bật để tránh workflow tự kích hoạt khi tài khoản này tự gửi tin.',
+    },
+    {
+      key: 'onlyOwn', label: 'Chỉ xử lý tin mình tự gửi', type: 'boolean', section: 'Người gửi',
+      desc: 'Ngược lại - chỉ chạy với tin nhắn từ chính tài khoản này.',
+    },
+    {
+      key: 'keyword', label: 'Từ khóa kích hoạt', type: 'text', section: 'Nội dung',
       placeholder: 'giá, báo giá, order',
       desc: 'Workflow chỉ chạy khi tin nhắn chứa một trong các từ khóa này. Nhập nhiều từ khóa cách nhau bằng dấu phẩy. Để trống = mọi tin nhắn đều kích hoạt.',
     },
     {
-      key: 'keywordMode', label: 'Cách khớp từ khóa', type: 'select',
+      key: 'keywordMode', label: 'Cách khớp từ khóa', type: 'select', section: 'Nội dung',
       desc: 'Quy tắc áp dụng khi kiểm tra từ khóa trong tin nhắn.',
       options: [
         { value: 'contains_any', label: 'Chứa ít nhất 1 từ khóa (phổ biến nhất)' },
@@ -1842,33 +2185,16 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       ],
     },
     {
-      key: 'ignoreOwn', label: 'Bỏ qua tin nhắn do mình gửi', type: 'boolean',
-      desc: 'Bật để tránh workflow tự kích hoạt khi tài khoản này tự gửi tin.',
+      key: 'activeHours', label: 'Khung giờ hoạt động', type: 'time-window', section: 'Thời gian & tần suất',
+      desc: 'Trong khung giờ: chỉ chạy trong giờ đã chọn. Ngoài khung giờ: chỉ chạy ngoài giờ đó, vd. tự động trả lời ngoài giờ làm việc.',
     },
     {
-      key: 'onlyOwn', label: 'Chỉ xử lý tin mình tự gửi', type: 'boolean',
-      desc: 'Ngược lại - chỉ chạy với tin nhắn từ chính tài khoản này.',
+      key: 'cooldownMinutes', label: 'Giới hạn tần suất (phút)', type: 'number', section: 'Thời gian & tần suất',
+      placeholder: '0', min: 0,
+      desc: 'Sau khi workflow chạy cho một hội thoại, các tin nhắn tiếp theo từ hội thoại đó bị bỏ qua trong N phút (vd. 60 = tối đa 1 lần mỗi giờ). 0 = tắt. Bộ đếm được đặt lại khi khởi động lại ứng dụng.',
     },
     {
-      key: 'fromId', label: 'Chỉ nhận từ người dùng cụ thể', type: 'contact-picker', contactType: 'user',
-      placeholder: 'Để trống = tất cả mọi người',
-      desc: 'Chọn một người cụ thể để lắng nghe. Để trống = nhận từ tất cả.',
-      advanced: true,
-    },
-    {
-      key: 'groupId', label: 'Chỉ nhận từ nhóm cụ thể', type: 'contact-picker', contactType: 'group',
-      placeholder: 'Để trống = tất cả các nhóm',
-      desc: 'Chọn một nhóm cụ thể để lắng nghe. Để trống = nhận từ tất cả nhóm.',
-      advanced: true,
-    },
-    {
-      key: 'threadId', label: 'Chỉ nhận từ hội thoại cụ thể', type: 'contact-picker', contactType: 'all',
-      placeholder: 'Để trống = tất cả hội thoại',
-      desc: 'ID hội thoại Facebook muốn lắng nghe. Để trống = nhận từ tất cả hội thoại.',
-      advanced: true,
-    },
-    {
-      key: 'debounceSeconds', label: 'Gom tin nhắn liên tiếp (giây)', type: 'number',
+      key: 'debounceSeconds', label: 'Gom tin nhắn liên tiếp (giây)', type: 'number', section: 'Thời gian & tần suất',
       placeholder: '0',
       desc: 'Chờ N giây sau tin nhắn cuối cùng rồi mới chạy workflow (gom tất cả tin nhắn liên tiếp thành 1 lần xử lý). 0 = chạy ngay mỗi tin.',
       advanced: true,
@@ -1956,20 +2282,20 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
   // ─── Facebook Actions ────────────────────────────────────────────────────
   'fb.action.sendMessage': [
     {
-      key: 'message', label: 'Nội dung tin nhắn', type: 'textarea',
+      key: 'message', label: 'Nội dung tin nhắn', type: 'textarea', section: 'Nội dung',
       placeholder: 'Xin chào! Mình có thể giúp gì?',
       desc: 'Nội dung tin nhắn gửi đi. Dùng {{ }} để chèn dữ liệu động.',
       templateVars: ['$trigger.fromName', '$trigger.content', '$trigger.threadId'],
     },
     {
-      key: 'threadIds', label: 'Gửi đến hội thoại', type: 'contact-picker', contactType: 'all',
+      key: 'threadIds', label: 'Gửi đến hội thoại', type: 'contact-picker', contactType: 'all', section: 'Người nhận',
       contactMode: 'multi',
       placeholder: '{{ $trigger.threadId }}',
       desc: 'Chọn một hoặc nhiều hội thoại Facebook để gửi. Nếu không chọn, sẽ dùng hội thoại từ trigger.',
       templateVars: ['$trigger.threadId'],
     },
     {
-      key: 'continueOnError', label: 'Tiếp tục workflow dù gửi thất bại', type: 'boolean',
+      key: 'continueOnError', label: 'Tiếp tục workflow dù gửi thất bại', type: 'boolean', section: 'Tùy chọn',
       desc: 'Bật nếu muốn các bước sau vẫn chạy ngay cả khi tin nhắn này gửi lỗi.',
       advanced: true,
     },
@@ -1995,6 +2321,55 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       key: 'continueOnError', label: 'Tiếp tục workflow dù gửi thất bại', type: 'boolean',
       desc: 'Bật nếu muốn các bước sau vẫn chạy ngay cả khi gửi tệp lỗi.',
       advanced: true,
+    },
+  ],
+  'fb.action.sendVideo': [
+    {
+      key: 'filePath', label: 'Video cần gửi', type: 'file-picker', fileType: 'file',
+      desc: 'Chọn file video từ máy tính để gửi.',
+    },
+    {
+      key: 'body', label: 'Chú thích (tuỳ chọn)', type: 'text',
+      placeholder: 'Xem video giới thiệu sản phẩm!',
+    },
+    {
+      key: 'threadIds', label: 'Gửi đến hội thoại', type: 'contact-picker', contactType: 'all',
+      contactMode: 'multi', placeholder: '{{ $trigger.threadId }}', templateVars: ['$trigger.threadId'],
+    },
+    {
+      key: 'continueOnError', label: 'Tiếp tục workflow dù gửi thất bại', type: 'boolean', advanced: true,
+    },
+  ],
+  'fb.action.sendFile': [
+    {
+      key: 'filePath', label: 'File cần gửi', type: 'file-picker', fileType: 'file',
+      desc: 'Chọn file (PDF, Excel, ...) từ máy tính để gửi.',
+    },
+    {
+      key: 'body', label: 'Chú thích (tuỳ chọn)', type: 'text',
+    },
+    {
+      key: 'threadIds', label: 'Gửi đến hội thoại', type: 'contact-picker', contactType: 'all',
+      contactMode: 'multi', placeholder: '{{ $trigger.threadId }}', templateVars: ['$trigger.threadId'],
+    },
+    {
+      key: 'continueOnError', label: 'Tiếp tục workflow dù gửi thất bại', type: 'boolean', advanced: true,
+    },
+  ],
+  'fb.action.sendAudio': [
+    {
+      key: 'filePath', label: 'File audio cần gửi', type: 'file-picker', fileType: 'file',
+      desc: 'Chọn file âm thanh từ máy tính để gửi.',
+    },
+    {
+      key: 'body', label: 'Chú thích (tuỳ chọn)', type: 'text',
+    },
+    {
+      key: 'threadIds', label: 'Gửi đến hội thoại', type: 'contact-picker', contactType: 'all',
+      contactMode: 'multi', placeholder: '{{ $trigger.threadId }}', templateVars: ['$trigger.threadId'],
+    },
+    {
+      key: 'continueOnError', label: 'Tiếp tục workflow dù gửi thất bại', type: 'boolean', advanced: true,
     },
   ],
   'fb.action.addReaction': [
@@ -2190,7 +2565,7 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
   // ─── Telegram triggers ──────────────────────────────────────────────────────
   'tg.trigger.message': [
     {
-      key: 'chatType', label: 'Nguồn tin nhắn', type: 'select',
+      key: 'chatType', label: 'Nguồn tin nhắn', type: 'choice', section: 'Phạm vi',
       desc: 'Workflow sẽ lắng nghe tin nhắn từ đâu?',
       options: [
         { value: 'all', label: 'Tất cả (cá nhân + nhóm + channel + topic)' },
@@ -2201,18 +2576,41 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       ],
     },
     {
-      key: 'chatId', label: 'Chỉ nhận từ hội thoại cụ thể', type: 'contact-picker',
+      key: 'chatId', label: 'Chỉ nhận từ hội thoại cụ thể', type: 'contact-picker', section: 'Phạm vi',
       contactType: 'all', channel: 'telegram_user',
       placeholder: 'Để trống = tất cả hội thoại',
       desc: 'Chọn hội thoại Telegram muốn lắng nghe. Để trống = nhận từ tất cả.',
     },
     {
-      key: 'keyword', label: 'Từ khóa kích hoạt', type: 'text',
+      key: 'excludeThreadIds', label: 'Loại trừ hội thoại / nhóm', type: 'contact-picker', section: 'Phạm vi',
+      contactType: 'all', contactMode: 'multi', channel: 'telegram_user',
+      placeholder: 'Để trống = không loại trừ',
+      desc: 'Không kích hoạt với các hội thoại, nhóm hoặc kênh Telegram được chọn.',
+    },
+    {
+      key: 'fromId', label: 'Chỉ nhận từ người gửi cụ thể', type: 'contact-picker', section: 'Người gửi',
+      contactType: 'user', channel: 'telegram_user',
+      placeholder: 'Để trống = tất cả',
+      desc: 'Chọn người gửi cụ thể. Để trống = nhận từ tất cả.',
+      advanced: true,
+    },
+    {
+      key: 'excludeSenderIds', label: 'Loại trừ người gửi', type: 'contact-picker', section: 'Người gửi',
+      contactType: 'user', contactMode: 'multi', channel: 'telegram_user',
+      placeholder: 'Để trống = không loại trừ ai',
+      desc: 'Tin nhắn từ những người được chọn sẽ không kích hoạt workflow.',
+    },
+    {
+      key: 'ignoreOwn', label: 'Bỏ qua tin nhắn do mình gửi', type: 'boolean', section: 'Người gửi',
+      desc: 'Bật để tránh workflow tự kích hoạt khi tài khoản tự gửi tin.',
+    },
+    {
+      key: 'keyword', label: 'Từ khóa kích hoạt', type: 'text', section: 'Nội dung',
       placeholder: 'giá, báo giá, order',
       desc: 'Workflow chỉ chạy khi tin nhắn chứa một trong các từ khóa. Nhiều từ khóa cách nhau bằng dấu phẩy. Để trống = mọi tin nhắn.',
     },
     {
-      key: 'keywordMode', label: 'Cách khớp từ khóa', type: 'select',
+      key: 'keywordMode', label: 'Cách khớp từ khóa', type: 'select', section: 'Nội dung',
       desc: 'Quy tắc áp dụng khi kiểm tra từ khóa trong tin nhắn.',
       options: [
         { value: 'contains_any', label: 'Chứa ít nhất 1 từ khóa (phổ biến nhất)' },
@@ -2222,18 +2620,16 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
       ],
     },
     {
-      key: 'ignoreOwn', label: 'Bỏ qua tin nhắn do mình gửi', type: 'boolean',
-      desc: 'Bật để tránh workflow tự kích hoạt khi tài khoản tự gửi tin.',
+      key: 'activeHours', label: 'Khung giờ hoạt động', type: 'time-window', section: 'Thời gian & tần suất',
+      desc: 'Trong khung giờ: chỉ chạy trong giờ đã chọn. Ngoài khung giờ: chỉ chạy ngoài giờ đó, vd. tự động trả lời ngoài giờ làm việc.',
     },
     {
-      key: 'fromId', label: 'Chỉ nhận từ người gửi cụ thể', type: 'contact-picker',
-      contactType: 'user', channel: 'telegram_user',
-      placeholder: 'Để trống = tất cả',
-      desc: 'Chọn người gửi cụ thể. Để trống = nhận từ tất cả.',
-      advanced: true,
+      key: 'cooldownMinutes', label: 'Giới hạn tần suất (phút)', type: 'number', section: 'Thời gian & tần suất',
+      placeholder: '0', min: 0,
+      desc: 'Sau khi workflow chạy cho một hội thoại, các tin nhắn tiếp theo từ hội thoại đó bị bỏ qua trong N phút (vd. 60 = tối đa 1 lần mỗi giờ). 0 = tắt. Bộ đếm được đặt lại khi khởi động lại ứng dụng.',
     },
     {
-      key: 'debounceSeconds', label: 'Chờ gom tin nhắn (giây)', type: 'number',
+      key: 'debounceSeconds', label: 'Chờ gom tin nhắn (giây)', type: 'number', section: 'Thời gian & tần suất',
       placeholder: '0',
       desc: 'Chờ N giây sau tin nhắn cuối rồi mới chạy. 0 = chạy ngay mỗi tin.',
       advanced: true,
@@ -2387,24 +2783,56 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
     { key: 'userId', label: 'Telegram user ID', type: 'text', placeholder: '{{ $trigger.fromId }}', templateVars: ['$trigger.fromId'] },
     { key: 'durationMinutes', label: 'Mute trong (phút)', type: 'number', placeholder: '10', min: 1, desc: 'Trong thời gian này user không thể gửi tin.' },
   ],
+  'tgbot.action.sendSticker': [
+    { key: 'chatId', label: 'Gửi đến chat', type: 'contact-picker', contactType: 'all', channel: 'telegram_bot', placeholder: '{{ $trigger.chatId }}', templateVars: ['$trigger.chatId'] },
+    { key: 'stickerPath', label: 'File sticker (webp)', type: 'file-picker', fileType: 'file', desc: 'Chọn file sticker định dạng webp để gửi.' },
+  ],
+  'tgbot.action.sendAudio': [
+    { key: 'chatId', label: 'Gửi đến chat', type: 'contact-picker', contactType: 'all', channel: 'telegram_bot', placeholder: '{{ $trigger.chatId }}', templateVars: ['$trigger.chatId'] },
+    { key: 'audioPath', label: 'File audio (mp3)', type: 'file-picker', fileType: 'file', desc: 'Chọn file âm thanh để gửi.' },
+    { key: 'caption', label: 'Chú thích', type: 'textarea', placeholder: 'Không bắt buộc', advanced: true },
+  ],
+  'tgbot.action.sendVoice': [
+    { key: 'chatId', label: 'Gửi đến chat', type: 'contact-picker', contactType: 'all', channel: 'telegram_bot', placeholder: '{{ $trigger.chatId }}', templateVars: ['$trigger.chatId'] },
+    { key: 'voicePath', label: 'File ghi âm (ogg)', type: 'file-picker', fileType: 'file', desc: 'Chọn file voice note định dạng ogg để gửi.' },
+    { key: 'caption', label: 'Chú thích', type: 'textarea', placeholder: 'Không bắt buộc', advanced: true },
+  ],
+  'tgbot.action.leaveChat': [
+    { key: 'chatId', label: 'Chat cần rời', type: 'contact-picker', contactType: 'all', channel: 'telegram_bot', placeholder: '{{ $trigger.chatId }}', templateVars: ['$trigger.chatId'] },
+  ],
+  'tgbot.action.sendMenu': [
+    { key: 'chatId', label: 'Gửi đến chat', type: 'contact-picker', contactType: 'all', channel: 'telegram_bot', placeholder: '{{ $trigger.chatId }}', templateVars: ['$trigger.chatId'] },
+    { key: 'text', label: 'Nội dung menu', type: 'text', placeholder: 'Chọn một tùy chọn:' },
+    { key: 'buttons', label: 'Nút bấm (Inline Keyboard)', type: 'json', hint: '[[{"text":"Mua","callback_data":"mua"},{"text":"Hỗ trợ","callback_data":"hotro"}]]', desc: 'Mảng 2 chiều các nút. Mỗi nút có "text" và "callback_data".' },
+  ],
+  'tgbot.action.sendForm': [
+    { key: 'chatId', label: 'Gửi đến chat', type: 'contact-picker', contactType: 'all', channel: 'telegram_bot', placeholder: '{{ $trigger.chatId }}', templateVars: ['$trigger.chatId'] },
+    { key: 'text', label: 'Tiêu đề form', type: 'text', placeholder: 'Vui lòng nhập thông tin:' },
+    { key: 'fields', label: 'Các trường form', type: 'json', hint: '[{"label":"Họ tên","field_name":"name","required":true}]', desc: 'Mỗi trường có "label", "field_name" và "required".' },
+  ],
+  'tgbot.action.answerCallback': [
+    { key: 'callbackQueryId', label: 'Callback query ID', type: 'text', placeholder: '{{ $trigger.callbackQueryId }}', templateVars: ['$trigger.callbackQueryId'] },
+    { key: 'text', label: 'Nội dung trả lời', type: 'text', placeholder: 'Không bắt buộc', desc: 'Thông báo ngắn hiện lên cho user (popup).' },
+    { key: 'showAlert', label: 'Hiện dạng alert (popup)', type: 'boolean', desc: 'Bật để hiện hộp thoại, tắt để hiện thông báo nhỏ.', advanced: true },
+  ],
 
   // ─── Telegram Actions ───────────────────────────────────────────────────────
   'tg.sendMessage': [
     {
-      key: 'chatId', label: 'Gửi đến hội thoại', type: 'contact-picker',
+      key: 'message', label: 'Nội dung tin nhắn', type: 'textarea', section: 'Nội dung',
+      placeholder: 'Xin chào! Mình có thể giúp gì?',
+      desc: 'Nội dung tin nhắn gửi đi. Dùng {{ }} để chèn dữ liệu động.',
+      templateVars: ['$trigger.fromName', '$trigger.content', '$trigger.chatId'],
+    },
+    {
+      key: 'chatId', label: 'Gửi đến hội thoại', type: 'contact-picker', section: 'Người nhận',
       contactType: 'all', channel: 'telegram_user',
       placeholder: '{{ $trigger.chatId }}',
       desc: 'Chọn hội thoại Telegram cần gửi tin nhắn.',
       templateVars: ['$trigger.chatId', '$trigger.fromId'],
     },
     {
-      key: 'message', label: 'Nội dung tin nhắn', type: 'textarea',
-      placeholder: 'Xin chào! Mình có thể giúp gì?',
-      desc: 'Nội dung tin nhắn gửi đi. Dùng {{ }} để chèn dữ liệu động.',
-      templateVars: ['$trigger.fromName', '$trigger.content', '$trigger.chatId'],
-    },
-    {
-      key: 'continueOnError', label: 'Tiếp tục workflow dù gửi thất bại', type: 'boolean',
+      key: 'continueOnError', label: 'Tiếp tục workflow dù gửi thất bại', type: 'boolean', section: 'Tùy chọn',
       desc: 'Bật nếu muốn các bước sau vẫn chạy ngay cả khi tin nhắn này gửi lỗi.',
       advanced: true,
     },
@@ -2433,6 +2861,16 @@ const CONFIG_SCHEMA: Record<string, Field[]> = {
     { key: 'chatId', label: 'Gửi đến hội thoại', type: 'contact-picker', contactType: 'all', channel: 'telegram_user', placeholder: '{{ $trigger.chatId }}', templateVars: ['$trigger.chatId'] },
     { key: 'filePath', label: 'File cần gửi', type: 'file-picker', fileType: 'file', desc: 'Chọn file (PDF, Excel, ...) để gửi.' },
     { key: 'caption', label: 'Chú thích file', type: 'text', advanced: true },
+  ],
+  'tg.sendVideo': [
+    { key: 'chatId', label: 'Gửi đến hội thoại', type: 'contact-picker', contactType: 'all', channel: 'telegram_user', placeholder: '{{ $trigger.chatId }}', templateVars: ['$trigger.chatId'] },
+    { key: 'filePath', label: 'Video cần gửi', type: 'file-picker', fileType: 'file', desc: 'Chọn file video (mp4) để gửi.' },
+    { key: 'caption', label: 'Chú thích video', type: 'text', advanced: true },
+  ],
+  'tg.sendVoice': [
+    { key: 'chatId', label: 'Gửi đến hội thoại', type: 'contact-picker', contactType: 'all', channel: 'telegram_user', placeholder: '{{ $trigger.chatId }}', templateVars: ['$trigger.chatId'] },
+    { key: 'filePath', label: 'File ghi âm (ogg)', type: 'file-picker', fileType: 'file', desc: 'Chọn file voice note định dạng ogg để gửi.' },
+    { key: 'caption', label: 'Chú thích', type: 'text', advanced: true },
   ],
   'tg.forwardMessage': [
     { key: 'fromChatId', label: 'Từ hội thoại', type: 'contact-picker', contactType: 'all', channel: 'telegram_user', desc: 'Hội thoại chứa tin nhắn cần chuyển tiếp.' },
@@ -2550,30 +2988,69 @@ interface Props {
   onInlineRoutesChange?: (targetNodeIds: string[]) => void;
   onClose: () => void;
   workflowId?: string;
+  /** Channel of the workflow (contact picker / variables default to it). */
+  workflowChannel?: string;
+  /** Accounts the workflow runs for ([] = every account of the channel). */
+  workflowPageIds?: string[];
 }
 
 // ─── Shared styles ────────────────────────────────────────────────────────────
 
-const inputCls  = 'w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-colors';
-const selectCls = 'w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors cursor-pointer [&>option]:bg-gray-800 [&>option]:text-white';
-const labelCls  = 'text-xs font-semibold text-gray-300 block mb-1';
-const descCls   = 'text-[11px] text-gray-400 mt-1.5 leading-relaxed';
-const hintCls   = 'text-[11px] text-blue-400/80 mt-1 leading-relaxed';
+// Theme-aware `.wf-*` classes (index.css → "Workflow editor (wf-*)"). Do not use
+// gray-* / text-foreground here: the light theme remaps those globally.
+const inputCls  = 'wf-input';
+const selectCls = 'wf-select';
+const labelCls  = 'wf-label';
+const descCls   = 'wf-help';
+/** Button of a full-width segmented control (`wf-seg w-full`). Wrap the label in `<span className="truncate">`. */
+const segBtnCls = 'wf-seg__btn flex-1 min-w-0 !h-7 !px-1.5';
+/** Field-level pill (choice / chips / day picker) - a little larger than the preset chips. */
+const chipCls   = 'wf-chip !h-7 !px-2.5 !text-xs';
+
+type SectionIcon = (props: { className?: string }) => JSX.Element;
+
+const DEFAULT_SECTION  = 'Cấu hình';
+const ADVANCED_SECTION = 'Nâng cao';
+
+/** Section card icons, looked up by `Field.section` name (unknown names → SlidersIcon). */
+const SECTION_ICONS: Record<string, SectionIcon> = {
+  'Phạm vi': TargetIcon,
+  'Người gửi': UserIcon,
+  'Người nhận': UsersIcon,
+  'Nội dung': MessageSquareIcon,
+  'Tệp đính kèm': PaperclipIcon,
+  'Thời gian & tần suất': ClockIcon,
+  'Bộ lọc': FilterIcon,
+  'Điều kiện': FilterIcon,
+  'Tài khoản': ShieldIcon,
+  'Nguồn': DatabaseIcon,
+  'Tùy chọn': SlidersIcon,
+  [DEFAULT_SECTION]: SlidersIcon,
+  [ADVANCED_SECTION]: SettingsIcon,
+};
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
+
+/** `{ }` glyph for template-variable affordances. */
+function BracesGlyph({ className = 'w-3 h-3' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
+      <path d="M8 3H7a2 2 0 0 0-2 2v4a2 2 0 0 1-2 2 2 2 0 0 1 2 2v4a2 2 0 0 0 2 2h1" />
+      <path d="M16 3h1a2 2 0 0 1 2 2v4a2 2 0 0 0 2 2 2 2 0 0 0-2 2v4a2 2 0 0 1-2 2h-1" />
+    </svg>
+  );
+}
 
 function ToggleSwitch({ checked, onChange, label, desc }: {
   checked: boolean; onChange: (v: boolean) => void; label: string; desc?: string;
 }) {
   return (
-    <button type="button" onClick={() => onChange(!checked)} className="w-full flex items-start gap-3 text-left">
-      <div className={`mt-0.5 w-8 h-[18px] rounded-full flex-shrink-0 transition-colors relative ${checked ? 'bg-blue-600' : 'bg-gray-700'}`}>
-        <span className={`absolute top-[2px] w-[14px] h-[14px] bg-white rounded-full shadow transition-all ${checked ? 'left-[18px]' : 'left-[2px]'}`} />
-      </div>
-      <div className="min-w-0">
-        <p className={`text-sm font-medium transition-colors leading-tight ${checked ? 'text-white' : 'text-gray-400'}`}>{label}</p>
-        {desc && <p className={`${descCls} mt-0.5`}>{desc}</p>}
-      </div>
+    <button type="button" role="switch" aria-checked={checked} onClick={() => onChange(!checked)} className="wf-switch-row">
+      <span className="flex-1 min-w-0">
+        <span className="block text-[13px] font-medium leading-[1.125rem] wf-text">{label}</span>
+        {desc && <span className={`block ${descCls} !mt-0.5`}>{desc}</span>}
+      </span>
+      <span className="wf-switch mt-px" data-on={String(checked)} aria-hidden="true" />
     </button>
   );
 }
@@ -2585,26 +3062,151 @@ function CronField({ value, onChange, placeholder }: { value: string; onChange: 
       <input
         value={value ?? ''} onChange={e => onChange(e.target.value)}
         placeholder={placeholder || '0 8 * * *'}
-        className={`${inputCls} font-mono`}
+        className={`${inputCls} wf-mono`}
       />
       {human && (
-        <p className="text-[11px] text-green-400 bg-green-500/10 border border-green-500/20 rounded-lg px-2.5 py-1.5">
-          ⏰ {human}
-        </p>
+        <div className="wf-callout" data-tone="success">
+          <ClockIcon className="w-3.5 h-3.5" />
+          <span>{human}</span>
+        </div>
       )}
       <div className="flex flex-wrap gap-1.5">
         {CRON_PRESETS.map(p => (
           <button key={p.value} type="button" onClick={() => onChange(p.value)}
-            className={`text-[11px] px-2 py-1 rounded-lg border transition-colors
-              ${value === p.value
-                ? 'bg-blue-600 border-blue-500 text-white'
-                : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-500 hover:text-white'
-              }`}
+            className="wf-chip" data-active={String(value === p.value)}
           >
             {p.label}
           </button>
         ))}
       </div>
+    </div>
+  );
+}
+
+// ─── Time window (active hours) ───────────────────────────────────────────────
+// Value contract (CONTRACT.md "Active hours"): { mode, start: 'HH:mm', end: 'HH:mm', days }.
+// days uses JS getDay() numbering (0 = Chủ nhật); empty = every day. Evaluated in Vietnam time.
+
+type TimeWindowMode = 'always' | 'inside' | 'outside';
+interface TimeWindowValue { mode: TimeWindowMode; start: string; end: string; days: number[] }
+
+const TIME_WINDOW_DEFAULTS = { start: '08:00', end: '17:30', days: [1, 2, 3, 4, 5, 6] };
+const TIME_WINDOW_MODES: { value: TimeWindowMode; label: string }[] = [
+  { value: 'always',  label: 'Luôn hoạt động' },
+  { value: 'inside',  label: 'Trong khung giờ' },
+  { value: 'outside', label: 'Ngoài khung giờ' },
+];
+/** Monday-first display order → getDay() values. */
+const TIME_WINDOW_DAYS: { value: number; short: string; name: string }[] = [
+  { value: 1, short: 'T2', name: 'Thứ 2' },
+  { value: 2, short: 'T3', name: 'Thứ 3' },
+  { value: 3, short: 'T4', name: 'Thứ 4' },
+  { value: 4, short: 'T5', name: 'Thứ 5' },
+  { value: 5, short: 'T6', name: 'Thứ 6' },
+  { value: 6, short: 'T7', name: 'Thứ 7' },
+  { value: 0, short: 'CN', name: 'Chủ nhật' },
+];
+const TIME_WINDOW_PRESETS: { label: string; start: string; end: string; days: number[] }[] = [
+  { label: 'Giờ hành chính', start: '08:00', end: '17:30', days: [1, 2, 3, 4, 5] },
+  { label: 'Cả tuần 8h–22h', start: '08:00', end: '22:00', days: [0, 1, 2, 3, 4, 5, 6] },
+  { label: 'Ban đêm',        start: '22:00', end: '07:00', days: [0, 1, 2, 3, 4, 5, 6] },
+];
+
+function describeTimeWindowDays(days: number[]): string {
+  const ordered = TIME_WINDOW_DAYS.filter(d => days.includes(d.value));
+  if (ordered.length === 0 || ordered.length === TIME_WINDOW_DAYS.length) return 'mọi ngày';
+  const positions = ordered.map(d => TIME_WINDOW_DAYS.indexOf(d));
+  const contiguous = positions.every((p, i) => i === 0 || p === positions[i - 1] + 1);
+  if (contiguous && ordered.length >= 3) return `${ordered[0].name} – ${ordered[ordered.length - 1].name}`;
+  return ordered.map(d => d.name).join(', ');
+}
+
+function describeTimeWindow(v: TimeWindowValue): string {
+  const isTime = (t: string) => /^[0-9]{2}:[0-9]{2}$/.test(t);
+  if (!isTime(v.start) || !isTime(v.end)) return 'Hãy chọn đủ giờ bắt đầu và giờ kết thúc.';
+  const range = v.start === v.end
+    ? 'cả ngày'
+    : `từ ${v.start} đến ${v.end}${v.start > v.end ? ' (qua đêm)' : ''}`;
+  const days = describeTimeWindowDays(v.days);
+  return v.mode === 'outside'
+    ? `Tạm dừng ${range}, ${days} — thời gian còn lại vẫn chạy.`
+    : `Chạy ${range}, ${days}.`;
+}
+
+function TimeWindowField({ value, onChange }: { value: unknown; onChange: (next: TimeWindowValue) => void }) {
+  const raw = (value && typeof value === 'object' && !Array.isArray(value) ? value : {}) as Partial<TimeWindowValue>;
+  const mode: TimeWindowMode = raw.mode === 'inside' || raw.mode === 'outside' ? raw.mode : 'always';
+  // Missing values fall back to the defaults, so the first switch away from "always"
+  // initialises start/end/days (08:00 – 17:30, Thứ 2 – Thứ 7).
+  const current: TimeWindowValue = {
+    mode,
+    start: typeof raw.start === 'string' ? raw.start : TIME_WINDOW_DEFAULTS.start,
+    end: typeof raw.end === 'string' ? raw.end : TIME_WINDOW_DEFAULTS.end,
+    days: Array.isArray(raw.days)
+      ? raw.days.map(Number).filter(d => Number.isInteger(d) && d >= 0 && d <= 6)
+      : [...TIME_WINDOW_DEFAULTS.days],
+  };
+  const emit = (patch: Partial<TimeWindowValue>) => onChange({ ...current, ...patch });
+  const toggleDay = (day: number) => emit({
+    days: current.days.includes(day)
+      ? current.days.filter(d => d !== day)
+      : [...current.days, day].sort((a, b) => a - b),
+  });
+
+  return (
+    <div className="space-y-2.5">
+      <div className="wf-seg w-full" role="radiogroup">
+        {TIME_WINDOW_MODES.map(m => (
+          <button key={m.value} type="button" role="radio" aria-checked={mode === m.value}
+            onClick={() => { if (m.value !== mode) emit({ mode: m.value }); }}
+            className={segBtnCls} data-active={String(mode === m.value)} title={m.label}>
+            <span className="truncate">{m.label}</span>
+          </button>
+        ))}
+      </div>
+
+      {mode !== 'always' && (
+        <div className="wf-card wf-card--plain p-3 space-y-3">
+          <div className="wf-field-grid">
+            <label className="block min-w-0">
+              <span className="block mb-1 text-[11px] font-medium wf-muted">Từ</span>
+              <input type="time" value={current.start} onChange={e => emit({ start: e.target.value })} className={inputCls} />
+            </label>
+            <label className="block min-w-0">
+              <span className="block mb-1 text-[11px] font-medium wf-muted">Đến</span>
+              <input type="time" value={current.end} onChange={e => emit({ end: e.target.value })} className={inputCls} />
+            </label>
+          </div>
+          <div>
+            <span className="block mb-1.5 text-[11px] font-medium wf-muted">Ngày áp dụng</span>
+            <div className="flex flex-wrap gap-1.5">
+              {TIME_WINDOW_DAYS.map(d => (
+                <button key={d.value} type="button" aria-pressed={current.days.includes(d.value)}
+                  onClick={() => toggleDay(d.value)} title={d.name}
+                  className={`${chipCls} justify-center min-w-[2.5rem]`} data-active={String(current.days.includes(d.value))}>
+                  {d.short}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="mr-0.5 text-[11px] font-medium wf-muted">Mẫu nhanh:</span>
+            {TIME_WINDOW_PRESETS.map(p => (
+              <button key={p.label} type="button" className="wf-chip"
+                onClick={() => emit({ start: p.start, end: p.end, days: [...p.days] })}>
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {mode !== 'always' && (
+        <p className={`${descCls} flex items-start gap-1.5`}>
+          <ClockIcon className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+          <span>{describeTimeWindow(current)} <span className="wf-faint">(giờ Việt Nam)</span></span>
+        </p>
+      )}
     </div>
   );
 }
@@ -2651,31 +3253,31 @@ function HtmlEditorField({ value, onChange, placeholder, templateVars }: {
     { icon: 'P',  title: 'Đoạn văn',    action: () => wrap('<p>','</p>'),     cls: '' },
     { icon: '↵',  title: 'Xuống dòng',  action: () => insertLine('<br/>'),    cls: '' },
     { icon: '≡',  title: 'Danh sách',   action: () => insertLine('<ul>\n  <li>Mục 1</li>\n  <li>Mục 2</li>\n</ul>'), cls: '' },
-    { icon: <LinkIcon className="w-4 h-4" />, title: 'Liên kết',    action: () => wrap('<a href="https://">','</a>'), cls: '' },
+    { icon: <LinkIcon className="w-3.5 h-3.5" />, title: 'Liên kết',    action: () => wrap('<a href="https://">','</a>'), cls: '' },
     { icon: '━',  title: 'Đường kẻ',    action: () => insertLine('<hr/>'),    cls: '' },
-    { icon: <PaletteIcon className="w-4 h-4" />, title: 'Màu chữ đỏ',  action: () => wrap('<span style="color:#e11d48">','</span>'), cls: '' },
+    { icon: <PaletteIcon className="w-3.5 h-3.5" />, title: 'Màu chữ đỏ',  action: () => wrap('<span style="color:#e11d48">','</span>'), cls: '' },
   ];
 
   return (
-    <div className="border border-gray-700 rounded-xl overflow-hidden">
-      {/* Tab bar */}
-      <div className="flex items-stretch bg-gray-800/80 border-b border-gray-700">
-        <button type="button" onClick={() => setTab('edit')}
-          className={`px-3 py-1.5 text-[11px] font-medium transition-colors border-r border-gray-700
-            ${tab === 'edit' ? 'text-white bg-gray-700/80' : 'text-gray-400 hover:text-gray-300'}`}>
-          ✏️ Soạn thảo
-        </button>
-        <button type="button" onClick={() => setTab('preview')}
-          className={`px-3 py-1.5 text-[11px] font-medium transition-colors border-r border-gray-700
-            ${tab === 'preview' ? 'text-white bg-gray-700/80' : 'text-gray-400 hover:text-gray-300'}`}>
-          👁 Xem trước
-        </button>
+    <div className="wf-card wf-card--plain overflow-hidden transition-colors focus-within:border-[color:var(--wf-focus)]">
+      {/* Tab bar (+ toolbar, wraps below the tabs when the panel is narrow) */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 px-2 py-1.5 border-b border-[color:var(--wf-card-border)]">
+        <div className="wf-seg flex-shrink-0">
+          <button type="button" onClick={() => setTab('edit')}
+            className="wf-seg__btn" data-active={String(tab === 'edit')}>
+            <EditIcon className="w-3 h-3" /> Soạn thảo
+          </button>
+          <button type="button" onClick={() => setTab('preview')}
+            className="wf-seg__btn" data-active={String(tab === 'preview')}>
+            <EyeIcon className="w-3 h-3" /> Xem trước
+          </button>
+        </div>
         {/* Toolbar - only in edit mode */}
         {tab === 'edit' && (
-          <div className="flex items-center gap-0.5 px-1.5 flex-1 overflow-x-auto scrollbar-none">
+          <div className="flex flex-wrap items-center gap-0.5">
             {TOOLBAR.map(btn => (
               <button key={btn.title} type="button" title={btn.title} onClick={btn.action}
-                className={`flex-shrink-0 text-[11px] w-6 h-6 flex items-center justify-center rounded hover:bg-gray-600 text-gray-400 hover:text-white transition-colors ${btn.cls}`}>
+                className={`wf-icon-btn !w-6 !h-6 text-[11px] ${btn.cls}`}>
                 {btn.icon}
               </button>
             ))}
@@ -2693,33 +3295,33 @@ function HtmlEditorField({ value, onChange, placeholder, templateVars }: {
             placeholder={placeholder || '<p>Xin chào <b>{{ $trigger.fromName }}</b>,</p>\n<p>{{ $trigger.content }}</p>'}
             rows={8}
             spellCheck={false}
-            className="w-full bg-gray-800/50 px-3 py-2.5 text-[12px] text-white placeholder-gray-600 focus:outline-none resize-none font-mono leading-relaxed"
+            className="block w-full bg-transparent px-3 py-2.5 wf-mono leading-relaxed resize-none outline-none text-[color:var(--wf-text)] placeholder:text-[color:var(--wf-faint)]"
           />
           {/* Var chips inside editor */}
           {templateVars && templateVars.length > 0 && (
-            <div className="flex flex-wrap gap-1 px-2 pb-2 border-t border-gray-700/50 pt-1.5 bg-gray-800/30">
-              <span className="text-[9px] text-gray-400 self-center mr-0.5">Chèn:</span>
+            <div className="flex flex-wrap items-center gap-1 px-2.5 py-2 border-t border-[color:var(--wf-card-border)]">
+              <span className="mr-0.5 text-[10.5px] font-medium wf-faint">Chèn:</span>
               {templateVars.map(v => (
                 <button key={v} type="button"
                   onClick={() => { const tag = `{{ ${v} }}`; insertLine(tag); navigator.clipboard.writeText(tag).catch(() => {}); }}
                   title={`Chèn + copy: {{ ${v} }}`}
-                  className="text-[9px] px-1 py-0.5 rounded bg-blue-500/10 border border-blue-500/25 text-blue-400 hover:bg-blue-500/20 font-mono transition-colors">
-                  {v}
+                  className="rounded text-[11px] leading-5 transition-opacity hover:opacity-75">
+                  <code className="wf-var">{v}</code>
                 </button>
               ))}
             </div>
           )}
         </div>
       ) : (
-        /* Preview */
+        /* Preview - always a white "email" canvas, independent of the app theme */
         <div className="bg-white min-h-[140px] max-h-[360px] overflow-y-auto">
           {value?.trim() ? (
             <div
-              className="px-4 py-3 text-sm text-gray-800 prose prose-sm max-w-none"
+              className="px-4 py-3 text-sm text-foreground prose prose-sm max-w-none"
               dangerouslySetInnerHTML={{ __html: value }}
             />
           ) : (
-            <div className="px-4 py-6 text-center text-gray-400 text-xs italic">
+            <div className="px-4 py-6 text-center text-muted-foreground text-xs italic">
               Chưa có nội dung - hãy soạn thảo trong tab "Soạn thảo"
             </div>
           )}
@@ -2745,7 +3347,7 @@ function AccountAvatar({ account, size = 'sm' }: { account: { avatar_url?: strin
       <img
         src={account.avatar_url}
         alt={account.full_name || account.display_name || account.zalo_id}
-        className={`${sizeClass} rounded-full object-cover flex-shrink-0 ring-1 ring-gray-600`}
+        className={`${sizeClass} rounded-full object-cover flex-shrink-0 ring-1 ring-border`}
         onError={(e) => {
           (e.target as HTMLImageElement).style.display = 'none';
         }}
@@ -2756,7 +3358,7 @@ function AccountAvatar({ account, size = 'sm' }: { account: { avatar_url?: strin
   // Fallback: initials
   const initials = (account.full_name || account.display_name || account.zalo_id).slice(0, 2).toUpperCase();
   return (
-    <div className={`${sizeClass} rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-medium flex-shrink-0 ring-1 ring-gray-600`}>
+    <div className={`${sizeClass} rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-medium flex-shrink-0 ring-1 ring-border`}>
       {initials}
     </div>
   );
@@ -2891,16 +3493,16 @@ function LabelPickerModal({
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
 
       {/* Modal */}
-      <div className="relative bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl w-[680px] max-w-[95vw] max-h-[80vh] flex flex-col overflow-hidden">
+      <div className="relative bg-popover border border-border rounded-2xl shadow-2xl w-[680px] max-w-[95vw] max-h-[80vh] flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700 bg-gray-800/50">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border bg-card/50">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-500 to-purple-600 flex items-center justify-center">
               <span className="text-xl"><TagIcon className="w-4 h-4" /></span>
             </div>
             <div>
-              <h2 className="text-base font-semibold text-white">Chọn nhãn</h2>
-              <p className="text-xs text-gray-400">
+              <h2 className="text-base font-semibold text-foreground">Chọn nhãn</h2>
+              <p className="text-xs text-muted-foreground">
                 {mode === 'single' ? 'Chọn 1 nhãn' : 'Có thể chọn nhiều nhãn'}
                 {selected.length > 0 && ` • Đã chọn: ${selected.length}`}
               </p>
@@ -2908,7 +3510,7 @@ function LabelPickerModal({
           </div>
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-lg bg-gray-700/50 hover:bg-gray-600 flex items-center justify-center text-gray-400 hover:text-white transition-colors"
+            className="w-8 h-8 rounded-lg bg-muted/50 hover:bg-accent flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -2919,9 +3521,9 @@ function LabelPickerModal({
         {/* Body */}
         <div className="flex flex-1 min-h-0">
           {/* ─── Left: Account Sidebar ─── */}
-          <div className="w-60 border-r border-gray-700 bg-gray-800/30 flex flex-col">
-            <div className="px-3 py-2.5 border-b border-gray-700/50">
-              <span className="text-[10px] text-gray-400 uppercase tracking-wide font-medium">
+          <div className="w-60 border-r border-border bg-card/30 flex flex-col">
+            <div className="px-3 py-2.5 border-b border-border/50">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">
                 Tài khoản
               </span>
             </div>
@@ -2933,13 +3535,13 @@ function LabelPickerModal({
                 className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left transition-all ${
                   selectedAccountId === 'all'
                     ? 'bg-blue-500/20 border border-blue-500/40 text-blue-300'
-                    : 'hover:bg-gray-700/50 text-gray-400 hover:text-gray-300 border border-transparent'
+                    : 'hover:bg-muted/50 text-muted-foreground hover:text-foreground/80 border border-transparent'
                 }`}
               >
                 <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center text-white text-sm"><ClipboardListIcon className="w-4 h-4 inline" /> </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-xs font-medium truncate">Tất cả</div>
-                  <div className="text-[10px] text-gray-400">
+                  <div className="text-[10px] text-muted-foreground">
                     {(activeTab === 'local' ? localOpts : zaloOpts).length} nhãn
                   </div>
                 </div>
@@ -2956,7 +3558,7 @@ function LabelPickerModal({
                     className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left transition-all ${
                       isActive
                         ? 'bg-purple-500/20 border border-purple-500/40 text-purple-300'
-                        : 'hover:bg-gray-700/50 text-gray-400 hover:text-gray-300 border border-transparent'
+                        : 'hover:bg-muted/50 text-muted-foreground hover:text-foreground/80 border border-transparent'
                     }`}
                   >
                     <AccountAvatar account={acc} size="md" />
@@ -2964,7 +3566,7 @@ function LabelPickerModal({
                       <div className="text-xs font-medium truncate">
                         {acc.full_name || acc.display_name || acc.zalo_id}
                       </div>
-                      <div className="flex items-center gap-1.5 text-[10px] text-gray-400">
+                      <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
                         {acc.phone && <span>{formatPhoneDisplay(acc.phone)}</span>}
                         <span>•</span>
                         <span>{acc.labelCount} nhãn</span>
@@ -2978,7 +3580,7 @@ function LabelPickerModal({
               })}
 
               {accountsWithLabels.length === 0 && (
-                <div className="px-3 py-4 text-center text-xs text-gray-400">
+                <div className="px-3 py-4 text-center text-xs text-muted-foreground">
                   Không có tài khoản nào có nhãn {activeTab === 'local' ? 'Local' : 'Zalo'}
                 </div>
               )}
@@ -2988,21 +3590,21 @@ function LabelPickerModal({
           {/* ─── Right: Labels Panel ─── */}
           <div className="flex-1 flex flex-col min-w-0">
             {/* Tabs */}
-            <div className="flex bg-gray-800/60 border-b border-gray-700/50">
+            <div className="flex bg-card/60 border-b border-border/50">
               <button
                 type="button"
                 onClick={() => setActiveTab('local')}
                 className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-all border-b-2 ${
                   activeTab === 'local'
                     ? 'border-teal-500 text-teal-400 bg-teal-500/5'
-                    : 'border-transparent text-gray-400 hover:text-gray-300 hover:bg-gray-700/30'
+                    : 'border-transparent text-muted-foreground hover:text-foreground/80 hover:bg-muted/30'
                 }`}
               >
                 <span><HardDriveIcon className="w-4 h-4" /></span>
                 <span>Nhãn Local</span>
                 {localOpts.length > 0 && (
                   <span className={`text-xs px-2 py-0.5 rounded-full ${
-                    activeTab === 'local' ? 'bg-teal-500/20 text-teal-400' : 'bg-gray-700 text-gray-400'
+                    activeTab === 'local' ? 'bg-teal-500/20 text-teal-400' : 'bg-muted text-muted-foreground'
                   }`}>
                     {localOpts.length}
                   </span>
@@ -3014,14 +3616,14 @@ function LabelPickerModal({
                 className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-all border-b-2 ${
                   activeTab === CHANNEL.ZALO
                     ? 'border-purple-500 text-purple-400 bg-purple-500/5'
-                    : 'border-transparent text-gray-400 hover:text-gray-300 hover:bg-gray-700/30'
+                    : 'border-transparent text-muted-foreground hover:text-foreground/80 hover:bg-muted/30'
                 }`}
               >
                 <span>☁️</span>
                 <span>Nhãn Zalo</span>
                 {zaloOpts.length > 0 && (
                   <span className={`text-xs px-2 py-0.5 rounded-full ${
-                    activeTab === CHANNEL.ZALO ? 'bg-purple-500/20 text-purple-400' : 'bg-gray-700 text-gray-400'
+                    activeTab === CHANNEL.ZALO ? 'bg-purple-500/20 text-purple-400' : 'bg-muted text-muted-foreground'
                   }`}>
                     {zaloOpts.length}
                   </span>
@@ -3032,7 +3634,7 @@ function LabelPickerModal({
             {/* Labels List - Single column */}
             <div className="flex-1 overflow-y-auto p-3">
               {filteredLabels.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-gray-400">
+                <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                   <span className="text-4xl mb-3 justify-center"><TagIcon className="w-4 h-4" /></span>
                   <p className="text-sm">Không có nhãn nào</p>
                   <p className="text-xs mt-1">
@@ -3058,8 +3660,8 @@ function LabelPickerModal({
                         onClick={() => toggle(opt.value)}
                         className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border text-left transition-all ${
                           isSelected
-                            ? 'ring-2 ring-offset-1 ring-offset-gray-900'
-                            : 'bg-gray-800/40 border-gray-700/40 hover:border-gray-600 hover:bg-gray-800/60'
+                            ? 'ring-2 ring-offset-1 ring-offset-background'
+                            : 'bg-card/40 border-border/40 hover:border-input hover:bg-card/60'
                         }`}
                         style={isSelected ? {
                           backgroundColor: `${bgColor}15`,
@@ -3099,7 +3701,7 @@ function LabelPickerModal({
                         {selectedAccountId === 'all' && acc && (
                           <div className="flex items-center gap-2 ml-auto">
                             <AccountAvatar account={acc} size="sm" />
-                            <span className="text-[11px] text-gray-400">
+                            <span className="text-[11px] text-muted-foreground">
                               {acc.full_name || acc.display_name || acc.zalo_id}
                             </span>
                           </div>
@@ -3121,10 +3723,10 @@ function LabelPickerModal({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between px-5 py-4 border-t border-gray-700 bg-gray-800/50">
-          <div className="text-xs text-gray-400">
+        <div className="flex items-center justify-between px-5 py-4 border-t border-border bg-card/50">
+          <div className="text-xs text-muted-foreground">
             {selected.length > 0 ? (
-              <span>Đã chọn <span className="text-white font-medium">{selected.length}</span> nhãn</span>
+              <span>Đã chọn <span className="text-foreground font-medium">{selected.length}</span> nhãn</span>
             ) : (
               <span>{mode === 'single' ? 'Chọn 1 nhãn' : 'Chọn nhãn để áp dụng'}</span>
             )}
@@ -3142,7 +3744,7 @@ function LabelPickerModal({
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-xs font-medium text-gray-300 hover:text-white bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
+              className="px-4 py-2 text-xs font-medium text-foreground/80 hover:text-foreground bg-muted hover:bg-accent rounded-lg transition-colors"
             >
               Đóng
             </button>
@@ -3188,10 +3790,8 @@ function LabelPickerField({
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center gap-2 py-6 text-gray-400 text-xs">
-        <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-          <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
-        </svg>
+      <div className="wf-card wf-card--plain flex items-center justify-center gap-2 py-5 text-xs wf-muted">
+        <Spinner size={4} />
         Đang tải danh sách nhãn…
       </div>
     );
@@ -3199,10 +3799,12 @@ function LabelPickerField({
 
   if (options.length === 0) {
     return (
-      <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl px-4 py-4 text-center">
-        <div className="text-xl mb-2"><TagIcon className="w-4 h-4" /></div>
-        <p className="text-yellow-400 text-xs font-medium">Chưa có nhãn nào</p>
-        <p className="text-yellow-400/70 text-[11px] mt-1">Vào <b>CRM → Quản lý nhãn</b> để tạo nhãn trước.</p>
+      <div className="wf-callout" data-tone="warn">
+        <TagIcon className="w-3.5 h-3.5" />
+        <div className="min-w-0">
+          <div className="wf-callout__title">Chưa có nhãn nào</div>
+          <div className="mt-0.5">Vào <b>CRM → Quản lý nhãn</b> để tạo nhãn trước.</div>
+        </div>
       </div>
     );
   }
@@ -3212,18 +3814,18 @@ function LabelPickerField({
   };
 
   return (
-    <div className="border border-gray-700 rounded-xl overflow-hidden bg-gray-800/30">
+    <div className="wf-card wf-card--plain overflow-hidden">
       {/* ── Selected Labels Display ── */}
       {selected.length > 0 && (
-        <div className="px-3 py-3 border-b border-gray-700/50 bg-gray-800/40">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-[10px] text-gray-400 uppercase tracking-wide font-medium">
+        <div className="px-3 py-2.5 border-b border-[color:var(--wf-card-border)]">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <span className="text-[10.5px] font-semibold uppercase tracking-wide wf-muted">
               Đã chọn ({selected.length})
             </span>
             <button
               type="button"
               onClick={() => onChange([])}
-              className="text-[10px] text-gray-400 hover:text-red-400 transition-colors"
+              className="wf-btn wf-btn--sm wf-btn--ghost wf-btn--danger"
             >
               Xóa tất cả
             </button>
@@ -3278,18 +3880,16 @@ function LabelPickerField({
       )}
 
       {/* ── Open Modal Button ── */}
-      <button
-        type="button"
-        onClick={() => setShowModal(true)}
-        className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gray-800/50 hover:bg-gray-700/50 text-gray-300 hover:text-white transition-all"
-      >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M12 5v14M5 12h14"/>
-        </svg>
-        <span className="text-xs font-medium">
+      <div className="p-1.5">
+        <button
+          type="button"
+          onClick={() => setShowModal(true)}
+          className="wf-btn wf-btn--ghost wf-btn--block"
+        >
+          <PlusIcon className="w-4 h-4" />
           {selected.length > 0 ? 'Thêm nhãn khác' : 'Chọn nhãn'}
-        </span>
-      </button>
+        </button>
+      </div>
 
       {/* ── Modal ── */}
       <LabelPickerModal
@@ -3304,605 +3904,12 @@ function LabelPickerField({
 
       {/* ── Footer hint ── */}
       {selected.length === 0 && (
-        <div className="px-3 py-2 bg-gray-800/30 border-t border-gray-700/50">
-          <p className="text-[10px] text-gray-400 text-center">
+        <div className="px-3 py-2 border-t border-[color:var(--wf-card-border)]">
+          <p className="text-[11px] text-center wf-faint">
             {mode === 'single' ? 'Chọn 1 nhãn để áp dụng' : 'Có thể chọn nhiều nhãn • Để trống = áp dụng với mọi nhãn'}
           </p>
         </div>
       )}
-    </div>
-  );
-}
-
-// ─── Contact Picker Modal ─────────────────────────────────────────────────────
-
-interface ContactItem {
-  id: string;
-  name: string;
-  alias?: string;  // Tên gợi nhớ
-  avatar?: string;
-  type: 'user' | 'group';
-  accountId: string;
-  accountName: string;
-}
-
-function ContactPickerModal({
-  open,
-  onClose,
-  contactType,
-  contactMode = 'single',
-  channel,
-  accountId,
-  value,
-  onChange,
-  accounts,
-}: {
-  open: boolean;
-  onClose: () => void;
-  contactType: 'user' | 'group' | 'all';
-  contactMode?: 'single' | 'multi';
-  channel?: string;
-  accountId?: string;
-  value: string[];
-  onChange: (v: string[]) => void;
-  accounts: { zalo_id: string; full_name: string; display_name?: string; phone?: string; avatar_url: string; cookies: string; imei: string; user_agent: string; channel?: string }[];
-}) {
-  const [searchQuery, setSearchQuery] = React.useState('');
-  const [contacts, setContacts] = React.useState<ContactItem[]>([]);
-  const [loading, setLoading] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
-  const [filterTab, setFilterTab] = React.useState<'all' | 'user' | 'group'>('all');
-  const theme = useAppStore(s => s.theme);
-  const groupInfoCache = useAppStore(s => s.groupInfoCache);
-  const isLight = theme === 'light';
-
-  // Filter accounts by channel if specified
-  const filteredAccounts = React.useMemo(() => {
-    const byChannel = channel ? accounts.filter(a => a.channel === channel) : accounts;
-    return accountId ? byChannel.filter(a => a.zalo_id === accountId) : byChannel;
-  }, [accounts, channel, accountId]);
-
-  const [selectedAccountId, setSelectedAccountId] = React.useState<string>(filteredAccounts[0]?.zalo_id || '');
-
-  React.useEffect(() => {
-    if (accountId && accountId !== selectedAccountId) setSelectedAccountId(accountId);
-    else if (!filteredAccounts.some(account => account.zalo_id === selectedAccountId)) setSelectedAccountId(filteredAccounts[0]?.zalo_id || '');
-  }, [accountId, filteredAccounts, selectedAccountId]);
-
-  // Load contacts when account changes
-  React.useEffect(() => {
-    if (!open || !selectedAccountId) return;
-
-    const loadContacts = async () => {
-      setLoading(true);
-      setError(null);
-      const items: ContactItem[] = [];
-      const acc = accounts.find(a => a.zalo_id === selectedAccountId);
-      if (!acc) {
-        setLoading(false);
-        setError('Không tìm thấy tài khoản');
-        return;
-      }
-
-      let hasError = false;
-      let errorMsg = '';
-
-      // Load contacts from database - includes both users and groups
-      try {
-        const contactsRes = await ipc.db?.getContacts(selectedAccountId);
-        const contactsList = contactsRes?.contacts || [];
-        contactsList.forEach((c: any) => {
-          if (!c.contact_id) return;
-
-          // Check contact_type from DB
-          const isGroup = c.contact_type === 'group';
-
-          // Filter based on contactType prop
-          if (contactType === 'user' && isGroup) return;
-          if (contactType === 'group' && !isGroup) return;
-
-          items.push({
-            id: c.contact_id,
-            // Tên gợi nhớ (alias) hiển thị trước, sau đó là display_name, zalo_name
-            name: c.alias || c.display_name || c.zalo_name || (isGroup ? `Nhóm ${c.contact_id}` : `User ${c.contact_id}`),
-            alias: c.alias || undefined,
-            avatar: c.avatar_url,
-            type: isGroup ? 'group' : 'user',
-            accountId: acc.zalo_id,
-            accountName: acc.full_name || acc.display_name || acc.zalo_id,
-          });
-        });
-      } catch (err: any) {
-        console.warn('[ContactPicker] Failed to load contacts from DB:', err);
-      }
-
-      // Load groups from API - requires active connection (as backup if not in DB)
-      // Zalo is the only channel with this legacy getGroups IPC fallback.
-      // Telegram/Facebook targets must stay on their own DB-backed contacts and
-      // must never initialize a Zalo connection merely by opening this picker.
-      if ((contactType === 'group' || contactType === 'all') && acc.channel === CHANNEL.ZALO) {
-        try {
-          const auth = buildZaloAuth(acc);
-          const groupsRes = await ipc.zalo?.getGroups(auth);
-
-          // Check for API error
-          if (groupsRes?.error) {
-            hasError = true;
-            errorMsg = groupsRes.error;
-            console.warn('[ContactPicker] Groups API error:', groupsRes.error);
-          } else {
-            const groups = groupsRes?.response?.gridInfoMap || {};
-            const existingIds = new Set(items.map(i => i.id));
-
-            Object.entries(groups).forEach(([groupId, groupInfo]: [string, any]) => {
-              // Skip if already loaded from DB
-              if (existingIds.has(groupId)) return;
-
-              items.push({
-                id: groupId,
-                name: groupInfo?.name || `Nhóm ${groupId}`,
-                avatar: groupInfo?.avatar || groupInfo?.avt,
-                type: 'group',
-                accountId: acc.zalo_id,
-                accountName: acc.full_name || acc.display_name || acc.zalo_id,
-              });
-            });
-          }
-        } catch (err: any) {
-          hasError = true;
-          errorMsg = err?.message || 'Không thể tải danh sách nhóm';
-          console.warn('[ContactPicker] Failed to load groups:', err);
-        }
-      }
-
-      setContacts(items);
-
-      // Only show error if we got no results AND there was an error
-      if (items.length === 0 && hasError) {
-        setError(errorMsg || 'Tài khoản chưa kết nối. Vui lòng kết nối lại.');
-      } else if (hasError && contactType === 'group') {
-        // For group-only picker, show error even if we have some cached data
-        setError('Không thể tải nhóm mới. Tài khoản có thể chưa kết nối.');
-      } else {
-        setError(null);
-      }
-
-      setLoading(false);
-    };
-
-    loadContacts();
-  }, [open, selectedAccountId, contactType, accounts]);
-
-  // Filter contacts by search and tab
-  const filteredContacts = React.useMemo(() => {
-    let result = contacts;
-
-    // Filter by tab (only when contactType is 'all')
-    if (contactType === 'all' && filterTab !== 'all') {
-      result = result.filter(c => c.type === filterTab);
-    }
-
-    // Filter by search
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      result = result.filter(c =>
-        c.name.toLowerCase().includes(q) ||
-        c.id.includes(q) ||
-        (c.alias && c.alias.toLowerCase().includes(q))
-      );
-    }
-
-    return result;
-  }, [contacts, searchQuery, filterTab, contactType]);
-
-  // Count by type
-  const userCount = contacts.filter(c => c.type === 'user').length;
-  const groupCount = contacts.filter(c => c.type === 'group').length;
-
-  const handleSelect = (contact: ContactItem) => {
-    if (contactMode === 'multi') {
-      const alreadySelected = value.includes(contact.id);
-      if (alreadySelected) {
-        onChange(value.filter(id => id !== contact.id));
-      } else {
-        onChange([...value, contact.id]);
-      }
-    } else {
-      onChange([contact.id]);
-      onClose();
-    }
-  };
-
-  const handleClear = () => {
-    onChange([]);
-    onClose();
-  };
-
-  if (!open) return null;
-
-  return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center">
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-
-      {/* Modal */}
-      <div className={`relative rounded-2xl shadow-2xl w-[600px] max-w-[95vw] max-h-[80vh] flex flex-col overflow-hidden border ${
-        isLight ? 'bg-white border-gray-200' : 'bg-gray-900 border-gray-700'
-      }`}>
-        {/* Header */}
-        <div className={`flex items-center justify-between px-5 py-4 border-b ${
-          isLight ? 'bg-gray-50 border-gray-200' : 'bg-gray-800/50 border-gray-700'
-        }`}>
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
-              <span className="text-xl">{contactType === 'group' ? '👥' : contactType === 'user' ? '👤' : '📇'}</span>
-            </div>
-            <div>
-              <h2 className={`text-base font-semibold ${isLight ? 'text-gray-900' : 'text-white'}`}>
-                {contactType === 'group' ? 'Chọn nhóm' : contactType === 'user' ? 'Chọn liên hệ' : 'Chọn liên hệ / nhóm'}
-              </h2>
-              <p className={`text-xs ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
-                Chọn từ danh bạ Zalo
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
-              isLight ? 'bg-gray-100 hover:bg-gray-200 text-gray-400' : 'bg-gray-700/50 hover:bg-gray-600 text-gray-400 hover:text-white'
-            }`}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-            </svg>
-          </button>
-        </div>
-
-        {/* Body */}
-        <div className="flex flex-1 min-h-0">
-          {/* Account Sidebar */}
-          <div className={`w-48 border-r flex flex-col ${
-            isLight ? 'bg-gray-50 border-gray-200' : 'bg-gray-800/30 border-gray-700'
-          }`}>
-            <div className={`px-3 py-2.5 border-b ${isLight ? 'border-gray-200' : 'border-gray-700/50'}`}>
-              <span className={`text-[10px] uppercase tracking-wide font-medium ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
-                Tài khoản
-              </span>
-            </div>
-            <div className="flex-1 overflow-y-auto p-2 space-y-1">
-              {filteredAccounts.map(acc => {
-                const isActive = selectedAccountId === acc.zalo_id;
-                return (
-                  <button
-                    key={acc.zalo_id}
-                    type="button"
-                    onClick={() => setSelectedAccountId(acc.zalo_id)}
-                    className={`w-full flex items-center gap-2 px-2 py-2 rounded-lg text-left transition-all ${
-                      isActive
-                        ? isLight
-                          ? 'bg-blue-50 border border-blue-200 text-blue-700'
-                          : 'bg-blue-500/20 border border-blue-500/40 text-blue-300'
-                        : isLight
-                          ? 'hover:bg-gray-100 text-gray-700 border border-transparent'
-                          : 'hover:bg-gray-700/50 text-gray-400 hover:text-gray-300 border border-transparent'
-                    }`}
-                  >
-                    {acc.avatar_url ? (
-                      <img src={acc.avatar_url} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
-                    ) : (
-                      <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-[10px] font-medium flex-shrink-0">
-                        {(acc.full_name || acc.zalo_id).slice(0, 2).toUpperCase()}
-                      </div>
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs font-medium truncate">
-                        {acc.full_name || acc.display_name || acc.zalo_id}
-                      </div>
-                      {acc.phone && (
-                        <div className={`text-[10px] ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
-                          {acc.phone}
-                        </div>
-                      )}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Contacts List */}
-          <div className="flex-1 flex flex-col min-w-0">
-            {/* Search */}
-            <div className={`px-4 py-3 border-b ${isLight ? 'border-gray-200' : 'border-gray-700/50'}`}>
-              <div className="relative">
-                <svg className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${isLight ? 'text-gray-400' : 'text-gray-400'}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                  <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
-                </svg>
-                <input
-                  type="text"
-                  placeholder="Tìm kiếm..."
-                  value={searchQuery}
-                  onChange={e => setSearchQuery(e.target.value)}
-                  className={`w-full pl-10 pr-4 py-2 text-sm rounded-lg border focus:outline-none focus:ring-2 ${
-                    isLight
-                      ? 'bg-white border-gray-200 text-gray-900 placeholder-gray-400 focus:ring-blue-500/30 focus:border-blue-500'
-                      : 'bg-gray-800 border-gray-600 text-white placeholder-gray-500 focus:ring-blue-500/30 focus:border-blue-500'
-                  }`}
-                />
-              </div>
-            </div>
-
-            {/* Filter tabs - only show when contactType is 'all' */}
-            {contactType === 'all' && (
-              <div className={`flex border-b ${isLight ? 'border-gray-200 bg-gray-50' : 'border-gray-700/50 bg-gray-800/50'}`}>
-                <button
-                  type="button"
-                  onClick={() => setFilterTab('all')}
-                  className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium transition-all border-b-2 ${
-                    filterTab === 'all'
-                      ? isLight
-                        ? 'border-blue-500 text-blue-600 bg-blue-50/50'
-                        : 'border-blue-500 text-blue-400 bg-blue-500/5'
-                      : isLight
-                        ? 'border-transparent text-gray-400 hover:text-gray-700'
-                        : 'border-transparent text-gray-400 hover:text-gray-300'
-                  }`}
-                >
-                  <span><ClipboardListIcon className="w-4 h-4" /></span>
-                  <span>Tất cả</span>
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${
-                    filterTab === 'all'
-                      ? isLight ? 'bg-blue-100 text-blue-600' : 'bg-blue-500/20 text-blue-400'
-                      : isLight ? 'bg-gray-200 text-gray-400' : 'bg-gray-700 text-gray-400'
-                  }`}>{contacts.length}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFilterTab('user')}
-                  className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium transition-all border-b-2 ${
-                    filterTab === 'user'
-                      ? isLight
-                        ? 'border-green-500 text-green-600 bg-green-50/50'
-                        : 'border-green-500 text-green-400 bg-green-500/5'
-                      : isLight
-                        ? 'border-transparent text-gray-400 hover:text-gray-700'
-                        : 'border-transparent text-gray-400 hover:text-gray-300'
-                  }`}
-                >
-                  <span><UserIcon className="w-4 h-4" /></span>
-                  <span>Cá nhân</span>
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${
-                    filterTab === 'user'
-                      ? isLight ? 'bg-green-100 text-green-600' : 'bg-green-500/20 text-green-400'
-                      : isLight ? 'bg-gray-200 text-gray-400' : 'bg-gray-700 text-gray-400'
-                  }`}>{userCount}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFilterTab('group')}
-                  className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium transition-all border-b-2 ${
-                    filterTab === 'group'
-                      ? isLight
-                        ? 'border-purple-500 text-purple-600 bg-purple-50/50'
-                        : 'border-purple-500 text-purple-400 bg-purple-500/5'
-                      : isLight
-                        ? 'border-transparent text-gray-400 hover:text-gray-700'
-                        : 'border-transparent text-gray-400 hover:text-gray-300'
-                  }`}
-                >
-                  <span><UsersIcon className="w-4 h-4" /></span>
-                  <span>Nhóm</span>
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${
-                    filterTab === 'group'
-                      ? isLight ? 'bg-purple-100 text-purple-600' : 'bg-purple-500/20 text-purple-400'
-                      : isLight ? 'bg-gray-200 text-gray-400' : 'bg-gray-700 text-gray-400'
-                  }`}>{groupCount}</span>
-                </button>
-              </div>
-            )}
-
-            {/* List */}
-            <div className="flex-1 overflow-y-auto p-3">
-              {/* Error message */}
-              {error && (
-                <div className={`mb-3 px-3 py-2.5 rounded-lg flex items-start gap-2 ${
-                  isLight ? 'bg-amber-50 border border-amber-200' : 'bg-amber-500/10 border border-amber-500/30'
-                }`}>
-                  <svg className={`w-4 h-4 flex-shrink-0 mt-0.5 ${isLight ? 'text-amber-500' : 'text-amber-400'}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                    <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
-                  </svg>
-                  <div>
-                    <p className={`text-xs font-medium ${isLight ? 'text-amber-700' : 'text-amber-300'}`}>
-                      {error}
-                    </p>
-                    <p className={`text-[10px] mt-0.5 ${isLight ? 'text-amber-600' : 'text-amber-400/70'}`}>
-                      Hãy chọn tài khoản khác hoặc nhập ID thủ công.
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {loading ? (
-                <div className="flex items-center justify-center py-12">
-                  <svg className={`animate-spin w-6 h-6 ${isLight ? 'text-gray-400' : 'text-gray-400'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
-                  </svg>
-                </div>
-              ) : filteredContacts.length === 0 && !error ? (
-                <div className={`text-center py-12 ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
-                  <span className="text-4xl mb-3 block">{contactType === 'group' ? '👥' : '👤'}</span>
-                  <p className="text-sm">Không tìm thấy</p>
-                </div>
-              ) : filteredContacts.length === 0 && error ? (
-                <div className={`text-center py-8 ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
-                  <span className="text-3xl mb-2 block"><InboxIcon className="w-4 h-4" /></span>
-                  <p className="text-xs">Không có dữ liệu</p>
-                </div>
-              ) : (
-                <div className="space-y-1">
-                  {filteredContacts.map(contact => {
-                    const isSelected = value.includes(contact.id);
-                    return (
-                    <button
-                      key={`${contact.type}-${contact.id}`}
-                      type="button"
-                      onClick={() => handleSelect(contact)}
-                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border text-left transition-all ${
-                        isSelected
-                          ? isLight
-                            ? 'bg-blue-50 border-blue-200 ring-2 ring-blue-500/30'
-                            : 'bg-blue-500/15 border-blue-500/40 ring-2 ring-blue-500/30'
-                          : isLight
-                            ? 'bg-white border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-                            : 'bg-gray-800/40 border-gray-700/40 hover:border-gray-600 hover:bg-gray-800/60'
-                      }`}
-                    >
-                      {/* Checkbox for multi mode */}
-                      {contactMode === 'multi' && (
-                        <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 ${
-                          isSelected
-                            ? 'bg-blue-500 border-blue-500'
-                            : isLight ? 'border-gray-300' : 'border-gray-600'
-                        }`}>
-                          {isSelected && (
-                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3">
-                              <polyline points="20 6 9 17 4 12"/>
-                            </svg>
-                          )}
-                        </div>
-                      )}
-                      {/* Avatar - use GroupAvatar for groups, like CRM */}
-                      {contact.type === 'group' ? (
-                        <GroupAvatar
-                          avatarUrl={contact.avatar}
-                          groupInfo={(groupInfoCache[selectedAccountId] || {})[contact.id]}
-                          name={contact.name}
-                          size="sm"
-                        />
-                      ) : contact.avatar ? (
-                        <img
-                          src={contact.avatar}
-                          alt=""
-                          className="w-9 h-9 rounded-full object-cover flex-shrink-0"
-                          onError={(e) => {
-                            (e.target as HTMLImageElement).style.display = 'none';
-                            const fallback = (e.target as HTMLImageElement).nextElementSibling;
-                            if (fallback) (fallback as HTMLElement).style.display = 'flex';
-                          }}
-                        />
-                      ) : (
-                        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-sm font-bold flex-shrink-0">
-                          {(contact.name || 'U').charAt(0).toUpperCase()}
-                        </div>
-                      )}
-                      {/* Hidden fallback for user avatar error */}
-                      {contact.type === 'user' && contact.avatar && (
-                        <div
-                          className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-sm font-bold flex-shrink-0"
-                          style={{ display: 'none' }}
-                        >
-                          {(contact.name || 'U').charAt(0).toUpperCase()}
-                        </div>
-                      )}
-
-                      {/* Info */}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className={`text-sm font-medium truncate ${isLight ? 'text-gray-900' : 'text-white'}`}>
-                            {contact.name}
-                          </span>
-                        </div>
-                        <div className={`text-[11px] flex items-center gap-2 ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
-                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${
-                            contact.type === 'group'
-                              ? isLight ? 'bg-purple-100 text-purple-700' : 'bg-purple-500/20 text-purple-400'
-                              : isLight ? 'bg-blue-100 text-blue-700' : 'bg-blue-500/20 text-blue-400'
-                          }`}>
-                            {contact.type === 'group' ? 'Nhóm' : '👤 Cá nhân'}
-                          </span>
-                          <span className="truncate">ID: {contact.id}</span>
-                        </div>
-                      </div>
-
-                      {/* Selected chip count for multi */}
-                      {contactMode === 'multi' && isSelected && (
-                        <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 ${
-                          isLight ? 'bg-blue-500 text-white' : 'bg-blue-500 text-white'
-                        }`}>
-                          {(value.indexOf(contact.id) + 1)}
-                        </span>
-                      )}
-                      {/* Selected checkmark for single */}
-                      {contactMode !== 'multi' && value[0] === contact.id && (
-                        <svg className="w-5 h-5 flex-shrink-0 text-blue-500" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                        </svg>
-                      )}
-                    </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className={`flex items-center justify-between px-5 py-4 border-t ${
-          isLight ? 'bg-gray-50 border-gray-200' : 'bg-gray-800/50 border-gray-700'
-        }`}>
-          <div className="flex items-center gap-2">
-            <span className={`text-xs ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
-              {filteredContacts.length} {contactType === 'group' ? 'nhóm' : contactType === 'user' ? 'liên hệ' : 'mục'}
-            </span>
-            {contactMode === 'multi' && value.length > 0 && (
-              <span className={`text-xs font-medium ${isLight ? 'text-blue-600' : 'text-blue-400'}`}>
-                · Đã chọn {value.length}
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            {contactMode === 'multi' && value.length > 0 && (
-              <button
-                type="button"
-                onClick={handleClear}
-                className={`px-3 py-2 text-xs font-medium rounded-lg transition-colors ${
-                  isLight
-                    ? 'text-red-600 bg-red-50 hover:bg-red-100'
-                    : 'text-red-400 bg-red-500/10 hover:bg-red-500/20'
-                }`}
-              >
-                Bỏ chọn
-              </button>
-            )}
-            {contactMode === 'multi' ? (
-              <button
-                type="button"
-                onClick={onClose}
-                className={`px-4 py-2 text-xs font-medium rounded-lg transition-colors ${
-                  isLight
-                    ? 'text-white bg-blue-600 hover:bg-blue-500'
-                    : 'text-white bg-blue-600 hover:bg-blue-500'
-                }`}
-              >
-                Xác nhận{value.length > 0 ? ` (${value.length})` : ''}
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={onClose}
-                className={`px-4 py-2 text-xs font-medium rounded-lg transition-colors ${
-                  isLight
-                    ? 'text-gray-700 bg-gray-100 hover:bg-gray-200'
-                    : 'text-gray-300 bg-gray-700 hover:bg-gray-600'
-                }`}
-              >
-                Đóng
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
@@ -3926,127 +3933,6 @@ function AccountPickerField({ value, onChange, channel, placeholder }: {
   );
 }
 
-function ContactPickerField({
-  value,
-  onChange,
-  contactType,
-  contactMode = 'single',
-  channel,
-  accountId,
-  placeholder,
-  templateVars,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  contactType: 'user' | 'group' | 'all';
-  contactMode?: 'single' | 'multi';
-  channel?: string;
-  accountId?: string;
-  placeholder?: string;
-  templateVars?: string[];
-}) {
-  const { accounts } = useAccountStore();
-  const [showModal, setShowModal] = React.useState(false);
-  const theme = useAppStore(s => s.theme);
-  const isLight = theme === 'light';
-
-  // Parse giá trị hiện tại: string đơn hoặc JSON array
-  const selectedIds: string[] = React.useMemo(() => {
-    if (!value) return [];
-    try { const p = JSON.parse(value); return Array.isArray(p) ? p : [value]; }
-    catch { return [value]; }
-  }, [value]);
-
-  // Callback nhận mảng từ modal → serialize về string
-  const handleChange = (ids: string[]) => {
-    if (contactMode === 'multi') {
-      onChange(ids.length > 0 ? JSON.stringify(ids) : '');
-    } else {
-      onChange(ids[0] || '');
-    }
-  };
-
-  return (
-    <div className={`border rounded-xl overflow-hidden ${isLight ? 'border-gray-200 bg-white' : 'border-gray-700 bg-gray-800/30'}`}>
-      {/* Current value display */}
-      <div className="flex items-center gap-2 p-2">
-        <div className="flex-1 flex flex-wrap gap-1 min-h-[32px] items-center">
-          {selectedIds.length > 0 ? (
-            selectedIds.map(id => (
-              <span key={id} className={`inline-flex items-center gap-1 px-2 py-0.5 text-[11px] rounded-full font-medium ${
-                isLight ? 'bg-blue-100 text-blue-700' : 'bg-blue-500/20 text-blue-300'
-              }`}>
-                {id}
-                <button type="button" onClick={() => handleChange(selectedIds.filter(x => x !== id))}
-                  className="hover:text-white transition-colors">&times;</button>
-              </span>
-            ))
-          ) : (
-            <span className={`text-xs ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
-              {placeholder || 'Nhập ID hoặc chọn từ danh bạ'}
-            </span>
-          )}
-        </div>
-        <button
-          type="button"
-          onClick={() => setShowModal(true)}
-          className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all flex items-center gap-1.5 ${
-            isLight
-              ? 'bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200'
-              : 'bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 border border-blue-500/30'
-          }`}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
-            <circle cx="9" cy="7" r="4"/>
-            <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
-            <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-          </svg>
-          Chọn
-        </button>
-      </div>
-
-      {/* Template vars */}
-      {templateVars && templateVars.length > 0 && (
-        <div className={`px-3 py-2 border-t ${isLight ? 'border-gray-100 bg-gray-50' : 'border-gray-700/50 bg-gray-800/50'}`}>
-          <div className={`text-[10px] mb-1.5 ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
-            Hoặc dùng biến:
-          </div>
-          <div className="flex flex-wrap gap-1">
-            {templateVars.map(v => (
-              <button
-                key={v}
-                type="button"
-                onClick={() => handleChange([`{{ ${v} }}`])}
-                className={`px-2 py-1 text-[10px] font-mono rounded transition-colors ${
-                  value === `{{ ${v} }}`
-                    ? isLight ? 'bg-blue-100 text-blue-700' : 'bg-blue-500/30 text-blue-300'
-                    : isLight ? 'bg-gray-100 text-gray-400 hover:bg-gray-200' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
-                }`}
-              >
-                {`{{ ${v} }}`}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Modal */}
-      <ContactPickerModal
-        open={showModal}
-        onClose={() => setShowModal(false)}
-        contactType={contactType}
-        contactMode={contactMode}
-        channel={channel}
-        accountId={accountId}
-        value={selectedIds}
-        onChange={handleChange}
-        accounts={accounts}
-      />
-    </div>
-  );
-}
-
 // ─── File Picker Field ────────────────────────────────────────────────────────
 
 function FilePickerField({
@@ -4059,8 +3945,6 @@ function FilePickerField({
   fileType: 'image' | 'file';
   placeholder?: string;
 }) {
-  const theme = useAppStore(s => s.theme);
-  const isLight = theme === 'light';
   const [previewError, setPreviewError] = React.useState(false);
 
   const handleSelectFile = async () => {
@@ -4085,11 +3969,11 @@ function FilePickerField({
   const showPreview = fileType === 'image' && value && !previewError;
 
   return (
-    <div className={`border rounded-xl overflow-hidden ${isLight ? 'border-gray-200 bg-white' : 'border-gray-700 bg-gray-800/30'}`}>
+    <div className="wf-card wf-card--plain overflow-hidden">
       {/* Preview for images */}
       {showPreview && (
-        <div className={`p-3 border-b ${isLight ? 'border-gray-200 bg-gray-50' : 'border-gray-700 bg-gray-800/50'}`}>
-          <div className="relative w-full h-32 rounded-lg overflow-hidden bg-gray-900/20">
+        <div className="p-2.5 border-b border-[color:var(--wf-card-border)]">
+          <div className="relative w-full h-36 rounded-lg overflow-hidden bg-[var(--wf-sub)]">
             <img
               src={isUrl ? value : `file://${value}`}
               alt="Preview"
@@ -4103,54 +3987,31 @@ function FilePickerField({
       {/* Local file selection is the primary workflow. Legacy URL values still
           render below so existing workflows remain readable, but new media
           actions never require the user to type a path or URL. */}
-      <div className="flex items-center gap-2 p-2">
+      <div className="p-2">
         <button
           type="button"
           onClick={handleSelectFile}
-          className={`w-full px-3 py-2 text-xs font-medium rounded-lg transition-all flex items-center justify-center gap-1.5 ${
-            isLight
-              ? 'bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200'
-              : 'bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 border border-blue-500/30'
-          }`}
+          className="wf-btn wf-btn--block"
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            {fileType === 'image' ? (
-              <>
-                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-                <circle cx="8.5" cy="8.5" r="1.5"/>
-                <polyline points="21 15 16 10 5 21"/>
-              </>
-            ) : (
-              <>
-                <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>
-                <polyline points="13 2 13 9 20 9"/>
-              </>
-            )}
-          </svg>
+          {fileType === 'image' ? <ImageIcon className="w-4 h-4" /> : <PaperclipIcon className="w-4 h-4" />}
           {value ? `Đổi ${fileType === 'image' ? 'ảnh' : 'tệp'}` : `Chọn ${fileType === 'image' ? 'ảnh' : 'tệp'} từ máy tính`}
         </button>
       </div>
 
       {/* File info */}
       {value && (
-        <div className={`px-3 py-2 border-t flex items-center gap-2 ${isLight ? 'border-gray-100 bg-gray-50' : 'border-gray-700/50 bg-gray-800/50'}`}>
+        <div className="flex items-center gap-2 px-3 py-2 border-t border-[color:var(--wf-card-border)]">
           {isLocalFile ? (
             <>
-              <svg className={`w-4 h-4 flex-shrink-0 ${isLight ? 'text-green-600' : 'text-green-400'}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-                <polyline points="22 4 12 14.01 9 11.01"/>
-              </svg>
-              <span className={`text-[10px] truncate ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
+              <CheckCircleIcon className="w-4 h-4 flex-shrink-0 text-[#16a34a]" />
+              <span className="min-w-0 truncate text-[11px] wf-text-2" title={value}>
                 Đã chọn: {value.split(/[\\/]/).pop()}
               </span>
             </>
           ) : isUrl ? (
             <>
-              <svg className={`w-4 h-4 flex-shrink-0 ${isLight ? 'text-blue-600' : 'text-blue-400'}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
-                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
-              </svg>
-              <span className={`text-[10px] truncate ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
+              <LinkIcon className="w-4 h-4 flex-shrink-0 text-[color:var(--wf-focus)]" />
+              <span className="min-w-0 truncate text-[11px] wf-muted" title={value}>
                 URL cũ: {value}
               </span>
             </>
@@ -4163,9 +4024,7 @@ function FilePickerField({
                 onChange('');
                 setPreviewError(false);
               }}
-              className={`ml-auto text-[10px] px-2 py-1 rounded transition-colors ${
-                isLight ? 'text-red-600 hover:bg-red-50' : 'text-red-400 hover:bg-red-500/20'
-              }`}
+              className="wf-btn wf-btn--sm wf-btn--danger ml-auto flex-shrink-0"
             >
               Xóa
             </button>
@@ -4217,16 +4076,16 @@ function NodePickerModal({
     <div className="fixed inset-0 z-[9999] flex items-center justify-center">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
       <div className={`relative rounded-2xl shadow-2xl w-[520px] max-w-[95vw] max-h-[80vh] flex flex-col overflow-hidden border ${
-        isLight ? 'bg-white border-gray-200' : 'bg-gray-900 border-gray-700'
+        isLight ? 'bg-white border-gray-200' : 'bg-background border-border'
       }`}>
         {/* Header */}
-        <div className={`flex items-center justify-between px-5 py-4 border-b ${isLight ? 'border-gray-200' : 'border-gray-700'}`}>
+        <div className={`flex items-center justify-between px-5 py-4 border-b ${isLight ? 'border-gray-200' : 'border-border'}`}>
           <div>
-            <p className={`text-base font-semibold ${isLight ? 'text-gray-900' : 'text-white'}`}>Chọn dữ liệu từ node</p>
-            <p className={`text-xs ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>Click để copy UUID hoặc chèn cú pháp tham chiếu</p>
+            <p className={`text-base font-semibold ${isLight ? 'text-gray-900' : 'text-foreground'}`}>Chọn dữ liệu từ node</p>
+            <p className={`text-xs ${isLight ? 'text-muted-foreground' : 'text-muted-foreground'}`}>Click để copy UUID hoặc chèn cú pháp tham chiếu</p>
           </div>
           <button onClick={onClose} className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${
-            isLight ? 'hover:bg-gray-100 text-gray-400' : 'hover:bg-gray-700 text-gray-400'
+            isLight ? 'hover:bg-gray-100 text-muted-foreground' : 'hover:bg-muted text-muted-foreground'
           }`}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -4235,9 +4094,9 @@ function NodePickerModal({
         </div>
 
         {/* Search */}
-        <div className={`px-4 py-3 border-b ${isLight ? 'border-gray-200' : 'border-gray-700/50'}`}>
+        <div className={`px-4 py-3 border-b ${isLight ? 'border-gray-200' : 'border-border/50'}`}>
           <div className="relative">
-            <svg className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${isLight ? 'text-gray-400' : 'text-gray-400'}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <svg className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${isLight ? 'text-muted-foreground' : 'text-muted-foreground'}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
               <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
             </svg>
             <input
@@ -4245,8 +4104,8 @@ function NodePickerModal({
               value={search} onChange={e => setSearch(e.target.value)}
               className={`w-full pl-10 pr-4 py-2 text-sm rounded-lg border focus:outline-none focus:ring-2 ${
                 isLight
-                  ? 'bg-white border-gray-200 text-gray-900 placeholder-gray-400 focus:ring-blue-500/30'
-                  : 'bg-gray-800 border-gray-600 text-white placeholder-gray-500 focus:ring-blue-500/30'
+                  ? 'bg-white border-gray-200 text-gray-900 placeholder-subtle-foreground focus:ring-blue-500/30'
+                  : 'bg-card border-input text-foreground placeholder-subtle-foreground focus:ring-blue-500/30'
               }`}
             />
           </div>
@@ -4255,7 +4114,7 @@ function NodePickerModal({
         {/* Node list */}
         <div className="flex-1 overflow-y-auto p-3 space-y-1">
           {filtered.length === 0 ? (
-            <div className={`text-center py-8 ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
+            <div className={`text-center py-8 ${isLight ? 'text-muted-foreground' : 'text-muted-foreground'}`}>
               <span className="text-3xl block mb-2"><SearchIcon className="w-4 h-4" /></span>
               <p className="text-sm">Không tìm thấy node</p>
             </div>
@@ -4266,20 +4125,20 @@ function NodePickerModal({
               return (
                 <div key={n.id} className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border transition-all ${
                   isCurrent
-                    ? isLight ? 'bg-gray-100 border-gray-200' : 'bg-gray-800/60 border-gray-700'
-                    : isLight ? 'bg-white border-gray-200 hover:border-gray-300' : 'bg-gray-800/40 border-gray-700/40 hover:border-gray-600'
+                    ? isLight ? 'bg-gray-100 border-gray-200' : 'bg-card/60 border-border'
+                    : isLight ? 'bg-white border-gray-200 hover:border-gray-300' : 'bg-card/40 border-border/40 hover:border-input'
                 }`}>
                   {/* Info */}
                   <div className="flex-1 min-w-0">
-                    <div className={`text-sm font-medium truncate flex items-center gap-1.5 ${isLight ? 'text-gray-900' : 'text-white'}`}>
+                    <div className={`text-sm font-medium truncate flex items-center gap-1.5 ${isLight ? 'text-gray-900' : 'text-foreground'}`}>
                       {n.label}
                       {isCurrent && (
                         <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
-                          isLight ? 'bg-gray-200 text-gray-400' : 'bg-gray-700 text-gray-400'
+                          isLight ? 'bg-gray-200 text-muted-foreground' : 'bg-muted text-muted-foreground'
                         }`}>đang chọn</span>
                       )}
                     </div>
-                    <div className={`text-[10px] font-mono truncate mt-0.5 ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
+                    <div className={`text-[10px] font-mono truncate mt-0.5 ${isLight ? 'text-muted-foreground' : 'text-muted-foreground'}`}>
                       {n.id}
                     </div>
                   </div>
@@ -4309,12 +4168,12 @@ function NodePickerModal({
         </div>
 
         {/* Footer */}
-        <div className={`px-5 py-3 border-t flex items-center justify-between ${isLight ? 'border-gray-200 bg-gray-50' : 'border-gray-700 bg-gray-800/50'}`}>
-          <span className={`text-[11px] ${isLight ? 'text-gray-400' : 'text-gray-400'}`}>
+        <div className={`px-5 py-3 border-t flex items-center justify-between ${isLight ? 'border-gray-200 bg-gray-50' : 'border-border bg-card/50'}`}>
+          <span className={`text-[11px] ${isLight ? 'text-muted-foreground' : 'text-muted-foreground'}`}>
             {filtered.length}/{allNodes.length} node
           </span>
           <button onClick={onClose} className={`px-4 py-1.5 text-xs font-medium rounded-lg transition-colors ${
-            isLight ? 'bg-gray-100 text-gray-700 hover:bg-gray-200' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+            isLight ? 'bg-gray-100 text-gray-700 hover:bg-gray-200' : 'bg-muted text-foreground/80 hover:bg-accent'
           }`}>Đóng</button>
         </div>
       </div>
@@ -4425,80 +4284,83 @@ function TelegramBotMessageEditor({
   };
 
   return (
-    <div className={`space-y-4 border-t pt-4 ${isLight ? 'border-gray-200 text-gray-900 [&_input]:!bg-white [&_input]:!text-gray-900 [&_input]:!border-gray-300 [&_textarea]:!bg-white [&_textarea]:!text-gray-900 [&_textarea]:!border-gray-300 [&_select]:!bg-white [&_select]:!text-gray-900 [&_select]:!border-gray-300' : 'border-gray-700/50'}`}>
+    <div className="space-y-4">
       <div>
-        <p className={`text-sm font-semibold ${isLight ? 'text-gray-900' : 'text-white'}`}>Tin nhắn Telegram Bot</p>
-        <p className={`text-[11px] mt-1 ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>Để trống phần nút bấm nếu chỉ muốn gửi tin nhắn như workflow hiện tại.</p>
+        <p className="text-[13px] font-semibold wf-text">Tin nhắn Telegram Bot</p>
+        <p className={`${descCls} !mt-1`}>Để trống phần nút bấm nếu chỉ muốn gửi tin nhắn như workflow hiện tại.</p>
       </div>
       <div>
-        <label className={`block text-xs font-medium mb-1.5 ${isLight ? 'text-gray-700' : 'text-gray-300'}`}>Bot gửi tin</label>
+        <label className={`${labelCls} mb-1.5`}>Bot gửi tin</label>
         <select value={config.accountId || ''} onChange={e => applyConfig({ ...config, accountId: e.target.value })}
-          className="w-full rounded-lg border border-gray-600 bg-gray-800 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none">
+          className={selectCls}>
           <option value="">Chọn Telegram Bot</option>
           {bots.map((bot: any) => <option key={bot.zalo_id} value={bot.zalo_id}>{bot.full_name || bot.username || bot.zalo_id}</option>)}
         </select>
       </div>
       <div>
-        <label className={`block text-xs font-medium mb-1.5 ${isLight ? 'text-gray-700' : 'text-gray-300'}`}>Hội thoại nhận</label>
+        <label className={`${labelCls} mb-1.5`}>Hội thoại nhận</label>
         <input value={config.chatId ?? ''} onChange={e => applyConfig({ ...config, chatId: e.target.value })}
-          placeholder="{{ $trigger.chatId }}" className="w-full rounded-lg border border-gray-600 bg-gray-800 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none" />
-        <p className={`text-[10px] mt-1 ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>Giữ <code className="text-cyan-500">{'{{ $trigger.chatId }}'}</code> để trả lời đúng chat vừa kích hoạt workflow.</p>
+          placeholder="{{ $trigger.chatId }}" className={inputCls} />
+        <p className={descCls}>Giữ <code className="wf-var">{'{{ $trigger.chatId }}'}</code> để trả lời đúng chat vừa kích hoạt workflow.</p>
       </div>
       <div>
-        <label className={`block text-xs font-medium mb-1.5 ${isLight ? 'text-gray-700' : 'text-gray-300'}`}>Nội dung tin nhắn</label>
+        <label className={`${labelCls} mb-1.5`}>Nội dung tin nhắn</label>
         <textarea value={config.message ?? ''} onChange={e => applyConfig({ ...config, message: e.target.value })}
-          rows={4} placeholder="Xin chào! Mình có thể giúp gì?" className="w-full resize-none rounded-lg border border-gray-600 bg-gray-800 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none" />
+          rows={4} placeholder="Xin chào! Mình có thể giúp gì?" className="wf-textarea" />
       </div>
 
-      <div className={`rounded-xl border p-3 space-y-3 ${isLight ? 'border-gray-200 bg-white shadow-sm' : 'border-gray-700 bg-gray-800/50'}`}>
+      <div className="wf-card p-3 space-y-3">
         <div className="flex items-start justify-between gap-3">
-          <div><p className={`text-xs font-semibold ${isLight ? 'text-gray-900' : 'text-white'}`}>Thêm nút tương tác</p><p className={`text-[10px] mt-0.5 ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>Bật khi cần menu hoặc chuyển người dùng đến một nhánh node trong canvas.</p></div>
+          <div className="min-w-0"><p className="text-[13px] font-semibold wf-text">Thêm nút tương tác</p><p className={`${descCls} !mt-0.5`}>Bật khi cần menu hoặc chuyển người dùng đến một nhánh node trong canvas.</p></div>
           <button type="button" role="switch" aria-checked={keyboard.enabled} onClick={() => setKeyboard({ enabled: !keyboard.enabled })}
-            className={`relative h-6 w-11 rounded-full transition-colors ${keyboard.enabled ? 'bg-blue-600' : 'bg-gray-600'}`}><span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${keyboard.enabled ? 'translate-x-5' : 'translate-x-0.5'}`} /></button>
+            className="wf-switch mt-0.5" data-on={String(!!keyboard.enabled)} title={keyboard.enabled ? 'Tắt nút tương tác' : 'Bật nút tương tác'} />
         </div>
         {keyboard.enabled && <>
-          <div className="grid grid-cols-2 gap-2">
-            <button type="button" onClick={() => setKeyboard({ type: 'reply' })} className={`rounded-lg border px-2 py-2 text-xs font-medium ${keyboard.type === 'reply' ? 'border-blue-500 bg-blue-500/15 text-blue-300' : 'border-gray-600 text-gray-400 hover:bg-gray-700'}`}>Reply Keyboard</button>
-            <button type="button" onClick={() => setKeyboard({ type: 'inline' })} className={`rounded-lg border px-2 py-2 text-xs font-medium ${keyboard.type === 'inline' ? 'border-blue-500 bg-blue-500/15 text-blue-300' : 'border-gray-600 text-gray-400 hover:bg-gray-700'}`}>Inline Button</button>
+          <div className="wf-seg w-full">
+            <button type="button" onClick={() => setKeyboard({ type: 'reply' })} className={segBtnCls} data-active={String(keyboard.type === 'reply')}><span className="truncate">Reply Keyboard</span></button>
+            <button type="button" onClick={() => setKeyboard({ type: 'inline' })} className={segBtnCls} data-active={String(keyboard.type === 'inline')}><span className="truncate">Inline Button</span></button>
           </div>
-          <p className={`text-[10px] ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>{keyboard.type === 'reply' ? 'Reply Keyboard gửi chính text của nút như một tin nhắn mới. Hãy dùng trigger tin nhắn để xử lý.' : 'Inline Button nhận callback. Nút “Đi đến node” chỉ chạy node đích và các node nối sau nó khi người dùng bấm.'}</p>
+          <p className="text-[11px] leading-4 wf-muted">{keyboard.type === 'reply' ? 'Reply Keyboard gửi chính text của nút như một tin nhắn mới. Hãy dùng trigger tin nhắn để xử lý.' : 'Inline Button nhận callback. Nút “Đi đến node” chỉ chạy node đích và các node nối sau nó khi người dùng bấm.'}</p>
           <div className="space-y-2">
-            {rows.map((row, rowIndex) => <div key={rowIndex} className={`rounded-lg border p-2 space-y-2 ${isLight ? 'border-gray-200 bg-gray-50' : 'border-gray-700'}`}>
-              <div className="flex items-center justify-between"><span className={`text-[10px] ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>Hàng {rowIndex + 1}</span><button type="button" onClick={() => mutateRows(current => current.filter((_, i) => i !== rowIndex))} className="text-[10px] text-red-500 hover:text-red-400">Xóa hàng</button></div>
-              {row.map((button, buttonIndex) => <div key={button.id} className={`rounded-md p-2 space-y-1.5 ${isLight ? 'bg-white border border-gray-100' : 'bg-gray-900/60'}`}>
-                <div className="flex gap-1.5"><input value={button.text} onChange={e => mutateRows(current => current.map((r, ri) => ri === rowIndex ? r.map((b, bi) => bi === buttonIndex ? { ...b, text: e.target.value } : b) : r))} placeholder="Tên nút" className="min-w-0 flex-1 rounded border border-gray-600 bg-gray-800 px-2 py-1.5 text-xs text-white" />
-                  <button type="button" onClick={() => mutateRows(current => current.map((r, ri) => ri === rowIndex ? r.filter((_, bi) => bi !== buttonIndex) : r))} className="px-2 text-xs text-red-400 hover:bg-red-500/10 rounded">×</button></div>
+            {rows.map((row, rowIndex) => <div key={rowIndex} className="wf-card wf-card--plain p-2.5 space-y-2">
+              <div className="flex items-center justify-between gap-2"><span className="text-[11px] font-semibold wf-muted">Hàng {rowIndex + 1}</span><button type="button" onClick={() => mutateRows(current => current.filter((_, i) => i !== rowIndex))} className="wf-btn wf-btn--sm wf-btn--ghost wf-btn--danger">Xóa hàng</button></div>
+              {row.map((button, buttonIndex) => <div key={button.id} className="wf-card p-2 space-y-1.5">
+                <div className="flex items-center gap-1.5"><input value={button.text} onChange={e => mutateRows(current => current.map((r, ri) => ri === rowIndex ? r.map((b, bi) => bi === buttonIndex ? { ...b, text: e.target.value } : b) : r))} placeholder="Tên nút" className="wf-input wf-input--sm min-w-0 flex-1" />
+                  <button type="button" onClick={() => mutateRows(current => current.map((r, ri) => ri === rowIndex ? r.filter((_, bi) => bi !== buttonIndex) : r))} className="wf-icon-btn wf-icon-btn--danger" title="Xóa nút"><CloseIcon className="w-3.5 h-3.5" /></button></div>
                 {keyboard.type === 'inline' && <>
-                  <select value={button.action || 'node'} onChange={e => mutateRows(current => current.map((r, ri) => ri === rowIndex ? r.map((b, bi) => bi === buttonIndex ? { ...b, action: e.target.value as BotKeyboardButton['action'] } : b) : r))} className="w-full rounded border border-gray-600 bg-gray-800 px-2 py-1.5 text-xs text-white"><option value="node">Đi đến node</option><option value="callback">Callback tùy chỉnh</option><option value="url">Mở liên kết</option></select>
-                  {(button.action || 'node') === 'node' && <select value={button.targetNodeId || ''} onChange={e => mutateRows(current => current.map((r, ri) => ri === rowIndex ? r.map((b, bi) => bi === buttonIndex ? { ...b, targetNodeId: e.target.value } : b) : r))} className="w-full rounded border border-gray-600 bg-gray-800 px-2 py-1.5 text-xs text-white"><option value="">Chọn node đích</option>{targetNodes.map((target: any) => <option key={target.id} value={target.id}>{target.label}</option>)}</select>}
-                  {(button.action || 'node') === 'callback' && <input value={button.callbackData || ''} onChange={e => mutateRows(current => current.map((r, ri) => ri === rowIndex ? r.map((b, bi) => bi === buttonIndex ? { ...b, callbackData: e.target.value } : b) : r))} maxLength={64} placeholder="callback_data (tối đa 64 bytes)" className="w-full rounded border border-gray-600 bg-gray-800 px-2 py-1.5 text-xs text-white" />}
-                  {(button.action || 'node') === 'url' && <input value={button.url || ''} onChange={e => mutateRows(current => current.map((r, ri) => ri === rowIndex ? r.map((b, bi) => bi === buttonIndex ? { ...b, url: e.target.value } : b) : r))} placeholder="https://..." className="w-full rounded border border-gray-600 bg-gray-800 px-2 py-1.5 text-xs text-white" />}
+                  <select value={button.action || 'node'} onChange={e => mutateRows(current => current.map((r, ri) => ri === rowIndex ? r.map((b, bi) => bi === buttonIndex ? { ...b, action: e.target.value as BotKeyboardButton['action'] } : b) : r))} className="wf-select wf-input--sm"><option value="node">Đi đến node</option><option value="callback">Callback tùy chỉnh</option><option value="url">Mở liên kết</option></select>
+                  {(button.action || 'node') === 'node' && <select value={button.targetNodeId || ''} onChange={e => mutateRows(current => current.map((r, ri) => ri === rowIndex ? r.map((b, bi) => bi === buttonIndex ? { ...b, targetNodeId: e.target.value } : b) : r))} className="wf-select wf-input--sm"><option value="">Chọn node đích</option>{targetNodes.map((target: any) => <option key={target.id} value={target.id}>{target.label}</option>)}</select>}
+                  {(button.action || 'node') === 'callback' && <input value={button.callbackData || ''} onChange={e => mutateRows(current => current.map((r, ri) => ri === rowIndex ? r.map((b, bi) => bi === buttonIndex ? { ...b, callbackData: e.target.value } : b) : r))} maxLength={64} placeholder="callback_data (tối đa 64 bytes)" className="wf-input wf-input--sm" />}
+                  {(button.action || 'node') === 'url' && <input value={button.url || ''} onChange={e => mutateRows(current => current.map((r, ri) => ri === rowIndex ? r.map((b, bi) => bi === buttonIndex ? { ...b, url: e.target.value } : b) : r))} placeholder="https://..." className="wf-input wf-input--sm" />}
                 </>}
               </div>)}
-              <button type="button" onClick={() => mutateRows(current => current.map((r, i) => i === rowIndex ? [...r, newBotKeyboardButton()] : r))} className="text-[11px] text-blue-400 hover:text-blue-300">+ Thêm nút cùng hàng</button>
+              <button type="button" onClick={() => mutateRows(current => current.map((r, i) => i === rowIndex ? [...r, newBotKeyboardButton()] : r))} className="wf-btn wf-btn--sm wf-btn--ghost"><PlusIcon className="w-3 h-3" /> Thêm nút cùng hàng</button>
             </div>)}
-            <button type="button" onClick={() => mutateRows(current => [...current, [newBotKeyboardButton()]])} className={`w-full rounded-lg border border-dashed py-2 text-xs hover:border-blue-500 hover:text-blue-500 ${isLight ? 'border-gray-300 text-gray-600' : 'border-gray-600 text-gray-300 hover:text-blue-300'}`}>+ Thêm hàng nút</button>
+            <button type="button" onClick={() => mutateRows(current => [...current, [newBotKeyboardButton()]])} className="wf-btn wf-btn--dashed wf-btn--block"><PlusIcon className="w-3.5 h-3.5" /> Thêm hàng nút</button>
           </div>
-          {keyboard.type === 'reply' && <div className="flex flex-wrap gap-3 text-[11px] text-gray-300"><label className="flex items-center gap-1.5"><input type="checkbox" checked={keyboard.resize !== false} onChange={e => setKeyboard({ resize: e.target.checked })} /> Tự co chiều cao</label><label className="flex items-center gap-1.5"><input type="checkbox" checked={!!keyboard.oneTime} onChange={e => setKeyboard({ oneTime: e.target.checked })} /> Ẩn sau một lần bấm</label><label className="flex items-center gap-1.5"><input type="checkbox" checked={!!keyboard.persistent} onChange={e => setKeyboard({ persistent: e.target.checked })} /> Luôn hiển thị</label></div>}
+          {keyboard.type === 'reply' && <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs wf-text-2"><label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" className="accent-[var(--wf-focus)]" checked={keyboard.resize !== false} onChange={e => setKeyboard({ resize: e.target.checked })} /> Tự co chiều cao</label><label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" className="accent-[var(--wf-focus)]" checked={!!keyboard.oneTime} onChange={e => setKeyboard({ oneTime: e.target.checked })} /> Ẩn sau một lần bấm</label><label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" className="accent-[var(--wf-focus)]" checked={!!keyboard.persistent} onChange={e => setKeyboard({ persistent: e.target.checked })} /> Luôn hiển thị</label></div>}
         </>}
       </div>
 
-      <div className={`rounded-xl border p-3 ${isLight ? 'border-blue-200 bg-blue-50' : 'border-blue-500/30 bg-blue-500/5'}`}>
-        <p className={`text-xs font-semibold mb-2 ${isLight ? 'text-blue-700' : 'text-blue-200'}`}>Xem trước</p>
-        <div className={`rounded-lg p-3 ${isLight ? 'bg-[#eef3f8]' : 'bg-[#17212b]'}`}><div className={`ml-auto max-w-[88%] whitespace-pre-wrap rounded-2xl rounded-br-sm px-3 py-2 text-xs ${isLight ? 'bg-[#d8ecff] text-[#1f2937]' : 'bg-[#2b5278] text-white'}`}>{config.message || 'Nội dung tin nhắn'}</div>
-          {keyboard.enabled && rows.length > 0 && <div className={`mt-2 gap-1 ${keyboard.type === 'reply' ? (isLight ? 'rounded-lg bg-white p-2 shadow-sm' : 'rounded-lg bg-[#22303d] p-2') : 'flex flex-col'}`}>{rows.map((row, index) => <div key={index} className="flex gap-1">{row.map(button => <span key={button.id} className={`flex-1 rounded px-2 py-1.5 text-center text-[10px] ${isLight ? 'bg-white text-blue-700 border border-blue-200' : 'bg-[#315b82] text-[#8fc7ff]'}`}>{button.text || 'Nút'}</span>)}</div>)}</div>}</div>
+      <div className="wf-card p-3">
+        <p className="mb-2 text-xs font-semibold wf-text">Xem trước</p>
+        <div className={`rounded-lg p-3 ${isLight ? 'bg-[#eef3f8]' : 'bg-muted'}`}><div className={`ml-auto max-w-[88%] whitespace-pre-wrap rounded-2xl rounded-br-sm px-3 py-2 text-xs ${isLight ? 'bg-[#d8ecff] text-foreground' : 'bg-accent text-foreground'}`}>{config.message || 'Nội dung tin nhắn'}</div>
+          {keyboard.enabled && rows.length > 0 && <div className={`mt-2 gap-1 ${keyboard.type === 'reply' ? (isLight ? 'rounded-lg bg-white p-2 shadow-sm' : 'rounded-lg bg-muted p-2') : 'flex flex-col'}`}>{rows.map((row, index) => <div key={index} className="flex gap-1">{row.map(button => <span key={button.id} className={`flex-1 rounded px-2 py-1.5 text-center text-[10px] ${isLight ? 'bg-white text-blue-700 border border-blue-200' : 'bg-accent text-[#8fc7ff]'}`}>{button.text || 'Nút'}</span>)}</div>)}</div>}</div>
       </div>
-      <div className={`rounded-xl border p-3 ${isLight ? 'border-gray-200 bg-white shadow-sm' : 'border-gray-700'}`}><p className={`text-xs font-semibold ${isLight ? 'text-gray-900' : 'text-white'}`}>Gửi thử an toàn</p><p className={`text-[10px] mt-0.5 ${isLight ? 'text-gray-500' : 'text-gray-400'}`}>Chỉ gửi vào Chat thử bên dưới, không dùng hội thoại đang kích hoạt workflow.</p><div className="mt-2 flex gap-2"><input value={config.testChatId || ''} onChange={e => applyConfig({ ...config, testChatId: e.target.value })} placeholder="Chat ID thử" className="min-w-0 flex-1 rounded-lg border border-gray-600 bg-gray-800 px-2.5 py-2 text-xs text-white" /><button type="button" disabled={testing} onClick={testSend} className="rounded-lg bg-green-600 px-3 py-2 text-xs font-medium text-white disabled:opacity-60">{testing ? 'Đang gửi…' : 'Gửi thử'}</button></div>{testResult && <p className={`mt-2 text-[11px] ${testResult.startsWith('Đã') ? 'text-green-400' : 'text-amber-300'}`}>{testResult}</p>}</div>
+      <div className="wf-card p-3"><p className="text-xs font-semibold wf-text">Gửi thử an toàn</p><p className={`${descCls} !mt-0.5`}>Chỉ gửi vào Chat thử bên dưới, không dùng hội thoại đang kích hoạt workflow.</p><div className="mt-2 flex gap-2"><input value={config.testChatId || ''} onChange={e => applyConfig({ ...config, testChatId: e.target.value })} placeholder="Chat ID thử" className="wf-input min-w-0 flex-1" /><button type="button" disabled={testing} onClick={testSend} className="wf-btn wf-btn--success !h-auto flex-shrink-0">{testing ? 'Đang gửi…' : 'Gửi thử'}</button></div>{testResult && <p className="mt-2 text-[11px]" style={{ color: testResult.startsWith('Đã') ? '#16a34a' : '#d97706' }}>{testResult}</p>}</div>
     </div>
   );
 }
 
-export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, onLabelChange, onInlineRoutesChange, onClose, workflowId }: Props) {
+export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, onLabelChange, onInlineRoutesChange, onClose, workflowId, workflowChannel, workflowPageIds }: Props) {
   const { accounts } = useAccountStore();
   const [config, setConfig]             = useState<Record<string, any>>(node.config || {});
   const [label, setLabel]               = useState(node.label || '');
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [panelWidth, setPanelWidth]     = useState(320);
+  // "Nâng cao" section - open by default (settings panel v2).
+  const [showAdvanced, setShowAdvanced] = useState(true);
+  /** Per-section collapsed flags (section name → true when collapsed). Every section starts expanded. */
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
+  const [panelWidth, setPanelWidth]     = useState(420);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [loadedLabelOptions, setLoadedLabelOptions] = useState<LoadedLabelOption[]>([]);
   const [loadingLabelOptions, setLoadingLabelOptions] = useState(false);
@@ -4511,23 +4373,40 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
   const [isUpstreamNodesCollapsed, setIsUpstreamNodesCollapsed] = useState(true);
   const isResizingRef = useRef(false);
   const resizeStartXRef  = useRef(0);
-  const resizeStartWRef  = useRef(320);
+  const resizeStartWRef  = useRef(420);
 
-  const allFields   = CONFIG_SCHEMA[node.type] || [];
-  const basicFields = allFields.filter(f => !f.advanced);
-  const advFields   = allFields.filter(f =>  f.advanced);
+  const allFields   = CONFIG_SCHEMA[node.type] || pluginFieldsFor(node.type) || [];
+  const visual      = getNodeVisual(node.type);
+  const defaultLabel = getNodeLabel(node.type);
+  const nodeDescription = getNodeDescription(node.type);
+
+  // ── Group fields into titled sections ("sắp xếp thông minh") ──────────────
+  // Schema order is kept. `section` wins; otherwise basic fields go to "Cấu hình"
+  // and advanced ones to "Nâng cao", which is always rendered last.
+  const fieldSections: { name: string; fields: Field[] }[] = [];
+  const advancedFields: Field[] = [];
+  for (const field of allFields) {
+    const name = field.section || (field.advanced ? ADVANCED_SECTION : DEFAULT_SECTION);
+    if (name === ADVANCED_SECTION) { advancedFields.push(field); continue; }
+    let section = fieldSections.find(s => s.name === name);
+    if (!section) { section = { name, fields: [] }; fieldSections.push(section); }
+    section.fields.push(field);
+  }
+  if (advancedFields.length > 0) fieldSections.push({ name: ADVANCED_SECTION, fields: advancedFields });
 
   useEffect(() => {
     setConfig(node.config || {});
     setLabel(node.label || '');
-    setShowAdvanced(false);
+    setShowAdvanced(true);
+    setCollapsedSections({});
   }, [node.id]);
 
   // Stable account IDs string to prevent useEffect re-runs
   const accountIds = accounts.map(a => a.zalo_id).sort().join(',');
 
   useEffect(() => {
-    if (node.type !== 'trigger.labelAssigned' && node.type !== 'zalo.assignLabel' && node.type !== 'zalo.removeLabel') {
+    const isAudience = node.type === 'logic.forEachContact';
+    if (node.type !== 'trigger.labelAssigned' && node.type !== 'zalo.assignLabel' && node.type !== 'zalo.removeLabel' && !isAudience) {
       setLoadedLabelOptions([]);
       return;
     }
@@ -4559,7 +4438,8 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
         });
 
         // Fetch Zalo labels directly from API for each account
-        const currentAccounts = useAccountStore.getState().accounts;
+        // (audience source "Hội thoại theo nhãn" only reads Local labels → no Zalo API calls for it)
+        const currentAccounts = isAudience ? [] : useAccountStore.getState().accounts;
 
         for (const acc of currentAccounts) {
           try {
@@ -4680,29 +4560,14 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
   const upstreamNodes = React.useMemo(() => {
     if (!nodes || !edges || !node?.id) return [];
 
-    // Build reverse adjacency: target → [sources]
-    const reverseAdj = new Map<string, string[]>();
-    for (const e of edges) {
-      if (!reverseAdj.has(e.target)) reverseAdj.set(e.target, []);
-      reverseAdj.get(e.target)!.push(e.source);
-    }
-
-    // BFS backwards from current node to find all upstream nodes
-    const upstream = new Set<string>();
-    const queue = [node.id];
-    while (queue.length > 0) {
-      const current = queue.shift()!;
-      const sources = reverseAdj.get(current) || [];
-      for (const src of sources) {
-        if (!upstream.has(src)) {
-          upstream.add(src);
-          queue.push(src);
-        }
-      }
-    }
+    // Node chạy trước node này (BFS ngược theo cạnh; sau cổng "Xong" của Lặp qua danh sách thì gồm cả thân vòng lặp)
+    const nodeMap = new Map(nodes.map((n: any) => [n.id, n]));
+    const upstream = upstreamNodeIds(node.id, edges, id => {
+      const n: any = nodeMap.get(id);
+      return n?.data?.type || n?.type;
+    });
 
     // Map to display info
-    const nodeMap = new Map(nodes.map((n: any) => [n.id, n]));
     return Array.from(upstream)
       .map(id => {
         const n = nodeMap.get(id);
@@ -4717,6 +4582,18 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
       .filter(Boolean)
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [nodes, edges, node?.id]);
+
+  // ── Variable context: trigger types of the workflow + upstream nodes (with config) ──
+  const triggerTypes = React.useMemo(() => {
+    const types = (nodes || []).map((n: any) => String(n.data?.type || n.type || '')).filter(isTriggerType);
+    return [...new Set(types)];
+  }, [nodes]);
+  const upstreamVarNodes = React.useMemo<VarNode[]>(() => {
+    const byId = new Map((nodes || []).map((n: any) => [n.id, n]));
+    return (upstreamNodes as any[]).map(u => ({ id: u.id, label: u.label, type: u.type, config: byId.get(u.id)?.data?.config || {} }));
+  }, [upstreamNodes, nodes]);
+  /** Field suggestions the workflow's trigger really provides (e.g. no fromName on Facebook). */
+  const availableVars = (keys?: string[]) => (keys || []).filter(key => isVarAvailable(key, triggerTypes));
 
   // ── All nodes for the node picker modal ─────────────────────────────────
   const allNodeList = React.useMemo(() => {
@@ -4746,7 +4623,7 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
       if (!isResizingRef.current) return;
       // dragging LEFT increases panel width; dragging RIGHT decreases
       const delta = resizeStartXRef.current - ev.clientX;
-      setPanelWidth(Math.max(280, Math.min(720, resizeStartWRef.current + delta)));
+      setPanelWidth(Math.max(320, Math.min(760, resizeStartWRef.current + delta)));
     };
     const onUp = () => {
       isResizingRef.current = false;
@@ -4773,19 +4650,87 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
 
   const appendVar = (key: string, v: string) => update(key, (config[key] ?? '') + v);
 
-  const renderField = (field: Field) => {
-    // ── hideWhen: skip rendering if condition matches ──────────────────────
+  /** `hideWhenKey` / `hideWhenValue` rule (hidden fields are not rendered; empty sections are skipped). */
+  const isFieldHidden = (field: Field): boolean => {
     if (field.hideWhenKey && field.hideWhenValue) {
       const cur = config[field.hideWhenKey] || '';
       // Nếu chưa có giá trị (old workflow), dùng default = 'assistant'
       const effective = field.hideWhenKey === 'aiConfigMode' && !cur ? 'assistant' : cur;
-      if (effective === field.hideWhenValue) return null;
+      if (effective === field.hideWhenValue) return true;
+    }
+    return false;
+  };
+
+  /** Options of a select / choice field after `optionsFilter`. */
+  const getFieldOptions = (field: Field): SelectOption[] => {
+    let opts = field.options ?? [];
+    if (field.optionsFilter) {
+      const filterVal = config[field.optionsFilter.key] as string | undefined;
+      const allowed = filterVal ? field.optionsFilter.map[filterVal] : null;
+      if (allowed) opts = opts.filter(o => allowed.includes(o.value));
+    }
+    return opts;
+  };
+
+  /** select / choice change - also drops the dependent keys listed in `clearsKeyOnChange`. */
+  const selectOption = (field: Field, value: string) => {
+    const next: Record<string, any> = { ...config, [field.key]: value };
+    if (field.clearsKeyOnChange) field.clearsKeyOnChange.forEach(k => { delete next[k]; });
+    setConfig(next); onConfigChange(next);
+  };
+
+  const renderField = (field: Field) => {
+    // ── hideWhen: skip rendering if condition matches ──────────────────────
+    if (isFieldHidden(field)) return null;
+
+    // Boolean → switch row. renderSection wraps consecutive rows in one `wf-toggle-list`.
+    if (field.type === 'boolean') {
+      return (
+        <ToggleSwitch key={field.key} checked={!!config[field.key]} onChange={v => update(field.key, v)}
+          label={field.label} desc={field.desc} />
+      );
     }
 
-    const isBool = field.type === 'boolean';
+    // Plain info → a single callout (label = title, desc = body).
+    if (field.type === 'info' && !field.isWebhookUrl) {
+      return (
+        <div key={field.key} className="wf-callout">
+          <InfoIcon className="w-3.5 h-3.5" />
+          <div className="min-w-0">
+            <div className="wf-callout__title">{field.label}</div>
+            {field.desc && <div className="mt-0.5">{field.desc}</div>}
+          </div>
+        </div>
+      );
+    }
+
+    const showVarBtn = !!field.templateVars?.length && !(field.htmlToggle && config[field.htmlToggle]);
+    const chipsEmpty = field.type === 'chips' && !(Array.isArray(config[field.key]) && config[field.key].length > 0);
+
     return (
-      <div key={field.key} className={isBool ? 'bg-gray-800/40 border border-gray-700/50 rounded-xl px-3 py-2.5' : ''}>
-        {!isBool && <label className={labelCls}>{field.label}</label>}
+      <div key={field.key}>
+        <div className="flex items-center justify-between gap-2 mb-1.5">
+          <label className={`${labelCls} min-w-0`}>{field.label}</label>
+          {(chipsEmpty || showVarBtn) && (
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {chipsEmpty && <span className="text-[11px] wf-faint">Không chọn = tất cả</span>}
+              {showVarBtn && (
+                <button
+                  type="button"
+                  onClick={() => { setTemplatePopupField(field.key); setShowTemplatePopup(true); }}
+                  className="wf-var-btn"
+                  title="Chèn biến động"
+                >
+                  <BracesGlyph />
+                  Chèn biến
+                  {availableVars(field.templateVars).length > 0 && (
+                    <span className="opacity-60">{availableVars(field.templateVars).length}</span>
+                  )}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
 
         {field.type === 'text' && (
           <input value={config[field.key] ?? ''} onChange={e => update(field.key, e.target.value)}
@@ -4797,34 +4742,80 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
               value={config[field.key] ?? ''}
               onChange={v => update(field.key, v)}
               placeholder={field.placeholder}
-              templateVars={field.templateVars}
+              templateVars={availableVars(field.templateVars)}
             />
           ) : (
             <textarea value={config[field.key] ?? ''} onChange={e => update(field.key, e.target.value)}
               placeholder={field.placeholder} rows={field.type === 'multiline' ? 5 : 3}
-              className={`${inputCls} resize-none`} />
+              className="wf-textarea" />
           )
         )}
         {field.type === 'select' && (() => {
-          let opts = field.options ?? [];
-          if (field.optionsFilter) {
-            const filterVal = config[field.optionsFilter.key] as string | undefined;
-            const allowed = filterVal ? field.optionsFilter.map[filterVal] : null;
-            if (allowed) opts = opts.filter(o => allowed.includes(o.value));
-          }
+          const opts = getFieldOptions(field);
           return (
             <select value={config[field.key] ?? opts[0]?.value ?? ''}
-              onChange={e => {
-                const next: Record<string, any> = { ...config, [field.key]: e.target.value };
-                if (field.clearsKeyOnChange) field.clearsKeyOnChange.forEach(k => { delete next[k]; });
-                setConfig(next); onConfigChange(next);
-              }} className={selectCls}>
+              onChange={e => selectOption(field, e.target.value)} className={selectCls}>
               {opts.map(opt => (
-                <option key={opt.value} value={opt.value} className="bg-gray-800 text-white">{opt.label}</option>
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
               ))}
             </select>
           );
         })()}
+        {field.type === 'choice' && (() => {
+          const opts = getFieldOptions(field);
+          // Same as <select value={…}>: React matches the value as a string, and a value that is not an
+          // option (e.g. templates storing threadType 'user', or the number 0) shows the first option.
+          const raw = config[field.key];
+          const active = raw != null && opts.some(o => o.value === String(raw)) ? String(raw) : opts[0]?.value;
+          // Like a native <select>, re-picking the current value is a no-op (keeps clearsKeyOnChange keys).
+          const pick = (value: string) => { if (value !== active) selectOption(field, value); };
+          const maxSegLabel = opts.length <= 2 ? 22 : 15;
+          if (opts.length <= 3 && opts.every(o => o.label.length <= maxSegLabel)) {
+            return (
+              <div className="wf-seg w-full" role="radiogroup" aria-label={field.label}>
+                {opts.map(opt => (
+                  <button key={opt.value} type="button" role="radio" aria-checked={active === opt.value}
+                    onClick={() => pick(opt.value)} title={opt.label}
+                    className={segBtnCls} data-active={String(active === opt.value)}>
+                    <span className="truncate">{opt.label}</span>
+                  </button>
+                ))}
+              </div>
+            );
+          }
+          return (
+            <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label={field.label}>
+              {opts.map(opt => (
+                <button key={opt.value} type="button" role="radio" aria-checked={active === opt.value}
+                  onClick={() => pick(opt.value)}
+                  className={chipCls} data-active={String(active === opt.value)}>
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          );
+        })()}
+        {field.type === 'chips' && (() => {
+          const selected: string[] = Array.isArray(config[field.key]) ? config[field.key] : [];
+          return (
+            <div className="flex flex-wrap gap-1.5">
+              {(field.options ?? []).map(opt => {
+                const isOn = selected.includes(opt.value);
+                return (
+                  <button key={opt.value} type="button" aria-pressed={isOn}
+                    onClick={() => update(field.key, isOn ? selected.filter(v => v !== opt.value) : [...selected, opt.value])}
+                    className={chipCls} data-active={String(isOn)}>
+                    {isOn && <CheckIcon className="w-3 h-3 -ml-0.5" />}
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })()}
+        {field.type === 'time-window' && (
+          <TimeWindowField value={config[field.key]} onChange={v => update(field.key, v)} />
+        )}
         {field.type === 'number' && (
           <input type="number" value={config[field.key] ?? ''}
             min={field.min} placeholder={field.placeholder}
@@ -4833,26 +4824,67 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
               update(field.key, field.min !== undefined && v < field.min ? field.min : v);
             }} className={inputCls} />
         )}
-        {field.type === 'boolean' && (
-          <ToggleSwitch checked={!!config[field.key]} onChange={v => update(field.key, v)}
-            label={field.label} desc={field.desc} />
-        )}
         {field.type === 'json' && (
           <textarea
             value={typeof config[field.key] === 'string' ? config[field.key] : JSON.stringify(config[field.key] ?? '', null, 2)}
             onChange={e => { try { update(field.key, JSON.parse(e.target.value)); } catch { update(field.key, e.target.value); } }}
             placeholder={field.hint || field.placeholder} rows={4}
-            className={`${inputCls} resize-none font-mono text-xs`} />
+            className="wf-textarea wf-mono" />
         )}
+        {field.type === 'case-list' && (() => {
+          const cases: Array<{ match: string; label: string }> = Array.isArray(config[field.key]) ? config[field.key] : [];
+          const setCases = (next: Array<{ match: string; label: string }>) => update(field.key, next);
+          return (
+            <div className="space-y-2">
+              {cases.map((c, idx) => (
+                <div key={idx} className="wf-card wf-card--plain p-2.5">
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <span className="text-xs font-semibold wf-text-2">Nhánh {idx + 1}</span>
+                    <button
+                      type="button"
+                      onClick={() => setCases(cases.filter((_, i) => i !== idx))}
+                      className="wf-icon-btn wf-icon-btn--danger !w-6 !h-6"
+                      title="Xoá nhánh"
+                    >
+                      <TrashIcon className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  <div className="wf-field-grid">
+                    <label className="block min-w-0">
+                      <span className="block mb-1 text-[11px] font-medium wf-muted">Khi giá trị khớp</span>
+                      <input
+                        value={c.match ?? ''}
+                        onChange={e => setCases(cases.map((x, i) => i === idx ? { ...x, match: e.target.value } : x))}
+                        placeholder="Giá trị khớp (vd: xin chào)"
+                        className="wf-input wf-input--sm"
+                      />
+                    </label>
+                    <label className="block min-w-0">
+                      <span className="block mb-1 text-[11px] font-medium wf-muted">Tên nhánh</span>
+                      <input
+                        value={c.label ?? ''}
+                        onChange={e => setCases(cases.map((x, i) => i === idx ? { ...x, label: e.target.value } : x))}
+                        placeholder="Tên nhánh (vd: case_chao)"
+                        className="wf-input wf-input--sm"
+                      />
+                    </label>
+                  </div>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={() => setCases([...cases, { match: '', label: `case_${cases.length + 1}` }])}
+                className="wf-btn wf-btn--dashed wf-btn--block"
+              >
+                <PlusIcon className="w-3.5 h-3.5" /> Thêm nhánh
+              </button>
+            </div>
+          );
+        })()}
         {field.type === 'cron' && (
           <CronField value={config[field.key] ?? ''} onChange={v => update(field.key, v)} placeholder={field.placeholder} />
         )}
         {field.type === 'info' && field.isWebhookUrl && <WebhookUrlField field={field} config={config} workflowId={workflowId} update={update} />}
-        {field.type === 'info' && !field.isWebhookUrl && (
-          <div className="rounded-lg border border-blue-500/25 bg-blue-500/10 px-3 py-2 text-xs leading-5 text-blue-300">
-            {field.desc}
-          </div>
-        )}
 
         {field.type === 'html' && (
           <HtmlEditorField value={config[field.key] ?? ''} onChange={v => update(field.key, v)} placeholder={field.placeholder} />
@@ -4879,15 +4911,23 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
 
         {/* ── Contact Picker ───────────────────────────────────────────── */}
         {field.type === 'contact-picker' && (
-          <ContactPickerField
-            value={config[field.key] ?? ''}
-            onChange={v => update(field.key, v)}
-            contactType={field.contactType || 'all'}
-            channel={field.channelFromKey ? config[field.channelFromKey] : field.channel}
-            accountId={field.accountIdFromKey ? config[field.accountIdFromKey] : undefined}
-            placeholder={field.placeholder}
-            templateVars={field.templateVars}
-          />
+          (() => {
+            // Kênh: field chéo kênh → theo config; field có kênh riêng → kênh đó; còn lại → kênh của workflow
+            const pickerChannel = (field.channelFromKey ? config[field.channelFromKey] : field.channel) || workflowChannel;
+            return (
+              <ContactPickerField
+                value={config[field.key] ?? ''}
+                onChange={v => update(field.key, v)}
+                contactType={field.contactType || 'all'}
+                contactMode={field.contactMode}
+                channel={pickerChannel}
+                accountId={field.accountIdFromKey ? config[field.accountIdFromKey] : undefined}
+                preferredAccountIds={pickerChannel && pickerChannel === workflowChannel ? workflowPageIds : undefined}
+                placeholder={field.placeholder}
+                templateVars={availableVars(field.templateVars)}
+              />
+            );
+          })()
         )}
 
         {field.type === 'account-picker' && (
@@ -4916,7 +4956,7 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
 
           if (loadingAssistants) {
             return (
-              <div className="flex items-center gap-2 py-3 text-gray-400 text-xs">
+              <div className="wf-card wf-card--plain flex items-center gap-2 px-3 py-3 text-xs wf-muted">
                 <Spinner size={4} />
                 Đang tải danh sách trợ lý…
               </div>
@@ -4925,9 +4965,12 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
 
           if (enabledList.length === 0) {
             return (
-              <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl px-3 py-3 text-xs">
-                <p className="text-yellow-400 font-medium">⚠️ Chưa có trợ lý AI nào</p>
-                <p className="text-yellow-400/70 mt-1">Vào <b>Tích hợp → Trợ lý AI</b> để tạo trợ lý trước, sau đó quay lại đây chọn.</p>
+              <div className="wf-callout" data-tone="warn">
+                <AlertIcon className="w-3.5 h-3.5" />
+                <div className="min-w-0">
+                  <div className="wf-callout__title">Chưa có trợ lý AI nào</div>
+                  <div className="mt-0.5">Vào <b>Tích hợp → Trợ lý AI</b> để tạo trợ lý trước, sau đó quay lại đây chọn.</div>
+                </div>
               </div>
             );
           }
@@ -4936,32 +4979,26 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
             <div className="space-y-1.5">
               {enabledList.map(a => {
                 const isActive = selected === a.id;
-                const platformIcon = a.platform === 'openai' ? <BotIcon className="w-4 h-4" /> : a.platform === 'gemini' ? <DiamondIcon className="w-4 h-4" /> : a.platform === 'deepseek' ? <HelpCircleIcon className="w-4 h-4" /> : a.platform === 'grok' ? <LightningIcon className="w-4 h-4" /> : <BotIcon className="w-4 h-4" />;
+                const PlatformIcon = a.platform === 'openai' ? BotIcon : a.platform === 'gemini' ? DiamondIcon : a.platform === 'deepseek' ? HelpCircleIcon : a.platform === 'grok' ? LightningIcon : BotIcon;
                 return (
                   <button
                     key={a.id}
                     type="button"
                     onClick={() => update(field.key, isActive ? '' : a.id)}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border text-left transition-all ${
-                      isActive
-                        ? 'bg-blue-600/20 border-blue-500/60 ring-1 ring-blue-500/30'
-                        : 'bg-gray-800/60 border-gray-700/50 hover:border-gray-600 hover:bg-gray-800'
-                    }`}
+                    className="wf-choice"
+                    data-active={String(isActive)}
                   >
-                    <span className="flex-shrink-0">{platformIcon}</span>
-                    <div className="flex-1 min-w-0">
-                      <p className={`text-sm font-medium truncate ${isActive ? 'text-blue-300' : 'text-gray-200'}`}>
-                        {a.name}
-                      </p>
-                      <p className="text-[10px] text-gray-400 truncate">
+                    {/* Tile inherits --wf-accent: node family colour, focus blue when active */}
+                    <span className="wf-icon-tile" data-size="sm">
+                      <PlatformIcon className="wf-icon-tile__glyph" />
+                    </span>
+                    <span className="flex-1 min-w-0">
+                      <span className="wf-choice__title block truncate">{a.name}</span>
+                      <span className="wf-choice__meta block truncate">
                         {a.platform?.toUpperCase()} • {a.model}
-                      </p>
-                    </div>
-                    {isActive && (
-                      <svg className="w-5 h-5 text-blue-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                      </svg>
-                    )}
+                      </span>
+                    </span>
+                    {isActive && <CheckCircleIcon className="w-[18px] h-[18px] flex-shrink-0 text-[color:var(--wf-focus)]" />}
                   </button>
                 );
               })}
@@ -4978,9 +5015,12 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
 
           if (telegramBots.length === 0) {
             return (
-              <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl px-3 py-3 text-xs">
-                <p className="text-yellow-400 font-medium">⚠️ Chưa có Bot Telegram nào</p>
-                <p className="text-yellow-400/70 mt-1">Vào <b>Settings → Tích hợp</b> để kết nối Bot Telegram trước, sau đó quay lại đây chọn.</p>
+              <div className="wf-callout" data-tone="warn">
+                <AlertIcon className="w-3.5 h-3.5" />
+                <div className="min-w-0">
+                  <div className="wf-callout__title">Chưa có Bot Telegram nào</div>
+                  <div className="mt-0.5">Vào <b>Settings → Tích hợp</b> để kết nối Bot Telegram trước, sau đó quay lại đây chọn.</div>
+                </div>
               </div>
             );
           }
@@ -4994,22 +5034,17 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
                     key={i.id}
                     type="button"
                     onClick={() => update(field.key, isActive ? '' : i.id)}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border text-left transition-all ${
-                      isActive
-                        ? 'bg-blue-600/20 border-blue-500/60 ring-1 ring-blue-500/30'
-                        : 'bg-gray-800/60 border-gray-700/50 hover:border-gray-600 hover:bg-gray-800'
-                    }`}
+                    className="wf-choice"
+                    data-active={String(isActive)}
                   >
-                    <span className="text-lg">🤖</span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm text-gray-200 font-medium truncate">{i.name}</p>
-                      <p className="text-[10px] text-gray-400">Telegram Bot</p>
-                    </div>
-                    {isActive && (
-                      <svg className="w-5 h-5 text-blue-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                      </svg>
-                    )}
+                    <span className="wf-icon-tile" data-size="sm">
+                      <SendIcon className="wf-icon-tile__glyph" />
+                    </span>
+                    <span className="flex-1 min-w-0">
+                      <span className="wf-choice__title block truncate">{i.name}</span>
+                      <span className="wf-choice__meta block">Telegram Bot</span>
+                    </span>
+                    {isActive && <CheckCircleIcon className="w-[18px] h-[18px] flex-shrink-0 text-[color:var(--wf-focus)]" />}
                   </button>
                 );
               })}
@@ -5017,44 +5052,69 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
           );
         })()}
 
-        {field.desc && !isBool && <p className={descCls}>{field.desc}</p>}
-        {field.hint && field.type !== 'json' && <p className={hintCls}><SunIcon className="w-4 h-4 inline" /> {field.hint}</p>}
-        {field.templateVars?.length && !isBool && !(field.htmlToggle && config[field.htmlToggle]) && (
-          <button
-            type="button"
-            onClick={() => { setTemplatePopupField(field.key); setShowTemplatePopup(true); }}
-            className="mt-1.5 flex items-center gap-1.5 text-[10px] font-medium text-cyan-400 bg-cyan-500/10 hover:bg-cyan-500/20 px-2 py-1 rounded-lg transition-colors"
-          >
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/>
-            </svg>
-            Chèn biến động
-            <span className="text-[9px] text-cyan-500/60">({field.templateVars.length} biến)</span>
-          </button>
+        {field.desc && field.type !== 'info' && <p className={descCls}>{field.desc}</p>}
+        {field.hint && field.type !== 'json' && (
+          <div className="wf-callout mt-2" data-tone="tip">
+            <LightbulbIcon className="w-3.5 h-3.5" />
+            <span>{field.hint}</span>
+          </div>
         )}
       </div>
+    );
+  };
+
+  // ── Section card: header (icon · title · count · chevron) + fields ───────
+  const renderSection = (section: { name: string; fields: Field[] }) => {
+    const visible = section.fields.filter(f => !isFieldHidden(f));
+    if (visible.length === 0) return null;
+
+    const isAdvanced = section.name === ADVANCED_SECTION;
+    const open = isAdvanced ? showAdvanced : !collapsedSections[section.name];
+    const toggle = () => {
+      if (isAdvanced) setShowAdvanced(p => !p);
+      else setCollapsedSections(prev => ({ ...prev, [section.name]: !prev[section.name] }));
+    };
+    const Icon = SECTION_ICONS[section.name] || SlidersIcon;
+
+    // Consecutive booleans share one toggle list.
+    const blocks: React.ReactNode[] = [];
+    let toggles: Field[] = [];
+    const flushToggles = () => {
+      if (toggles.length === 0) return;
+      blocks.push(<div key={`toggles:${toggles[0].key}`} className="wf-toggle-list">{toggles.map(f => renderField(f))}</div>);
+      toggles = [];
+    };
+    for (const field of visible) {
+      if (field.type === 'boolean') { toggles.push(field); continue; }
+      flushToggles();
+      blocks.push(renderField(field));
+    }
+    flushToggles();
+
+    return (
+      <section key={section.name} className="wf-section">
+        <button type="button" onClick={toggle} aria-expanded={open} className="wf-section__head"
+          title={open ? 'Thu gọn mục này' : 'Mở mục này'}>
+          <span className="wf-section__icon"><Icon className="w-3.5 h-3.5" /></span>
+          <span className="wf-section__title">{section.name}</span>
+          <span className="wf-section__meta">{visible.length} mục</span>
+          <ChevronDownIcon className={`w-4 h-4 flex-shrink-0 wf-faint transition-transform ${open ? '' : '-rotate-90'}`} />
+        </button>
+        {open && <div className="wf-section__body">{blocks}</div>}
+      </section>
     );
   };
 
   // ── Shared inner content ─────────────────────────────────────────────────
   const formContent = (
     <>
-      {/* Tên hiển thị */}
-      <div>
-        <label className={labelCls}>Tên hiển thị</label>
-        <input value={label}
-          onChange={e => { setLabel(e.target.value); onLabelChange(e.target.value); }}
-          className={inputCls} placeholder={getNodeLabel(node.type)} />
-        <p className={descCls}>Tên gợi nhớ hiển thị trên node trong sơ đồ workflow.</p>
-      </div>
-
-      {(allFields.length > 0 || node.type === 'tgbot.action.sendMessage') && <div className="border-t border-gray-700/50" />}
-
       {allFields.length === 0 && node.type !== 'tgbot.action.sendMessage' && (
-        <div className="bg-gray-800/60 border border-gray-700/50 rounded-xl px-4 py-5 text-center">
-          <div className="text-2xl mb-2">✅</div>
-          <p className="text-gray-300 text-xs font-medium">Node này không cần cấu hình thêm</p>
-          <p className="text-gray-400 text-[11px] mt-1">Chỉ cần kết nối với các node khác là đủ.</p>
+        <div className="wf-empty">
+          <span className="wf-icon-tile" style={accentStyle('#16a34a')}>
+            <CheckCircleIcon className="wf-icon-tile__glyph" />
+          </span>
+          <p className="mt-1 text-[13px] font-semibold wf-text">Node này không cần cấu hình thêm</p>
+          <p className="text-xs wf-muted">Chỉ cần kết nối với các node khác là đủ.</p>
         </div>
       )}
 
@@ -5069,120 +5129,90 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
         />
       )}
 
-      {basicFields.map(renderField)}
-
-      {advFields.length > 0 && (
-        <div>
-          <button type="button" onClick={() => setShowAdvanced(p => !p)}
-            className="w-full flex items-center gap-2 py-1.5 text-gray-400 hover:text-gray-300 transition-colors text-xs">
-            <div className="flex-1 h-px bg-gray-700/60" />
-            <span className="flex items-center gap-1.5 flex-shrink-0">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
-                className={`transition-transform ${showAdvanced ? 'rotate-180' : ''}`}>
-                <polyline points="6 9 12 15 18 9"/>
-              </svg>
-              {showAdvanced ? 'Ẩn bớt' : `${advFields.length} tùy chọn nâng cao`}
-            </span>
-            <div className="flex-1 h-px bg-gray-700/60" />
-          </button>
-          {showAdvanced && <div className="space-y-4 mt-2">{advFields.map(renderField)}</div>}
-        </div>
-      )}
+      {fieldSections.map(renderSection)}
     </>
   );
 
   const footer = (
-    <div className="px-4 py-3 border-t border-gray-700/60 flex-shrink-0 space-y-2">
-      {/* ── Node references ── */}
-      {upstreamNodes.length > 0 && (
-        <div className="bg-gray-800/60 rounded-xl px-3 py-2">
-          <button
-            type="button"
-            onClick={() => setIsUpstreamNodesCollapsed(collapsed => !collapsed)}
-            aria-expanded={!isUpstreamNodesCollapsed}
-            className="w-full flex items-center justify-between gap-2 text-left text-[11px] text-gray-400 font-medium hover:text-gray-300 transition-colors"
-            title={isUpstreamNodesCollapsed ? 'Mở dữ liệu từ node phía trước' : 'Thu gọn dữ liệu từ node phía trước'}
-          >
-            <span className="flex items-center gap-1.5 min-w-0">
-              <span className="truncate">Dữ liệu từ node phía trước</span>
-              <span className="text-[10px] text-gray-500">({upstreamNodes.length})</span>
+    <div className="wf-panel__footer px-5 py-3 flex-shrink-0">
+      <div className="space-y-2.5">
+        {/* ── Template variables toolbar ── */}
+        <div className="flex items-center justify-between gap-2">
+          <span className="flex items-center gap-1.5 min-w-0 text-xs font-semibold wf-text-2">
+            <span className="inline-flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-md bg-[var(--wf-var-bg)] text-[color:var(--wf-var-fg)]">
+              <BracesGlyph />
             </span>
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              className={`flex-shrink-0 transition-transform ${isUpstreamNodesCollapsed ? '' : 'rotate-180'}`}
-              aria-hidden="true"
+            <span className="truncate">Biến động</span>
+          </span>
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            <button
+              type="button"
+              onClick={() => setShowNodePicker(true)}
+              className="wf-btn wf-btn--sm"
+              title="Copy {{ $node.<id>.output }} của một node"
             >
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-          </button>
-          {!isUpstreamNodesCollapsed && (
-            <>
-              <div className="flex flex-col gap-1.5 mt-1.5">
-                {upstreamNodes.map(n => {
-                  const copied = copiedNodeId === n.id;
-                  return (
-                    <div key={n.id} className="flex items-center gap-1.5">
+              <PlusIcon className="w-3 h-3" /> Output node
+            </button>
+            <button
+              type="button"
+              onClick={() => { setTemplatePopupField(''); setShowTemplatePopup(true); }}
+              className="wf-btn wf-btn--sm wf-btn--primary"
+            >
+              <BracesGlyph /> Chèn biến
+            </button>
+          </div>
+        </div>
+        <p className="text-[11px] leading-4 wf-muted">
+          Dùng <code className="wf-var">{'{{ }}'}</code> để chèn dữ liệu động: trigger, ngày giờ, output node khác.
+        </p>
+
+        {/* ── Node references ── */}
+        {upstreamNodes.length > 0 && (
+          <div className="wf-card">
+            <button
+              type="button"
+              onClick={() => setIsUpstreamNodesCollapsed(collapsed => !collapsed)}
+              aria-expanded={!isUpstreamNodesCollapsed}
+              className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left"
+              title={isUpstreamNodesCollapsed ? 'Mở dữ liệu từ node phía trước' : 'Thu gọn dữ liệu từ node phía trước'}
+            >
+              <span className="flex items-center gap-1.5 min-w-0 text-xs font-semibold wf-text-2">
+                <span className="truncate">Dữ liệu từ node phía trước</span>
+                <span className="font-medium wf-faint">({upstreamNodes.length})</span>
+              </span>
+              <ChevronDownIcon className={`w-4 h-4 flex-shrink-0 wf-faint transition-transform ${isUpstreamNodesCollapsed ? '' : 'rotate-180'}`} />
+            </button>
+            {!isUpstreamNodesCollapsed && (
+              <div className="px-1.5 pb-2 border-t border-[color:var(--wf-card-border)]">
+                <div className="flex flex-col gap-0.5 pt-1.5 max-h-52 overflow-y-auto">
+                  {upstreamNodes.map(n => {
+                    const copied = copiedNodeId === n.id;
+                    return (
                       <button
+                        key={n.id}
                         type="button"
                         onClick={() => {
                           navigator.clipboard.writeText(`{{ $node.${n.id}.output }}`).catch(()=>{});
                           setCopiedNodeId(n.id);
                           setTimeout(() => setCopiedNodeId(null), 1000);
                         }}
-                        className={`flex-1 flex items-center gap-2 text-[10px] font-mono px-2.5 py-1.5 rounded-lg transition-all truncate ${
-                          copied
-                            ? 'bg-green-500/20 text-green-400 border border-green-500/40'
-                            : 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 hover:bg-cyan-500/20 hover:border-cyan-500/40'
-                        }`}
+                        title={`Copy {{ $node.${n.id}.output }}`}
+                        className="group w-full flex items-center gap-2.5 px-1.5 py-1.5 rounded-lg text-left transition-colors hover:bg-[var(--wf-hover)]"
                       >
-                        {copied ? (
-                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="flex-shrink-0"><polyline points="20 6 9 17 4 12"/></svg>
-                        ) : (
-                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0">
-                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                          </svg>
-                        )}
-                        <span className="truncate">{n.label}</span>
+                        <NodeIconTile type={n.type} size="sm" showChannel={false} />
+                        <span className="flex-1 min-w-0 truncate text-xs font-medium wf-text">{n.label}</span>
+                        {copied
+                          ? <CheckIcon className="w-3.5 h-3.5 flex-shrink-0 text-[#16a34a]" />
+                          : <CopyIcon className="w-3.5 h-3.5 flex-shrink-0 wf-faint group-hover:text-[color:var(--wf-text)]" />}
                       </button>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
+                <p className="mt-1.5 px-1.5 text-[10.5px] wf-faint">Bấm để copy <code className="wf-var">{'{{ $node.<UUID>.output }}'}</code></p>
               </div>
-              <p className="text-[9px] text-gray-400 mt-1">Click để copy <span className="font-mono text-gray-400">{'{{ $node.<UUID>.output }}'}</span></p>
-            </>
-          )}
-        </div>
-      )}
-
-      {/* ── Template Variable Popup Trigger ── */}
-      <div className="bg-gray-800/60 rounded-xl px-3 py-2">
-        <div className="flex items-center justify-between">
-          <p className="text-[11px] text-gray-400 font-medium">🔤 Biến động</p>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setShowNodePicker(true)}
-              className="text-[10px] text-cyan-400 hover:text-cyan-300 bg-cyan-500/10 hover:bg-cyan-500/20 px-2 py-0.5 rounded-lg transition-colors font-medium"
-            >
-              + Output node
-            </button>
-            <button
-              type="button"
-              onClick={() => { setTemplatePopupField(''); setShowTemplatePopup(true); }}
-              className="text-[10px] text-white bg-blue-500 hover:bg-blue-500/60 px-2 py-0.5 rounded-lg transition-colors font-medium"
-            >
-              + Chèn Biến
-            </button>
+            )}
           </div>
-        </div>
-        <p className="text-[9px] text-gray-400 mt-1.5">
-          Dùng <code className="text-blue-400 bg-blue-500/10 px-1 rounded text-[9px]">{'{{ }}'}</code> để chèn dữ liệu động từ trigger, ngày giờ, hoặc output của node khác. Click vào nút để xem danh sách đầy đủ.
-        </p>
+        )}
       </div>
 
       {/* Node Picker Modal */}
@@ -5204,10 +5234,10 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
       <TemplateVarPopup
         open={showTemplatePopup}
         onClose={() => setShowTemplatePopup(false)}
-        nodeType={node?.type}
-        allNodes={allNodeList}
-        currentId={node?.id}
-        currentField={templatePopupField}
+        triggerTypes={triggerTypes}
+        upstreamNodes={upstreamVarNodes}
+        suggestedKeys={allFields.find(f => f.key === templatePopupField)?.templateVars}
+        fieldLabel={templatePopupField ? allFields.find(f => f.key === templatePopupField)?.label : undefined}
         onSelect={(varKey) => {
           const tag = `{{ ${varKey} }}`;
           if (templatePopupField) {
@@ -5223,31 +5253,52 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
   );
 
   const headerBtns = (
-    <div className="flex items-center gap-1 flex-shrink-0">
+    <div className="flex items-center gap-0.5 flex-shrink-0 -mr-1.5">
       {/* Fullscreen toggle */}
-      <button onClick={() => setIsFullscreen(f => !f)} title={isFullscreen ? 'Thu nhỏ (Esc)' : 'Mở rộng toàn màn hình'}
-        className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 transition-colors">
-        {isFullscreen ? (
-          /* Compress icon */
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/>
-            <path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/>
-          </svg>
-        ) : (
-          /* Expand icon */
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/>
-            <path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>
-          </svg>
-        )}
+      <button type="button" onClick={() => setIsFullscreen(f => !f)} title={isFullscreen ? 'Thu nhỏ (Esc)' : 'Mở rộng toàn màn hình'}
+        className="wf-icon-btn">
+        {isFullscreen ? <MinimizeIcon className="w-4 h-4" /> : <MaximizeIcon className="w-4 h-4" />}
       </button>
       {/* Close */}
-      <button onClick={onClose} title="Đóng"
-        className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 transition-colors">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-        </svg>
+      <button type="button" onClick={onClose} title="Đóng" className="wf-icon-btn">
+        <CloseIcon className="w-4 h-4" />
       </button>
+    </div>
+  );
+
+  // ── Header: node identity + inline-editable display name ────────────────
+  const isRenamed = !!label.trim() && label !== defaultLabel;
+  const header = (
+    <div className="wf-panel__header px-5 pt-4 pb-3 flex-shrink-0" style={accentStyle(visual.accent)}>
+      <div className="flex items-center gap-3">
+        <NodeIconTile type={node.type} size="lg" />
+        <div className="flex-1 min-w-0">
+          {/* Eyebrow: family · channel (10px uppercase, node accent colour) */}
+          <div className="wf-node__eyebrow">
+            <span className="flex-shrink-0">{visual.familyLabel}</span>
+            {visual.channel && (
+              <>
+                <span className="flex-shrink-0" aria-hidden="true">·</span>
+                <span className="min-w-0 truncate">{CHANNEL_NAME[visual.channel]}</span>
+              </>
+            )}
+          </div>
+          {/* Tên hiển thị (was a form field): same state + handler, now edited in place */}
+          <input
+            value={label}
+            onChange={e => { setLabel(e.target.value); onLabelChange(e.target.value); }}
+            onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+            placeholder={defaultLabel}
+            title="Nhấn để đổi tên hiển thị trên sơ đồ"
+            aria-label="Tên hiển thị trên sơ đồ"
+            spellCheck={false}
+            className="wf-title-input"
+          />
+        </div>
+        {headerBtns}
+      </div>
+      {nodeDescription && <p className="wf-panel__desc mt-2.5">{nodeDescription}</p>}
+      {isRenamed && <p className="mt-1 text-[11px] wf-muted">Loại: {defaultLabel}</p>}
     </div>
   );
 
@@ -5256,22 +5307,14 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
         onClick={e => { if (e.target === e.currentTarget) setIsFullscreen(false); }}>
-        <div className="bg-gray-900 border border-gray-700/60 rounded-2xl shadow-2xl flex flex-col"
-          style={{ width: 'min(53.75rem, 92vw)', height: 'min(90vh, 56.25rem)' }}>
-          {/* Header */}
-          <div className="px-5 py-3.5 border-b border-gray-700/60 flex items-center justify-between flex-shrink-0">
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="text-base">⚙️</span>
-              <div className="min-w-0">
-                <p className="text-white text-sm font-semibold truncate">{node.label || getNodeLabel(node.type)}</p>
-                <p className="text-gray-400 text-[11px]">{getNodeLabel(node.type)}</p>
-              </div>
-            </div>
-            {headerBtns}
-          </div>
+        <div className="wf-panel border rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+          style={{ width: 'min(53.75rem, 92vw)', height: 'min(90vh, 56.25rem)', ...accentStyle(visual.accent) }}>
+          {header}
           {/* Body */}
-          <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-            {formContent}
+          <div className="flex-1 overflow-y-auto px-6 py-5">
+            <div className="max-w-2xl w-full mx-auto space-y-4">
+              {formContent}
+            </div>
           </div>
           {footer}
         </div>
@@ -5281,32 +5324,21 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
 
   // ── Normal sidebar panel (resizable) ────────────────────────────────────
   return (
-    <div className="relative bg-gray-900 border-l border-gray-700/60 flex flex-col h-full overflow-hidden flex-shrink-0"
-      style={{ width: panelWidth }}>
+    <div className="wf-panel relative border-l flex flex-col h-full overflow-hidden flex-shrink-0"
+      style={{ width: panelWidth, ...accentStyle(visual.accent) }}>
 
-      {/* ← Drag-resize handle on left edge */}
+      {/* ← Drag-resize handle on left edge: invisible 6px hit area, 2px line on hover */}
       <div
         onMouseDown={handleResizeMouseDown}
-        className="absolute left-0 top-0 bottom-0 w-1.5 cursor-ew-resize group z-10 hover:bg-blue-500/40 transition-colors"
+        className="group absolute left-0 top-0 bottom-0 w-1.5 cursor-ew-resize z-10"
         title="Kéo để thay đổi chiều rộng">
-        {/* Visual indicator on hover */}
-        <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-10 rounded-full bg-gray-600 group-hover:bg-blue-400 transition-colors mx-auto" style={{ marginLeft: '0.125rem' }} />
+        <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-[var(--wf-focus)] opacity-0 group-hover:opacity-100 transition-opacity" />
       </div>
 
-      {/* Header */}
-      <div className="pl-4 pr-3 py-3 border-b border-gray-700/60 flex items-center justify-between flex-shrink-0">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-base">⚙️</span>
-          <div className="min-w-0">
-            <p className="text-white text-sm font-semibold truncate leading-tight">{node.label || getNodeLabel(node.type)}</p>
-            <p className="text-gray-400 text-[11px] truncate">{getNodeLabel(node.type)}</p>
-          </div>
-        </div>
-        {headerBtns}
-      </div>
+      {header}
 
       {/* Form */}
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
         {formContent}
       </div>
 

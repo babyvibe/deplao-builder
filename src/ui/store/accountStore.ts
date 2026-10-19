@@ -22,6 +22,8 @@ export interface AccountInfo {
   facebook_id?: string;
   proxy_id?: number | null;
   username?: string; // @username telegram
+  /** Zalo: ID hội thoại "My Documents" có sẵn của Zalo (loginInfo.send2me_id), không phải zalo_id */
+  send2me_id?: string;
 }
 
 interface AccountStore {

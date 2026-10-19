@@ -25,7 +25,7 @@ export class PancakeAdapter extends IntegrationAdapter {
 
   private getShopId(): string {
     const shopId = this.config.credentials.shopId || this.config.settings?.shopId;
-    if (!shopId) throw new Error('Thieu Shop ID Pancake');
+    if (!shopId) throw new Error('Thiếu Shop ID Pancake');
     return String(shopId);
   }
 
@@ -35,7 +35,7 @@ export class PancakeAdapter extends IntegrationAdapter {
       this.config.credentials.apiKey ||
       this.config.credentials.accessToken ||
       this.config.credentials.token;
-    if (!key) throw new Error('Thieu api_key Pancake');
+    if (!key) throw new Error('Thiếu api_key Pancake');
     return String(key);
   }
 
@@ -362,9 +362,9 @@ export class PancakeAdapter extends IntegrationAdapter {
         data?.data?.shop_name ||
         `Shop #${shopId}`;
 
-      return { success: true, message: `Ket noi Pancake thanh cong - shop: ${shopName}` };
+      return { success: true, message: `Kết nối Pancake thành công - shop: ${shopName}` };
     } catch (e: any) {
-      return { success: false, message: `Loi ket noi Pancake: ${this.formatError(e)}` };
+      return { success: false, message: `Lỗi kết nối Pancake: ${this.formatError(e)}` };
     }
   }
 
@@ -518,7 +518,7 @@ export class PancakeAdapter extends IntegrationAdapter {
       }
 
       default:
-        throw new Error(`Pancake khong ho tro action: ${action}`);
+        throw new Error(`Pancake không hỗ trợ action: ${action}`);
     }
   }
 }

@@ -1,0 +1,319 @@
+package connector
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"time"
+
+	"github.com/rs/zerolog"
+	"go.mau.fi/util/jsontime"
+	"maunium.net/go/mautrix/bridgev2"
+	"maunium.net/go/mautrix/bridgev2/database"
+	"maunium.net/go/mautrix/bridgev2/networkid"
+	"maunium.net/go/mautrix/mediaproxy"
+
+	"go.mau.fi/mautrix-meta/pkg/messagix/socket"
+	"go.mau.fi/mautrix-meta/pkg/messagix/table"
+	"go.mau.fi/mautrix-meta/pkg/metaid"
+	"go.mau.fi/mautrix-meta/pkg/msgconv"
+	"go.mau.fi/mautrix-meta/pkg/msgconv/mediadl"
+)
+
+var _ bridgev2.DirectMediableNetwork = (*MetaConnector)(nil)
+
+func (m *MetaConnector) SetUseDirectMedia() {
+	m.MsgConv.DirectMedia = true
+}
+
+func (m *MetaConnector) Download(ctx context.Context, mediaID networkid.MediaID, params map[string]string) (mediaproxy.GetMediaResponse, error) {
+	mediaInfo, err := metaid.ParseMediaID(mediaID)
+	if err != nil {
+		return nil, err
+	}
+	zerolog.Ctx(ctx).Trace().Any("mediaInfo", mediaInfo).Any("err", err).Msg("download direct media")
+
+	var msg *database.Message
+	if mediaInfo.PartID == "" {
+		msg, err = m.Bridge.DB.Message.GetFirstPartByID(ctx, mediaInfo.UserID, mediaInfo.MessageID)
+	} else {
+		msg, err = m.Bridge.DB.Message.GetPartByID(ctx, mediaInfo.UserID, mediaInfo.MessageID, mediaInfo.PartID)
+	}
+	if err != nil {
+		return nil, err
+	} else if msg == nil {
+		return nil, fmt.Errorf("message not found")
+	}
+
+	dmm := msg.Metadata.(*metaid.MessageMetadata).DirectMediaMeta
+	if dmm == nil {
+		return nil, fmt.Errorf("message does not have direct media metadata")
+	}
+
+	switch mediaInfo.Type {
+	case metaid.DirectMediaTypeMetaV1, metaid.DirectMediaTypeMetaV2:
+		var info *mediadl.DirectMediaMeta
+		err = json.Unmarshal(dmm, &info)
+		if err != nil {
+			return nil, err
+		}
+
+		log := zerolog.Ctx(ctx)
+		url := info.URL
+
+		// Check if URL is expired or about to expire (5 minute buffer)
+		needsRefresh := !info.ExpiresAt.IsZero() && time.Now().After(info.ExpiresAt.Add(-5*time.Minute))
+
+		// Try download first
+		size, reader, err := mediadl.DownloadMedia(ctx, info.MimeType, url, m.MsgConv.MaxFileSize)
+
+		// If download failed with 403 or we know URL is expired, try to refresh
+		if err != nil && (errors.Is(err, mediadl.ErrForbidden) || needsRefresh) {
+			log.Debug().
+				Bool("needs_refresh", needsRefresh).
+				AnErr("original_error", err).
+				Msg("Attempting to refresh expired media URL")
+
+			refreshedURL, refreshErr := m.refreshMediaURL(ctx, mediaInfo, msg, info)
+			if refreshErr != nil {
+				log.Warn().Err(refreshErr).Msg("Failed to refresh media URL")
+				// Return the original error if refresh failed
+				return nil, err
+			}
+
+			log.Debug().Str("refreshed_url", refreshedURL).Msg("Successfully refreshed media URL")
+			size, reader, err = mediadl.DownloadMedia(ctx, info.MimeType, refreshedURL, m.MsgConv.MaxFileSize)
+		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		return &mediaproxy.GetMediaResponseData{
+			Reader:        reader,
+			ContentType:   info.MimeType,
+			ContentLength: size,
+		}, nil
+	case metaid.DirectMediaTypeWhatsAppV1, metaid.DirectMediaTypeWhatsAppV2:
+		var info *msgconv.DirectMediaWhatsApp
+		err = json.Unmarshal(dmm, &info)
+		if err != nil {
+			return nil, err
+		}
+
+		ul := m.Bridge.GetCachedUserLoginByID(mediaInfo.UserID)
+		if ul == nil || !ul.Client.IsLoggedIn() {
+			return nil, fmt.Errorf("login %s not found for download", mediaInfo.UserID)
+		}
+		client := ul.Client.(*MetaClient)
+		return &mediaproxy.GetMediaResponseFile{
+			Callback: func(f *os.File) (*mediaproxy.FileMeta, error) {
+				return &mediaproxy.FileMeta{}, client.E2EEClient.DownloadToFile(ctx, info, f)
+			},
+		}, nil
+	default:
+		return nil, fmt.Errorf("unknown media type: %v", mediaInfo.Type)
+	}
+}
+
+// refreshMediaURL routes to the appropriate refresh method based on attachment type
+func (m *MetaConnector) refreshMediaURL(
+	ctx context.Context,
+	mediaInfo *metaid.MediaInfo,
+	msg *database.Message,
+	info *mediadl.DirectMediaMeta,
+) (string, error) {
+	ul := m.Bridge.GetCachedUserLoginByID(mediaInfo.UserID)
+	if ul == nil || !ul.Client.IsLoggedIn() {
+		return "", fmt.Errorf("login %s not found for refresh", mediaInfo.UserID)
+	}
+	client := ul.Client.(*MetaClient)
+
+	if info.AttachmentFBID != "" {
+		return m.refreshBlobMedia(ctx, client, msg, info)
+	}
+
+	return "", fmt.Errorf("no refresh identifiers available")
+}
+
+// refreshBlobMedia re-fetches messages to get fresh attachment URLs.
+// It updates all fetched messages in the database, not just the one we need.
+func (m *MetaConnector) refreshBlobMedia(
+	ctx context.Context,
+	client *MetaClient,
+	msg *database.Message,
+	info *mediadl.DirectMediaMeta,
+) (string, error) {
+	log := zerolog.Ctx(ctx)
+
+	// Parse thread key from portal ID
+	threadKey := metaid.ParseFBPortalID(msg.Room.ID)
+	if threadKey == 0 {
+		return "", fmt.Errorf("invalid thread key")
+	}
+
+	// Parse message ID for the target message
+	parsedMsgID := metaid.ParseMessageID(msg.ID)
+	fbMsgID, ok := parsedMsgID.(metaid.ParsedFBMessageID)
+	if !ok {
+		return "", fmt.Errorf("not a FB message ID: %s", msg.ID)
+	}
+
+	log.Debug().
+		Int64("thread_key", threadKey).
+		Str("message_id", fbMsgID.ID).
+		Str("attachment_fbid", info.AttachmentFBID).
+		Int("part_index", info.PartIndex).
+		Msg("Refreshing blob media by re-fetching messages")
+
+	// Re-fetch messages around the target
+	resp, err := client.Client.ExecuteTasks(ctx, &socket.FetchMessagesTask{
+		ThreadKey:            threadKey,
+		Direction:            0,
+		ReferenceTimestampMs: msg.Timestamp.UnixMilli(),
+		ReferenceMessageId:   fbMsgID.ID,
+		SyncGroup:            1,
+		Cursor:               client.Client.GetCursor(1),
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch messages: %w", err)
+	}
+
+	// Collect all fetched messages
+	upsertMap, insertMsgs := resp.WrapMessages()
+	var allMessages []*table.WrappedMessage
+	for _, upsert := range upsertMap {
+		allMessages = append(allMessages, upsert.Messages...)
+	}
+	allMessages = append(allMessages, insertMsgs...)
+
+	var resultURL string
+	var updatedCount int
+
+	// Process ALL fetched messages, updating their URLs in the database
+	for _, wrappedMsg := range allMessages {
+		// Build attachment URL map: AttachmentFbid -> fresh URL
+		attachmentURLs := make(map[string]string)
+		attachmentExpiry := make(map[string]time.Time)
+
+		for _, att := range wrappedMsg.BlobAttachments {
+			if att.AttachmentFbid == "" {
+				continue
+			}
+			url := att.PlayableUrl
+			expiry := att.PlayableUrlExpirationTimestampMs
+			if url == "" {
+				url = att.PreviewUrl
+				expiry = att.PreviewUrlExpirationTimestampMs
+			}
+			if url != "" {
+				attachmentURLs[att.AttachmentFbid] = url
+				attachmentExpiry[att.AttachmentFbid] = time.UnixMilli(expiry)
+			}
+		}
+
+		for _, att := range wrappedMsg.Attachments {
+			if att.AttachmentFbid == "" {
+				continue
+			}
+			url := att.PlayableUrl
+			expiry := att.PlayableUrlExpirationTimestampMs
+			if url == "" {
+				url = att.PreviewUrl
+				expiry = att.PreviewUrlExpirationTimestampMs
+			}
+			if url != "" {
+				attachmentURLs[att.AttachmentFbid] = url
+				attachmentExpiry[att.AttachmentFbid] = time.UnixMilli(expiry)
+			}
+		}
+
+		if len(attachmentURLs) == 0 {
+			continue
+		}
+
+		// Look up all message parts in the database for this message
+		networkMsgID := metaid.MakeFBMessageID(wrappedMsg.MessageId)
+		dbMessages, err := m.Bridge.DB.Message.GetAllPartsByID(ctx, msg.Room.Receiver, networkMsgID)
+		if err != nil {
+			log.Warn().Err(err).Str("message_id", wrappedMsg.MessageId).Msg("Failed to get message parts from database")
+			continue
+		}
+
+		for _, dbMsg := range dbMessages {
+			meta, ok := dbMsg.Metadata.(*metaid.MessageMetadata)
+			if !ok || meta.DirectMediaMeta == nil {
+				continue
+			}
+
+			var dmm mediadl.DirectMediaMeta
+			if err := json.Unmarshal(meta.DirectMediaMeta, &dmm); err != nil {
+				continue
+			}
+
+			// Check if this attachment has a fresh URL
+			if dmm.AttachmentFBID == "" {
+				continue
+			}
+
+			freshURL, hasFreshURL := attachmentURLs[dmm.AttachmentFBID]
+			freshExpiry := attachmentExpiry[dmm.AttachmentFBID]
+
+			if !hasFreshURL || freshURL == dmm.URL {
+				// No update needed
+				continue
+			}
+
+			// Update the stored URL and expiry
+			dmm.URL = freshURL
+			dmm.ExpiresAt = jsontime.UM(freshExpiry)
+
+			updatedMeta, err := json.Marshal(dmm)
+			if err != nil {
+				log.Warn().Err(err).Msg("Failed to marshal updated DirectMediaMeta")
+				continue
+			}
+
+			meta.DirectMediaMeta = updatedMeta
+			if err := m.Bridge.DB.Message.Update(ctx, dbMsg); err != nil {
+				log.Warn().Err(err).Str("message_id", string(dbMsg.ID)).Msg("Failed to update message in database")
+				continue
+			}
+
+			updatedCount++
+			log.Debug().
+				Str("message_id", wrappedMsg.MessageId).
+				Str("attachment_fbid", dmm.AttachmentFBID).
+				Msg("Updated attachment URL in database")
+
+			// Check if this is the attachment we're looking for
+			if wrappedMsg.MessageId == fbMsgID.ID && dmm.AttachmentFBID == info.AttachmentFBID {
+				resultURL = freshURL
+			}
+		}
+
+		// Also check by part index for the target message if we haven't found our result
+		if wrappedMsg.MessageId == fbMsgID.ID && resultURL == "" {
+			if info.PartIndex >= 0 && info.PartIndex < len(wrappedMsg.BlobAttachments) {
+				att := wrappedMsg.BlobAttachments[info.PartIndex]
+				url := att.PlayableUrl
+				if url == "" {
+					url = att.PreviewUrl
+				}
+				if url != "" {
+					resultURL = url
+				}
+			}
+		}
+	}
+
+	log.Debug().Int("updated_count", updatedCount).Msg("Finished refreshing blob media URLs")
+
+	if resultURL != "" {
+		return resultURL, nil
+	}
+
+	return "", fmt.Errorf("target attachment not found in re-fetched messages")
+}

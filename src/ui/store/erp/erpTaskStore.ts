@@ -1,12 +1,10 @@
 import { create } from 'zustand';
-import ipc from '@/lib/ipc';
 import DataAccessor from '@/lib/data/DataAccessor';
-import { useEmployeeStore } from '@/store/employeeStore';
 import type { CreateTaskInput, ErpProject, ErpTask, ErpTaskPriority, ErpTaskStatus, TaskInboxFilter, UpdateTaskInput } from '../../../models/erp';
+import { withErpDeniedNotice } from './erpStoreHelpers';
 
-function isEmployee(): boolean {
-  try { return useEmployeeStore.getState().mode === 'employee'; } catch { return false; }
-}
+// Dự án / công việc: mọi lệnh qua DataAccessor (nhân viên → REST, Boss kiểm tra quyền ERP theo hồ sơ nhân viên).
+// Kết quả cùng hình dạng IPC ở cả hai chế độ; đọc lỗi → giữ dữ liệu đang hiện, ghi lỗi → không đổi state.
 
 type TaskListFilter = {
   projectId?: string;
@@ -38,7 +36,8 @@ interface ErpTaskState {
   setActiveProject: (id: string | null) => void;
   loadTasks: (filter?: TaskListFilter) => Promise<void>;
   createTask: (input: CreateTaskInput) => Promise<ErpTask | null>;
-  updateTask: (id: string, patch: UpdateTaskInput) => Promise<void>;
+  /** Kết quả lưu (Boss / handler từ chối → success:false + error) — người gọi báo lỗi thay vì "đã lưu". */
+  updateTask: (id: string, patch: UpdateTaskInput) => Promise<{ success: boolean; error?: string; task?: ErpTask }>;
   updateTaskStatus: (id: string, status: string) => Promise<void>;
   deleteTask: (id: string) => Promise<void>;
   loadInbox: (filter: TaskInboxFilter) => Promise<void>;
@@ -64,35 +63,20 @@ export const useErpTaskStore = create<ErpTaskState>((set) => ({
   loadProjects: async () => {
     set({ loading: true });
     try {
-      if (isEmployee()) {
-        const res: any = await DataAccessor.erpProjects();
-        if (res?.success) set({ projects: res.data?.projects || res.projects || [], loading: false });
-        else set({ error: res?.error, loading: false });
-      } else {
-        const res = await ipc.erp?.projectList();
-        if (res?.success) set({ projects: res.projects, loading: false });
-        else set({ error: res?.error, loading: false });
-      }
+      const res: any = await DataAccessor.erpProjects();
+      if (res?.success && Array.isArray(res.projects)) set({ projects: res.projects, loading: false, error: null });
+      else set({ error: res?.error || null, loading: false });
     } catch (e: any) { set({ error: e.message, loading: false }); }
   },
 
   createProject: async (params) => {
     try {
-      if (isEmployee()) {
-        const res: any = await DataAccessor.erpCreateProject(params);
-        if (res?.success && res.data?.project) {
-          set(s => ({ projects: [...s.projects, res.data.project] }));
-          return res.data.project;
-        }
-        return null;
-      } else {
-        const res = await ipc.erp?.projectCreate({ ...params });
-        if (res?.success && res.project) {
-          set(s => ({ projects: [...s.projects, res.project] }));
-          return res.project;
-        }
-        return null;
+      const res: any = withErpDeniedNotice(await DataAccessor.erpCreateProject({ ...params }));
+      if (res?.success && res.project) {
+        set(s => ({ projects: s.projects.some(p => p.id === res.project.id) ? s.projects : [...s.projects, res.project] }));
+        return res.project;
       }
+      return null;
     } catch { return null; }
   },
 
@@ -101,94 +85,60 @@ export const useErpTaskStore = create<ErpTaskState>((set) => ({
   loadTasks: async (filter = {}) => {
     set({ loading: true, lastFilter: filter });
     try {
-      if (isEmployee()) {
-        const res: any = await DataAccessor.erpTasks(filter);
-        if (res?.success) {
-          set({ ...buildTaskCollections((res.data?.tasks || res.tasks || []) as ErpTask[]), loading: false });
-        } else set({ error: res?.error, loading: false });
-      } else {
-        const res = await ipc.erp?.taskList(filter);
-        if (res?.success) {
-          set({ ...buildTaskCollections(res.tasks as ErpTask[]), loading: false });
-        } else set({ error: res?.error, loading: false });
-      }
+      const res: any = await DataAccessor.erpTasks(filter);
+      if (res?.success && Array.isArray(res.tasks)) {
+        set({ ...buildTaskCollections(res.tasks as ErpTask[]), loading: false, error: null });
+      } else set({ error: res?.error || null, loading: false });
     } catch (e: any) { set({ error: e.message, loading: false }); }
   },
 
   createTask: async (input) => {
     try {
-      if (isEmployee()) {
-        const res: any = await DataAccessor.erpCreateTask(input);
-        if (res?.success && (res.data?.task || res.task)) {
-          const task = (res.data?.task || res.task) as ErpTask;
-          set(state => reconcileTaskInState(state, task));
-          return task;
-        }
-        return null;
-      } else {
-        const res = await ipc.erp?.taskCreate({ input });
-        if (res?.success && res.task) {
-          const task = res.task as ErpTask;
-          set(state => reconcileTaskInState(state, task));
-          return task;
-        }
-        return null;
+      const res: any = withErpDeniedNotice(await DataAccessor.erpCreateTask(input));
+      if (res?.success && res.task) {
+        const task = res.task as ErpTask;
+        set(state => reconcileTaskInState(state, task));
+        return task;
       }
+      return null;
     } catch { return null; }
   },
 
   updateTask: async (id, patch) => {
     try {
-      if (isEmployee()) {
-        const res: any = await DataAccessor.erpUpdateTask(id, patch);
-        if (res?.success && (res.data?.task || res.task)) {
-          set(state => reconcileTaskInState(state, (res.data?.task || res.task) as ErpTask));
-        }
-      } else {
-        const res = await ipc.erp?.taskUpdate({ id, patch });
-        if (res?.success && res.task) {
-          set(state => reconcileTaskInState(state, res.task as ErpTask));
-        }
+      const res: any = withErpDeniedNotice(await DataAccessor.erpUpdateTask(id, patch));
+      if (res?.success && res.task) {
+        set(state => reconcileTaskInState(state, res.task as ErpTask));
+        return { success: true, task: res.task as ErpTask };
       }
-    } catch {}
+      return { success: !!res?.success, error: res?.error };
+    } catch (e: any) {
+      return { success: false, error: e?.message || String(e) };
+    }
   },
 
   updateTaskStatus: async (id, status) => {
     try {
-      if (isEmployee()) {
-        const res: any = await DataAccessor.erpUpdateTaskStatus(id, status);
-        if (res?.success && (res.data?.task || res.task)) {
-          set(state => reconcileTaskInState(state, (res.data?.task || res.task) as ErpTask));
-        }
-      } else {
-        const res = await ipc.erp?.taskUpdateStatus({ id, status });
-        if (res?.success && res.task) {
-          set(state => reconcileTaskInState(state, res.task as ErpTask));
-        }
+      const res: any = withErpDeniedNotice(await DataAccessor.erpUpdateTaskStatus(id, status));
+      if (res?.success && res.task) {
+        set(state => reconcileTaskInState(state, res.task as ErpTask));
       }
     } catch {}
   },
 
+  // Boss từ chối / mất kết nối → giữ task trên bảng
   deleteTask: async (id) => {
     try {
-      if (isEmployee()) {
-        await DataAccessor.erpDeleteTask(id);
-      } else {
-        await ipc.erp?.taskDelete({ id });
-      }
-    } catch {}
+      const res: any = withErpDeniedNotice(await DataAccessor.erpDeleteTask(id));
+      if (res && res.success === false) return;
+    } catch { return; }
     set(state => removeTaskFromState(state, id));
   },
 
   loadInbox: async (filter) => {
     try {
-      if (isEmployee()) {
-        const res: any = await DataAccessor.erpMyInbox(filter);
-        if (res?.success) set({ inboxTasks: res.data?.tasks || res.tasks || [] });
-      } else {
-        const res = await ipc.erp?.taskListMyInbox({ filter });
-        if (res?.success) set({ inboxTasks: res.tasks });
-      }
+      const res: any = await DataAccessor.erpMyInbox(filter);
+      if (res?.success && Array.isArray(res.tasks)) set({ inboxTasks: res.tasks });
     } catch {}
   },
 

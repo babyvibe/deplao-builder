@@ -30,34 +30,34 @@ export default function CampaignCloneModal({ campaignName, totalContacts, onClos
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onClose}>
       <div
-        className="bg-gray-800 border border-gray-600 rounded-2xl w-[400px] shadow-2xl"
+        className="bg-card border border-input rounded-2xl w-[400px] shadow-2xl"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
           <div className="flex items-center gap-2">
             <span className="text-lg"><ClipboardListIcon className="w-4 h-4" /></span>
-            <h3 className="font-semibold text-white text-sm">Nhân bản chiến dịch</h3>
+            <h3 className="font-semibold text-foreground text-sm">Nhân bản chiến dịch</h3>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">✕</button>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">✕</button>
         </div>
 
         <div className="p-5 space-y-4">
           {/* Campaign preview */}
-          <div className="bg-gray-700/60 rounded-xl px-4 py-3">
-            <p className="text-[11px] text-gray-400 mb-0.5">Chiến dịch gốc</p>
-            <p className="text-sm text-white font-medium truncate">{campaignName}</p>
-            <p className="text-xs text-gray-400 mt-0.5">{totalContacts} liên hệ</p>
+          <div className="bg-muted/60 rounded-xl px-4 py-3">
+            <p className="text-[11px] text-muted-foreground mb-0.5">Chiến dịch gốc</p>
+            <p className="text-sm text-foreground font-medium truncate">{campaignName}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">{totalContacts} liên hệ</p>
           </div>
 
           {/* New name input */}
           <div>
-            <label className="text-xs text-gray-400 font-medium mb-1.5 block">Tên bản sao</label>
+            <label className="text-xs text-muted-foreground font-medium mb-1.5 block">Tên bản sao</label>
             <input
               value={cloneName}
               onChange={e => setCloneName(e.target.value)}
               placeholder="Nhập tên cho bản sao..."
-              className="w-full bg-gray-700 border border-gray-600 rounded-xl px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-colors"
+              className="w-full bg-muted border border-input rounded-xl px-3 py-2.5 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 transition-colors"
             />
             {!cloneName.trim() && (
               <p className="text-[11px] text-red-400 mt-1">Tên không được để trống</p>
@@ -66,14 +66,14 @@ export default function CampaignCloneModal({ campaignName, totalContacts, onClos
 
           {/* Include contacts option */}
           <div>
-            <p className="text-xs text-gray-400 font-medium mb-2">Tuỳ chọn sao chép tệp khách</p>
+            <p className="text-xs text-muted-foreground font-medium mb-2">Tuỳ chọn sao chép tệp khách</p>
             <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={() => setIncludeContacts(false)}
                 className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border text-center transition-colors ${
                   !includeContacts
-                    ? 'border-blue-500 bg-blue-500/15 text-white'
-                    : 'border-gray-600 text-gray-400 hover:border-gray-500 hover:text-gray-200'
+                    ? 'border-blue-500 bg-blue-500/15 text-foreground'
+                    : 'border-input text-muted-foreground hover:border-border-strong hover:text-foreground'
                 }`}
               >
                 <span className="text-xl"><EditIcon className="w-4 h-4" /></span>
@@ -87,8 +87,8 @@ export default function CampaignCloneModal({ campaignName, totalContacts, onClos
                 onClick={() => setIncludeContacts(true)}
                 className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border text-center transition-colors ${
                   includeContacts
-                    ? 'border-purple-500 bg-purple-500/15 text-white'
-                    : 'border-gray-600 text-gray-400 hover:border-gray-500 hover:text-gray-200'
+                    ? 'border-purple-500 bg-purple-500/15 text-foreground'
+                    : 'border-input text-muted-foreground hover:border-border-strong hover:text-foreground'
                 }`}
               >
                 <span className="text-xl"><UsersIcon className="w-4 h-4" /></span>
@@ -102,10 +102,10 @@ export default function CampaignCloneModal({ campaignName, totalContacts, onClos
         </div>
 
         {/* Footer */}
-        <div className="flex gap-2 px-5 py-4 border-t border-gray-700">
+        <div className="flex gap-2 px-5 py-4 border-t border-border">
           <button
             onClick={onClose}
-            className="flex-1 py-2.5 rounded-xl bg-gray-700 text-gray-300 text-sm hover:bg-gray-600 transition-colors"
+            className="flex-1 py-2.5 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent transition-colors"
           >
             Hủy
           </button>

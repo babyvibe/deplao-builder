@@ -3,7 +3,8 @@ import type { CRMNote } from '@/store/crmStore';
 
 interface NoteListProps {
   notes: CRMNote[];
-  onSave: (content: string, id?: number) => Promise<void>;
+  /** Trả `false` khi lưu thất bại → giữ nguyên nội dung đang gõ để người dùng thử lại. */
+  onSave: (content: string, id?: number) => Promise<void | boolean>;
   onDelete: (id: number) => Promise<void>;
 }
 
@@ -16,16 +17,16 @@ export default function NoteList({ notes, onSave, onDelete }: NoteListProps) {
   const handleAdd = async () => {
     if (!newText.trim()) return;
     setSaving(true);
-    await onSave(newText.trim());
-    setNewText('');
+    const saved = await onSave(newText.trim());
+    if (saved !== false) setNewText('');
     setSaving(false);
   };
 
   const handleEdit = async (note: CRMNote) => {
     if (!editText.trim()) return;
     setSaving(true);
-    await onSave(editText.trim(), note.id);
-    setEditId(null);
+    const saved = await onSave(editText.trim(), note.id);
+    if (saved !== false) setEditId(null);
     setSaving(false);
   };
 
@@ -38,7 +39,7 @@ export default function NoteList({ notes, onSave, onDelete }: NoteListProps) {
         <textarea value={newText} onChange={e => setNewText(e.target.value)}
           placeholder="Thêm ghi chú..."
           rows={2}
-          className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 resize-none" />
+          className="flex-1 bg-muted border border-input rounded-lg px-3 py-2 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 resize-none" />
         <button onClick={handleAdd} disabled={saving || !newText.trim()}
           className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs disabled:opacity-40 self-end">
           Lưu
@@ -47,22 +48,22 @@ export default function NoteList({ notes, onSave, onDelete }: NoteListProps) {
 
       {/* List */}
       {notes.map(note => (
-        <div key={note.id} className="bg-gray-700/50 border border-gray-600 rounded-lg p-2.5 group">
+        <div key={note.id} className="bg-muted/50 border border-input rounded-lg p-2.5 group">
           {editId === note.id ? (
             <div className="space-y-1.5">
               <textarea value={editText} onChange={e => setEditText(e.target.value)}
                 rows={3} autoFocus
-                className="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500 resize-none" />
+                className="w-full bg-muted border border-input rounded px-2 py-1.5 text-xs text-foreground focus:outline-none focus:border-blue-500 resize-none" />
               <div className="flex gap-1.5">
-                <button onClick={() => setEditId(null)} className="flex-1 py-1 rounded bg-gray-600 text-xs text-gray-300 hover:bg-gray-500">Hủy</button>
+                <button onClick={() => setEditId(null)} className="flex-1 py-1 rounded bg-accent text-xs text-foreground/80 hover:bg-accent">Hủy</button>
                 <button onClick={() => handleEdit(note)} disabled={saving} className="flex-1 py-1 rounded bg-blue-600 text-xs text-white hover:bg-blue-700 disabled:opacity-50">Lưu</button>
               </div>
             </div>
           ) : (
             <>
-              <p className="text-xs text-gray-200 whitespace-pre-wrap">{note.content}</p>
+              <p className="text-xs text-foreground whitespace-pre-wrap">{note.content}</p>
               <div className="flex items-center justify-between mt-1.5">
-                <span className="text-[11px] text-gray-400">{fmt(note.updated_at)}</span>
+                <span className="text-[11px] text-muted-foreground">{fmt(note.updated_at)}</span>
                 <div className="opacity-0 group-hover:opacity-100 flex gap-2 transition-opacity">
                   <button onClick={() => { setEditId(note.id); setEditText(note.content); }}
                     className="text-[11px] text-blue-400 hover:text-blue-300">Sửa</button>
@@ -75,7 +76,7 @@ export default function NoteList({ notes, onSave, onDelete }: NoteListProps) {
         </div>
       ))}
 
-      {notes.length === 0 && <p className="text-xs text-gray-400 text-center py-2">Chưa có ghi chú nào</p>}
+      {notes.length === 0 && <p className="text-xs text-muted-foreground text-center py-2">Chưa có ghi chú nào</p>}
     </div>
   );
 }

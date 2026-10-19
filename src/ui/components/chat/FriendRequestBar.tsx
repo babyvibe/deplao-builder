@@ -1,6 +1,7 @@
 import React from 'react';
 import { Spinner } from '@/components/common/PageLoading';
 import { useAppStore } from '@/store/appStore';
+import { useShallow } from 'zustand/react/shallow';
 import { useAccountStore } from '@/store/accountStore';
 import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
@@ -27,7 +28,9 @@ export default function FriendRequestBar({ zaloId, userId, contact, getAuth, onR
   const [sendPopupOpen, setSendPopupOpen] = React.useState(false);
   const [sendMsg, setSendMsg] = React.useState('');
   const [sending, setSending] = React.useState(false);
-  const { showNotification } = useAppStore();
+  const { showNotification } = useAppStore(useShallow(s => ({
+    showNotification: s.showNotification,
+  })));
 
   // Khi status thoát khỏi 'loading' → thông báo parent để scroll to bottom
   React.useEffect(() => {
@@ -109,10 +112,18 @@ export default function FriendRequestBar({ zaloId, userId, contact, getAuth, onR
       }
     });
 
+    // Hủy kết bạn (Zalo / điện thoại / máy khác) → hiện lại thanh "Kết bạn"
+    const unsubFriendRemoved = ipc.on?.('event:friendRemoved', (data: any) => {
+      if (data?.zaloId === zaloId && String(data?.userId || '') === String(userId)) {
+        setStatus('stranger');
+      }
+    });
+
     return () => {
       unsubAccepted?.();
       unsubSent?.();
       unsubRemoved?.();
+      unsubFriendRemoved?.();
     };
   }, [zaloId, userId]);
 
@@ -183,7 +194,7 @@ export default function FriendRequestBar({ zaloId, userId, contact, getAuth, onR
 
   return (
     <>
-      <div className="flex items-center gap-3 px-4 py-2.5 bg-gray-800/80 border-b border-gray-700/60 flex-shrink-0">
+      <div className="flex items-center gap-3 px-4 py-2.5 bg-card/80 border-b border-border/60 flex-shrink-0">
         {/* Icon */}
         <div className="w-7 h-7 rounded-full bg-blue-500/20 flex items-center justify-center flex-shrink-0">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-400">
@@ -197,18 +208,18 @@ export default function FriendRequestBar({ zaloId, userId, contact, getAuth, onR
         {/* Text */}
         <div className="flex-1 min-w-0">
           {status === 'stranger' && (
-            <span className="text-sm text-gray-300">
-              Gửi yêu cầu kết bạn tới <span className="font-medium text-white">{displayName}</span>
+            <span className="text-sm text-foreground/80">
+              Gửi yêu cầu kết bạn tới <span className="font-medium text-foreground">{displayName}</span>
             </span>
           )}
           {status === 'sent' && (
-            <span className="text-sm text-gray-400">
-              Đã gửi yêu cầu kết bạn tới <span className="font-medium text-gray-300">{displayName}</span> - đang chờ chấp nhận
+            <span className="text-sm text-muted-foreground">
+              Đã gửi yêu cầu kết bạn tới <span className="font-medium text-foreground/80">{displayName}</span> - đang chờ chấp nhận
             </span>
           )}
           {status === 'received' && (
-            <span className="text-sm text-gray-300">
-              <span className="font-medium text-white">{displayName}</span> đã gửi cho bạn yêu cầu kết bạn
+            <span className="text-sm text-foreground/80">
+              <span className="font-medium text-foreground">{displayName}</span> đã gửi cho bạn yêu cầu kết bạn
             </span>
           )}
         </div>
@@ -229,7 +240,7 @@ export default function FriendRequestBar({ zaloId, userId, contact, getAuth, onR
             <button
               onClick={handleUndo}
               disabled={sending}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-muted hover:bg-accent text-foreground/80 hover:text-foreground text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
             >
               {sending
                 ? <Spinner size={3} />
@@ -243,7 +254,7 @@ export default function FriendRequestBar({ zaloId, userId, contact, getAuth, onR
               <button
                 onClick={handleReject}
                 disabled={sending}
-                className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
+                className="px-3 py-1.5 bg-muted hover:bg-accent text-foreground/80 hover:text-foreground text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
               >
                 Từ chối
               </button>
@@ -270,11 +281,11 @@ export default function FriendRequestBar({ zaloId, userId, contact, getAuth, onR
           onClick={() => setSendPopupOpen(false)}
         >
           <div
-            className="bg-gray-800 border border-gray-700 rounded-2xl shadow-2xl w-full max-w-sm mx-4 flex flex-col"
+            className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-sm mx-4 flex flex-col"
             onClick={e => e.stopPropagation()}
           >
             {/* Header */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
               <div className="flex items-center gap-3">
                 {contact?.avatar_url ? (
                   <img src={contact.avatar_url} alt="" className="w-10 h-10 rounded-full object-cover"
@@ -285,12 +296,12 @@ export default function FriendRequestBar({ zaloId, userId, contact, getAuth, onR
                   </div>
                 )}
                 <div>
-                  <p className="font-semibold text-white text-sm">{displayName}</p>
-                  <p className="text-xs text-gray-400">Gửi yêu cầu kết bạn</p>
+                  <p className="font-semibold text-foreground text-sm">{displayName}</p>
+                  <p className="text-xs text-muted-foreground">Gửi yêu cầu kết bạn</p>
                 </div>
               </div>
               <button onClick={() => setSendPopupOpen(false)}
-                className="w-7 h-7 rounded-full flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 transition-colors">
+                className="w-7 h-7 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               </button>
             </div>
@@ -298,7 +309,7 @@ export default function FriendRequestBar({ zaloId, userId, contact, getAuth, onR
             {/* Body */}
             <div className="px-5 py-4 space-y-3">
               <div>
-                <label className="text-xs text-gray-400 font-medium block mb-1.5">Lời nhắn kèm theo (tùy chọn)</label>
+                <label className="text-xs text-muted-foreground font-medium block mb-1.5">Lời nhắn kèm theo (tùy chọn)</label>
                 <textarea
                   autoFocus
                   value={sendMsg}
@@ -306,17 +317,17 @@ export default function FriendRequestBar({ zaloId, userId, contact, getAuth, onR
                   maxLength={150}
                   placeholder="Xin chào, tôi muốn kết bạn với bạn!"
                   rows={3}
-                  className="w-full bg-gray-700 border border-gray-600 focus:border-blue-500 rounded-xl px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none resize-none transition-colors"
+                  className="w-full bg-muted border border-input focus:border-blue-500 rounded-xl px-3 py-2.5 text-sm text-foreground placeholder-subtle-foreground focus:outline-none resize-none transition-colors"
                   onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) handleSendRequest(); }}
                 />
-                <p className="text-right text-[11px] text-gray-400 mt-0.5">{sendMsg.length}/150</p>
+                <p className="text-right text-[11px] text-muted-foreground mt-0.5">{sendMsg.length}/150</p>
               </div>
             </div>
 
             {/* Footer */}
             <div className="flex gap-3 px-5 pb-5 pt-1">
               <button onClick={() => setSendPopupOpen(false)}
-                className="flex-1 py-2.5 rounded-xl bg-gray-700 hover:bg-gray-600 text-sm text-gray-300 transition-colors">
+                className="flex-1 py-2.5 rounded-xl bg-muted hover:bg-accent text-sm text-foreground/80 transition-colors">
                 Huỷ
               </button>
               <button

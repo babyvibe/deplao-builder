@@ -53,9 +53,24 @@ export interface Workspace {
     }>;
 }
 
+/**
+ * Mật khẩu nhân viên đã lưu cho một remote workspace ("Kết nối lại" không phải gõ lại). Mã hoá bằng Electron safeStorage
+ * (Windows DPAPI) ở workspaceIpc — WorkspaceManager chỉ cất bản mã. Nằm NGOÀI object Workspace nên không bao giờ theo
+ * workspace:list / getActive / switched… sang renderer.
+ */
+export interface SavedRemotePassword {
+    /** base64 của safeStorage.encryptString(password) */
+    enc: string;
+    /** Tên đăng nhập (chữ thường) lúc lưu — chỉ dùng lại cho đúng tài khoản này. '' = không rõ. */
+    username: string;
+    savedAt: number;
+}
+
 interface WorkspaceConfig {
     activeWorkspaceId: string;
     workspaces: Workspace[];
+    /** workspaceId → mật khẩu đã lưu (mã hoá). */
+    savedPasswords?: Record<string, SavedRemotePassword>;
 }
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -280,6 +295,8 @@ class WorkspaceManager {
         if (!ws) return { success: false, error: 'Workspace không tồn tại' };
 
         this.config.workspaces = this.config.workspaces.filter(w => w.id !== id);
+        // Xoá workspace = quên luôn mật khẩu nhân viên đã lưu
+        if (this.config.savedPasswords) delete this.config.savedPasswords[id];
 
         // If deleted was active, switch to first remaining
         if (this.config.activeWorkspaceId === id) {
@@ -317,6 +334,27 @@ class WorkspaceManager {
 
         Logger.log(`[WorkspaceManager] Deleted workspace "${ws.name}" (${id})`);
         return { success: true };
+    }
+
+    // ─── Mật khẩu nhân viên đã lưu (bản mã) ──────────────────────────
+
+    public getSavedPassword(id: string): SavedRemotePassword | null {
+        const entry = this.config.savedPasswords?.[id];
+        return entry && typeof entry.enc === 'string' && entry.enc ? entry : null;
+    }
+
+    public setSavedPassword(id: string, entry: SavedRemotePassword): void {
+        if (!this.config.workspaces.some(w => w.id === id)) return;
+        this.config.savedPasswords = { ...(this.config.savedPasswords || {}), [id]: entry };
+        this.saveConfig();
+    }
+
+    /** true nếu có mật khẩu để xoá. */
+    public clearSavedPassword(id: string): boolean {
+        if (!this.config.savedPasswords?.[id]) return false;
+        delete this.config.savedPasswords[id];
+        this.saveConfig();
+        return true;
     }
 
     // ─── Active workspace ────────────────────────────────────────────

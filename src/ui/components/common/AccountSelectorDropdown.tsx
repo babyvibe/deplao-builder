@@ -65,17 +65,17 @@ export default function AccountSelectorDropdown({ options, activeId, onSelect, p
       {/* Trigger */}
       <button
         onClick={() => setOpen(v => !v)}
-        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-600 hover:border-gray-500 bg-gray-800 text-xs text-white transition-colors ${fullWidth ? 'w-full' : ''}`}
+        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border border-input hover:border-border-strong bg-card text-xs text-foreground transition-colors ${fullWidth ? 'w-full' : ''}`}
       >
         {active ? (
           <Avatar option={active} size="sm" />
         ) : (
-          <div className="w-5 h-5 rounded-full bg-gray-600 flex-shrink-0" />
+          <div className="w-5 h-5 rounded-full bg-accent flex-shrink-0" />
         )}
         <span className={`truncate ${fullWidth ? 'flex-1 text-left' : 'max-w-[120px]'}`}>{active?.name || active?.id || placeholder}</span>
         <svg
           width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-          className={`text-gray-400 flex-shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
+          className={`text-muted-foreground flex-shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
         >
           <polyline points="6 9 12 15 18 9" />
         </svg>
@@ -83,9 +83,9 @@ export default function AccountSelectorDropdown({ options, activeId, onSelect, p
 
       {/* Dropdown panel */}
       {open && (
-        <div className={`${panelPos} bg-gray-800 border border-gray-700 rounded-xl shadow-2xl z-50 min-w-[230px] ${fullWidth ? 'w-full' : ''} overflow-hidden`}>
+        <div className={`${panelPos} bg-card border border-border rounded-xl shadow-2xl z-50 min-w-[230px] ${fullWidth ? 'w-full' : ''} overflow-hidden`}>
           <div className="px-3 pt-2.5 pb-1">
-            <p className="text-[9px] uppercase tracking-widest text-gray-400 font-semibold">Tài khoản</p>
+            <p className="text-[9px] uppercase tracking-widest text-muted-foreground font-semibold">Tài khoản</p>
           </div>
           <div className="max-h-[200px] overflow-y-auto">
             {options.map(opt => {
@@ -94,17 +94,17 @@ export default function AccountSelectorDropdown({ options, activeId, onSelect, p
                 <button
                   key={opt.id}
                   onClick={() => { onSelect(opt.id); setOpen(false); }}
-                  className={`w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-gray-700 transition-colors text-left
+                  className={`w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-muted transition-colors text-left
                     ${isActive ? 'bg-blue-500/10' : ''}`}
                 >
                   <Avatar option={opt} size="md" />
                   <div className="flex-1 min-w-0">
                     {/* Tên */}
-                    <p className="text-xs font-semibold text-white truncate leading-tight">
+                    <p className="text-xs font-semibold text-foreground truncate leading-tight">
                       {opt.name || opt.id}
                     </p>
                     {/* SĐT · ID */}
-                    <p className="text-[11px] text-gray-400 truncate mt-0.5">
+                    <p className="text-[11px] text-muted-foreground truncate mt-0.5">
                       <PhoneDisplay phone={opt.phone} className="text-xs text-blue-400" />
                     </p>
                   </div>

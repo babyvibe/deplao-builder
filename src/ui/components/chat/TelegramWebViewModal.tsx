@@ -67,14 +67,14 @@ export default function TelegramWebViewModal({ accountId, botId, url, title, onC
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
       <div
-        className="relative bg-gray-900 rounded-2xl shadow-2xl overflow-hidden flex flex-col"
+        className="relative bg-popover rounded-2xl shadow-2xl overflow-hidden flex flex-col"
         style={{ width: '420px', height: '85vh', maxHeight: '700px' }}
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 bg-gray-800 border-b border-gray-700 flex-shrink-0">
-          <span className="text-sm font-medium text-white truncate">{title || 'Mini App'}</span>
-          <button onClick={onClose} className="w-7 h-7 rounded-full hover:bg-gray-700 flex items-center justify-center text-gray-400 hover:text-white transition-colors">
+        <div className="flex items-center justify-between px-4 py-3 bg-card border-b border-border flex-shrink-0">
+          <span className="text-sm font-medium text-foreground truncate">{title || 'Mini App'}</span>
+          <button onClick={onClose} className="w-7 h-7 rounded-full hover:bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
@@ -84,23 +84,23 @@ export default function TelegramWebViewModal({ accountId, botId, url, title, onC
         {/* Content */}
         <div className="flex-1 relative">
           {loading && (
-            <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
+            <div className="absolute inset-0 flex items-center justify-center bg-background">
               <div className="flex flex-col items-center gap-3">
                 <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                <span className="text-sm text-gray-400">Đang tải Mini App...</span>
+                <span className="text-sm text-muted-foreground">Đang tải Mini App...</span>
               </div>
             </div>
           )}
           {error && (
-            <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
+            <div className="absolute inset-0 flex items-center justify-center bg-background">
               <div className="flex flex-col items-center gap-3 text-center px-6">
                 <div className="w-12 h-12 rounded-full bg-red-900/30 flex items-center justify-center">
                   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-red-400">
                     <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>
                   </svg>
                 </div>
-                <p className="text-sm text-gray-400">{error}</p>
-                <button onClick={onClose} className="px-4 py-2 text-sm bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">
+                <p className="text-sm text-muted-foreground">{error}</p>
+                <button onClick={onClose} className="px-4 py-2 text-sm bg-muted hover:bg-accent text-foreground rounded-lg transition-colors">
                   Đóng
                 </button>
               </div>

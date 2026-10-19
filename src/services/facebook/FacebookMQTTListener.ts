@@ -8,6 +8,7 @@ import mqtt, { MqttClient } from 'mqtt';
 import { EventEmitter } from 'events';
 import WebSocket from 'ws';
 import { FBSessionData, FBMQTTMessage, FBConnectionStatus } from './FacebookTypes';
+import { templateFromStoryAttachment, type FbTemplate } from '../../shared/facebookTemplate';
 import {
   generateSessionId, generateClientId
 } from './FacebookUtils';
@@ -621,6 +622,7 @@ export class FacebookMQTTListener extends EventEmitter {
       let name: string | undefined;
       let fileSize: number | undefined;
       let mimeType: string | undefined;
+      let template: FbTemplate | undefined;
 
       try {
         const mercury = att?.mercury || {};
@@ -659,10 +661,20 @@ export class FacebookMQTTListener extends EventEmitter {
           attachmentType = 'file';
           url = blob?.url || blob?.preview?.uri || null;
           name = blob?.filename || blob?.name || undefined;
+        } else if (mercury.extensible_attachment) {
+          // Tin mẫu của Page / bot, chia sẻ, thẻ sản phẩm…: trước đây không đọc → tin `text` rỗng
+          const ext = mercury.extensible_attachment;
+          const parsed = templateFromStoryAttachment(ext);
+          if (parsed) {
+            template = parsed;
+            attachmentType = 'template';
+            url = parsed.url || null;
+            if (typeof id === 'number' && id < 0 && ext.legacy_attachment_id) id = String(ext.legacy_attachment_id);
+          }
         }
       } catch {}
 
-      return { id, url, attachmentType, name, fileSize, mimeType };
+      return { id, url, attachmentType, name, fileSize, mimeType, ...(template ? { template } : {}) };
     };
 
     // Parse ALL attachments (batch image sends have multiple)

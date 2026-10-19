@@ -54,9 +54,11 @@ export default function TelegramPollBubble({ msg, isSent }: { msg: any; isSent: 
 
   const answerCount = poll.options.length;
   const total = poll.totalVoters || Math.max(...poll.options.map(option => option.voters), 0);
-  const panelClass = isSent ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-100';
-  const optionClass = isSent ? 'bg-blue-500/60' : 'bg-gray-600/60';
-  const mutedClass = isSent ? 'text-blue-100' : 'text-gray-400';
+  // ChatWindow đã bọc tin bình chọn trong bong bóng (nền trắng / xanh nhạt + giờ) → không vẽ khung nền
+  // đặc bên trong; hàng lựa chọn là ô bên trong bong bóng → bg-foreground/5 (hợp cả gửi lẫn nhận).
+  const panelClass = 'text-foreground';
+  const optionClass = 'bg-foreground/5';
+  const mutedClass = 'text-muted-foreground';
 
   return (
     <div className={`min-w-[260px] max-w-sm rounded-2xl p-3 ${panelClass}`}>
@@ -75,7 +77,7 @@ export default function TelegramPollBubble({ msg, isSent }: { msg: any; isSent: 
             <div key={`${option.text}-${index}`} className={`relative overflow-hidden rounded-lg px-2.5 py-2 ${optionClass}`}>
               {total > 0 && (
                 <div
-                  className={`absolute inset-y-0 left-0 ${isSent ? 'bg-blue-300/25' : 'bg-purple-500/25'}`}
+                  className={`absolute inset-y-0 left-0 ${isSent ? 'bg-primary/15' : 'bg-purple-500/25'}`}
                   style={{ width: `${percentage}%` }}
                 />
               )}

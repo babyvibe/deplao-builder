@@ -1,5 +1,71 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { TelegramForumTopicContext } from '../src/models/telegram';
+// import type: preload không require file khác lúc chạy (hằng kênh được kiểm kiểu bằng typeof bên dưới).
+import type { CloudflareIpc, CLOUD_CHANGED_EVENT, CLOUD_CLEANUP_PROGRESS_EVENT, CLOUD_RESTORE_PROGRESS_EVENT } from '../src/shared/cloudContracts';
+
+// ─── Cloudflare (Internet & Đám mây) — kênh 'cloudflare:*', xem electron/ipc/cloudflareIpc.ts ───────────
+// Token / mật khẩu sao lưu chỉ đi một chiều renderer → main (connect, setPassphrase, restore…), không bao giờ quay về.
+const CLOUD_EVENT_CHANNELS: [typeof CLOUD_CHANGED_EVENT, typeof CLOUD_RESTORE_PROGRESS_EVENT, typeof CLOUD_CLEANUP_PROGRESS_EVENT] = ['cloudflare:changed', 'cloudflare:restoreProgress', 'cloudflare:cleanupProgress'];
+const cloudflareBridge: CloudflareIpc = {
+  status:           () => ipcRenderer.invoke('cloudflare:status'),
+  connect:          (input) => ipcRenderer.invoke('cloudflare:connect', input),
+  disconnect:       () => ipcRenderer.invoke('cloudflare:disconnect'),
+  recheck:          () => ipcRenderer.invoke('cloudflare:recheck'),
+  tokenTemplateUrl: () => ipcRenderer.invoke('cloudflare:tokenTemplateUrl'),
+  tunnel: {
+    getConfig:         () => ipcRenderer.invoke('cloudflare:tunnel:getConfig'),
+    setMode:           (mode) => ipcRenderer.invoke('cloudflare:tunnel:setMode', { mode }),
+    configureAuto:     (input) => ipcRenderer.invoke('cloudflare:tunnel:configureAuto', input),
+    setAutoStart:      (on) => ipcRenderer.invoke('cloudflare:tunnel:setAutoStart', { on }),
+    setServiceEnabled: (service, enabled) => ipcRenderer.invoke('cloudflare:tunnel:setServiceEnabled', { service, enabled }),
+    addresses:         () => ipcRenderer.invoke('cloudflare:tunnel:addresses'),
+    health:            (opts) => ipcRenderer.invoke('cloudflare:tunnel:health', opts || {}),
+    moveHere:          () => ipcRenderer.invoke('cloudflare:tunnel:moveHere'),
+    disconnectForeign: () => ipcRenderer.invoke('cloudflare:tunnel:disconnectForeign'),
+    teardown:          () => ipcRenderer.invoke('cloudflare:tunnel:teardown'),
+  },
+  media: {
+    status:       () => ipcRenderer.invoke('cloudflare:media:status'),
+    setEnabled:   (on) => ipcRenderer.invoke('cloudflare:media:setEnabled', { on }),
+    pause:        () => ipcRenderer.invoke('cloudflare:media:pause'),
+    resume:       () => ipcRenderer.invoke('cloudflare:media:resume'),
+    setOptions:   (opts) => ipcRenderer.invoke('cloudflare:media:setOptions', opts),
+    rehydrateAll: () => ipcRenderer.invoke('cloudflare:media:rehydrateAll'),
+    cleanupPreview: (req) => ipcRenderer.invoke('cloudflare:media:cleanupPreview', req),
+    cleanupRun:   (previewId) => ipcRenderer.invoke('cloudflare:media:cleanupRun', { previewId }),
+  },
+  storage: {
+    status:      () => ipcRenderer.invoke('cloudflare:storage:status'),
+    setProvider: (provider) => ipcRenderer.invoke('cloudflare:storage:setProvider', { provider }),
+  },
+  google: {
+    connect:       (client) => ipcRenderer.invoke('cloudflare:google:connect', { client: client ?? null }),
+    cancelConnect: () => ipcRenderer.invoke('cloudflare:google:cancelConnect'),
+    disconnect:    () => ipcRenderer.invoke('cloudflare:google:disconnect'),
+    refresh:       () => ipcRenderer.invoke('cloudflare:google:refresh'),
+  },
+  usage: {
+    get: (opts) => ipcRenderer.invoke('cloudflare:usage:get', opts || {}),
+  },
+  sync: {
+    get:   () => ipcRenderer.invoke('cloudflare:sync:get'),
+    apply: (config) => ipcRenderer.invoke('cloudflare:sync:apply', config),
+  },
+  db: {
+    status:            () => ipcRenderer.invoke('cloudflare:db:status'),
+    setMode:           (mode) => ipcRenderer.invoke('cloudflare:db:setMode', { mode }),
+    setScope:          (scope) => ipcRenderer.invoke('cloudflare:db:setScope', scope),
+    setPassphrase:     (passphrase) => ipcRenderer.invoke('cloudflare:db:setPassphrase', { passphrase }),
+    syncNow:           () => ipcRenderer.invoke('cloudflare:db:syncNow'),
+    log:               (opts) => ipcRenderer.invoke('cloudflare:db:log', opts || {}),
+    listRemote:        () => ipcRenderer.invoke('cloudflare:db:listRemote'),
+    deleteRemote:      (workspaceId) => ipcRenderer.invoke('cloudflare:db:deleteRemote', { workspaceId }),
+    restore:           (req) => ipcRenderer.invoke('cloudflare:db:restore', req),
+    follow:            (req) => ipcRenderer.invoke('cloudflare:db:follow', req),
+    restoreState:      () => ipcRenderer.invoke('cloudflare:db:restoreState'),
+    resumeAutomations: () => ipcRenderer.invoke('cloudflare:db:resumeAutomations'),
+  },
+};
 
 // Expose typed API to renderer
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -44,7 +110,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     runAllMediaCleanup: () => ipcRenderer.invoke('login:runAllMediaCleanup'),
     checkHealth: (zaloIds: string | string[]) => ipcRenderer.invoke('login:checkHealth', { zaloIds }),
     checkAndRefreshAvatar: (zaloId: string) => ipcRenderer.invoke('login:checkAndRefreshAvatar', { zaloId }),
-    requestOldMessages: (zaloId: string) => ipcRenderer.invoke('login:requestOldMessages', { zaloId }),
+  },
+
+  // ─── Đồng bộ tin nhắn từ điện thoại (Zalo mobile → máy tính) ─────
+  mobileSync: {
+    start: (zaloId: string, range?: { fromTs?: number | null; toTs?: number | null }) =>
+      ipcRenderer.invoke('zalo:mobileSync:start', { zaloId, fromTs: range?.fromTs ?? null, toTs: range?.toTs ?? null }),
+    cancel: (zaloId: string) => ipcRenderer.invoke('zalo:mobileSync:cancel', { zaloId }),
+    getStatus: (zaloId: string) => ipcRenderer.invoke('zalo:mobileSync:status', { zaloId }),
   },
 
   // ─── Zalo API ────────────────────────────────────────────────────
@@ -66,6 +139,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getFriends: (auth: any) => ipcRenderer.invoke('zalo:getFriends', { auth }),
     getGroups: (auth: any) => ipcRenderer.invoke('zalo:getGroups', { auth }),
     getUserInfo: (params: any) => ipcRenderer.invoke('zalo:getUserInfo', params),
+    refreshContactsInfo: (params: any) => ipcRenderer.invoke('zalo:refreshContactsInfo', params),
     getContext: (params: any) => ipcRenderer.invoke('zalo:getContext', params),
     findUser: (params: any) => ipcRenderer.invoke('zalo:findUser', params),
     sendFriendRequest: (params: any) => ipcRenderer.invoke('zalo:sendFriendRequest', params),
@@ -138,6 +212,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getListReminder: (params: any) => ipcRenderer.invoke('zalo:getListReminder', params),
     getReminder: (params: any) => ipcRenderer.invoke('zalo:getReminder', params),
     sendSeenEvent: (params: any) => ipcRenderer.invoke('zalo:sendSeenEvent', params),
+    sendTyping: (params: any) => ipcRenderer.invoke('zalo:sendTyping', params),
     sendBankCard: (params: any) => ipcRenderer.invoke('zalo:sendBankCard', params),
   },
 
@@ -145,7 +220,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getMessages: (params: any) => ipcRenderer.invoke('db:getMessages', params),
     getMessagesAround: (params: any) => ipcRenderer.invoke('db:getMessagesAround', params),
     getContacts: (zaloId: string) => ipcRenderer.invoke('db:getContacts', { zaloId }),
+    getContactById: (params: { zaloId: string; contactId: string }) => ipcRenderer.invoke('db:getContactById', params),
     getContactsFiltered: (params: any) => ipcRenderer.invoke('db:getContactsFiltered', params),
+    searchContactsForPicker: (params: any) => ipcRenderer.invoke('db:searchContactsForPicker', params),
     saveAccount: (account: any) => ipcRenderer.invoke('db:saveAccount', account),
     searchContactByPhone: (params: { zaloId: string; phone: string }) => ipcRenderer.invoke('db:searchContactByPhone', params),
     searchMessages: (params: any) => ipcRenderer.invoke('db:searchMessages', params),
@@ -177,6 +254,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getLinks: (params: any) => ipcRenderer.invoke('db:getLinks', params),
     saveLink: (params: any) => ipcRenderer.invoke('db:saveLink', params),
     getGroupMembers: (params: any) => ipcRenderer.invoke('db:getGroupMembers', params),
+    getGroupMembersPage: (params: any) => ipcRenderer.invoke('db:getGroupMembersPage', params),
     getAllGroupMembers: (params: any) => ipcRenderer.invoke('db:getAllGroupMembers', params),
     saveGroupMembers: (params: any) => ipcRenderer.invoke('db:saveGroupMembers', params),
     upsertGroupMember: (params: any) => ipcRenderer.invoke('db:upsertGroupMember', params),
@@ -239,6 +317,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Local Pinned Conversations
     getLocalPinnedConversations: (params: any) => ipcRenderer.invoke('db:getLocalPinnedConversations', params),
     setLocalPinnedConversation: (params: any) => ipcRenderer.invoke('db:setLocalPinnedConversation', params),
+    // Tự động đánh dấu đã đọc
+    getUnreadConversations: (params: any) => ipcRenderer.invoke('db:getUnreadConversations', params),
+    // Starred messages ("Tin đánh dấu")
+    getStarredMessageKeys: (params: any) => ipcRenderer.invoke('db:getStarredMessageKeys', params),
+    getStarredMessages: (params: any) => ipcRenderer.invoke('db:getStarredMessages', params),
+    setMessageStarred: (params: any) => ipcRenderer.invoke('db:setMessageStarred', params),
   },
 
   // ─── CRM ─────────────────────────────────────────────────────────
@@ -290,6 +374,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getVideoMeta: (params: any) => ipcRenderer.invoke('file:getVideoMeta', params),
     readImageAsBase64: (params: { localPath?: string; remoteUrl?: string }) => ipcRenderer.invoke('file:readImageAsBase64', params),
     repairImage: (params: any) => ipcRenderer.invoke('file:repairImage', params),
+    checkMediaExpired: (params: { zaloId: string; msgId: string; urls: string[]; force?: boolean }) => ipcRenderer.invoke('file:checkMediaExpired', params),
+    downloadMessageMedia: (params: { zaloId: string; msgId: string; threadId?: string; kind: 'image' | 'gif' | 'file' | 'voice' | 'video' }) => ipcRenderer.invoke('file:downloadMessageMedia', params),
     ensureFaststart: (params: { filePath: string }) => ipcRenderer.invoke('file:ensureFaststart', params),
     validateLocalImages: (items: any) => ipcRenderer.invoke('file:validateLocalImages', items),
     captureScreenshot: () => ipcRenderer.invoke('file:captureScreenshot'),
@@ -308,6 +394,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       delete: (id: string) => ipcRenderer.invoke('workflow:delete', { id }),
       toggle: (id: string, enabled: boolean) => ipcRenderer.invoke('workflow:toggle', { id, enabled }),
       runManual: (id: string, triggerData?: any) => ipcRenderer.invoke('workflow:runManual', { id, triggerData }),
+      simulate: (id: string, triggerData?: any, triggeredBy?: string) => ipcRenderer.invoke('workflow:simulate', { id, triggerData, triggeredBy }),
       getLogs: (id: string, limit?: number) => ipcRenderer.invoke('workflow:getLogs', { id, limit }),
       deleteLogs: (id: string) => ipcRenderer.invoke('workflow:deleteLogs', { id }),
       clone: (id: string, targetZaloId: string) => ipcRenderer.invoke('workflow:clone', { id, targetZaloId }),
@@ -344,6 +431,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   logs: {
     getBuffer: () => ipcRenderer.invoke('log:getBuffer'),
     clear:     () => ipcRenderer.invoke('log:clear'),
+    // Renderer → Nhật ký (Logger main, prefix [renderer]). Fire-and-forget; main tự che bí mật + giới hạn tốc độ.
+    append:    (level: string, msg: string) => ipcRenderer.send('log:append', { level, msg }),
   },
 
   // ─── Integration Hub ──────────────────────────────────────────────
@@ -357,6 +446,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     execute:         (id: string, action: string, params?: any) => ipcRenderer.invoke('integration:execute', { id, action, params }),
     executeByType:   (type: string, action: string, params?: any) => ipcRenderer.invoke('integration:executeByType', { type, action, params }),
     getWebhookPort:  () => ipcRenderer.invoke('integration:getWebhookPort'),
+    // Đăng ký webhook tự động (KiotViet / Sapo) — chạy trên Boss
+    listWebhooks:    (id: string) => ipcRenderer.invoke('integration:listWebhooks', { id }),
+    registerWebhooks:(id: string, events: string[]) => ipcRenderer.invoke('integration:registerWebhooks', { id, events }),
+    removeWebhook:   (id: string, webhookId: string) => ipcRenderer.invoke('integration:removeWebhook', { id, webhookId }),
   },
 
   // ─── AI Assistants ────────────────────────────────────────────────
@@ -372,6 +465,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     removeFile:      (fileId: number) => ipcRenderer.invoke('ai:removeFile', { fileId }),
     suggest:         (assistantId: string, chatHistory: any[]) => ipcRenderer.invoke('ai:suggest', { assistantId, chatHistory }),
     chat:            (assistantId: string, messages: any[], structured?: boolean, maxTokens?: number) => ipcRenderer.invoke('ai:chat', { assistantId, messages, structured, maxTokens }),
+    chatRaw:         (params: { assistantId: string; messages: any[]; maxTokens?: number; temperature?: number }) => ipcRenderer.invoke('ai:chat', { ...params, rawSystem: true }),
     getAccountAssistant:  (zaloId: string, role: string) => ipcRenderer.invoke('ai:getAccountAssistant', { zaloId, role }),
     setAccountAssistant:  (zaloId: string, role: string, assistantId: string | null) => ipcRenderer.invoke('ai:setAccountAssistant', { zaloId, role, assistantId }),
     getAccountAssistants: (zaloId: string) => ipcRenderer.invoke('ai:getAccountAssistants', { zaloId }),
@@ -400,6 +494,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     create:             (params: any) => ipcRenderer.invoke('employee:create', params),
     update:             (employeeId: string, updates: any) => ipcRenderer.invoke('employee:update', { employeeId, updates }),
     delete:             (employeeId: string) => ipcRenderer.invoke('employee:delete', { employeeId }),
+    logoutAll:          () => ipcRenderer.invoke('employee:logoutAll'),
     setPermissions:     (employeeId: string, permissions: any[]) => ipcRenderer.invoke('employee:setPermissions', { employeeId, permissions }),
     getPermissions:     (employeeId: string) => ipcRenderer.invoke('employee:getPermissions', { employeeId }),
     assignAccounts:     (employeeId: string, zaloIds: string[]) => ipcRenderer.invoke('employee:assignAccounts', { employeeId, zaloIds }),
@@ -410,8 +505,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     validateToken:      (token: string) => ipcRenderer.invoke('employee:validateToken', { token }),
     setMode:            (mode: string) => ipcRenderer.invoke('employee:setMode', { mode }),
     getMode:            () => ipcRenderer.invoke('employee:getMode'),
-    connectToBoss:      (bossUrl: string, token: string) => ipcRenderer.invoke('employee:connectToBoss', { bossUrl, token }),
-    disconnectFromBoss: () => ipcRenderer.invoke('employee:disconnectFromBoss'),
     getConnectionStatus:() => ipcRenderer.invoke('employee:getConnectionStatus'),
     proxyAction:        (channel: string, params: any) => ipcRenderer.invoke('employee:proxyAction', { channel, params }),
     // Groups
@@ -419,12 +512,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     createGroup:        (name: string, color?: string) => ipcRenderer.invoke('employee:createGroup', { name, color }),
     updateGroup:        (groupId: string, updates: any) => ipcRenderer.invoke('employee:updateGroup', { groupId, updates }),
     deleteGroup:        (groupId: string) => ipcRenderer.invoke('employee:deleteGroup', { groupId }),
-    // Analytics
-    analyticsComparison:     (sinceTs: number, untilTs: number) => ipcRenderer.invoke('employee:analytics:comparison', { sinceTs, untilTs }),
-    analyticsMessageTimeline:(sinceTs: number, untilTs: number) => ipcRenderer.invoke('employee:analytics:messageTimeline', { sinceTs, untilTs }),
+    // Analytics (zaloIds: only activity on these accounts; omitted = every account)
+    analyticsComparison:     (sinceTs: number, untilTs: number, zaloIds?: string[]) => ipcRenderer.invoke('employee:analytics:comparison', { sinceTs, untilTs, zaloIds }),
+    analyticsMessageTimeline:(sinceTs: number, untilTs: number, zaloIds?: string[]) => ipcRenderer.invoke('employee:analytics:messageTimeline', { sinceTs, untilTs, zaloIds }),
     analyticsOnlineTimeline: (sinceTs: number, untilTs: number) => ipcRenderer.invoke('employee:analytics:onlineTimeline', { sinceTs, untilTs }),
-    analyticsResponseDist:   (sinceTs: number, untilTs: number) => ipcRenderer.invoke('employee:analytics:responseDistribution', { sinceTs, untilTs }),
-    analyticsHourlyActivity: (sinceTs: number, untilTs: number) => ipcRenderer.invoke('employee:analytics:hourlyActivity', { sinceTs, untilTs }),
+    analyticsResponseDist:   (sinceTs: number, untilTs: number, zaloIds?: string[]) => ipcRenderer.invoke('employee:analytics:responseDistribution', { sinceTs, untilTs, zaloIds }),
+    analyticsHourlyActivity: (sinceTs: number, untilTs: number, zaloIds?: string[]) => ipcRenderer.invoke('employee:analytics:hourlyActivity', { sinceTs, untilTs, zaloIds }),
   },
 
   // ─── Workspace Management ────────────────────────────────────────
@@ -444,6 +537,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getAllStatuses:        () => ipcRenderer.invoke('workspace:getAllStatuses'),
     loginRemote:          (bossUrl: string, username: string, password: string) =>
                             ipcRenderer.invoke('workspace:loginRemote', { bossUrl, username, password }),
+    // Mật khẩu nhân viên đã lưu: main giữ (mã hoá safeStorage), renderer chỉ biết có / không
+    rememberPassword:     (id: string, password: string) => ipcRenderer.invoke('workspace:rememberPassword', { id, password }),
+    hasSavedPassword:     (id: string) => ipcRenderer.invoke('workspace:hasSavedPassword', { id }),
+    loginRemoteSaved:     (id: string, bossUrl: string, username: string) =>
+                            ipcRenderer.invoke('workspace:loginRemoteSaved', { id, bossUrl, username }),
+    forgetPassword:       (id: string) => ipcRenderer.invoke('workspace:forgetPassword', { id }),
+    networkOnline:        () => ipcRenderer.invoke('workspace:networkOnline'),
+    refreshSnapshot:      (id: string, reason?: string) => ipcRenderer.invoke('workspace:refreshSnapshot', { id, reason }),
   },
 
   // ─── Relay Server (Boss) ──────────────────────────────────────────
@@ -454,10 +555,62 @@ contextBridge.exposeInMainWorld('electronAPI', {
     kickEmployee:        (employeeId: string) => ipcRenderer.invoke('relay:kickEmployee', { employeeId }),
     startTunnel:         () => ipcRenderer.invoke('relay:startTunnel'),
     stopTunnel:          () => ipcRenderer.invoke('relay:stopTunnel'),
+    restartTunnel:       () => ipcRenderer.invoke('relay:restartTunnel'),
     getTunnelStatus:     () => ipcRenderer.invoke('relay:getTunnelStatus'),
     getTunnelConfig:     () => ipcRenderer.invoke('relay:getTunnelConfig'),
-    setTunnelConfig:     (cfg: { provider?: string; authtoken?: string; domain?: string }) => ipcRenderer.invoke('relay:setTunnelConfig', cfg),
+    setTunnelConfig:     (cfg: { provider?: string; authtoken?: string; domain?: string; cfToken?: string; cfPublicUrl?: string; autoStart?: boolean }) => ipcRenderer.invoke('relay:setTunnelConfig', cfg),
+    probeBossAddress:    (params: { url?: string; workspaceId?: string }) => ipcRenderer.invoke('relay:probeBossAddress', params || {}),
   },
+
+  // ─── Public API & Plugin (Công cụ → Ứng dụng, API & Webhook) ───────────────
+  api: {
+    status:            () => ipcRenderer.invoke('api:status'),
+    startServer:       (port?: number) => ipcRenderer.invoke('api:server:start', { port }),
+    stopServer:        () => ipcRenderer.invoke('api:server:stop'),
+    setSetting:        (key: string, value: string) => ipcRenderer.invoke('api:settings:set', { key, value }),
+    listKeys:          (includeRevoked?: boolean) => ipcRenderer.invoke('api:keys:list', { includeRevoked }),
+    createKey:         (input: any) => ipcRenderer.invoke('api:keys:create', input),
+    updateKey:         (id: string, patch: any) => ipcRenderer.invoke('api:keys:update', { id, patch }),
+    revokeKey:         (id: string) => ipcRenderer.invoke('api:keys:revoke', { id }),
+    revokeAllKeys:     () => ipcRenderer.invoke('api:keys:revokeAll'),
+    purgeKey:          (id: string) => ipcRenderer.invoke('api:keys:purge', { id }),
+    keyUsage:          (id: string, hours?: number) => ipcRenderer.invoke('api:keys:usage', { id, hours }),
+    listLogs:          (limit?: number, principalId?: string) => ipcRenderer.invoke('api:logs:list', { limit, principalId }),
+    openDocs:          (hash?: string) => ipcRenderer.invoke('api:docs:open', hash ? { hash } : undefined),
+    listWebhooks:      () => ipcRenderer.invoke('api:webhooks:list'),
+    createWebhook:     (input: any) => ipcRenderer.invoke('api:webhooks:create', input),
+    updateWebhook:     (id: string, patch: any) => ipcRenderer.invoke('api:webhooks:update', { id, patch }),
+    deleteWebhook:     (id: string) => ipcRenderer.invoke('api:webhooks:delete', { id }),
+    testWebhook:       (id: string) => ipcRenderer.invoke('api:webhooks:test', { id }),
+    webhookDeliveries: (id: string, status?: string, limit?: number) => ipcRenderer.invoke('api:webhooks:deliveries', { id, status, limit }),
+    retryDelivery:     (deliveryId: string) => ipcRenderer.invoke('api:webhooks:retry', { deliveryId }),
+    eventTypes:        () => ipcRenderer.invoke('api:events:types'),
+  },
+  // ─── Plugin ───────────────────────────────────────────────────────
+  plugins: {
+    list:              () => ipcRenderer.invoke('plugins:list'),
+    contributions:     () => ipcRenderer.invoke('plugins:contributions'),
+    pickZip:           () => ipcRenderer.invoke('plugins:pickZip'),
+    inspectZip:        (path: string) => ipcRenderer.invoke('plugins:inspectZip', { path }),
+    pickDevFolder:     () => ipcRenderer.invoke('plugins:pickDevFolder'),
+    confirmInstall:    (token: string, accountIds?: string[] | null) => ipcRenderer.invoke('plugins:confirmInstall', { token, accountIds }),
+    cancelInstall:     (token: string) => ipcRenderer.invoke('plugins:cancelInstall', { token }),
+    enable:            (id: string) => ipcRenderer.invoke('plugins:enable', { id }),
+    disable:           (id: string) => ipcRenderer.invoke('plugins:disable', { id }),
+    reload:            (id: string) => ipcRenderer.invoke('plugins:reload', { id }),
+    uninstall:         (id: string, deleteData?: boolean) => ipcRenderer.invoke('plugins:uninstall', { id, deleteData }),
+    getSettings:       (id: string) => ipcRenderer.invoke('plugins:getSettings', { id }),
+    setSettings:       (id: string, values: Record<string, any>) => ipcRenderer.invoke('plugins:setSettings', { id, values }),
+    logs:              (id: string, limit?: number) => ipcRenderer.invoke('plugins:logs', { id, limit }),
+    openFolder:        (id: string, kind?: 'code' | 'data') => ipcRenderer.invoke('plugins:openFolder', { id, kind }),
+    nodeTypes:         () => ipcRenderer.invoke('plugins:nodeTypes'),
+    invoke:            (pluginId: string, method: string, params?: any) => ipcRenderer.invoke('plugins:invoke', { pluginId, method, params }),
+    subscribeEvents:   (pluginId: string, types: string[]) => ipcRenderer.invoke('plugins:events:subscribe', { pluginId, types }),
+    unsubscribeEvents: (pluginId?: string) => ipcRenderer.invoke('plugins:events:unsubscribe', { pluginId }),
+    command:           (pluginId: string, buttonId: string, context?: any) => ipcRenderer.invoke('plugins:command', { pluginId, buttonId, context }),
+  },
+  // ─── Cloudflare (Internet & Đám mây) ──────────────────────────────
+  cloudflare: cloudflareBridge,
 
   // ─── Facebook ─────────────────────────────────────────────────────
   fb: {
@@ -465,6 +618,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     addAccountWithCredentials: (params: { username: string; password: string; twoFASecret?: string; proxyId?: number | null }) => ipcRenderer.invoke('fb:addAccountWithCredentials', params),
     startMessengerLiteLogin: (params: { proxyId?: number | null }) => ipcRenderer.invoke('fb:startMessengerLiteLogin', params),
     submitMessengerLiteLogin: (params: { sessionId: string; input: Record<string, string>; proxyId?: number | null }) => ipcRenderer.invoke('fb:submitMessengerLiteLogin', params),
+    waitMessengerLiteLogin: (params: { sessionId: string }) => ipcRenderer.invoke('fb:waitMessengerLiteLogin', params),
+    backMessengerLiteLogin: (params: { sessionId: string }) => ipcRenderer.invoke('fb:backMessengerLiteLogin', params),
+    runMessengerLiteWebStep: (params: { sessionId: string }) => ipcRenderer.invoke('fb:runMessengerLiteWebStep', params),
     cancelMessengerLiteLogin: (params: { sessionId: string }) => ipcRenderer.invoke('fb:cancelMessengerLiteLogin', params),
     removeAccount:       (params: { accountId: string }) => ipcRenderer.invoke('fb:removeAccount', params),
     updateCookie:        (params: { accountId: string; cookie: string }) => ipcRenderer.invoke('fb:updateCookie', params),
@@ -485,6 +641,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     changeThreadEmoji:   (params: any) => ipcRenderer.invoke('fb:changeThreadEmoji', params),
     changeNickname:      (params: any) => ipcRenderer.invoke('fb:changeNickname', params),
     loginWithCredentials:(params: any) => ipcRenderer.invoke('fb:loginWithCredentials', params),    fetchThreadMessages:   (params: any) => ipcRenderer.invoke('fb:fetchThreadMessages', params),
+    fetchOlderMessages:    (params: any) => ipcRenderer.invoke('fb:fetchOlderMessages', params),
+    startHistorySync:      (params: any) => ipcRenderer.invoke('fb:startHistorySync', params),
+    cancelHistorySync:     (params: any) => ipcRenderer.invoke('fb:cancelHistorySync', params),
+    getHistorySyncStatus:  (params: any) => ipcRenderer.invoke('fb:getHistorySyncStatus', params),
     refreshContactAvatar:  (params: any) => ipcRenderer.invoke('fb:refreshContactAvatar', params),
     sendTyping:            (params: any) => ipcRenderer.invoke('fb:sendTyping', params),
     blockUser:             (params: any) => ipcRenderer.invoke('fb:blockUser', params),
@@ -502,6 +662,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     changeThreadTheme:     (params: any) => ipcRenderer.invoke('fb:changeThreadTheme', params),
     createNote:            (params: any) => ipcRenderer.invoke('fb:createNote', params),
     addGroupAdmin:         (params: any) => ipcRenderer.invoke('fb:addGroupAdmin', params),
+    createGroup:           (params: any) => ipcRenderer.invoke('fb:createGroup', params),
     removeGroupAdmin:      (params: any) => ipcRenderer.invoke('fb:removeGroupAdmin', params),
     changeApprovalMode:    (params: any) => ipcRenderer.invoke('fb:changeApprovalMode', params),
     approvePendingMember:  (params: any) => ipcRenderer.invoke('fb:approvePendingMember', params),
@@ -569,6 +730,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     signIn2FA:      (password: string) => ipcRenderer.invoke('telegramUser:signIn2FA', password),
     startListener:  (account: any) => ipcRenderer.invoke('telegramUser:startListener', account),
     stopListener:   (accountId: string) => ipcRenderer.invoke('telegramUser:stopListener', accountId),
+    networkOnline:  () => ipcRenderer.invoke('telegramUser:networkOnline'),
     sendMessage:    (params: any) => ipcRenderer.invoke('telegramUser:sendMessage', params),
     editMessage:    (params: any) => ipcRenderer.invoke('telegramUser:editMessage', params),
     deleteMessages: (params: any) => ipcRenderer.invoke('telegramUser:deleteMessages', params),
@@ -580,6 +742,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     sendTopicFile:  (params: TelegramForumTopicContext & { filePath: string; caption?: string }) => ipcRenderer.invoke('telegramUser:sendTopicFile', params),
     sendTyping:     (params: any) => ipcRenderer.invoke('telegramUser:sendTyping', params),
     sendReaction:   (params: any) => ipcRenderer.invoke('telegramUser:sendReaction', params),
+    getAvailableReactions: (params: { accountId: string; chatId: string }) => ipcRenderer.invoke('telegramUser:getAvailableReactions', params),
+    refreshReactions: (params: { accountId: string; chatId: string; messageIds: string[] }) => ipcRenderer.invoke('telegramUser:refreshReactions', params),
     isConnected:    (accountId: string) => ipcRenderer.invoke('telegramUser:isConnected', accountId),
     getActive:      () => ipcRenderer.invoke('telegramUser:getActive'),
     refreshMessages:(params: { accountId: string }) => ipcRenderer.invoke('telegramUser:refreshMessages', params),
@@ -592,12 +756,33 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Group management
     getGroupInfo:      (params: any) => ipcRenderer.invoke('telegramUser:getGroupInfo', params),
     joinGroup:         (params: any) => ipcRenderer.invoke('telegramUser:joinGroup', params),
+    createGroup:       (params: any) => ipcRenderer.invoke('telegramUser:createGroup', params),
+    previewJoinLink:   (params: any) => ipcRenderer.invoke('telegramUser:previewJoinLink', params),
+    joinByLink:        (params: any) => ipcRenderer.invoke('telegramUser:joinByLink', params),
+    addContact:        (params: any) => ipcRenderer.invoke('telegramUser:addContact', params),
+    createChannel:     (params: any) => ipcRenderer.invoke('telegramUser:createChannel', params),
+    checkChatUsername: (params: any) => ipcRenderer.invoke('telegramUser:checkChatUsername', params),
+    setChatUsername:   (params: any) => ipcRenderer.invoke('telegramUser:setChatUsername', params),
+    getChatSettings:   (params: any) => ipcRenderer.invoke('telegramUser:getChatSettings', params),
+    editChatAbout:     (params: any) => ipcRenderer.invoke('telegramUser:editChatAbout', params),
+    revokeInviteLink:  (params: any) => ipcRenderer.invoke('telegramUser:revokeInviteLink', params),
+    toggleSignatures:  (params: any) => ipcRenderer.invoke('telegramUser:toggleSignatures', params),
+    getDiscussionGroups: (params: any) => ipcRenderer.invoke('telegramUser:getDiscussionGroups', params),
+    setDiscussionGroup: (params: any) => ipcRenderer.invoke('telegramUser:setDiscussionGroup', params),
+    setHistoryTtl:     (params: any) => ipcRenderer.invoke('telegramUser:setHistoryTtl', params),
+    deleteChat:        (params: any) => ipcRenderer.invoke('telegramUser:deleteChat', params),
+    inviteUsers:       (params: any) => ipcRenderer.invoke('telegramUser:inviteUsers', params),
+    getContacts:       (params: any) => ipcRenderer.invoke('telegramUser:getContacts', params),
+    deleteContacts:    (params: any) => ipcRenderer.invoke('telegramUser:deleteContacts', params),
+    getCallHistory:    (params: any) => ipcRenderer.invoke('telegramUser:getCallHistory', params),
+    declineCall:       (params: any) => ipcRenderer.invoke('telegramUser:declineCall', params),
     getGroupMembers:   (params: any) => ipcRenderer.invoke('telegramUser:getGroupMembers', params),
     hydrateMessageSenders: (params: any) => ipcRenderer.invoke('telegramUser:hydrateMessageSenders', params),
     setDialogMute:     (params: any) => ipcRenderer.invoke('telegramUser:setDialogMute', params),
     setDialogArchived: (params: any) => ipcRenderer.invoke('telegramUser:setDialogArchived', params),
     setDialogPin:      (params: any) => ipcRenderer.invoke('telegramUser:setDialogPin', params),
     getMessageReactions:(params: any) => ipcRenderer.invoke('telegramUser:getMessageReactions', params),
+    getMessageReadParticipants: (params: { accountId: string; chatId: string; messageId: string }) => ipcRenderer.invoke('telegramUser:getMessageReadParticipants', params),
     addChatUser:       (params: any) => ipcRenderer.invoke('telegramUser:addChatUser', params),
     deleteChatUser:    (params: any) => ipcRenderer.invoke('telegramUser:deleteChatUser', params),
     editChatTitle:     (params: any) => ipcRenderer.invoke('telegramUser:editChatTitle', params),
@@ -611,6 +796,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     readForumTopic:    (params: any) => ipcRenderer.invoke('telegramUser:readForumTopic', params),
     getMessages:       (params: any) => ipcRenderer.invoke('telegramUser:getMessages', params),
     repairMessageMedia:(params: { accountId: string; chatId: string; messageId: string }) => ipcRenderer.invoke('telegramUser:repairMessageMedia', params),
+    refreshMessageAttachments: (params: { accountId: string; chatId: string; messageIds: string[] }) => ipcRenderer.invoke('telegramUser:refreshMessageAttachments', params),
     repairEmptyMessages:(params: { accountId: string; chatId: string; messageIds: string[] }) => ipcRenderer.invoke('telegramUser:repairEmptyMessages', params),
     repairMessageQuotes:(params: { accountId: string; chatId: string; items: Array<{ messageId: string; replyToId: string }> }) => ipcRenderer.invoke('telegramUser:repairMessageQuotes', params),
     getFullChat:       (params: any) => ipcRenderer.invoke('telegramUser:getFullChat', params),
@@ -634,6 +820,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     searchGifs:           (params: any) => ipcRenderer.invoke('telegramUser:searchGifs', params),
     sendSticker:          (params: any) => ipcRenderer.invoke('telegramUser:sendSticker', params),
     sendGif:              (params: any) => ipcRenderer.invoke('telegramUser:sendGif', params),
+    downloadSticker:      (params: any) => ipcRenderer.invoke('telegramUser:downloadSticker', params),
+    getStickerPanel:      (params: any) => ipcRenderer.invoke('telegramUser:getStickerPanel', params),
+    getStickerSet:        (params: any) => ipcRenderer.invoke('telegramUser:getStickerSet', params),
+    getStickerSetOfMessage:(params: any) => ipcRenderer.invoke('telegramUser:getStickerSetOfMessage', params),
+    setStickerSetInstalled:(params: any) => ipcRenderer.invoke('telegramUser:setStickerSetInstalled', params),
+    getStickerFile:       (params: any) => ipcRenderer.invoke('telegramUser:getStickerFile', params),
+    saveGif:              (params: any) => ipcRenderer.invoke('telegramUser:saveGif', params),
+    searchStickerSets:    (params: any) => ipcRenderer.invoke('telegramUser:searchStickerSets', params),
   },
 
   // ─── ERP ─────────────────────────────────────────────────────────
@@ -736,6 +930,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ─── Media Library ───────────────────────────────────────────────
   library: {
     getItems:    (params: any) => ipcRenderer.invoke('library:getItems', params),
+    getItem:     (uuid: string) => ipcRenderer.invoke('library:getItem', { uuid }),
     upload:      (params: any) => ipcRenderer.invoke('library:upload', params),
     deleteItem:  (uuid: string) => ipcRenderer.invoke('library:deleteItem', uuid),
     getFolders:  (params: { zaloId: string; ownerZaloIds?: string[]; type?: string }) => ipcRenderer.invoke('library:getFolders', params),
@@ -751,7 +946,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'event:disconnected',
       'event:reaction',
       'event:telegramReaction',
+      'event:telegramCall',
       'event:telegramSync',
+      'event:mobileSync',
+      'event:fbHistorySync',
       'event:messageEdited',
       'event:messagesDeleted',
       'event:userPresence',
@@ -783,6 +981,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'crm:queueStatus',
       'crm:campaignDone',
       'workflow:executed',
+      'workflow:changed',
       'db:copyProgress',
       'integration:webhook',
       'integration:payment',
@@ -799,6 +998,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'workspace:permissionUpdate',
       'workspace:syncComplete',
       'employee:modeChanged',
+      'employee:credentials',
+      'employee:resync',
+      'employee:bossUrlChanged',
       // ─── Facebook events ─────────────────────────────────────────────
       'fb:onMessage',
       'fb:onReaction',
@@ -807,6 +1009,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'fb:onDisconnect',
       'fb:onReconnect',
       'fb:onConnectionStatus',
+      // useChatEvents đã nghe các kênh dưới nhưng thiếu ở đây → chưa bao giờ chạy (kể cả trên Boss)
+      'fb:onTyping',
+      'fb:onSeen',
+      'fb:onThreadInfoUpdate',
+      'fb:onGroupEvent',
+      'fb:onContactUpdate',
+      'fb:onE2EEStatus',
       // ─── ERP events ──────────────────────────────────────────────────
       'erp:event:taskCreated',
       'erp:event:taskUpdated',
@@ -834,6 +1043,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'crm:campaignChanged',
       'crm:noteChanged',
       'db:pinnedConversationChanged',
+      'db:starredMessageChanged',
       'db:contactFlagsChanged',
       'db:contactAliasChanged',
       'db:unreadChanged',
@@ -842,6 +1052,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'crm:tagChanged',
       'event:friendRequestSent',
       'event:friendRequestRemoved',
+      'event:friendRemoved',
       'event:pollVote',
       'erp:event:noteShared',
       'erp:event:departmentUpdated',
@@ -851,6 +1062,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'library:itemAdded',
       'library:itemUpdated',
       'library:itemDeleted',
+      // ─── Plugin ──────────────────────────────────────────────────
+      'plugins:changed',
+      'plugins:event',
+      // ─── Cloudflare ──────────────────────────────────────────────
+      ...CLOUD_EVENT_CHANNELS,
     ];
     if (validChannels.includes(channel)) {
       const subscription = (_event: any, ...args: any[]) => callback(...args);

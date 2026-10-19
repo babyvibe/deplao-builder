@@ -56,18 +56,18 @@ export default function AIAssistantPage() {
   }
 
   return (
-    <div className="flex flex-col h-full overflow-hidden bg-gray-900">
+    <div className="flex flex-col h-full overflow-hidden bg-background">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-gray-700 flex-shrink-0">
+      <div className="px-6 py-4 border-b border-border flex-shrink-0">
         <div className="flex items-center gap-3">
           <div className="flex-1">
-            <h1 className="text-lg font-semibold text-white"><BotIcon className="w-4 h-4 inline" /> Trợ lý AI</h1>
-            <p className="text-xs text-gray-400 mt-0.5">
+            <h1 className="text-lg font-semibold text-foreground"><BotIcon className="w-4 h-4 inline" /> Trợ lý AI</h1>
+            <p className="text-xs text-muted-foreground mt-0.5">
               Tạo và quản lý trợ lý AI - tùy chỉnh prompt, nạp dữ liệu sản phẩm, file kiến thức
             </p>
           </div>
           <button onClick={() => setShowAccountPopup(true)}
-            className="px-3 py-2 text-sm rounded-lg transition-colors border text-gray-400 hover:text-white border-gray-600 hover:border-gray-500"><UserIcon className="w-4 h-4 inline" /> Gán theo tài khoản
+            className="px-3 py-2 text-sm rounded-lg transition-colors border text-muted-foreground hover:text-foreground border-input hover:border-border-strong"><UserIcon className="w-4 h-4 inline" /> Gán theo tài khoản
           </button>
           <button onClick={() => setCreating(true)}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors">
@@ -82,8 +82,8 @@ export default function AIAssistantPage() {
           <PageLoading variant="inline" text="Đang tải trợ lý AI..." />
         ) : assistants.length === 0 ? (
           <div className="text-center py-20">
-            <h3 className="text-lg font-medium text-white mb-2">Chưa có trợ lý AI nào</h3>
-            <p className="text-sm text-gray-400 mb-6 max-w-md mx-auto">
+            <h3 className="text-lg font-medium text-foreground mb-2">Chưa có trợ lý AI nào</h3>
+            <p className="text-sm text-muted-foreground mb-6 max-w-md mx-auto">
               Tạo trợ lý AI để tự động gợi ý câu trả lời trong chat, hỏi đáp trực tiếp và nhiều hơn nữa
             </p>
             <button onClick={() => setCreating(true)}
@@ -98,7 +98,7 @@ export default function AIAssistantPage() {
               return (
                 <button key={a.id}
                   onClick={() => setEditingId(a.id)}
-                  className="text-left p-5 rounded-xl border border-gray-700 hover:border-blue-500 bg-gray-800 hover:bg-gray-750 transition-all group"
+                  className="text-left p-5 rounded-xl border border-border hover:border-blue-500 bg-card hover:bg-muted transition-all group"
                 >
                   <div className="flex items-start gap-3">
                     <div className={`w-11 h-11 rounded-xl ${meta.color} flex items-center justify-center text-xl flex-shrink-0 text-white-important`}>
@@ -106,19 +106,19 @@ export default function AIAssistantPage() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
-                        <span className="font-medium text-white text-sm truncate">{a.name}</span>
+                        <span className="font-medium text-foreground text-sm truncate">{a.name}</span>
                         {a.isDefault && (
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-900/50 text-blue-400 font-bold flex-shrink-0">
                             MẶC ĐỊNH
                           </span>
                         )}
                       </div>
-                      <p className="text-xs text-gray-400">{meta.label} - {a.model}</p>
+                      <p className="text-xs text-muted-foreground">{meta.label} - {a.model}</p>
                     </div>
                   </div>
                   <div className="mt-3 flex items-center justify-between">
-                    <span className={`text-xs flex items-center gap-1 ${a.enabled ? 'text-green-400' : 'text-gray-400'}`}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${a.enabled ? 'bg-green-400' : 'bg-gray-600'}`}/>
+                    <span className={`text-xs flex items-center gap-1 ${a.enabled ? 'text-green-400' : 'text-muted-foreground'}`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${a.enabled ? 'bg-green-400' : 'bg-accent'}`}/>
                       {a.enabled ? 'Đang bật' : 'Đã tắt'}
                     </span>
                     <span className="text-xs text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity">

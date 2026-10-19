@@ -1,15 +1,31 @@
 import axios from 'axios';
 import { IntegrationAdapter, TestResult } from '../IntegrationAdapter';
+import {
+  ParsedPayment, WebhookAuthResult, WebhookCapableAdapter, WebhookRequest, parseCassoPayload, parseWebhookBody,
+  verifyCassoWebhook,
+} from '../paymentWebhook';
 
 /**
  * Casso payment webhook adapter.
  * Credentials required: apiKey
- * Optional: secretKey (for webhook signature validation)
- * Docs: https://casso.vn/docs
+ * Optional: secretKey = "Key bảo mật" của tích hợp Webhook V2 (hoặc Webhook cũ). Có khoá → webhook phải có chữ ký hợp lệ.
+ * Docs: https://developer.casso.vn
  */
-export class CassoAdapter extends IntegrationAdapter {
+export class CassoAdapter extends IntegrationAdapter implements WebhookCapableAdapter {
   readonly type = 'casso';
   readonly name = 'Casso';
+
+  hasWebhookSecret(): boolean {
+    return !!String(this.config.credentials.secretKey || '').trim();
+  }
+
+  verifyWebhook(req: WebhookRequest): WebhookAuthResult {
+    return verifyCassoWebhook(req, this.config.credentials.secretKey);
+  }
+
+  parseWebhook(body: any): ParsedPayment[] {
+    return parseCassoPayload(body);
+  }
 
   private getHeaders() {
     return { Authorization: `apikey ${this.config.credentials.apiKey}` };
@@ -53,18 +69,12 @@ export class CassoAdapter extends IntegrationAdapter {
       }
 
       case 'handleWebhook': {
-        // Validate HMAC signature if secretKey is configured
-        const { secretKey } = this.config.credentials;
-        if (secretKey && params.signature) {
-          const crypto = require('crypto');
-          const computed = crypto.createHmac('sha256', secretKey)
-            .update(JSON.stringify(params.body)).digest('hex');
-          if (computed !== params.signature) {
-            throw new Error('Webhook signature không hợp lệ');
-          }
-        }
-        const records: any[] = params.body?.data || (params.body ? [params.body] : []);
-        return { valid: true, transactions: records };
+        // Như webhook server: params.headers + params.rawBody (chuỗi body gốc); có khoá thì bắt buộc chữ ký hợp lệ.
+        const rawBody = Buffer.from(typeof params.rawBody === 'string' ? params.rawBody : JSON.stringify(params.body ?? {}), 'utf8');
+        const body = parseWebhookBody(rawBody);
+        const auth = this.verifyWebhook({ headers: params.headers || {}, rawBody, body });
+        if (auth.ok === false) throw new Error(`Webhook Casso không hợp lệ: ${auth.message}`);
+        return { valid: true, verified: auth.method !== 'none', transactions: this.parseWebhook(body).map(p => p.raw) };
       }
 
       default:

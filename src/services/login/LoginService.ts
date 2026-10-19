@@ -31,10 +31,6 @@ export default class LoginService {
         return await this.loginHelper.loginCookies(imei, cookies, userAgent, proxyId);
     }
 
-    public async requestOldMessages(auth: any) {
-        return await this.loginHelper.requestOldMessages(auth);
-    }
-
     public async disconnectUser(zaloId: string): Promise<void> {
         return await this.loginHelper.disconnectUser(zaloId);
     }

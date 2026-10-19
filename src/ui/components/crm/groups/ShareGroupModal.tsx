@@ -151,11 +151,11 @@ export default function ShareGroupModal({
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className="bg-gray-800 border border-gray-600 rounded-2xl w-full max-w-[520px] max-h-[85vh] shadow-2xl flex flex-col overflow-hidden"
+      <div className="bg-card border border-input rounded-2xl w-full max-w-[520px] max-h-[85vh] shadow-2xl flex flex-col overflow-hidden"
         onClick={e => e.stopPropagation()}>
 
         {/* Header — fixed */}
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-700 flex-shrink-0">
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-border flex-shrink-0">
           <div className="w-10 h-10 rounded-xl bg-green-500/15 border border-green-500/30 flex items-center justify-center flex-shrink-0">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2.5">
               <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
@@ -163,10 +163,10 @@ export default function ShareGroupModal({
             </svg>
           </div>
           <div className="flex-1">
-            <h3 className="font-semibold text-white text-sm">Chia sẻ nhóm</h3>
-            <p className="text-xs text-gray-400 mt-0.5">Chia sẻ nhóm lên hệ thống chờ admin duyệt</p>
+            <h3 className="font-semibold text-foreground text-sm">Chia sẻ nhóm</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">Chia sẻ nhóm lên hệ thống chờ admin duyệt</p>
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-300 transition-colors p-1">
+          <button onClick={onClose} className="text-subtle-foreground hover:text-foreground/80 transition-colors p-1">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
@@ -185,10 +185,10 @@ export default function ShareGroupModal({
                 </div>
                 <div>
                   <p className="text-sm text-green-400 font-semibold">Chia sẻ thành công!</p>
-                  <p className="text-xs text-gray-400 mt-1">Nhóm của bạn đang chờ admin duyệt</p>
+                  <p className="text-xs text-muted-foreground mt-1">Nhóm của bạn đang chờ admin duyệt</p>
                 </div>
               </div>
-              <div className="bg-gray-700/50 rounded-xl p-4 flex items-center gap-3">
+              <div className="bg-muted/50 rounded-xl p-4 flex items-center gap-3">
                 {avatarUrl ? (
                   <img src={avatarUrl} alt={displayName || pageId}
                     className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
@@ -198,16 +198,16 @@ export default function ShareGroupModal({
                   </div>
                 )}
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm text-white font-medium truncate">{displayName || 'Người dùng'}</p>
-                  <p className="text-[11px] text-gray-500">UID: {pageId}</p>
+                  <p className="text-sm text-foreground font-medium truncate">{displayName || 'Người dùng'}</p>
+                  <p className="text-[11px] text-subtle-foreground">UID: {pageId}</p>
                 </div>
               </div>
               <div className="text-center py-1">
-                <p className="text-xs text-gray-400">Cảm ơn bạn đã đóng góp nhóm cho cộng đồng! 🎉</p>
-                <p className="text-[11px] text-gray-500 mt-1">Nhóm sẽ xuất hiện sau khi admin duyệt.</p>
+                <p className="text-xs text-muted-foreground">Cảm ơn bạn đã đóng góp nhóm cho cộng đồng! 🎉</p>
+                <p className="text-[11px] text-subtle-foreground mt-1">Nhóm sẽ xuất hiện sau khi admin duyệt.</p>
               </div>
               <button onClick={onClose}
-                className="w-full py-2.5 rounded-xl bg-gray-700 text-gray-300 text-sm hover:bg-gray-600 transition-colors">
+                className="w-full py-2.5 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent transition-colors">
                 Đóng
               </button>
             </div>
@@ -225,18 +225,18 @@ export default function ShareGroupModal({
             <>
               {/* ── Step 1: Nhập link nhóm ──────────────────────────────── */}
               <div>
-                <label className="text-xs text-gray-400 mb-1.5 block font-medium">Link nhóm Zalo</label>
+                <label className="text-xs text-muted-foreground mb-1.5 block font-medium">Link nhóm Zalo</label>
                 <div className="flex gap-2">
                   <div className="relative flex-1">
-                    <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">{LinkIcon}</div>
+                    <div className="absolute left-3 top-1/2 -translate-y-1/2 text-subtle-foreground">{LinkIcon}</div>
                     <input type="text" value={linkInput} onChange={e => { setLinkInput(e.target.value); setLinkError(''); setResolvedGroup(null); }}
                       onKeyDown={e => { if (e.key === 'Enter' && !linkLoading) handleResolveLink(); }}
                       placeholder="https://zalo.me/g/xxxxxx hoặc Group ID"
-                      className="w-full bg-gray-700 border border-gray-600 rounded-xl pl-9 pr-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-green-500" />
+                      className="w-full bg-muted border border-input rounded-xl pl-9 pr-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-green-500" />
                   </div>
                   <button onClick={handleResolveLink}
                     disabled={linkLoading || !linkInput.trim()}
-                    className="px-4 py-2 bg-gray-600 hover:bg-gray-500 disabled:opacity-50 text-white text-sm font-medium rounded-xl transition-colors flex items-center gap-1.5 flex-shrink-0">
+                    className="px-4 py-2 bg-accent hover:bg-accent disabled:opacity-50 text-foreground text-sm font-medium rounded-xl transition-colors flex items-center gap-1.5 flex-shrink-0">
                     {linkLoading ? <>{SpinIcon} Đang tải...</> : 'Tra cứu'}
                   </button>
                 </div>
@@ -260,8 +260,8 @@ export default function ShareGroupModal({
                       </div>
                     )}
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm text-white font-medium truncate">{resolvedGroup.name}</p>
-                      <p className="text-[11px] text-gray-400">ID: {resolvedGroup.groupId}</p>
+                      <p className="text-sm text-foreground font-medium truncate">{resolvedGroup.name}</p>
+                      <p className="text-[11px] text-muted-foreground">ID: {resolvedGroup.groupId}</p>
                     </div>
                     <span className="px-2 py-0.5 bg-green-500/20 text-green-400 text-[10px] font-medium rounded-full">Hợp lệ ✓</span>
                   </div>
@@ -270,14 +270,14 @@ export default function ShareGroupModal({
 
               {/* ── Step 2: Chọn danh mục ──────────────────────────────── */}
               <div>
-                <label className="text-xs text-gray-400 mb-1.5 block font-medium">Chọn danh mục</label>
+                <label className="text-xs text-muted-foreground mb-1.5 block font-medium">Chọn danh mục</label>
                 <div className="grid grid-cols-4 gap-1.5 max-h-[240px] overflow-y-auto pr-1">
                   {DEFAULT_CATEGORIES.map(cat => (
                     <button key={cat.id} onClick={() => setSelectedCategoryId(cat.id)}
                       className={`px-1.5 py-2 rounded-lg border text-center transition-colors
                         ${selectedCategoryId === cat.id
-                          ? 'border-green-500 bg-green-500/10 text-white'
-                          : 'border-gray-600 text-gray-400 hover:border-gray-500'}`}>
+                          ? 'border-green-500 bg-green-500/10 text-foreground'
+                          : 'border-input text-muted-foreground hover:border-border-strong'}`}>
                       <span className="text-lg block">{cat.icon}</span>
                       <span className="mt-0.5 block truncate text-[9px] leading-tight">{cat.name}</span>
                     </button>
@@ -287,11 +287,11 @@ export default function ShareGroupModal({
 
               {/* ── Step 3: Ghi chú ────────────────────────────────────── */}
               <div>
-                <label className="text-xs text-gray-400 mb-1.5 block font-medium">Ghi chú (tùy chọn)</label>
+                <label className="text-xs text-muted-foreground mb-1.5 block font-medium">Ghi chú (tùy chọn)</label>
                 <textarea value={note} onChange={e => setNote(e.target.value)}
                   placeholder="Nhóm chất lượng, nhiều người mua hàng, nên tham gia..."
                   rows={2}
-                  className="w-full bg-gray-700 border border-gray-600 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-green-500 resize-none" />
+                  className="w-full bg-muted border border-input rounded-xl px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-green-500 resize-none" />
               </div>
             </>
           )}
@@ -299,9 +299,9 @@ export default function ShareGroupModal({
 
         {/* Actions — fixed bottom */}
         {!result && (
-          <div className="flex gap-2 px-6 py-4 border-t border-gray-700 flex-shrink-0">
+          <div className="flex gap-2 px-6 py-4 border-t border-border flex-shrink-0">
             <button onClick={onClose}
-              className="flex-1 py-2.5 rounded-xl bg-gray-700 text-gray-300 text-sm hover:bg-gray-600 transition-colors">
+              className="flex-1 py-2.5 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent transition-colors">
               Hủy
             </button>
             <button onClick={handleSubmit}

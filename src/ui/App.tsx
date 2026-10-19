@@ -9,16 +9,21 @@ import MessageInput from './components/chat/MessageInput';
 import ConversationInfo from './components/chat/ConversationInfo';
 import GroupBoardPanel from './components/chat/GroupBoardPanel';
 import IntegrationQuickPanel from './components/integration/IntegrationQuickPanel';
+import PluginPagesHost from './components/plugins/PluginPagesHost';
+import PluginChatPanel from './components/plugins/PluginChatPanel';
+import { initPluginStore } from './store/pluginStore';
 import AIQuickPanel from './components/integration/AIQuickPanel';
 import ReminderNotification from './components/chat/ReminderNotification';
 import FriendRequestNotification, { FriendRequestNotifData } from './components/common/FriendRequestNotification';
 import QuickChatModal from './components/chat/QuickChatModal';
 import AccountInitPanel from './components/common/AccountInitPanel';
 import AccountSwitcherOverlay from './components/common/AccountSwitcherOverlay';
+import TelegramIncomingCall from './components/chat/quick/telegram/TelegramIncomingCall';
 import { UpdateNotification } from './components/common/UpdateNotification';
 import { useAppStore } from './store/appStore';
 import { useAccountStore } from './store/accountStore';
 import { useChatStore } from './store/chatStore';
+import { useShallow } from 'zustand/react/shallow';
 import { useCRMStore } from './store/crmStore';
 import { useZaloEvents } from './hooks/useZaloEvents';
 import { useChatEvents } from './hooks/useChatEvents';
@@ -26,13 +31,21 @@ import useIsMobile from './hooks/useIsMobile';
 import ipc, { buildZaloAuth } from './lib/ipc';
 import { sendSeenForThread } from './lib/sendSeenHelper';
 import { getFilteredUnreadCount } from './lib/badgeUtils';
-import DataAccessor from './lib/data/DataAccessor';
+import DataAccessor, { isReadFailure } from './lib/data/DataAccessor';
+import { reloadAccountContacts } from './lib/chat/accountContacts';
 import { playNotificationSound, showDesktopNotification } from './utils/NotificationService';
 import { checkAccountInitNeeds } from './lib/zaloInitUtils';
 import AddAccountModal from "@/components/auth/AddAccountModal";
 import EmployeeConnectionBanner from "@/components/common/EmployeeConnectionBanner";
 import { useWorkspaceStore } from './store/workspaceStore';
 import { useEmployeeStore } from './store/employeeStore';
+import RestQueryService from '../services/http/RestQueryService';
+import {
+  AUTH_EXPIRED_MESSAGE,
+  createThrottleGate,
+  normalizeBossUrl,
+  SNAPSHOT_REFRESH_THROTTLE_MS,
+} from '../shared/employeeConnection';
 import LockScreen from './components/auth/LockScreen';
 import { Spinner } from '@/components/common/PageLoading';
 import { GlobeIcon } from '@/components/common/icons';
@@ -60,6 +73,8 @@ type WorkspaceAccountCache = {
   is_business?: number;
   is_active?: number;
   listener_active?: number;
+  /** zalo | facebook | telegram_user | telegram_bot — Boss gửi trong snapshot (bản Boss cũ không có → Zalo) */
+  channel?: string;
 };
 
 function buildPermissionsMap(permissions?: WorkspacePermissionCache[]): Record<string, boolean> {
@@ -74,13 +89,19 @@ function normalizeWorkspaceAccounts(accounts?: WorkspaceAccountCache[]) {
   return (accounts || []).map((account: any) => {
     const listenerState = account.listener_active ?? account.listenerActive ?? (account.isConnected ? 1 : 0);
     const fullName = account.full_name || account.display_name || account.zalo_id;
+    // Kênh của tài khoản (snapshot Boss): thiếu thì tài khoản Facebook / Telegram bị coi là Zalo (sai adapter, không có
+    // nút đồng bộ…). Trạng thái (listener_active) Boss tính theo kênh — không hỏi phiên cục bộ của máy nhân viên.
+    const channel = typeof account.channel === 'string' && account.channel ? account.channel : undefined;
     return {
     zalo_id: account.zalo_id,
+    ...(channel ? { channel } : {}),
+    ...(channel === 'facebook' ? { facebook_id: account.facebook_id || account.zalo_id } : {}),
     display_name: fullName,
     full_name: fullName,
     avatar_url: account.avatar_url || '',
     phone: account.phone || '',
     is_business: account.is_business || 0,
+    ...(account.send2me_id ? { send2me_id: String(account.send2me_id) } : {}),
     imei: '',
     user_agent: '',
     cookies: '',
@@ -116,6 +137,39 @@ function ensureActiveAccount(accounts: Array<{ zalo_id: string }>) {
   if (!activeAccountStillVisible) {
     accountStore.setActiveAccount(accounts[0].zalo_id);
   }
+}
+
+/**
+ * Init REST client của nhân viên bằng Boss URL + token LẤY TỪ CẤU HÌNH WORKSPACE Ở MAIN (nguồn sự thật
+ * duy nhất): getActive() lúc mở app, payload workspace:switched, sự kiện employee:credentials.
+ * Không bao giờ init từ kết quả đăng nhập ở renderer. RestQueryService.init idempotent (cùng giá trị → giữ nguyên).
+ */
+function applyEmployeeCredentials(bossUrl: string | undefined, token: string | undefined, source: string): void {
+  const url = normalizeBossUrl(bossUrl);
+  if (!url || !token) return;
+  RestQueryService.getInstance().init(url, token);
+  const empStore = useEmployeeStore.getState();
+  if (empStore.bossUrl !== url) empStore.setBossUrl(url);
+  if (empStore.token !== token) empStore.setToken(token);
+  console.log(`[App] REST credentials (${source}): ${url}`);
+}
+
+const snapshotRefreshGate = createThrottleGate(SNAPSHOT_REFRESH_THROTTLE_MS);
+
+/**
+ * Làm mới snapshot nhân viên (quyền + tài khoản được giao) qua đường boot/snapshot của main
+ * (/api/sync/snapshot → workspace:initialState { forced }) — tối đa 1 lần / 10 s / workspace.
+ */
+function refreshEmployeeSnapshot(reason: string): void {
+  const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+  if (!workspaceId || useEmployeeStore.getState().mode !== 'employee') return;
+  if (!snapshotRefreshGate(workspaceId)) return;
+  console.log(`[App] Làm mới snapshot nhân viên (${reason})`);
+  ipc.workspace?.refreshSnapshot?.(workspaceId, reason)
+    .then((res) => {
+      if (!res?.success) console.warn(`[App] refreshSnapshot (${reason}) thất bại: ${res?.error || 'unknown'}`);
+    })
+    .catch(() => {});
 }
 
 async function loadEmployeeConversationsForAccounts(accounts: Array<{ zalo_id: string }>, limit = 200) {
@@ -165,17 +219,43 @@ export default function App() {
     showAIQuickPanel, toggleAIQuickPanel,
     openQuickChat, quickChatOpen, theme, fontSizeScale,
     sidebarExpanded
-  } = useAppStore();
-  const { setAccounts, updateListenerActive, accounts } = useAccountStore();
-  const { setContacts } = useChatStore();
-  const { activeThreadId, activeThreadType, contacts } = useChatStore();
-  const { activeAccountId } = useAccountStore();
+  } = useAppStore(useShallow(s => ({
+    view: s.view, setView: s.setView, notification: s.notification, hideNotification: s.hideNotification,
+    erpPermissionDialog: s.erpPermissionDialog, hideErpPermissionDialog: s.hideErpPermissionDialog,
+    addAccountModalOpen: s.addAccountModalOpen, setAddAccountModalOpen: s.setAddAccountModalOpen,
+    showConversationInfo: s.showConversationInfo, toggleConversationInfo: s.toggleConversationInfo,
+    showGroupBoard: s.showGroupBoard, setShowGroupBoard: s.setShowGroupBoard,
+    showIntegrationQuickPanel: s.showIntegrationQuickPanel,
+    toggleIntegrationQuickPanel: s.toggleIntegrationQuickPanel, showAIQuickPanel: s.showAIQuickPanel,
+    toggleAIQuickPanel: s.toggleAIQuickPanel, openQuickChat: s.openQuickChat, quickChatOpen: s.quickChatOpen,
+    theme: s.theme, fontSizeScale: s.fontSizeScale, sidebarExpanded: s.sidebarExpanded,
+  })));
+  const activePluginPanel = useAppStore(s => s.activePluginPanel);
+  const setActivePluginPanel = useAppStore(s => s.setActivePluginPanel);
+  // Plugin: trang sidebar, panel chat, nút soạn tin của plugin đang bật (rỗng nếu không có plugin).
+  useEffect(() => initPluginStore(), []);
+  const { setAccounts, updateListenerActive, accounts } = useAccountStore(useShallow(s => ({
+    setAccounts: s.setAccounts, updateListenerActive: s.updateListenerActive, accounts: s.accounts,
+  })));
+  const { activeAccountId } = useAccountStore(useShallow(s => ({
+    activeAccountId: s.activeAccountId,
+  })));
+  // App là gốc cả giao diện: subscribe cả store (hay cả map contacts — đổi theo mọi tin nhắn đến) làm MỌI component
+  // render lại theo mọi tin nhắn / đang gõ / đã xem của mọi tài khoản. Chỉ lấy hội thoại đang mở.
+  const { setContacts, activeThreadId, activeThreadType } = useChatStore(useShallow(s => ({
+    setContacts: s.setContacts, activeThreadId: s.activeThreadId, activeThreadType: s.activeThreadType,
+  })));
+  const activeContact = useChatStore(s => (
+    activeAccountId && activeThreadId ? s.contacts[activeAccountId]?.find(c => c.contact_id === activeThreadId) : undefined
+  ));
   const [initializing, setInitializing] = useState(true);
   const [lockEnabled, setLockEnabled] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
   const startupInitStartedRef = useRef(false);
   const isMobile = useIsMobile();
-  const { mobileShowChat, setMobileShowChat } = useAppStore();
+  const { mobileShowChat, setMobileShowChat } = useAppStore(useShallow(s => ({
+    mobileShowChat: s.mobileShowChat, setMobileShowChat: s.setMobileShowChat,
+  })));
 
   // ─── Resizable sidebar width ────────────────────────────────────────────
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
@@ -250,21 +330,59 @@ export default function App() {
   // ─── Early init RestQueryService (employee mode) — trước workspace:switched ──
   // UI components mount và gọi REST API ngay lập tức, nhưng workspace:switched
   // event có độ trễ → RestQueryService chưa init → request bị "blocked".
-  // Fix: init ngay từ mount effect với thông tin workspace hiện tại.
+  // Fix: init ngay từ mount effect với thông tin workspace hiện tại (cùng cấu hình ở main).
   useEffect(() => {
     (async () => {
       try {
         const wsRes = await ipc.workspace?.getActive();
         const ws = wsRes?.workspace;
         if (ws?.type === 'remote' && ws.bossUrl && ws.token) {
-          const mod = await import('../services/http/RestQueryService');
-          if (mod?.default?.getInstance) {
-            mod.default.getInstance().init(ws.bossUrl, ws.token);
-            console.log(`[App] ⚡ Early RestQueryService init: ${ws.bossUrl}`);
-          }
+          applyEmployeeCredentials(ws.bossUrl, ws.token, 'startup');
         }
       } catch {}
     })();
+  }, []);
+
+  // ─── Employee ↔ Boss: URL/token từ main, badge kết hợp, resync, 403 ACCOUNT_FORBIDDEN ──
+  useEffect(() => {
+    const rest = RestQueryService.getInstance();
+    // Nửa REST của badge: bị chặn (lỗi transport liên tiếp) hoặc chưa có URL/token → "đang khôi phục"
+    const syncRestBlocked = () => {
+      useEmployeeStore.getState().setRestBlocked(rest.isBlocked() || !rest.getBaseUrl() || !rest.getToken());
+    };
+    syncRestBlocked();
+    const offRestStatus = rest.addStatusListener(() => syncRestBlocked());
+
+    // Main vừa kết nối / đổi URL-token → REST client theo đúng cấu hình đó
+    const offCredentials = window.electronAPI?.on('employee:credentials', (data) => {
+      if (!data?.workspaceId || !data.bossUrl || !data.token) return;
+      const rendererActive = useWorkspaceStore.getState().activeWorkspaceId;
+      // Đang chuyển workspace (renderer còn ở workspace cũ) → bỏ qua; workspace:switched init đúng thời điểm
+      const isActive = rendererActive ? data.workspaceId === rendererActive : data.active;
+      if (!isActive) return;
+      applyEmployeeCredentials(data.bossUrl, data.token, `main:${data.reason}`);
+    });
+
+    // Kết nối hồi phục sau khoảng mất > 10 s / máy ngủ dậy → data loader tải lại (window 'employee:resync')
+    const offResync = window.electronAPI?.on('employee:resync', (data) => {
+      if (!data?.workspaceId) return;
+      const activeId = useWorkspaceStore.getState().activeWorkspaceId;
+      if (activeId && data.workspaceId !== activeId) return;
+      console.log(`[App] employee:resync (${data.reason}, mất kết nối ~${Math.round((data.gapMs || 0) / 1000)}s)`);
+      window.dispatchEvent(new CustomEvent('employee:resync', { detail: data }));
+      refreshEmployeeSnapshot(`resync:${data.reason}`);
+    });
+
+    // REST gặp 403 ACCOUNT_FORBIDDEN → quyền / tài khoản được giao đã đổi → lấy lại snapshot (≤ 1 lần / 10 s)
+    const onAccountForbidden = () => refreshEmployeeSnapshot('accountForbidden');
+    window.addEventListener('employee:accountForbidden', onAccountForbidden);
+
+    return () => {
+      offRestStatus();
+      offCredentials?.();
+      offResync?.();
+      window.removeEventListener('employee:accountForbidden', onAccountForbidden);
+    };
   }, []);
 
   // ─── Lock screen: listen for lock events + keyboard shortcut ───────────
@@ -289,8 +407,9 @@ export default function App() {
   useEffect(() => {
     const handleChanged = (e: Event) => {
       const enabled = (e as CustomEvent).detail?.enabled ?? false;
+      // Vừa bật trong Cài đặt: chỉ bật phím tắt Ctrl+Shift+L / nút khoá, KHÔNG khoá ngay — khoá ngay gỡ cả Cài đặt nên màn
+      // "Lưu recovery key" hiện một lần sau khi bật (LockScreenSettings) không bao giờ thấy. Lần mở app sau sẽ hỏi mật khẩu.
       setLockEnabled(enabled);
-      if (enabled) setIsLocked(true);
     };
     window.addEventListener('lockScreen:changed', handleChanged);
     return () => window.removeEventListener('lockScreen:changed', handleChanged);
@@ -515,6 +634,7 @@ export default function App() {
     await ipc.zalo?.acceptFriendRequest({ auth, userId });
     await DataAccessor.removeFriendRequest({ zaloId, userId, direction: 'received' }).catch(() => {});
     await DataAccessor.getFriendRequests({ zaloId, direction: 'received' }).then((res: any) => {
+      if (isReadFailure(res)) return; // đọc lỗi → giữ số đếm và chấm "mới" như cũ
       const count = res?.requests?.length ?? 0;
       if (useAccountStore.getState().activeAccountId === zaloId) {
         useCRMStore.getState().setRequestCount(count);
@@ -533,6 +653,7 @@ export default function App() {
     await ipc.zalo?.rejectFriendRequest({ auth, userId });
     await DataAccessor.removeFriendRequest({ zaloId, userId, direction: 'received' }).catch(() => {});
     await DataAccessor.getFriendRequests({ zaloId, direction: 'received' }).then((res: any) => {
+      if (isReadFailure(res)) return; // đọc lỗi → giữ số đếm và chấm "mới" như cũ
       const count = res?.requests?.length ?? 0;
       if (useAccountStore.getState().activeAccountId === zaloId) {
         useCRMStore.getState().setRequestCount(count);
@@ -629,20 +750,15 @@ export default function App() {
         empStore.setAssignedAccounts(ws.cachedAssignedAccounts || []);
         empStore.setEmployees(ws.cachedEmployeesData || []);
 
-        // Init RestQueryService để employee có thể gọi REST API
-        if (ws.bossUrl && ws.token) {
-          try {
-            const mod = await import('../services/http/RestQueryService');
-            if (mod?.default?.getInstance) {
-              mod.default.getInstance().init(ws.bossUrl, ws.token);
-            }
-          } catch {}
-        }
+        // Init RestQueryService để employee có thể gọi REST API — URL/token trong payload là cấu hình
+        // workspace ở main (cùng nguồn với employee:credentials), init SAU khi đã reset store cũ.
+        applyEmployeeCredentials(ws.bossUrl, ws.token, 'workspace:switched');
 
         // Use snapshot from event payload (merged by main process) - no IPC needed
         // Snapshot chỉ là dữ liệu cache, KHÔNG đồng nghĩa đang connected
         const snapshot = ws._snapshot;
-        empStore.setBossConnected(!!ws._connected);
+        empStore.setHeartbeatConnected(!!ws._connected);
+        empStore.setAuthExpired(!!ws._authExpired);
         if (snapshot) {
           if (snapshot.assignedAccounts?.length) empStore.setAssignedAccounts(snapshot.assignedAccounts);
           if (snapshot.permissions?.length) empStore.setPermissions(buildPermissionsMap(snapshot.permissions));
@@ -650,6 +766,8 @@ export default function App() {
         }
       } else {
         empStore.reset();
+        // Rời chế độ nhân viên → REST client ngừng gọi Boss (DataAccessor dùng IPC cho workspace local)
+        RestQueryService.getInstance().reset();
       }
 
       // Reset stores to reflect new workspace data
@@ -725,10 +843,11 @@ export default function App() {
     const unsub = window.electronAPI?.on('workspace:initialState', async (data: any) => {
       if (!data?.workspaceId) return;
 
-      // Throttle: bỏ qua nếu đã xử lý trong 60s gần nhất (SSE reconnect loop)
+      // Throttle: bỏ qua nếu đã xử lý trong 60s gần nhất (SSE reconnect loop).
+      // forced = làm mới chủ động (403 ACCOUNT_FORBIDDEN / resync, đã throttle 10 s) → áp dụng ngay.
       const now = Date.now();
       const lastTs = lastInitialStateTs.current[data.workspaceId] || 0;
-      if (now - lastTs < 60_000) {
+      if (!data.forced && now - lastTs < 60_000) {
         return;
       }
       lastInitialStateTs.current[data.workspaceId] = now;
@@ -791,7 +910,7 @@ export default function App() {
       const permsMap = buildPermissionsMap(permissions);
       empStore.setPermissions(permsMap);
       empStore.setAssignedAccounts(assignedAccounts);
-      empStore.setBossConnected(true);
+      // Trạng thái kết nối KHÔNG ghi ở đây: badge chỉ theo heartbeat (workspace:connectionStatus) + REST
       empStore.setEmployees(employeesData);
       empStore.setCurrentEmployee(buildCurrentEmployeeFromWorkspace({
         ...useWorkspaceStore.getState().activeWorkspace(),
@@ -939,19 +1058,47 @@ export default function App() {
     return () => unsub?.();
   }, []);
 
-  // ─── Track remote workspace connection status ───────────
+  // ─── Track remote workspace connection status (heartbeat của main) ───────────
   useEffect(() => {
-    const unsub = window.electronAPI?.on('workspace:connectionStatus', (data: any) => {
+    const unsub = window.electronAPI?.on('workspace:connectionStatus', (data) => {
       if (!data?.workspaceId) return;
       useWorkspaceStore.getState().setConnectionStatus(data.workspaceId, {
         connected: !!data.connected,
         latency: data.latency ?? 0,
       });
-      // Update employeeStore.bossConnected if this is the active workspace
+      // Nửa heartbeat của badge — chỉ cho workspace đang active
       const activeWsId = useWorkspaceStore.getState().activeWorkspaceId;
-      if (data.workspaceId === activeWsId) {
-        useEmployeeStore.getState().setBossConnected(!!data.connected);
-        if (data.latency !== undefined) useEmployeeStore.getState().setLatency(data.latency);
+      if (data.workspaceId !== activeWsId) return;
+      const empStore = useEmployeeStore.getState();
+      const wasExpired = empStore.authExpired;
+      empStore.setHeartbeatConnected(!!data.connected);
+      if (data.latency !== undefined) empStore.setLatency(data.latency);
+      if (data.connected) empStore.setAuthExpired(false);
+      else if (typeof data.authExpired === 'boolean') empStore.setAuthExpired(data.authExpired);
+
+      if (empStore.mode === 'employee') {
+        if (data.authExpired && !wasExpired) {
+          useAppStore.getState().showNotification(AUTH_EXPIRED_MESSAGE, 'warning');
+        }
+        if (data.kicked) {
+          useAppStore.getState().showNotification(data.reason || 'Bị ngắt kết nối bởi quản lý', 'warning');
+        }
+      }
+
+      if (data.reason === 'user-disconnect' || data.kicked) {
+        // Người dùng ngắt / bị Boss kick → REST cũng dừng: badge giữ Offline, không gọi Boss nữa
+        RestQueryService.getInstance().reset();
+      } else if (data.connected) {
+        // Lưới an toàn: main đã nối mà REST chưa có URL/token → lấy từ cấu hình workspace ở main
+        const rest = RestQueryService.getInstance();
+        if (!rest.getBaseUrl() || !rest.getToken()) {
+          ipc.workspace?.getActive?.().then((res) => {
+            const ws = res?.workspace;
+            if (ws?.id === data.workspaceId && ws.type === 'remote') {
+              applyEmployeeCredentials(ws.bossUrl, ws.token, 'connectionStatus');
+            }
+          }).catch(() => {});
+        }
       }
     });
     return () => unsub?.();
@@ -983,19 +1130,17 @@ export default function App() {
 
       console.log(`[App] workspace:syncComplete received: type=${data.syncType} workspace=${data.workspaceId}`);
 
-      // Reload contacts from DB for all assigned accounts
+      // Reload contacts for all assigned accounts — nhân viên đọc từ BOSS (ipc.db.getContacts ở máy nhân viên chỉ là
+      // stub `{ success: true }` → trước đây không nạp gì); lỗi đọc giữ danh sách (reloadAccountContacts)
       const empStore = useEmployeeStore.getState();
       const accounts = empStore.assignedAccounts || [];
       if (accounts.length > 0) {
         for (const zaloId of accounts) {
           try {
-            const contactsRes = await Promise.race([
-              ipc.db?.getContacts(zaloId),
+            await Promise.race([
+              reloadAccountContacts(zaloId),
               new Promise(r => setTimeout(() => r(null), 5000)),
-            ]) as any;
-            if (contactsRes?.contacts) {
-              setContacts(zaloId, contactsRes.contacts);
-            }
+            ]);
           } catch {}
         }
         // Reload flags
@@ -1136,11 +1281,11 @@ export default function App() {
         const reminderData = typeof actionData.data === 'string' ? JSON.parse(actionData.data) : actionData.data;
 
         // Lấy thông tin account
-        const account = accounts.find(a => a.zalo_id === zaloId);
+        const account = useAccountStore.getState().accounts.find(a => a.zalo_id === zaloId);
         const accountName = account?.display_name || account?.phone || 'Tài khoản';
 
         // Lấy thông tin conversation
-        const contactList = contacts[zaloId] || [];
+        const contactList = useChatStore.getState().contacts[zaloId] || [];
         const contact = contactList.find(c => c.contact_id === threadId);
         const conversationName = contact?.display_name || 'Hội thoại';
 
@@ -1163,7 +1308,7 @@ export default function App() {
 
     window.addEventListener('zalo:reminder', handleReminderEvent);
     return () => window.removeEventListener('zalo:reminder', handleReminderEvent);
-  }, [accounts, contacts]);
+  }, []);
 
   // Initialize on app start
   useEffect(() => {
@@ -1257,8 +1402,10 @@ export default function App() {
           // 4b. Sync FB account connection status from main process
           //     (reconnectAllFBAccounts runs in main process before renderer is ready,
           //      so the fb:onConnectionStatus event may have been missed)
+          //     Nhân viên: phiên Facebook chạy trên Boss — trạng thái lấy từ snapshot + fb:onConnectionStatus (relay),
+          //     fb:checkHealth ở máy nhân viên là thao tác chỉ Boss.
           const fbAccounts = accountsRes.accounts.filter((a: any) => (a.channel || CHANNEL.ZALO) === 'facebook');
-          if (fbAccounts.length > 0) {
+          if (fbAccounts.length > 0 && !isEmployeeMode) {
             setTimeout(async () => {
               for (const fbAcc of fbAccounts) {
                 try {
@@ -1284,34 +1431,19 @@ export default function App() {
             empStore.reset();
             empStore.setMode('employee');
             empStore.setCurrentEmployee(buildCurrentEmployeeFromWorkspace(activeWs));
-            empStore.setBossUrl(activeWs.bossUrl || '');
+            empStore.setBossUrl(normalizeBossUrl(activeWs.bossUrl));
             empStore.setToken(activeWs.token || '');
             console.log(`[App] 🪙 Recovery token: ${activeWs.token ? activeWs.token.slice(0, 20) + '...' : 'EMPTY!'}`);
-            // Init RestQueryService
-            if (activeWs.bossUrl && activeWs.token) {
-              try {
-                const mod = await import('../services/http/RestQueryService');
-                if (mod?.default?.getInstance) {
-                  const rqs = mod.default.getInstance();
-                  rqs.init(activeWs.bossUrl, activeWs.token);
-                  rqs.setOnStatusChange((connected: boolean, latency: number) => {
-                    useEmployeeStore.getState().setBossConnected(connected);
-                    if (latency > 0) useEmployeeStore.getState().setLatency(latency);
-                  });
-                  console.log(`[App] ✅ RestQueryService initialized: ${activeWs.bossUrl}`);
-                } else {
-                  console.warn('[App] ❌ RestQueryService not available');
-                }
-              } catch (e) {
-                console.warn('[App] ❌ RestQueryService init error:', e);
-              }
-            } else {
-              console.warn(`[App] ⚠️ Cannot init RestQueryService: bossUrl=${!!activeWs.bossUrl} token=${!!activeWs.token}`);
+            // RestQueryService: đã init ở effect "Early init" từ CÙNG cấu hình workspace, sau đó theo
+            // employee:credentials của main (kết nối / đổi URL-token). Status listener đăng ký 1 lần ở effect riêng.
+            if (!activeWs.bossUrl || !activeWs.token) {
+              console.warn(`[App] ⚠️ Remote workspace thiếu cấu hình: bossUrl=${!!activeWs.bossUrl} token=${!!activeWs.token}`);
             }
             // Query actual connection status instead of hardcoding false
             // (connectAutoWorkspaces may have already connected by the time init reaches here)
             const connStatus = await ipc.workspace?.getConnectionStatus?.(activeWs.id).catch(() => null);
-            empStore.setBossConnected(!!connStatus?.connected);
+            empStore.setHeartbeatConnected(!!connStatus?.connected);
+            empStore.setAuthExpired(!!connStatus?.authExpired);
             if (connStatus?.latency !== undefined) empStore.setLatency(connStatus.latency);
             // Load from cached data in workspace config (populated after first successful connection)
             empStore.setPermissions(buildPermissionsMap(activeWs.cachedPermissions));
@@ -1422,6 +1554,11 @@ export default function App() {
     };
 
     const handleOnline = () => {
+      // Telegram User connections live in the main process; let them skip the
+      // reconnect backoff. Independent of the Zalo reconnect below.
+      ipc.telegramUser?.networkOnline?.().catch(() => {});
+      // Remote workspace (nhân viên ↔ Boss): main thử lại / heartbeat ngay thay vì chờ backoff
+      ipc.workspace?.networkOnline?.().catch(() => {});
       reconnectAfterNetworkRestore().catch((err) => {
         console.warn('[NetworkReconnect] error:', err);
       });
@@ -1436,14 +1573,16 @@ export default function App() {
     };
   }, [reconnectAfterNetworkRestore]);
 
+  const pluginPanelOpen = !!activePluginPanel && !showGroupBoard && !showConversationInfo && !showIntegrationQuickPanel && !showAIQuickPanel;
   const rightInfoOverlayOpen =
-      showGroupBoard || showConversationInfo || showIntegrationQuickPanel || showAIQuickPanel;
+      showGroupBoard || showConversationInfo || showIntegrationQuickPanel || showAIQuickPanel || pluginPanelOpen;
 
   const closeRightInfoOverlay = () => {
     if (showGroupBoard) setShowGroupBoard(false);
     if (showConversationInfo) toggleConversationInfo();
     if (showIntegrationQuickPanel) toggleIntegrationQuickPanel();
     if (showAIQuickPanel) toggleAIQuickPanel();
+    if (activePluginPanel) setActivePluginPanel(null);
   };
 
   // ─── Lock screen gate: block entire app until unlocked ───────────────────
@@ -1453,12 +1592,12 @@ export default function App() {
 
   if (initializing) {
     return (
-      <div className="h-screen flex flex-col bg-gray-900">
+      <div className="h-screen flex flex-col bg-background">
         <TopBar />
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center">
             <Spinner size={10} className="mx-auto mb-3" />
-            <p className="text-gray-400 text-sm">Đang khởi động...</p>
+            <p className="text-muted-foreground text-sm">Đang khởi động...</p>
           </div>
         </div>
       </div>
@@ -1466,7 +1605,7 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-gray-900 overflow-hidden">
+    <div className="h-screen flex flex-col bg-background overflow-hidden">
       <TopBar />
       <EmployeeConnectionBanner />
 
@@ -1493,7 +1632,7 @@ export default function App() {
                   {!isMobile && (
                     <div
                       onMouseDown={handleSidebarResizeStart}
-                      className={`w-1 flex-shrink-0 cursor-col-resize hover:bg-blue-500/50 transition-colors z-10 ${sidebarResizing ? 'bg-blue-500/50' : 'bg-gray-700/50'}`}
+                      className={`w-1 flex-shrink-0 cursor-col-resize border-r border-border hover:bg-primary/40 transition-colors z-10 ${sidebarResizing ? 'bg-primary/60' : 'bg-card'}`}
                       title="Kéo để thay đổi chiều rộng"
                     />
                   )}
@@ -1514,11 +1653,10 @@ export default function App() {
                     </div>
                     {/* Bảng tin nhóm panel */}
                     {showGroupBoard && activeThreadId && activeAccountId && (() => {
-                      const contactList = contacts[activeAccountId] || [];
-                      const contact = contactList.find(c => c.contact_id === activeThreadId);
+                      const contact = activeContact;
                       const isGroupThread = activeThreadType === 1 || contact?.contact_type === 'group';
                       return isGroupThread ? (
-                        <div className="absolute inset-y-0 right-0 z-50 w-80 max-w-[92vw] border-l border-gray-700 bg-gray-800 flex flex-col overflow-hidden shadow-2xl"
+                        <div className="absolute inset-y-0 right-0 z-50 w-80 max-w-[92vw] border-l border-border bg-card flex flex-col overflow-hidden shadow-2xl"
                               onClick={(e) => e.stopPropagation()}>
                           <GroupBoardPanel
                             zaloId={activeAccountId}
@@ -1560,8 +1698,7 @@ export default function App() {
                           <IntegrationQuickPanel
                               onClose={toggleIntegrationQuickPanel}
                               contextPhone={(() => {
-                                const cl = activeAccountId ? (contacts[activeAccountId] || []) : [];
-                                const c = cl.find((x: any) => x.contact_id === activeThreadId);
+                                const c = activeContact;
                                 const raw = c?.phone || '';
                                 if (!raw) return '';
                                 const digits = raw.startsWith('+') ? raw.slice(1) : raw;
@@ -1569,8 +1706,7 @@ export default function App() {
                                 return raw;
                               })()}
                               contextName={(() => {
-                                const cl = activeAccountId ? (contacts[activeAccountId] || []) : [];
-                                const c = cl.find((x: any) => x.contact_id === activeThreadId);
+                                const c = activeContact;
                                 return c?.alias || c?.display_name || '';
                               })()}
                           />
@@ -1583,6 +1719,15 @@ export default function App() {
                             onClick={(e) => e.stopPropagation()}
                         >
                           <AIQuickPanel onClose={toggleAIQuickPanel} />
+                        </div>
+                    )}
+                    {/* Right panel: plugin (contributes.chatPanels) */}
+                    {pluginPanelOpen && (
+                        <div
+                            className="absolute inset-y-0 right-0 z-40 max-w-[92vw] overflow-hidden"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                          <PluginChatPanel />
                         </div>
                     )}
                   </div>
@@ -1599,6 +1744,8 @@ export default function App() {
             {view === 'analytics' && <div className="flex-1 h-full overflow-hidden"><AnalyticsPage /></div>}
             {view === 'erp' && <div className="flex-1 h-full overflow-hidden"><ErpPage /></div>}
             {view === 'dashboard' && <Dashboard />}
+            {/* Trang plugin: giữ iframe đã mở khi chuyển view (ẩn bằng CSS) */}
+            <PluginPagesHost />
           </Suspense>
         </div>
       </div>
@@ -1616,7 +1763,7 @@ export default function App() {
             flex items-start gap-3 pl-4 pr-3 py-3.5 rounded-2xl shadow-2xl transition-all
             ${theme === 'light'
               ? 'bg-white border border-gray-200 shadow-gray-300/50'
-              : 'bg-gray-900 border border-gray-700/70 shadow-black/60'
+              : 'bg-background border border-border/70 shadow-black/60'
             }`}
           style={{
             borderLeftWidth: '0.25rem',
@@ -1653,7 +1800,7 @@ export default function App() {
               : 'Thông báo'}
             </p>
             <p className={`text-sm leading-snug font-medium break-words
-              ${theme === 'light' ? 'text-gray-800' : 'text-gray-100'}`}>
+              ${theme === 'light' ? 'text-gray-800' : 'text-foreground'}`}>
               {notification.message}
             </p>
           </div>
@@ -1663,8 +1810,8 @@ export default function App() {
             onClick={(e) => { e.stopPropagation(); hideNotification(); }}
             className={`flex-shrink-0 mt-0.5 w-6 h-6 flex items-center justify-center rounded-full transition-colors
               ${theme === 'light'
-                ? 'text-gray-400 hover:text-gray-400 hover:bg-gray-100'
-                : 'text-gray-400 hover:text-gray-300 hover:bg-gray-700/60'}`}>
+                ? 'text-muted-foreground hover:text-muted-foreground hover:bg-gray-100'
+                : 'text-muted-foreground hover:text-foreground/80 hover:bg-muted/60'}`}>
             <svg width="9" height="9" viewBox="0 0 10 10" fill="currentColor">
               <path d="M6.06 5l2.47-2.47A.75.75 0 007.47 1.47L5 3.94 2.53 1.47A.75.75 0 001.47 2.53L3.94 5 1.47 7.47a.75.75 0 001.06 1.06L5 6.06l2.47 2.47a.75.75 0 001.06-1.06L6.06 5z"/>
             </svg>
@@ -1676,20 +1823,20 @@ export default function App() {
         <div className="fixed inset-0 z-[70] bg-black/65 backdrop-blur-sm flex items-center justify-center p-4" onClick={hideErpPermissionDialog}>
           <div
             onClick={e => e.stopPropagation()}
-            className={`w-full max-w-md rounded-2xl border shadow-2xl overflow-hidden ${theme === 'light' ? 'bg-white border-red-200 shadow-gray-400/30' : 'bg-gray-900 border-gray-700 shadow-black/60'}`}
+            className={`w-full max-w-md rounded-2xl border shadow-2xl overflow-hidden ${theme === 'light' ? 'bg-white border-red-200 shadow-gray-400/30' : 'bg-popover border-border shadow-black/60'}`}
           >
-            <div className={`px-5 py-4 border-b ${theme === 'light' ? 'border-red-100 bg-red-50/80' : 'border-gray-800 bg-red-500/10'}`}>
+            <div className={`px-5 py-4 border-b ${theme === 'light' ? 'border-red-100 bg-red-50/80' : 'border-border bg-red-500/10'}`}>
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-start gap-3 min-w-0">
                   <div className="w-10 h-10 rounded-xl bg-red-500/15 text-red-500 flex items-center justify-center text-xl font-bold flex-shrink-0">!</div>
                   <div className="min-w-0">
-                    <p className={`text-sm font-semibold ${theme === 'light' ? 'text-gray-900' : 'text-white'}`}>{erpPermissionDialog.title}</p>
+                    <p className={`text-sm font-semibold ${theme === 'light' ? 'text-gray-900' : 'text-foreground'}`}>{erpPermissionDialog.title}</p>
                     <p className={`text-xs mt-1 ${theme === 'light' ? 'text-red-700' : 'text-red-300'}`}>Hệ thống đã chặn thao tác vì tài khoản hiện tại không đủ quyền.</p>
                   </div>
                 </div>
                 <button
                   onClick={hideErpPermissionDialog}
-                  className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${theme === 'light' ? 'text-gray-400 hover:text-gray-700 hover:bg-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}
+                  className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${theme === 'light' ? 'text-muted-foreground hover:text-gray-700 hover:bg-white' : 'text-muted-foreground hover:text-foreground hover:bg-card'}`}
                 >
                   ✕
                 </button>
@@ -1697,13 +1844,13 @@ export default function App() {
             </div>
 
             <div className="px-5 py-4 space-y-3">
-              <p className={`text-sm leading-relaxed ${theme === 'light' ? 'text-gray-700' : 'text-gray-200'}`}>
+              <p className={`text-sm leading-relaxed ${theme === 'light' ? 'text-gray-700' : 'text-foreground'}`}>
                 {erpPermissionDialog.message}
               </p>
               {erpPermissionDialog.details && (
-                <div className={`rounded-xl border px-3 py-2 ${theme === 'light' ? 'border-gray-200 bg-gray-50' : 'border-gray-700 bg-gray-800/80'}`}>
-                  <p className={`text-[11px] uppercase tracking-wider mb-1 ${theme === 'light' ? 'text-gray-400' : 'text-gray-400'}`}>Chi tiết</p>
-                  <p className={`text-xs break-words ${theme === 'light' ? 'text-gray-400' : 'text-gray-300'}`}>{erpPermissionDialog.details}</p>
+                <div className={`rounded-xl border px-3 py-2 ${theme === 'light' ? 'border-gray-200 bg-gray-50' : 'border-border bg-card'}`}>
+                  <p className={`text-[11px] uppercase tracking-wider mb-1 ${theme === 'light' ? 'text-muted-foreground' : 'text-muted-foreground'}`}>Chi tiết</p>
+                  <p className={`text-xs break-words ${theme === 'light' ? 'text-muted-foreground' : 'text-foreground/80'}`}>{erpPermissionDialog.details}</p>
                 </div>
               )}
               <div className="flex justify-end">
@@ -1774,6 +1921,8 @@ export default function App() {
       {/* Auto-update notification - bottom-right corner */}
       <UpdateNotification />
       <AccountSwitcherOverlay />
+      {/* Cuộc gọi Telegram đến: từ chối / mở chat (Deplao chưa nghe máy được) */}
+      <TelegramIncomingCall />
     </div>
   );
 }

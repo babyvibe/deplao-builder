@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import { useAccountStore } from '@/store/accountStore';
+import { useAppStore } from '@/store/appStore';
 import { Spinner } from '@/components/common/PageLoading';
 import { AlertIcon, BotIcon, ChatIcon, LightningIcon, SparklesIcon, TargetIcon, UserIcon } from '@/components/common/icons';
 
@@ -74,7 +75,12 @@ export default function AccountAssignmentPopup({ open, onClose }: { open: boolea
 
   const handleSet = async (zaloId: string, role: 'suggestion' | 'panel', assistantId: string | null) => {
     try {
-      await ipc.ai?.setAccountAssistant(zaloId, role, assistantId);
+      const res: any = await ipc.ai?.setAccountAssistant(zaloId, role, assistantId);
+      // Nhân viên: lưu trên Boss, chờ kết quả — Boss từ chối (thiếu quyền ai_assistant…) thì báo, không đổi lựa chọn
+      if (res?.success === false) {
+        useAppStore.getState().showNotification?.('Không gán được trợ lý: ' + (res.error || ''), 'error');
+        return;
+      }
       setAssignments(prev => ({
         ...prev,
         [zaloId]: { ...prev[zaloId], [role]: assistantId },
@@ -87,15 +93,15 @@ export default function AccountAssignmentPopup({ open, onClose }: { open: boolea
 
   return (
     <div ref={overlayRef} className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50">
-      <div className="bg-gray-800 border border-gray-700 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700 flex-shrink-0">
+      <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border flex-shrink-0">
           <div>
-            <h2 className="text-base font-semibold text-white"><UserIcon className="w-4 h-4 inline" /> Gán trợ lý theo tài khoản</h2>
-            <p className="text-xs text-gray-400 mt-0.5">
+            <h2 className="text-base font-semibold text-foreground"><UserIcon className="w-4 h-4 inline" /> Gán trợ lý theo tài khoản</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
               Mỗi tài khoản Zalo có thể dùng trợ lý riêng cho gợi ý tin nhắn và panel chat AI. Để trống = dùng trợ lý mặc định.
             </p>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors p-1">
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors p-1">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
@@ -108,29 +114,29 @@ export default function AccountAssignmentPopup({ open, onClose }: { open: boolea
               <Spinner size={5} />
             </div>
           ) : accounts.length === 0 ? (
-            <p className="text-sm text-gray-400 text-center py-10">Chưa có tài khoản Zalo nào.</p>
+            <p className="text-sm text-muted-foreground text-center py-10">Chưa có tài khoản Zalo nào.</p>
           ) : (
             <div className="space-y-3">
               {accounts.map(acc => {
                 const assignment = assignments[acc.zalo_id] || { suggestion: null, panel: null };
                 return (
                   <div key={acc.zalo_id}
-                    className="flex items-center gap-4 bg-gray-900/60 rounded-xl p-4 border border-gray-700/50"
+                    className="flex items-center gap-4 bg-card rounded-xl p-4 border border-border/50"
                   >
                     <img src={acc.avatar_url || ''} alt=""
-                      className="w-10 h-10 rounded-full bg-gray-700 flex-shrink-0 object-cover"
+                      className="w-10 h-10 rounded-full bg-muted flex-shrink-0 object-cover"
                     />
                     <div className="flex-shrink-0 min-w-[130px]">
-                      <p className="text-sm text-white font-medium truncate">{acc.full_name}</p>
-                      <p className="text-[11px] text-gray-400">{acc.zalo_id}</p>
+                      <p className="text-sm text-foreground font-medium truncate">{acc.full_name}</p>
+                      <p className="text-[11px] text-muted-foreground">{acc.zalo_id}</p>
                     </div>
                     <div className="flex-1 grid grid-cols-2 gap-3">
                       <div>
-                        <label className="text-[10px] text-gray-400 block mb-1 font-medium"><SparklesIcon className="w-3.5 h-3.5 inline" /> Gợi ý tin nhắn</label>
+                        <label className="text-[10px] text-muted-foreground block mb-1 font-medium"><SparklesIcon className="w-3.5 h-3.5 inline" /> Gợi ý tin nhắn</label>
                         <select
                           value={assignment.suggestion || ''}
                           onChange={e => handleSet(acc.zalo_id, 'suggestion', e.target.value || null)}
-                          className="w-full bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                          className="w-full bg-muted border border-input rounded-lg px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:border-blue-500"
                         >
                           <option value="">Mặc định</option>
                           {enabledAssistants.map(a => (
@@ -139,11 +145,11 @@ export default function AccountAssignmentPopup({ open, onClose }: { open: boolea
                         </select>
                       </div>
                       <div>
-                        <label className="text-[10px] text-gray-400 block mb-1 font-medium"><ChatIcon className="w-4 h-4 inline" /> Panel chat AI</label>
+                        <label className="text-[10px] text-muted-foreground block mb-1 font-medium"><ChatIcon className="w-4 h-4 inline" /> Panel chat AI</label>
                         <select
                           value={assignment.panel || ''}
                           onChange={e => handleSet(acc.zalo_id, 'panel', e.target.value || null)}
-                          className="w-full bg-gray-700 border border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                          className="w-full bg-muted border border-input rounded-lg px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:border-blue-500"
                         >
                           <option value="">Mặc định</option>
                           {enabledAssistants.map(a => (
@@ -159,7 +165,7 @@ export default function AccountAssignmentPopup({ open, onClose }: { open: boolea
           )}
         </div>
 
-        <div className="flex justify-end px-6 py-4 border-t border-gray-700 flex-shrink-0">
+        <div className="flex justify-end px-6 py-4 border-t border-border flex-shrink-0">
           <button onClick={onClose}
             className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
           >

@@ -1,0 +1,40 @@
+{
+  "upstream": "https://github.com/m008v/fbchat-v2",
+  "version": "2.3.3",
+  "commit": "f0522c6ad0833097959691064ca878d694ef6fdf",
+  "submodules": {
+    "bridge-e2ee/meta": {
+      "upstream": "https://github.com/mautrix/meta.git",
+      "commit": "cea2e38c9107be591bcd1b7a6562ccc72400ce23"
+    }
+  },
+  "retrievedAt": "2026-10-16T00:00:00Z",
+  "bridgeAdapterPatches": [
+    "Electron JSON-RPC media localPath adapter",
+    "Electron secure-storage device state transport",
+    "Application event persistence adapter",
+    "hello handshake with protocol/capability validation",
+    "Serial write queue for stdin",
+    "Generation isolation for stale response detection",
+    "connectE2EE registers only devices without a server identity and waits for the encrypted socket",
+    "Per-request panic recovery (handleSafely)",
+    "Credential login removed from the E2EE bridge; served by loginHelper",
+    "Page templates / XMA kept as structured template attachments with all CTAs + carousel items; legacy LSInsertAttachment rows converted (bridge/xma.go)",
+    "fetchMessages RPC: per-thread history page via LightSpeed FetchMessagesTask, answered asynchronously; an existing-range answer must carry the request reference timestamp (as in mautrix-meta), one diagnostic log line per page (bridge/history.go)",
+    "E2EE: thumbs-up CommonSticker, image galleries, placeholders for view-once / payment / contact; signal-only payloads dropped instead of empty messages"
+  ],
+  "loginHelper": {
+    "path": "src/bridge-e2ee/login",
+    "binary": "fbchat-login-bridge",
+    "reason": "Separate module since fbchat-v2 2.3.2, whose pinned mautrix/meta 3ed7bfa crashed in the Bloks interpreter on Facebook's current Messenger Lite login pages (nil GetArg in bk.action.f32.Eq, missing bk.action.array.Get). The E2EE bridge now pins cea2e38 (2026-08-25), still older than the helper's v0.2609.1 (2026-10-08), so the helper keeps its own vendored copy (login/meta via a replace directive) with a small Bloks patch adding bk.action.string.StartsWith/EndsWith/Contains, which v0.2609.1 still lacks but the OTP input validation uses.",
+    "mautrixMeta": {
+      "module": "go.mau.fi/mautrix-meta",
+      "version": "v0.2609.1-0.20261008194055-080ba2d3d5e9",
+      "commit": "080ba2d3d5e9d2e8b35ea32170289b2512b548fe"
+    },
+    "replace": {
+      "github.com/imroc/req/v3": "github.com/beeper/req/v3 v3.0.0-20260925135712-b49593750e56"
+    }
+  },
+  "note": "fbchat-v2 main at 2026-10-15 (not tagged yet): \"fix(e2ee): stabilize LightSpeed bridge for v2.3.3\" bumps mautrix/meta 3ed7bfa -> cea2e38. The old pin no longer completed the LightSpeed socket handshake (\"failed to ensure db 1 is synced: timeout\") on current Facebook accounts."
+}

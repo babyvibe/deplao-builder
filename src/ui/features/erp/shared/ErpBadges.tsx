@@ -8,7 +8,7 @@ import { useEmployeeStore } from '@/store/employeeStore';
 export type ErpPriority = 'low' | 'medium' | 'high' | 'urgent' | string;
 
 const PRIORITY_STYLE: Record<string, { label: string; cls: string }> = {
-  low:    { label: 'Thấp',    cls: 'bg-gray-500/20 text-gray-300 border-gray-500/40' },
+  low:    { label: 'Thấp',    cls: 'bg-accent/20 text-foreground/80 border-border-strong/40' },
   normal: { label: 'Bình thường', cls: 'bg-blue-500/20 text-blue-300 border-blue-500/40' },
   medium: { label: 'Trung',   cls: 'bg-blue-500/20 text-blue-300 border-blue-500/40' },
   high:   { label: 'Cao',     cls: 'bg-orange-500/20 text-orange-300 border-orange-500/40' },
@@ -29,7 +29,7 @@ export function PriorityBadge({ value, compact }: { value?: ErpPriority; compact
 export type ErpStatus = 'todo' | 'doing' | 'review' | 'done' | 'cancelled' | string;
 
 const STATUS_STYLE: Record<string, { label: string; cls: string }> = {
-  todo:      { label: 'Cần làm',  cls: 'bg-gray-500/20 text-gray-300' },
+  todo:      { label: 'Cần làm',  cls: 'bg-accent/20 text-foreground/80' },
   doing:     { label: 'Đang làm', cls: 'bg-blue-500/20 text-blue-300' },
   review:    { label: 'Xem xét',  cls: 'bg-purple-500/20 text-purple-300' },
   done:      { label: 'Hoàn thành', cls: 'bg-green-500/20 text-green-300' },
@@ -104,17 +104,17 @@ export function EmployeeAvatar({
   return (
     <span className="inline-flex items-center gap-1.5">
       {avatar ? (
-        <img src={avatar} alt={name} className="rounded-full object-cover ring-1 ring-gray-700" style={dim} />
+        <img src={avatar} alt={name} className="rounded-full object-cover ring-1 ring-border" style={dim} />
       ) : (
         <span
-          className={`rounded-full text-white font-semibold inline-flex items-center justify-center ring-1 ring-gray-700 ${colorFor(id)}`}
+          className={`rounded-full text-foreground font-semibold inline-flex items-center justify-center ring-1 ring-border ${colorFor(id)}`}
           style={dim}
           title={name}
         >
           {initialsFrom(name)}
         </span>
       )}
-      {showName && <span className="text-xs text-gray-300 truncate">{name}</span>}
+      {showName && <span className="text-xs text-foreground/80 truncate">{name}</span>}
     </span>
   );
 }
@@ -133,7 +133,7 @@ const markdownLinkRegex = new RegExp(String.raw`\[([^\]]+)\]\((https?:[^)\s]+)\)
 
 function inlineMd(s: string): string {
   return s
-    .replace(/`([^`]+)`/g, '<code class="bg-gray-800 px-1 rounded text-[12px]">$1</code>')
+    .replace(/`([^`]+)`/g, '<code class="bg-card px-1 rounded text-[12px]">$1</code>')
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/\*([^*]+)\*/g, '<em>$1</em>')
     .replace(/_([^_]+)_/g, '<em>$1</em>')
@@ -151,7 +151,7 @@ function renderMarkdown(src: string): string {
   let m: RegExpExecArray | null;
   while ((m = fenceRe.exec(escaped)) !== null) {
     parts.push(renderBlocks(escaped.slice(lastIdx, m.index)));
-    parts.push(`<pre class="bg-gray-800 rounded p-3 my-2 text-[12px] overflow-x-auto"><code>${m[1].trim()}</code></pre>`);
+    parts.push(`<pre class="bg-card rounded p-3 my-2 text-[12px] overflow-x-auto"><code>${m[1].trim()}</code></pre>`);
     lastIdx = m.index + m[0].length;
   }
   parts.push(renderBlocks(escaped.slice(lastIdx)));
@@ -187,7 +187,7 @@ function renderBlocks(src: string): string {
     if (h) { flushList(); flushPara();
       const lvl = h[1].length;
       const sizes = ['text-2xl', 'text-xl', 'text-lg', 'text-base', 'text-sm', 'text-xs'];
-      out.push(`<h${lvl} class="${sizes[lvl - 1]} font-bold text-white mt-4 mb-2">${inlineMd(h[2])}</h${lvl}>`);
+      out.push(`<h${lvl} class="${sizes[lvl - 1]} font-bold text-foreground mt-4 mb-2">${inlineMd(h[2])}</h${lvl}>`);
     } else if (ul) { flushPara();
       if (listType && listType !== 'ul') flushList();
       listType = 'ul'; listBuf.push(ul[1]);
@@ -195,7 +195,7 @@ function renderBlocks(src: string): string {
       if (listType && listType !== 'ol') flushList();
       listType = 'ol'; listBuf.push(ol[1]);
     } else if (bq) { flushList(); flushPara();
-      out.push(`<blockquote class="border-l-2 border-gray-600 pl-3 my-2 text-gray-400 italic">${inlineMd(bq[1])}</blockquote>`);
+      out.push(`<blockquote class="border-l-2 border-input pl-3 my-2 text-muted-foreground italic">${inlineMd(bq[1])}</blockquote>`);
     } else if (line.trim() === '') {
       flushList(); flushPara();
     } else {
@@ -235,7 +235,7 @@ export function MarkdownRenderer({ source, className }: { source: string; classN
 
   return (
     <div
-      className={`erp-md text-sm text-gray-300 ${className ?? ''}`}
+      className={`erp-md text-sm text-foreground/80 ${className ?? ''}`}
       onClick={handleClick}
       dangerouslySetInnerHTML={{ __html: html }}
     />
@@ -252,7 +252,7 @@ export function RichContentPreview({
   compact?: boolean;
 }) {
   if (!source?.trim()) {
-    return <p className={`text-xs text-gray-400 italic ${className ?? ''}`}>Chưa có nội dung chi tiết</p>;
+    return <p className={`text-xs text-muted-foreground italic ${className ?? ''}`}>Chưa có nội dung chi tiết</p>;
   }
 
   return (

@@ -20,7 +20,7 @@
  */
 
 import ipc from '@/lib/ipc'
-import DataAccessor from '@/lib/data/DataAccessor';;
+import DataAccessor, { isReadFailure, readFailureMessage } from '@/lib/data/DataAccessor';
 import { extractUserProfile } from '../../utils/profileUtils';
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -80,11 +80,17 @@ export interface SyncGroupsOptions {
    * (Single-group mode only) Pre-parsed member IDs from a getGroupInfo call the caller
    * already made. When provided together with placeholders, skips the internal getGroupInfo
    * call to avoid a duplicate API request.
-   * Pass displayName: '' in each placeholder to force fresh enrichment.
+   * Placeholders are saved first (INSERT OR REPLACE): carry the names already known, otherwise they are blanked in the
+   * DB until enrichment finishes. Use `forceEnrich` to re-fetch every name.
    */
   memberIds?: string[];
   /** Paired with memberIds above. */
   placeholders?: MemberPlaceholder[];
+  /**
+   * (Single-group mode only) Lấy lại tên / ảnh của MỌI thành viên, kể cả người đã có tên (làm mới thủ công).
+   * Placeholders vẫn mang tên đang có → bước lưu đầu tiên không xoá trắng tên trong DB trong lúc chờ.
+   */
+  forceEnrich?: boolean;
 }
 
 // ── Internal ──────────────────────────────────────────────────────────────────
@@ -100,6 +106,8 @@ interface _EnrichOpts {
   stopRef?: { current: boolean };
   /** true = skip getGroupMembersInfo, known to fail for this group */
   skipGetGroupMembersInfo?: boolean;
+  /** true = coi mọi thành viên là chưa có tên (lấy lại hết) */
+  forceEnrich?: boolean;
 }
 
 type _GroupEnrichItem = {
@@ -113,6 +121,7 @@ async function _fetchGroupMembersComplete(opts: _EnrichOpts): Promise<void> {
     activeAccountId, auth, groupId, memberIds, placeholders,
     batchSize = 200, onProgress, stopRef,
     skipGetGroupMembersInfo = false,
+    forceEnrich = false,
   } = opts;
 
   if (memberIds.length === 0) return;
@@ -121,7 +130,7 @@ async function _fetchGroupMembersComplete(opts: _EnrichOpts): Promise<void> {
   const existingNameSet = new Set<string>();
   for (const p of placeholders) {
     roleMap[p.memberId] = p.role;
-    if (p.displayName?.trim()) existingNameSet.add(p.memberId);
+    if (!forceEnrich && p.displayName?.trim()) existingNameSet.add(p.memberId);
   }
 
   const membersWithoutNames = memberIds.filter(id => !existingNameSet.has(id));
@@ -215,7 +224,7 @@ async function _fetchGroupMembersComplete(opts: _EnrichOpts): Promise<void> {
 async function _syncSingleGroup(opts: SyncGroupsOptions): Promise<void> {
   const {
     activeAccountId, auth, groupId, onProgress, onPhase1Done, onGroupEnriched, stopRef,
-    memberIds: prebuiltMemberIds, placeholders: prebuiltPlaceholders,
+    memberIds: prebuiltMemberIds, placeholders: prebuiltPlaceholders, forceEnrich,
   } = opts;
   if (!groupId) return;
 
@@ -280,7 +289,7 @@ async function _syncSingleGroup(opts: SyncGroupsOptions): Promise<void> {
   onProgress?.({ phase: 'members', current: 0, total: memberIds.length, groupCurrent: 1, groupTotal: 1, currentGroupName: groupName });
 
   await _fetchGroupMembersComplete({
-    activeAccountId, auth, groupId, memberIds, placeholders,
+    activeAccountId, auth, groupId, memberIds, placeholders, forceEnrich,
     onProgress: (cur, total) => onProgress?.({
       phase: 'members', current: cur, total,
       groupCurrent: 1, groupTotal: 1, currentGroupName: groupName,
@@ -309,6 +318,12 @@ async function _syncAllGroups(opts: SyncGroupsOptions): Promise<void> {
 
   // Load ALL existing members in one shot (no extra DB queries per group later)
   const existingMembersRes = await DataAccessor.getAllGroupMembers(activeAccountId);
+  // Không đọc được bảng thành viên hiện có (mất kết nối Boss / DB lỗi) → DỪNG: chạy tiếp sẽ coi mọi nhóm là mới,
+  // ghi đè tên thành viên bằng bản rỗng và tải lại toàn bộ từ Zalo.
+  if (isReadFailure(existingMembersRes)) {
+    console.warn('[zaloGroupUtils] abort full group sync — cannot read existing members:', readFailureMessage(existingMembersRes));
+    throw new Error('Không đọc được danh sách thành viên hiện có — đã dừng đồng bộ để không ghi đè dữ liệu. Thử lại sau.');
+  }
   const existingMemberRows: any[] = existingMembersRes?.rows ?? [];
   const existingCountMap: Record<string, number> = {};
   const groupMembersMap: Record<string, MemberPlaceholder[]> = {};

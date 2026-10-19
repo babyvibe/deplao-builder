@@ -1,8 +1,12 @@
 import { BrowserWindow } from 'electron';
 import * as path from 'path';
 import Logger from '../../utils/Logger';
+import { normalizeZaloMessageImages } from '../../utils/zaloImageUrl';
 import DatabaseService from '../database/DatabaseService';
+import { groupEventActorId, groupEventActorText, profileFromUserInfo } from '../../shared/zaloGroupEventActor';
 import FileStorageService from '../file/FileStorageService';
+import { groupAdminRole, groupOwnerRole } from '../../shared/groupMemberRoles';
+import { zaloReactionIconToEmoji } from '../../shared/zaloReactions';
 
 /** Callback để invalidate group cache trong ZaloLoginHelper (tránh circular import) */
 let _invalidateGroupCacheFn: ((zaloId: string, groupId: string) => void) | null = null;
@@ -14,6 +18,18 @@ export function registerGroupCacheInvalidator(fn: (zaloId: string, groupId: stri
  * EventBroadcaster - Thay thế ApiService webhook bằng Electron IPC events
  * Broadcast Zalo events từ main process → renderer process
  */
+/** Một dòng thông báo nhóm đang chờ tra tên người thực hiện (nhóm ẩn thành viên). */
+interface GroupActorJob {
+    zaloId: string;
+    groupId: string;
+    eventType: string;
+    rawEvent: any;
+    msgId: string;
+    timestamp: number;
+    actorId: string;
+    placeholder: string;
+}
+
 class EventBroadcaster {
     private static window: BrowserWindow | null = null;
     /** Cache previous groupSetting per group to detect what changed in update_setting events */
@@ -102,13 +118,14 @@ class EventBroadcaster {
     }
 
     public static runOnBossDb(fn: (db: DatabaseService) => void): void {
+        this.withBossDb(fn);
+    }
+
+    /** Như runOnBossDb nhưng trả về kết quả của `fn` (fn phải đồng bộ). */
+    public static withBossDb<T>(fn: (db: DatabaseService) => T): T {
         const { bossDbPath } = this.resolveBossContext();
         const db = DatabaseService.getInstance();
-        if (bossDbPath) {
-            db.withDbPath(bossDbPath, () => fn(db));
-        } else {
-            fn(db);
-        }
+        return bossDbPath ? db.withDbPath(bossDbPath, () => fn(db)) : fn(db);
     }
 
     private static sendAware(channel: string, data: any): void {
@@ -283,6 +300,8 @@ class EventBroadcaster {
      */
     public static async broadcastMessage(zaloId: string, message: any, options?: { silent?: boolean; fromRelay?: boolean }): Promise<void> {
         try {
+            // Ảnh JPEG XL (Zalo điện thoại bản mới) → URL bản JPG trước khi lưu DB / tải về / gửi renderer.
+            normalizeZaloMessageImages(message);
             const undoControl = this.getUndoControlPayload(message);
             if (undoControl) {
                 Logger.log(`[EventBroadcaster] Detected undo control payload on message stream: recalled msgId=${undoControl.msgId} threadId=${undoControl.threadId || '-'} source=${options?.silent ? 'history' : 'realtime'}`);
@@ -316,7 +335,7 @@ class EventBroadcaster {
                 if (msgId && DatabaseService.getInstance().hasMessage(zaloId, String(msgId))) {
                     return; // Already in DB → skip entirely (no save, no event, no download)
                 }
-                // New message but from old_messages/getGroupChatHistory → mark silent
+                // New message but from getGroupChatHistory (lịch sử) → mark silent
                 message._silent = true;
             }
 
@@ -874,19 +893,11 @@ class EventBroadcaster {
                     ? String(rMsg[0].gMsgID || rMsg[0].cMsgID || '')
                     : String(rData.msgId || reaction.msgId || '');
                 const rawIcon: string = rData.content?.rIcon || reaction.content?.rIcon || reaction.rIcon || rData.rIcon || '';
-                const ICON_MAP: Record<string, string> = {
-                    '/-heart': '❤️', '/-strong': '👍', ':>': '😆', ':o': '😮',
-                    ':-((':  '😢', ':-h': '😡', ':-*': '😘', ":')": '😂',
-                    '/-shit': '💩', '/-rose': '🌹', '/-break': '💔', '/-weak': '👎',
-                    ';xx': '😍', ';-/': '😕', ';-)': '😉', '/-fade': '🥱',
-                    '_()_': '🙏', '/-no': '🙅', '/-ok': '👌', '/-v': '✌️',
-                    '/-thanks': '🙏', '/-punch': '👊', ':-bye': '👋', ':((': '😭',
-                    ':))': '😁', '$-)': '🤑',
-                };
-                const emoji = ICON_MAP[rawIcon] || rawIcon;
+                const emoji = zaloReactionIconToEmoji(rawIcon);
+                const threadId = String(reaction.threadId || rData.idTo || rData.threadId || '');
                 if (userId && targetMsgId) {
                     this.runOnBossDb((db) => {
-                        db.updateMessageReaction(zaloId, targetMsgId, userId, emoji);
+                        db.updateMessageReaction(zaloId, targetMsgId, userId, emoji, threadId || undefined);
                     });
                 }
             } catch (err: any) {
@@ -1027,7 +1038,8 @@ class EventBroadcaster {
 
     /**
      * Broadcast khi bạn bè bị xóa (FriendEventType.REMOVE = 1).
-     * Remove from friends DB.
+     * Remove from friends DB + event:friendRemoved (trước đây chỉ xoá DB: UI Boss / nhân viên vẫn hiện "bạn bè"
+     * tới khi tải lại).
      */
     public static broadcastFriendRemoved(zaloId: string, friendId: string): void {
         if (!friendId) return;
@@ -1037,6 +1049,7 @@ class EventBroadcaster {
         } catch (err: any) {
             Logger.warn(`[EventBroadcaster] broadcastFriendRemoved error: ${err.message}`);
         }
+        this.sendAware('event:friendRemoved', { zaloId, userId: String(friendId) });
     }
 
     /**
@@ -1077,7 +1090,14 @@ class EventBroadcaster {
             }
         }
 
-        const systemText = EventBroadcaster.generateGroupEventText(eventType, rawEvent, zaloId, groupId);
+        // Nhóm ẩn danh sách thành viên: updateMembers rỗng → người thực hiện (sourceId). Tên tra trong DB; chưa có thì
+        // getUserInfo (gộp lô) rồi sửa dòng thông báo — trước đây luôn là "Thành viên đã rời khỏi nhóm".
+        const actorId = groupId ? groupEventActorId(eventType, rawEvent) : '';
+        const actor = actorId ? EventBroadcaster.lookupKnownMember(zaloId, groupId, actorId) : null;
+        const systemText = actorId
+            ? groupEventActorText(eventType, actor?.name || '', rawEvent)
+            : EventBroadcaster.generateGroupEventText(eventType, rawEvent, zaloId, groupId);
+        const systemMembers = actorId && actor?.name ? [{ id: actorId, dName: actor.name, avatar: actor.avatar }] : undefined;
         const msgId = `sys_${eventType}_${groupId}_${Date.now()}`;
         const timestamp = Date.now();
 
@@ -1169,7 +1189,7 @@ class EventBroadcaster {
             try {
                 const d2 = rawEvent?.data || rawEvent || {};
                 const um: any[] = d2.updateMembers || [];
-                this.runOnBossDb((db) => db.saveSystemMessage(zaloId, groupId, msgId, systemText, timestamp, um.length > 0 ? um : undefined));
+                this.runOnBossDb((db) => db.saveSystemMessage(zaloId, groupId, msgId, systemText, timestamp, um.length > 0 ? um : systemMembers));
             } catch {}
         }
 
@@ -1189,11 +1209,13 @@ class EventBroadcaster {
                             case 'leave': case 'remove_member': case 'block_member':
                                 db.removeGroupMember(zaloId, groupId, uid);
                                 break;
+                            // Quy ước Zalo trong DB: phó nhóm = 1, trưởng nhóm = 2 (shared/groupMemberRoles) — trước đây
+                            // ghi phó nhóm mới thành 2 → hiện "Trưởng nhóm"
                             case 'add_admin':
-                                db.upsertGroupMember(zaloId, groupId, { memberId: uid, displayName: um.dName || um.zaloName || '', avatar: um.avatar || um.avatar_25 || '', role: 2 });
+                                db.upsertGroupMember(zaloId, groupId, { memberId: uid, displayName: um.dName || um.zaloName || '', avatar: um.avatar || um.avatar_25 || '', role: groupAdminRole('zalo') });
                                 break;
                             case 'remove_admin':
-                                db.upsertGroupMember(zaloId, groupId, { memberId: uid, displayName: um.dName || um.zaloName || '', avatar: um.avatar || um.avatar_25 || '', role: uid === creatorId ? 1 : 0 });
+                                db.upsertGroupMember(zaloId, groupId, { memberId: uid, displayName: um.dName || um.zaloName || '', avatar: um.avatar || um.avatar_25 || '', role: uid === creatorId ? groupOwnerRole('zalo') : 0 });
                                 break;
                         }
                     }
@@ -1201,7 +1223,10 @@ class EventBroadcaster {
             } catch (err: any) { Logger.warn(`[EventBroadcaster] Surgical member DB update failed: ${err.message}`); }
         }
 
-        this.sendAware('event:groupEvent', { zaloId, groupId, eventType, data: rawEvent, systemText, msgId, timestamp });
+        this.sendAware('event:groupEvent', { zaloId, groupId, eventType, data: rawEvent, systemText, systemMembers, msgId, timestamp });
+        if (actorId && !actor?.name && systemText) {
+            EventBroadcaster.scheduleActorResolution({ zaloId, groupId, eventType, rawEvent, msgId, timestamp, actorId, placeholder: systemText });
+        }
 
         const CACHE_INVALIDATING_EVENTS = new Set([
             'join', 'leave', 'remove_member', 'block_member',
@@ -1210,6 +1235,103 @@ class EventBroadcaster {
         if (groupId && CACHE_INVALIDATING_EVENTS.has(eventType) && _invalidateGroupCacheFn) {
             _invalidateGroupCacheFn(zaloId, groupId);
         }
+    }
+
+    // ─── Nhóm ẩn thành viên: tên người thực hiện sự kiện ─────────────────────
+
+    /** Tên / avatar đã biết của một người (bản thân, liên hệ, thành viên nhóm đã lưu) — không gọi mạng. */
+    private static lookupKnownMember(zaloId: string, groupId: string, uid: string): { name: string; avatar: string } | null {
+        if (uid === zaloId) return { name: 'Bạn', avatar: '' };
+        try {
+            return this.withBossDb((db) => {
+                const contact: any = db.getContactById(zaloId, uid);
+                const contactName = String(contact?.alias || contact?.display_name || '').trim();
+                if (contactName && contactName !== uid) return { name: contactName, avatar: String(contact?.avatar_url || '') };
+                const member = db.queryOne<{ display_name: string; avatar: string }>(
+                    `SELECT display_name, avatar FROM page_group_member
+                     WHERE owner_zalo_id = ? AND member_id = ? AND display_name != ''
+                     ORDER BY (group_id = ?) DESC, updated_at DESC LIMIT 1`,
+                    [zaloId, uid, groupId],
+                );
+                return member?.display_name ? { name: String(member.display_name), avatar: String(member.avatar || '') } : null;
+            });
+        } catch {
+            return null;
+        }
+    }
+
+    private static readonly ACTOR_PROFILE_TTL_MS = 6 * 60 * 60 * 1000;
+    private static actorProfileCache = new Map<string, { name: string; avatar: string; at: number }>();
+    private static actorLookupQueue = new Map<string, { jobs: GroupActorJob[] }>();
+
+    /** Gom các sự kiện trong ~1,5 s thành một lệnh getUserInfo (≤ 50 UID) cho mỗi tài khoản. */
+    private static scheduleActorResolution(job: GroupActorJob): void {
+        const cached = this.actorProfileCache.get(`${job.zaloId}:${job.actorId}`);
+        if (cached && Date.now() - cached.at < this.ACTOR_PROFILE_TTL_MS) {
+            this.applyResolvedActor(job, cached);
+            return;
+        }
+        let queue = this.actorLookupQueue.get(job.zaloId);
+        if (!queue) {
+            queue = { jobs: [] };
+            this.actorLookupQueue.set(job.zaloId, queue);
+            setTimeout(() => { void this.flushActorResolution(job.zaloId); }, 1500);
+        }
+        queue.jobs.push(job);
+    }
+
+    private static async flushActorResolution(zaloId: string): Promise<void> {
+        const queue = this.actorLookupQueue.get(zaloId);
+        this.actorLookupQueue.delete(zaloId);
+        if (!queue?.jobs.length) return;
+        const api: any = require('../../utils/ConnectionManager').default.getAllConnections().get(zaloId)?.api;
+        if (!api?.getUserInfo) return;
+        const uids = [...new Set(queue.jobs.map((job) => job.actorId))];
+        for (let i = 0; i < uids.length; i += 50) {
+            const chunk = uids.slice(i, i + 50);
+            try {
+                const response = await api.getUserInfo(chunk);
+                for (const uid of chunk) {
+                    const profile = profileFromUserInfo(response, uid);
+                    if (profile?.name) this.actorProfileCache.set(`${zaloId}:${uid}`, { ...profile, at: Date.now() });
+                }
+            } catch (err: any) {
+                Logger.warn(`[EventBroadcaster] getUserInfo cho sự kiện nhóm lỗi: ${err?.message || err}`);
+            }
+        }
+        if (this.actorProfileCache.size > 2000) this.actorProfileCache.clear();
+        for (const job of queue.jobs) {
+            const profile = this.actorProfileCache.get(`${zaloId}:${job.actorId}`);
+            if (profile?.name) this.applyResolvedActor(job, profile);
+        }
+    }
+
+    /** Sửa dòng thông báo đã lưu / đang hiện (chỉ khi vẫn là chữ tạm) và báo renderer + nhân viên. */
+    private static applyResolvedActor(job: GroupActorJob, profile: { name: string; avatar: string }): void {
+        const text = groupEventActorText(job.eventType, profile.name, job.rawEvent);
+        if (!text || text === job.placeholder) return;
+        const members = [{ id: job.actorId, dName: profile.name, avatar: profile.avatar }];
+        try {
+            this.runOnBossDb((db) => {
+                db.run(
+                    `UPDATE messages SET content = ?, attachments = ?
+                     WHERE owner_zalo_id = ? AND thread_id = ? AND msg_id = ? AND content = ?`,
+                    [text, JSON.stringify(members), job.zaloId, job.groupId, job.msgId, job.placeholder],
+                );
+                db.run(
+                    `UPDATE contacts SET last_message = ?
+                     WHERE owner_zalo_id = ? AND contact_id = ? AND last_message IN (?, ?)`,
+                    [`🔔 ${text}`, job.zaloId, job.groupId, job.placeholder, `🔔 ${job.placeholder}`],
+                );
+            });
+        } catch (err: any) {
+            Logger.warn(`[EventBroadcaster] cập nhật thông báo nhóm lỗi: ${err?.message || err}`);
+        }
+        this.sendAware('event:groupEvent', {
+            zaloId: job.zaloId, groupId: job.groupId, eventType: job.eventType, data: job.rawEvent,
+            systemText: text, systemMembers: members, msgId: job.msgId, timestamp: job.timestamp,
+            update: true, previousText: job.placeholder,
+        });
     }
 
     /**
@@ -1351,7 +1473,7 @@ class EventBroadcaster {
     public static broadcastUndo(zaloId: string, msgId: string, threadId?: string): void {
         if (msgId) {
             this.runOnBossDb((db) => {
-                db.markMessageRecalled(zaloId, String(msgId));
+                db.markMessageRecalled(zaloId, String(msgId), threadId);
                 if (threadId) { try { db.updateLastMessageIfRecalled(zaloId, threadId, String(msgId)); } catch {} }
             });
             Logger.log(`[EventBroadcaster] broadcastUndo: recalled msgId=${msgId} zaloId=${zaloId} threadId=${threadId}`);
@@ -1367,7 +1489,7 @@ class EventBroadcaster {
         if (msgIds.length > 0) {
             this.runOnBossDb((db) => {
                 for (const msgId of msgIds) {
-                    db.markMessageRecalled(zaloId, String(msgId));
+                    db.markMessageRecalled(zaloId, String(msgId), threadId);
                     try { db.updateLastMessageIfRecalled(zaloId, threadId, String(msgId)); } catch {}
                 }
             });

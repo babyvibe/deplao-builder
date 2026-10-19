@@ -1,14 +1,21 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import ipc from '@/lib/ipc';
-import { toLocalMediaUrl } from '@/lib/localMedia';
 import type { ChannelCapability } from '@/../configs/channelConfig';
-import { ClipboardListIcon, ReplyIcon } from '@/components/common/icons';
+import { ClipboardListIcon, CloudIcon, ReplyIcon, StarIcon } from '@/components/common/icons';
+import { getForwardBlockReason } from '@/lib/chat/forwardSupport';
+import { copyImageToClipboard } from '@/lib/chat/copyImage';
+import TelegramReadReceipts, { type ReadReceiptPerson } from './TelegramReadReceipts';
+import { ReactionGrid } from './ReactionPicker';
+import { displayReactionEmoji } from './ReactionComponents';
+import { sameReaction } from '@/lib/chat/reactionChoices';
 
 
 interface MessageContextMenuProps {
   x: number;
   y: number;
   msg: any;
+  /** Album: the photo that was right-clicked (image actions + star act on it, like Zalo). */
+  mediaMsg?: any;
   isSent: boolean;
   isGroupAdmin?: boolean; // trưởng nhóm / phó nhóm được thu hồi tin nhắn của thành viên
   channelCap?: ChannelCapability;
@@ -20,12 +27,27 @@ interface MessageContextMenuProps {
   onDelete: (msg: any) => void;
   onDeleteFromDb?: (msg: any) => void;
   onReact: (msg: any, reaction: string) => void;
+  /** Gỡ reaction của mình (bấm lại reaction đang chọn) */
+  onCancelReact?: (msg: any) => void;
+  /** Reaction theo kênh (lib/chat/reactionChoices): `quick` hiện sẵn; còn nhiều hơn → nút mở rộng ra lưới (Telegram) */
+  reactionChoices?: { quick: string[]; all: string[] };
+  myReaction?: string | null;
   onPin?: (msg: any) => void;
   onEdit?: (msg: any) => void;
+  /** "Tin đánh dấu": current state of the targeted message + toggle. */
+  isStarred?: boolean;
+  onToggleStar?: (msg: any) => void;
+  /** Zalo only: send a copy of the message to My Documents (Cloud của tôi). */
+  onSaveToMyDocuments?: (msg: any) => void;
   showNotification?: (msg: string, type: 'success' | 'error' | 'info') => void;
+  /** Tin đã thu hồi: chỉ còn thao tác cục bộ (sao chép, lưu ảnh/file, đánh dấu, xoá khỏi app) — ẩn mọi thao tác đồng bộ lên nền tảng. */
+  recalled?: boolean;
+  /** Telegram, tin mình gửi (≤ 7 ngày): dòng "Đã xem" cuối menu. ChatWindow chỉ truyền khi tin đủ điều kiện. */
+  readReceipts?: { accountId: string; resolvePerson: (userId: string) => ReadReceiptPerson | null };
 }
 
-const QUICK_REACTIONS = ['❤️', '😆', '😯', '😢', '😡', '👍'];
+/** Mặc định khi nơi gọi không truyền reactionChoices (Zalo: đúng các loại Zalo có — 😆 / 😯 bị gửi thành ❤️). */
+const QUICK_REACTIONS = ['❤️', '😄', '😮', '😢', '😡', '👍'];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -69,7 +91,14 @@ function getRemoteUrl(msg: any): string {
   try {
     const p = JSON.parse(msg.content || '{}');
     if (isVideoMsg(msg)) return p?.href || '';
-    return p?.params?.hd || p?.params?.rawUrl || p?.href || p?.thumb || '';
+    const params = typeof p?.params === 'string' ? JSON.parse(p.params || '{}') : (p?.params || {});
+    const url = params?.hd || params?.rawUrl || p?.href || p?.thumb || '';
+    if (url) return url;
+  } catch { /* Facebook / Telegram: plain-text content */ }
+  try {
+    const attachments = typeof msg.attachments === 'string' ? JSON.parse(msg.attachments || '[]') : (msg.attachments || []);
+    const first = Array.isArray(attachments) ? attachments[0] : null;
+    return first?.url || first?.href || '';
   } catch { return ''; }
 }
 
@@ -86,9 +115,25 @@ function getDefaultFilename(msg: any): string {
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export default function MessageContextMenu({
-  x, y, msg, isSent, isGroupAdmin, channelCap, onClose, onReply, onForward, onSelectMessages, onUndo, onDelete, onDeleteFromDb, onReact, onPin, onEdit, showNotification,
+  x, y, msg, mediaMsg, isSent, isGroupAdmin, channelCap, onClose, onReply, onForward, onSelectMessages, onUndo, onDelete, onDeleteFromDb, onReact, onPin, onEdit,
+  isStarred, onToggleStar, onSaveToMyDocuments, showNotification, recalled = false, readReceipts,
+  onCancelReact, reactionChoices, myReaction = null,
 }: MessageContextMenuProps) {
+  const quickReactions = reactionChoices?.quick ?? QUICK_REACTIONS;
+  const allReactions = reactionChoices?.all ?? QUICK_REACTIONS;
+  const canExpandReactions = allReactions.length > quickReactions.length;
+  // Telegram: mở rộng hàng reaction thành lưới đầy đủ (thay cho các mục menu, như Telegram)
+  const [reactionsExpanded, setReactionsExpanded] = useState(false);
+  const pickReaction = (emoji: string) => {
+    if (onCancelReact && sameReaction(emoji, myReaction)) onCancelReact(msg);
+    else onReact(msg, emoji);
+    onClose();
+  };
+  // Thao tác đồng bộ lên nền tảng (react, trả lời, chuyển tiếp, ghim, sửa, thu hồi, xoá phía Zalo…)
+  const platform = !recalled;
   const menuRef = useRef<HTMLDivElement>(null);
+  // Image actions (copy / save / folder) and the star target the right-clicked album photo
+  const target = mediaMsg || msg;
 
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
@@ -103,27 +148,34 @@ export default function MessageContextMenu({
     };
   }, [onClose]);
 
-  // Adjust position to stay in viewport
+  // Keep the whole menu inside the viewport (its height depends on the items shown)
+  const [top, setTop] = useState(() => Math.min(y, window.innerHeight - 360));
+  useLayoutEffect(() => {
+    const height = menuRef.current?.offsetHeight || 0;
+    if (height) setTop(Math.max(8, Math.min(y, window.innerHeight - height - 8)));
+  }, [y, reactionsExpanded]);
+  const menuWidth = reactionsExpanded ? 296 : canExpandReactions ? 256 : 224;
   const style: React.CSSProperties = {
     position: 'fixed',
-    left: Math.min(x, window.innerWidth - 220),
-    top: Math.min(y, window.innerHeight - 360),
+    left: Math.max(8, Math.min(x, window.innerWidth - menuWidth - 8)),
+    top,
+    width: menuWidth,
     zIndex: 9999,
   };
 
-  const isFile = isFileMsg(msg);
-  const isVideo = isVideoMsg(msg);
+  const isFile = isFileMsg(target);
+  const isVideo = isVideoMsg(target);
   const isLink = isLinkMsg(msg);
-  const isMedia = !isFile && !isVideo && isMediaMsg(msg);
-  const localPath = (isFile || isMedia || isVideo) ? getLocalPath(msg) : '';
-  const remoteUrl = (isFile || isMedia || isVideo) ? getRemoteUrl(msg) : '';
+  const isMedia = !isFile && !isVideo && isMediaMsg(target);
+  const localPath = (isFile || isMedia || isVideo) ? getLocalPath(target) : '';
+  const remoteUrl = (isFile || isMedia || isVideo) ? getRemoteUrl(target) : '';
   const defaultName = (() => {
     if (isVideo) {
       const lp = localPath;
       if (lp) return lp.replace(/.*[/\\]/, '');
-      return `video_${msg.msg_id || Date.now()}.mp4`;
+      return `video_${target.msg_id || Date.now()}.mp4`;
     }
-    return (isFile || isMedia) ? getDefaultFilename(msg) : '';
+    return (isFile || isMedia) ? getDefaultFilename(target) : '';
   })();
 
   // Copy text content (only for non-file, non-media)
@@ -172,39 +224,15 @@ export default function MessageContextMenu({
     onClose();
   };
 
-  // Copy ảnh vào clipboard (chỉ cho media)
+  // Copy ảnh thẳng vào clipboard (chỉ cho media) - không mở viewer / trình duyệt
   const handleCopyImage = async () => {
     onClose();
+    if (!localPath && !remoteUrl) { showNotification?.('Không có ảnh để sao chép', 'error'); return; }
     try {
-      if (!localPath && !remoteUrl) { showNotification?.('Không có ảnh để sao chép', 'error'); return; }
-
-      // Dùng main process fetch để tránh lỗi CORS khi fetch remote URL từ renderer
-      const result = await ipc.file?.readImageAsBase64({ localPath: localPath || undefined, remoteUrl: remoteUrl || undefined });
-      if (!result?.success || !result.base64) {
-        showNotification?.('Không thể tải ảnh: ' + (result?.error || 'unknown'), 'error');
-        return;
-      }
-
-      // Chuyển base64 → Blob
-      const binary = atob(result.base64);
-      const arr = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) arr[i] = binary.charCodeAt(i);
-      const blob = new Blob([arr], { type: result.mimeType || 'image/jpeg' });
-
-      // Đảm bảo là image/png (Clipboard API chỉ hỗ trợ png)
-      let pngBlob: Blob = blob;
-      if (result.mimeType !== 'image/png') {
-        const bmp = await createImageBitmap(blob);
-        const canvas = document.createElement('canvas');
-        canvas.width = bmp.width; canvas.height = bmp.height;
-        const ctx = canvas.getContext('2d')!;
-        ctx.drawImage(bmp, 0, 0);
-        pngBlob = await new Promise<Blob>(res => canvas.toBlob(b => res(b!), 'image/png'));
-      }
-      await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob })]);
+      await copyImageToClipboard({ localPath: localPath || undefined, remoteUrl: remoteUrl || undefined });
       showNotification?.('Đã sao chép ảnh vào clipboard', 'success');
     } catch (e: any) {
-      showNotification?.('Không thể sao chép ảnh: ' + e.message, 'error');
+      showNotification?.('Không thể sao chép ảnh: ' + (e?.message || 'Lỗi không xác định'), 'error');
     }
   };
 
@@ -236,28 +264,57 @@ export default function MessageContextMenu({
 
   return (
     <div ref={menuRef} style={style}
-      className="bg-gray-800 border border-gray-600 rounded-xl shadow-2xl py-1 w-56 text-sm select-none">
-      {/* Quick reactions */}
-      {(channelCap?.supportsReaction ?? true) && (
-        <div className="flex items-center justify-around px-2 py-2 border-b border-gray-700">
-          {QUICK_REACTIONS.map((emoji) => (
-            <button key={emoji}
-              onClick={() => { onReact(msg, emoji); onClose(); }}
-              className="text-xl hover:scale-125 transition-transform"
-              title={emoji}>
-              {emoji}
-            </button>
-          ))}
+      className="bg-popover border border-border rounded-xl shadow-2xl py-1 text-sm select-none">
+      {recalled && (
+        <div className="px-4 py-2 text-[11px] leading-snug text-muted-foreground border-b border-border">
+          Tin đã thu hồi · chỉ thao tác trên máy này
         </div>
       )}
+      {/* Reaction nhanh theo kênh; Telegram: nút ⌄ mở lưới đầy đủ reaction của hội thoại */}
+      {platform && (channelCap?.supportsReaction ?? true) && quickReactions.length > 0 && (
+        reactionsExpanded ? (
+          <ReactionGrid emojis={allReactions} myEmoji={myReaction} onPick={pickReaction} />
+        ) : (
+          <div className="flex items-center justify-around px-2 py-2 border-b border-border">
+            {quickReactions.map((emoji) => (
+              <button key={emoji}
+                onClick={() => pickReaction(emoji)}
+                className={`text-xl leading-none p-0.5 rounded-lg hover:scale-125 transition-transform ${sameReaction(emoji, myReaction) ? 'bg-muted ring-1 ring-primary' : ''}`}
+                title={sameReaction(emoji, myReaction) ? 'Bấm lần nữa để gỡ' : emoji}>
+                {displayReactionEmoji(emoji)}
+              </button>
+            ))}
+            {canExpandReactions && (
+              <button
+                type="button"
+                onClick={() => setReactionsExpanded(true)}
+                className="w-8 h-8 shrink-0 flex items-center justify-center rounded-full bg-muted hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+                title="Xem tất cả cảm xúc"
+                aria-label="Xem tất cả cảm xúc"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </button>
+            )}
+          </div>
+        )
+      )}
+      {/* Đang xem lưới reaction: ẩn các mục menu (như Telegram) */}
+      {!reactionsExpanded && (<>
 
-      {(channelCap?.supportsReply ?? true) && (
+      {platform && (channelCap?.supportsReply ?? true) && (
         <MenuItem icon={<ReplyIcon className="w-4 h-4" />} label="Trả lời" onClick={() => { onReply(msg); onClose(); }} />
       )}
-      {(channelCap?.supportsForward ?? true) && (
+      {/* Cuộc gọi, bình chọn, thẻ thông báo, bản tin OA, tin hệ thống… không chuyển tiếp được (Zalo cũng không cho) */}
+      {platform && (channelCap?.supportsForward ?? true) && !getForwardBlockReason(msg) && (
         <MenuItem icon="↪" label="Chuyển tiếp" onClick={() => { onForward(msg); onClose(); }} />
       )}
-      {onSelectMessages && (
+      {/* Zalo: gửi bản sao tin vào My Documents (Cloud của tôi) - như "Tuỳ chọn khác › Lưu vào My Documents" của Zalo */}
+      {platform && onSaveToMyDocuments && !getForwardBlockReason(target) && (
+        <MenuItem icon={<CloudIcon className="w-4 h-4" />} label="Lưu vào My Documents" onClick={() => { onSaveToMyDocuments(target); onClose(); }} />
+      )}
+      {platform && onSelectMessages && (
         <MenuItem icon="☑" label="Chọn tin nhắn" onClick={() => { onSelectMessages(msg); onClose(); }} />
       )}
 
@@ -289,7 +346,7 @@ export default function MessageContextMenu({
               <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
             </svg>
           }
-          label="Sao chép ảnh"
+          label="Copy hình ảnh"
           onClick={handleCopyImage}
         />
       )}
@@ -323,7 +380,7 @@ export default function MessageContextMenu({
       )}
 
       {/* Ghim tin nhắn */}
-      {(channelCap?.supportsPin ?? true) && onPin && (
+      {platform && (channelCap?.supportsPin ?? true) && onPin && (
         <MenuItem
           icon={
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
@@ -340,8 +397,17 @@ export default function MessageContextMenu({
         />
       )}
 
+      {/* Tin đánh dấu (như Zalo) - xem lại ở menu ⋮ → Tin đánh dấu */}
+      {onToggleStar && (
+        <MenuItem
+          icon={<StarIcon className="w-4 h-4" />}
+          label={isStarred ? 'Bỏ đánh dấu tin nhắn' : 'Đánh dấu tin nhắn'}
+          onClick={() => { onToggleStar(target); onClose(); }}
+        />
+      )}
+
       {/* Sửa tin nhắn — chỉ cho tin nhắn text đã gửi, channel hỗ trợ */}
-      {isSent && onEdit && (channelCap?.supportsEdit ?? false) && (msg.msg_type === 'text' || msg.msg_type === 'chat.text') && !isFile && !isMedia && !isVideo && (
+      {platform && isSent && onEdit && (channelCap?.supportsEdit ?? false) && (msg.msg_type === 'text' || msg.msg_type === 'chat.text') && !isFile && !isMedia && !isVideo && (
         <MenuItem
           icon={
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -354,10 +420,10 @@ export default function MessageContextMenu({
         />
       )}
 
-      {(channelCap?.supportsUnsend ?? true) && isSent && (
+      {platform && (channelCap?.supportsUnsend ?? true) && isSent && (
         <MenuItem icon="↺" label="Thu hồi tin nhắn" onClick={() => { onUndo(msg); onClose(); }} danger />
       )}
-      {(channelCap?.supportsUnsend ?? true) && !isSent && isGroupAdmin && (
+      {platform && (channelCap?.supportsUnsend ?? true) && !isSent && isGroupAdmin && (
         <MenuItem
           icon="↺"
           label="Xoá tin nhắn của thành viên"
@@ -365,7 +431,7 @@ export default function MessageContextMenu({
           danger
         />
       )}
-      <MenuItem icon="↺" label="Xóa (chỉ mình tôi)" onClick={() => { onDelete(msg); onClose(); }} danger />
+      {platform && <MenuItem icon="↺" label="Xóa (chỉ mình tôi)" onClick={() => { onDelete(msg); onClose(); }} danger />}
       {onDeleteFromDb && (
         <MenuItem
           icon={
@@ -382,6 +448,8 @@ export default function MessageContextMenu({
           danger
         />
       )}
+      {readReceipts && <TelegramReadReceipts accountId={readReceipts.accountId} msg={msg} resolvePerson={readReceipts.resolvePerson} />}
+      </>)}
     </div>
   );
 }
@@ -391,8 +459,8 @@ function MenuItem({ icon, label, onClick, danger }: {
 }) {
   return (
     <button onClick={onClick}
-      className={`w-full flex items-center gap-3 px-4 py-2.5 hover:bg-gray-700 transition-colors text-left ${
-        danger ? 'text-red-400' : 'text-gray-200'
+      className={`w-full flex items-center gap-3 px-4 py-2.5 hover:bg-muted transition-colors text-left ${
+        danger ? 'text-red-400' : 'text-foreground'
       }`}>
       <span className="w-4 h-4 flex items-center justify-center flex-shrink-0">{icon}</span>
       <span>{label}</span>

@@ -1,10 +1,18 @@
 import React, {useCallback, useEffect, useLayoutEffect, useRef, useState} from 'react';
-import {useChatStore} from '@/store/chatStore';
+import {useChatStore, type MessageItem} from '@/store/chatStore';
+import { forgetReplyDraft, getReplyDraft, replyDraftKey, saveReplyDraft } from '@/lib/chat/replyDrafts';
+import { useShallow } from 'zustand/react/shallow';
 import {useAccountStore} from '@/store/accountStore';
 import {useAppStore} from '@/store/appStore';
 import {useEmployeeStore} from '@/store/employeeStore';
-import ipc from '@/lib/ipc'
-import DataAccessor from '@/lib/data/DataAccessor';;
+import ipc, { buildZaloAuth } from '@/lib/ipc'
+import DataAccessor, { isReadFailure, readFailureMessage } from '@/lib/data/DataAccessor';
+import { useEmployeeResync } from '@/hooks/useEmployeeResync';
+import {
+  EMPTY_THREAD_LOCAL_LABELS, nextThreadLocalLabels, sortActiveLocalLabels, threadLabelsKey, toLabelIdSet,
+  type ThreadLocalLabelsState,
+} from '@/lib/chat/chatLoadFailures';
+import { relayEventAccount, THREAD_LABELS_CHANGED_EVENT, threadLabelsEventTouches } from '@/lib/chat/relayUiEvents';
 import { messageQueue, generateTempId, extractMsgIdFromResponse } from '@/lib/MessageQueue';
 import { Spinner } from '@/components/common/PageLoading';
 import AccountAssignmentPopup from './AccountAssignmentPopup';
@@ -24,10 +32,14 @@ import ReminderPanel from './ReminderPanel';
 import { matchesShortcut } from '../common/LabelEmojiPicker';
 import { getCapability } from '../../../configs/channelConfig';
 import { isNonZalo, isTelegramBot, isTelegramUser, isTelegram, isFacebook, isZalo, CHANNEL, isTelegramForumGeneral } from '@/lib/channelHelper';
+import { getTelegramMembershipNotice } from '@/lib/telegramMembership';
 import * as channelIpc from '../../lib/channelIpc';
 import { getAdapter } from '@/lib/adapters/registry';
 import { extractVideoThumbViaCanvas } from '@/lib/chat/videoUtils';
 import { EMOJI_CATEGORIES, QUICK_EMOJIS } from '@/lib/chat/emojiUtils';
+import PluginComposerButtons from '@/components/plugins/PluginComposerButtons';
+import { TelegramMediaPicker, lastTelegramPickerTab } from './stickers/TelegramMediaPicker';
+import { sendTelegramStickerItem, type TelegramStickerItem } from '@/lib/chat/telegramStickerStore';
 import { AlertIcon, AwardIcon, BellIcon, BookmarkIcon, BotIcon, ChartIcon, ChatIcon, CheckIcon, ClipboardListIcon, ClockIcon, CreditCardIcon, DollarIcon, EditIcon, FileTextIcon, FolderIcon, GiftIcon, GlobeIcon, KeyIcon, LightbulbIcon, LightningIcon, LinkIcon, PackageIcon, PinIcon, PluginIcon, RefreshIcon, SearchIcon, SettingsIcon, ShoppingCartIcon, SmartphoneIcon, SmileIcon, SparklesIcon, StarIcon, StoreIcon, TagIcon, TargetIcon, TrashIcon, TrendingUpIcon, TruckIcon, UserIcon } from '@/components/common/icons';
 
 interface LocalLabel {
@@ -102,8 +114,13 @@ export default function MessageInput() {
   // Drag-and-drop state
   const [isDragging, setIsDragging] = useState(false);
   const dragCounterRef = useRef(0);
-  const [localLabels, setLocalLabels] = useState<LocalLabel[]>([]);
-  const [threadLocalLabelIds, setThreadLocalLabelIds] = useState<Set<number>>(new Set());
+  // Nhãn Local (danh mục của tài khoản + nhãn đang gắn cho hội thoại). Lần đọc lỗi (chế độ nhân viên: mất kết nối BOSS)
+  // giữ nhãn đang có của đúng tài khoản / hội thoại thay vì thành rỗng, và hiện "Thử lại" gọn trên hàng nhãn.
+  const [localLabelState, setLocalLabelState] = useState<ThreadLocalLabelsState<LocalLabel>>(EMPTY_THREAD_LOCAL_LABELS);
+  const localLabels = localLabelState.labels;
+  const threadLocalLabelIds = localLabelState.threadLabelIds;
+  const localLabelsFailed = localLabelState.failed;
+  const localLabelOwnerRef = useRef('');
   const [togglingLocalLabelId, setTogglingLocalLabelId] = useState<number | null>(null);
   // Pinned shortcut: id of shortcut whose icon edit picker is open
   const [pinnedEditIconId, setPinnedEditIconId] = useState<string | null>(null);
@@ -129,6 +146,7 @@ export default function MessageInput() {
   const textareaRef = useRef<HTMLDivElement>(null);
   const mentionListRef = useRef<HTMLDivElement>(null);
   const emojiPickerRef = useRef<HTMLDivElement>(null);
+  const stickerToolbarRef = useRef<HTMLDivElement>(null);
   const moreMenuBtnRef = useRef<HTMLButtonElement>(null);
   const aiMenuRef = useRef<HTMLDivElement>(null);
   // Track IME composition state (Vietnamese, Chinese, etc.) to avoid
@@ -143,9 +161,31 @@ export default function MessageInput() {
   // Debounce timer for auto-saving draft while typing (~1s)
   const draftSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const { activeThreadId, activeThreadType, activeTopicId, forumTopics, addMessage, removeMessage, replyTo, setReplyTo, editingMsg, setEditingMsg, markReplied, setDraft, clearDraft } = useChatStore();
-  const { activeAccountId, getActiveAccount, accounts: allAccounts } = useAccountStore();
-  const { showNotification, groupInfoCache, setGroupInfo, mergedInboxMode, toggleIntegrationQuickPanel, pinnedIntegrationShortcuts, unpinIntegrationShortcut, editPinnedShortcutIcon, openIntegrationPanelTo, aiSuggestionsEnabled, aiSuggestions, aiSuggestionsLoading, setAiSuggestionsEnabled, setAiSuggestions, setAiSuggestionsLoading, isAiSuggestDisabled, toggleAiDisableForThread, toggleAiDisableForAccount, aiSuggestDisabledThreads, aiSuggestDisabledAccounts } = useAppStore();
+  // Selector: ô nhập tin (component lớn) không render lại với tin nhắn / đang gõ / đã xem của hội thoại khác
+  const { activeThreadId, activeThreadType, activeTopicId, forumTopics, addMessage, removeMessage, replyTo, setReplyTo, editingMsg, setEditingMsg, markReplied, setDraft, clearDraft } = useChatStore(useShallow(s => ({
+    activeThreadId: s.activeThreadId, activeThreadType: s.activeThreadType, activeTopicId: s.activeTopicId,
+    forumTopics: s.forumTopics, addMessage: s.addMessage, removeMessage: s.removeMessage, replyTo: s.replyTo,
+    setReplyTo: s.setReplyTo, editingMsg: s.editingMsg, setEditingMsg: s.setEditingMsg, markReplied: s.markReplied,
+    setDraft: s.setDraft, clearDraft: s.clearDraft,
+  })));
+  const { activeAccountId, getActiveAccount, accounts: allAccounts } = useAccountStore(useShallow(s => ({
+    activeAccountId: s.activeAccountId, getActiveAccount: s.getActiveAccount, accounts: s.accounts,
+  })));
+  const { showNotification, setGroupInfo, mergedInboxMode, toggleIntegrationQuickPanel, pinnedIntegrationShortcuts, unpinIntegrationShortcut, editPinnedShortcutIcon, openIntegrationPanelTo, aiSuggestionsEnabled, aiSuggestions, aiSuggestionsLoading, setAiSuggestionsEnabled, setAiSuggestions, setAiSuggestionsLoading, isAiSuggestDisabled, toggleAiDisableForThread, toggleAiDisableForAccount, aiSuggestDisabledThreads, aiSuggestDisabledAccounts } = useAppStore(useShallow(s => ({
+    showNotification: s.showNotification, setGroupInfo: s.setGroupInfo, mergedInboxMode: s.mergedInboxMode,
+    toggleIntegrationQuickPanel: s.toggleIntegrationQuickPanel, pinnedIntegrationShortcuts: s.pinnedIntegrationShortcuts,
+    unpinIntegrationShortcut: s.unpinIntegrationShortcut, editPinnedShortcutIcon: s.editPinnedShortcutIcon,
+    openIntegrationPanelTo: s.openIntegrationPanelTo, aiSuggestionsEnabled: s.aiSuggestionsEnabled, aiSuggestions: s.aiSuggestions,
+    aiSuggestionsLoading: s.aiSuggestionsLoading, setAiSuggestionsEnabled: s.setAiSuggestionsEnabled,
+    setAiSuggestions: s.setAiSuggestions, setAiSuggestionsLoading: s.setAiSuggestionsLoading,
+    isAiSuggestDisabled: s.isAiSuggestDisabled, toggleAiDisableForThread: s.toggleAiDisableForThread,
+    toggleAiDisableForAccount: s.toggleAiDisableForAccount, aiSuggestDisabledThreads: s.aiSuggestDisabledThreads,
+    aiSuggestDisabledAccounts: s.aiSuggestDisabledAccounts,
+  })));
+  // Thông tin nhóm đang mở (thành viên để @mention): không render lại khi nhóm khác cập nhật
+  const threadGroupInfo = useAppStore(s => (
+    activeAccountId && activeThreadId ? s.groupInfoCache?.[activeAccountId]?.[activeThreadId] : undefined
+  ));
 
   // Channel capability for active thread
   const activeContact = useChatStore(s => (s.contacts[activeAccountId || ''] || []).find(c => c.contact_id === activeThreadId));
@@ -190,34 +230,54 @@ export default function MessageInput() {
     });
   };
 
+  // Hội thoại đang mở: phản hồi muộn của hội thoại trước không được ghi đè nhãn của hội thoại này
+  localLabelOwnerRef.current = activeAccountId && activeThreadId ? threadLabelsKey(activeAccountId, activeThreadId) : '';
+
   const loadLocalLabelsForThread = useCallback(async () => {
     if (!activeAccountId || !activeThreadId) {
-      setLocalLabels([]);
-      setThreadLocalLabelIds(new Set());
+      setLocalLabelState(EMPTY_THREAD_LOCAL_LABELS);
       return;
     }
-
-    try {
-      const [labelsRes, threadRes] = await Promise.all([
-        DataAccessor.getLocalLabels({ zaloId: activeAccountId }),
-        DataAccessor.getThreadLocalLabels({ zaloId: activeAccountId, threadId: activeThreadId }),
-      ]);
-      const labels = (labelsRes?.labels || [])
-        .filter((l: any) => (l?.is_active ?? 1) === 1)
-        .sort((a: any, b: any) => {
-          const sa = Number(a?.sort_order ?? 0);
-          const sb = Number(b?.sort_order ?? 0);
-          if (sa !== sb) return sa - sb;
-          return String(a?.name || '').localeCompare(String(b?.name || ''));
-        });
-      const threadLabels = threadRes?.labels || [];
-      setLocalLabels(labels);
-      setThreadLocalLabelIds(new Set(threadLabels.map((l: any) => Number(l.id))));
-    } catch {
-      setLocalLabels([]);
-      setThreadLocalLabelIds(new Set());
+    const accountId = activeAccountId;
+    const threadId = activeThreadId;
+    const [labelsRes, threadRes] = await Promise.all([
+      DataAccessor.getLocalLabels({ zaloId: accountId }).catch(() => null),
+      DataAccessor.getThreadLocalLabels({ zaloId: accountId, threadId }).catch(() => null),
+    ]);
+    if (localLabelOwnerRef.current !== threadLabelsKey(accountId, threadId)) return;
+    const labelsOk = !!labelsRes && !isReadFailure(labelsRes);
+    const threadOk = !!threadRes && !isReadFailure(threadRes);
+    if (!labelsOk || !threadOk) {
+      console.warn('[MessageInput] Không tải được Nhãn Local:', readFailureMessage(labelsOk ? threadRes : labelsRes) || 'lỗi không rõ');
     }
+    // Lỗi → giữ danh mục của cùng tài khoản / nhãn đã gắn của cùng hội thoại (khác hội thoại: "chưa biết", không mượn)
+    setLocalLabelState(prev => nextThreadLocalLabels(
+      prev, accountId, threadId,
+      labelsOk ? sortActiveLocalLabels<LocalLabel>(labelsRes?.labels) : null,
+      threadOk ? toLabelIdSet(threadRes?.labels) : null,
+    ));
   }, [activeAccountId, activeThreadId]);
+
+  // Chế độ nhân viên: kết nối BOSS phục hồi → tải lại Nhãn Local của hội thoại đang mở
+  useEmployeeResync(loadLocalLabelsForThread);
+
+  // Nhãn Local đổi ở nơi khác (ChatHeader, CRM, Boss / nhân viên khác qua relay) → tải lại nhãn của hội thoại đang mở.
+  // Trước đây ô soạn tin chỉ tải lúc đổi hội thoại: nhãn người khác vừa gán không hiện.
+  useEffect(() => {
+    const handleLabels = (e: Event) => {
+      const owner = relayEventAccount((e as CustomEvent).detail);
+      if (!owner || owner === activeAccountId) void loadLocalLabelsForThread();
+    };
+    const handleThreadLabels = (e: Event) => {
+      if (threadLabelsEventTouches((e as CustomEvent).detail, activeAccountId, activeThreadId)) void loadLocalLabelsForThread();
+    };
+    window.addEventListener('local-labels-changed', handleLabels);
+    window.addEventListener(THREAD_LABELS_CHANGED_EVENT, handleThreadLabels);
+    return () => {
+      window.removeEventListener('local-labels-changed', handleLabels);
+      window.removeEventListener(THREAD_LABELS_CHANGED_EVENT, handleThreadLabels);
+    };
+  }, [activeAccountId, activeThreadId, loadLocalLabelsForThread]);
 
   // ─── AI: listen for insert-to-chat events from AIQuickPanel ──────────────
   useEffect(() => {
@@ -365,7 +425,7 @@ export default function MessageInput() {
         isGroup: activeThreadType === 1,
       }).catch(() => {});
     } else {
-      const auth = { cookies: account.cookies, imei: account.imei, userAgent: account.user_agent };
+      const auth = buildZaloAuth(account);
       (ipc.zalo as any)?.sendTyping?.({ auth, threadId: activeThreadId, type: activeThreadType })?.catch?.(() => {});
     }
 
@@ -380,7 +440,7 @@ export default function MessageInput() {
   const isGroupThread = activeThreadType === 1;
   const groupMembers: Array<{ userId: string; displayName: string; avatar: string; username?: string }> =
     (activeAccountId && activeThreadId && isGroupThread)
-      ? (groupInfoCache?.[activeAccountId]?.[activeThreadId]?.members || [])
+      ? (threadGroupInfo?.members || [])
       : [];
 
   // Fetch missing usernames for Telegram group members when @ is triggered
@@ -455,7 +515,7 @@ export default function MessageInput() {
 
       // Update groupInfoCache with fetched usernames
       if (Object.keys(updates).length > 0) {
-        const cached = groupInfoCache?.[activeAccountId]?.[activeThreadId];
+        const cached = useAppStore.getState().groupInfoCache?.[activeAccountId]?.[activeThreadId];
         if (cached?.members) {
           const updatedMembers = cached.members.map((m: any) =>
             updates[m.userId] ? { ...m, username: updates[m.userId] } : m
@@ -490,6 +550,26 @@ export default function MessageInput() {
   useEffect(() => {
     if (replyTo) textareaRef.current?.focus();
   }, [replyTo]);
+
+  // Trích dẫn THEO TỪNG hội thoại / chủ đề forum: rời hội thoại thì cất, vào hội thoại thì lấy lại (không có → bỏ trích
+  // dẫn). Trước đây trích dẫn là một biến chung: sang hội thoại B vẫn còn trích dẫn tin của A, quay lại A thì đã mất.
+  const replyKey = replyDraftKey(activeAccountId, activeThreadId, activeTopicId);
+  useLayoutEffect(() => {
+    if (!replyKey) return undefined;
+    const restored = getReplyDraft(replyKey);
+    if (useChatStore.getState().replyTo !== restored) setReplyTo(restored);
+    return () => saveReplyDraft(replyKey, useChatStore.getState().replyTo);
+  }, [replyKey]);
+
+  /**
+   * Gửi xong tin trả lời: bỏ trích dẫn của ĐÚNG hội thoại đã gửi. Người dùng có thể đã sang hội thoại khác trong lúc chờ
+   * gửi — setReplyTo(null) khi đó xoá nhầm trích dẫn của hội thoại mới, còn trích dẫn đã gửi thì hiện lại khi quay về.
+   */
+  const finishReply = useCallback((sent: MessageItem | null | undefined) => {
+    if (!sent) return;
+    forgetReplyDraft(sent);
+    if (useChatStore.getState().replyTo === sent) useChatStore.getState().setReplyTo(null);
+  }, []);
 
   // Pre-fill text when entering edit mode
   useEffect(() => {
@@ -533,7 +613,11 @@ export default function MessageInput() {
   useEffect(() => {
     // ── Save draft for the PREVIOUS thread ──────────────────────────
     const prev = prevThreadRef.current;
-    if (prev?.accountId && prev?.threadId) {
+    // Đang sửa tin ở hội thoại vừa rời: huỷ sửa — trước đây khung "Đang sửa" theo sang hội thoại khác và bấm gửi sẽ sửa
+    // tin của hội thoại cũ. Chữ đang sửa không lưu thành tin nháp (giữ tin nháp có trước khi sửa).
+    const editingPrev = useChatStore.getState().editingMsg;
+    if (editingPrev) setEditingMsg(null);
+    if (prev?.accountId && prev?.threadId && !editingPrev) {
       const el = textareaRef.current;
       const currentText = el ? el.innerText.replace(/\u200B/g, '').trim() : '';
       if (currentText) {
@@ -590,28 +674,34 @@ export default function MessageInput() {
     }, 50);
   }, [activeThreadId, activeAccountId]);
 
+  // Tin nhắn nhanh của tài khoản đang mở (theo chế độ zalo / local của tài khoản). Lỗi đọc → giữ danh sách đang có.
+  const reloadQuickMessages = useCallback((): Promise<void> => {
+    if (!activeAccountId) return Promise.resolve();
+    const account = getActiveAccount();
+    if (!account) return Promise.resolve();
+    const channelCap = getCapability((account.channel || CHANNEL.ZALO) as any);
+    const auth = buildZaloAuth(account);
+    const mode = channelCap.quickMessageSyncMode === 'local' ? 'local' : ((localStorage.getItem(`qm_mode_${activeAccountId}`) as 'zalo' | 'local') || CHANNEL.ZALO);
+    return fetchQuickMessages(auth, activeAccountId, mode).then(setQuickMessages).catch(() => {});
+  }, [activeAccountId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Preload quick messages when account changes
   useEffect(() => {
     if (!activeAccountId) return;
-    const account = getActiveAccount();
-    if (!account) return;
-    const channelCap = getCapability((account.channel || CHANNEL.ZALO) as any);
-    const auth = { cookies: account.cookies, imei: account.imei, userAgent: account.user_agent };
-    const mode = channelCap.quickMessageSyncMode === 'local' ? 'local' : ((localStorage.getItem(`qm_mode_${activeAccountId}`) as 'zalo' | 'local') || CHANNEL.ZALO);
-    fetchQuickMessages(auth, activeAccountId, mode).then(setQuickMessages).catch(() => {});
-    // Re-fetch when quick messages change (remote sync or another tab)
-    const handleQMChange = () => {
-      if (!activeAccountId) return;
-      const account = getActiveAccount();
-      if (!account) return;
-      const channelCap = getCapability((account.channel || CHANNEL.ZALO) as any);
-      const auth = { cookies: account.cookies, imei: account.imei, userAgent: account.user_agent };
-      const mode = channelCap.quickMessageSyncMode === 'local' ? 'local' : ((localStorage.getItem(`qm_mode_${activeAccountId}`) as 'zalo' | 'local') || CHANNEL.ZALO);
-      fetchQuickMessages(auth, activeAccountId, mode).then(setQuickMessages).catch(() => {});
+    void reloadQuickMessages();
+    // Re-fetch when quick messages change (remote sync or another tab) — bỏ qua thay đổi của tài khoản khác
+    // (active / reorder không mang tài khoản → vẫn tải lại)
+    const handleQMChange = (e: Event) => {
+      const owner = relayEventAccount((e as CustomEvent).detail);
+      if (owner && owner !== activeAccountId) return;
+      void reloadQuickMessages();
     };
     window.addEventListener('ui:quickMessagesChanged', handleQMChange);
     return () => window.removeEventListener('ui:quickMessagesChanged', handleQMChange);
-  }, [activeAccountId]);
+  }, [activeAccountId, reloadQuickMessages]);
+
+  // Chế độ nhân viên: kết nối BOSS phục hồi → tải lại tin nhắn nhanh (đổi trong lúc mất kết nối không có event)
+  useEmployeeResync(reloadQuickMessages);
 
   useEffect(() => {
     loadLocalLabelsForThread().catch(() => {});
@@ -712,7 +802,8 @@ export default function MessageInput() {
             setInlineStickerSuggestions([]);
             return;
           }
-          const detailRes = await ipc.db?.getStickersByIds?.({ stickerIds: cacheRes.stickerIds.slice(0, 20) });
+          // DataAccessor: chế độ nhân viên đọc sticker đã cache trên Boss (IPC trả stub rỗng → luôn hỏi lại API)
+          const detailRes = await DataAccessor.getStickers({ stickerIds: cacheRes.stickerIds.slice(0, 20) });
           if (detailRes?.success && detailRes.stickers?.length) {
             setInlineStickerSuggestions(detailRes.stickers);
             return;
@@ -722,7 +813,7 @@ export default function MessageInput() {
         // Step 2: Cache miss → call Zalo API
         const account = getActiveAccount();
         if (!account) { setInlineStickerSuggestions([]); return; }
-        const auth = { cookies: account.cookies, imei: account.imei, userAgent: account.user_agent };
+        const auth = buildZaloAuth(account);
 
         const idsRes = await ipc.zalo?.getStickers({ auth, keyword: kw });
         const ids: number[] = idsRes?.response || [];
@@ -795,7 +886,8 @@ export default function MessageInput() {
       try {
         // Step 1: Search local DB contacts
         if (activeAccountId) {
-          const dbRes = await ipc.db?.searchContactByPhone?.({ zaloId: activeAccountId, phone });
+          // DataAccessor: chế độ nhân viên tra danh bạ Boss (IPC trả stub → luôn tốn lượt findUser của Zalo)
+          const dbRes = await DataAccessor.searchContactByPhone({ zaloId: activeAccountId, phone });
           if (dbRes?.success && dbRes?.contact) {
             const c = dbRes.contact;
             setContactCardSuggestion({
@@ -812,7 +904,7 @@ export default function MessageInput() {
         // Step 2: Not found in DB → try Zalo findUser API
         const account = getActiveAccount();
         if (!account) { setContactCardLoading(false); return; }
-        const auth = { cookies: account.cookies, imei: account.imei, userAgent: account.user_agent };
+        const auth = buildZaloAuth(account);
 
         const findRes = await ipc.zalo?.findUser({ auth, zaloId: activeAccountId, phone });
         const foundUser = findRes?.response || findRes?.data;
@@ -861,7 +953,8 @@ export default function MessageInput() {
     if (isNonZalo(account.channel)) {
       return { cookies: '', imei: '', userAgent: '' };
     }
-    return { cookies: account.cookies, imei: account.imei, userAgent: account.user_agent };
+    // accountId: máy nhân viên không có cookie → Boss biết gửi bằng tài khoản nào (không lấy tài khoản được giao đầu tiên)
+    return buildZaloAuth(account);
   };
 
   // ── Nhận file từ ChatWindow drop (drag-and-drop trên vùng tin nhắn) ──
@@ -940,7 +1033,7 @@ export default function MessageInput() {
               }
             } catch (err: any) { return { success: false, error: err?.message || String(err) }; }
           },
-          onSuccess: () => { if (quotePayload) setReplyTo(null); },
+          onSuccess: () => { if (quotePayload) finishReply(replyTo); },
         });
       }
 
@@ -974,7 +1067,7 @@ export default function MessageInput() {
               }
             } catch (err: any) { return { success: false, error: err?.message || String(err) }; }
           },
-          onSuccess: () => { if (quotePayload) setReplyTo(null); },
+          onSuccess: () => { if (quotePayload) finishReply(replyTo); },
         });
       }
     };
@@ -983,34 +1076,76 @@ export default function MessageInput() {
     return () => window.removeEventListener('chat:dragDropFiles', handleDragDropFiles);
   }, [activeThreadId, activeAccountId, activeThreadType, activeTopicId, replyTo, getAuth, activeContact]);
 
-  const handleToggleLocalLabel = useCallback(async (label: LocalLabel) => {
-    if (!activeAccountId || !activeThreadId || togglingLocalLabelId !== null) return;
+  // Plugin (deplao.ui.insertComposerText / nút soạn tin): chèn chữ vào cuối ô soạn tin.
+  useEffect(() => {
+    const onInsert = (e: Event) => {
+      const value = String((e as CustomEvent).detail?.text || '');
+      const el = textareaRef.current;
+      if (!value || !el) return;
+      el.focus();
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+      const node = document.createTextNode(value);
+      range.insertNode(node);
+      range.setStartAfter(node);
+      range.setEndAfter(node);
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    window.addEventListener('composer:insertText', onInsert);
+    return () => window.removeEventListener('composer:insertText', onInsert);
+  }, []);
+
+  const localLabelThreadKey = localLabelState.threadKey;
+  /** Gắn / gỡ một Nhãn Local cho hội thoại đang mở. true = đã đổi (phím tắt chỉ báo "thành công" khi đó). */
+  const handleToggleLocalLabel = useCallback(async (label: LocalLabel): Promise<boolean> => {
+    if (!activeAccountId || !activeThreadId || togglingLocalLabelId !== null) return false;
+    // Chưa biết nhãn đang gắn của hội thoại này (đang tải / lần đọc lỗi): không gắn / gỡ theo trạng thái đoán
+    if (localLabelThreadKey !== threadLabelsKey(activeAccountId, activeThreadId)) {
+      if (localLabelsFailed) showNotification('Chưa tải được Nhãn Local của hội thoại — đang thử lại', 'error');
+      void loadLocalLabelsForThread();
+      return false;
+    }
     const exists = threadLocalLabelIds.has(label.id);
     setTogglingLocalLabelId(label.id);
     try {
-      if (exists) {
-        await DataAccessor.removeLocalLabelFromThread({ zaloId: activeAccountId, labelId: label.id, threadId: activeThreadId });
-      } else {
-        await DataAccessor.assignLocalLabelToThread({ zaloId: activeAccountId, labelId: label.id, threadId: activeThreadId });
-      }
+      const res: any = exists
+        ? await DataAccessor.removeLocalLabelFromThread({ zaloId: activeAccountId, labelId: label.id, threadId: activeThreadId })
+        : await DataAccessor.assignLocalLabelToThread({ zaloId: activeAccountId, labelId: label.id, threadId: activeThreadId });
+      // Nhân viên: Boss từ chối / mất kết nối trả success:false (không ném lỗi) → báo như lỗi
+      if (res?.success === false) throw new Error(res.error || 'write failed');
       await loadLocalLabelsForThread();
       // Dispatch event so ConversationList & CRM reload local labels
       window.dispatchEvent(new CustomEvent('local-labels-changed', { detail: { zaloId: activeAccountId } }));
+      return true;
     } catch {
       showNotification('Không thể cập nhật Nhãn Local', 'error');
+      return false;
     } finally {
       setTogglingLocalLabelId(null);
     }
-  }, [activeAccountId, activeThreadId, activeThreadType, loadLocalLabelsForThread, showNotification, threadLocalLabelIds, togglingLocalLabelId]);
+  }, [activeAccountId, activeThreadId, activeThreadType, loadLocalLabelsForThread, showNotification, threadLocalLabelIds, togglingLocalLabelId, localLabelThreadKey, localLabelsFailed]);
 
   // ─── Pin/unpin conversation locally (Ctrl+P) ──────────────────────────────────
   const handlePinConversation = useCallback(async () => {
     if (!activeAccountId || !activeThreadId) return;
     try {
       const res = await DataAccessor.getLocalPinnedConversations({ zaloId: activeAccountId });
+      // Đọc lỗi ≠ "chưa ghim": không ghim / bỏ ghim theo trạng thái đoán
+      if (isReadFailure(res)) {
+        showNotification('Không tải được trạng thái ghim — thử lại sau', 'error');
+        return;
+      }
       const pinnedThreadIds: string[] = res?.threadIds || [];
       const isPinned = pinnedThreadIds.includes(activeThreadId);
-      await DataAccessor.setLocalPinnedConversation({ zaloId: activeAccountId, threadId: activeThreadId, isPinned: !isPinned });
+      const pinRes: any = await DataAccessor.setLocalPinnedConversation({ zaloId: activeAccountId, threadId: activeThreadId, isPinned: !isPinned });
+      if (pinRes?.success === false) {
+        showNotification(`Không thể ghim hội thoại: ${pinRes.error || 'lỗi không xác định'}`, 'error');
+        return;
+      }
       showNotification(isPinned ? 'Đã bỏ ghim hội thoại' : 'Đã ghim hội thoại', 'success');
       // Notify ConversationList to refresh pinned state
       window.dispatchEvent(new CustomEvent('local-pin-changed', { detail: { zaloId: activeAccountId } }));
@@ -1118,8 +1253,8 @@ export default function MessageInput() {
           e.stopPropagation();
           const exists = threadLocalLabelIds.has(label.id);
           const action = exists ? 'Gỡ' : 'Gắn';
-          handleToggleLocalLabel(label).then(() => {
-            showNotification(`${action} nhãn "${label.emoji || ''} ${label.name}" thành công`, 'success');
+          handleToggleLocalLabel(label).then((toggled) => {
+            if (toggled) showNotification(`${action} nhãn "${label.emoji || ''} ${label.name}" thành công`, 'success');
           });
           return;
         }
@@ -1857,7 +1992,7 @@ export default function MessageInput() {
         setContactCardSuggestion(null);
         setContactCardLoading(false);
         lastDetectedPhoneRef.current = '';
-        if (quotePayload) setReplyTo(null);
+        if (quotePayload) finishReply(replyTo);
       }
 
       // Clear suggestion also when sending with the phone text
@@ -1869,7 +2004,7 @@ export default function MessageInput() {
 
       // Nếu chỉ có danh thiếp (không text, không ảnh) → done
       if (!hasText && !cardToSend) {
-        if (quotePayload) setReplyTo(null);
+        if (quotePayload) finishReply(replyTo);
         setSending(false);
         textareaRef.current?.focus();
         return;
@@ -1921,7 +2056,7 @@ export default function MessageInput() {
             }
           },
         });
-        if (quotePayload) setReplyTo(null);
+        if (quotePayload) finishReply(replyTo);
         setSending(false); textareaRef.current?.focus(); return;
       }
 
@@ -1959,7 +2094,9 @@ export default function MessageInput() {
                   quote: quotePayload,
                   ...(isTelegram(activeChannel) && mentions.length > 0 ? { mentions } : {}),
                 });
-              if (!res?.success) return { success: false, error: res?.error || 'Gửi tin nhắn Facebook thất bại' };
+              if (!res?.success) {
+                return { success: false, uncertain: !!res?.uncertain, msgId: res?.messageId, error: res?.error || 'Gửi tin nhắn Facebook thất bại' };
+              }
               return { success: true, msgId: res?.messageId };
             } catch (err: any) {
               return { success: false, error: err?.message || String(err) };
@@ -2064,7 +2201,7 @@ export default function MessageInput() {
             return { success: true, msgId: result.messageId };
           } else if (isNonZalo(ch)) {
             const res = await channelIpc.sendMessage(ch, { accountId: activeAccountId, threadId: activeThreadId, body: '👍', threadType: activeThreadType });
-            if (!res?.success) return { success: false, error: res?.error || 'Gửi thất bại' };
+            if (!res?.success) return { success: false, uncertain: !!res?.uncertain, msgId: res?.messageId, error: res?.error || 'Gửi thất bại' };
             return { success: true, msgId: res?.messageId };
           } else {
             const res = await ipc.zalo?.sendMessage({ auth, threadId: activeThreadId, type: activeThreadType, message: '👍' });
@@ -2141,7 +2278,7 @@ export default function MessageInput() {
       },
       onSuccess: () => {
         // API thành công — GIỮ preview temp, register batch để đếm webhook
-        if (quotePayload) setReplyTo(null);
+        if (quotePayload) finishReply(replyTo);
         messageQueue.registerImageBatch(
           batchTempId, activeAccountId!, activeThreadId, filePaths.length,
           () => { removeMessage(activeAccountId!, activeThreadId, batchTempId); },
@@ -2192,7 +2329,7 @@ export default function MessageInput() {
         }
       },
       onSuccess: () => {
-        if (quotePayload) setReplyTo(null);
+        if (quotePayload) finishReply(replyTo);
       },
     });
   };
@@ -2268,7 +2405,7 @@ export default function MessageInput() {
           return { success: false, error: err?.message || String(err) };
         }
       },
-      onSuccess: () => { if (quotePayload) setReplyTo(null); },
+      onSuccess: () => { if (quotePayload) finishReply(replyTo); },
     });
   };
 
@@ -2388,7 +2525,7 @@ export default function MessageInput() {
                 return { success: true, ...extractMsgIdFromResponse(sendRes, 'zalo') };
               } catch (err: any) { return { success: false, error: err?.message || String(err) }; }
             },
-            onSuccess: () => { if (quotePayload) setReplyTo(null); },
+            onSuccess: () => { if (quotePayload) finishReply(replyTo); },
           });
         } catch (err: any) {
           showNotification('Gửi ghi âm thất bại: ' + err.message, 'error');
@@ -2474,6 +2611,38 @@ export default function MessageInput() {
     setShowAiMenu(false);
     setShowStickerPicker((v) => !v);
   };
+
+  /** Sticker / GIF Telegram từ bảng biểu cảm: gửi ngay (đang trả lời tin nào thì trả lời tin đó), giữ nguyên chữ đang soạn. */
+  const handleSendTelegramSticker = (item: TelegramStickerItem) => {
+    setShowEmojiPicker(false);
+    setShowStickerPicker(false);
+    if (!activeAccountId || !activeThreadId) return;
+    void sendTelegramStickerItem(item, { accountId: activeAccountId, chatId: activeThreadId, topicId: activeTopicId });
+    textareaRef.current?.focus();
+  };
+
+  // Lưới emoji: bảng emoji thường, hoặc tab Emoji của bảng Emoji · Sticker · GIF (Telegram)
+  const renderEmojiGrid = () => (
+    <div className="space-y-3">
+      {Object.entries(EMOJI_CATEGORIES).map(([category, emojis]) => (
+        <div key={category}>
+          <p className="text-[11px] text-muted-foreground font-medium mb-1.5 px-1">{category}</p>
+          <div className="grid grid-cols-8 gap-0.5">
+            {emojis.map((emoji, idx) => (
+              <button
+                key={`${category}-${emoji}-${idx}`}
+                onMouseDown={(e) => { e.preventDefault(); insertEmoji(emoji); }}
+                className="text-xl hover:bg-muted rounded-lg p-1 transition-colors aspect-square flex items-center justify-center hover:scale-110"
+                title={emoji}
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 
   const handleToggleBotMenu = async () => {
     if (showBotMenu) { setShowBotMenu(false); return; }
@@ -2631,6 +2800,8 @@ export default function MessageInput() {
     // ── Debounced draft save (~1s) ────────────────────────────────────
     if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
     draftSaveTimerRef.current = setTimeout(() => {
+      // Đang sửa tin: chữ trong ô là nội dung sửa, không phải tin nháp
+      if (useChatStore.getState().editingMsg) return;
       const aid = useAccountStore.getState().activeAccountId;
       const tid = useChatStore.getState().activeThreadId;
       if (aid && tid) {
@@ -2933,7 +3104,7 @@ export default function MessageInput() {
             ...(quotePayload ? { quote: quotePayload } : {}),
           });
         }
-        if (quotePayload) setReplyTo(null);
+        if (quotePayload) finishReply(replyTo);
       } catch (err: any) {
         showNotification('Gửi video thất bại: ' + err.message, 'error');
       } finally {
@@ -2971,7 +3142,7 @@ export default function MessageInput() {
             ...(quotePayload ? { quote: quotePayload } : {}),
           });
         }
-        if (quotePayload) setReplyTo(null);
+        if (quotePayload) finishReply(replyTo);
       } catch (err: any) {
         showNotification('Gửi file thất bại: ' + err.message, 'error');
       } finally {
@@ -3006,7 +3177,7 @@ export default function MessageInput() {
   const telegramComposerBlocked = isTelegramUser(activeContact?.channel) && (
     activeContact?.telegram_can_send === 0 ||
     (activeContact?.telegram_peer_type === 'channel' && activeContact?.telegram_can_send !== 1) ||
-    (!!activeTelegramTopic?.isClosed && !groupInfoCache?.[activeAccountId || '']?.[activeThreadId || '']?.canManageTopics)
+    (!!activeTelegramTopic?.isClosed && !threadGroupInfo?.canManageTopics)
   );
   if (telegramComposerBlocked) {
     const joinAction = activeContact?.telegram_join_action;
@@ -3036,11 +3207,15 @@ export default function MessageInput() {
         setJoiningTelegramGroup(false);
       }
     };
+    const membershipNotice = getTelegramMembershipNotice(activeContact);
     return (
-      <div className="border-t border-gray-700 bg-gray-800 px-4 py-3 text-center text-sm text-gray-400 flex-shrink-0">
+      <div className="border-t border-border bg-card px-4 py-3 text-center text-sm text-muted-foreground flex-shrink-0">
         <div>{activeTelegramTopic?.isClosed
           ? 'Chủ đề này đã đóng; chỉ quản trị viên có quyền mới có thể gửi tin nhắn'
           : activeContact.telegram_send_reason || 'Bạn không có quyền gửi tin nhắn trong cuộc trò chuyện này'}</div>
+        {membershipNotice && !activeTelegramTopic?.isClosed && (
+          <div className="mt-1 text-xs text-amber-400/90">{membershipNotice.description}</div>
+        )}
         {canJoin && (
           <button
             type="button"
@@ -3057,7 +3232,7 @@ export default function MessageInput() {
 
   return (
     <div
-      className="border-t border-gray-700 bg-gray-800 flex-shrink-0 relative"
+      className="border-t border-border bg-card flex-shrink-0 relative"
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
@@ -3066,7 +3241,7 @@ export default function MessageInput() {
       {/* Drag-overlay */}
       {isDragging && (
         <div
-          className="absolute inset-0 z-50 flex items-center justify-center bg-gray-900/80 backdrop-blur-sm rounded-lg border-2 border-dashed border-blue-500 pointer-events-none"
+          className="absolute inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm rounded-lg border-2 border-dashed border-blue-500 pointer-events-none"
           onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); }}
           onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); }}
           onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
@@ -3079,7 +3254,7 @@ export default function MessageInput() {
               <line x1="12" y1="3" x2="12" y2="15"/>
             </svg>
             <p className="text-blue-400 font-medium text-sm">Thả file / ảnh để gửi</p>
-            <p className="text-gray-400 text-xs">Hỗ trợ ảnh, video, file</p>
+            <p className="text-muted-foreground text-xs">Hỗ trợ ảnh, video, file</p>
           </div>
         </div>
       )}
@@ -3119,68 +3294,79 @@ export default function MessageInput() {
 
       {/* Reply preview */}
       {replyTo && (
-        <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-700 bg-gray-750">
+        <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
           <div className="flex-1 border-l-2 border-blue-500 pl-2 min-w-0 flex items-center gap-2">
             <div className="flex-1 min-w-0">
               <p className="text-xs text-blue-400 font-medium">Trả lời</p>
-              <p className="text-xs text-gray-400 truncate">{parseReplyContent(replyTo.content, replyTo.msg_type)}</p>
+              <p className="text-xs text-muted-foreground truncate">{parseReplyContent(replyTo.content, replyTo.msg_type)}</p>
             </div>
             {isImageMsg(replyTo.msg_type, replyTo.content) && (() => {
               const imgs = extractReplyImages(replyTo.content, replyTo.attachments);
               return imgs.length > 0 ? (
                 <div className="flex gap-1 flex-shrink-0">
                   {imgs.slice(0, 3).map((url, i) => (
-                    <img key={i} src={url} alt="" className="w-10 h-10 rounded object-cover border border-gray-600" />
+                    <img key={i} src={url} alt="" className="w-10 h-10 rounded object-cover border border-input" />
                   ))}
-                  {imgs.length > 3 && <div className="w-10 h-10 rounded bg-gray-600 flex items-center justify-center text-xs text-gray-300">+{imgs.length - 3}</div>}
+                  {imgs.length > 3 && <div className="w-10 h-10 rounded bg-accent flex items-center justify-center text-xs text-foreground/80">+{imgs.length - 3}</div>}
                 </div>
               ) : null;
             })()}
           </div>
-          <button onClick={() => setReplyTo(null)} className="text-gray-400 hover:text-white flex-shrink-0 text-lg leading-none">✕</button>
+          <button onClick={() => setReplyTo(null)} className="text-muted-foreground hover:text-foreground flex-shrink-0 text-lg leading-none">✕</button>
         </div>
       )}
 
       {/* Edit mode indicator */}
       {editingMsg && (
-        <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-700 bg-gray-750">
+        <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
           <div className="flex-1 border-l-2 border-amber-500 pl-2 min-w-0">
             <p className="text-xs text-amber-400 font-medium">Đang sửa tin nhắn</p>
-            <p className="text-xs text-gray-400 truncate">{editingMsg.content || ''}</p>
+            <p className="text-xs text-muted-foreground truncate">{editingMsg.content || ''}</p>
           </div>
-          <button onClick={() => { setEditingMsg(null); }} className="text-gray-400 hover:text-white flex-shrink-0 text-lg leading-none">✕</button>
+          <button onClick={() => { setEditingMsg(null); }} className="text-muted-foreground hover:text-foreground flex-shrink-0 text-lg leading-none">✕</button>
         </div>
       )}
 
       {/* Clipboard image previews */}
       {clipboardImages.length > 0 && (
-        <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-700 bg-gray-800 overflow-x-auto">
-          <span className="text-xs text-gray-400 flex-shrink-0">Ảnh đính kèm:</span>
+        <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-card overflow-x-auto">
+          <span className="text-xs text-muted-foreground flex-shrink-0">Ảnh đính kèm:</span>
           {clipboardImages.map((img) => (
             <div key={img.id} className="relative flex-shrink-0 group/clip">
               <img
                 src={img.dataUrl}
                 alt="clipboard"
-                className="w-16 h-16 rounded-lg object-cover border border-gray-600"
+                className="w-16 h-16 rounded-lg object-cover border border-input"
               />
               <button
                 onClick={() => setClipboardImages(prev => prev.filter(i => i.id !== img.id))}
-                className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-gray-600 hover:bg-red-500 rounded-full flex items-center justify-center text-white text-xs font-bold shadow-lg transition-colors"
+                className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-accent hover:bg-red-500 rounded-full flex items-center justify-center text-white text-xs font-bold shadow-lg transition-colors"
                 title="Xóa ảnh"
               >✕</button>
             </div>
           ))}
           <button
             onClick={() => setClipboardImages([])}
-            className="flex-shrink-0 text-xs text-gray-400 hover:text-red-400 px-2 py-1 rounded hover:bg-gray-700 transition-colors ml-auto"
+            className="flex-shrink-0 text-xs text-muted-foreground hover:text-red-400 px-2 py-1 rounded hover:bg-muted transition-colors ml-auto"
             title="Xóa tất cả"
           >Xóa tất cả</button>
         </div>
       )}
 
+      {/* Nhãn Local đọc lỗi (chế độ nhân viên) và chưa có nhãn nào để hiện: "Thử lại" gọn thay vì giấu cả hàng nhãn */}
+      {showLocalLabels && localLabels.length === 0 && localLabelsFailed && (
+        <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border/50 text-xs text-muted-foreground">
+          <span>Không tải được Nhãn Local</span>
+          <button type="button" onClick={() => { void loadLocalLabelsForThread(); }} className="inline-flex items-center gap-1 text-primary hover:underline">
+            <RefreshIcon className="w-3 h-3" />
+            Thử lại
+          </button>
+        </div>
+      )}
+
       {/* Local label row - Pancake-style horizontal pills */}
       {showLocalLabels && localLabels.length > 0 && (
-        <div className="flex items-start gap-1.5 px-3 py-2 border-b border-gray-700/50 transition-all">
+        <div className="flex items-start gap-1.5 px-3 py-2 border-b border-border/50 transition-all">
           <div ref={labelRowRef} className="flex flex-wrap gap-1.5 flex-1 min-w-0 transition-all" style={{ maxHeight: localLabelExpanded ? 'none' : 56, overflow: localLabelExpanded ? 'visible' : 'hidden',}}>
             {localLabels.map(label => {
             const active = threadLocalLabelIds.has(label.id);
@@ -3220,8 +3406,14 @@ export default function MessageInput() {
           </div>
           {/* Right-side controls: expand/collapse arrow + close X */}
           <div className="flex items-center gap-1 flex-shrink-0 ml-1">
+            {/* Lần tải mới nhất lỗi: đang hiện nhãn cũ (nhãn đang gắn có thể chưa đúng) → thử lại */}
+            {localLabelsFailed && (
+              <button type="button" onClick={() => { void loadLocalLabelsForThread(); }} className="text-warning hover:text-foreground flex-shrink-0" title="Không tải được Nhãn Local mới nhất — bấm để thử lại">
+                <RefreshIcon className="w-4 h-4" />
+              </button>
+            )}
             {localLabelCanExpand && (
-              <button type="button" onClick={() => setLocalLabelExpanded(v => !v)} className="text-gray-400 hover:text-gray-300 flex-shrink-0" title={localLabelExpanded ? 'Thu gọn' : 'Xem tất cả'}>
+              <button type="button" onClick={() => setLocalLabelExpanded(v => !v)} className="text-muted-foreground hover:text-foreground/80 flex-shrink-0" title={localLabelExpanded ? 'Thu gọn' : 'Xem tất cả'}>
                 {localLabelExpanded ? (
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <polyline points="6 9 12 15 18 9" />
@@ -3247,7 +3439,7 @@ export default function MessageInput() {
       {/* ── Inline sticker suggestions (Zalo-style) - above toolbar ── */}
       {inlineStickerSuggestions.length > 0 && (
         <div
-          className="inline-sticker-bar flex items-center gap-1.5 px-2 py-1.5 border-b border-gray-700/50 overflow-x-auto"
+          className="inline-sticker-bar flex items-center gap-1.5 px-2 py-1.5 border-b border-border/50 overflow-x-auto"
           style={{ scrollbarWidth: 'none' }}
           onWheel={e => {
             // Convert vertical wheel to horizontal scroll so mouse wheel works naturally
@@ -3257,12 +3449,12 @@ export default function MessageInput() {
             }
           }}
         >
-          <span className="text-[10px] text-gray-400 flex-shrink-0 mr-0.5">🎭</span>
+          <span className="text-[10px] text-muted-foreground flex-shrink-0 mr-0.5">🎭</span>
           {inlineStickerSuggestions.map((s: any) => (
             <button
               key={s.id}
               onClick={() => handleInlineStickerSend(s)}
-              className="flex-shrink-0 w-12 h-12 rounded-xl hover:bg-gray-700/80 flex items-center justify-center overflow-hidden transition-all hover:scale-110 p-0.5"
+              className="flex-shrink-0 w-12 h-12 rounded-xl hover:bg-muted/80 flex items-center justify-center overflow-hidden transition-all hover:scale-110 p-0.5"
               title={s.text || `Sticker ${s.id} - bấm để gửi`}
             >
               {s.stickerUrl ? (
@@ -3280,7 +3472,7 @@ export default function MessageInput() {
           ))}
           <button
             onClick={() => { setInlineStickerSuggestions([]); inlineStickerLastKwRef.current = ''; }}
-            className="flex-shrink-0 w-6 h-6 rounded-full hover:bg-gray-700 flex items-center justify-center text-gray-400 hover:text-gray-300 text-[10px] transition-colors ml-0.5"
+            className="flex-shrink-0 w-6 h-6 rounded-full hover:bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground/80 text-[10px] transition-colors ml-0.5"
             title="Ẩn gợi ý sticker"
           >
             ✕
@@ -3306,7 +3498,7 @@ export default function MessageInput() {
                   <img src={contactCardSuggestion.avatarUrl} alt="" className="w-full h-full object-cover"
                     onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                 ) : (
-                  <div className="w-full h-full flex items-center justify-center text-white text-sm font-bold">
+                  <div className="w-full h-full flex items-center justify-center text-foreground text-sm font-bold">
                     {(contactCardSuggestion.displayName || '?').charAt(0).toUpperCase()}
                   </div>
                 )}
@@ -3348,40 +3540,31 @@ export default function MessageInput() {
       )}
 
       {/* ── Toolbar row ── */}
-      <div className="flex items-center gap-1 px-2 pt-2 pb-1 border-b border-gray-700/50">
+      <div className="flex items-center gap-1 px-2 pt-2 pb-1 border-b border-border/50">
         {/* Emoji / Biểu cảm */}
-        {/* Sticker (ẩn trong employee mode nếu không có permission, ẩn cho Telegram tạm thời) */}
-        {channelCap.supportsSticker && hasChatPermission && !isTelegramUser(activeContact?.channel) && !isTelegramBot(activeContact?.channel) && (
-        <div className="relative">
-          <ToolbarBtn onClick={handleSendSticker} title="Sticker" active={showStickerPicker}>
+        {/* Sticker (ẩn trong employee mode nếu không có permission). Telegram cá nhân: bảng Emoji · Sticker · GIF đồng bộ
+            tài khoản; bot Telegram không có API bộ sticker của tài khoản → ẩn */}
+        {channelCap.supportsSticker && hasChatPermission && !isTelegramBot(activeContact?.channel) && (
+        <div className="relative" ref={stickerToolbarRef}>
+          <ToolbarBtn onClick={handleSendSticker} title={isTelegramUser(activeContact?.channel) ? 'Sticker · GIF' : 'Sticker'} active={showStickerPicker}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="10" r="1.5"/><circle cx="15" cy="10" r="1.5"/><path d="M9 15s1.5 2 3 2 3-2 3-2"/>
             </svg>
           </ToolbarBtn>
           {showStickerPicker && (
-            isTelegramUser(activeContact?.channel) || isTelegramBot(activeContact?.channel)
-            ? <TelegramStickerPicker
-                accountId={activeAccountId || ''}
-                onSelect={async (sticker) => {
-                  setShowStickerPicker(false);
-                  if (!activeThreadId || sending) return;
-                  setSending(true);
-                  try {
-                    await ipc.telegramUser?.sendSticker({
-                      accountId: activeAccountId || '',
-                      chatId: activeThreadId,
-                      stickerId: sticker.id,
-                      accessHash: sticker.accessHash,
-                    });
-                    setText('');
-                  } catch (err: any) {
-                    showNotification('Gửi sticker thất bại: ' + err.message, 'error');
-                  } finally {
-                    setSending(false);
-                  }
-                }}
-                onClose={() => setShowStickerPicker(false)}
-              />
+            isTelegramUser(activeContact?.channel)
+            ? activeAccountId ? (
+                <TelegramMediaPicker
+                  accountId={activeAccountId}
+                  initialTab="stickers"
+                  emoji={renderEmojiGrid()}
+                  canSendMedia={hasChatPermission}
+                  onPick={handleSendTelegramSticker}
+                  onClose={() => setShowStickerPicker(false)}
+                  anchorRef={stickerToolbarRef}
+                  className="absolute bottom-full left-0 mb-2 z-50"
+                />
+              ) : null
             : <StickerPicker
                 getAuth={getAuth}
                 onSelect={handleSendStickerItem}
@@ -3469,7 +3652,7 @@ export default function MessageInput() {
             </span>
             <button
               onClick={cancelRecording}
-              className="ml-1 text-gray-400 hover:text-red-400 transition-colors"
+              className="ml-1 text-muted-foreground hover:text-red-400 transition-colors"
               title="Huỷ ghi âm"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -3508,6 +3691,8 @@ export default function MessageInput() {
           </svg>
         </ToolbarBtn>
         )}
+        {/* Nút của plugin (contributes.composerButtons) */}
+        <PluginComposerButtons accountId={activeAccountId} threadId={activeThreadId} />
         {/* Tin nhắn nhanh */}
         <div className="relative">
           <ToolbarBtn onClick={() => setShowQuickManager(v => !v)} title="Tin nhắn nhanh" active={showQuickManager}>
@@ -3524,7 +3709,7 @@ export default function MessageInput() {
                       const account = getActiveAccount();
                       if (account) {
                         const channelCap = getCapability((account.channel || CHANNEL.ZALO) as any);
-                        const auth = { cookies: account.cookies, imei: account.imei, userAgent: account.user_agent };
+                        const auth = buildZaloAuth(account);
                         const mode = channelCap.quickMessageSyncMode === 'local' ? 'local' : ((localStorage.getItem(`qm_mode_${activeAccountId}`) as 'zalo' | 'local') || 'local');
                         if (channelCap.quickMessageSyncMode !== 'local') invalidateZaloQuickMessageCache(activeAccountId);
                         fetchQuickMessages(auth, activeAccountId, mode, true).then(setQuickMessages).catch(() => {});
@@ -3552,7 +3737,7 @@ export default function MessageInput() {
         {/* ── Pinned integration shortcuts ── */}
         {pinnedIntegrationShortcuts.length > 0 && (
           <>
-            <div className="w-px h-4 bg-gray-700 mx-0.5 flex-shrink-0" />
+            <div className="w-px h-4 bg-muted mx-0.5 flex-shrink-0" />
             {pinnedIntegrationShortcuts.map(shortcut => (
               <div key={shortcut.id} className="relative flex-shrink-0">
                 <ToolbarBtn
@@ -3614,31 +3799,31 @@ export default function MessageInput() {
             </span>
           </ToolbarBtn>
           {showAiMenu && (
-            <div className="absolute bottom-full left-0 mb-2 w-64 overflow-hidden rounded-2xl border border-purple-500/20 bg-gray-800/95 shadow-2xl shadow-black/40 backdrop-blur z-50">
+            <div className="absolute bottom-full left-0 mb-2 w-64 overflow-hidden rounded-2xl border border-purple-500/20 bg-card shadow-2xl shadow-black/40 backdrop-blur z-50">
               <div className="border-b border-purple-500/10 bg-gradient-to-r from-purple-500/10 via-transparent to-transparent px-3 py-2">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-purple-500">Gợi ý AI</p>
-                <p className="mt-0.5 text-[11px] text-gray-400">Tuỳ chỉnh nhanh cho hội thoại hiện tại</p>
+                <p className="mt-0.5 text-[11px] text-muted-foreground">Tuỳ chỉnh nhanh cho hội thoại hiện tại</p>
               </div>
               <button
                 onClick={() => { setAiSuggestionsEnabled(!aiSuggestionsEnabled); setShowAiMenu(false); }}
                 className="w-full text-left px-3 py-2.5 hover:bg-purple-500/10 flex items-center gap-2.5 transition-colors"
               >
-                <span className={`w-4 h-4 rounded-md border ${aiSuggestionsEnabled ? 'bg-blue-500 border-blue-500 shadow-sm shadow-blue-900/40' : 'border-gray-500 bg-gray-800'} flex items-center justify-center flex-shrink-0`}>
+                <span className={`w-4 h-4 rounded-md border ${aiSuggestionsEnabled ? 'bg-blue-500 border-blue-500 shadow-sm shadow-blue-900/40' : 'border-border-strong bg-card'} flex items-center justify-center flex-shrink-0`}>
                   {aiSuggestionsEnabled && <span className="text-white-important text-[8px]">✓</span>}
                 </span>
-                <span className="text-gray-200 leading-5">Bật gợi ý AI (toàn bộ)</span>
+                <span className="text-foreground leading-5">Bật gợi ý AI (toàn bộ)</span>
               </button>
               {activeAccountId && activeThreadId && (
                 <>
-                  <div className="mx-3 border-t border-gray-700/80" />
+                  <div className="mx-3 border-t border-border/80" />
                   <button
                     onClick={() => { toggleAiDisableForThread(activeAccountId, activeThreadId); setShowAiMenu(false); }}
                     className="w-full text-left px-3 py-2.5 hover:bg-purple-500/10 flex items-center gap-2.5 transition-colors"
                   >
-                    <span className={`w-4 h-4 rounded-md border ${isAiSuggestDisabled(activeAccountId, activeThreadId) && !useAppStore.getState().aiSuggestDisabledAccounts[activeAccountId] ? 'bg-red-500 border-red-500 shadow-sm shadow-red-900/40' : 'border-gray-500 bg-gray-800'} flex items-center justify-center flex-shrink-0`}>
+                    <span className={`w-4 h-4 rounded-md border ${isAiSuggestDisabled(activeAccountId, activeThreadId) && !useAppStore.getState().aiSuggestDisabledAccounts[activeAccountId] ? 'bg-red-500 border-red-500 shadow-sm shadow-red-900/40' : 'border-border-strong bg-card'} flex items-center justify-center flex-shrink-0`}>
                       {isAiSuggestDisabled(activeAccountId, activeThreadId) && !useAppStore.getState().aiSuggestDisabledAccounts[activeAccountId] && <span className="text-white-important text-[8px]">✓</span>}
                     </span>
-                    <span className="text-gray-200 leading-5">Tắt ở hội thoại này</span>
+                    <span className="text-foreground leading-5">Tắt ở hội thoại này</span>
                   </button>
                 </>
               )}
@@ -3647,10 +3832,10 @@ export default function MessageInput() {
                   onClick={() => { toggleAiDisableForAccount(activeAccountId); setShowAiMenu(false); }}
                   className="w-full text-left px-3 py-2.5 hover:bg-purple-500/10 flex items-center gap-2.5 transition-colors"
                 >
-                  <span className={`w-4 h-4 rounded-md border ${useAppStore.getState().aiSuggestDisabledAccounts[activeAccountId] ? 'bg-red-500 border-red-500 shadow-sm shadow-red-900/40' : 'border-gray-500 bg-gray-800'} flex items-center justify-center flex-shrink-0`}>
+                  <span className={`w-4 h-4 rounded-md border ${useAppStore.getState().aiSuggestDisabledAccounts[activeAccountId] ? 'bg-red-500 border-red-500 shadow-sm shadow-red-900/40' : 'border-border-strong bg-card'} flex items-center justify-center flex-shrink-0`}>
                     {useAppStore.getState().aiSuggestDisabledAccounts[activeAccountId] && <span className="text-white-important text-[8px]">✓</span>}
                   </span>
-                  <span className="text-gray-200 leading-5">Tắt toàn bộ tài khoản này</span>
+                  <span className="text-foreground leading-5">Tắt toàn bộ tài khoản này</span>
                 </button>
               )}
             </div>
@@ -3732,7 +3917,7 @@ export default function MessageInput() {
 
       {/* ── Format bar (expandable) ── */}
       {showFormatBar && (
-        <div className="flex items-center gap-1 px-3 py-1.5 border-b border-gray-700/50 flex-wrap">
+        <div className="flex items-center gap-1 px-3 py-1.5 border-b border-border/50 flex-wrap">
           {/* Bold */}
           <FmtBtn active={activeFmts.has('b')} onClick={() => applyFormat('b')} title="Đậm (Ctrl+B)">
             <span className="font-bold text-sm leading-none">B</span>
@@ -3750,7 +3935,7 @@ export default function MessageInput() {
             <span className="line-through text-sm leading-none">S</span>
           </FmtBtn>
 
-          <div className="w-px h-4 bg-gray-600 mx-1" />
+          <div className="w-px h-4 bg-accent mx-1" />
 
           {/* Font size */}
           <FmtBtn active={activeFmts.has('f_13')} onClick={() => applyFormat('f_13')} title="Chữ nhỏ">
@@ -3760,7 +3945,7 @@ export default function MessageInput() {
             <span className="text-base leading-none font-medium">A</span>
           </FmtBtn>
 
-          <div className="w-px h-4 bg-gray-600 mx-1" />
+          <div className="w-px h-4 bg-accent mx-1" />
 
           {/* Colors */}
           {([
@@ -3778,7 +3963,7 @@ export default function MessageInput() {
             />
           ))}
 
-          <div className="w-px h-4 bg-gray-600 mx-1" />
+          <div className="w-px h-4 bg-accent mx-1" />
 
           {/* Clear all formats */}
           {fmtRanges.length > 0 && (
@@ -3794,13 +3979,13 @@ export default function MessageInput() {
                   }
                 }}
                 title="Xóa tất cả định dạng"
-              className="text-xs text-gray-400 hover:text-red-400 px-1.5 py-0.5 rounded hover:bg-gray-700 transition-colors"
+              className="text-xs text-muted-foreground hover:text-red-400 px-1.5 py-0.5 rounded hover:bg-muted transition-colors"
             >✕ Xóa định dạng</button>
           )}
 
           {/* Hint: select text to apply */}
           {fmtRanges.length === 0 && (
-            <span className="text-xs text-gray-400 ml-auto">Chọn văn bản rồi bấm định dạng</span>
+            <span className="text-xs text-muted-foreground ml-auto">Chọn văn bản rồi bấm định dạng</span>
           )}
           {fmtRanges.length > 0 && (
             <span className="text-xs text-blue-400 ml-auto">
@@ -3833,6 +4018,7 @@ export default function MessageInput() {
         <CreatePollDialog
           groupId={activeThreadId}
           activeAccountId={activeAccountId}
+          channel={activeContact?.channel || CHANNEL.ZALO}
           onClose={() => setShowCreatePoll(false)}
         />
       )}
@@ -3902,14 +4088,14 @@ export default function MessageInput() {
               {menuBtnLabel}
             </button>
             {showBotMenu && (
-              <div ref={botMenuRef} className="absolute bottom-full left-0 mb-2 w-80 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl z-50 max-h-72 overflow-y-auto">
+              <div ref={botMenuRef} className="absolute bottom-full left-0 mb-2 w-80 bg-card border border-border rounded-xl shadow-2xl z-50 max-h-72 overflow-y-auto">
                 {botCommandsLoading ? (
-                  <div className="flex items-center justify-center py-6 text-gray-400 text-xs">
+                  <div className="flex items-center justify-center py-6 text-muted-foreground text-xs">
                     <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mr-2" />
                     Đang tải lệnh...
                   </div>
                 ) : botCommands.length === 0 ? (
-                  <div className="py-6 text-center text-gray-500 text-xs">
+                  <div className="py-6 text-center text-subtle-foreground text-xs">
                     Bot này chưa có lệnh nào
                   </div>
                 ) : (
@@ -3922,10 +4108,10 @@ export default function MessageInput() {
                         data-bot-cmd
                         onClick={() => handleSelectBotCommand(cmd.command)}
                         onMouseEnter={() => setBotCmdSelectedIdx(idx)}
-                        className={`w-full flex items-start gap-3 px-4 py-2.5 transition-colors text-left ${idx === botCmdSelectedIdx ? 'bg-gray-700' : 'hover:bg-gray-700'}`}
+                        className={`w-full flex items-start gap-3 px-4 py-2.5 transition-colors text-left ${idx === botCmdSelectedIdx ? 'bg-muted' : 'hover:bg-muted'}`}
                       >
                         <span className="text-blue-400 font-medium text-sm flex-shrink-0">/{cmd.command}</span>
-                        <span className="text-gray-400 text-xs mt-0.5 leading-relaxed">{cmd.description}</span>
+                        <span className="text-muted-foreground text-xs mt-0.5 leading-relaxed">{cmd.description}</span>
                       </button>
                     ))}
                   </div>
@@ -3952,10 +4138,10 @@ export default function MessageInput() {
         {showMentionDropdown && filteredMentions.length > 0 && isGroupThread && (
           <div
             ref={mentionListRef}
-            className="absolute bottom-full left-3 right-3 mb-1 bg-gray-800 border border-gray-600 rounded-xl shadow-2xl z-30 overflow-hidden"
+            className="absolute bottom-full left-3 right-3 mb-1 bg-card border border-input rounded-xl shadow-2xl z-30 overflow-hidden"
             style={{ maxHeight: '15rem', overflowY: 'auto' }}
           >
-            <p className="text-xs text-gray-400 px-3 py-1.5 border-b border-gray-700 sticky top-0 bg-gray-800 z-10 flex items-center gap-2">
+            <p className="text-xs text-muted-foreground px-3 py-1.5 border-b border-border sticky top-0 bg-card z-10 flex items-center gap-2">
               <span>Nhắc đến thành viên{mentionSearch ? ` - "${mentionSearch}"` : ''}</span>
               {fetchingUsernames && (
                 <span className="flex items-center gap-1 text-cyan-400">
@@ -3969,7 +4155,7 @@ export default function MessageInput() {
                 key={member.userId}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => handleSelectMention(member)}
-                className={`w-full flex items-center gap-3 px-3 py-2 text-left transition-colors ${idx === mentionSelectedIdx ? 'bg-gray-700' : 'hover:bg-gray-700'}`}
+                className={`w-full flex items-center gap-3 px-3 py-2 text-left transition-colors ${idx === mentionSelectedIdx ? 'bg-muted' : 'hover:bg-muted'}`}
               >
                 {member.avatar ? (
                   <img src={member.avatar} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
@@ -3979,7 +4165,7 @@ export default function MessageInput() {
                   </div>
                 )}
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm text-white truncate">{member.displayName}</p>
+                  <p className="text-sm text-foreground truncate">{member.displayName}</p>
                   {member.username && (
                     <p className="text-[11px] text-cyan-400 truncate">@{member.username}</p>
                   )}
@@ -3994,7 +4180,7 @@ export default function MessageInput() {
           {/* Placeholder */}
           {!text && (
             <span
-              className="absolute inset-0 text-gray-400 text-sm pointer-events-none select-none flex items-center px-0"
+              className="absolute inset-0 text-muted-foreground text-sm pointer-events-none select-none flex items-center px-0"
               style={{ top: 0 }}
             >
               {account ? 'Nhập @tên để tag, Shift+Enter xuống dòng, Enter gửi...' : 'Nhập tin nhắn...'}
@@ -4019,7 +4205,7 @@ export default function MessageInput() {
                 prevTextRef.current = '';
               }
             }}
-            className="w-full bg-transparent text-gray-200 text-sm focus:outline-none overflow-y-auto py-1"
+            className="w-full bg-transparent text-foreground text-sm focus:outline-none overflow-y-auto py-1"
             style={{ minHeight: '2rem', maxHeight: '8rem', wordBreak: 'break-word', whiteSpace: 'pre-wrap', lineHeight: '1.5' }}
             spellCheck={false}
           />
@@ -4030,35 +4216,32 @@ export default function MessageInput() {
           <button
             onMouseDown={(e) => { e.preventDefault(); setShowEmojiPicker(v => !v); setShowStickerPicker(false); }}
             title="Biểu cảm"
-            className={`w-9 h-9 rounded-lg flex items-center justify-center text-xl transition-colors ${showEmojiPicker ? 'bg-blue-600' : 'hover:bg-gray-700'}`}
+            className={`w-9 h-9 rounded-lg flex items-center justify-center text-xl transition-colors ${showEmojiPicker ? 'bg-blue-600' : 'hover:bg-muted'}`}
           >
             <SmileIcon className="w-5 h-5" />
           </button>
           {showEmojiPicker && (
-            <div
-              className="absolute bottom-12 right-0 bg-gray-800 border border-gray-600 rounded-2xl shadow-2xl z-30 w-80 overflow-hidden"
-            >
-              {/* Emoji sections - vertical scroll */}
-              <div className="max-h-72 overflow-y-auto p-2 space-y-3">
-                {Object.entries(EMOJI_CATEGORIES).map(([category, emojis]) => (
-                  <div key={category}>
-                    <p className="text-[11px] text-gray-400 font-medium mb-1.5 px-1">{category}</p>
-                    <div className="grid grid-cols-8 gap-0.5">
-                      {emojis.map((emoji, idx) => (
-                        <button
-                          key={`${category}-${emoji}-${idx}`}
-                          onMouseDown={(e) => { e.preventDefault(); insertEmoji(emoji); }}
-                          className="text-xl hover:bg-gray-700 rounded-lg p-1 transition-colors aspect-square flex items-center justify-center hover:scale-110"
-                          title={emoji}
-                        >
-                          {emoji}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ))}
+            isTelegramUser(activeContact?.channel) && activeAccountId ? (
+              // Telegram cá nhân: Emoji · Sticker · GIF trong một bảng như Telegram (mở lại vào tab dùng gần nhất)
+              <TelegramMediaPicker
+                accountId={activeAccountId}
+                initialTab={lastTelegramPickerTab()}
+                emoji={renderEmojiGrid()}
+                canSendMedia={hasChatPermission}
+                onPick={handleSendTelegramSticker}
+                onClose={() => setShowEmojiPicker(false)}
+                className="absolute bottom-12 right-0 z-30"
+              />
+            ) : (
+              <div
+                className="absolute bottom-12 right-0 bg-card border border-input rounded-2xl shadow-2xl z-30 w-80 overflow-hidden"
+              >
+                {/* Emoji sections - vertical scroll */}
+                <div className="max-h-72 overflow-y-auto p-2">
+                  {renderEmojiGrid()}
+                </div>
               </div>
-            </div>
+            )
           )}
         </div>
 
@@ -4085,7 +4268,7 @@ export default function MessageInput() {
           <button
             onClick={handleSendLike}
             disabled={sending}
-            className="flex-shrink-0 w-9 h-9 rounded-lg hover:bg-gray-700 flex items-center justify-center text-blue-400 hover:text-blue-300 transition-colors text-xl"
+            className="flex-shrink-0 w-9 h-9 rounded-lg hover:bg-muted flex items-center justify-center text-blue-400 hover:text-blue-300 transition-colors text-xl"
             title="Gửi 👍"
           >
             👍
@@ -4102,7 +4285,7 @@ export default function MessageInput() {
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-400 flex-shrink-0">
               <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/>
             </svg>
-            <span className="text-[11px] text-gray-400 flex-shrink-0">Đang trả lời từ:</span>
+            <span className="text-[11px] text-muted-foreground flex-shrink-0">Đang trả lời từ:</span>
             {ownerAcc.avatar_url
               ? <img src={ownerAcc.avatar_url} alt="" className="w-4 h-4 rounded-full object-cover flex-shrink-0" />
               : <div className="w-4 h-4 rounded-full bg-blue-600 flex items-center justify-center text-white text-[7px] font-bold flex-shrink-0">{(ownerAcc.full_name || ownerAcc.zalo_id).charAt(0).toUpperCase()}</div>
@@ -4150,17 +4333,17 @@ function PinContextMenu({ onEditIcon, onDelete, onClose }: {
   }, [onClose]);
   return (
     <div ref={ref}
-      className="absolute bottom-full left-0 mb-2 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl z-50 py-1.5 w-44 overflow-hidden"
+      className="absolute bottom-full left-0 mb-2 bg-card border border-border rounded-xl shadow-2xl z-50 py-1.5 w-44 overflow-hidden"
       onClick={e => e.stopPropagation()}
     >
       <button
         onClick={onEditIcon}
-        className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-gray-200 hover:bg-gray-700 transition-colors"
+        className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-foreground hover:bg-muted transition-colors"
       >
         <span className="text-base"><EditIcon className="w-4 h-4" /></span>
         <span>Đổi icon</span>
       </button>
-      <div className="h-px bg-gray-700/60 mx-2 my-0.5" />
+      <div className="h-px bg-muted/60 mx-2 my-0.5" />
       <button
         onClick={onDelete}
         className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-red-400 hover:bg-red-500/10 transition-colors"
@@ -4218,14 +4401,14 @@ function PinEmojiPicker({ onSelect, onClose }: { onSelect: (icon: string) => voi
   }, [onClose]);
   return (
     <div ref={ref}
-      className="absolute bottom-full right-0 mb-2 bg-gray-800 border border-gray-600 rounded-xl shadow-2xl z-50 p-3 w-64"
+      className="absolute bottom-full right-0 mb-2 bg-card border border-input rounded-xl shadow-2xl z-50 p-3 w-64"
       onClick={e => e.stopPropagation()}
     >
-      <p className="text-[11px] text-gray-400 mb-2 font-medium">Chọn icon:</p>
+      <p className="text-[11px] text-muted-foreground mb-2 font-medium">Chọn icon:</p>
       <div className="grid grid-cols-8 gap-0.5">
         {PIN_EMOJIS_TOOLBAR.map(item => (
           <button key={item.id} onClick={() => onSelect(item.id)}
-            className="w-10 h-10 flex items-center justify-center rounded hover:bg-gray-700 transition-colors">
+            className="w-10 h-10 flex items-center justify-center rounded hover:bg-muted transition-colors">
             {item.icon}
           </button>
         ))}
@@ -4248,7 +4431,7 @@ const ToolbarBtn = React.forwardRef<HTMLButtonElement, {
       title={title}
       onContextMenu={onContextMenu}
       className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors disabled:opacity-40 disabled:cursor-not-allowed
-        ${active ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
+        ${active ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}
     >
       {children}
     </button>
@@ -4487,7 +4670,7 @@ function StickerPicker({
         const cacheRes = await DataAccessor.getKeywordStickers(kw);
         if (cacheRes?.success && cacheRes.stickerIds?.length) {
           // Cache hit - load sticker details from stickers DB table
-          const detailRes = await ipc.db?.getStickersByIds?.({ stickerIds: cacheRes.stickerIds.slice(0, 30) });
+          const detailRes = await DataAccessor.getStickers({ stickerIds: cacheRes.stickerIds.slice(0, 30) });
           if (detailRes?.success && detailRes.stickers?.length) {
             setSearchResults(detailRes.stickers);
             setSearching(false);
@@ -4597,7 +4780,7 @@ function StickerPicker({
 
           // Get sticker details (try DB first, then API for missing ones)
           let stickers: StickerDetail[] = [];
-          const dbRes = await ipc.db?.getStickersByIds?.({ stickerIds: ids.slice(0, 30) });
+          const dbRes = await DataAccessor.getStickers({ stickerIds: ids.slice(0, 30) });
           if (dbRes?.success && dbRes.stickers?.length >= ids.slice(0, 30).length * 0.8) {
             // Most stickers already in DB
             stickers = dbRes.stickers;
@@ -4729,12 +4912,12 @@ function StickerPicker({
   return (
     <div
       ref={pickerRef}
-      className="absolute bottom-12 left-0 w-96 bg-gray-800 border border-gray-600 rounded-2xl shadow-2xl z-30 flex flex-col overflow-hidden"
+      className="absolute bottom-12 left-0 w-96 bg-card border border-input rounded-2xl shadow-2xl z-30 flex flex-col overflow-hidden"
       style={{ maxHeight: '27.5rem' }}
       onClick={(e) => e.stopPropagation()}
     >
       {/* Tabs */}
-      <div className="flex border-b border-gray-700 flex-shrink-0">
+      <div className="flex border-b border-border flex-shrink-0">
         {mainTabs.map((t) => (
           <button
             key={t.key}
@@ -4742,7 +4925,7 @@ function StickerPicker({
             className={`flex-1 py-2 text-[11px] font-semibold tracking-wide transition-colors place-content-center flex ${
               (tab === t.key || (tab === 'search' && t.key === 'recent'))
                 ? 'text-blue-400 border-b-2 border-blue-400'
-                : 'text-gray-400 hover:text-gray-200'
+                : 'text-muted-foreground hover:text-foreground'
             }`}
           >
             {t.label}
@@ -4753,8 +4936,8 @@ function StickerPicker({
       {/* Search input (always visible except emoji tab) */}
       {tab !== 'emoji' && (
         <div className="px-3 py-2 flex-shrink-0">
-          <div className="flex items-center gap-2 bg-gray-700 rounded-lg px-3 py-1.5">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-400 flex-shrink-0">
+          <div className="flex items-center gap-2 bg-muted rounded-lg px-3 py-1.5">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted-foreground flex-shrink-0">
               <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
             </svg>
             <input
@@ -4763,10 +4946,10 @@ function StickerPicker({
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
               placeholder="Tìm kiếm sticker..."
-              className="flex-1 bg-transparent text-sm text-gray-200 placeholder-gray-500 focus:outline-none"
+              className="flex-1 bg-transparent text-sm text-foreground placeholder-subtle-foreground focus:outline-none"
             />
             {keyword && (
-              <button onClick={() => { setKeyword(''); setTab('recent'); }} className="text-gray-400 hover:text-white text-sm">✕</button>
+              <button onClick={() => { setKeyword(''); setTab('recent'); }} className="text-muted-foreground hover:text-foreground text-sm">✕</button>
             )}
           </div>
         </div>
@@ -4777,17 +4960,17 @@ function StickerPicker({
         /* Search results */
         <div className="flex-1 overflow-y-auto px-2 pb-2">
           {searching ? (
-            <div className="flex flex-col items-center justify-center py-8 text-gray-400">
+            <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
               <div className="w-6 h-6 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mb-2" />
               <span className="text-xs">Đang tìm kiếm...</span>
             </div>
           ) : searchResults.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 text-gray-400 text-xs">
+            <div className="flex flex-col items-center justify-center py-8 text-muted-foreground text-xs">
               😕 Không tìm thấy sticker
             </div>
           ) : (
             <>
-              <p className="text-xs text-gray-400 px-1 py-1.5 font-medium">Kết quả tìm kiếm ({searchResults.length})</p>
+              <p className="text-xs text-muted-foreground px-1 py-1.5 font-medium">Kết quả tìm kiếm ({searchResults.length})</p>
               <div className="grid grid-cols-5 gap-1.5">
                 {searchResults.map((s) => (
                   <StickerItem key={s.id} sticker={s} onSelect={onSelect} />
@@ -4800,14 +4983,14 @@ function StickerPicker({
         /* Recent stickers */
         <div className="flex-1 overflow-y-auto px-2 pb-2">
           {recentStickers.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 text-gray-400 text-xs text-center">
+            <div className="flex flex-col items-center justify-center py-8 text-muted-foreground text-xs text-center">
               <span className="text-3xl mb-2">🎭</span>
               Chưa có sticker nào gần đây<br/>
               Hãy tìm kiếm hoặc mở kho sticker
             </div>
           ) : (
             <>
-              <p className="text-xs text-gray-400 px-1 py-1.5 font-medium">Gần đây</p>
+              <p className="text-xs text-muted-foreground px-1 py-1.5 font-medium">Gần đây</p>
               <div className="grid grid-cols-5 gap-1.5">
                 {recentStickers.map((s) => (
                   <StickerItem key={s.id} sticker={s} onSelect={onSelect} />
@@ -4820,12 +5003,12 @@ function StickerPicker({
         /* Sticker Store */
         <div className="flex-1 overflow-y-auto flex flex-col min-h-0">
           {loadingStore ? (
-            <div className="flex flex-col items-center justify-center py-8 text-gray-400">
+            <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
               <div className="w-6 h-6 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mb-2" />
               <span className="text-xs">Đang tải kho sticker...</span>
             </div>
           ) : storeError && packs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 text-gray-400 text-xs gap-2">
+            <div className="flex flex-col items-center justify-center py-8 text-muted-foreground text-xs gap-2">
               <span><AlertIcon className="w-4 h-4 inline" /> {storeError}</span>
               <button
                 onClick={fetchStickerStore}
@@ -4835,7 +5018,7 @@ function StickerPicker({
               </button>
             </div>
           ) : packs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 text-gray-400 text-xs gap-2">
+            <div className="flex flex-col items-center justify-center py-8 text-muted-foreground text-xs gap-2">
               <StoreIcon className="w-8 h-8 mb-1 opacity-40" />
               <span>Chưa có gói sticker nào</span>
               <button
@@ -4848,7 +5031,7 @@ function StickerPicker({
           ) : (
             <>
               {/* Pack list - horizontal scroll */}
-              <div className="flex gap-1 px-2 py-2 overflow-x-auto flex-shrink-0 border-b border-gray-700/50"
+              <div className="flex gap-1 px-2 py-2 overflow-x-auto flex-shrink-0 border-b border-border/50"
                    onWheel={e => {
                      // Convert vertical wheel to horizontal scroll so mouse wheel works naturally
                      if (e.deltaY !== 0) {
@@ -4863,7 +5046,7 @@ function StickerPicker({
                     className={`flex-shrink-0 w-12 h-12 rounded-xl overflow-hidden border-2 transition-all hover:scale-105 ${
                       activePackId === pack.catId
                         ? 'border-blue-400 shadow-lg shadow-blue-500/20'
-                        : 'border-transparent hover:border-gray-500'
+                        : 'border-transparent hover:border-border-strong'
                     }`}
                     title={pack.name || `Gói ${pack.catId}`}
                   >
@@ -4871,12 +5054,12 @@ function StickerPicker({
                       <img
                         src={pack.thumbUrl}
                         alt={pack.name}
-                        className="w-full h-full object-contain bg-gray-700/50"
+                        className="w-full h-full object-contain bg-muted/50"
                         loading="lazy"
                         onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                       />
                     ) : (
-                      <div className="w-full h-full bg-gray-700/50 flex items-center justify-center text-lg">🎭</div>
+                      <div className="w-full h-full bg-muted/50 flex items-center justify-center text-lg">🎭</div>
                     )}
                   </button>
                 ))}
@@ -4884,11 +5067,11 @@ function StickerPicker({
                 <button
                   onClick={fetchStickerStore}
                   disabled={loadingStore}
-                  className="flex-shrink-0 w-12 h-12 rounded-xl border-2 border-dashed border-gray-600 hover:border-gray-400 flex items-center justify-center text-gray-400 hover:text-gray-300 transition-all"
+                  className="flex-shrink-0 w-12 h-12 rounded-xl border-2 border-dashed border-input hover:border-border-strong flex items-center justify-center text-muted-foreground hover:text-foreground/80 transition-all"
                   title="Cập nhật kho sticker"
                 >
                   {loadingStore ? (
-                    <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
+                    <div className="w-4 h-4 border-2 border-border-strong border-t-transparent rounded-full animate-spin" />
                   ) : (
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="M23 4v6h-6"/><path d="M1 20v-6h6"/>
@@ -4901,17 +5084,17 @@ function StickerPicker({
               {/* Pack stickers grid */}
               <div className="flex-1 overflow-y-auto px-2 pb-2">
                 {activePackId === null ? (
-                  <div className="flex flex-col items-center justify-center py-6 text-gray-400 text-xs">
+                  <div className="flex flex-col items-center justify-center py-6 text-muted-foreground text-xs">
                     <span className="text-2xl mb-2">👆</span>
                     Chọn một gói sticker ở trên
                   </div>
                 ) : loadingPack ? (
-                  <div className="flex flex-col items-center justify-center py-6 text-gray-400">
+                  <div className="flex flex-col items-center justify-center py-6 text-muted-foreground">
                     <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mb-2" />
                     <span className="text-xs">Đang tải...</span>
                   </div>
                 ) : packStickers.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-6 text-gray-400 text-xs">
+                  <div className="flex flex-col items-center justify-center py-6 text-muted-foreground text-xs">
                     Gói sticker này trống hoặc không hỗ trợ
                   </div>
                 ) : (
@@ -4930,13 +5113,13 @@ function StickerPicker({
         <div className="flex-1 overflow-y-auto p-2 space-y-3">
           {Object.entries(EMOJI_CATEGORIES).map(([category, emojis]) => (
             <div key={category}>
-              <p className="text-[11px] text-gray-400 font-medium mb-1.5 px-1">{category}</p>
+              <p className="text-[11px] text-muted-foreground font-medium mb-1.5 px-1">{category}</p>
               <div className="grid grid-cols-6 gap-1">
                 {emojis.map((emoji, idx) => (
                   <button
                     key={`${category}-${emoji}-${idx}`}
                     onClick={() => { onInsertEmoji?.(emoji); onClose(); }}
-                    className="text-xl hover:bg-gray-700 rounded-lg p-1 transition-colors aspect-square flex items-center justify-center"
+                    className="text-xl hover:bg-muted rounded-lg p-1 transition-colors aspect-square flex items-center justify-center"
                     title={emoji}
                   >
                     {emoji}
@@ -4956,7 +5139,7 @@ function StickerItem({ sticker, onSelect }: { sticker: StickerDetail; onSelect: 
   return (
     <button
       onClick={() => onSelect(sticker)}
-      className="aspect-square rounded-xl hover:bg-gray-700 flex items-center justify-center overflow-hidden transition-colors p-0.5"
+      className="aspect-square rounded-xl hover:bg-muted flex items-center justify-center overflow-hidden transition-colors p-0.5"
       title={sticker.text || String(sticker.id)}
     >
       {sticker.stickerUrl ? (
@@ -4986,7 +5169,7 @@ function FmtBtn({ children, active, onClick, title }: {
       onMouseDown={(e) => { e.preventDefault(); onClick(); }}
       title={title}
       className={`w-7 h-7 rounded flex items-center justify-center transition-colors ${
-        active ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white'
+        active ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
       }`}
     >
       {children}
@@ -5070,21 +5253,21 @@ function MoreMenuDropdown({ isGroup, onCreatePoll, onCreateNote, onCreateReminde
   return (
     <div
       ref={ref}
-      className="absolute bottom-full right-0 mb-2 bg-gray-800 border border-gray-700 rounded-2xl shadow-2xl z-50 w-56 py-2 overflow-hidden"
+      className="absolute bottom-full right-0 mb-2 bg-card border border-border rounded-2xl shadow-2xl z-50 w-56 py-2 overflow-hidden"
     >
-      <p className="text-[11px] text-gray-400 px-4 pt-1 pb-2 font-medium uppercase tracking-wide">
+      <p className="text-[11px] text-muted-foreground px-4 pt-1 pb-2 font-medium uppercase tracking-wide">
         {isGroup ? 'Tính năng nhóm' : 'Tính năng'}
       </p>
       {items.map((item) => (
         <button
           key={item.label}
           onClick={item.onClick}
-          className="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-gray-700/70 cursor-pointer"
+          className="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-muted/70 cursor-pointer"
         >
           <span className={`flex-shrink-0 ${item.color}`}>{item.icon}</span>
           <div className="min-w-0">
-            <p className="text-sm font-medium text-gray-200">{item.label}</p>
-            <p className="text-[11px] text-gray-400 leading-tight">{item.sublabel}</p>
+            <p className="text-sm font-medium text-foreground">{item.label}</p>
+            <p className="text-[11px] text-muted-foreground leading-tight">{item.sublabel}</p>
           </div>
         </button>
       ))}
@@ -5127,332 +5310,20 @@ function ShortcutsPopup({ onClose }: { onClose: () => void }) {
   return (
     <div
       ref={ref}
-      className="absolute bottom-full right-0 mb-2 bg-gray-800 border border-gray-700 rounded-2xl shadow-2xl z-50 w-72 py-3 px-4"
+      className="absolute bottom-full right-0 mb-2 bg-card border border-border rounded-2xl shadow-2xl z-50 w-72 py-3 px-4"
     >
-      <p className="text-[11px] text-gray-400 font-medium uppercase tracking-wide mb-3">
+      <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide mb-3">
         Phím tắt hội thoại
       </p>
       <div className="flex flex-col gap-1.5">
         {SHORTCUTS.map(sc => (
           <div key={sc.key} className="flex items-center justify-between gap-4">
-            <span className="text-xs text-gray-400">{sc.desc}</span>
-            <kbd className="flex-shrink-0 text-[11px] font-mono px-2 py-1 rounded-md bg-gray-700 text-gray-200 border border-gray-600 leading-none">
+            <span className="text-xs text-muted-foreground">{sc.desc}</span>
+            <kbd className="flex-shrink-0 text-[11px] font-mono px-2 py-1 rounded-md bg-muted text-foreground border border-input leading-none">
               {sc.key}
             </kbd>
           </div>
         ))}
-      </div>
-    </div>
-  );
-}
-
-// ─── TelegramStickerItem — download & cache sticker thumbnail ────────────────
-const stickerThumbCache = new Map<string, string>(); // stickerId → localUrl
-
-function TelegramStickerItem({
-  sticker,
-  accountId,
-  onSelect,
-}: {
-  sticker: any;
-  accountId: string;
-  onSelect: (s: any) => void;
-}) {
-  const [thumbUrl, setThumbUrl] = useState<string | null>(stickerThumbCache.get(sticker.id) || null);
-
-  React.useEffect(() => {
-    if (thumbUrl) return; // already cached
-    let cancelled = false;
-    // Download sticker thumbnail via Telegram API
-    (async () => {
-      try {
-        const res = await ipc.telegramUser?.downloadSticker?.({
-          accountId,
-          stickerId: sticker.id,
-          accessHash: sticker.accessHash,
-        });
-        if (!cancelled && res?.success && res.localPath) {
-          const url = (window as any).electronAPI?.file?.toLocalMediaUrl?.(res.localPath) || res.localPath;
-          stickerThumbCache.set(sticker.id, url);
-          setThumbUrl(url);
-        }
-      } catch {}
-    })();
-    return () => { cancelled = true; };
-  }, [sticker.id, sticker.accessHash, accountId, thumbUrl]);
-
-  return (
-    <button onClick={() => onSelect(sticker)}
-      className="p-1 rounded-lg hover:bg-gray-700 transition-colors flex items-center justify-center"
-      title={sticker.emoji || ''}>
-      {thumbUrl ? (
-        <img src={thumbUrl} alt="" className="w-12 h-12 object-contain" loading="lazy" />
-      ) : (
-        <div className="w-12 h-12 rounded-lg bg-gray-700/50 flex items-center justify-center text-xl">{sticker.emoji || '🎨'}</div>
-      )}
-    </button>
-  );
-}
-
-// ─── Telegram Sticker/GIF Cache ─────────────────────────────────────────────
-const tgStickerCache = {
-  recent: null as any[] | null,
-  sets: null as any[] | null,
-  setStickers: new Map<string, any[]>(),
-  gifs: null as any[] | null,
-  gifSearches: new Map<string, any[]>(),
-  clear() {
-    this.recent = null;
-    this.sets = null;
-    this.setStickers.clear();
-    this.gifs = null;
-    this.gifSearches.clear();
-  },
-};
-
-// ─── TelegramStickerPicker ──────────────────────────────────────────────────
-// Style: tất cả bộ sticker load sẵn, cuộn xuống lazy load, GIF search realtime
-function TelegramStickerPicker({
-  accountId,
-  onSelect,
-  onClose,
-}: {
-  accountId: string;
-  onSelect: (sticker: { id: string; emoji?: string; format?: string; accessHash?: string }) => void;
-  onClose: () => void;
-}) {
-  const [tab, setTab] = useState<'stickers' | 'gif'>('stickers');
-  const [stickerSets, setStickerSets] = useState<any[]>([]);
-  const [allStickers, setAllStickers] = useState<{ setId: string; title: string; stickers: any[] }[]>([]);
-  const [recentStickers, setRecentStickers] = useState<any[]>([]);
-  const [gifResults, setGifResults] = useState<any[]>([]);
-  const [gifSearch, setGifSearch] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [gifLoading, setGifLoading] = useState(false);
-  const pickerRef = useRef<HTMLDivElement>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const [visibleCount, setVisibleCount] = useState(40);
-
-  // Close on outside click
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) onClose();
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [onClose]);
-
-  // Load all sticker sets + their stickers on mount
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        // 1. Load recent stickers
-        const recentRes = await ipc.telegramUser?.getRecentStickers({ accountId });
-        if (!cancelled && recentRes?.success) {
-          setRecentStickers(recentRes.stickers || []);
-        }
-
-        // 2. Load all sticker sets
-        const setsRes = await ipc.telegramUser?.getStickerSets({ accountId });
-        if (!cancelled && setsRes?.success) {
-          const sets = setsRes.sets || [];
-          setStickerSets(sets);
-
-          // 3. Load stickers for each set (in background, don't block UI)
-          const loaded: { setId: string; title: string; stickers: any[] }[] = [];
-          for (const set of sets) {
-            if (cancelled) break;
-            try {
-              const stickersRes = await ipc.telegramUser?.getStickerSetStickers({
-                accountId,
-                setId: set.id,
-                accessHash: set.accessHash,
-                shortName: set.shortName,
-              });
-              if (stickersRes?.success) {
-                loaded.push({ setId: set.id, title: set.title, stickers: stickersRes.stickers || [] });
-                if (!cancelled) setAllStickers([...loaded]); // Update incrementally
-              }
-            } catch {}
-          }
-        }
-      } catch {} finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [accountId]);
-
-  // Search GIFs
-  const handleGifSearch = useCallback(async (q: string) => {
-    if (!q.trim()) {
-      // Load trending GIFs
-      if (tgStickerCache.gifs) {
-        setGifResults(tgStickerCache.gifs);
-        return;
-      }
-      setGifLoading(true);
-      const res = await ipc.telegramUser?.getGifs({ accountId });
-      if (res?.success) {
-        const data = res.gifs || [];
-        tgStickerCache.gifs = data;
-        setGifResults(data);
-      }
-      setGifLoading(false);
-      return;
-    }
-    // Search by keyword
-    const cacheKey = q.trim().toLowerCase();
-    if (tgStickerCache.gifSearches.has(cacheKey)) {
-      setGifResults(tgStickerCache.gifSearches.get(cacheKey)!);
-      return;
-    }
-    setGifLoading(true);
-    const res = await ipc.telegramUser?.searchGifs({ accountId, query: q.trim() });
-    if (res?.success) {
-      const data = res.gifs || [];
-      tgStickerCache.gifSearches.set(cacheKey, data);
-      setGifResults(data);
-    }
-    setGifLoading(false);
-  }, [accountId]);
-
-  // Load trending GIFs on mount
-  useEffect(() => {
-    handleGifSearch('');
-  }, [handleGifSearch]);
-
-  // Lazy load on scroll
-  const handleScroll = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 80) {
-      setVisibleCount(v => v + 30);
-    }
-  }, []);
-
-  // Reset visible count on tab change
-  useEffect(() => { setVisibleCount(40); }, [tab]);
-
-  // Flatten all stickers for display
-  const allFlatStickers = recentStickers.length > 0
-    ? [...recentStickers, ...allStickers.flatMap(s => s.stickers)]
-    : allStickers.flatMap(s => s.stickers);
-
-  return (
-    <div ref={pickerRef} className="absolute bottom-full left-0 mb-2 w-80 h-[28rem] bg-gray-800 border border-gray-600 rounded-2xl shadow-2xl z-50 flex flex-col overflow-hidden">
-      {/* Tabs */}
-      <div className="flex border-b border-gray-700 flex-shrink-0">
-        <button onClick={() => setTab('stickers')}
-          className={`flex-1 py-2 text-xs font-medium transition-colors ${tab === 'stickers' ? 'text-cyan-400 border-b-2 border-cyan-400' : 'text-gray-400 hover:text-gray-200'}`}>
-          Sticker
-        </button>
-        <button onClick={() => setTab('gif')}
-          className={`flex-1 py-2 text-xs font-medium transition-colors ${tab === 'gif' ? 'text-cyan-400 border-b-2 border-cyan-400' : 'text-gray-400 hover:text-gray-200'}`}>
-          GIF
-        </button>
-      </div>
-
-      {/* Content */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto" onScroll={handleScroll}>
-        {loading && <div className="flex items-center justify-center h-full py-8"><Spinner size={5} /></div>}
-
-        {/* Stickers tab */}
-        {tab === 'stickers' && !loading && (
-          <div className="p-2">
-            {/* Recent stickers */}
-            {recentStickers.length > 0 && (
-              <div className="mb-3">
-                <p className="text-[11px] text-gray-400 font-medium px-1 mb-1.5">Gần đây</p>
-                <div className="grid grid-cols-5 gap-1">
-                  {recentStickers.slice(0, 10).map((s: any, i: number) => (
-                    <TelegramStickerItem
-                      key={`recent-${s.id || i}`}
-                      sticker={s}
-                      accountId={accountId}
-                      onSelect={onSelect}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* All sticker sets - loaded at once */}
-            {allStickers.map(set => (
-              <div key={set.setId} className="mb-3">
-                <p className="text-[11px] text-gray-400 font-medium px-1 mb-1.5">{set.title}</p>
-                <div className="grid grid-cols-5 gap-1">
-                  {set.stickers.slice(0, visibleCount).map((s: any, i: number) => (
-                    <TelegramStickerItem
-                      key={`${set.setId}-${s.id || i}`}
-                      sticker={s}
-                      accountId={accountId}
-                      onSelect={onSelect}
-                    />
-                  ))}
-                </div>
-              </div>
-            ))}
-
-            {/* Sticker sets still loading */}
-            {stickerSets.length > allStickers.length && (
-              <div className="flex items-center justify-center py-3">
-                <Spinner size={4} />
-                <span className="text-xs text-gray-400 ml-2">Đang tải thêm bộ sticker...</span>
-              </div>
-            )}
-
-            {allStickers.length === 0 && stickerSets.length === 0 && (
-              <p className="text-center text-gray-500 text-xs py-8">Chưa cài bộ sticker nào</p>
-            )}
-          </div>
-        )}
-
-        {/* GIF tab */}
-        {tab === 'gif' && (
-          <div className="p-2">
-            {/* Search bar */}
-            <div className="flex gap-1.5 mb-2 sticky top-0 bg-gray-800 py-1 z-10">
-              <input
-                value={gifSearch}
-                onChange={e => {
-                  setGifSearch(e.target.value);
-                  // Auto-search on typing (debounced)
-                  const q = e.target.value.trim();
-                  if (q.length >= 2) handleGifSearch(q);
-                  else if (!q) handleGifSearch('');
-                }}
-                onKeyDown={e => { if (e.key === 'Enter') handleGifSearch(gifSearch); }}
-                placeholder="Tìm GIF..."
-                className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-cyan-500"
-              />
-              <button onClick={() => handleGifSearch(gifSearch)}
-                className="px-3 py-1.5 bg-cyan-600 text-white text-xs rounded-lg hover:bg-cyan-700 transition-colors">
-                Tìm
-              </button>
-            </div>
-
-            {gifLoading && <div className="flex items-center justify-center py-8"><Spinner size={5} /></div>}
-
-            {!gifLoading && gifResults.length > 0 && (
-              <div className="grid grid-cols-3 gap-1.5">
-                {gifResults.slice(0, visibleCount).map((g, i) => (
-                  <button key={`${g.id}-${i}`} onClick={() => onSelect({ id: g.id, format: 'gif' })}
-                    className="aspect-square rounded-lg bg-gradient-to-br from-gray-700 to-gray-600 hover:from-gray-600 hover:to-gray-500 transition-colors flex items-center justify-center">
-                    <span className="text-2xl">🎬</span>
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {!gifLoading && gifResults.length === 0 && (
-              <p className="text-center text-gray-500 text-xs py-8">
-                {gifSearch ? 'Không tìm thấy GIF' : 'Đang tải GIF trending...'}
-              </p>
-            )}
-          </div>
-        )}
       </div>
     </div>
   );

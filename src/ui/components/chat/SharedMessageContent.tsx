@@ -20,6 +20,12 @@ interface SharedMessageContentProps {
   isRtf?: boolean;
   isBankCard?: boolean;
   isLocation?: boolean;
+  /** Tin mẫu của Page Facebook (thẻ + nút) */
+  isFbTemplate?: boolean;
+  renderFbTemplate?: () => React.ReactNode;
+  /** Tin zinstant của Zalo Official Account (chat.webcontent / .v2): bản tin, thông báo, khuyến mãi */
+  isZinstant?: boolean;
+  renderZinstant?: () => React.ReactNode;
   renderPoll?: () => React.ReactNode;
   renderGroupMedia?: () => React.ReactNode;
   renderVideo?: () => React.ReactNode;
@@ -59,6 +65,10 @@ export default function SharedMessageContent({
   isRtf,
   isBankCard,
   isLocation,
+  isFbTemplate,
+  renderFbTemplate,
+  isZinstant,
+  renderZinstant,
   renderPoll,
   renderGroupMedia,
   renderVideo,
@@ -85,6 +95,8 @@ export default function SharedMessageContent({
   if (isEcard && renderEcard) return <>{renderEcard()}</>;
   if (isSticker && renderSticker) return <>{renderSticker()}</>;
   if (isRtf && renderRtf) return <>{renderRtf()}</>;
+  if (isFbTemplate && renderFbTemplate) return <>{renderFbTemplate()}</>;
+  if (isZinstant && renderZinstant) return <>{renderZinstant()}</>;
   if (isLocation) {
     return (
       <MessageBubble

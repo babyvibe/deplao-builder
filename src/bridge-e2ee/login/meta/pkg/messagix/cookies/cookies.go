@@ -1,0 +1,223 @@
+package cookies
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"go.mau.fi/mautrix-meta/pkg/messagix/types"
+)
+
+type MetaCookieName string
+
+const (
+	// MetaCookieDatr seems to be a session ID that's displayed in security settings
+	MetaCookieDatr             MetaCookieName = "datr"
+	MetaCookieDevicePixelRatio MetaCookieName = "dpr"
+
+	// FBCookieXS is the main session cookie for Facebook
+	FBCookieXS MetaCookieName = "xs"
+	// FBCookieCUser contains the user ID for Facebook
+	FBCookieCUser MetaCookieName = "c_user"
+
+	FBCookieSB               MetaCookieName = "sb"
+	FBCookieFR               MetaCookieName = "fr"
+	FBCookieWindowDimensions MetaCookieName = "wd"
+	FBCookiePresence         MetaCookieName = "presence"
+	FBCookieOO               MetaCookieName = "oo"
+
+	// IGCookieSessionID is the main session cookie for Instagram
+	IGCookieSessionID MetaCookieName = "sessionid"
+	// IGCookieCSRFToken is the CSRF token for Instagram which must match the one in request headers
+	IGCookieCSRFToken MetaCookieName = "csrftoken"
+	// IGCookieDSUserID contains the user ID for Instagram
+	IGCookieDSUserID MetaCookieName = "ds_user_id"
+
+	IGCookieMachineID MetaCookieName = "mid"
+	IGCookieDeviceID  MetaCookieName = "ig_did"
+	IGCookieRUR       MetaCookieName = "rur"
+	IGCookieSHBID     MetaCookieName = "shbid"
+	IGCookieSHBTS     MetaCookieName = "shbts"
+)
+
+var FBRequiredCookies = []MetaCookieName{FBCookieXS, FBCookieCUser, MetaCookieDatr}
+var IGRequiredCookies = []MetaCookieName{IGCookieSessionID, IGCookieCSRFToken, IGCookieDSUserID}
+var IGOptionalCookies = []MetaCookieName{IGCookieRUR, IGCookieSHBID, IGCookieSHBTS, IGCookieMachineID, IGCookieDeviceID}
+
+type Cookies struct {
+	Platform types.Platform
+	values   map[MetaCookieName]string
+	lock     sync.RWMutex
+
+	IGWWWClaim string
+}
+
+func (c *Cookies) UpdateValues(newValues map[MetaCookieName]string) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	c.values = make(map[MetaCookieName]string)
+	for k, v := range newValues {
+		c.values[MetaCookieName(k)] = v
+	}
+}
+
+func (c *Cookies) MarshalJSON() ([]byte, error) {
+	return json.Marshal(c.values)
+}
+
+func (c *Cookies) UnmarshalJSON(data []byte) error {
+	return json.Unmarshal(data, &c.values)
+}
+
+func (c *Cookies) String() string {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	var out []string
+	for k, v := range c.values {
+		out = append(out, fmt.Sprintf("%s=%s", k, v))
+	}
+	return strings.Join(out, "; ")
+}
+
+func (c *Cookies) GetViewports() (width, height string) {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	pxs := strings.Split(c.values[FBCookieWindowDimensions], "x")
+	if len(pxs) != 2 {
+		return "1920", "1003"
+	}
+	return pxs[0], pxs[1]
+}
+
+func (c *Cookies) GetMissingCookieNames() []MetaCookieName {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	var missingCookies []MetaCookieName
+	if c.Platform.IsMessenger() {
+		missingCookies = slices.Clone(FBRequiredCookies)
+	} else {
+		missingCookies = slices.Clone(IGRequiredCookies)
+	}
+	return slices.DeleteFunc(missingCookies, func(name MetaCookieName) bool {
+		return c.values[name] != ""
+	})
+}
+
+func (c *Cookies) IsLoggedIn() bool {
+	if c == nil {
+		return false
+	}
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	var cookieKey MetaCookieName
+	if c.Platform.IsMessenger() {
+		cookieKey = FBCookieXS
+	} else {
+		cookieKey = IGCookieSessionID
+	}
+	return c.values[cookieKey] != ""
+}
+
+func (c *Cookies) GetUserID() int64 {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	var cookieKey MetaCookieName
+	if c.Platform.IsMessenger() {
+		cookieKey = FBCookieCUser
+	} else {
+		cookieKey = IGCookieDSUserID
+	}
+	userID, _ := strconv.ParseInt(c.values[cookieKey], 10, 64)
+	return userID
+}
+
+func (c *Cookies) Get(key MetaCookieName) string {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	return c.values[key]
+}
+
+func (c *Cookies) GetAll() map[MetaCookieName]string {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	newMap := map[MetaCookieName]string{}
+	for key, val := range c.values {
+		newMap[key] = val
+	}
+	return newMap
+}
+
+func (c *Cookies) Set(key MetaCookieName, value string) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	c.values[key] = value
+}
+
+func (c *Cookies) UpdateFromResponse(r *http.Response) {
+	if c == nil || r == nil {
+		return
+	}
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	if c.values == nil {
+		c.values = make(map[MetaCookieName]string)
+	}
+	now := time.Now()
+	for _, cookie := range r.Cookies() {
+		if cookie.MaxAge < 0 || (cookie.MaxAge == 0 && !cookie.Expires.IsZero() && cookie.Expires.Before(now)) {
+			delete(c.values, MetaCookieName(cookie.Name))
+		} else {
+			c.values[MetaCookieName(cookie.Name)] = cookie.Value
+		}
+	}
+	if c.Platform == types.Instagram {
+		for _, rawCookie := range r.Header.Values("Set-Cookie") {
+			c.updateRawIGRoutingCookie(rawCookie, now)
+		}
+	}
+	if wwwClaim := r.Header.Get("x-ig-set-www-claim"); wwwClaim != "" {
+		c.IGWWWClaim = wwwClaim
+	}
+}
+
+func (c *Cookies) updateRawIGRoutingCookie(rawCookie string, now time.Time) {
+	pair, attributes, _ := strings.Cut(rawCookie, ";")
+	name, value, ok := strings.Cut(strings.TrimSpace(pair), "=")
+	if !ok {
+		return
+	}
+	cookieName := MetaCookieName(strings.TrimSpace(name))
+	if !slices.Contains(IGOptionalCookies, cookieName) {
+		return
+	}
+
+	var maxAge *int64
+	expired := false
+	for _, rawAttribute := range strings.Split(attributes, ";") {
+		attribute, attributeValue, hasValue := strings.Cut(strings.TrimSpace(rawAttribute), "=")
+		if !hasValue {
+			continue
+		}
+		switch strings.ToLower(attribute) {
+		case "max-age":
+			parsedMaxAge, err := strconv.ParseInt(strings.TrimSpace(attributeValue), 10, 64)
+			if err == nil {
+				maxAge = &parsedMaxAge
+			}
+		case "expires":
+			expires, err := http.ParseTime(strings.TrimSpace(attributeValue))
+			expired = err == nil && expires.Before(now)
+		}
+	}
+	remove := (maxAge != nil && *maxAge <= 0) || (maxAge == nil && expired)
+	if remove {
+		delete(c.values, cookieName)
+	} else {
+		c.values[cookieName] = strings.TrimSpace(value)
+	}
+}

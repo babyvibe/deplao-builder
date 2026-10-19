@@ -60,13 +60,13 @@ function DebugModal({ log, onClose }: { log: SendLogEntry; onClose: () => void }
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[100]" onClick={onClose}>
-      <div className="bg-gray-900 border border-gray-600 rounded-2xl w-[680px] max-w-[96vw] max-h-[90vh] flex flex-col shadow-2xl"
+      <div className="bg-popover border border-input rounded-2xl w-[680px] max-w-[96vw] max-h-[90vh] flex flex-col shadow-2xl"
         onClick={e => e.stopPropagation()}>
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-700 flex-shrink-0">
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-border flex-shrink-0">
           <div>
-            <h3 className="text-sm font-semibold text-white"><SearchIcon className="w-4 h-4 inline" /> Debug Log #{log.id}</h3>
-            <p className="text-[11px] text-gray-400 mt-0.5">
+            <h3 className="text-sm font-semibold text-foreground"><SearchIcon className="w-4 h-4 inline" /> Debug Log #{log.id}</h3>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
               {log.display_name || log.contact_id}
               {log.phone ? ` · ${formatPhone(log.phone)}` : ''}
               {' · '}Chiến dịch {campName}
@@ -74,14 +74,14 @@ function DebugModal({ log, onClose }: { log: SendLogEntry; onClose: () => void }
             </p>
           </div>
           <button onClick={onClose}
-            className="text-gray-400 hover:text-white transition-colors text-lg leading-none">✕</button>
+            className="text-muted-foreground hover:text-foreground transition-colors text-lg leading-none">✕</button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
           {/* Meta row */}
           <div className="flex flex-wrap gap-2 text-xs">
-            <span className="px-2 py-1 rounded-lg bg-gray-700 text-gray-300">
-              UID: <span className="text-white font-mono">{log.contact_id}</span>
+            <span className="px-2 py-1 rounded-lg bg-muted text-foreground/80">
+              UID: <span className="text-foreground font-mono">{log.contact_id}</span>
             </span>
             <span className={`px-2 py-1 rounded-lg font-medium ${
               log.status === 'sent' ? 'bg-green-500/15 text-green-400' : 'bg-red-500/15 text-red-400'
@@ -98,32 +98,32 @@ function DebugModal({ log, onClose }: { log: SendLogEntry; onClose: () => void }
 
           {/* Message */}
           <div>
-            <p className="text-[11px] text-gray-400 uppercase tracking-wide mb-1.5">Nội dung gửi</p>
-            <div className="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2.5 text-xs text-gray-200 whitespace-pre-wrap break-word">
+            <p className="text-[11px] text-muted-foreground uppercase tracking-wide mb-1.5">Nội dung gửi</p>
+            <div className="bg-card border border-border rounded-xl px-3 py-2.5 text-xs text-foreground whitespace-pre-wrap break-word">
               {log.message || '(trống)'}
             </div>
           </div>
 
           {/* Request */}
           <div>
-            <p className="text-[11px] text-gray-400 uppercase tracking-wide mb-1.5">Data Request</p>
-            <pre className="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2.5 text-[11px] text-green-300 overflow-x-auto whitespace-pre-wrap break-word leading-relaxed max-h-48 overflow-y-auto">
+            <p className="text-[11px] text-muted-foreground uppercase tracking-wide mb-1.5">Data Request</p>
+            <pre className="bg-card border border-border rounded-xl px-3 py-2.5 text-[11px] text-green-300 overflow-x-auto whitespace-pre-wrap break-word leading-relaxed max-h-48 overflow-y-auto">
               {tryFmtJson(log.data_request)}
             </pre>
           </div>
 
           {/* Response */}
           <div>
-            <p className="text-[11px] text-gray-400 uppercase tracking-wide mb-1.5">Data Response</p>
-            <pre className="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2.5 text-[11px] text-blue-300 overflow-x-auto whitespace-pre-wrap break-word leading-relaxed max-h-48 overflow-y-auto">
+            <p className="text-[11px] text-muted-foreground uppercase tracking-wide mb-1.5">Data Response</p>
+            <pre className="bg-card border border-border rounded-xl px-3 py-2.5 text-[11px] text-blue-300 overflow-x-auto whitespace-pre-wrap break-word leading-relaxed max-h-48 overflow-y-auto">
               {tryFmtJson(log.data_response)}
             </pre>
           </div>
         </div>
 
-        <div className="px-5 py-3 border-t border-gray-700 flex-shrink-0">
+        <div className="px-5 py-3 border-t border-border flex-shrink-0">
           <button onClick={onClose}
-            className="w-full py-2 rounded-xl bg-gray-700 text-gray-300 text-sm hover:bg-gray-600 transition-colors">
+            className="w-full py-2 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent transition-colors">
             Đóng
           </button>
         </div>
@@ -294,18 +294,18 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
       {debugLog && <DebugModal log={debugLog} onClose={() => setDebugLog(null)} />}
 
       {/* Header */}
-      <div className="flex items-center gap-3 px-5 py-3 border-b border-gray-700 flex-shrink-0">
-        <h3 className="text-sm font-semibold text-white"><ClipboardListIcon className="w-4 h-4 inline" /> Lịch sử gửi</h3>
+      <div className="flex items-center gap-3 px-5 py-3 border-b border-border flex-shrink-0">
+        <h3 className="text-sm font-semibold text-foreground"><ClipboardListIcon className="w-4 h-4 inline" /> Lịch sử gửi</h3>
         <div className="flex items-center gap-2 text-xs">
           <span className="text-green-400">{sentCount} đã gửi</span>
           {failedCount > 0 && <span className="text-red-400">{failedCount} lỗi</span>}
-          <span className="text-gray-400">/ {logs.length} tổng</span>
+          <span className="text-muted-foreground">/ {logs.length} tổng</span>
         </div>
         <div className="ml-auto flex items-center gap-2">
           {filtered.length > 0 && (
             <button onClick={exportToCSV}
               title={`Xuất ${filtered.length} dòng đang hiển thị ra CSV`}
-              className="flex items-center gap-1.5 text-xs text-gray-300 hover:text-white bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded-lg transition-colors border border-gray-600 hover:border-gray-500">
+              className="flex items-center gap-1.5 text-xs text-foreground/80 hover:text-foreground bg-muted hover:bg-accent px-3 py-1.5 rounded-lg transition-colors border border-input hover:border-border-strong">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
                 <polyline points="7 10 12 15 17 10"/>
@@ -314,62 +314,62 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
               Xuất CSV
             </button>
           )}
-          <button onClick={loadData} className="text-xs text-gray-400 hover:text-white transition-colors">↻ Tải lại</button>
+          <button onClick={loadData} className="text-xs text-muted-foreground hover:text-foreground transition-colors">↻ Tải lại</button>
         </div>
       </div>
 
       {/* Filters */}
-      <div className="flex items-center gap-2 px-5 py-2 border-b border-gray-700 flex-shrink-0 flex-wrap">
+      <div className="flex items-center gap-2 px-5 py-2 border-b border-border flex-shrink-0 flex-wrap">
         {/* Search */}
         <div className="relative">
-          <svg width="12" height="12" className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"
+          <svg width="12" height="12" className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
             viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
           </svg>
           <input value={filterSearch} onChange={e => { setFilterSearch(e.target.value); setPage(0); }}
             placeholder="Tên, SĐT, UID, nội dung..."
-            className="bg-gray-700 border border-gray-600 rounded-full pl-7 pr-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 w-44" />
+            className="bg-muted border border-input rounded-full pl-7 pr-3 py-1.5 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 w-44" />
         </div>
 
         {/* Campaign autocomplete */}
         <div ref={campaignInputRef} className="relative">
-          <div className="flex items-center bg-gray-700 border border-gray-600 rounded-full overflow-hidden focus-within:border-blue-500 transition-colors">
+          <div className="flex items-center bg-muted border border-input rounded-full overflow-hidden focus-within:border-blue-500 transition-colors">
             <input value={filterCampaignName}
               onChange={e => handleCampaignInput(e.target.value)}
               onFocus={() => { if (filterCampaignName.trim()) setShowSuggestions(true); }}
               placeholder="Tên chiến dịch..."
-              className="bg-transparent pl-3 pr-1 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none w-36" />
+              className="bg-transparent pl-3 pr-1 py-1.5 text-xs text-foreground placeholder-subtle-foreground focus:outline-none w-36" />
             {filterCampaignName && (
-              <button onClick={clearCampaignFilter} className="pr-2.5 text-gray-400 hover:text-white text-xs flex-shrink-0">✕</button>
+              <button onClick={clearCampaignFilter} className="pr-2.5 text-muted-foreground hover:text-foreground text-xs flex-shrink-0">✕</button>
             )}
           </div>
           {showSuggestions && suggestions.length > 0 && (
-            <div className="absolute top-full left-0 mt-1 bg-gray-800 border border-gray-600 rounded-xl shadow-xl z-50 min-w-[200px] max-h-48 overflow-y-auto">
+            <div className="absolute top-full left-0 mt-1 bg-card border border-input rounded-xl shadow-xl z-50 min-w-[200px] max-h-48 overflow-y-auto">
               {suggestions.map(c => (
                 <button key={c.id} onClick={() => selectCampaign(c)}
-                  className="w-full text-left px-3 py-2 text-xs text-gray-200 hover:bg-gray-700 transition-colors truncate"><CampaignIcon className="w-4 h-4 inline" /> {c.name}
+                  className="w-full text-left px-3 py-2 text-xs text-foreground hover:bg-muted transition-colors truncate"><CampaignIcon className="w-4 h-4 inline" /> {c.name}
                 </button>
               ))}
             </div>
           )}
           {showSuggestions && filterCampaignName.trim() && suggestions.length === 0 && (
-            <div className="absolute top-full left-0 mt-1 bg-gray-800 border border-gray-600 rounded-xl shadow-xl z-50 px-3 py-2 min-w-[200px]">
-              <p className="text-xs text-gray-400">Không tìm thấy chiến dịch</p>
+            <div className="absolute top-full left-0 mt-1 bg-card border border-input rounded-xl shadow-xl z-50 px-3 py-2 min-w-[200px]">
+              <p className="text-xs text-muted-foreground">Không tìm thấy chiến dịch</p>
             </div>
           )}
         </div>
 
         {/* Date range */}
-        <div className="flex items-center gap-1 text-xs text-gray-400">
+        <div className="flex items-center gap-1 text-xs text-muted-foreground">
           <span className="flex-shrink-0">Từ</span>
           <DateInputVN value={dateFrom} onChange={e => { setDateFrom(e.target.value); setPage(0); }}
-            className="bg-gray-700 border border-gray-600 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500 w-32" />
+            className="bg-muted border border-input rounded-lg px-2 py-1 text-xs text-foreground focus:outline-none focus:border-blue-500 w-32" />
           <span className="flex-shrink-0">→</span>
           <DateInputVN value={dateTo} onChange={e => { setDateTo(e.target.value); setPage(0); }}
-            className="bg-gray-700 border border-gray-600 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500 w-32" />
+            className="bg-muted border border-input rounded-lg px-2 py-1 text-xs text-foreground focus:outline-none focus:border-blue-500 w-32" />
           {(dateFrom || dateTo) && (
             <button onClick={() => { setDateFrom(''); setDateTo(''); setPage(0); }}
-              className="text-gray-400 hover:text-white text-xs" title="Xóa lọc ngày">✕</button>
+              className="text-muted-foreground hover:text-foreground text-xs" title="Xóa lọc ngày">✕</button>
           )}
         </div>
 
@@ -377,7 +377,7 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
         <select
           value={filterStatus}
           onChange={e => { setFilterStatus(e.target.value as typeof filterStatus); setPage(0); }}
-          className="bg-gray-700 border border-gray-600 rounded-full text-xs text-gray-300 px-2.5 py-1.5 focus:outline-none focus:border-blue-500 flex-shrink-0">
+          className="bg-muted border border-input rounded-full text-xs text-foreground/80 px-2.5 py-1.5 focus:outline-none focus:border-blue-500 flex-shrink-0">
           <option value="all">Tất cả trạng thái</option>
           <option value="sent">✓ Đã gửi</option>
           <option value="failed">✕ Lỗi</option>
@@ -387,22 +387,22 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
         <select
           value={filterSendType}
           onChange={e => { setFilterSendType(e.target.value as typeof filterSendType); setPage(0); }}
-          className="bg-gray-700 border border-gray-600 rounded-full text-xs text-gray-300 px-2.5 py-1.5 focus:outline-none focus:border-blue-500 flex-shrink-0">
+          className="bg-muted border border-input rounded-full text-xs text-foreground/80 px-2.5 py-1.5 focus:outline-none focus:border-blue-500 flex-shrink-0">
           <option value="all">Tất cả loại</option>
           <option value="message"><ChatIcon className="w-4 h-4 inline" /> Tin nhắn</option>
           {supportsZaloCampaignActions && <option value="friend_request"><UserCheckIcon className="w-4 h-4 inline" /> Kết bạn</option>}
           {supportsZaloCampaignActions && <option value="invite_to_group"><UsersIcon className="w-4 h-4 inline" /> Mời nhóm</option>}
         </select>
 
-        <span className="ml-auto text-xs text-gray-400">{filtered.length} kết quả</span>
+        <span className="ml-auto text-xs text-muted-foreground">{filtered.length} kết quả</span>
       </div>
 
       {/* Table */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto bg-card">
         {loading ? (
-          <div className="p-5 space-y-2">{[...Array(8)].map((_, i) => <div key={i} className="h-9 bg-gray-700/50 rounded animate-pulse" />)}</div>
+          <div className="p-5 space-y-2">{[...Array(8)].map((_, i) => <div key={i} className="h-9 bg-muted/50 rounded animate-pulse" />)}</div>
         ) : paged.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-gray-400 py-16">
+          <div className="flex flex-col items-center justify-center h-full text-muted-foreground py-16">
             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mb-3 opacity-40">
               <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l5.414 5.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2z"/>
             </svg>
@@ -415,7 +415,7 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
         ) : (
           <>
             {/* Column headers - added debug col at end */}
-            <div className="grid grid-cols-[1fr_2fr_1fr_90px_80px_28px] gap-2 px-5 py-2 text-[11px] text-gray-400 border-b border-gray-700 sticky top-0 bg-gray-900 z-10">
+            <div className="grid grid-cols-[1fr_2fr_1fr_90px_80px_28px] gap-2 px-5 py-2 text-[11px] text-muted-foreground border-b border-border sticky top-0 bg-card z-10">
               <span>Người nhận</span>
               <span>Nội dung</span>
               <span>Chiến dịch</span>
@@ -432,13 +432,13 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
               const phone = log.phone ? formatPhone(log.phone) : '';
               return (
                 <div key={log.id}
-                  className={`grid grid-cols-[1fr_2fr_1fr_90px_80px_28px] gap-2 px-5 py-2.5 border-b border-gray-700/50 text-xs hover:bg-gray-800/50 transition-colors group ${
+                  className={`grid grid-cols-[1fr_2fr_1fr_90px_80px_28px] gap-2 px-5 py-2.5 border-b border-border/50 text-xs hover:bg-card/50 transition-colors group ${
                     log.status === 'failed' ? 'bg-red-500/5' : ''
                   }`}>
                   {/* Recipient */}
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5">
-                      <p className="text-gray-300 truncate font-medium">{recipientName}</p>
+                      <p className="text-foreground/80 truncate font-medium">{recipientName}</p>
                       {log.contact_type === 'group' && (
                         <span className="text-[9px] text-purple-400 flex-shrink-0 bg-purple-400/10 px-1 rounded">nhóm</span>
                       )}
@@ -447,19 +447,19 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
                       )}
                     </div>
                     {phone
-                      ? <p className="text-gray-400 text-[11px] font-mono truncate">{phone}</p>
+                      ? <p className="text-muted-foreground text-[11px] font-mono truncate">{phone}</p>
                       : log.contact_id && log.contact_id !== log.display_name
-                        ? <p className="text-gray-400 font-mono text-[11px] truncate">{log.contact_id}</p>
+                        ? <p className="text-muted-foreground font-mono text-[11px] truncate">{log.contact_id}</p>
                         : null
                     }
                   </div>
                   {/* Message */}
                   <div className="min-w-0">
-                    <p className="text-gray-200 truncate">{log.message}</p>
+                    <p className="text-foreground truncate">{log.message}</p>
                     {log.error && <p className="text-red-400 text-[11px] truncate">⚠ {log.error}</p>}
                   </div>
                   {/* Campaign */}
-                  <span className="text-gray-400 truncate self-center">
+                  <span className="text-muted-foreground truncate self-center">
                     {campaignName || (log.campaign_id ? `#${log.campaign_id} - Đã xoá` : '-')}
                   </span>
                   {/* Send type badge - 3 types only */}
@@ -482,7 +482,7 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
                         <button
                             onClick={() => setDebugLog(log)}
                             title="Xem data request / response"
-                            className="transition-opacity w-5 h-5 rounded flex items-center justify-center text-gray-400 hover:text-blue-400 hover:bg-blue-500/10">
+                            className="transition-opacity w-5 h-5 rounded flex items-center justify-center text-muted-foreground hover:text-blue-400 hover:bg-blue-500/10">
                           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <polyline points="16 18 22 12 16 6"/>
                             <polyline points="8 6 2 12 8 18"/>
@@ -490,7 +490,7 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
                         </button>
                       </span>
                     </div>
-                    <span className="text-[11px] text-gray-400">{fmt(log.sent_at)}</span>
+                    <span className="text-[11px] text-muted-foreground">{fmt(log.sent_at)}</span>
                   </div>
                 </div>
               );
@@ -501,12 +501,12 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
 
       {/* Pagination */}
       {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-2 px-4 py-2.5 border-t border-gray-700 flex-shrink-0">
+        <div className="flex items-center justify-center gap-2 px-4 py-2.5 border-t border-border flex-shrink-0">
           <button disabled={page === 0} onClick={() => setPage(p => p - 1)}
-            className="px-2.5 py-1 rounded-lg bg-gray-700 text-xs text-gray-300 hover:bg-gray-600 disabled:opacity-40">‹</button>
-          <span className="text-xs text-gray-400">{page + 1} / {totalPages}</span>
+            className="px-2.5 py-1 rounded-lg bg-muted text-xs text-foreground/80 hover:bg-accent disabled:opacity-40">‹</button>
+          <span className="text-xs text-muted-foreground">{page + 1} / {totalPages}</span>
           <button disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)}
-            className="px-2.5 py-1 rounded-lg bg-gray-700 text-xs text-gray-300 hover:bg-gray-600 disabled:opacity-40">›</button>
+            className="px-2.5 py-1 rounded-lg bg-muted text-xs text-foreground/80 hover:bg-accent disabled:opacity-40">›</button>
         </div>
       )}
     </div>

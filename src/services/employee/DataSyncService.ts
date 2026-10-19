@@ -34,14 +34,17 @@ const SYNCABLE_TABLES_BY_ZALO = [
     { table: 'employee_message_log', zaloCol: 'zalo_id',        tsCol: 'timestamp' },
 ];
 
-/** Tables synced fully (device-wide, no zaloId filter) */
+/**
+ * Tables synced fully (device-wide, no zaloId filter).
+ * KHÔNG có app_settings: bảng này giữ khoá ký JWT nhân viên (employee_jwt_secret), token tunnel
+ * (relay_cf_tunnel_token, relay_ngrok_authtoken)… — gửi đi là nhân viên giả được token của người khác.
+ */
 const SYNCABLE_TABLES_GLOBAL = [
     { table: 'stickers',              tsCol: 'updated_at' },
     { table: 'sticker_packs',         tsCol: 'updated_at' },
     { table: 'recent_stickers',       tsCol: 'used_at' },
     { table: 'keyword_stickers',      tsCol: 'updated_at' },
     { table: 'local_labels',          tsCol: 'updated_at' },
-    { table: 'app_settings',          tsCol: null },
     // AI assistants & usage
     { table: 'ai_assistants',         tsCol: 'updated_at' },
     { table: 'ai_assistant_files',    tsCol: 'created_at' },
@@ -96,6 +99,27 @@ const PRIVACY_FILTERED_ERP_TABLES = new Set([
 /** Account info to sync (no imei/user_agent/cookies - employee doesn't need login credentials) */
 const ACCOUNT_SAFE_COLUMNS = 'zalo_id, full_name, avatar_url, phone, is_business, is_active, last_seen, listener_active';
 
+/**
+ * Cột bí mật không bao giờ rời máy Boss: credential tích hợp (API key, khoá bảo mật webhook Casso / SePay…) và
+ * API key trợ lý AI. credentials_encrypted là JSON thường khi máy không có safeStorage; bản đã mã hoá cũng vô dụng ở
+ * máy khác. Nhân viên xem tích hợp qua REST /api/query/integrations (listConfigs — đã bỏ credential).
+ */
+const SECRET_COLUMNS: Readonly<Record<string, readonly string[]>> = {
+    integrations: ['credentials_encrypted'],
+    ai_assistants: ['api_key_encrypted'],
+};
+
+/** Bỏ cột bí mật của bảng trước khi đưa vào payload gửi nhân viên. */
+export function withoutSecretColumns(table: string, rows: any[]): any[] {
+    const secret = SECRET_COLUMNS[table];
+    if (!secret || rows.length === 0) return rows;
+    return rows.map(row => {
+        const copy = { ...row };
+        for (const column of secret) delete copy[column];
+        return copy;
+    });
+}
+
 export interface SyncPayload {
     /** Timestamp of this sync snapshot */
     syncTs: number;
@@ -116,6 +140,9 @@ interface ProgressCallback {
  *
  * Boss side: exports filtered data for employee's assigned zaloIds.
  * Employee side: imports data into local DB.
+ *
+ * Hiện KHÔNG được nối vào đâu (không có nơi gọi từ 26.7.0): nhân viên đọc dữ liệu qua REST /api/query/* và
+ * /api/sync/snapshot. Nếu nối lại: payload không được chứa bí mật (SECRET_COLUMNS, không app_settings).
  */
 class DataSyncService {
     private static instance: DataSyncService;
@@ -162,7 +189,7 @@ class DataSyncService {
                     offset += PAGE_SIZE;
                 }
                 if (allRows.length > 0) {
-                    tables[spec.table] = allRows;
+                    tables[spec.table] = withoutSecretColumns(spec.table, allRows);
                 }
             } catch (err: any) {
                 Logger.warn(`[DataSyncService] Export skip ${spec.table}: ${err.message}`);
@@ -185,7 +212,7 @@ class DataSyncService {
                     offset += PAGE_SIZE;
                 }
                 if (allRows.length > 0) {
-                    tables[spec.table] = allRows;
+                    tables[spec.table] = withoutSecretColumns(spec.table, allRows);
                 }
             } catch (err: any) {
                 Logger.warn(`[DataSyncService] Export skip ${spec.table}: ${err.message}`);
@@ -236,7 +263,7 @@ class DataSyncService {
                     );
                 }
                 if (rows.length > 0) {
-                    tables[spec.table] = rows;
+                    tables[spec.table] = withoutSecretColumns(spec.table, rows);
                 }
             } catch (err: any) {
                 Logger.warn(`[DataSyncService] Delta skip ${spec.table}: ${err.message}`);
@@ -257,7 +284,7 @@ class DataSyncService {
                     rows = db.query<any>(`SELECT * FROM ${spec.table}`);
                 }
                 if (rows.length > 0) {
-                    tables[spec.table] = rows;
+                    tables[spec.table] = withoutSecretColumns(spec.table, rows);
                 }
             } catch (err: any) {
                 Logger.warn(`[DataSyncService] Delta skip ${spec.table}: ${err.message}`);

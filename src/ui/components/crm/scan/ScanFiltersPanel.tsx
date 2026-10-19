@@ -32,8 +32,8 @@ export default function ScanFiltersPanel({ scanType, filters, onChange }: Props)
       {showPublicFilter && (
         <label className="flex items-center gap-1 cursor-pointer flex-shrink-0">
           <input type="checkbox" checked={!!filters.public} onChange={(e) => update({ public: e.target.checked })}
-            className="w-3 h-3 rounded bg-gray-700 border-gray-500 text-blue-500" />
-          <span className="text-[11px] text-gray-400">Công khai</span>
+            className="w-3 h-3 rounded bg-muted border-border-strong text-blue-500" />
+          <span className="text-[11px] text-muted-foreground">Công khai</span>
         </label>
       )}
 
@@ -41,15 +41,15 @@ export default function ScanFiltersPanel({ scanType, filters, onChange }: Props)
       {showRecentFilter && (
         <label className="flex items-center gap-1 cursor-pointer flex-shrink-0">
           <input type="checkbox" checked={!!filters.recent} onChange={(e) => update({ recent: e.target.checked })}
-            className="w-3 h-3 rounded bg-gray-700 border-gray-500 text-blue-500" />
-          <span className="text-[11px] text-gray-400">Gần đây</span>
+            className="w-3 h-3 rounded bg-muted border-border-strong text-blue-500" />
+          <span className="text-[11px] text-muted-foreground">Gần đây</span>
         </label>
       )}
 
       {/* Year filter */}
       {showYearFilter && (
         <select value={filters.year || ''} onChange={(e) => update({ year: e.target.value })}
-          className="bg-gray-700/50 text-gray-300 text-[11px] rounded-lg px-2 py-1.5 border border-gray-600/30 focus:outline-none focus:border-blue-500 flex-shrink-0">
+          className="bg-muted/50 text-foreground/80 text-[11px] rounded-lg px-2 py-1.5 border border-input/30 focus:outline-none focus:border-blue-500 flex-shrink-0">
           {YEAR_OPTIONS.map(opt => (<option key={opt.value} value={opt.value}>{opt.label}</option>))}
         </select>
       )}
@@ -57,7 +57,7 @@ export default function ScanFiltersPanel({ scanType, filters, onChange }: Props)
       {/* Comment sort */}
       {showCommentSort && (
         <select value={filters.commentSort || 'chronological'} onChange={(e) => update({ commentSort: e.target.value as 'chronological' | 'relevant' })}
-          className="bg-gray-700/50 text-gray-300 text-[11px] rounded-lg px-2 py-1.5 border border-gray-600/30 focus:outline-none focus:border-blue-500 flex-shrink-0">
+          className="bg-muted/50 text-foreground/80 text-[11px] rounded-lg px-2 py-1.5 border border-input/30 focus:outline-none focus:border-blue-500 flex-shrink-0">
           {COMMENT_SORT_OPTIONS.map(opt => (<option key={opt.value} value={opt.value}>{opt.label}</option>))}
         </select>
       )}
@@ -66,15 +66,15 @@ export default function ScanFiltersPanel({ scanType, filters, onChange }: Props)
       {showCommentKeyword && (
         <input type="text" value={filters.commentKeyword || ''} onChange={(e) => update({ commentKeyword: e.target.value })}
           placeholder="Lọc từ khóa..."
-          className="bg-gray-700/50 text-gray-300 text-[11px] rounded-lg px-2.5 py-1.5 w-32 border border-gray-600/30 focus:outline-none focus:border-blue-500 placeholder-gray-500 flex-shrink-0" />
+          className="bg-muted/50 text-foreground/80 text-[11px] rounded-lg px-2.5 py-1.5 w-32 border border-input/30 focus:outline-none focus:border-blue-500 placeholder-subtle-foreground flex-shrink-0" />
       )}
 
       {/* Phone detection (post comments) */}
       {showPhoneFilter && (
         <label className="flex items-center gap-1 cursor-pointer flex-shrink-0">
           <input type="checkbox" checked={!!filters.detectPhone} onChange={(e) => update({ detectPhone: e.target.checked })}
-            className="w-3 h-3 rounded bg-gray-700 border-gray-500 text-emerald-500" />
-          <span className="text-[11px] text-gray-400">Có SĐT</span>
+            className="w-3 h-3 rounded bg-muted border-border-strong text-emerald-500" />
+          <span className="text-[11px] text-muted-foreground">Có SĐT</span>
         </label>
       )}
     </div>

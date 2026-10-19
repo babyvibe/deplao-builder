@@ -14,6 +14,8 @@ export interface ActionResult {
   msgId?: string;
   messageId?: string;
   pollId?: string;
+  /** Facebook E2EE: unacknowledged send that may have been delivered (see MessageQueue). */
+  uncertain?: boolean;
 }
 
 export interface ThreadsResult {
@@ -59,6 +61,11 @@ export interface SendAttachmentParams {
   quote?: string | null;
   /** Reply-to message ID for Telegram */
   replyToMsgId?: string;
+  /**
+   * Item thư viện (máy nhân viên không có file — `filePath` rỗng): Boss tự đổi uuid → đường dẫn file của item
+   * (executeProxyAction, đã kiểm tra quyền trang).
+   */
+  libraryUuid?: string;
 }
 
 export interface SendVideoParams {
@@ -75,6 +82,8 @@ export interface SendVideoParams {
   body?: string;
   quote?: any;
   auth?: any;
+  /** Item thư viện khi máy nhân viên không có file (xem SendAttachmentParams.libraryUuid). */
+  libraryUuid?: string;
 }
 
 export interface UnsendParams {

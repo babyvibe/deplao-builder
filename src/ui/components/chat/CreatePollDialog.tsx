@@ -18,7 +18,7 @@ export function CreatePollDialog({ groupId, activeAccountId, channel, onClose }:
   const [hidePreview, setHidePreview] = React.useState(false);
   const [isAnon, setIsAnon] = React.useState(false);
   const [creating, setCreating] = React.useState(false);
-  const { showNotification } = useAppStore();
+  const showNotification = useAppStore(s => s.showNotification);
 
   const setOption = (i: number, val: string) => setOptions(prev => prev.map((o, idx) => idx === i ? val : o));
   const addOption = () => { if (options.length < 20) setOptions(prev => [...prev, '']); };
@@ -71,12 +71,12 @@ export function CreatePollDialog({ groupId, activeAccountId, channel, onClose }:
 
   return (
     <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-[#1e2535] rounded-2xl shadow-2xl border border-gray-700 w-full max-w-2xl mx-4 max-h-[90vh] flex flex-col"
+      <div className="bg-popover rounded-2xl shadow-2xl border border-border w-full max-w-2xl mx-4 max-h-[90vh] flex flex-col"
         onClick={e => e.stopPropagation()}>
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700 flex-shrink-0">
-          <h2 className="text-white font-bold text-lg">Tạo bình chọn</h2>
-          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 transition-colors">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border flex-shrink-0">
+          <h2 className="text-foreground font-bold text-lg">Tạo bình chọn</h2>
+          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
@@ -89,20 +89,20 @@ export function CreatePollDialog({ groupId, activeAccountId, channel, onClose }:
             {/* Left: question + options */}
             <div className="space-y-4">
               <div>
-                <label className="text-sm text-gray-300 font-medium mb-1.5 block">Chủ đề bình chọn</label>
+                <label className="text-sm text-foreground/80 font-medium mb-1.5 block">Chủ đề bình chọn</label>
                 <textarea
                   value={question}
                   onChange={e => setQuestion(e.target.value)}
                   maxLength={200}
                   placeholder="Đặt câu hỏi bình chọn"
                   rows={3}
-                  className="w-full bg-gray-800 border border-gray-600 rounded-xl px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 resize-none"
+                  className="w-full bg-card border border-input rounded-xl px-3 py-2.5 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 resize-none"
                 />
-                <p className="text-right text-xs text-gray-400 mt-0.5">{question.length}/200</p>
+                <p className="text-right text-xs text-muted-foreground mt-0.5">{question.length}/200</p>
               </div>
 
               <div>
-                <label className="text-sm text-gray-300 font-medium mb-1.5 block">Các lựa chọn</label>
+                <label className="text-sm text-foreground/80 font-medium mb-1.5 block">Các lựa chọn</label>
                 <div className="space-y-2">
                   {options.map((opt, i) => (
                     <div key={i} className="flex items-center gap-2">
@@ -110,11 +110,11 @@ export function CreatePollDialog({ groupId, activeAccountId, channel, onClose }:
                         value={opt}
                         onChange={e => setOption(i, e.target.value)}
                         placeholder={`Lựa chọn ${i + 1}`}
-                        className="flex-1 bg-gray-800 border border-gray-600 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                        className="flex-1 bg-card border border-input rounded-xl px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
                       />
                       {options.length > 2 && (
                         <button onClick={() => removeOption(i)}
-                          className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-red-400 transition-colors">
+                          className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-red-400 transition-colors">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                             <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                           </svg>
@@ -138,7 +138,7 @@ export function CreatePollDialog({ groupId, activeAccountId, channel, onClose }:
             {/* Right: settings */}
             <div className="space-y-4">
               <div>
-                <label className="text-sm text-gray-300 font-medium mb-1.5 block">Thời hạn bình chọn</label>
+                <label className="text-sm text-foreground/80 font-medium mb-1.5 block">Thời hạn bình chọn</label>
                 <div className="relative">
                   <DateInputVN
                     type="datetime-local"
@@ -146,22 +146,22 @@ export function CreatePollDialog({ groupId, activeAccountId, channel, onClose }:
                     onChange={e => setExpiredTime(e.target.value)}
                     min={new Date().toISOString().slice(0, 16)}
                     placeholder="Không thời hạn"
-                    className="w-full bg-gray-800 border border-gray-600 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500"
+                    className="w-full bg-card border border-input rounded-xl px-3 py-2.5 text-sm text-foreground focus:outline-none focus:border-blue-500"
                   />
                   {expiredTime && (
                     <button onClick={() => setExpiredTime('')}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white">
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                         <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                       </svg>
                     </button>
                   )}
                 </div>
-                {!expiredTime && <p className="text-xs text-gray-400 mt-1">Không giới hạn thời gian</p>}
+                {!expiredTime && <p className="text-xs text-muted-foreground mt-1">Không giới hạn thời gian</p>}
               </div>
 
               <div>
-                <p className="text-sm text-gray-300 font-medium mb-2">Thiết lập nâng cao</p>
+                <p className="text-sm text-foreground/80 font-medium mb-2">Thiết lập nâng cao</p>
                 <div className="space-y-2.5">
                   <PollToggle label="Chọn nhiều phương án" checked={allowMulti} onChange={setAllowMulti} />
                   <PollToggle label="Có thể thêm phương án" checked={allowAdd} onChange={setAllowAdd} />
@@ -169,7 +169,7 @@ export function CreatePollDialog({ groupId, activeAccountId, channel, onClose }:
               </div>
 
               <div>
-                <p className="text-sm text-gray-300 font-medium mb-2">Bình chọn ẩn danh</p>
+                <p className="text-sm text-foreground/80 font-medium mb-2">Bình chọn ẩn danh</p>
                 <div className="space-y-2.5">
                   <PollToggle label="Ẩn kết quả khi chưa bình chọn" checked={hidePreview} onChange={setHidePreview} />
                   <PollToggle label="Ẩn người bình chọn" checked={isAnon} onChange={setIsAnon} />
@@ -180,9 +180,9 @@ export function CreatePollDialog({ groupId, activeAccountId, channel, onClose }:
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-700 flex-shrink-0">
+        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border flex-shrink-0">
           <button onClick={onClose}
-            className="px-5 py-2 rounded-xl text-sm font-semibold text-gray-300 hover:bg-gray-700 transition-colors">
+            className="px-5 py-2 rounded-xl text-sm font-semibold text-foreground/80 hover:bg-muted transition-colors">
             Huỷ
           </button>
           <button onClick={handleCreate} disabled={creating || !question.trim() || options.filter(o => o.trim()).length < 2}
@@ -199,11 +199,11 @@ export function CreatePollDialog({ groupId, activeAccountId, channel, onClose }:
 function PollToggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
   return (
     <label className="flex items-center justify-between cursor-pointer select-none">
-      <span className="text-sm text-gray-300">{label}</span>
+      <span className="text-sm text-foreground/80">{label}</span>
       <button
         type="button"
         onClick={() => onChange(!checked)}
-        className={`relative w-10 h-5 rounded-full transition-colors flex-shrink-0 ${checked ? 'bg-blue-600' : 'bg-gray-600'}`}
+        className={`relative w-10 h-5 rounded-full transition-colors flex-shrink-0 ${checked ? 'bg-blue-600' : 'bg-accent'}`}
       >
         <span className={`absolute top-0.5 left-0 w-4 h-4 bg-white rounded-full shadow transition-transform ${checked ? 'translate-x-5' : 'translate-x-0.5'}`} />
       </button>

@@ -1,5 +1,12 @@
 import React from 'react';
 import { zaloCodeToEmoji } from '@/lib/chat/emojiUtils';
+import { getTelegramPostMeta } from '@/lib/mediaResolver';
+import { toLocalMediaUrl } from '@/lib/localMedia';
+import { useAccountStore } from '@/store/accountStore';
+import { mergeZaloReactionAliases } from '../../../shared/zaloReactions';
+
+/** Tin Zalo (bản ghi cũ không có channel). */
+const isZaloChannel = (channel?: string) => !channel || channel === 'zalo';
 
 /** Parse reactions từ msg.reactions -> { emoji: count } (dùng cho hiển thị bubble) */
 function reactionKey(value: string, channel?: string): string {
@@ -25,13 +32,24 @@ const EMOJI_NORMALIZE: Record<string, string> = {
   '😍': '😍️', '😍︎': '😍️',
 };
 
+// Chuỗi reaction chuẩn của Telegram không có U+FE0F ("☃", "✍", "🕊", "🤷‍♂"…): các ký tự mặc định kiểu chữ này hiện đen
+// trắng / tách rời nếu thiếu → thêm U+FE0F CHỈ khi hiển thị (so sánh, gửi vẫn dùng chuỗi chuẩn).
+const TEXT_DEFAULT_EMOJI = /([\u2764\u2603\u270D\u2642\u2640\u263A\u2639]|\uD83D\uDD4A)(?!\uFE0F)/g;
+
 function displayReactionEmoji(value: string): string {
   if (value.startsWith('tg_custom:')) return '✨';
-  return EMOJI_NORMALIZE[value] || value;
+  return EMOJI_NORMALIZE[value] || value.replace(TEXT_DEFAULT_EMOJI, '$1\uFE0F');
 }
 
 function parseReactions(raw: any, channel?: string): Record<string, number> {
   if (!raw) return {};
+  if (isZaloChannel(channel)) {
+    const counts: Record<string, number> = {};
+    for (const [key, data] of Object.entries(parseReactionsFull(raw, channel).emoji)) {
+      if (data.total > 0) counts[key] = data.total;
+    }
+    return counts;
+  }
   let parsed = raw;
   if (typeof parsed === 'string') {
     try { parsed = JSON.parse(parsed); } catch { return {}; }
@@ -86,7 +104,9 @@ function parseReactionsFull(raw: any, channel?: string): { total: number; emoji:
         converted[key].users[uid] = ((converted[key].users[uid] || 0)) + (cnt as number);
       }
     }
-    return { total: parsed.total || 0, emoji: converted };
+    const result = { total: parsed.total || 0, emoji: converted };
+    // Zalo: "haha" từng lưu 2 kiểu (😄 lúc thả, 😆 từ echo) → gộp, cùng người lấy số lớn hơn
+    return isZaloChannel(channel) ? mergeZaloReactionAliases(result) : result;
   }
 
   // Old format: { userId: emojiChar } - convert Zalo codes to emoji
@@ -99,7 +119,7 @@ function parseReactionsFull(raw: any, channel?: string): { total: number; emoji:
     result.emoji[key].users[uid] = (result.emoji[key].users[uid] || 0) + 1;
     result.total++;
   }
-  return result;
+  return isZaloChannel(channel) ? mergeZaloReactionAliases(result) : result;
 }
 
 // ─── Reaction Context Menu ────────────────────────────────────────────────────
@@ -130,14 +150,14 @@ function ReactionContextMenu({ x, y, msg, myEmoji, onClose, onReact, onCancel }:
   };
 
   return (
-    <div ref={menuRef} style={style} className="bg-gray-800 border border-gray-600 rounded-xl shadow-2xl py-2 px-2">
-      <p className="text-xs text-gray-400 px-2 mb-1.5">Thả cảm xúc</p>
+    <div ref={menuRef} style={style} className="bg-card border border-input rounded-xl shadow-2xl py-2 px-2">
+      <p className="text-xs text-muted-foreground px-2 mb-1.5">Thả cảm xúc</p>
       <div className="flex items-center gap-1 flex-wrap max-w-[220px]">
         {REACTION_EMOJIS.map(emoji => (
           <button
             key={emoji}
             onClick={() => onReact(msg, emoji)}
-            className={`text-xl p-1 rounded-lg hover:bg-gray-700 transition-colors hover:scale-125 ${myEmoji === emoji ? 'bg-gray-700 ring-1 ring-blue-400' : ''}`}
+            className={`text-xl p-1 rounded-lg hover:bg-muted transition-colors hover:scale-125 ${myEmoji === emoji ? 'bg-muted ring-1 ring-blue-400' : ''}`}
             title={emoji}
           >
             {emoji}
@@ -147,7 +167,7 @@ function ReactionContextMenu({ x, y, msg, myEmoji, onClose, onReact, onCancel }:
         {myEmoji && (
           <button
             onClick={() => onCancel(msg)}
-            className="text-sm px-2 py-1 rounded-lg bg-gray-700 hover:bg-red-700 text-gray-300 hover:text-white transition-colors ml-1"
+            className="text-sm px-2 py-1 rounded-lg bg-muted hover:bg-red-700 text-foreground/80 hover:text-white transition-colors ml-1"
             title="Huỷ reaction của bạn"
           >
             ✕ Huỷ
@@ -169,13 +189,19 @@ function ReactionPopup({ msg, initialEmoji, contacts, groupMembers, currentUserI
   const [tab, setTab] = React.useState(initialEmoji || 'all');
   const [fetchedData, setFetchedData] = React.useState<ReturnType<typeof parseReactionsFull> | null>(null);
   const [loading, setLoading] = React.useState(false);
+  const ownAvatar = useAccountStore((s) => s.accounts.find((account) => account.zalo_id === currentUserId)?.avatar_url || '');
+  const [brokenAvatars, setBrokenAvatars] = React.useState<Set<string>>(() => new Set());
+  // Kênh phát tin Telegram: không ai xem được người thả cảm xúc (Telegram ẩn để bảo vệ người theo dõi, kể cả với quản
+  // trị viên — API trả BROADCAST_FORBIDDEN), chỉ có số lượng từng biểu cảm.
+  const channelPost = msg.channel === 'telegram_user' && !!getTelegramPostMeta(msg);
+  const [anonymous, setAnonymous] = React.useState(channelPost);
   const baseData = parseReactionsFull(msg.reactions, msg.channel);
   const data = fetchedData || baseData;
   const totalAll = data.total;
 
   // Fetch full reaction list từ Telegram API khi popup mở
   React.useEffect(() => {
-    if (!ownerZaloId || msg.channel !== 'telegram_user') return;
+    if (!ownerZaloId || msg.channel !== 'telegram_user' || channelPost) return;
     const threadId = msg.thread_id || msg.owner_zalo_id;
     if (!threadId) return;
     setLoading(true);
@@ -185,6 +211,7 @@ function ReactionPopup({ msg, initialEmoji, contacts, groupMembers, currentUserI
       chatId: threadId,
       messageId: msg.msg_id,
     }).then((res: any) => {
+      if (res?.anonymous) { setAnonymous(true); return; }
       if (!res?.success || !res.reactions?.length) return;
       // REPLACE (not merge) with API results to avoid double-counting
       const replaced: ReturnType<typeof parseReactionsFull> = { total: 0, emoji: {} };
@@ -235,36 +262,38 @@ function ReactionPopup({ msg, initialEmoji, contacts, groupMembers, currentUserI
     return uid;
   };
   const getAvatar = (uid: string) => {
+    // Chính mình: ảnh của tài khoản — dòng danh bạ "tự chat" của Zalo hay giữ URL ảnh cũ đã hỏng
+    if (uid === currentUserId && ownAvatar) return toLocalMediaUrl(ownAvatar);
     const c = contacts.find(c => c.contact_id === uid);
-    if (c?.avatar_url) return c.avatar_url;
+    if (c?.avatar_url) return toLocalMediaUrl(c.avatar_url);
     const m = groupMembers?.find(m => (m.userId || m.id) === uid);
-    return m?.avatar || '';
+    return m?.avatar ? toLocalMediaUrl(m.avatar) : '';
   };
   const users = getUsersForTab();
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
-      <div className="bg-gray-800 rounded-2xl w-96 max-h-[70vh] flex flex-col shadow-2xl border border-gray-700" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-card rounded-2xl w-96 max-h-[70vh] flex flex-col shadow-2xl border border-border" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
-          <h3 className="text-sm font-semibold text-white">Biểu cảm</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-white w-6 h-6 flex items-center justify-center rounded-full hover:bg-gray-700">✕</button>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+          <h3 className="text-sm font-semibold text-foreground">Biểu cảm</h3>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground w-6 h-6 flex items-center justify-center rounded-full hover:bg-muted">✕</button>
         </div>
         {/* Tabs */}
-        <div className="flex border-b border-gray-700 overflow-x-auto scrollbar-hide">
+        <div className="flex border-b border-border overflow-x-auto scrollbar-hide">
           <button
             onClick={() => setTab('all')}
-            className={`flex items-center gap-1 px-3 py-2 text-xs whitespace-nowrap border-b-2 transition-colors ${tab === 'all' ? 'text-white border-blue-500' : 'text-gray-400 border-transparent hover:text-gray-200'}`}
+            className={`flex items-center gap-1 px-3 py-2 text-xs whitespace-nowrap border-b-2 transition-colors ${tab === 'all' ? 'text-foreground border-blue-500' : 'text-muted-foreground border-transparent hover:text-foreground'}`}
           >
-            Tất cả <span className="bg-gray-700 px-1.5 py-0.5 rounded-full text-gray-300">{totalAll}</span>
+            Tất cả <span className="bg-muted px-1.5 py-0.5 rounded-full text-foreground/80">{totalAll}</span>
           </button>
           {Object.entries(data.emoji).map(([emo, emoData]) => (
             <button
               key={emo}
               onClick={() => setTab(emo)}
-              className={`flex items-center gap-1 px-3 py-2 text-xs whitespace-nowrap border-b-2 transition-colors ${tab === emo ? 'text-white border-blue-500' : 'text-gray-400 border-transparent hover:text-gray-200'}`}
+              className={`flex items-center gap-1 px-3 py-2 text-xs whitespace-nowrap border-b-2 transition-colors ${tab === emo ? 'text-foreground border-blue-500' : 'text-muted-foreground border-transparent hover:text-foreground'}`}
             >
-              {displayReactionEmoji(emo)} <span className="bg-gray-700 px-1.5 py-0.5 rounded-full text-gray-300">{emoData.total}</span>
+              {displayReactionEmoji(emo)} <span className="bg-muted px-1.5 py-0.5 rounded-full text-foreground/80">{emoData.total}</span>
             </button>
           ))}
         </div>
@@ -272,30 +301,42 @@ function ReactionPopup({ msg, initialEmoji, contacts, groupMembers, currentUserI
         <div className="flex-1 overflow-y-auto p-3 space-y-2 min-h-[100px]">
           {users.map(({ uid, emojis, total }) => (
             <div key={uid} className="flex items-center gap-3 py-1">
-              {getAvatar(uid) ? (
-                <img src={getAvatar(uid)} alt="" className="w-9 h-9 rounded-full object-cover flex-shrink-0" />
+              {getAvatar(uid) && !brokenAvatars.has(uid) ? (
+                <img src={getAvatar(uid)} alt="" className="w-9 h-9 rounded-full object-cover flex-shrink-0"
+                  onError={() => setBrokenAvatars((prev) => new Set(prev).add(uid))} />
               ) : (
                 <div className="w-9 h-9 rounded-full bg-blue-600 flex items-center justify-center text-white text-sm font-bold flex-shrink-0">
                   {(getName(uid) || 'U').charAt(0).toUpperCase()}
                 </div>
               )}
               <div className="flex-1 min-w-0">
-                <p className="text-sm text-white truncate">{getName(uid)}</p>
+                <p className="text-sm text-foreground truncate">{getName(uid)}</p>
               </div>
               <div className="flex items-center gap-0.5 flex-shrink-0">
                 {Object.entries(emojis).map(([emo, cnt]) => (
                   <span key={emo} className="text-base">
-                    {displayReactionEmoji(emo)}{(cnt as number) > 1 && <span className="text-xs text-gray-400">{cnt as number}</span>}
+                    {displayReactionEmoji(emo)}{(cnt as number) > 1 && <span className="text-xs text-muted-foreground">{cnt as number}</span>}
                   </span>
                 ))}
               </div>
             </div>
           ))}
-          {users.length === 0 && (
-            <p className="text-xs text-gray-400 text-center py-6">
+          {users.length === 0 && (anonymous && totalAll > 0 ? (
+            <div className="px-3 py-5 text-center">
+              <p className="text-sm text-foreground">
+                {tab === 'all'
+                  ? `${totalAll.toLocaleString('vi-VN')} lượt thả cảm xúc`
+                  : <>{displayReactionEmoji(tab)} {(data.emoji[tab]?.total || 0).toLocaleString('vi-VN')} lượt</>}
+              </p>
+              <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
+                Kênh Telegram ẩn danh người thả cảm xúc — Telegram chỉ cho xem số lượng, kể cả với quản trị viên kênh.
+              </p>
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground text-center py-6">
               {loading ? 'Đang tải...' : 'Chưa có ai thả cảm xúc này'}
             </p>
-          )}
+          ))}
         </div>
       </div>
     </div>

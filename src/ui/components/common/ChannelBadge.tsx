@@ -63,7 +63,7 @@ export default function ChannelBadge({ channel, size = 'md', className = '' }: P
 
   return (
     <span
-      className={`inline-flex items-center justify-center rounded-full border border-[#1a1d27] ${sizeClass} ${className}`}
+      className={`inline-flex items-center justify-center rounded-full border border-border ${sizeClass} ${className}`}
       style={{ backgroundColor: color }}
       title={getChannelLabel(channel as Channel)}
     >

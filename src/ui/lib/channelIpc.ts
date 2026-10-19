@@ -59,6 +59,7 @@ export async function sendAttachment(channel: Channel, params: {
   body?: string;
   fileType?: 'image' | 'video' | 'audio' | 'file';
   quote?: string | null;
+  libraryUuid?: string;
 }) {
   return getAdapter(channel).sendAttachment(params);
 }
@@ -76,6 +77,7 @@ export async function sendVideo(channel: Channel, params: {
   body?: string;
   quote?: any;
   auth?: any;
+  libraryUuid?: string;
 }) {
   return getAdapter(channel).sendVideo(params);
 }

@@ -2,6 +2,7 @@ import EventBroadcaster from '../event/EventBroadcaster';
 import DatabaseService from '../database/DatabaseService';
 import ConnectionManager from '../../utils/ConnectionManager';
 import AccountSendQueue from './AccountSendQueue';
+import { recipientGapRangeMs } from './recipientPacing';
 import { FacebookService } from '../facebook/FacebookService';
 import { FacebookSendService } from '../facebook/FacebookSendService';
 import { resolveThreadKind } from '../facebook/FacebookThreadKind';
@@ -20,6 +21,16 @@ import { parseStructuredResponse, isValidStructuredResponse } from '../../utils/
 import { CHANNEL } from '../../ui/lib/channelHelper';
 import { Reactions } from 'zca-js';
 import { requestAICompletion } from '../ai/AIProviderAdapter';
+import { automationsPausedAfterRestore } from '../cloudflare/restoreGate';
+import {
+  parseIdList, isExcludedId, isWithinActiveHours, classifyZaloMessageType, normalizeMessageTypes,
+  mentionsAccount, hasSenderRoleFilter, normalizeZaloUid, resolveZaloGroupRole, isRoleAllowed,
+  parseCooldownMs,
+} from './triggerFilters';
+import { posLookupNode, posLookupQuery, refusedPosLookup, vietnamLocalPhone } from './posLookupGuard';
+import { MAX_LOOP_ITERATIONS_PER_RUN, forEachBodyNodeIds, forEachItemLimit, forEachVariableName, parseForEachList } from './forEachLoop';
+import { paymentFromEvent } from '../integrations/paymentWebhook';
+import { matchesPosWebhookTrigger } from '../integrations/posWebhook';
 
 // Workflow versions before reaction keys were introduced stored the six picker
 // options as numbers. Keep those workflows executable while sending the icon
@@ -53,6 +64,7 @@ export type NodeType =
   | 'trigger.reaction' | 'trigger.undo' | 'trigger.schedule' | 'trigger.manual'
   | 'trigger.labelAssigned' | 'trigger.telegramCommand'
   | 'zalo.sendMessage' | 'zalo.sendImage' | 'zalo.sendFile' | 'zalo.sendVoice'
+  | 'zalo.sendVideo' | 'zalo.sendSticker'
   | 'zalo.forwardMessage' | 'zalo.addReaction' | 'zalo.undoMessage'
   | 'zalo.sendTyping'
   | 'zalo.findUser' | 'zalo.getUserInfo' | 'zalo.sendFriendRequest'
@@ -62,6 +74,7 @@ export type NodeType =
   | 'zalo.assignLabel' | 'zalo.removeLabel'
   | 'zalo.changeAliasName'
   | 'logic.if' | 'logic.switch' | 'logic.wait' | 'logic.forEach'
+  | 'logic.forEachContact'
   | 'logic.setVariable' | 'logic.stopIf'
   | 'action.forwardCrossChannel'
   | 'data.textFormat' | 'data.jsonParse' | 'data.dateFormat' | 'data.randomPick'
@@ -70,8 +83,8 @@ export type NodeType =
   | 'notify.telegram' | 'notify.discord' | 'notify.email' | 'notify.notion'
   | 'output.httpRequest' | 'output.log'
   // P0 integrations
-  | 'trigger.payment'
-  | 'trigger.webhook'
+  | 'trigger.payment' | 'trigger.posWebhook'
+  | 'trigger.webhook' | 'trigger.api'
   | 'kiotviet.lookupCustomer' | 'kiotviet.lookupOrder' | 'kiotviet.createOrder' | 'kiotviet.lookupProduct'
   | 'haravan.lookupCustomer' | 'haravan.lookupOrder' | 'haravan.createOrder' | 'haravan.lookupProduct'
   | 'sapo.lookupCustomer'    | 'sapo.lookupOrder'    | 'sapo.createOrder'    | 'sapo.lookupProduct'    | 'sapo.getInventory'
@@ -87,10 +100,11 @@ export type NodeType =
   | 'fb.action.markAsRead' | 'fb.action.forward' | 'fb.action.pin' | 'fb.action.unpin'
   | 'fb.action.createPoll' | 'fb.action.block' | 'fb.action.unsend' | 'fb.action.editMessage'
   | 'fb.action.changeName' | 'fb.action.changeEmoji' | 'fb.action.changeNickname'
-  | 'fb.action.sendImage'
+  | 'fb.action.sendImage' | 'fb.action.sendVideo' | 'fb.action.sendFile' | 'fb.action.sendAudio'
   // Telegram
   | 'tg.trigger.message' | 'tg.trigger.unsend' | 'tg.trigger.groupEvent'
   | 'tg.sendMessage' | 'tg.sendPhoto' | 'tg.sendFile' | 'tg.forwardMessage'
+  | 'tg.sendVideo' | 'tg.sendVoice'
   | 'tg.deleteMessage' | 'tg.editMessage' | 'tg.addReaction' | 'tg.pinMessage'
   | 'tg.sendPoll' | 'tg.sendSticker' | 'tg.sendTyping'
   | 'tg.banMember' | 'tg.promoteMember' | 'tg.addMember' | 'tg.removeMember'
@@ -102,6 +116,7 @@ export type NodeType =
   | 'tgbot.trigger.editedMessage' | 'tgbot.trigger.joinRequest'
   | 'tgbot.action.sendMessage' | 'tgbot.action.sendPhoto' | 'tgbot.action.sendVideo' | 'tgbot.action.sendFile'
   | 'tgbot.action.sendMenu' | 'tgbot.action.sendForm' | 'tgbot.action.forward'
+  | 'tgbot.action.sendSticker' | 'tgbot.action.sendAudio' | 'tgbot.action.sendVoice' | 'tgbot.action.leaveChat'
   | 'tgbot.action.editMessage' | 'tgbot.action.deleteMessage' | 'tgbot.action.pinMessage'
   | 'tgbot.action.unpinMessage' | 'tgbot.action.addReaction' | 'tgbot.action.sendPoll'
   | 'tgbot.action.sendChatAction' | 'tgbot.action.banMember' | 'tgbot.action.restrictMember'
@@ -152,6 +167,18 @@ export interface WorkflowRunLog {
   status: 'success' | 'error' | 'partial';
   errorMessage?: string;
   nodeResults: NodeResult[];
+  /** Dry-run (simulate): side effects were mocked, no real message was sent. */
+  simulated?: boolean;
+  /** Outbound messages produced by send nodes (for the mock chat). */
+  simulatedMessages?: SimulatedMessage[];
+}
+
+export interface SimulatedMessage {
+  nodeId: string;
+  label: string;
+  type: string;
+  text: string;
+  threadId?: string;
 }
 
 export interface NodeResult {
@@ -163,6 +190,8 @@ export interface NodeResult {
   output: Record<string, any>;
   durationMs: number;
   error?: string;
+  /** Lượt lặp (từ 1) khi node nằm trong thân "Lặp qua danh sách"; không có = node chạy một lần. */
+  iteration?: number;
 }
 
 interface ExecutionContext {
@@ -175,6 +204,17 @@ interface ExecutionContext {
   /** Full node list - used by renderTemplate to match $node.Label.field by label name */
   _wfNodes: WorkflowNode[];
   _wfName: string;
+}
+
+/** Trạng thái một lần chạy, dùng chung giữa chuỗi node chính và thân các vòng lặp logic.forEach. */
+interface WorkflowRunState {
+  status: 'success' | 'error' | 'partial';
+  errorMessage?: string;
+  nodeResults: NodeResult[];
+  simulate: boolean;
+  simulatedMessages: SimulatedMessage[];
+  /** Tổng số lượt lặp đã chạy (giới hạn MAX_LOOP_ITERATIONS_PER_RUN). */
+  loopIterations: number;
 }
 
 /**
@@ -216,6 +256,35 @@ function logTelegramChannelTrace(stage: string, trace: ReturnType<typeof getTele
   // Logger.log(`[TG:channel-workflow] ${stage} | ${printable.join(' ')}`);
 }
 
+/** Cooldown (cooldownMinutes): khi map vượt ngưỡng thì dọn các mốc đã hết hạn (tối đa 1 lần / phút) */
+const COOLDOWN_PRUNE_THRESHOLD = 2000;
+const COOLDOWN_PRUNE_INTERVAL_MS = 60 * 1000;
+/** Cache vai trò nhóm Zalo cho bộ lọc senderRole (key = zaloId:groupId) */
+const GROUP_ROLE_CACHE_TTL_MS = 10 * 60 * 1000;
+/** Tra cứu lỗi được nhớ ngắn hạn để không gọi getGroupInfo liên tục khi nhóm nhắn dồn dập */
+const GROUP_ROLE_FAILURE_TTL_MS = 30 * 1000;
+/** zca-js getGroupInfo không có timeout → tự giới hạn, tránh lượt tra cứu treo chặn mãi nhóm đó */
+const GROUP_ROLE_LOOKUP_TIMEOUT_MS = 15 * 1000;
+const GROUP_ROLE_CACHE_MAX = 500;
+
+type ZaloGroupRoles = { creatorId: string; adminIds: string[] };
+
+// ─── Simulation (dry-run) ─────────────────────────────────────────────────────
+// These node types are pure (no side effect) so a simulated run executes them for
+// real to get the correct branch decisions; every other node type is mocked.
+
+const SIMULATE_REAL_TYPES = new Set<string>([
+  'logic.if', 'logic.switch', 'logic.setVariable', 'logic.stopIf', 'logic.forEach',
+  'data.textFormat', 'data.randomPick', 'data.dateFormat', 'data.jsonParse',
+]);
+
+const OUTBOUND_SEND_RE = /^(zalo|fb\.action|tg|tgbot\.action)\.(sendMessage|sendImage|sendPhoto|sendFile|sendVideo|sendVoice|sendAudio|sendSticker|sendGif|sendTextStyle|sendBusinessCard|sendBankCard|sendMenu|sendPoll|sendForm|forwardMessage)$/;
+
+/** Best-effort outbound text of a send node's rendered config. */
+function outboundText(cfg: Record<string, any>): string {
+  return String(cfg.message || cfg.caption || cfg.body || cfg.text || cfg.content || '').trim();
+}
+
 // ─── Service ─────────────────────────────────────────────────────────────────
 
 class WorkflowEngineService {
@@ -227,6 +296,13 @@ class WorkflowEngineService {
   private debounceTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   /** Buffered message events for debounce - key = workflowId:threadId */
   private debounceBuffers: Map<string, any[]> = new Map();
+  /** cooldownMinutes - key = workflowId:threadId → thời điểm hết cooldown (chỉ trong RAM) */
+  private cooldownUntil: Map<string, number> = new Map();
+  private cooldownLastPruneAt = 0;
+  /** senderRole - vai trò nhóm Zalo đã tra cứu, key = zaloId:groupId (failed = lỗi, nhớ ngắn hạn) */
+  private groupRoleCache: Map<string, ZaloGroupRoles & { at: number; failed?: boolean }> = new Map();
+  /** senderRole - getGroupInfo đang chạy, gộp các lượt tra cứu trùng key */
+  private groupRoleInflight: Map<string, Promise<ZaloGroupRoles | null>> = new Map();
 
   public static getInstance(): WorkflowEngineService {
     if (!this.instance) this.instance = new WorkflowEngineService();
@@ -235,9 +311,7 @@ class WorkflowEngineService {
 
   public async initialize(): Promise<void> {
     this.loadWorkflows();
-    this.registerZaloEventListeners();
-    this.registerFacebookEventListeners();
-    this.registerTelegramEventListeners();
+    this.rehookEvents();
     this.registerCronJobs();
     // Sync Telegram bot pollers for trigger.telegramCommand
     try {
@@ -337,6 +411,7 @@ class WorkflowEngineService {
     this.unregisterCron(workflowId);
     // Clean up debounce timers/buffers for this workflow
     this.clearDebounceForWorkflow(workflowId);
+    this.clearCooldownForWorkflow(workflowId);
     // Sync Telegram pollers when workflow is removed
     try {
       const { syncPollers } = require('./TelegramBotPollingService');
@@ -356,7 +431,36 @@ class WorkflowEngineService {
     }
   }
 
+  /** Xoá các mốc cooldown của workflow (key = workflowId:threadId) */
+  private clearCooldownForWorkflow(workflowId: string): void {
+    const prefix = workflowId + ':';
+    for (const key of this.cooldownUntil.keys()) {
+      if (key.startsWith(prefix)) this.cooldownUntil.delete(key);
+    }
+  }
+
   // ─── Event Listeners ──────────────────────────────────────────────────────
+
+  /** Hook đã đăng ký với EventBroadcaster — gỡ trước khi đăng ký lại để không chạy workflow hai lần. */
+  private eventUnsubscribers: Array<() => void> = [];
+
+  private onEvent(channel: string, callback: (data: any) => void): void {
+    this.eventUnsubscribers.push(EventBroadcaster.onBeforeSend(channel, callback));
+  }
+
+  /**
+   * (Đăng ký lại) mọi hook trigger. Gọi lúc khởi động và sau khi đổi workspace — workspace:switch gọi
+   * EventBroadcaster.clearBeforeSendHooks(), trước đây workflow ngừng nhận sự kiện tới khi mở lại app.
+   */
+  public rehookEvents(): void {
+    for (const unsubscribe of this.eventUnsubscribers) {
+      try { unsubscribe(); } catch { /* hook đã bị xoá */ }
+    }
+    this.eventUnsubscribers = [];
+    this.registerZaloEventListeners();
+    this.registerFacebookEventListeners();
+    this.registerTelegramEventListeners();
+  }
 
   private registerZaloEventListeners(): void {
     const EVENT_MAP: Record<string, string> = {
@@ -367,9 +471,10 @@ class WorkflowEngineService {
       'event:undo':          'trigger.undo',
       'event:labelAssigned': 'trigger.labelAssigned',
       'integration:payment': 'trigger.payment',
+      'integration:posWebhook': 'trigger.posWebhook',
     };
     for (const [channel, triggerType] of Object.entries(EVENT_MAP)) {
-      EventBroadcaster.onBeforeSend(channel, (data: any) => {
+      this.onEvent(channel, (data: any) => {
         this.triggerWorkflows(triggerType, data);
       });
     }
@@ -385,13 +490,13 @@ class WorkflowEngineService {
       'fb:onGroupEvent': 'fb.trigger.groupEvent',
     };
     for (const [channel, triggerType] of Object.entries(SIMPLE_EVENTS)) {
-      EventBroadcaster.onBeforeSend(channel, (data: any) => {
+      this.onEvent(channel, (data: any) => {
         this.triggerWorkflows(triggerType, data);
       });
     }
 
     // Message event - determine specific trigger type from attachment data
-    EventBroadcaster.onBeforeSend('fb:onMessage', (data: any) => {
+    this.onEvent('fb:onMessage', (data: any) => {
       // Always trigger the base text-message workflow
       this.triggerWorkflows('fb.trigger.message', data);
 
@@ -415,7 +520,7 @@ class WorkflowEngineService {
   /** Bridge Telegram events to workflow triggers */
   private registerTelegramEventListeners(): void {
     // Telegram messages come through the unified 'event:message' channel
-    EventBroadcaster.onBeforeSend('event:message', (data: any) => {
+    this.onEvent('event:message', (data: any) => {
       const ch = data?.channel || data?.message?.channel || data?.message?.data?.channel || data?.data?.channel;
       if (ch === 'telegram_user') {
         logTelegramChannelTrace('HOOK_RECEIVED', getTelegramChannelTrace(data));
@@ -430,11 +535,11 @@ class WorkflowEngineService {
       }
     });
     // Telegram message deletes (unsend)
-    EventBroadcaster.onBeforeSend('event:messagesDeleted', (data: any) => {
+    this.onEvent('event:messagesDeleted', (data: any) => {
       this.triggerWorkflows('tg.trigger.unsend', data);
     });
     // Telegram group events
-    EventBroadcaster.onBeforeSend('event:groupEvent', (data: any) => {
+    this.onEvent('event:groupEvent', (data: any) => {
       if (data.channel === 'telegram_user') {
         this.triggerWorkflows('tg.trigger.groupEvent', data);
       }
@@ -442,7 +547,7 @@ class WorkflowEngineService {
     // Bot inline keyboards are delivered as callback_query updates, not normal
     // messages. Route buttons intentionally resume a node in the *same*
     // workflow; they never start an unrelated workflow.
-    EventBroadcaster.onBeforeSend('event:telegramBotCallback', (data: any) => {
+    this.onEvent('event:telegramBotCallback', (data: any) => {
       const callbackData = String(data?.callbackData || '');
       const route = callbackData.match(/^dlw:n:([a-zA-Z0-9_-]+)$/);
       if (route) {
@@ -472,13 +577,13 @@ class WorkflowEngineService {
       }
       this.triggerWorkflows('tgbot.trigger.callback', data);
     });
-    EventBroadcaster.onBeforeSend('event:telegramBotMembership', (data: any) => {
+    this.onEvent('event:telegramBotMembership', (data: any) => {
       this.triggerWorkflows('tgbot.trigger.join', data);
     });
-    EventBroadcaster.onBeforeSend('event:telegramBotEditedMessage', (data: any) => {
+    this.onEvent('event:telegramBotEditedMessage', (data: any) => {
       this.triggerWorkflows('tgbot.trigger.editedMessage', data);
     });
-    EventBroadcaster.onBeforeSend('event:telegramBotJoinRequest', (data: any) => {
+    this.onEvent('event:telegramBotJoinRequest', (data: any) => {
       this.triggerWorkflows('tgbot.trigger.joinRequest', data);
     });
   }
@@ -518,6 +623,11 @@ class WorkflowEngineService {
 
     const tz = scheduleNode.config.timezone || 'Asia/Ho_Chi_Minh';
     const task = cron.schedule(expr, () => {
+      // Vừa khôi phục DB từ Cloudflare: chờ người dùng xác nhận máy cũ đã tắt (tránh hai máy cùng chạy lịch).
+      if (automationsPausedAfterRestore()) {
+        Logger.warn(`[WorkflowEngine] Cron "${wf.name}" skipped: automations paused after restore`);
+        return;
+      }
       this.executeWorkflow(wf, {}, 'trigger.schedule').catch(err => {
         Logger.error(`[WorkflowEngine] Cron error in "${wf.name}": ${err.message}`);
       });
@@ -534,6 +644,7 @@ class WorkflowEngineService {
   // ─── Trigger matching ─────────────────────────────────────────────────────
 
   private triggerWorkflows(triggerType: string, eventData: any, targetWorkflowId?: string): void {
+    if (automationsPausedAfterRestore()) return;
     const telegramChannelTrace = triggerType === 'tg.trigger.message'
       ? getTelegramChannelTrace(eventData)
       : null;
@@ -575,79 +686,270 @@ class WorkflowEngineService {
         debounceSeconds: Number(triggerNode.config.debounceSeconds || 0),
       });
 
-      // ─── Debounce for message triggers: gom tin nhắn liên tiếp ────────
-      const debounceSeconds = Number(triggerNode.config.debounceSeconds || 0);
-      if ((triggerType === 'trigger.message' || triggerType === 'fb.trigger.message' || triggerType === 'tg.trigger.message') && debounceSeconds > 0) {
-        const envelope = eventData.message || eventData;
-        const msg = envelope.data || eventData.data || envelope;
-        const threadId = (msg as any).threadId || envelope.threadId || eventData.threadId || '';
-        const debounceKey = `${wf.id}:${threadId}`;
-
-        // Buffer the event
-        if (!this.debounceBuffers.has(debounceKey)) {
-          this.debounceBuffers.set(debounceKey, []);
-        }
-        this.debounceBuffers.get(debounceKey)!.push(eventData);
-
-        // Clear existing timer and set new one
-        const existingTimer = this.debounceTimers.get(debounceKey);
-        if (existingTimer) clearTimeout(existingTimer);
-
-        const timer = setTimeout(() => {
-          this.debounceTimers.delete(debounceKey);
-          const buffered = this.debounceBuffers.get(debounceKey) || [];
-          this.debounceBuffers.delete(debounceKey);
-
-          if (buffered.length === 0) return;
-
-          // Merge all buffered messages: take the LAST event as base, combine contents
-          const lastEvent = buffered[buffered.length - 1];
-          if (buffered.length > 1) {
-            // Extract content from each buffered message and join
-            const mergedContents: string[] = [];
-            for (const evt of buffered) {
-              const m = evt.data || evt.message || {};
-              const md = (m as any).data || {};
-              const rawContent = md.content || (m as any).content || evt.content;
-              const text = String((rawContent as any)?.msg || (typeof rawContent === 'string' ? rawContent : '') || '').trim();
-              if (text) mergedContents.push(text);
-            }
-            // Inject merged content into last event's message data
-            const lastMsg = lastEvent.data || lastEvent.message || {};
-            const lastMsgData = (lastMsg as any).data || {};
-            const mergedText = mergedContents.join('\n');
-            if (lastMsgData.content && typeof lastMsgData.content === 'object') {
-              lastMsgData.content = { ...lastMsgData.content, msg: mergedText };
-            } else {
-              lastMsgData.content = mergedText;
-            }
-            Logger.info(`[WorkflowEngine] Debounce merged ${buffered.length} messages for "${wf.name}": "${mergedText.substring(0, 200)}"`);
-          }
-
-          this.executeWorkflow(wf, lastEvent, triggerType).catch(err => {
-            Logger.error(`[WorkflowEngine] Error in workflow "${wf.name}" (debounced): ${err.message}`);
+      // senderRole (trưởng / phó nhóm / thành viên) cần getGroupInfo → kiểm tra bất đồng bộ,
+      // chỉ dispatch khi vai trò người gửi khớp. Tin cá nhân đã bị loại ở matchesTriggerFilter.
+      if (triggerType === 'trigger.message' && hasSenderRoleFilter(triggerNode.config?.senderRole)) {
+        this.matchesSenderRole(triggerNode, eventData)
+          .then(allowed => {
+            if (!allowed) return;
+            // Workflow có thể đã bị tắt / xoá trong lúc chờ getGroupInfo
+            if (!this.workflows.get(wf.id)?.enabled) return;
+            this.dispatchMatchedWorkflow(wf, triggerNode, triggerType, eventData);
+          })
+          .catch(err => {
+            Logger.warn(`[WorkflowEngine] senderRole check failed for "${wf.name}": ${err?.message || err}`);
           });
-        }, debounceSeconds * 1000);
-
-        this.debounceTimers.set(debounceKey, timer);
-
-        // Cap debounce entries to prevent unbounded memory growth
-        if (this.debounceTimers.size > 500) {
-          const oldestKey = this.debounceTimers.keys().next().value;
-          if (oldestKey) {
-            clearTimeout(this.debounceTimers.get(oldestKey)!);
-            this.debounceTimers.delete(oldestKey);
-            this.debounceBuffers.delete(oldestKey);
-          }
-        }
-
-        Logger.info(`[WorkflowEngine] Debounce: buffered message for "${wf.name}" (${debounceKey}), wait ${debounceSeconds}s`);
         continue;
       }
 
-      this.executeWorkflow(wf, eventData, triggerType).catch(err => {
-        Logger.error(`[WorkflowEngine] Error in workflow "${wf.name}": ${err.message}`);
+      this.dispatchMatchedWorkflow(wf, triggerNode, triggerType, eventData);
+    }
+  }
+
+  /**
+   * Phần xử lý sau khi workflow đã khớp trigger (matchesTriggerFilter + senderRole):
+   * cooldown → debounce (gom tin nhắn liên tiếp) hoặc chạy ngay.
+   */
+  private dispatchMatchedWorkflow(wf: Workflow, triggerNode: WorkflowNode, triggerType: string, eventData: any): void {
+    // ─── Cooldown: đã chạy cho hội thoại này trong N phút gần đây → bỏ qua ────
+    // Với debounce: kiểm tra khi tin đến (trước khi gom), ghi mốc khi lượt chạy gộp thực sự bắt đầu.
+    const cooldown = this.getMessageCooldown(wf, triggerNode, triggerType, eventData);
+    if (cooldown) {
+      const until = this.cooldownUntil.get(cooldown.key);
+      const now = Date.now();
+      if (until !== undefined && now < until) {
+        const remainSeconds = Math.ceil((until - now) / 1000);
+        Logger.info(`[WorkflowEngine] Cooldown: skip "${wf.name}" (${cooldown.key}), còn ${remainSeconds}s`);
+        return;
+      }
+    }
+
+    // ─── Debounce for message triggers: gom tin nhắn liên tiếp ────────
+    const debounceSeconds = Number(triggerNode.config.debounceSeconds || 0);
+    if ((triggerType === 'trigger.message' || triggerType === 'fb.trigger.message' || triggerType === 'tg.trigger.message') && debounceSeconds > 0) {
+      const envelope = eventData.message || eventData;
+      const msg = envelope.data || eventData.data || envelope;
+      // fb:onMessage không có threadId (id hội thoại ở message.replyToID) → trước đây mọi hội thoại
+      // Facebook dùng chung 1 key và tin của hội thoại trước bị bỏ. Zalo / Telegram giữ nguyên cách đọc.
+      const threadId = triggerType === 'fb.trigger.message'
+        ? this.getFacebookThreadId(eventData)
+        : ((msg as any).threadId || envelope.threadId || eventData.threadId || '');
+      const debounceKey = `${wf.id}:${threadId}`;
+
+      // Buffer the event
+      if (!this.debounceBuffers.has(debounceKey)) {
+        this.debounceBuffers.set(debounceKey, []);
+      }
+      this.debounceBuffers.get(debounceKey)!.push(eventData);
+
+      // Clear existing timer and set new one
+      const existingTimer = this.debounceTimers.get(debounceKey);
+      if (existingTimer) clearTimeout(existingTimer);
+
+      const timer = setTimeout(() => {
+        this.debounceTimers.delete(debounceKey);
+        const buffered = this.debounceBuffers.get(debounceKey) || [];
+        this.debounceBuffers.delete(debounceKey);
+
+        if (buffered.length === 0) return;
+
+        // Merge all buffered messages: take the LAST event as base, combine contents
+        const lastEvent = buffered[buffered.length - 1];
+        if (buffered.length > 1) {
+          // Extract content from each buffered message and join
+          const mergedContents: string[] = [];
+          for (const evt of buffered) {
+            const m = evt.data || evt.message || {};
+            const md = (m as any).data || {};
+            const rawContent = md.content || (m as any).content || evt.content;
+            const text = String((rawContent as any)?.msg || (typeof rawContent === 'string' ? rawContent : '') || '').trim();
+            if (text) mergedContents.push(text);
+          }
+          // Inject merged content into last event's message data
+          const lastMsg = lastEvent.data || lastEvent.message || {};
+          const lastMsgData = (lastMsg as any).data || {};
+          const mergedText = mergedContents.join('\n');
+          if (lastMsgData.content && typeof lastMsgData.content === 'object') {
+            lastMsgData.content = { ...lastMsgData.content, msg: mergedText };
+          } else {
+            lastMsgData.content = mergedText;
+          }
+          Logger.info(`[WorkflowEngine] Debounce merged ${buffered.length} messages for "${wf.name}": "${mergedText.substring(0, 200)}"`);
+        }
+
+        if (cooldown) this.markCooldown(cooldown.key, cooldown.ms);
+        this.executeWorkflow(wf, lastEvent, triggerType).catch(err => {
+          Logger.error(`[WorkflowEngine] Error in workflow "${wf.name}" (debounced): ${err.message}`);
+        });
+      }, debounceSeconds * 1000);
+
+      this.debounceTimers.set(debounceKey, timer);
+
+      // Cap debounce entries to prevent unbounded memory growth
+      if (this.debounceTimers.size > 500) {
+        const oldestKey = this.debounceTimers.keys().next().value;
+        if (oldestKey) {
+          clearTimeout(this.debounceTimers.get(oldestKey)!);
+          this.debounceTimers.delete(oldestKey);
+          this.debounceBuffers.delete(oldestKey);
+        }
+      }
+
+      Logger.info(`[WorkflowEngine] Debounce: buffered message for "${wf.name}" (${debounceKey}), wait ${debounceSeconds}s`);
+      return;
+    }
+
+    if (cooldown) this.markCooldown(cooldown.key, cooldown.ms);
+    this.executeWorkflow(wf, eventData, triggerType).catch(err => {
+      Logger.error(`[WorkflowEngine] Error in workflow "${wf.name}": ${err.message}`);
+    });
+  }
+
+  /**
+   * cooldownMinutes của trigger tin nhắn → { key: `${workflowId}:${threadId}`, ms }.
+   * null = tắt (không cấu hình / trigger khác / không xác định được hội thoại).
+   */
+  private getMessageCooldown(wf: Workflow, triggerNode: WorkflowNode, triggerType: string, eventData: any): { key: string; ms: number } | null {
+    if (triggerType !== 'trigger.message' && triggerType !== 'fb.trigger.message' && triggerType !== 'tg.trigger.message') return null;
+    const ms = parseCooldownMs(triggerNode.config?.cooldownMinutes);
+    if (ms <= 0) return null;
+    const threadId = this.getMessageThreadId(triggerType, eventData);
+    return threadId ? { key: `${wf.id}:${threadId}`, ms } : null;
+  }
+
+  /** Thread id của sự kiện tin nhắn - cùng cách đọc với matchesTriggerFilter của từng kênh */
+  private getMessageThreadId(triggerType: string, data: any): string {
+    if (!data) return '';
+    if (triggerType === 'fb.trigger.message') return this.getFacebookThreadId(data);
+    if (triggerType === 'tg.trigger.message') {
+      const envelope = data.message || data;
+      const msg = envelope.data || data.data || envelope;
+      return String(data.threadId || envelope.threadId || msg.threadId || msg.chatId || '').trim();
+    }
+    // trigger.message (Zalo): message.threadId = user id (1-1) hoặc group id
+    const msg = data.data || data.message || {};
+    return String((msg as any).threadId || data.threadId || '').trim();
+  }
+
+  /**
+   * Thread id của sự kiện fb:onMessage. FBMQTTMessage không có threadId mà mang id hội thoại ở
+   * message.replyToID ('0' = không xác định) → cùng chuỗi fallback với $trigger.threadId (flattenTriggerData).
+   */
+  private getFacebookThreadId(data: any): string {
+    const msg = data?.message || {};
+    const threadId = String(data?.threadId || msg.threadId || msg.replyToID || '').trim();
+    return threadId === '0' ? '' : threadId;
+  }
+
+  /**
+   * Ghi thời điểm hết cooldown (lúc workflow bắt đầu chạy + N phút). Khi map quá lớn thì dọn các
+   * mốc đã hết hạn - quét toàn bộ vì thời điểm hết hạn không theo thứ tự chèn (N khác nhau).
+   */
+  private markCooldown(key: string, cooldownMs: number): void {
+    const now = Date.now();
+    this.cooldownUntil.set(key, now + cooldownMs);
+    if (this.cooldownUntil.size <= COOLDOWN_PRUNE_THRESHOLD) return;
+    if (now - this.cooldownLastPruneAt < COOLDOWN_PRUNE_INTERVAL_MS) return;
+    this.cooldownLastPruneAt = now;
+    for (const [entryKey, until] of this.cooldownUntil) {
+      if (until <= now) this.cooldownUntil.delete(entryKey);
+    }
+  }
+
+  /**
+   * senderRole (trigger.message Zalo, tin nhóm): vai trò người gửi lấy từ getGroupInfo của
+   * CHÍNH tài khoản nhận tin. Tra cứu lỗi / thiếu dữ liệu → false (không kích hoạt).
+   */
+  private async matchesSenderRole(triggerNode: WorkflowNode, data: any): Promise<boolean> {
+    const msg = data?.data || data?.message || {};          // UserMessage | GroupMessage
+    const msgData = (msg as any).data || {};                 // TMessage - uidFrom, mentions ...
+    // 'event:message' cũng chở tin Telegram → vai trò nhóm Zalo không áp dụng
+    const channel = data?.channel || (msg as any).channel || msgData.channel;
+    if (channel && channel !== CHANNEL.ZALO) return false;
+    const zaloId = String(data?.zaloId || '').trim();
+    const groupId = String((msg as any).threadId || data?.threadId || '').trim();
+    const senderId = normalizeZaloUid(msgData.uidFrom || (msg as any).uidFrom || data?.fromId);
+    if (!zaloId || !groupId || !senderId) {
+      Logger.warn(`[WorkflowEngine] senderRole: thiếu dữ liệu (account=${zaloId || '-'}, group=${groupId || '-'}, sender=${senderId || '-'}) → không kích hoạt`);
+      return false;
+    }
+    const roles = await this.getZaloGroupRoles(zaloId, groupId);
+    if (!roles) return false;
+    const role = resolveZaloGroupRole(senderId, roles.creatorId, roles.adminIds);
+    return isRoleAllowed(role, String(triggerNode.config?.senderRole ?? ''));
+  }
+
+  /** creatorId / adminIds của nhóm: cache 10 phút theo zaloId:groupId, gộp các lượt gọi trùng */
+  private getZaloGroupRoles(zaloId: string, groupId: string): Promise<ZaloGroupRoles | null> {
+    const key = `${zaloId}:${groupId}`;
+    const cached = this.groupRoleCache.get(key);
+    if (cached) {
+      const ttl = cached.failed ? GROUP_ROLE_FAILURE_TTL_MS : GROUP_ROLE_CACHE_TTL_MS;
+      const age = Date.now() - cached.at;
+      if (age < ttl) {
+        if (cached.failed) {
+          // Không gọi lại getGroupInfo dồn dập (Zalo hạn chế API) nhưng vẫn ghi lý do bỏ qua từng tin
+          Logger.warn(`[WorkflowEngine] senderRole: tra cứu nhóm ${groupId} (tài khoản ${zaloId}) vừa lỗi ${Math.round(age / 1000)}s trước, thử lại sau ${Math.ceil((ttl - age) / 1000)}s → không kích hoạt`);
+          return Promise.resolve(null);
+        }
+        return Promise.resolve({ creatorId: cached.creatorId, adminIds: cached.adminIds });
+      }
+      this.groupRoleCache.delete(key);
+    }
+    const inflight = this.groupRoleInflight.get(key);
+    if (inflight) return inflight;
+
+    const lookup = this.fetchZaloGroupRoles(zaloId, groupId)
+      .then(roles => {
+        this.rememberZaloGroupRoles(key, roles);
+        return roles;
+      })
+      .finally(() => {
+        this.groupRoleInflight.delete(key);
       });
+    this.groupRoleInflight.set(key, lookup);
+    return lookup;
+  }
+
+  private async fetchZaloGroupRoles(zaloId: string, groupId: string): Promise<ZaloGroupRoles | null> {
+    // Không dùng getApi(): getApi fallback sang tài khoản khác → sai vai trò / sai nhóm
+    const api = ConnectionManager.getConnection(zaloId)?.api;
+    if (!api) {
+      Logger.warn(`[WorkflowEngine] senderRole: tài khoản ${zaloId} chưa kết nối → không kích hoạt (nhóm ${groupId})`);
+      return null;
+    }
+    try {
+      // zca-js: GroupInfoResponse.gridInfoMap[groupId] = GroupInfo { creatorId, adminIds, ... }
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`timeout ${GROUP_ROLE_LOOKUP_TIMEOUT_MS / 1000}s`)), GROUP_ROLE_LOOKUP_TIMEOUT_MS);
+      });
+      const res: any = await Promise.race([api.getGroupInfo(groupId), timeout])
+        .finally(() => { if (timer) clearTimeout(timer); });
+      const info: any = res?.gridInfoMap?.[groupId] || res?.changed_groups?.[groupId];
+      const creatorId = normalizeZaloUid(info?.creatorId || info?.creator);
+      if (!info || !creatorId) {
+        Logger.warn(`[WorkflowEngine] senderRole: getGroupInfo(${groupId}) không có creatorId → không kích hoạt`);
+        return null;
+      }
+      const rawAdminIds: unknown[] = Array.isArray(info.adminIds) ? info.adminIds : (Array.isArray(info.subAdmins) ? info.subAdmins : []);
+      const adminIds = rawAdminIds.map(id => normalizeZaloUid(id)).filter(Boolean);
+      return { creatorId, adminIds };
+    } catch (err: any) {
+      Logger.warn(`[WorkflowEngine] senderRole: getGroupInfo(${groupId}) lỗi (tài khoản ${zaloId}): ${err?.message || err} → không kích hoạt`);
+      return null;
+    }
+  }
+
+  private rememberZaloGroupRoles(key: string, roles: ZaloGroupRoles | null): void {
+    this.groupRoleCache.delete(key);
+    this.groupRoleCache.set(key, roles
+      ? { creatorId: roles.creatorId, adminIds: roles.adminIds, at: Date.now() }
+      : { creatorId: '', adminIds: [], at: Date.now(), failed: true });
+    while (this.groupRoleCache.size > GROUP_ROLE_CACHE_MAX) {
+      const oldestKey = this.groupRoleCache.keys().next().value;
+      if (oldestKey === undefined) break;
+      this.groupRoleCache.delete(oldestKey);
     }
   }
 
@@ -743,8 +1045,68 @@ class WorkflowEngineService {
     };
   }
 
+  /**
+   * Public API v1 / plugin: bắn sự kiện cho node trigger.api. Đi qua đúng triggerWorkflows
+   * (cùng lọc pageIds, debounce, cooldown như mọi trigger) và trả về các workflow khớp.
+   */
+  public triggerApiEvent(eventName: string, payload: any, meta: { keyId?: string; accountId?: string; source?: string } = {}): { matched: number; workflowIds: string[] } {
+    const data = {
+      eventName: String(eventName || ''),
+      payload: payload ?? {},
+      keyId: meta.keyId || '',
+      source: meta.source || 'api',
+      accountId: meta.accountId || '',
+      zaloId: meta.accountId || '',
+      receivedAt: Date.now(),
+    };
+    const matched: string[] = [];
+    for (const wf of this.workflows.values()) {
+      if (!wf.enabled || !this.isRunnableWorkflow(wf)) continue;
+      const node = wf.nodes.find(n => n.type === 'trigger.api');
+      if (!node || !this.matchesTriggerFilter(node, data)) continue;
+      if (wf.pageIds.length > 0 && data.zaloId && !wf.pageIds.includes(data.zaloId)) continue;
+      matched.push(wf.id);
+    }
+    this.triggerWorkflows('trigger.api', data);
+    return { matched: matched.length, workflowIds: matched };
+  }
+
+  /**
+   * Plugin bắn trigger riêng của nó (deplao.workflow.trigger). Trường của payload nằm ở cấp trên
+   * cùng để dùng {{ $trigger.<field> }}; accountId (nếu có) dùng cho lọc tài khoản của workflow.
+   */
+  public triggerPluginEvent(type: string, payload: any, meta: { pluginId: string }): { matched: number; workflowIds: string[] } {
+    const body = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : { value: payload };
+    const accountId = String(body.accountId || body.zaloId || '');
+    const data = { ...body, payload: body, pluginId: meta.pluginId, accountId, zaloId: accountId, receivedAt: Date.now() };
+    const matched: string[] = [];
+    for (const wf of this.workflows.values()) {
+      if (!wf.enabled || !this.isRunnableWorkflow(wf)) continue;
+      const node = wf.nodes.find(n => n.type === type);
+      if (!node || !this.matchesTriggerFilter(node, data)) continue;
+      if (wf.pageIds.length > 0 && accountId && !wf.pageIds.includes(accountId)) continue;
+      matched.push(wf.id);
+    }
+    this.triggerWorkflows(type, data);
+    return { matched: matched.length, workflowIds: matched };
+  }
+
   private matchesTriggerFilter(triggerNode: WorkflowNode, data: any): boolean {
     const cfg = triggerNode.config;
+
+    // Trigger do plugin đóng góp (contributes.triggers)
+    if ((cfg as any)?.__plugin && (cfg as any)?.__kind === 'trigger') {
+      return require('../plugins/PluginNodeRegistry').default.getInstance().matchesTrigger(cfg, data);
+    }
+
+    // Public API v1: POST /api/v1/workflows/events/{eventName}
+    if (triggerNode.type === 'trigger.api') {
+      const wanted = String(cfg?.eventName || '').trim();
+      if (wanted && wanted !== String(data?.eventName || '')) return false;
+      const requiredKey = String(cfg?.requiredKeyId || '').trim();
+      if (requiredKey && requiredKey !== String(data?.keyId || '')) return false;
+      return true;
+    }
 
     if (triggerNode.type === 'trigger.message') {
       // data = { zaloId, message } where message is a zca-js UserMessage | GroupMessage:
@@ -777,6 +1139,21 @@ class WorkflowEngineService {
           try { if (!new RegExp(cfg.keyword, 'i').test(content)) return false; } catch { return false; }
         }
       }
+      // ── Bộ lọc mở rộng: chỉ có tác dụng khi được cấu hình (workflow cũ không đổi) ──
+      // senderRole ≠ 'all' chỉ áp dụng cho tin nhóm → tin cá nhân không kích hoạt.
+      // Vai trò thực tế (getGroupInfo) được kiểm tra bất đồng bộ trong triggerWorkflows.
+      if (hasSenderRoleFilter(cfg.senderRole) && !isGroup) return false;
+      if (isExcludedId(cfg.excludeSenderIds, msgData.uidFrom || (msg as any).uidFrom || data.fromId)) return false;
+      if (isExcludedId(cfg.excludeThreadIds, (msg as any).threadId || data.threadId)) return false;
+      if ((cfg.onlyWhenMentioned === true || cfg.onlyWhenMentioned === 'true') && isGroup
+        && !mentionsAccount(msgData.mentions, String(data.zaloId || ''))) return false;
+      const messageTypes = normalizeMessageTypes(cfg.messageTypes);
+      if (messageTypes.length > 0) {
+        const rawContent = msgData.content || (msg as any).content || data.content;
+        const messageKind = classifyZaloMessageType(msgData.msgType || (msg as any).msgType, rawContent);
+        if (!messageTypes.includes(messageKind)) return false;
+      }
+      if (!isWithinActiveHours(cfg.activeHours, Date.now())) return false;
     }
 
     if (triggerNode.type === 'trigger.groupEvent') {
@@ -821,16 +1198,24 @@ class WorkflowEngineService {
     }
 
     if (triggerNode.type === 'trigger.payment') {
-      const tx = data.transaction || data;
+      // Casso (amount) và SePay (transferAmount / transferType) đã chuẩn hoá ở IntegrationRegistry
+      const payment = paymentFromEvent(data);
+      // "Khi nhận thanh toán" chỉ cho tiền vào
+      if (payment.direction === 'out') return false;
       // Filter by integration id
       if (cfg.integrationId && data.integrationId !== cfg.integrationId) return false;
       // Filter by minimum amount
-      if (cfg.minAmount && Number(tx.amount || tx.in || 0) < Number(cfg.minAmount)) return false;
-      // Filter by description keyword
+      if (cfg.minAmount && payment.amount < Number(cfg.minAmount)) return false;
+      // Filter by description keyword (SePay: cả nội dung CK lẫn mô tả đầy đủ của ngân hàng)
       if (cfg.descContains) {
-        const desc = String(tx.description || tx.memo || tx.content || '').toLowerCase();
+        const desc = `${payment.description}\n${payment.bankDescription}`.toLowerCase();
         if (!desc.includes(String(cfg.descContains).toLowerCase())) return false;
       }
+    }
+
+    if (triggerNode.type === 'trigger.posWebhook') {
+      // Chỉ webhook đã xác thực (IntegrationRegistry → posWebhook.ts); lọc nền tảng / kết nối / loại dữ liệu / sự kiện / trạng thái
+      if (data?.verified !== true || !matchesPosWebhookTrigger(cfg, data)) return false;
     }
 
     if (triggerNode.type === 'trigger.webhook') {
@@ -973,6 +1358,10 @@ class WorkflowEngineService {
           }
         }
       }
+      // ── Bộ lọc mở rộng (excludeSenderIds / excludeThreadIds / activeHours) ──
+      if (isExcludedId(cfg.excludeSenderIds, data.fromId || (data.message || {}).userID)) return false;
+      if (isExcludedId(cfg.excludeThreadIds, this.getFacebookThreadId(data))) return false;
+      if (!isWithinActiveHours(cfg.activeHours, Date.now())) return false;
     }
 
     // ── Facebook media attachment triggers ────────────────────────────────
@@ -1049,6 +1438,10 @@ class WorkflowEngineService {
         if (mode === 'exact' && !kws.includes(content)) return false;
         if (mode === 'starts_with' && !kws.some(k => content.startsWith(k))) return false;
       }
+      // ── Bộ lọc mở rộng (excludeSenderIds / excludeThreadIds / activeHours) ──
+      if (isExcludedId(cfg.excludeSenderIds, data.fromId || msg.fromId || msg.senderId || msg.uidFrom)) return false;
+      if (isExcludedId(cfg.excludeThreadIds, data.threadId || envelope.threadId || msg.threadId || msg.chatId)) return false;
+      if (!isWithinActiveHours(cfg.activeHours, Date.now())) return false;
     }
 
     // ── Telegram unsend trigger ──────────────────────────────────────────
@@ -1081,14 +1474,17 @@ class WorkflowEngineService {
     triggerData: any,
     triggeredBy: string = 'manual',
     startNodeId?: string,
+    opts?: { simulate?: boolean },
   ): Promise<WorkflowRunLog> {
     if (!this.isRunnableWorkflow(wf)) {
       throw new Error('Workflow không hỗ trợ chạy (channel unknown)');
     }
 
+    const simulate = opts?.simulate === true;
     const runId = uuidv4();
     const startedAt = Date.now();
     const nodeResults: NodeResult[] = [];
+    const simulatedMessages: SimulatedMessage[] = [];
 
     const telegramChannelTrace = triggeredBy === 'tg.trigger.message'
       ? getTelegramChannelTrace(triggerData)
@@ -1115,101 +1511,21 @@ class WorkflowEngineService {
     const sortedOrder = this.topologicalSort(wf);
     const routeNodes = startNodeId ? this.getReachableWorkflowNodes(wf, startNodeId) : null;
     const order = routeNodes ? sortedOrder.filter(nodeId => routeNodes.has(nodeId)) : sortedOrder;
-    let status: 'success' | 'error' | 'partial' = 'success';
-    let errorMessage: string | undefined;
-
-    for (const nodeId of order) {
-      const node = wf.nodes.find(n => n.id === nodeId);
-      if (!node) continue;
-      const t0 = Date.now();
-
-      if (context.skippedNodes.has(nodeId)) {
-        nodeResults.push({ nodeId, nodeType: node.type, label: node.label, status: 'skipped', input: {}, output: { _skipped: true }, durationMs: 0 });
-        // Propagate skip to downstream nodes
-        this.markDownstreamSkipped(nodeId, wf, context.skippedNodes);
-        continue;
-      }
-
-      let renderedConfig: Record<string, any> = {};
-      try {
-        renderedConfig = this.renderConfig(node.config, context);
-        if (node.type === 'zalo.sendMessage') {
-          Logger.info(`[WorkflowEngine] sendMessage BEFORE: raw="${(node.config.message || '').substring(0, 300)}" → rendered="${(renderedConfig.message || '').substring(0, 300)}"`);
-        }
-        const output = await this.executeNode(node, renderedConfig, context, wf);
-        context.nodes[nodeId] = { output };
-        if (node.type === 'ai.generateText') {
-          Logger.info(`[WorkflowEngine] AI chat output stored: keys=${output ? Object.keys(output).join(',') : 'null'}, result="${typeof output === 'object' && output ? (output.result || '').substring(0, 200) : String(output).substring(0, 200)}"`);
-        }
-
-        // If this is an IF node, mark the wrong branch as skipped
-        if (node.type === 'logic.if') {
-          const result = output.result as boolean;
-          for (const edge of wf.edges.filter(e => e.source === nodeId)) {
-            if (edge.sourceHandle === 'true' && !result) {
-              context.skippedNodes.add(edge.target);
-              this.markDownstreamSkipped(edge.target, wf, context.skippedNodes);
-            }
-            if (edge.sourceHandle === 'false' && result) {
-              context.skippedNodes.add(edge.target);
-              this.markDownstreamSkipped(edge.target, wf, context.skippedNodes);
-            }
-          }
-        }
-
-        // switch node: mark all non-matching cases
-        if (node.type === 'logic.switch') {
-          const matchedHandle = output.matchedHandle as string;
-          for (const edge of wf.edges.filter(e => e.source === nodeId)) {
-            if (edge.sourceHandle !== matchedHandle) {
-              context.skippedNodes.add(edge.target);
-              this.markDownstreamSkipped(edge.target, wf, context.skippedNodes);
-            }
-          }
-        }
-
-        nodeResults.push({ nodeId, nodeType: node.type, label: node.label, status: 'success', input: this.truncateData(renderedConfig), output: this.truncateData(output), durationMs: Date.now() - t0 });
-      } catch (err: any) {
-        // logic.stopIf signals a graceful stop - treat as success, halt loop
-        if (err.message === '__STOP__') {
-          nodeResults.push({ nodeId, nodeType: node.type, label: node.label, status: 'success', input: this.truncateData(renderedConfig), output: { stopped: true }, durationMs: Date.now() - t0 });
-          break;
-        }
-        // Build rich error output from axios/HTTP errors
-        const errorOutput: Record<string, any> = {};
-        errorOutput._errorType = 'execution_error';
-        if (err.response) {
-          errorOutput._errorType = 'http_error';
-          errorOutput._httpStatus = err.response.status;
-          errorOutput._httpStatusText = err.response.statusText;
-          errorOutput._responseData = this.truncateData(err.response.data);
-          errorOutput._responseHeaders = err.response.headers;
-        } else if (err.request) {
-          errorOutput._errorType = 'network_error';
-          errorOutput._requestSummary = `${err.request.method || ''} ${err.request.url || ''}`;
-        }
-        if (err.code) errorOutput._errorCode = err.code;
-        if (err.message) errorOutput._errorMessage = err.message;
-        if (err.stack) errorOutput._stackTrace = err.stack.split('\n').slice(0, 6).join('\n');
-        nodeResults.push({ nodeId, nodeType: node.type, label: node.label, status: 'error', input: this.truncateData(renderedConfig), output: this.truncateData(errorOutput), durationMs: Date.now() - t0, error: err.message });
-        if (node.config.continueOnError) {
-          status = 'partial';
-        } else {
-          status = 'error';
-          errorMessage = `Node "${node.label || node.type}" lỗi: ${err.message}`;
-          break;
-        }
-      }
-    }
+    const run: WorkflowRunState = { status: 'success', nodeResults, simulate, simulatedMessages, loopIterations: 0 };
+    await this.runNodeSequence(order, wf, context, run);
+    const { status, errorMessage } = run;
 
     const log: WorkflowRunLog = {
       id: runId, workflowId: wf.id, workflowName: wf.name,
       triggeredBy, startedAt, finishedAt: Date.now(),
       status, errorMessage, nodeResults,
+      ...(simulate ? { simulated: true, simulatedMessages } : {}),
     };
 
-    DatabaseService.getInstance().saveWorkflowRunLog(log);
-    EventBroadcaster.emit('workflow:executed', { workflowId: wf.id, runId, status });
+    if (!simulate) {
+      DatabaseService.getInstance().saveWorkflowRunLog(log);
+      EventBroadcaster.emit('workflow:executed', { workflowId: wf.id, runId, status });
+    }
     logTelegramChannelTrace('WORKFLOW_EXECUTION_FINISHED', telegramChannelTrace, {
       workflowId: wf.id,
       runId,
@@ -1219,6 +1535,209 @@ class WorkflowEngineService {
       error: errorMessage || '-',
     });
     return log;
+  }
+
+  /**
+   * Chạy các node theo thứ tự topo. Node "Lặp qua danh sách" (logic.forEach) chạy xong thì các node nối từ cổng
+   * "Mỗi phần tử" (forEachBodyNodeIds) chạy lại cho từng phần tử, sau đó chuỗi này chạy tiếp các node còn lại — nhánh
+   * "Xong" chạy một lần. Trả về false khi workflow phải dừng (Dừng workflow nếu…, node lỗi không bật "tiếp tục khi lỗi").
+   */
+  private async runNodeSequence(order: string[], wf: Workflow, ctx: ExecutionContext, run: WorkflowRunState, iteration?: number): Promise<boolean> {
+    const loopHandled = new Set<string>();
+    for (const nodeId of order) {
+      if (loopHandled.has(nodeId)) continue;
+      const node = wf.nodes.find(n => n.id === nodeId);
+      if (!node) continue;
+      const step = await this.runWorkflowNode(node, wf, ctx, run, iteration);
+      if (step === 'halt') return false;
+      if (node.type !== 'logic.forEach' || step === 'skipped') continue;
+      const bodyIds = forEachBodyNodeIds(wf.edges, nodeId);
+      const body = order.filter(id => bodyIds.has(id));
+      if (step === 'failed') {
+        // Node lặp lỗi nhưng bật "tiếp tục khi lỗi": không có danh sách → thân vòng lặp không chạy, nhánh "Xong" vẫn chạy
+        for (const id of body) ctx.skippedNodes.add(id);
+        continue;
+      }
+      body.forEach(id => loopHandled.add(id));
+      if (!(await this.runForEachLoop(node, body, wf, ctx, run))) return false;
+    }
+    return true;
+  }
+
+  /**
+   * Thân vòng lặp cho từng phần tử của node forEach vừa chạy (output.items, tối đa ô "Tối đa" / 100 phần tử).
+   * Mỗi lượt: {{ $var.<tên biến> }} = phần tử, {{ $var.<tên biến>Index }} = số thứ tự từ 1; nhánh đã bỏ qua (IF / Switch)
+   * và kết quả node của lượt trước được xoá. Biến khác lưu trong vòng lặp (Lưu giá trị vào biến) còn lại sau vòng lặp
+   * để nhánh "Xong" dùng (vd. ghép danh sách rồi gửi một tin).
+   */
+  private async runForEachLoop(node: WorkflowNode, body: string[], wf: Workflow, ctx: ExecutionContext, run: WorkflowRunState): Promise<boolean> {
+    const output = ctx.nodes[node.id]?.output || {};
+    const items: any[] = Array.isArray(output.items) ? output.items.slice(0, forEachItemLimit(node.config?.maxItems)) : [];
+    if (items.length === 0) {
+      for (const id of body) {
+        const bodyNode = wf.nodes.find(n => n.id === id);
+        if (bodyNode) {
+          run.nodeResults.push({
+            nodeId: id, nodeType: bodyNode.type, label: bodyNode.label, status: 'skipped', input: {},
+            output: { _skipped: true, reason: 'Danh sách rỗng - không có phần tử để lặp' }, durationMs: 0,
+          });
+        }
+      }
+      return true;
+    }
+
+    const itemVar = forEachVariableName(node.config?.itemVariable);
+    const indexVar = `${itemVar}Index`;
+    const saved = [itemVar, indexVar].map(key => ({
+      key, had: Object.prototype.hasOwnProperty.call(ctx.variables, key), value: ctx.variables[key],
+    }));
+    const baseSkipped = new Set(ctx.skippedNodes);
+    // Cùng quy tắc với forEachRecipient: workflow bị tắt / xoá trong lúc đang lặp → dừng, không chạy các phần tử còn lại
+    const existedAtStart = this.workflows.has(wf.id);
+    const stopped = (): boolean => {
+      const live = this.workflows.get(wf.id);
+      return live ? (wf.enabled && !live.enabled) : existedAtStart;
+    };
+    try {
+      for (let i = 0; i < items.length; i++) {
+        if (i > 0 && stopped()) {
+          run.status = 'error';
+          run.errorMessage = `Node "${node.label || node.type}": workflow đã tắt hoặc bị xoá — dừng lặp, còn ${items.length - i}/${items.length} phần tử chưa chạy`;
+          return false;
+        }
+        if (++run.loopIterations > MAX_LOOP_ITERATIONS_PER_RUN) {
+          run.status = 'error';
+          run.errorMessage = `Node "${node.label || node.type}" lỗi: vượt quá ${MAX_LOOP_ITERATIONS_PER_RUN} lượt lặp trong một lần chạy`;
+          return false;
+        }
+        ctx.variables[itemVar] = items[i];
+        ctx.variables[indexVar] = i + 1;
+        ctx.skippedNodes = new Set(baseSkipped);
+        for (const id of body) delete ctx.nodes[id];
+        if (!(await this.runNodeSequence(body, wf, ctx, run, i + 1))) return false;
+      }
+      return true;
+    } finally {
+      ctx.skippedNodes = baseSkipped;
+      for (const entry of saved) {
+        if (entry.had) ctx.variables[entry.key] = entry.value;
+        else delete ctx.variables[entry.key];
+      }
+    }
+  }
+
+  /**
+   * Chạy một node: bỏ qua nếu nằm ở nhánh không chạy, render cấu hình, chạy (hoặc mô phỏng), lưu kết quả, đánh dấu
+   * nhánh không chạy của IF / Switch. 'halt' = dừng cả workflow (Dừng workflow nếu…, lỗi không bật "tiếp tục khi lỗi"),
+   * 'failed' = node lỗi nhưng workflow chạy tiếp (trạng thái partial).
+   */
+  private async runWorkflowNode(
+    node: WorkflowNode,
+    wf: Workflow,
+    context: ExecutionContext,
+    run: WorkflowRunState,
+    iteration?: number,
+  ): Promise<'ran' | 'skipped' | 'failed' | 'halt'> {
+    const nodeId = node.id;
+    const nodeResults = run.nodeResults;
+    const loopTag = iteration ? { iteration } : {};
+    const t0 = Date.now();
+
+    if (context.skippedNodes.has(nodeId)) {
+      nodeResults.push({ nodeId, nodeType: node.type, label: node.label, status: 'skipped', input: {}, output: { _skipped: true }, durationMs: 0, ...loopTag });
+      // Propagate skip to downstream nodes
+      this.markDownstreamSkipped(nodeId, wf, context.skippedNodes);
+      return 'skipped';
+    }
+
+    let renderedConfig: Record<string, any> = {};
+    try {
+      renderedConfig = this.renderConfig(node.config, context);
+      if (node.type === 'zalo.sendMessage') {
+        Logger.info(`[WorkflowEngine] sendMessage BEFORE: raw="${(node.config.message || '').substring(0, 300)}" → rendered="${(renderedConfig.message || '').substring(0, 300)}"`);
+      }
+      const isTriggerNode = node.type.startsWith('trigger.') || node.type.includes('.trigger.');
+      const output = run.simulate && !isTriggerNode && !SIMULATE_REAL_TYPES.has(node.type)
+        ? this.simulateNode(node, renderedConfig, context)
+        : await this.executeNode(node, renderedConfig, context, wf);
+      context.nodes[nodeId] = { output };
+
+      // Simulate: capture outbound messages for the mock chat (in execution order)
+      if (run.simulate && OUTBOUND_SEND_RE.test(node.type)) {
+        const text = outboundText(renderedConfig);
+        if (text.trim()) {
+          run.simulatedMessages.push({
+            nodeId,
+            label: node.label,
+            type: node.type,
+            text,
+            threadId: String(renderedConfig.threadId || renderedConfig.chatId || renderedConfig.threadIds || ''),
+          });
+        }
+      }
+      if (node.type === 'ai.generateText') {
+        Logger.info(`[WorkflowEngine] AI chat output stored: keys=${output ? Object.keys(output).join(',') : 'null'}, result="${typeof output === 'object' && output ? (output.result || '').substring(0, 200) : String(output).substring(0, 200)}"`);
+      }
+
+      // If this is an IF node, mark the wrong branch as skipped
+      if (node.type === 'logic.if') {
+        const result = output.result as boolean;
+        for (const edge of wf.edges.filter(e => e.source === nodeId)) {
+          if (edge.sourceHandle === 'true' && !result) {
+            context.skippedNodes.add(edge.target);
+            this.markDownstreamSkipped(edge.target, wf, context.skippedNodes);
+          }
+          if (edge.sourceHandle === 'false' && result) {
+            context.skippedNodes.add(edge.target);
+            this.markDownstreamSkipped(edge.target, wf, context.skippedNodes);
+          }
+        }
+      }
+
+      // switch node: mark all non-matching cases
+      if (node.type === 'logic.switch') {
+        const matchedHandle = output.matchedHandle as string;
+        for (const edge of wf.edges.filter(e => e.source === nodeId)) {
+          if (edge.sourceHandle !== matchedHandle) {
+            context.skippedNodes.add(edge.target);
+            this.markDownstreamSkipped(edge.target, wf, context.skippedNodes);
+          }
+        }
+      }
+
+      nodeResults.push({ nodeId, nodeType: node.type, label: node.label, status: 'success', input: this.truncateData(renderedConfig), output: this.truncateData(output), durationMs: Date.now() - t0, ...loopTag });
+      return 'ran';
+    } catch (err: any) {
+      // logic.stopIf signals a graceful stop - treat as success, halt loop
+      if (err.message === '__STOP__') {
+        nodeResults.push({ nodeId, nodeType: node.type, label: node.label, status: 'success', input: this.truncateData(renderedConfig), output: { stopped: true }, durationMs: Date.now() - t0, ...loopTag });
+        return 'halt';
+      }
+      // Build rich error output from axios/HTTP errors
+      const errorOutput: Record<string, any> = {};
+      errorOutput._errorType = 'execution_error';
+      if (err.response) {
+        errorOutput._errorType = 'http_error';
+        errorOutput._httpStatus = err.response.status;
+        errorOutput._httpStatusText = err.response.statusText;
+        errorOutput._responseData = this.truncateData(err.response.data);
+        errorOutput._responseHeaders = err.response.headers;
+      } else if (err.request) {
+        errorOutput._errorType = 'network_error';
+        errorOutput._requestSummary = `${err.request.method || ''} ${err.request.url || ''}`;
+      }
+      if (err.code) errorOutput._errorCode = err.code;
+      if (err.message) errorOutput._errorMessage = err.message;
+      if (err.stack) errorOutput._stackTrace = err.stack.split('\n').slice(0, 6).join('\n');
+      nodeResults.push({ nodeId, nodeType: node.type, label: node.label, status: 'error', input: this.truncateData(renderedConfig), output: this.truncateData(errorOutput), durationMs: Date.now() - t0, error: err.message, ...loopTag });
+      if (node.config.continueOnError) {
+        run.status = 'partial';
+        return 'failed';
+      }
+      run.status = 'error';
+      run.errorMessage = `Node "${node.label || node.type}" lỗi: ${err.message}`;
+      return 'halt';
+    }
   }
 
   private markDownstreamSkipped(nodeId: string, wf: Workflow, skipped: Set<string>): void {
@@ -1264,11 +1783,13 @@ class WorkflowEngineService {
         const thumbUrl = (rawContent as any).thumb || (rawContent as any).normalUrl || (rawContent as any).hdUrl || '';
         if (thumbUrl && !images.includes(thumbUrl)) images.push(thumbUrl);
       }
+      const fromId = msgData.uidFrom    || (msg as any).uidFrom    || data.fromId    || '';
       return {
-        fromId:      msgData.uidFrom    || (msg as any).uidFrom    || data.fromId    || '',
+        fromId,
         fromName:    data.fromName      || msgData.dName            || msgData.senderInfo?.displayName
           || msgData.senderInfo?.zaloName || msgData.senderInfo?.name || (msg as any).fromName || '',
-        fromPhone:   data.fromPhone     || (msg as any).fromPhone   || '',
+        // Tin Zalo không mang SĐT → lấy SĐT đã lưu của người gửi (danh bạ / thông tin liên hệ)
+        fromPhone:   data.fromPhone     || (msg as any).fromPhone   || this.getSavedContactPhone(data.zaloId, fromId),
         content,
         images,
         threadId:    (msg as any).threadId || data.threadId        || msgData.idTo   || '',
@@ -1329,17 +1850,34 @@ class WorkflowEngineService {
       };
     }
     if (triggerType === 'trigger.payment' || triggerType === 'integration:payment') {
-      const tx = data.transaction || data;
+      const payment = paymentFromEvent(data);
       return {
         integrationId:   data.integrationId || '',
         integrationType: data.integrationType || '',
-        amount:          tx.amount || tx.in || 0,
-        description:     tx.description || tx.memo || tx.content || '',
-        bankName:        tx.bankName || tx.bank_name || '',
-        accountNumber:   tx.accountNumber || tx.bank_acc_id || '',
-        transactionId:   tx.id || tx.transaction_id || tx.tid || '',
-        transactionDate: tx.when || tx.transactionDate || tx.created_at || '',
-        raw:             tx,
+        amount:          payment.amount,
+        description:     payment.description,
+        bankName:        payment.bankName,
+        accountNumber:   payment.accountNumber,
+        transactionId:   payment.transactionId,
+        transactionDate: payment.transactionDate,
+        raw:             data.transaction || data,
+      };
+    }
+    if (triggerType === 'trigger.posWebhook') {
+      return {
+        integrationId:   data.integrationId || '',
+        integrationType: data.integrationType || '',
+        integrationName: data.integrationName || '',
+        event:           data.event || '',
+        entity:          data.entity || '',
+        code:            data.code || '',
+        status:          data.status || '',
+        customerName:    data.customerName || '',
+        customerPhone:   data.customerPhone || '',
+        // Node tra cứu POS mặc định dùng {{ $trigger.fromPhone }} → SĐT khách của đơn / khách hàng vừa gửi
+        fromPhone:       data.customerPhone || '',
+        total:           data.total || '',
+        data:            data.data ?? {},
       };
     }
     if (triggerType === 'trigger.webhook') {
@@ -1390,7 +1928,8 @@ class WorkflowEngineService {
       const msg = data.message || {};
       return {
         fbAccountId: data.fbAccountId || '',
-        messageId: data.messageId || '',
+        // fb:onMessage mang id tin ở message.messageID (fb:onReaction mới có messageId ở ngoài)
+        messageId: data.messageId || msg.messageID || msg.messageId || '',
         threadId: data.threadId || msg.threadId || msg.replyToID || '',
         fromId: msg.userID || data.userId || data.fromId || '',
         content: msg.body || '',
@@ -1437,11 +1976,16 @@ class WorkflowEngineService {
       const msg = envelope.data || data.data || envelope;
       const ch = data.channel || envelope.channel || msg.channel || '';
       const content = msg.preview || msg.content || msg.text || data.content || '';
+      const accountId = data.zaloId || data.accountId || '';
+      const fromId = msg.fromId || msg.senderId || msg.uidFrom || data.fromId || '';
       return {
-        accountId:  data.zaloId || data.accountId || '',
+        accountId,
         chatId:     data.threadId || envelope.threadId || msg.threadId || msg.chatId || '',
-        fromId:     msg.fromId || msg.senderId || msg.uidFrom || data.fromId || '',
+        fromId,
         fromName:   msg.fromName || msg.senderName || msg.dName || data.fromName || '',
+        ...(triggerType === 'tg.trigger.message'
+          ? { fromPhone: data.fromPhone || msg.fromPhone || this.getSavedContactPhone(accountId, fromId, true) }
+          : {}),
         content,
         body:       content,
         caption:    msg.content || msg.text || data.content || '',
@@ -1459,7 +2003,53 @@ class WorkflowEngineService {
     return { ...data };
   }
 
+  /**
+   * {{ $trigger.fromPhone }}: SĐT đã lưu của người gửi — contacts.phone (bạn bè Zalo có số, SĐT nhập ở Thông tin hội
+   * thoại / CRM); Telegram thêm số trong telegram_peers (liên hệ đã chia sẻ số). Không có → '' và các node tra cứu POS
+   * dùng biến này sẽ không tra cứu (posLookupGuard).
+   */
+  private getSavedContactPhone(accountId: unknown, contactId: unknown, telegram = false): string {
+    const owner = String(accountId ?? '').trim();
+    const id = String(contactId ?? '').trim();
+    if (!owner || !id) return '';
+    try {
+      const db = DatabaseService.getInstance();
+      const saved = vietnamLocalPhone(db.getContactById(owner, id)?.phone);
+      if (saved || !telegram) return saved;
+      return vietnamLocalPhone(db.getTelegramPeer(owner, id)?.phone);
+    } catch {
+      return '';
+    }
+  }
+
   // ─── Node Executor ────────────────────────────────────────────────────────
+
+  /** Dry-run: produce a mock output for a side-effect node without touching any real service. */
+  private simulateNode(node: WorkflowNode, cfg: Record<string, any>, ctx: ExecutionContext): Record<string, any> {
+    const type = node.type;
+    if (type === 'logic.wait') {
+      return { simulated: true, waited: Number(cfg.delayMs ?? (Number(cfg.delaySeconds || 1) * 1000)) };
+    }
+    if (type === 'output.log') {
+      return { simulated: true, logged: outboundText(cfg) || cfg.message };
+    }
+    if (type === 'ai.generateText') {
+      const prompt = String(cfg.prompt || '').replace(/\s+/g, ' ').slice(0, 80);
+      return { simulated: true, result: `[AI mô phỏng — trả lời cho: "${prompt}"]`, model: 'simulate' };
+    }
+    if (type === 'ai.classify') {
+      return { simulated: true, category: 'khác', input: String(cfg.input || '').slice(0, 80) };
+    }
+    if (type === 'output.httpRequest') {
+      return { simulated: true, status: 200, data: { simulated: true }, _simulated: true };
+    }
+    // send nodes + everything else with a side effect (sheets, notify, integrations, forEachContact…)
+    return {
+      simulated: true,
+      message: outboundText(cfg),
+      threadId: String(cfg.threadId || cfg.chatId || cfg.threadIds || ''),
+    };
+  }
 
   private async executeNode(
     node: WorkflowNode,
@@ -1467,6 +2057,14 @@ class WorkflowEngineService {
     ctx: ExecutionContext,
     _wf: Workflow
   ): Promise<Record<string, any>> {
+    // Tra cứu khách hàng / đơn hàng POS với SĐT + mã đơn trống: không gọi API (vài nền tảng trả danh sách không lọc
+    // → workflow trả lời bằng đơn / khách của người khác) — posLookupGuard.ts.
+    const posLookup = posLookupNode(node.type);
+    if (posLookup && !posLookupQuery(posLookup.kind, cfg)) {
+      Logger.info(`[WorkflowEngine] ${node.type}: SĐT / mã đơn trống → không tra cứu (workflow "${ctx._wfName}")`);
+      return refusedPosLookup(posLookup.kind);
+    }
+
     switch (node.type) {
 
       // ── Trigger nodes (just pass-through - already matched) ──────────────
@@ -1479,6 +2077,7 @@ class WorkflowEngineService {
       case 'trigger.manual':
       case 'trigger.labelAssigned':
       case 'trigger.webhook':
+      case 'trigger.api':
       case 'tgbot.trigger.message':
       case 'tgbot.trigger.command':
       case 'tgbot.trigger.join':
@@ -1540,8 +2139,8 @@ class WorkflowEngineService {
       }
 
       // ── Zalo Actions ─────────────────────────────────────────────────────
-      case 'zalo.sendMessage': return this.enqueueSend(cfg, ctx, async () => {
-        const api = this.getApi(ctx.pageId);
+      case 'zalo.sendMessage': {
+        this.getApi(ctx.pageId); // chưa kết nối → node lỗi ngay như trước
         const threadType = Number(cfg.threadType) === 1 ? 1 : 0;   // guard NaN → 0
         const targetThreadIds = this.resolveTargetThreadIds(cfg, ctx.trigger?.threadId);
         const continueOnError = cfg.continueOnError === true;
@@ -1553,7 +2152,8 @@ class WorkflowEngineService {
         if (segments) {
           Logger.info(`[WorkflowEngine] Structured AI response: ${segments.length} segments`);
           let lastMsgId = '';
-          for (const tid of targetThreadIds) {
+          await this.forEachRecipient(cfg, ctx, _wf, targetThreadIds, async (tid) => {
+            const api = this.getApi(ctx.pageId);
             try {
               for (let i = 0; i < segments.length; i++) {
                 const seg = segments[i];
@@ -1591,13 +2191,14 @@ class WorkflowEngineService {
               Logger.warn(`[WorkflowEngine] sendMessage to ${tid} failed: ${err.message}`);
               if (!continueOnError) throw err;
             }
-          }
+          });
           return { msgId: lastMsgId, success: true, structured: true, segmentCount: segments.length };
         }
 
         // ─── Plain text: loop qua nhiều thread ────────────────────────────
         let lastResult: any = { success: false, error: 'Không gửi được đến hội thoại nào' };
-        for (const tid of targetThreadIds) {
+        await this.forEachRecipient(cfg, ctx, _wf, targetThreadIds, async (tid) => {
+          const api = this.getApi(ctx.pageId);
           try {
             const result = await api.sendMessage({ msg: cfg.message }, tid, threadType);
             lastResult = result;
@@ -1607,13 +2208,13 @@ class WorkflowEngineService {
             lastResult = { success: false, error: err.message };
             if (!continueOnError) throw err;
           }
-        }
+        });
         return {
           msgId: (lastResult as any)?.message?.msgId || '',
           success: true,
           _targetCount: targetThreadIds.length,
         };
-      });
+      }
 
       case 'zalo.sendTyping': {
         // Gửi sự kiện "đang gõ" rồi chờ delay trước khi bước tiếp theo chạy.
@@ -1632,13 +2233,14 @@ class WorkflowEngineService {
         return { success: true, delayMs };
       }
 
-      case 'zalo.sendImage': return this.enqueueSend(cfg, ctx, async () => {
-        const api = this.getApi(ctx.pageId);
+      case 'zalo.sendImage': {
+        this.getApi(ctx.pageId); // chưa kết nối → node lỗi ngay như trước
         const threadType = Number(cfg.threadType) === 1 ? 1 : 0;
         const targetThreadIds = this.resolveTargetThreadIds(cfg, ctx.trigger?.threadId);
         const continueOnError = cfg.continueOnError === true;
         let lastResult: any = { success: false, error: 'Không gửi được ảnh đến hội thoại nào' };
-        for (const tid of targetThreadIds) {
+        await this.forEachRecipient(cfg, ctx, _wf, targetThreadIds, async (tid) => {
+          const api = this.getApi(ctx.pageId);
           try {
             const result = await api.sendMessage({ msg: cfg.message || '', attachments: [cfg.filePath] }, tid, threadType);
             lastResult = result;
@@ -1648,21 +2250,22 @@ class WorkflowEngineService {
             lastResult = { success: false, error: err.message };
             if (!continueOnError) throw err;
           }
-        }
+        });
         return {
           msgId: (lastResult as any)?.attachment?.[0]?.msgId || '',
           success: true,
           _targetCount: targetThreadIds.length,
         };
-      });
+      }
 
-      case 'zalo.sendFile': return this.enqueueSend(cfg, ctx, async () => {
-        const api = this.getApi(ctx.pageId);
+      case 'zalo.sendFile': {
+        this.getApi(ctx.pageId); // chưa kết nối → node lỗi ngay như trước
         const threadType = Number(cfg.threadType) === 1 ? 1 : 0;
         const targetThreadIds = this.resolveTargetThreadIds(cfg, ctx.trigger?.threadId);
         const continueOnError = cfg.continueOnError === true;
         let lastResult: any = { success: false, error: 'Không gửi được file đến hội thoại nào' };
-        for (const tid of targetThreadIds) {
+        await this.forEachRecipient(cfg, ctx, _wf, targetThreadIds, async (tid) => {
+          const api = this.getApi(ctx.pageId);
           try {
             const result = await api.sendMessage({ msg: '', attachments: [cfg.filePath] }, tid, threadType);
             lastResult = result;
@@ -1672,12 +2275,75 @@ class WorkflowEngineService {
             lastResult = { success: false, error: err.message };
             if (!continueOnError) throw err;
           }
-        }
+        });
         return {
           success: true,
           _targetCount: targetThreadIds.length,
         };
-      });
+      }
+
+      case 'zalo.sendVoice': {
+        this.getApi(ctx.pageId); // chưa kết nối → node lỗi ngay như trước
+        const threadType = Number(cfg.threadType) === 1 ? 1 : 0;
+        const targetThreadIds = this.resolveTargetThreadIds(cfg, ctx.trigger?.threadId);
+        const continueOnError = cfg.continueOnError === true;
+        await this.forEachRecipient(cfg, ctx, _wf, targetThreadIds, async (tid) => {
+          const api = this.getApi(ctx.pageId);
+          try {
+            const up = await api.uploadAttachment([cfg.filePath], tid, threadType);
+            const resp = Array.isArray(up) ? up[0] : up;
+            const voiceUrl = resp?.fileUrl || '';
+            if (!voiceUrl) throw new Error('Tải tin thoại lên Zalo thất bại');
+            await api.sendVoice({ voiceUrl }, tid, threadType);
+          } catch (err: any) {
+            Logger.warn(`[WorkflowEngine] zalo.sendVoice to ${tid} failed: ${err.message}`);
+            if (!continueOnError) throw err;
+          }
+        });
+        return { success: true, _targetCount: targetThreadIds.length };
+      }
+
+      case 'zalo.sendVideo': {
+        this.getApi(ctx.pageId); // chưa kết nối → node lỗi ngay như trước
+        const threadType = Number(cfg.threadType) === 1 ? 1 : 0;
+        const targetThreadIds = this.resolveTargetThreadIds(cfg, ctx.trigger?.threadId);
+        const continueOnError = cfg.continueOnError === true;
+        await this.forEachRecipient(cfg, ctx, _wf, targetThreadIds, async (tid) => {
+          const api = this.getApi(ctx.pageId);
+          try {
+            const up = await api.uploadAttachment([cfg.filePath], tid, threadType);
+            const resp = Array.isArray(up) ? up[0] : up;
+            const videoUrl = resp?.fileUrl || '';
+            if (!videoUrl) throw new Error('Tải video lên Zalo thất bại');
+            await api.sendVideo({ videoUrl, thumbnailUrl: videoUrl }, tid, threadType);
+          } catch (err: any) {
+            Logger.warn(`[WorkflowEngine] zalo.sendVideo to ${tid} failed: ${err.message}`);
+            if (!continueOnError) throw err;
+          }
+        });
+        return { success: true, _targetCount: targetThreadIds.length };
+      }
+
+      case 'zalo.sendSticker': {
+        const lookupApi = this.getApi(ctx.pageId);
+        const threadType = Number(cfg.threadType) === 1 ? 1 : 0;
+        const targetThreadIds = this.resolveTargetThreadIds(cfg, ctx.trigger?.threadId);
+        const stickerId = Number(cfg.stickerId);
+        if (!stickerId) throw new Error('[zalo.sendSticker] stickerId required');
+        const stickersDetail = await lookupApi.getStickersDetail(stickerId);
+        if (!stickersDetail || stickersDetail.length === 0) throw new Error('Không tìm thấy sticker');
+        const continueOnError = cfg.continueOnError === true;
+        await this.forEachRecipient(cfg, ctx, _wf, targetThreadIds, async (tid) => {
+          const api = this.getApi(ctx.pageId);
+          try {
+            await api.sendSticker(stickersDetail[0], tid, threadType);
+          } catch (err: any) {
+            Logger.warn(`[WorkflowEngine] zalo.sendSticker to ${tid} failed: ${err.message}`);
+            if (!continueOnError) throw err;
+          }
+        });
+        return { success: true, _targetCount: targetThreadIds.length };
+      }
 
       case 'zalo.findUser': {
         const api = this.getApi(ctx.pageId);
@@ -2007,9 +2673,14 @@ class WorkflowEngineService {
       }
 
       case 'logic.forEach': {
-        let arr: any[] = [];
-        try { arr = Array.isArray(cfg.array) ? cfg.array : JSON.parse(cfg.array || '[]'); } catch {}
-        return { items: arr, count: arr.length };
+        // Vòng lặp chạy ở runNodeSequence / runForEachLoop; node này chỉ đọc danh sách.
+        const items = this.resolveForEachItems(node.config?.array, cfg.array, ctx);
+        return { items, count: items.length, processed: Math.min(items.length, forEachItemLimit(node.config?.maxItems)) };
+      }
+
+      case 'logic.forEachContact': {
+        const audience = await this.resolveAudience(cfg, ctx);
+        return { result: JSON.stringify(audience.threadIds), count: audience.threadIds.length, items: audience.items };
       }
 
       // ── Data Nodes ───────────────────────────────────────────────────────
@@ -2386,8 +3057,9 @@ class WorkflowEngineService {
         };
       }
 
-      // ── P0: trigger.payment (pass-through like other triggers) ──────────────
+      // ── P0: trigger.payment / trigger.posWebhook (pass-through like other triggers) ──────────────
       case 'trigger.payment':
+      case 'trigger.posWebhook':
         return { ...ctx.trigger };
 
       // ── P0: KiotViet POS ─────────────────────────────────────────────────
@@ -2667,7 +3339,8 @@ class WorkflowEngineService {
 
         const continueOnError = cfg.continueOnError === true;
         let lastResult: any = { success: false, error: 'Không gửi được đến hội thoại nào' };
-        for (const tid of targetThreadIds) {
+        // Nhiều người nhận: giãn cách từng người (Facebook dễ bắt xác minh khi gửi dồn); một người nhận gửi ngay như cũ
+        await this.forEachRecipient(cfg, ctx, _wf, targetThreadIds, async (tid) => {
           try {
             const result = await FacebookSendService.sendTextMessage({
               accountId,
@@ -2688,7 +3361,7 @@ class WorkflowEngineService {
             lastResult = { success: false, error: err.message };
             if (!continueOnError) throw err;
           }
-        }
+        }, { queueKey: `fb:${accountId}`, single: 'direct' });
         return {
           success: lastResult.success,
           messageId: lastResult.messageId,
@@ -2711,7 +3384,10 @@ class WorkflowEngineService {
         return { success: result.success, ...(result.error ? { error: result.error } : {}) };
       }
 
-      case 'fb.action.sendImage': {
+      case 'fb.action.sendImage':
+      case 'fb.action.sendVideo':
+      case 'fb.action.sendFile':
+      case 'fb.action.sendAudio': {
         // DEPLAO_ADAPTER: Delegate to FacebookSendService.sendAttachment() —
         // single entry point for all Facebook attachment sends.
         const rawAccountId = cfg.accountId || ctx.trigger?.fbAccountId || ctx.pageId;
@@ -2741,7 +3417,7 @@ class WorkflowEngineService {
           }
 
           let lastResult: any = { success: false, error: 'Không gửi được đến hội thoại nào' };
-          for (const threadId of targetThreadIds) {
+          await this.forEachRecipient(cfg, ctx, _wf, targetThreadIds, async (threadId) => {
             try {
               const result = await FacebookSendService.sendAttachment({
                 accountId,
@@ -2762,7 +3438,7 @@ class WorkflowEngineService {
               lastResult = { success: false, error: err.message };
               if (!continueOnError) throw err;
             }
-          }
+          }, { queueKey: `fb:${accountId}`, single: 'direct' });
           return {
             success: lastResult.success,
             messageId: lastResult.messageId,
@@ -2953,7 +3629,10 @@ class WorkflowEngineService {
         // Parse structured AI response (same as zalo.sendMessage)
         const tgSegments = parseStructuredResponse(cfg.message);
         const tgMsg = tgSegments
-          ? tgSegments.filter((s: any) => s.type === 'text').map((s: any) => s.text).join('')
+          ? tgSegments
+              .filter((s: any) => s.type === 'text' && s.content)
+              .map((s: any) => String(s.content).trim())
+              .join('\n\n')
           : cfg.message;
         const tgSendResult = await this.sendTelegramMessage(tgAccountId, String(tgChatId), tgMsg);
         return { success: tgSendResult.success, messageId: tgSendResult.messageId, ...(tgSendResult.error ? { error: tgSendResult.error } : {}) };
@@ -2977,6 +3656,26 @@ class WorkflowEngineService {
         if (!cfg.filePath) throw new Error('[tg.sendFile] filePath required');
         const tgFileResult = await this.sendTelegramFile(tgAcc3, String(tgChat3), String(cfg.filePath), cfg.caption || '');
         return { success: tgFileResult.success, messageId: tgFileResult.messageId, ...(tgFileResult.error ? { error: tgFileResult.error } : {}) };
+      }
+
+      case 'tg.sendVideo': {
+        const tgAccV = cfg.accountId || ctx.trigger?.accountId || ctx.pageId;
+        if (!tgAccV) throw new Error('[tg.sendVideo] accountId required');
+        const tgChatV = cfg.chatId || ctx.trigger?.chatId || ctx.trigger?.threadId;
+        if (!tgChatV) throw new Error('[tg.sendVideo] chatId required');
+        if (!cfg.filePath) throw new Error('[tg.sendVideo] filePath required');
+        const tgVideoResult = await this.sendTelegramVideo(tgAccV, String(tgChatV), String(cfg.filePath), cfg.caption || '');
+        return { success: tgVideoResult.success, messageId: tgVideoResult.messageId, ...(tgVideoResult.error ? { error: tgVideoResult.error } : {}) };
+      }
+
+      case 'tg.sendVoice': {
+        const tgAccVo = cfg.accountId || ctx.trigger?.accountId || ctx.pageId;
+        if (!tgAccVo) throw new Error('[tg.sendVoice] accountId required');
+        const tgChatVo = cfg.chatId || ctx.trigger?.chatId || ctx.trigger?.threadId;
+        if (!tgChatVo) throw new Error('[tg.sendVoice] chatId required');
+        if (!cfg.filePath) throw new Error('[tg.sendVoice] filePath required');
+        const tgVoiceResult = await this.sendTelegramVoice(tgAccVo, String(tgChatVo), String(cfg.filePath), cfg.caption || '');
+        return { success: tgVoiceResult.success, messageId: tgVoiceResult.messageId, ...(tgVoiceResult.error ? { error: tgVoiceResult.error } : {}) };
       }
 
       case 'tg.forwardMessage': {
@@ -3247,6 +3946,38 @@ class WorkflowEngineService {
         return { success: result.success, messageId: result.messageId, error: result.error };
       }
 
+      case 'tgbot.action.sendSticker': {
+        const botAccountId = cfg.accountId || ctx.trigger?.accountId || ctx.pageId;
+        const chatId = cfg.chatId || ctx.trigger?.chatId;
+        if (!botAccountId || !chatId || !cfg.stickerPath) throw new Error('[tgbot.action.sendSticker] accountId, chatId and stickerPath required');
+        const result = await TelegramBot.sendSticker(botAccountId, chatId, cfg.stickerPath);
+        return { success: result.success, messageId: result.messageId, error: result.error };
+      }
+
+      case 'tgbot.action.sendAudio': {
+        const botAccountId = cfg.accountId || ctx.trigger?.accountId || ctx.pageId;
+        const chatId = cfg.chatId || ctx.trigger?.chatId;
+        if (!botAccountId || !chatId || !cfg.audioPath) throw new Error('[tgbot.action.sendAudio] accountId, chatId and audioPath required');
+        const result = await TelegramBot.sendAudio(botAccountId, chatId, cfg.audioPath, cfg.caption || '');
+        return { success: result.success, messageId: result.messageId, error: result.error };
+      }
+
+      case 'tgbot.action.sendVoice': {
+        const botAccountId = cfg.accountId || ctx.trigger?.accountId || ctx.pageId;
+        const chatId = cfg.chatId || ctx.trigger?.chatId;
+        if (!botAccountId || !chatId || !cfg.voicePath) throw new Error('[tgbot.action.sendVoice] accountId, chatId and voicePath required');
+        const result = await TelegramBot.sendVoice(botAccountId, chatId, cfg.voicePath, cfg.caption || '');
+        return { success: result.success, messageId: result.messageId, error: result.error };
+      }
+
+      case 'tgbot.action.leaveChat': {
+        const botAccountId = cfg.accountId || ctx.trigger?.accountId || ctx.pageId;
+        const chatId = cfg.chatId || ctx.trigger?.chatId;
+        if (!botAccountId || !chatId) throw new Error('[tgbot.action.leaveChat] accountId and chatId required');
+        const result = await TelegramBot.leaveChat(botAccountId, chatId);
+        return { success: result.success, error: result.error };
+      }
+
       case 'tgbot.action.sendMenu': {
         const botAccountId = cfg.accountId || ctx.trigger?.accountId || ctx.pageId;
         if (!botAccountId) throw new Error('[tgbot.action.sendMenu] accountId required');
@@ -3420,8 +4151,22 @@ class WorkflowEngineService {
         return { success: result.success, error: result.error };
       }
 
-      default:
-        return {};
+      default: {
+        // Node/trigger do plugin đóng góp: editor gắn cfg.__plugin khi thêm từ palette plugin.
+        // Node lạ không có dấu này giữ nguyên hành vi cũ (bỏ qua).
+        if (!cfg?.__plugin) return {};
+        const registry = require('../plugins/PluginNodeRegistry').default.getInstance();
+        if (cfg.__kind === 'trigger' || registry.isTrigger(node.type)) return { ...ctx.trigger };
+        return registry.execute(node.type, cfg, {
+          trigger: ctx.trigger,
+          variables: ctx.variables,
+          pageId: ctx.pageId,
+          workflowId: _wf.id,
+          workflowName: ctx._wfName,
+          nodeId: node.id,
+          nodeLabel: String((node as any).label || node.type),
+        });
+      }
     }
   }
 
@@ -3436,6 +4181,50 @@ class WorkflowEngineService {
     const minMs = Number(cfg.sendDelayMinSeconds ?? 0) * 1000;
     const maxMs = Number(cfg.sendDelayMaxSeconds ?? 0) * 1000;
     return AccountSendQueue.getInstance().enqueue(ctx.pageId, task, minMs, maxMs);
+  }
+
+  /**
+   * Gửi lần lượt tới từng người nhận của một node gửi tin.
+   *  - 0–1 người nhận (trả lời tự động): như trước — Zalo: một lượt trong hàng đợi tài khoản (enqueueSend, giãn cách
+   *    theo "Giãn cách gửi" của node); Facebook (`single: 'direct'`): gửi ngay.
+   *  - Nhiều người nhận: MỖI người một lượt riêng trong hàng đợi của tài khoản, sau mỗi lượt chờ ngẫu nhiên
+   *    recipientGapRangeMs (tối thiểu 5 giây, như chiến dịch giãn cách từng liên hệ). Trước đây cả danh sách gửi liên
+   *    tục trong một lượt (hàng đợi chỉ giãn giữa các lần chạy node). Người kế tiếp chỉ được xếp khi hàng đợi rảnh
+   *    (whenIdle) → tin trả lời tự động của cùng tài khoản xếp vào trong lúc chờ được gửi trước, không chờ hết đợt.
+   * Đợt gửi giờ kéo dài → workflow bị tắt (đang bật lúc bắt đầu) hoặc bị xoá giữa chừng thì dừng phần còn lại.
+   * `send` ném lỗi → dừng các người nhận còn lại (continueOnError do `send` tự xử lý như trước).
+   */
+  private async forEachRecipient(
+    cfg: Record<string, any>,
+    ctx: ExecutionContext,
+    wf: Workflow,
+    recipients: string[],
+    send: (threadId: string) => Promise<void>,
+    opts: { queueKey?: string; single?: 'queue' | 'direct' } = {},
+  ): Promise<void> {
+    if (recipients.length <= 1) {
+      const sendAll = async () => { for (const threadId of recipients) await send(threadId); };
+      return opts.single === 'direct' ? sendAll() : this.enqueueSend(cfg, ctx, sendAll);
+    }
+    const [minMs, maxMs] = recipientGapRangeMs(cfg);
+    const queueKey = opts.queueKey ?? ctx.pageId;
+    const existedAtStart = this.workflows.has(wf.id);
+    const stopped = (): boolean => {
+      const live = this.workflows.get(wf.id);
+      return live ? (wf.enabled && !live.enabled) : existedAtStart;
+    };
+    Logger.info(`[WorkflowEngine] "${wf.name}": gửi ${recipients.length} người nhận, giãn cách ${Math.round(minMs / 1000)}–${Math.round(maxMs / 1000)} giây`);
+    const queue = AccountSendQueue.getInstance();
+    for (let i = 0; i < recipients.length; i++) {
+      const threadId = recipients[i];
+      if (i > 0) await queue.whenIdle(queueKey);
+      await queue.enqueue(queueKey, async () => {
+        if (i > 0 && stopped()) {
+          throw new Error(`Workflow đã tắt hoặc bị xoá — dừng gửi, còn ${recipients.length - i}/${recipients.length} người nhận chưa gửi`);
+        }
+        await send(threadId);
+      }, minMs, maxMs);
+    }
   }
 
   private getApi(pageId: string): any {
@@ -3662,6 +4451,30 @@ class WorkflowEngineService {
     }
   }
 
+  private async sendTelegramVideo(accountId: string, chatId: string, filePath: string, caption: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    try {
+      if (this.isTelegramBotAccount(accountId)) {
+        return await TelegramBot.sendVideo(accountId, chatId, filePath, caption);
+      }
+      // MTProto: sendFile auto-detects media type from the file (mp4 → video).
+      return await TelegramUser.sendFile(accountId, chatId, filePath, caption);
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  private async sendTelegramVoice(accountId: string, chatId: string, filePath: string, caption: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    try {
+      if (this.isTelegramBotAccount(accountId)) {
+        return await TelegramBot.sendVoice(accountId, chatId, filePath, caption);
+      }
+      // MTProto: sendFile auto-detects media type from the file (ogg → voice note).
+      return await TelegramUser.sendFile(accountId, chatId, filePath, caption);
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
   private async forwardTelegramMessage(accountId: string, fromChatId: string, toChatId: string, messageId: string): Promise<{ success: boolean; error?: string }> {
     try {
       if (this.isTelegramBotAccount(accountId)) {
@@ -3802,9 +4615,88 @@ class WorkflowEngineService {
         if (Array.isArray(parsed) && parsed.length > 0) return parsed.map(String);
       } catch {}
     }
+    if (cfg.threadIdsExpr) {
+      try {
+        const parsed = JSON.parse(String(cfg.threadIdsExpr));
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed.map(String);
+      } catch {}
+    }
+    // threadIds 1 id thường (không phải mảng JSON): ô chọn hội thoại trước đây không nhận contactMode
+    // → lưu id đơn và bị bỏ qua (gửi về hội thoại trigger). Đặt sau threadIdsExpr để danh sách động
+    // (Chọn đối tượng nhận tin) vẫn được ưu tiên như trước.
+    if (typeof cfg.threadIds === 'string' && cfg.threadIds.trim() && !cfg.threadIds.trim().startsWith('[')) {
+      const ids = parseIdList(cfg.threadIds);
+      if (ids.length > 0) return ids;
+    }
     if (cfg.threadId) return [String(cfg.threadId)];
     if (triggerThreadId) return [triggerThreadId];
     return [];
+  }
+
+  /**
+   * Chọn đối tượng (audience): resolve danh sách threadId từ nguồn đã chọn
+   * (bạn bè / thành viên nhóm / nhãn local / CRM liên hệ) cho tài khoản Zalo.
+   * Trả về threadIds + items để node gửi tin lặp qua từng người.
+   */
+  private async resolveAudience(cfg: Record<string, any>, ctx: ExecutionContext): Promise<{ threadIds: string[]; items: Array<{ threadId: string; name: string }> }> {
+    const db = DatabaseService.getInstance();
+    const owner = String(cfg.accountId || cfg.pageId || ctx.pageId || '');
+    const limit = Math.max(1, Math.min(5000, Number(cfg.limit || 500)));
+    const source = cfg.source || 'friends';
+    // Loại trừ người nhận (excludeIds): áp dụng TRƯỚC limit để vẫn đủ `limit` người nhận khi có thể
+    const excludedIds = new Set(parseIdList(cfg.excludeIds));
+    const notExcluded = (id: unknown): boolean => !excludedIds.has(String(id ?? '').trim());
+    let threadIds: string[] = [];
+    let items: Array<{ threadId: string; name: string }> = [];
+
+    if (!owner) return { threadIds, items };
+
+    switch (source) {
+      case 'friends': {
+        const friends = db.getFriends(owner).filter(f => notExcluded(f.userId)).slice(0, limit);
+        threadIds = friends.map(f => String(f.userId)).filter(Boolean);
+        items = friends.map(f => ({ threadId: String(f.userId), name: f.displayName || f.userId }));
+        break;
+      }
+      case 'group_members': {
+        if (!cfg.groupId) throw new Error('[logic.forEachContact] groupId required khi chọn nguồn "thành viên nhóm"');
+        const members = db.getGroupMembers(owner, String(cfg.groupId)).filter(m => notExcluded(m.member_id)).slice(0, limit);
+        threadIds = members.map(m => String(m.member_id)).filter(Boolean);
+        items = members.map(m => ({ threadId: String(m.member_id), name: m.display_name || m.member_id }));
+        break;
+      }
+      case 'labels': {
+        // Label picker lưu "local:<id>" (nhãn Zalo "zalo:<acc>:<id>" không áp dụng cho nguồn này) hoặc số.
+        // Đã chọn nhãn nhưng không nhãn nào dùng được → không ai (gửi hàng loạt: không mở rộng thành "mọi nhãn").
+        const rawLabelIds: unknown[] = Array.isArray(cfg.labelIds) ? cfg.labelIds : [];
+        const labelIds: number[] = rawLabelIds
+          .map((x: any) => {
+            const value = String(x ?? '').trim();
+            if (value.startsWith('zalo:')) return NaN;
+            return Number(value.startsWith('local:') ? value.slice('local:'.length) : value);
+          })
+          .filter((id: number) => Number.isFinite(id));
+        const rows = db.getLocalLabelThreads(owner);
+        const filtered = rawLabelIds.length ? rows.filter(r => labelIds.includes(Number(r.label_id))) : rows;
+        const unique = [...new Set(filtered.map(r => String(r.thread_id)).filter(Boolean))].filter(notExcluded).slice(0, limit);
+        threadIds = unique;
+        items = unique.map(t => ({ threadId: t, name: t }));
+        break;
+      }
+      case 'crm_contacts': {
+        // getCRMContacts cắt trang theo limit → lấy dư thêm đúng số id bị loại trừ để không hụt người nhận
+        // (phần dư có trần để câu IN (...) đếm ghi chú không vượt giới hạn tham số của SQLite)
+        const res = db.getCRMContacts(owner, { limit: limit + Math.min(excludedIds.size, 20000) });
+        const contacts = res.contacts.filter((c: any) => notExcluded(c.contact_id)).slice(0, limit);
+        threadIds = contacts.map((c: any) => String(c.contact_id)).filter(Boolean).slice(0, limit);
+        items = contacts.map((c: any) => ({ threadId: String(c.contact_id), name: c.display_name || c.alias || c.contact_id }));
+        break;
+      }
+      default:
+        throw new Error(`[logic.forEachContact] unsupported source: ${source}`);
+    }
+
+    return { threadIds, items };
   }
 
   /**
@@ -3915,7 +4807,7 @@ class WorkflowEngineService {
           const val = this.getNestedValue(ctx.trigger, expr.slice(9));
           return String(val ?? '');
         }
-        if (expr.startsWith('$var.'))       return String(ctx.variables?.[expr.slice(5)] ?? '');
+        if (expr.startsWith('$var.'))       return this.formatVariableValue(this.getVariableValue(ctx, expr.slice(5)));
         if (expr === '$pageId')             return ctx.pageId ?? '';
         if (expr === '$date.now')           return new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
         if (expr === '$date.today')         return new Date().toLocaleDateString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
@@ -3967,6 +4859,62 @@ class WorkflowEngineService {
       } catch {}
       return '';
     });
+  }
+
+  /**
+   * {{ $var.<tên> }}: biến đã lưu, hoặc một trường của biến — phần tử của "Lặp qua danh sách" thường là object
+   * ({{ $var.item.name }}, {{ $var.item.variants[0].sku }}). Tên biến có dấu chấm lưu nguyên văn vẫn được ưu tiên.
+   */
+  private getVariableValue(ctx: ExecutionContext, path: string): any {
+    const vars = ctx.variables || {};
+    if (Object.prototype.hasOwnProperty.call(vars, path)) return vars[path];
+    return /[.[]/.test(path) ? this.getNestedValue(vars, path) : undefined;
+  }
+
+  /** Biến dạng object / mảng (phần tử danh sách) → JSON thay vì "[object Object]". */
+  private formatVariableValue(value: any): string {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'object') {
+      try { return JSON.stringify(value); } catch { return ''; }
+    }
+    return String(value);
+  }
+
+  /**
+   * Danh sách của node "Lặp qua danh sách": ô chỉ chứa một biến {{ … }} → lấy thẳng giá trị gốc (vd. mảng
+   * {{ $node.n3.products }} của bước trước — render ra chuỗi thì mất dữ liệu); còn lại đọc chuỗi đã render
+   * (JSON mảng hoặc mỗi dòng một phần tử).
+   */
+  private resolveForEachItems(raw: unknown, rendered: unknown, ctx: ExecutionContext): any[] {
+    if (Array.isArray(raw)) return raw;
+    const single = typeof raw === 'string' ? /^\s*\{\{\s*([\s\S]*?)\s*\}\}\s*$/.exec(raw) : null;
+    if (single) return parseForEachList(this.resolveExpressionValue(single[1].trim(), ctx));
+    return parseForEachList(typeof rendered === 'string' ? rendered : '');
+  }
+
+  /** Giá trị gốc (không đổi sang chuỗi) của một biến: $trigger.*, $var.*, $node.<id hoặc tên node>.<trường>. */
+  private resolveExpressionValue(expr: string, ctx: ExecutionContext): any {
+    if (expr.startsWith('$trigger.')) return this.getNestedValue(ctx.trigger, expr.slice(9));
+    if (expr.startsWith('$var.')) return this.getVariableValue(ctx, expr.slice(5));
+    if (!expr.startsWith('$node.')) return undefined;
+    const rest = expr.slice(6);
+    const dotIdx = rest.indexOf('.');
+    if (dotIdx === -1) return undefined;
+    const nodeRef = rest.slice(0, dotIdx);
+    const field = rest.slice(dotIdx + 1);
+    // Cùng cách tìm node với renderTemplate: theo id, theo tên node, rồi "nN" = node thứ N (id của mẫu cũ)
+    let found: { output: any } | null = null;
+    for (const [nid, ndata] of Object.entries(ctx.nodes)) {
+      const labelOrId = ctx._wfNodes?.find(n => n.id === nid)?.label || nid;
+      if (nid === nodeRef || labelOrId === nodeRef) { found = ndata; break; }
+    }
+    if (!found) {
+      const idxMatch = nodeRef.match(/^n(\d+)$/);
+      const target = idxMatch && ctx._wfNodes ? ctx._wfNodes[parseInt(idxMatch[1], 10) - 1] : undefined;
+      if (target && ctx.nodes[target.id]) found = ctx.nodes[target.id];
+    }
+    if (!found) return undefined;
+    return field === 'output' ? found.output : this.getNestedValue(found.output, field);
   }
 
   private getNestedValue(obj: any, path: string): any {

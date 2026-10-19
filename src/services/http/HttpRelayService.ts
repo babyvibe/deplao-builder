@@ -4,15 +4,59 @@ import * as path from 'path';
 import * as fs from 'fs';
 import Logger from '../../utils/Logger';
 import EmployeeService from '../employee/EmployeeService';
+import { checkEmployeeAccess, isEmployeeSettingKey } from './employeeAccess';
+import { RestReadCache, parseRestQueryParams, restCacheKey } from './employeeRestRead';
 import DatabaseService from '../database/DatabaseService';
 import EventBroadcaster from '../event/EventBroadcaster';
 import ConnectionManager from '../../utils/ConnectionManager';
-import TunnelService, { TunnelOptions, TunnelProvider } from '../tunnel/TunnelService';
+import TunnelService, { TunnelOptions, TunnelProvider, type TunnelChangeInfo } from '../tunnel/TunnelService';
+import {
+    BOSS_URL_CHANGED_EVENT,
+    TUNNEL_SWITCH_GRACE_MS,
+    type BossUrlChangedEvent,
+    type BossUrlChangeReason,
+    type RelayTunnelState,
+    type RelayTunnelStatus,
+} from '../../shared/tunnelAddress';
+import { normalizeBossUrl } from '../../shared/employeeConnection';
 import SocketIOService from '../socket/SocketIOService';
+import { canReceiveRelayEvent, classifyRelayEvent } from '../socket/relayAudience';
+import { RELAY_CHANNELS } from '../socket/relayChannels';
 import { handlers as restHandlers } from './handlers/RestApiHandlers';
 import { handleMediaRequest as handleMediaFileServe } from './handlers/MediaHandler';
 import { libraryHandlers } from './handlers/LibraryHandler';
+import {
+    ERP_REST_COMMAND_PREFIX, erpRestHttpStatus, erpTaskAttachmentHolder, matchErpRestRoute,
+} from './handlers/ErpRestRoutes';
 import FileStorageService from '../file/FileStorageService';
+import { toSafeFileName } from '../file/safeFileName';
+import {
+    COALESCED_POLL_CHANNELS, SPECIAL_PROXY_CHANNELS, checkProxyChannel, checkProxyFilePaths, employeeSendInfo,
+    proxyChannelModules, resolveAccountChannelProxy, resolveProxyAccount, shouldSkipCoalescedPoll,
+    type ProxyPathContext, type RecentPoll,
+} from './proxyActionPolicy';
+import { isAccountChannelProxy } from './employeeChannelRoutes';
+import {
+    checkRestCommand, commandPathParams, defaultCommandAccount, positiveInt, workflowPageIds, workflowPagesAllowed,
+} from './restCommandPolicy';
+import { canAccessLibraryOwner, checkMediaAccess, classifyMediaPath } from './bossFileAccess';
+import ApiPlatform from '../api/ApiPlatform';
+import { getApiSettingBool } from '../api/settings';
+
+/**
+ * Cloudflare tự động (src/services/cloudflare/tunnel): chế độ 'cloudflare_auto' → tunnel của relay là dịch vụ 'relay'
+ * của tiến trình cloudflared dùng chung (địa chỉ cố định). Nạp lười — chế độ khác / lỗi nạp → null = chạy như cũ.
+ */
+type CloudTunnelApi = typeof import('../cloudflare/tunnel');
+
+function cloudTunnelIfAuto(): CloudTunnelApi | null {
+    try {
+        const mod: CloudTunnelApi = require('../cloudflare/tunnel');
+        return mod.isCloudTunnelAuto() ? mod : null;
+    } catch {
+        return null;
+    }
+}
 
 interface RegisteredEmployee {
     employee_id: string;
@@ -50,6 +94,9 @@ interface EmployeeSnapshot {
         phone: string;
         is_business: number;
         is_active: number;
+        /** zalo | facebook | telegram_user | telegram_bot */
+        channel: string;
+        /** 1 = phiên đang chạy trên Boss (theo kênh — isAccountSessionOnline) */
         listener_active: number;
     }>;
     onlineAccounts: string[];
@@ -62,6 +109,15 @@ interface EmployeeSnapshot {
  *
  * Replaces SocketRelayService - no persistent WebSocket connections.
  */
+/** Đường dẫn chưa có file: "a.png" → "a (1).png" → "a (2).png"… (không ghi đè file người khác vừa upload). */
+function uniqueFilePath(dir: string, name: string): string {
+    const ext = path.extname(name);
+    const base = name.slice(0, name.length - ext.length);
+    let candidate = path.join(dir, name);
+    for (let i = 1; fs.existsSync(candidate) && i < 1000; i++) candidate = path.join(dir, `${base} (${i})${ext}`);
+    return candidate;
+}
+
 class HttpRelayService {
     private static instance: HttpRelayService;
     private httpServer: http.Server | null = null;
@@ -71,11 +127,11 @@ class HttpRelayService {
     private pinnedDbPath: string | null = null;
     private offlineCheckTimer: ReturnType<typeof setInterval> | null = null;
 
-    /** REST API response cache: key → { data, ts }.
-     *  Prevents redundant DB queries on every message (labels, flags, pins, etc.),
-     *  which block the main thread via synchronous better-sqlite3 and delay SSE writes. */
-    private restApiCache = new Map<string, { data: any; ts: number }>();
+    /** REST API response cache (labels, flags, pins…): nhân viên gọi lại sau MỖI tin nhắn — tránh chặn main thread
+     *  (better-sqlite3 đồng bộ). Entry chỉ dùng được khi DB chưa đổi kể từ lúc lưu (restCacheToken) và còn trong TTL;
+     *  chỉ lưu kết quả thành công. Xem RestReadCache (employeeRestRead.ts). */
     private static REST_CACHE_TTL_MS = 1500; // 1.5s cache for frequent read-only queries
+    private restApiCache = new RestReadCache(HttpRelayService.REST_CACHE_TTL_MS);
 
     /** SSE clients: employeeId → ServerResponse (persistent event stream) */
     private sseClients = new Map<string, http.ServerResponse>();
@@ -89,6 +145,8 @@ class HttpRelayService {
      * queued here and flushed the next time the employee's SSE stream reconnects.
      */
     private sseEventQueue = new Map<string, Array<{ channel: string; data: any; ts: number }>>();
+    /** Lệnh poll gần nhất theo kênh + tài khoản + hội thoại (gộp poll reaction Telegram của nhiều nhân viên). */
+    private recentPolls = new Map<string, RecentPoll>();
     private static SSE_QUEUE_TTL_MS = 600_000; // 10-minute TTL (was 2 min - WAN reconnect can take longer)
     private static SSE_QUEUE_MAX = 500;        // max queued events per employee (was 300)
 
@@ -97,6 +155,20 @@ class HttpRelayService {
     private tunnelUrl: string | null = null;
     /** Lưu tunnel cần restart khi relay start lại (sau workspace switch) */
     private tunnelPendingRestart = false;
+    /** TunnelService.watch() của cổng relay (đăng ký 1 lần / cổng). */
+    private tunnelWatchOff: (() => void) | null = null;
+    private tunnelWatchPort: number | null = null;
+    /** Lần đổi địa chỉ WAN gần nhất (so với địa chỉ lần chạy trước, lưu ở relay_tunnel_last_url). */
+    private tunnelUrlChange: BossUrlChangedEvent | null = null;
+    /** Lần bật tunnel gần nhất là tự bật (mở app / relay chạy lại), không phải BOSS bấm. */
+    private tunnelAutoStarted = false;
+    /** Cloudflare tự động: huỷ nghe thay đổi, đang ở chế độ đó, địa chỉ relay đã ghi nhận, hẹn tắt tunnel kiểu cũ. */
+    private cloudTunnelOff: (() => void) | null = null;
+    private cloudTunnelMode = false;
+    private cloudRelayUrl: string | null = null;
+    private legacyTunnelRetireTimer: ReturnType<typeof setTimeout> | null = null;
+    private static TUNNEL_LAST_URL_KEY = 'relay_tunnel_last_url';
+    private static TUNNEL_AUTOSTART_KEY = 'relay_tunnel_autostart';
 
     /** powerSaveBlocker id — chặn Mac/OS ngủ khi relay đang phục vụ nhân viên */
     private powerSaveId: number | null = null;
@@ -191,77 +263,11 @@ class HttpRelayService {
     /** Push timeout for event delivery */
     private static PUSH_TIMEOUT_MS = 3000;
 
-    /** Channels to relay from EventBroadcaster → employees */
-    private static RELAY_CHANNELS = [
-        'event:message',
-        'event:reaction',
-        'event:groupEvent',
-        'event:groupInfoUpdate',
-        'event:pollVote',
-        'event:pinsUpdated',
-        'event:connected',
-        'event:disconnected',
-        'event:friendRequest',
-        'event:friendAccepted',
-        'event:typing',
-        'event:seen',
-        'event:undo',
-        'event:delete',
-        'event:reminder',
-        'event:localPath',
-        'event:listenerDead',
-        // ─── ERP module events (Phase 1 MVP) ───────────────────────
-        'erp:event:projectCreated',
-        'erp:event:projectUpdated',
-        'erp:event:projectDeleted',
-        'erp:event:taskCreated',
-        'erp:event:taskUpdated',
-        'erp:event:taskDeleted',
-        'erp:event:commentAdded',
-        'erp:event:calendarEventCreated',
-        'erp:event:calendarEventUpdated',
-        'erp:event:calendarEventDeleted',
-        'erp:event:reminder',
-        'erp:event:noteCreated',
-        'erp:event:noteUpdated',
-        'erp:event:noteDeleted',
-        'erp:event:notification',
-        // ─── ERP Phase 2 events ────────────────────────────────────
-        'erp:event:leaveCreated',
-        'erp:event:leaveDecided',
-        'erp:event:attendanceUpdated',
-        'erp:event:noteShared',
-        'erp:event:departmentUpdated',
-        'erp:event:employeeProfileUpdated',
-        // ─── ERP Phase 2 missing events ──────────────────────────────────
-        'erp:event:employeeProfileDeleted',
-        // ─── CRM / Settings real-time sync ────────────────────────────
-        'db:localLabelChanged',
-        'db:localLabelThreadChanged',
-        'db:pinnedMessageChanged',
-        'db:localQuickMessageChanged',
-        'crm:campaignChanged',
-        'crm:noteChanged',
-        'db:pinnedConversationChanged',
-        'db:contactFlagsChanged',
-        'db:contactAliasChanged',
-        'db:unreadChanged',
-        'db:conversationDeleted',
-        'db:contactProfileUpdated',
-        'crm:tagChanged',
-        'event:friendRequestSent',
-        // ─── Library events ────────────────────────────────────────────
-        'library:itemAdded',
-        'library:itemUpdated',
-        'library:itemDeleted',
-        'event:friendRequestRemoved',
-        'crm:queueUpdate',
-        'crm:queueStatus',
-        'crm:campaignDone',
-        'workflow:executed',
-        'integration:payment',
-        'integration:webhook',
-    ];
+    /**
+     * Channels to relay from EventBroadcaster → employees — một nguồn với phía nhân viên (relayChannels.ts:
+     * nhân viên chuyển tiếp đúng các kênh này; kênh không relay phải nằm trong BOSS_ONLY_CHANNELS kèm lý do).
+     */
+    private static RELAY_CHANNELS: readonly string[] = RELAY_CHANNELS;
 
     public static getInstance(): HttpRelayService {
         if (!HttpRelayService.instance) {
@@ -287,8 +293,11 @@ class HttpRelayService {
             if (!emp) return null;
 
             const assignedAccounts = emp.assigned_accounts || [];
-            const onlineAccounts = assignedAccounts.filter((zaloId) => ConnectionManager.isConnected(zaloId));
             const allAccounts = db.getAccounts();
+            // Trạng thái phiên theo kênh (Facebook / Telegram không nằm trong ConnectionManager của Zalo)
+            const channelOf = new Map<string, string>(
+                allAccounts.map((a: any): [string, string] => [String(a.zalo_id), String(a.channel || 'zalo')]));
+            const onlineAccounts = assignedAccounts.filter((zaloId) => this.isAccountSessionOnline(zaloId, channelOf.get(zaloId)));
             let profile = db.queryOne<{ erp_role?: string; extra_json?: string }>(
                 `SELECT erp_role, extra_json FROM erp_employee_profiles WHERE employee_id = ?`,
                 [employeeId],
@@ -333,7 +342,11 @@ class HttpRelayService {
                     phone: a.phone || '',
                     is_business: a.is_business || 0,
                     is_active: a.is_active,
-                    listener_active: ConnectionManager.isConnected(a.zalo_id) ? 1 : 0,
+                    // Kênh: máy nhân viên cần để gọi đúng adapter (thiếu → tài khoản Facebook / Telegram bị coi là Zalo)
+                    channel: (a as any).channel || 'zalo',
+                    // Zalo My Documents (hội thoại có sẵn của Zalo) → máy nhân viên ghim đúng hội thoại
+                    send2me_id: db.resolveMyDocumentsId(a),
+                    listener_active: onlineAccounts.includes(a.zalo_id) ? 1 : 0,
                 }));
 
             return {
@@ -364,31 +377,47 @@ class HttpRelayService {
             this.httpServer = http.createServer((req, res) => this.handleHttpRequest(req, res));
 
             // Attach Socket.IO vào cùng HTTP server (path /socket.io)
-            // Employee dùng WebSocket thay SSE cho real-time event
-            SocketIOService.getInstance().attach(this.httpServer);
+            // Employee dùng WebSocket thay SSE cho real-time event. Realtime + catch-up lọc theo cùng
+            // assigned_accounts với kiểm tra quyền REST (updateEmployeeRooms giữ đồng bộ).
+            SocketIOService.getInstance().attach(this.httpServer, {
+                resolveAssignedAccounts: (employeeId) => this.employees.get(employeeId)?.assigned_accounts,
+            });
+            // Public API v1: namespace Socket.IO /v1 cho app ngoài & plugin (tách khỏi nhân viên).
+            ApiPlatform.getInstance().attachSocket(SocketIOService.getInstance().getServer());
 
             this.hookEventBroadcaster();
             this.startOfflineCheck();
 
+            // Tuỳ chọn ở Công cụ → Ứng dụng, API & Webhook → API: chỉ lắng nghe 127.0.0.1 (máy không có nhân viên LAN).
+            let bindLocalOnly = false;
+            try { bindLocalOnly = getApiSettingBool('api_bind_localhost_only'); } catch { bindLocalOnly = false; }
+
             return new Promise((resolve) => {
-                this.httpServer!.listen(this.port, () => {
+                const onListening = () => {
                     this.running = true;
                     this.startPowerSaveBlocker();
                     Logger.log(`[HttpRelayService] ✅ Server started on port ${this.port}`);
-                    // Auto-restart tunnel nếu trước đó tunnel đang chạy
-                    if (this.tunnelPendingRestart) {
-                        this.tunnelPendingRestart = false;
-                        TunnelService.start(this.port).then((url) => {
-                            this.tunnelActive = true;
-                            this.tunnelUrl = url;
-                            Logger.log(`[HttpRelayService] 🔁 Tunnel auto-restarted: ${url}`);
-                            this.broadcastEmployeeList();
-                        }).catch((err) => {
-                            Logger.warn(`[HttpRelayService] Tunnel auto-restart failed: ${err.message}`);
+                    // Cloudflare tự động: nghe địa chỉ của tunnel dùng chung và ghi nhận địa chỉ hiện tại (chế độ khác: không làm gì)
+                    this.ensureCloudTunnelWatcher();
+                    this.onCloudTunnelChange();
+                    // Bật lại tunnel: đang chạy trước khi relay dừng (đổi workspace) hoặc bật "Tự bật tunnel khi mở app".
+                    // Dùng đúng cấu hình đã lưu (Quick / Cloudflare có tài khoản / ngrok); lỗi (chưa có mạng) → tự thử lại.
+                    const restoreTunnel = this.tunnelPendingRestart || this.isTunnelAutoStart();
+                    this.tunnelPendingRestart = false;
+                    if (restoreTunnel) {
+                        void this.startTunnel({ auto: true }).then((res) => {
+                            if (res.success) {
+                                Logger.log(`[HttpRelayService] 🔁 Tunnel auto-started: ${res.tunnelUrl}`);
+                                this.broadcastEmployeeList();
+                            } else {
+                                Logger.warn(`[HttpRelayService] Tunnel auto-start failed: ${res.error} — TunnelService tự thử lại`);
+                            }
                         });
                     }
                     resolve({ success: true, port: this.port });
-                });
+                };
+                if (bindLocalOnly) this.httpServer!.listen(this.port, '127.0.0.1', onListening);
+                else this.httpServer!.listen(this.port, onListening);
                 this.httpServer!.on('error', (err: any) => {
                     Logger.error(`[HttpRelayService] ❌ Server error: ${err.message}`);
                     resolve({ success: false, error: err.message });
@@ -408,6 +437,7 @@ class HttpRelayService {
             }
             this.stopOfflineCheck();
             // Stop Socket.IO
+            ApiPlatform.getInstance().detachSocket();
             SocketIOService.getInstance().stop();
             // Close all SSE streams
             for (const [empId, res] of this.sseClients) {
@@ -418,8 +448,8 @@ class HttpRelayService {
             this.sseClients.clear();
             this.sseKeepaliveTimers.clear();
             this.sseLastWriteOk.clear();
-            // Stop tunnel if active — nhưng nhớ để restart sau
-            if (this.tunnelActive) {
+            // Stop tunnel if active (kể cả đang tự chạy lại) — nhưng nhớ để restart sau
+            if (this.tunnelActive || TunnelService.getState(this.port)) {
                 this.tunnelPendingRestart = true;
                 TunnelService.stop(this.port).catch(() => {});
                 this.tunnelActive = false;
@@ -449,6 +479,7 @@ class HttpRelayService {
         localIPs: string[];
         tunnelActive: boolean;
         tunnelUrl: string | null;
+        tunnel: RelayTunnelStatus;
     } {
         const employees = Array.from(this.employees.values()).map(e => ({
             employee_id: e.employee_id,
@@ -458,44 +489,124 @@ class HttpRelayService {
             connected_at: e.connected_at,
             sseConnected: this.sseClients.has(e.employee_id),
         }));
+        const tunnel = this.getTunnelStatus();
+        // Cloudflare tự động: địa chỉ từ tunnel dùng chung (tunnelActive/tunnelUrl riêng chỉ theo tunnel kiểu cũ)
+        const cloudMode = !!cloudTunnelIfAuto();
         return {
             running: this.running,
             port: this.port,
             connectedEmployees: employees,
             localIPs: this.getLocalIPs(),
-            tunnelActive: this.tunnelActive,
-            tunnelUrl: this.tunnelUrl,
+            tunnelActive: cloudMode ? tunnel.active : this.tunnelActive,
+            tunnelUrl: cloudMode ? tunnel.tunnelUrl : this.tunnelUrl,
+            tunnel,
         };
     }
 
+    public isRunning(): boolean {
+        return this.running;
+    }
+
+    /** Quản lý ngắt một nhân viên (UI / API v1): kết thúc hẳn phiên — token cũ hết hiệu lực, phải đăng nhập lại. */
     public kickEmployee(employeeId: string): void {
-        const emp = this.employees.get(employeeId);
-        if (emp) {
-            // Notify employee they've been kicked (via SSE first, then callbackUrl)
-            if (!this.pushViaSSE(employeeId, 'relay:kicked', { reason: 'Bị ngắt kết nối bởi quản lý' })) {
-                this.pushToEmployee(emp, 'relay:kicked', { reason: 'Bị ngắt kết nối bởi quản lý' }).catch(() => {});
+        this.terminateEmployeeSession(employeeId, 'Bị ngắt kết nối bởi quản lý');
+    }
+
+    /**
+     * Kết thúc hẳn phiên của một nhân viên — kick, khoá / xoá / đổi mật khẩu (employeeIpc gọi sau khi sửa / xoá):
+     * báo 'relay:kicked' kèm lý do → thu hồi token (REST / heartbeat 401, bắt tay Socket.IO bị từ chối) → ngắt socket sau
+     * ~1 s (kịp gửi thông báo) → bỏ đăng ký. Trước đây chỉ bỏ đăng ký: token còn hạn nên request kế tiếp tự đăng ký lại,
+     * socket vẫn mở. Relay không chạy → không có phiên nào để ngắt, chỉ thu hồi token.
+     */
+    public terminateEmployeeSession(employeeId: string, reason: string): void {
+        if (!employeeId) return;
+        if (this.running) {
+            const emp = this.employees.get(employeeId);
+            if (emp) {
+                this.pushControlToEmployee(emp, 'relay:kicked', { reason });
+            } else {
+                // Socket còn nối nhưng chưa đăng ký lại (vd ngay sau khi Boss khởi động lại)
+                try {
+                    const sio = SocketIOService.getInstance();
+                    if (sio.isOnline(employeeId)) sio.emitToEmployee(employeeId, 'relay:kicked', { reason });
+                } catch { /* socket server chưa chạy */ }
             }
-            // Close SSE stream
-            const sseRes = this.sseClients.get(employeeId);
-            if (sseRes) { try { sseRes.end(); } catch {} this.sseClients.delete(employeeId); }
-            const kt = this.sseKeepaliveTimers.get(employeeId);
-            if (kt) { clearInterval(kt); this.sseKeepaliveTimers.delete(employeeId); }
-            this.sseLastWriteOk.delete(employeeId);
-            this.employees.delete(employeeId);
-            this.sseEventQueue.delete(employeeId); // clear any pending queue
-            // End session in DB for online time tracking
-            try { this.runOnPinnedDb((db) => db.endEmployeeSession(employeeId)); } catch {}
-            Logger.log(`[HttpRelayService] Kicked employee: ${emp.display_name}`);
-            this.broadcastEmployeeList();
         }
+        EmployeeService.getInstance().revokeEmployeeTokens(employeeId);
+        if (this.running) {
+            try { SocketIOService.getInstance().disconnectEmployee(employeeId); } catch { /* socket server chưa chạy */ }
+        }
+        this.unregisterEmployee(employeeId, reason);
+    }
+
+    /**
+     * "Đăng xuất tất cả nhân viên": đổi khoá ký (mọi token cũ sai chữ ký — đổi trước, lỗi thì chưa đụng ai) → báo
+     * 'relay:kicked' cho mọi nhân viên đang nối → ngắt mọi socket nhân viên sau ~1 s → bỏ mọi đăng ký.
+     */
+    public logoutAllEmployees(reason = 'Quản lý đã đăng xuất tất cả nhân viên'): { success: boolean; notified: number; error?: string } {
+        const rotated = EmployeeService.getInstance().rotateJwtSecret();
+        if (!rotated.success) return { success: false, notified: 0, error: rotated.error || 'Không đổi được khoá ký' };
+        const notified = new Set<string>();
+        if (this.running) {
+            for (const emp of this.employees.values()) {
+                this.pushControlToEmployee(emp, 'relay:kicked', { reason });
+                notified.add(emp.employee_id);
+            }
+            try {
+                const sio = SocketIOService.getInstance();
+                for (const employeeId of sio.getOnlineEmployeeIds()) {
+                    if (notified.has(employeeId)) continue;
+                    sio.emitToEmployee(employeeId, 'relay:kicked', { reason });
+                    notified.add(employeeId);
+                }
+                sio.disconnectAllEmployees();
+            } catch { /* socket server chưa chạy */ }
+        }
+        // Mọi đăng ký + mọi luồng SSE (kể cả SSE của nhân viên không còn trong danh sách đăng ký)
+        const everyone = new Set<string>([...this.employees.keys(), ...this.sseClients.keys()]);
+        for (const employeeId of everyone) this.unregisterEmployee(employeeId, reason);
+        Logger.warn(`[HttpRelayService] 🔐 Đã đăng xuất tất cả nhân viên (${notified.size} nhân viên đang nối được báo)`);
+        return { success: true, notified: notified.size };
+    }
+
+    /** Bỏ đăng ký một nhân viên: đóng SSE, xoá hàng đợi, kết thúc phiên online trong DB, cập nhật danh sách. */
+    private unregisterEmployee(employeeId: string, why: string): void {
+        const sseRes = this.sseClients.get(employeeId);
+        if (sseRes) { try { sseRes.end(); } catch {} this.sseClients.delete(employeeId); }
+        const kt = this.sseKeepaliveTimers.get(employeeId);
+        if (kt) { clearInterval(kt); this.sseKeepaliveTimers.delete(employeeId); }
+        this.sseLastWriteOk.delete(employeeId);
+        this.sseEventQueue.delete(employeeId); // clear any pending queue
+        const emp = this.employees.get(employeeId);
+        if (!emp) return;
+        this.employees.delete(employeeId);
+        // End session in DB for online time tracking
+        try { this.runOnPinnedDb((db) => db.endEmployeeSession(employeeId)); } catch {}
+        Logger.log(`[HttpRelayService] Ended session of ${emp.display_name}: ${why}`);
+        this.broadcastEmployeeList();
     }
 
     // ─── HTTP Router ──────────────────────────────────────────────────
 
     private handleHttpRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
+        // readBody cần res để trả 413 khi body vượt giới hạn.
+        (req as any).__relayRes = res;
+        // ── Public API v1 + /docs (ApiPlatform) — xử lý riêng, không đụng route nhân viên ──
+        if (ApiPlatform.getInstance().handles(req.url || '')) {
+            ApiPlatform.getInstance().handle(req, res).catch((err: any) => {
+                Logger.error(`[HttpRelayService] API v1 error: ${err?.message || err}`);
+                if (!res.headersSent) {
+                    res.writeHead(500, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Lỗi không mong đợi' } }));
+                }
+            });
+            return;
+        }
+
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS, PATCH, PUT, DELETE');
-        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, ngrok-skip-browser-warning, Bypass-Tunnel-Reminder, X-Zalo-Id, X-Filename');
+        res.setHeader('Access-Control-Max-Age', '600');
 
         if (req.method === 'OPTIONS') {
             res.writeHead(204);
@@ -556,6 +667,13 @@ class HttpRelayService {
         if (req.method === 'POST' && url.startsWith('/api/command/')) {
             return this.handleRestApi(req, res);
         }
+        // Truy vấn đọc dùng POST vì danh sách id dài (sticker theo id; liên hệ CRM lọc theo nhãn Zalo)
+        if (req.method === 'POST' && url.startsWith('/api/query/stickers/by-ids')) {
+            return this.handleRestApi(req, res);
+        }
+        if (req.method === 'POST' && url.startsWith('/api/query/crm/contacts')) {
+            return this.handleRestApi(req, res);
+        }
         if ((req.method === 'PUT' || req.method === 'PATCH' || req.method === 'DELETE')
             && url.startsWith('/api/command/')) {
             return this.handleRestApi(req, res);
@@ -564,6 +682,10 @@ class HttpRelayService {
             return this.handleRestApi(req, res);
         }
         if (req.method === 'POST' && url.startsWith('/api/library/')) {
+            return this.handleRestApi(req, res);
+        }
+        // Sửa / xoá item, đổi tên / xoá thư mục thư viện (DataAccessor dùng PATCH / DELETE) — trước đây router trả 404
+        if ((req.method === 'PATCH' || req.method === 'DELETE') && url.startsWith('/api/library/')) {
             return this.handleRestApi(req, res);
         }
 
@@ -639,7 +761,7 @@ class HttpRelayService {
                 Logger.error(`[HttpRelayService] Login error: ${err.message}`);
                 this.json(res, 400, { success: false, error: 'Request không hợp lệ' });
             }
-        });
+        }, HttpRelayService.SMALL_BODY_BYTES);
     }
 
     private handleHeartbeat(req: http.IncomingMessage, res: http.ServerResponse): void {
@@ -664,7 +786,7 @@ class HttpRelayService {
             } catch (err: any) {
                 this.json(res, 400, { success: false, error: err.message });
             }
-        });
+        }, HttpRelayService.SMALL_BODY_BYTES);
     }
 
     // ─── Proxy action handler ─────────────────────────────────────────
@@ -694,21 +816,70 @@ class HttpRelayService {
     }
 
     private async executeProxyAction(employee: RegisteredEmployee, channel: string, params: any): Promise<any> {
-        let zaloId = params?.zaloId || params?.zalo_id || '';
-
-        if (!zaloId && employee.assigned_accounts.length > 0) {
-            zaloId = employee.assigned_accounts[0];
+        // ── Tài khoản thực hiện (proxyActionPolicy.resolveProxyAccount): id ghi rõ (params hoặc auth.accountId/zaloId)
+        // phải được giao; kênh chạy bằng phiên tài khoản (registry Zalo, login:connect) mà không ghi rõ → chỉ đoán khi
+        // không mơ hồ (một tài khoản được giao / hội thoại thuộc đúng một tài khoản). Trước đây thiếu zaloId → tài khoản
+        // được giao ĐẦU TIÊN: gửi tin / cảm xúc / đã đọc từ tài khoản B chạy bằng tài khoản A.
+        const { ipcHandlerRegistry: zaloRegistry } = require('../../../electron/ipc/zaloIpc');
+        const isRegistryChannel = !!zaloRegistry?.has(channel);
+        // Facebook / Telegram cá nhân (employeeChannelRoutes, nhóm "proxy"): tài khoản = params.accountId, BẮT BUỘC và phải
+        // được giao (Facebook: id nội bộ fb_accounts.id → accounts.zalo_id trước khi so). Trước đây kênh fb: / telegramUser:
+        // không qua kiểm tra tài khoản nào (resolveProxyAccount bỏ qua accountId ở cấp params).
+        const isAccountChannel = isAccountChannelProxy(channel);
+        const accountDecision = isAccountChannel
+            ? resolveAccountChannelProxy(params, employee.assigned_accounts, (id) => this.canonicalProxyAccountId(channel, id))
+            : resolveProxyAccount(params, employee.assigned_accounts, {
+                required: isRegistryChannel || SPECIAL_PROXY_CHANNELS.has(channel),
+                ownersOfThreads: (threadIds, candidates) => this.lookupThreadOwners(threadIds, candidates),
+            });
+        if (accountDecision.allowed === false) {
+            Logger.warn(`[HttpRelayService] 🚫 proxy ${channel} employee=${employee.employee_id}: ${accountDecision.code}`);
+            return { success: false, error: accountDecision.error, code: accountDecision.code };
+        }
+        const zaloId = accountDecision.accountId;
+        if (accountDecision.source === 'thread') {
+            Logger.log(`[HttpRelayService] proxy ${channel}: tài khoản ${zaloId} suy ra từ hội thoại (UI chưa gửi id tài khoản)`);
         }
 
-        if (zaloId && !employee.assigned_accounts.includes(zaloId)) {
-            return { success: false, error: 'Không có quyền truy cập tài khoản này' };
-        }
-
-        // Check permission
+        // Check permission — cần MỘT trong các module của kênh (proxyActionPolicy.proxyChannelModules: zalo/fb/telegramUser →
+        // chat, quét dữ liệu Facebook → crm, kết bạn / danh bạ → friends hoặc chat…)
         const empSvc = EmployeeService.getInstance();
-        const module = this.channelToModule(channel);
-        if (module && !empSvc.hasPermission(employee.employee_id, module)) {
-            return { success: false, error: `Không có quyền truy cập module: ${module}` };
+        const modules = proxyChannelModules(channel);
+        if (modules.length > 0 && !modules.some((m) => empSvc.hasPermission(employee.employee_id, m))) {
+            return { success: false, error: `Không có quyền truy cập module: ${modules.join(' / ')}`, code: 'MODULE_FORBIDDEN' };
+        }
+
+        // ── Kênh + file (proxyActionPolicy.ts). Trước đây fallback `_invokeHandlers` gọi được MỌI handler ipcMain
+        // (employee:update, relay:*, cài đặt, plugin, API key…) và handler gửi file nhận đường dẫn tuỳ ý trên máy Boss
+        // (gửi được cả file DB chứa cookie mọi tài khoản vào một cuộc trò chuyện).
+        const channelDecision = checkProxyChannel(channel, (c) => !!zaloRegistry?.has(c));
+        if (channelDecision.allowed === false) {
+            Logger.warn(`[HttpRelayService] 🚫 proxy ${channel} employee=${employee.employee_id}: ${channelDecision.code}`);
+            return { success: false, error: channelDecision.error, code: channelDecision.code };
+        }
+        const pathDecision = checkProxyFilePaths(params, this.proxyFilePathContext(employee));
+        if (pathDecision.allowed === false) {
+            Logger.warn(`[HttpRelayService] 🚫 proxy ${channel} employee=${employee.employee_id}: ${pathDecision.code} ${pathDecision.path}`);
+            return { success: false, error: pathDecision.error, code: pathDecision.code };
+        }
+        params = pathDecision.params;
+        const libraryDenied = this.checkProxyLibraryItems(employee, params);
+        if (libraryDenied) {
+            Logger.warn(`[HttpRelayService] 🚫 proxy ${channel} employee=${employee.employee_id}: thư viện ${libraryDenied}`);
+            return { success: false, error: 'Không có quyền dùng file thư viện này', code: 'ACCOUNT_FORBIDDEN' };
+        }
+        // Lệnh chỉ mang id bản ghi (chiến dịch, tin nhắn nhanh…): bản ghi phải thuộc tài khoản được giao
+        const ownerDenied = this.checkProxyRecordOwner(employee, channel, params);
+        if (ownerDenied) {
+            Logger.warn(`[HttpRelayService] 🚫 proxy ${channel} employee=${employee.employee_id}: ${ownerDenied}`);
+            return { success: false, error: ownerDenied, code: 'ACCOUNT_FORBIDDEN' };
+        }
+        // Kênh registry Zalo chạy bằng phiên của tài khoản → tài khoản phải có phiên (connection) trên Boss. Không có thì
+        // wrap() / resolveZaloId không khớp được cookie và rơi vào "kết nối duy nhất" → thao tác bằng tài khoản KHÁC.
+        // (Phiên đang kết nối lại — connected=false nhưng còn connection — vẫn cho chạy như trên máy Boss.)
+        if (isRegistryChannel && zaloId && !ConnectionManager.getConnection(zaloId)) {
+            Logger.warn(`[HttpRelayService] proxy ${channel}: tài khoản ${zaloId} chưa đăng nhập trên Boss`);
+            return { success: false, error: 'Tài khoản chưa đăng nhập trên Boss', code: 'ACCOUNT_OFFLINE' };
         }
 
         try {
@@ -718,7 +889,11 @@ class HttpRelayService {
                 if (realAuth) {
                     params = { ...params, auth: realAuth, _fromRelay: true };
                 } else if (zaloId) {
+                    // Không có phiên / cookie của tài khoản trên Boss: KHÔNG chuyển auth của nhân viên xuống handler — wrap()
+                    // sẽ đoán tài khoản (kết nối duy nhất / auth.zaloId) và có thể chạy bằng tài khoản khác.
                     Logger.warn(`[HttpRelayService] Proxy: could not resolve real auth for zaloId=${zaloId}, channel=${channel}`);
+                    return { success: false, error: 'Tài khoản chưa đăng nhập trên Boss', code: 'ACCOUNT_OFFLINE' };
+                } else {
                     params = { ...params, _fromRelay: true };
                 }
             } else {
@@ -752,9 +927,11 @@ class HttpRelayService {
                 }
             }
 
-            // Use handler registry
+            // Use handler registry. Facebook / Telegram cá nhân (tài khoản đã kiểm tra ở trên): ĐÚNG handler ipcMain của Boss
+            // (cùng chuẩn hoá / lưu DB / phát event như UI Boss), đi chung nhánh với registry Zalo để ghi "nhân viên nào đã gửi".
             const { ipcHandlerRegistry } = require('../../../electron/ipc/zaloIpc');
-            const handler = ipcHandlerRegistry?.get(channel);
+            const handler = ipcHandlerRegistry?.get(channel)
+                ?? (isAccountChannel ? (require('electron').ipcMain as any)?._invokeHandlers?.get(channel) : undefined);
 
             // ── Special: sendVideo from library → do full 3-step upload chain ──
             if (channel === 'zalo:sendVideo' && params._libraryUuid) {
@@ -773,7 +950,7 @@ class HttpRelayService {
                     }
 
                     const videoPath = libItem.file_path;
-                    const zaloId = params.zaloId || employee.assigned_accounts[0] || '';
+                    // zaloId = tài khoản đã xác định ở đầu hàm (không lấy tài khoản được giao đầu tiên)
 
                     // Step 1: Extract video metadata & thumbnail
                     const { execSync } = require('child_process');
@@ -934,24 +1111,35 @@ class HttpRelayService {
                         Logger.error(`[HttpRelayService] Library UUIDs array resolve error: ${err.message}`);
                     }
                 }
+                // Poll reaction Telegram trùng (nhiều nhân viên mở cùng nhóm) → không hỏi Telegram lần nữa trong 15 s:
+                // lần hỏi trước đã ghi DB + phát sự kiện cho mọi người (proxyActionPolicy.shouldSkipCoalescedPoll)
+                if (COALESCED_POLL_CHANNELS.has(channel)) {
+                    const pollKey = `${channel}|${params.accountId || ''}|${params.chatId || ''}`;
+                    const pollIds: string[] = Array.isArray(params.messageIds) ? params.messageIds.map(String) : [];
+                    const now = Date.now();
+                    if (shouldSkipCoalescedPoll(this.recentPolls.get(pollKey), pollIds, now)) {
+                        return { success: true, applied: 0, coalesced: true };
+                    }
+                    if (this.recentPolls.size > 500) this.recentPolls.clear();
+                    this.recentPolls.set(pollKey, { at: now, ids: new Set(pollIds) });
+                }
                 Logger.log(`[HttpRelayService] 🔄 Calling handler ${channel}: filePath=${params.filePath?.substring?.(0, 50) || '(empty)'}, filePathType=${typeof params.filePath}`);
                 const result = await handler(null, params);
+                this.restApiCache.clear();
 
-                // Log send actions + broadcast sender info to all workspaces
-                if ((channel.includes('send') || channel.includes('Send')) && !channel.includes('Seen') && !channel.includes('seen') && !channel.includes('Typing') && !channel.includes('typing')) {
-                    const rawMsgId = result?.response?.msgId
-                        ?? result?.response?.message?.msgId
-                        ?? result?.response?.message?.data?.msgId
-                        ?? '';
-                    const msgId = String(rawMsgId);
-                    const threadId = params?.threadId || params?.thread_id || '';
-                    Logger.log(`[HttpRelayService] 📤 SEND result for employee=${employee.employee_id}: channel=${channel}, msgId="${msgId}", rawMsgId=${rawMsgId} (type=${typeof rawMsgId}), threadId="${threadId}", zaloId="${zaloId}", response=${JSON.stringify(result?.response || {}).slice(0, 500)}`);
+                // Log send actions + broadcast sender info to all workspaces. proxyActionPolicy.employeeSendInfo: Zalo theo tên
+                // kênh như cũ; Facebook / Telegram đúng các kênh gửi tin (kết quả { messageId }, hội thoại threadId / chatId);
+                // handler báo lỗi → không ghi "đã gửi" (trước đây tin gửi lỗi vẫn bị tính là nhân viên đã trả lời).
+                const sendInfo = employeeSendInfo(channel, params, result);
+                if (sendInfo) {
+                    const { msgId, threadId } = sendInfo;
+                    Logger.log(`[HttpRelayService] 📤 SEND result for employee=${employee.employee_id}: channel=${channel}, msgId="${msgId}", threadId="${threadId}", zaloId="${zaloId}", response=${JSON.stringify(result?.response ?? result ?? {}).slice(0, 500)}`);
 
                     this.runOnPinnedDb((db) => db.logEmployeeAction({
                         employee_id: employee.employee_id,
                         zalo_id: zaloId,
                         thread_id: threadId,
-                        thread_type: params?.threadType ?? params?.thread_type ?? 0,
+                        thread_type: sendInfo.threadType,
                         msg_id: msgId,
                         action: 'sent',
                         metadata: JSON.stringify({ channel, proxy: true }),
@@ -976,7 +1164,7 @@ class HttpRelayService {
                                             employee_id: employee.employee_id,
                                             zalo_id: zaloId,
                                             thread_id: threadId,
-                                            thread_type: params?.threadType ?? params?.thread_type ?? 0,
+                                            thread_type: sendInfo.threadType,
                                             msg_id: msgId,
                                             action: 'replied',
                                             metadata: JSON.stringify({ channel, response_time_ms: responseTimeMs }),
@@ -1034,7 +1222,7 @@ class HttpRelayService {
                         doFallbackUpdate(5000);
                     }
 
-                    // Broadcast sender info to ALL employees so they know who replied
+                    // Broadcast sender info to employees assigned to this account so they know who replied
                     if (msgId || threadId) {
                         const senderPayload = {
                             zaloId,
@@ -1045,8 +1233,19 @@ class HttpRelayService {
                             employee_avatar: employee.avatar_url || '',
                             channel,
                         };
-                        // Push to all connected employees
+                        // Push to connected employees được giao tài khoản này (cùng quy tắc với realtime Socket.IO).
+                        // Socket.IO: phát theo tài khoản + buffer cho catch-up. Nhân viên chưa nối Socket.IO (bản cũ) →
+                        // SSE / callback LAN / hàng đợi như trước. Trước đây chỉ có nhánh sau: nhân viên qua tunnel
+                        // (không SSE, không callback) bị xếp hàng mãi, không bao giờ thấy "ai đã trả lời".
+                        let sio: SocketIOService | null = null;
+                        try {
+                            sio = SocketIOService.getInstance();
+                            sio.publish('relay:messageSentByEmployee', senderPayload);
+                        } catch { /* rơi về SSE / callback */ }
+                        const senderAudience = classifyRelayEvent('relay:messageSentByEmployee', senderPayload);
                         for (const emp of this.employees.values()) {
+                            if (!canReceiveRelayEvent(senderAudience, emp.employee_id, emp.assigned_accounts)) continue;
+                            if (sio?.isOnline(emp.employee_id)) continue; // đã nhận qua Socket.IO ở trên
                             if (!this.pushViaSSE(emp.employee_id, 'relay:messageSentByEmployee', senderPayload)) {
                                 if (emp.callbackUrl) {
                                     this.pushToEmployee(emp, 'relay:messageSentByEmployee', senderPayload).catch(() => {});
@@ -1069,7 +1268,10 @@ class HttpRelayService {
             const { ipcMain } = require('electron');
             const internalHandlers: Map<string, Function> | undefined = (ipcMain as any)._invokeHandlers;
             if (internalHandlers && internalHandlers.has(channel)) {
-                return await internalHandlers.get(channel)!(null, params);
+                const ipcResult = await internalHandlers.get(channel)!(null, params);
+                // Vừa ghi DB Boss: bỏ cache GET (1.5 s) để lần đọc ngay sau (UI tải lại sau khi lưu) thấy dữ liệu mới
+                this.restApiCache.clear();
+                return ipcResult;
             }
 
             return { success: false, error: `No handler for channel: ${channel}` };
@@ -1077,6 +1279,88 @@ class HttpRelayService {
             Logger.error(`[HttpRelayService] Proxy error (${channel}): ${err.message}`);
             return { success: false, error: err.message };
         }
+    }
+
+    /**
+     * Trong `candidates` (tài khoản được giao), tài khoản nào có hội thoại / nhóm `threadIds` (bảng contacts của Boss).
+     * Dùng để đoán tài khoản cho lệnh proxy từ UI cũ không gửi id tài khoản (resolveProxyAccount).
+     */
+    private lookupThreadOwners(threadIds: string[], candidates: string[]): string[] {
+        const threads = threadIds.slice(0, 50);
+        if (threads.length === 0 || candidates.length === 0) return [];
+        const rows = this.runOnPinnedDb((db) => db.query<{ owner_zalo_id: string }>(
+            `SELECT DISTINCT owner_zalo_id FROM contacts WHERE contact_id IN (${threads.map(() => '?').join(',')})
+             AND owner_zalo_id IN (${candidates.map(() => '?').join(',')})`,
+            [...threads, ...candidates],
+        )) || [];
+        return rows.map((row) => String(row.owner_zalo_id));
+    }
+
+    /** Chủ (owner_zalo_id) của một chiến dịch CRM; null = không có chiến dịch này. */
+    private campaignOwner(campaignId: unknown): string | null {
+        const id = positiveInt(campaignId);
+        if (!id) return null;
+        const row = this.runOnPinnedDb((db) => db.queryOne<{ owner_zalo_id: string }>(
+            'SELECT owner_zalo_id FROM crm_campaigns WHERE id = ?', [id]));
+        return row?.owner_zalo_id ? String(row.owner_zalo_id) : null;
+    }
+
+    /** Chủ của một tin nhắn nhanh local; null = không có. */
+    private quickMessageOwner(id: unknown): string | null {
+        const qmId = positiveInt(id);
+        if (!qmId) return null;
+        const row = this.runOnPinnedDb((db) => db.queryOne<{ owner_zalo_id: string }>(
+            'SELECT owner_zalo_id FROM local_quick_messages WHERE id = ?', [qmId]));
+        return row?.owner_zalo_id ? String(row.owner_zalo_id) : null;
+    }
+
+    /**
+     * Lệnh proxy chỉ mang id bản ghi (không có / không đủ zaloId): bản ghi phải thuộc tài khoản được giao (và đúng
+     * tài khoản trong tham số nếu có). Trước đây đổi trạng thái / xoá chiến dịch, bật tắt tin nhắn nhanh của tài khoản
+     * KHÁC chỉ bằng id. Không thấy bản ghi → để handler tự báo. Trả thông báo lỗi, hoặc null = được phép.
+     */
+    private checkProxyRecordOwner(employee: RegisteredEmployee, channel: string, params: any): string | null {
+        let owner: string | null = null;
+        if (channel === 'crm:updateCampaignStatus' || channel === 'crm:deleteCampaign' || channel === 'crm:cloneCampaign'
+            || channel === 'crm:addCampaignContacts' || channel === 'crm:deleteCampaignContacts'
+            || channel === 'crm:deleteAllCampaignContacts') {
+            owner = this.campaignOwner(params?.campaignId);
+        } else if (channel === 'db:setLocalQMActive' || channel === 'db:setLocalQMOrder') {
+            owner = this.quickMessageOwner(params?.id);
+        } else if (channel.startsWith('workflow:')) {
+            return this.checkProxyWorkflowAccess(employee, channel, params);
+        } else {
+            return null;
+        }
+        if (!owner) return null;
+        if (!employee.assigned_accounts.includes(owner)) return 'Không có quyền truy cập tài khoản này';
+        const requested = String(params?.zaloId || '');
+        if (requested && requested !== owner) return 'Bản ghi không thuộc tài khoản này';
+        return null;
+    }
+
+    /**
+     * Workflow qua proxy (WorkflowEditor / kho mẫu / nhân bản của nhân viên): cùng quy tắc với REST /api/command/workflows
+     * — mọi trang của workflow (mới và đang có) thuộc tài khoản được giao; trang nguồn / đích của nhân bản cũng vậy.
+     */
+    private checkProxyWorkflowAccess(employee: RegisteredEmployee, channel: string, params: any): string | null {
+        const assigned = employee.assigned_accounts;
+        const accountDenied = 'Không có quyền truy cập tài khoản này';
+        const pagesDenied = 'Workflow gắn trang không được giao cho bạn';
+        if (channel === 'workflow:cloneAll') {
+            const ids = [params?.sourceZaloId, params?.targetZaloId].map((id) => String(id ?? ''));
+            return ids.every((id) => id && assigned.includes(id)) ? null : accountDenied;
+        }
+        if (channel === 'workflow:clone') {
+            const target = String(params?.targetZaloId ?? '');
+            if (!target || !assigned.includes(target)) return accountDenied;
+        }
+        if (channel === 'workflow:save') {
+            const workflow = params?.workflow || {};
+            if (!workflowPagesAllowed(workflowPageIds(workflow.pageIds, workflow.pageId), assigned)) return pagesDenied;
+        }
+        const id = channel === 'workflow:save' ? String(params?.workflow?.id || '') : String(params?.id || '');
+        return this.checkWorkflowPages(id, assigned) ? pagesDenied : null;
     }
 
     // ─── Sync handlers ────────────────────────────────────────────────
@@ -1212,43 +1496,70 @@ class HttpRelayService {
             return this.json(res, 401, { success: false, error: 'Unauthorized' });
         }
 
-        const filename = req.headers['x-filename'] as string;
-        if (!filename) {
+        const rawFilename = req.headers['x-filename'] as string;
+        if (!rawFilename) {
             return this.json(res, 400, { success: false, error: 'Missing X-Filename header' });
         }
         const zaloId = (req.headers['x-zalo-id'] as string) || employee.assigned_accounts[0] || '';
+        if (zaloId && !employee.assigned_accounts.includes(zaloId)) {
+            return this.json(res, 403, { success: false, error: 'Không có quyền truy cập tài khoản này', code: 'ACCOUNT_FORBIDDEN' });
+        }
+        const maxBytes = HttpRelayService.MAX_MEDIA_UPLOAD_BYTES;
+        if (Number(req.headers['content-length'] || 0) > maxBytes) {
+            req.resume();
+            return this.json(res, 413, { success: false, error: `File tối đa ${Math.round(maxBytes / 1024 / 1024)} MB`, code: 'PAYLOAD_TOO_LARGE' });
+        }
 
-        const FileStorageService = require('../file/FileStorageService').default;
-        const chunks: Buffer[] = [];
+        // Tên do nhân viên gửi (client encodeURIComponent): chỉ lấy phần tên — trước đây ghép thẳng vào đường dẫn,
+        // "..\..\Startup\x.bat" ghi được file ra ngoài thư mục media. Giữ tên gốc (Zalo dùng làm tên tệp đính kèm).
+        const filename = toSafeFileName(rawFilename, `upload_${Date.now()}`);
+        let dir: string;
+        try {
+            dir = zaloId ? FileStorageService.getAccountDir(zaloId) : path.join(FileStorageService.getBaseDir(), '_uploads');
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        } catch (err: any) {
+            req.resume();
+            Logger.error(`[HttpRelayService] Upload error: ${err.message}`);
+            return this.json(res, 500, { success: false, error: err.message });
+        }
 
-        req.on('data', (chunk: Buffer) => chunks.push(chunk));
-        req.on('end', async () => {
+        // Ghi thẳng xuống đĩa (file tạm rồi đổi tên), không gom cả file trong RAM; vượt giới hạn → 413.
+        const tmpPath = path.join(dir, `.upload-${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}.part`);
+        const out = fs.createWriteStream(tmpPath);
+        let size = 0;
+        let settled = false;
+        const fail = (status: number, error: string, code?: string) => {
+            if (settled) return;
+            settled = true;
+            req.unpipe(out);
+            out.destroy();
+            fs.promises.unlink(tmpPath).catch(() => {});
+            req.resume();
+            if (status >= 500) Logger.error(`[HttpRelayService] Upload error: ${error}`);
+            this.json(res, status, { success: false, error, ...(code ? { code } : {}) });
+        };
+        req.on('data', (chunk: Buffer) => {
+            size += chunk.length;
+            if (size > maxBytes) fail(413, `File tối đa ${Math.round(maxBytes / 1024 / 1024)} MB`, 'PAYLOAD_TOO_LARGE');
+        });
+        req.on('close', () => { if (!req.complete) fail(400, 'Upload bị ngắt giữa chừng'); });
+        req.on('error', (err: Error) => fail(400, err.message));
+        out.on('error', (err: Error) => fail(500, err.message));
+        out.on('finish', () => {
+            if (settled) return;
+            if (size === 0) return fail(400, 'Empty file');
             try {
-                const buffer = Buffer.concat(chunks);
-                if (buffer.length === 0) {
-                    return this.json(res, 400, { success: false, error: 'Empty file' });
-                }
-
-                // Save to Boss storage
-                let bossPath: string;
-                if (zaloId) {
-                    bossPath = await FileStorageService.saveBuffer(zaloId, buffer, filename);
-                } else {
-                    const fs = require('fs');
-                    const path = require('path');
-                    const dir = path.join(FileStorageService.getBaseDir(), '_uploads');
-                    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-                    bossPath = path.join(dir, filename);
-                    fs.writeFileSync(bossPath, buffer);
-                }
-
-                Logger.log(`[HttpRelayService] Binary upload: ${filename} (${(buffer.length / 1024).toFixed(1)}KB) → ${bossPath}`);
+                // Trùng tên (hai nhân viên cùng gửi "image.png") → "image (1).png" thay vì ghi đè file của người kia
+                const bossPath = uniqueFilePath(dir, filename);
+                fs.renameSync(tmpPath, bossPath);
+                settled = true;
+                Logger.log(`[HttpRelayService] Binary upload: ${filename} (${(size / 1024).toFixed(1)}KB) → ${bossPath}`);
                 this.json(res, 200, { success: true, bossPath });
             } catch (err: any) {
-                Logger.error(`[HttpRelayService] Upload error: ${err.message}`);
-                this.json(res, 500, { success: false, error: err.message });
+                fail(500, err.message);
             }
         });
+        req.pipe(out);
     }
 
     // ═════════════════════════════════════════════════════════════════
@@ -1258,42 +1569,39 @@ class HttpRelayService {
     private handleRestApi(req: http.IncomingMessage, res: http.ServerResponse): void {
         const url = req.url || '';
 
-        // ── Media serving (không cần auth — tunnel security) ──
-        if (req.method === 'GET' && url.startsWith('/api/media/')) {
-            // Luôn dùng default workspace (Boss) media path, không dùng active workspace
-            // Vì khi employee workspace active, getBaseDir() trả về path của employee
-            // → Boss không tìm thấy file của chính nó → 404
-            let mediaBasePath = '';
-            try {
-                const WorkspaceManager = require('../../utils/WorkspaceManager').default;
-                const wm = WorkspaceManager.getInstance();
-                const defaultWs = wm.getWorkspaceById('default');
-                if (defaultWs && defaultWs.dbPath) {
-                    const dbFolder = path.dirname(wm.resolveDbPath(defaultWs.dbPath));
-                    mediaBasePath = path.join(dbFolder, 'media');
-                }
-            } catch {}
-            if (!mediaBasePath) {
-                mediaBasePath = FileStorageService.getBaseDir?.() || '';
-            }
-            if (!mediaBasePath) {
-                return this.json(res, 500, { error: 'Media path not configured' });
-            }
-            return handleMediaFileServe(req, res, mediaBasePath);
-        }
-
-        // ── Library file/thumb serving (không cần auth — tunnel security, cần runOnPinnedDb) ──
+        // ── File media / thư viện: bắt buộc phiên nhân viên + quyền tài khoản (bossFileAccess.ts) ──
+        // Trước đây mở tự do ("tunnel security") — ai biết URL Boss / tunnel là tải được file. Máy nhân viên tự gắn
+        // Authorization cho <img>/<video> (session.webRequest — bossSessionAuth.ts). KHÔNG miễn trừ loopback:
+        // cloudflared / ngrok kết nối từ 127.0.0.1 → loopback = Internet. UI của chính Boss dùng local-media://.
         if (req.method === 'GET') {
-            const pathname = url.indexOf('?') >= 0 ? url.slice(0, url.indexOf('?')) : url;
-            if (pathname.match(/^\/api\/library\/file\/[a-f0-9-]+$/)) {
-                const uuid = pathname.split('/').pop() || '';
-                this.runOnPinnedDb(() => libraryHandlers.serveFile(req, res, uuid));
-                return;
-            }
-            if (pathname.match(/^\/api\/library\/thumb\/[a-f0-9-]+$/)) {
-                const uuid = pathname.split('/').pop() || '';
-                this.runOnPinnedDb(() => libraryHandlers.serveThumb(req, res, uuid));
-                return;
+            const filePathname = url.indexOf('?') >= 0 ? url.slice(0, url.indexOf('?')) : url;
+            const libraryFile = /^\/api\/library\/(file|thumb)\/([a-f0-9-]+)$/.exec(filePathname);
+            if (url.startsWith('/api/media/') || libraryFile) {
+                const fileEmployee = this.authenticateRequest(req);
+                if (!fileEmployee) {
+                    res.writeHead(401, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+                    res.end(JSON.stringify({ success: false, error: 'Unauthorized' }));
+                    return;
+                }
+                fileEmployee.lastSeen = Date.now();
+
+                if (libraryFile) {
+                    // Item thư viện nằm trong DB của Boss → runOnPinnedDb; LibraryHandler kiểm tra chủ item
+                    const [, kind, uuid] = libraryFile;
+                    this.runOnPinnedDb(() => (kind === 'file'
+                        ? libraryHandlers.serveFile(req, res, uuid, fileEmployee)
+                        : libraryHandlers.serveThumb(req, res, uuid, fileEmployee)));
+                    return;
+                }
+
+                const mediaBasePath = this.getBossMediaBasePath();
+                if (!mediaBasePath) {
+                    return this.json(res, 500, { error: 'Media path not configured' });
+                }
+                return handleMediaFileServe(req, res, mediaBasePath, {
+                    employee: fileEmployee,
+                    lookupAccount: (segment) => this.lookupMediaAccountId(segment),
+                });
             }
         }
 
@@ -1302,21 +1610,26 @@ class HttpRelayService {
         if (!employee) {
             return this.json(res, 401, { success: false, error: 'Unauthorized' });
         }
+        // Gọi REST thành công cũng chứng tỏ nhân viên đang online (không chỉ heartbeat)
+        employee.lastSeen = Date.now();
 
         // Parse URL để dispatch
         const method = req.method;
         let params: any = {};
 
-        // Parse query params từ URL — auto-parse JSON objects/arrays
+        // Parse query params từ URL — auto-parse JSON objects/arrays (trừ ô chữ người dùng gõ: search, q, phone…)
         const queryIndex = url.indexOf('?');
         const pathname = queryIndex >= 0 ? url.slice(0, queryIndex) : url;
-        if (queryIndex >= 0) {
-            const searchParams = new URLSearchParams(url.slice(queryIndex));
-            for (const [k, v] of searchParams) {
-                if ((v.startsWith('{') && v.endsWith('}')) || (v.startsWith('[') && v.endsWith(']'))) {
-                    try { params[k] = JSON.parse(v); continue; } catch {}
-                }
-                params[k] = v;
+        if (queryIndex >= 0) params = parseRestQueryParams(url.slice(queryIndex));
+
+        // ── Phân quyền: tài khoản trong tham số phải được giao cho nhân viên; /api/query/analytics/* cần quyền
+        // module 'analytics'. Lệnh ghi (/api/command/*) kiểm tra lại trên body trong executeRestCommand.
+        if (method === 'GET') {
+            const denied = checkEmployeeAccess(employee, pathname, params,
+                (module) => EmployeeService.getInstance().hasPermission(employee.employee_id, module));
+            if (denied) {
+                Logger.warn(`[HttpRelayService] 🚫 ${method} ${pathname} employee=${employee.employee_id}: ${denied.code}`);
+                return this.json(res, denied.status, { success: false, error: denied.error, code: denied.code });
             }
         }
 
@@ -1342,9 +1655,15 @@ class HttpRelayService {
                 const zaloId = params.zaloId || employee.assigned_accounts[0];
                 if (!zaloId) return this.json(res, 400, { error: 'Missing zaloId' });
                 const rows = this.getCachedRestResult(method, pathname, employee.employee_id,
-                    () => DatabaseService.getInstance().getContactsWithFlags(zaloId) || []);
+                    () => DatabaseService.getInstance().getContactsWithFlags(zaloId) || [], params);
                 return this.json(res, 200, { success: true, data: { items: rows } });
             }
+            // Unread conversations ("Tự động đánh dấu đã đọc") — PHẢI đứng trước regex /conversations/:id bên dưới
+            // (trước đây đặt sau → bị hiểu là hội thoại id "unread" → luôn rỗng ở chế độ nhân viên)
+            if (method === 'GET' && pathname === '/api/query/conversations/unread') {
+                return this.json(res, 200, restHandlers.getUnreadConversations(employee, params));
+            }
+            // ⚠️ Route cụ thể /api/query/conversations/<tên> phải đặt TRƯỚC regex catch-all này (employeeRestContract.test)
             if (method === 'GET' && pathname.match(/^\/api\/query\/conversations\/[^/]+$/)) {
                 const contactId = pathname.split('/').pop() || '';
                 return this.json(res, 200, restHandlers.getConversationById(employee, { ...params, contactId }));
@@ -1363,6 +1682,15 @@ class HttpRelayService {
             if (method === 'GET' && pathname === '/api/query/messages') {
                 return this.json(res, 200, restHandlers.getMessages(employee, params));
             }
+            // unread / by-type PHẢI đứng trước regex /messages/:msgId bên dưới (trước đây đặt sau → bị hiểu là tin id
+            // "unread" / "by-type" → trả null: bảng tin nhóm thiếu bình chọn, đếm chưa đọc rỗng ở chế độ nhân viên)
+            if (method === 'GET' && pathname === '/api/query/messages/unread') {
+                return this.json(res, 200, restHandlers.getUnreadCountHandler(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/query/messages/by-type') {
+                return this.json(res, 200, restHandlers.getMessagesByTypeHandler(employee, params));
+            }
+            // ⚠️ Route cụ thể /api/query/messages/<tên> phải đặt TRƯỚC regex catch-all này (employeeRestContract.test)
             if (method === 'GET' && pathname.match(/^\/api\/query\/messages\/[^/]+$/)) {
                 const msgId = pathname.split('/').pop() || '';
                 return this.json(res, 200, restHandlers.getMessageById(employee, { ...params, msgId }));
@@ -1371,6 +1699,12 @@ class HttpRelayService {
             // Search
             if (method === 'GET' && pathname === '/api/search/messages') {
                 return this.json(res, 200, restHandlers.searchMessages(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/search/contacts') {
+                return this.json(res, 200, restHandlers.searchContactsForPicker(employee, params));
+            }
+            if (method === 'GET' && pathname === '/api/search/contact-by-phone') {
+                return this.json(res, 200, restHandlers.searchContactByPhone(employee, params));
             }
 
             // Friends
@@ -1390,6 +1724,9 @@ class HttpRelayService {
             if (method === 'GET' && pathname === '/api/query/groups/members') {
                 return this.json(res, 200, restHandlers.getGroupMembers(employee, params));
             }
+            if (method === 'GET' && pathname === '/api/query/groups/members/page') {
+                return this.json(res, 200, restHandlers.getGroupMembersPage(employee, params));
+            }
             if (method === 'GET' && pathname === '/api/query/groups/all') {
                 return this.json(res, 200, restHandlers.getAllGroupMembers(employee, params));
             }
@@ -1405,11 +1742,11 @@ class HttpRelayService {
             // Labels (cached — called redundantly after every message, blocks main thread)
             if (method === 'GET' && pathname === '/api/query/labels') {
                 return this.json(res, 200, this.getCachedRestResult(method, pathname, employee.employee_id,
-                    () => restHandlers.getLabels(employee, params)));
+                    () => restHandlers.getLabels(employee, params), params));
             }
             if (method === 'GET' && pathname === '/api/query/label-threads') {
                 return this.json(res, 200, this.getCachedRestResult(method, pathname, employee.employee_id,
-                    () => restHandlers.getLabelThreads(employee, params)));
+                    () => restHandlers.getLabelThreads(employee, params), params));
             }
 
             // Quick messages
@@ -1427,21 +1764,40 @@ class HttpRelayService {
                 return this.json(res, 200, restHandlers.getLinks(employee, params));
             }
 
-            // Settings
+            // Settings — thông báo theo tài khoản (trước đây bị route chung che mất)
+            if (method === 'GET' && pathname === '/api/query/settings/notif') {
+                const target = String(params.zaloId || employee.assigned_accounts[0] || '');
+                const raw = target ? DatabaseService.getInstance().getSetting(`notifSettings_${target}`) : null;
+                let data: any = null;
+                try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
+                return this.json(res, 200, { success: true, data });
+            }
+            // Settings — một khoá: chỉ khoá trong allowlist (không lộ employee_jwt_secret, token tunnel…)
             if (method === 'GET' && pathname.match(/^\/api\/query\/settings\/[^/]+$/)) {
-                const key = pathname.split('/').pop() || '';
+                const key = decodeURIComponent(pathname.split('/').pop() || '');
+                if (!isEmployeeSettingKey(key)) {
+                    return this.json(res, 403, { success: false, error: 'Không có quyền đọc cài đặt này', code: 'SETTING_FORBIDDEN' });
+                }
                 return this.json(res, 200, restHandlers.getSetting(employee, { ...params, key }));
+            }
+
+            // (Unread conversations: xem route trước regex /conversations/:id ở trên)
+
+            // Starred messages ("Tin đánh dấu") - keys of one account or the list of several
+            if (method === 'GET' && pathname === '/api/query/starred-messages') {
+                return this.json(res, 200, restHandlers.getStarredMessages(employee, params));
             }
 
             // Pinned conversations (cached — called redundantly after every message)
             if (method === 'GET' && pathname === '/api/query/pinned-conversations') {
                 return this.json(res, 200, this.getCachedRestResult(method, pathname, employee.employee_id,
-                    () => restHandlers.getPinnedConversations(employee, params)));
+                    () => restHandlers.getPinnedConversations(employee, params), params));
             }
 
             // Settings — all
             if (method === 'GET' && pathname === '/api/query/settings') {
-                const allSettings = DatabaseService.getInstance().query<any>('SELECT key, value FROM app_settings') || [];
+                const allSettings = (DatabaseService.getInstance().query<any>('SELECT key, value FROM app_settings') || [])
+                    .filter((row: any) => isEmployeeSettingKey(String(row?.key || '')));
                 return this.json(res, 200, { success: true, data: { items: allSettings } });
             }
 
@@ -1470,21 +1826,23 @@ class HttpRelayService {
             if (method === 'GET' && pathname === '/api/query/analytics/workflows') {
                 return this.json(res, 200, restHandlers.getWorkflowAnalytics(employee, params));
             }
+            // Reports with several accounts: one query over all of them (assigned accounts only)
+            if (method === 'GET' && pathname === '/api/query/analytics/workflows-multi') {
+                return this.json(res, 200, restHandlers.getWorkflowAnalyticsMulti(employee, params));
+            }
             if (method === 'GET' && pathname === '/api/query/analytics/ai') {
                 return this.json(res, 200, restHandlers.getAIAnalytics(employee, params));
             }
             if (method === 'GET' && pathname === '/api/query/analytics/response-time') {
                 return this.json(res, 200, restHandlers.getResponseTime(employee, params));
             }
+            if (method === 'GET' && pathname === '/api/query/analytics/response-time-multi') {
+                return this.json(res, 200, restHandlers.getResponseTimeMulti(employee, params));
+            }
             if (method === 'GET' && pathname === '/api/query/analytics/label-usage') {
                 return this.json(res, 200, restHandlers.getLabelUsage(employee, params));
             }
 
-            // ── Notif settings ──
-            if (method === 'GET' && pathname === '/api/query/settings/notif') {
-                const val = DatabaseService.getInstance().getSetting(`notifSettings_${params.zaloId}`);
-                return this.json(res, 200, { success: true, data: val ? JSON.parse(val) : null });
-            }
 
             // ── Pinned messages ──
             if (method === 'GET' && pathname === '/api/query/pinned-messages') {
@@ -1493,13 +1851,27 @@ class HttpRelayService {
 
             // ── Stickers ──
             if (method === 'GET' && pathname === '/api/query/sticker-packs') {
+                // ?catId=… = sticker của MỘT bộ (DataAccessor.getStickersByPackId); trước đây luôn trả danh sách bộ
+                if (params.catId !== undefined && params.catId !== '') {
+                    return this.json(res, 200, restHandlers.getStickersByPackIdHandler(employee, params));
+                }
                 return this.json(res, 200, restHandlers.getStickerPacksHandler(employee, params));
             }
             if (method === 'GET' && pathname === '/api/query/stickers/recent') {
                 return this.json(res, 200, restHandlers.getRecentStickersHandler(employee, params));
             }
-            if ((method === 'POST' || method === 'GET') && pathname === '/api/query/stickers/by-ids') {
+            if (method === 'GET' && pathname === '/api/query/stickers/by-ids') {
                 return this.json(res, 200, restHandlers.getStickersByIdsHandler(employee, params));
+            }
+            if (method === 'POST' && pathname === '/api/query/stickers/by-ids') {
+                // Danh sách id nằm trong body JSON → đọc body rồi trả lời trong đúng DB của relay
+                this.readBody(req, (body) => {
+                    let parsed: any = {};
+                    try { parsed = body ? JSON.parse(body) : {}; } catch { parsed = {}; }
+                    const result = this.runOnPinnedDb(() => restHandlers.getStickersByIdsHandler(employee, { ...params, ...parsed }));
+                    return this.json(res, 200, result);
+                });
+                return;
             }
 
             // ── CRM tags ──
@@ -1512,40 +1884,17 @@ class HttpRelayService {
                 return this.json(res, 200, restHandlers.getBankCardsHandler(employee, params));
             }
 
-            // ── ERP Tasks ──
-            if (method === 'GET' && pathname === '/api/query/erp/projects') {
-                return this.json(res, 200, restHandlers.getErpProjects(employee, params));
-            }
-            if (method === 'GET' && pathname === '/api/query/erp/tasks') {
-                return this.json(res, 200, restHandlers.getErpTasks(employee, params));
-            }
-            // ⚠️ Specific routes MUST come BEFORE the regex catch-all
-            if (method === 'GET' && pathname === '/api/query/erp/tasks/inbox') {
-                return this.json(res, 200, restHandlers.getErpMyInbox(employee, params));
-            }
-            if (method === 'GET' && pathname.match(/^\/api\/query\/erp\/tasks\/[^/]+$/)) {
-                const id = pathname.split('/').pop() || '';
-                return this.json(res, 200, restHandlers.getErpTaskDetail(employee, { ...params, id }));
-            }
-
-            // ── ERP Departments / Positions / Profiles ──
-            if (method === 'GET' && pathname === '/api/query/erp/departments') {
-                return this.json(res, 200, restHandlers.getErpDepartments(employee, params));
-            }
-            if (method === 'GET' && pathname === '/api/query/erp/positions') {
-                return this.json(res, 200, restHandlers.getErpPositions(employee, params));
-            }
-            if (method === 'GET' && pathname === '/api/query/erp/profiles') {
-                return this.json(res, 200, restHandlers.getErpProfiles(employee, params));
-            }
-            if (method === 'GET' && pathname.match(/^\/api\/query\/erp\/profiles\/[^/]+$/)) {
-                const employeeId = pathname.split('/').pop() || '';
-                return this.json(res, 200, restHandlers.getErpProfile(employee, { ...params, employeeId }));
-            }
-
-            // ── ERP Calendar ──
-            if (method === 'GET' && pathname === '/api/query/erp/calendar/events') {
-                return this.json(res, 200, restHandlers.getErpCalendarEvents(employee, params));
+            // ── ERP: dự án, công việc, lịch, ghi chú, nhân sự, chấm công, nghỉ phép, thông báo ──
+            // Bảng ErpRestRoutes (route cụ thể trước /:id) → ĐÚNG handler IPC erp:* với danh tính ERP của nhân viên
+            // (executeErpRest). Quyền module 'erp' đã kiểm tra ở checkEmployeeAccess phía trên.
+            if (method === 'GET' && pathname.match(/^\/api\/query\/erp\//)) {
+                this.executeErpRest(employee, method, pathname, params)
+                    .then(({ status, body }) => this.json(res, status, body))
+                    .catch((err: any) => {
+                        Logger.error(`[HttpRelayService] ERP ${method} ${pathname} error: ${err?.message || err}`);
+                        this.json(res, 500, { success: false, error: err?.message || String(err) });
+                    });
+                return;
             }
 
             // ── Proxies ──
@@ -1577,6 +1926,24 @@ class HttpRelayService {
             if (method === 'GET' && pathname === '/api/query/crm/contacts') {
                 return this.json(res, 200, restHandlers.getCRMContactsHandler(employee, params));
             }
+            if (method === 'POST' && pathname === '/api/query/crm/contacts') {
+                // Lọc theo nhãn Zalo: danh sách hội thoại của nhãn nằm trong body. Kiểm quyền tài khoản trên body như GET
+                // (checkEmployeeAccess phía trên chỉ chạy cho GET), rồi trả lời trong đúng DB của relay.
+                this.readBody(req, (body) => {
+                    let parsed: any = {};
+                    try { parsed = body ? JSON.parse(body) : {}; } catch { parsed = {}; }
+                    const merged = { ...params, ...parsed };
+                    const denied = checkEmployeeAccess(employee, pathname, merged,
+                        (module) => EmployeeService.getInstance().hasPermission(employee.employee_id, module));
+                    if (denied) {
+                        Logger.warn(`[HttpRelayService] 🚫 ${method} ${pathname} employee=${employee.employee_id}: ${denied.code}`);
+                        return this.json(res, denied.status, { success: false, error: denied.error, code: denied.code });
+                    }
+                    const result = this.runOnPinnedDb(() => restHandlers.getCRMContactsHandler(employee, merged));
+                    return this.json(res, 200, result);
+                });
+                return;
+            }
             if (method === 'GET' && pathname === '/api/query/crm/contacts/stats') {
                 return this.json(res, 200, restHandlers.getContactStatsHandler(employee, params));
             }
@@ -1596,13 +1963,7 @@ class HttpRelayService {
                 return this.json(res, 200, restHandlers.getActivityStatsHandler(employee, params));
             }
 
-            // ── Messages extended ──
-            if (method === 'GET' && pathname === '/api/query/messages/unread') {
-                return this.json(res, 200, restHandlers.getUnreadCountHandler(employee, params));
-            }
-            if (method === 'GET' && pathname === '/api/query/messages/by-type') {
-                return this.json(res, 200, restHandlers.getMessagesByTypeHandler(employee, params));
-            }
+            // (Messages extended — unread / by-type: xem route trước regex /messages/:msgId ở trên)
 
             // ── Quick Messages all ──
             if (method === 'GET' && pathname === '/api/query/quick-messages/all') {
@@ -1676,12 +2037,19 @@ class HttpRelayService {
                     try {
                         const parsed = JSON.parse(body);
                         const AIAssistantService = require('../ai/AIAssistantService').default;
-                        const result = await AIAssistantService.getInstance().chat(
-                            parsed.assistantId || parsed.params?.assistantId,
-                            parsed.messages || parsed.params?.messages || [],
-                            parsed.structured === true || parsed.params?.structured === true,
-                            parsed.maxTokens || parsed.params?.maxTokens || undefined
-                        );
+                        const assistantId = parsed.assistantId || parsed.params?.assistantId;
+                        const messages = parsed.messages || parsed.params?.messages || [];
+                        const maxTokens = parsed.maxTokens || parsed.params?.maxTokens || undefined;
+                        const result = (parsed.rawSystem === true || parsed.params?.rawSystem === true)
+                            ? await AIAssistantService.getInstance().chatRaw(assistantId, messages, {
+                                maxTokens, temperature: parsed.temperature ?? parsed.params?.temperature,
+                            })
+                            : await AIAssistantService.getInstance().chat(
+                                assistantId,
+                                messages,
+                                parsed.structured === true || parsed.params?.structured === true,
+                                maxTokens
+                            );
                         return this.json(res, 200, { success: true, ...result });
                     } catch (err: any) {
                         Logger.error(`[HttpRelayService] AI chat error: ${err.message}`);
@@ -1709,27 +2077,26 @@ class HttpRelayService {
             }
 
             // ── COMMAND endpoints (WRITE) ──
-            // Command handlers gọi trực tiếp DatabaseService
-            if (method === 'POST' && pathname.startsWith('/api/command/')) {
-                this.readBody(req, (body) => {
+            // executeRestCommand: kiểm tra quyền → handler IPC của Boss (workflow / tích hợp / chiến dịch / ghi chú / gắn
+            // nhãn — cùng logic + event như UI Boss) hoặc ghi DB trực tiếp (runOnPinnedDb). Body đọc xong mới chạy, nên
+            // phải chờ (async) và tự ghim DB — callback readBody nằm ngoài runOnPinnedDb của handleRestApi.
+            if ((method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE') && pathname.startsWith('/api/command/')) {
+                const commandMethod = method;
+                this.readBody(req, async (body) => {
+                    let parsed: any;
                     try {
-                        const parsed = JSON.parse(body);
-                        const result = this.executeRestCommand(employee, pathname, { ...params, ...parsed }, 'POST');
-                        return this.json(res, 200, result);
+                        parsed = body ? JSON.parse(body) : {};
                     } catch (err: any) {
                         return this.json(res, 400, { success: false, error: err.message });
                     }
-                });
-                return;
-            }
-            if ((method === 'PUT' || method === 'PATCH' || method === 'DELETE') && pathname.startsWith('/api/command/')) {
-                this.readBody(req, (body) => {
                     try {
-                        const parsed = body ? JSON.parse(body) : {};
-                        const result = this.executeRestCommand(employee, pathname, { ...params, ...parsed }, method);
-                        return this.json(res, 200, result);
+                        const result = await this.executeRestCommand(employee, pathname, { ...params, ...parsed }, commandMethod);
+                        // Bị từ chối quyền → 403 như lệnh đọc (RestQueryService: ACCOUNT_FORBIDDEN → làm mới snapshot)
+                        const status = result?.success === false && result?.status === 403 ? 403 : 200;
+                        return this.json(res, status, result);
                     } catch (err: any) {
-                        return this.json(res, 400, { success: false, error: err.message });
+                        Logger.error(`[HttpRelayService] Command ${commandMethod} ${pathname} error: ${err.message}`);
+                        return this.json(res, 500, { success: false, error: err.message });
                     }
                 });
                 return;
@@ -1757,9 +2124,18 @@ class HttpRelayService {
                 return this.json(res, 200, libraryHandlers.getItem(employee, { ...params, uuid, _bossUrl: `${proto}://${host}` }));
             }
             if (method === 'PATCH' && pathname.match(/^\/api\/library\/item\/[a-f0-9-]+$/)) {
+                // uuid nằm trong đường dẫn (trước đây chỉ đọc query → luôn "Missing uuid"); body đọc xong ngoài
+                // runOnPinnedDb → tự ghim DB; JSON hỏng → 400 (trước đây ném lỗi trong callback 'end')
+                const uuid = pathname.split('/').pop() || '';
                 this.readBody(req, (body) => {
-                    const parsed = JSON.parse(body);
-                    return this.json(res, 200, libraryHandlers.updateItem(employee, { ...params, ...parsed }));
+                    let parsed: any = {};
+                    try { parsed = body ? JSON.parse(body) : {}; } catch { return this.json(res, 400, { success: false, error: 'Body không hợp lệ' }); }
+                    try {
+                        const result = this.runOnPinnedDb(() => libraryHandlers.updateItem(employee, { ...params, ...parsed, uuid }));
+                        return this.json(res, 200, result);
+                    } catch (err: any) {
+                        return this.json(res, 500, { success: false, error: err.message });
+                    }
                 });
                 return;
             }
@@ -1773,8 +2149,27 @@ class HttpRelayService {
             }
             if (method === 'POST' && pathname === '/api/library/folders') {
                 this.readBody(req, (body) => {
-                    const parsed = JSON.parse(body);
-                    return this.json(res, 200, libraryHandlers.createFolder(employee, { ...params, ...parsed }));
+                    let parsed: any = {};
+                    try { parsed = body ? JSON.parse(body) : {}; } catch { return this.json(res, 400, { success: false, error: 'Body không hợp lệ' }); }
+                    try {
+                        return this.json(res, 200, this.runOnPinnedDb(() => libraryHandlers.createFolder(employee, { ...params, ...parsed })));
+                    } catch (err: any) {
+                        return this.json(res, 500, { success: false, error: err.message });
+                    }
+                });
+                return;
+            }
+            // Đổi tên thư mục (DataAccessor.renameLibraryFolder) — trước đây không có route
+            if (method === 'PATCH' && pathname.match(/^\/api\/library\/folders\/\d+$/)) {
+                const id = pathname.split('/').pop() || '';
+                this.readBody(req, (body) => {
+                    let parsed: any = {};
+                    try { parsed = body ? JSON.parse(body) : {}; } catch { return this.json(res, 400, { success: false, error: 'Body không hợp lệ' }); }
+                    try {
+                        return this.json(res, 200, this.runOnPinnedDb(() => libraryHandlers.renameFolder(employee, { ...params, ...parsed, id })));
+                    } catch (err: any) {
+                        return this.json(res, 500, { success: false, error: err.message });
+                    }
                 });
                 return;
             }
@@ -1782,15 +2177,7 @@ class HttpRelayService {
                 const id = pathname.split('/').pop() || '';
                 return this.json(res, 200, libraryHandlers.deleteFolder(employee, { ...params, id }));
             }
-            // Serve media files
-            if (method === 'GET' && pathname.match(/^\/api\/library\/file\/[a-f0-9-]+$/)) {
-                const uuid = pathname.split('/').pop() || '';
-                return libraryHandlers.serveFile(req, res, uuid);
-            }
-            if (method === 'GET' && pathname.match(/^\/api\/library\/thumb\/[a-f0-9-]+$/)) {
-                const uuid = pathname.split('/').pop() || '';
-                return libraryHandlers.serveThumb(req, res, uuid);
-            }
+            // GET /api/library/file|thumb/<uuid> được phục vụ ở đầu handleRestApi (xác thực + kiểm tra chủ item)
 
             return this.json(res, 404, { success: false, error: `Unknown endpoint: ${method} ${pathname}` });
             }); // end runOnPinnedDb
@@ -1801,540 +2188,645 @@ class HttpRelayService {
     }
 
     /**
-     * Execute a REST command (WRITE operations).
-     * POST/PUT/PATCH/DELETE tới /api/command/*
+     * Lệnh ghi REST của nhân viên — POST/PUT/PATCH/DELETE /api/command/*.
+     * Thứ tự: quyền tài khoản (employeeAccess) → quyền lệnh (restCommandPolicy: module, lệnh chỉ Boss, tài khoản nguồn /
+     * đích) → handler IPC của Boss nếu lệnh có handler tương ứng (executeRestCommandViaIpc) → ghi DB trực tiếp
+     * (executeRestCommandOnDb, trong DB đã ghim). Ghi xong phát CÙNG event như thao tác trên UI Boss để Boss và nhân viên
+     * khác cập nhật ngay (trước đây nhiều lệnh REST ghi DB mà không phát gì, hoặc phát thiếu ownerZaloId).
+     * Từ chối quyền → `{ success: false, …, status: 403 }` (router trả HTTP 403 như lệnh đọc).
      */
-    private executeRestCommand(employee: any, pathname: string, params: any, _method?: string): any {
-        const zaloId = params.zaloId || employee.assigned_accounts?.[0] || '';
-        const db = DatabaseService.getInstance();
-        const httpMethod = _method || 'POST';
+    private executeRestCommand(employee: any, pathname: string, params: any, _method?: string): Promise<any> {
+        // Chữ ký giữ dạng `private executeRestCommand(` (không async): employeeRestContract.test dùng làm mốc cuối handleRestApi
+        return this.runRestCommand(employee, pathname, params, _method || 'POST');
+    }
 
-        try {
-            // ── Conversations ──
-            if (pathname.match(/^\/api\/command\/conversations\/[^/]+\/flags$/)) {
-                const contactId = pathname.split('/')[3];
-                db.setContactFlags(zaloId, contactId, params.flags || {});
-                EventBroadcaster.emit('db:contactFlagsChanged', { zaloId, contactId, flags: params.flags });
-                return { success: true };
-            }
-            if (pathname.match(/^\/api\/command\/conversations\/[^/]+\/alias$/)) {
-                const contactId = pathname.split('/')[3];
-                db.setContactAlias(zaloId, contactId, params.alias || '');
-                EventBroadcaster.emit('db:contactAliasChanged', { ownerZaloId: zaloId, contactId, alias: params.alias });
-                return { success: true };
-            }
-            // MUST be BEFORE the generic delete pattern — the regex /^\/api\/command\/conversations\/[^/]+$/ would match "update-profile" as a contactId
-            if (pathname === '/api/command/conversations/update-profile') {
-                db.updateContactProfile(
-                    zaloId, params.contactId, params.displayName || '', params.avatarUrl || '',
-                    params.phone || '', params.contactType || '', params.gender ?? null,
-                    params.birthday ?? null, null, Boolean(params.manualDetails)
-                );
-                EventBroadcaster.emit('db:contactProfileUpdated', {
-                    ownerZaloId: zaloId, contactId: params.contactId,
-                    displayName: params.displayName, avatarUrl: params.avatarUrl,
-                    phone: params.phone, gender: params.gender, birthday: params.birthday,
-                });
-                return { success: true };
-            }
-            if (pathname.match(/^\/api\/command\/conversations\/[^/]+$/)) {
-                const contactId = pathname.split('/')[3];
-                db.deleteConversation(zaloId, contactId);
-                EventBroadcaster.emit('db:conversationDeleted', { zaloId, contactId, threadId: contactId });
-                return { success: true };
-            }
-
-            // ── CRM Notes ──
-            if (pathname === '/api/command/crm/notes') {
-                const id = db.saveCRMNote({ ...params.note, owner_zalo_id: zaloId });
-                EventBroadcaster.emit('crm:noteChanged', { action: 'save', ownerZaloId: zaloId, id, note: params.note });
-                return { success: true, data: { id } };
-            }
-            if (pathname.match(/^\/api\/command\/crm\/notes\/\d+$/)) {
-                const noteId = parseInt(pathname.split('/').pop() || '0');
-                db.deleteCRMNote(noteId, zaloId);
-                EventBroadcaster.emit('crm:noteChanged', { action: 'delete', ownerZaloId: zaloId, noteId });
-                return { success: true };
-            }
-
-            // ── CRM Campaigns ──
-            if (pathname === '/api/command/crm/campaigns') {
-                const id = db.saveCRMCampaign({ ...params.campaign, owner_zalo_id: zaloId });
-                EventBroadcaster.emit('crm:campaignChanged', { action: 'save', ownerZaloId: zaloId, id, campaign: params.campaign });
-                return { success: true, data: { id } };
-            }
-            if (pathname.match(/^\/api\/command\/crm\/campaigns\/\d+$/)) {
-                const campaignId = parseInt(pathname.split('/').pop() || '0');
-                db.deleteCRMCampaign(campaignId, zaloId);
-                EventBroadcaster.emit('crm:campaignChanged', { action: 'delete', ownerZaloId: zaloId, campaignId });
-                return { success: true };
-            }
-
-            // ── Labels ──
-            if (pathname === '/api/command/labels') {
-                const id = db.upsertLocalLabel(params.label);
-                EventBroadcaster.emit('db:localLabelChanged', { action: 'upsert', label: { ...params.label, id } });
-                return { success: true, data: { id } };
-            }
-            if (pathname.match(/^\/api\/command\/labels\/\d+$/)) {
-                const id = parseInt(pathname.split('/').pop() || '0');
-                db.deleteLocalLabel(id);
-                EventBroadcaster.emit('db:localLabelChanged', { action: 'delete', labelId: id });
-                return { success: true };
-            }
-            if (pathname === '/api/command/label-threads') {
-                if (httpMethod === 'DELETE') {
-                    db.removeLocalLabelFromThread(zaloId, params.labelId, params.threadId);
-                    EventBroadcaster.emit('db:localLabelThreadChanged', { action: 'remove', ownerZaloId: zaloId, labelId: params.labelId, threadId: params.threadId });
-                } else {
-                    db.assignLocalLabelToThread(zaloId, params.labelId, params.threadId);
-                    EventBroadcaster.emit('db:localLabelThreadChanged', { action: 'assign', ownerZaloId: zaloId, labelId: params.labelId, threadId: params.threadId });
-                }
-                return { success: true };
-            }
-
-            // ── Quick Messages ──
-            if (pathname === '/api/command/quick-messages') {
-                const id = db.upsertLocalQuickMessage(zaloId, params.item);
-                EventBroadcaster.emit('db:localQuickMessageChanged', { action: 'upsert', ownerZaloId: zaloId, item: { ...params.item, id } });
-                return { success: true, data: { id } };
-            }
-            if (pathname.match(/^\/api\/command\/quick-messages\/\d+$/)) {
-                const id = parseInt(pathname.split('/').pop() || '0');
-                if (httpMethod === 'DELETE') {
-                    db.deleteLocalQuickMessage(zaloId, id);
-                    EventBroadcaster.emit('db:localQuickMessageChanged', { action: 'delete', id, ownerZaloId: zaloId });
-                }
-                return { success: true };
-            }
-
-            // ── Drafts ──
-            if (pathname.match(/^\/api\/command\/drafts\/[^/]+$/)) {
-                const threadId = pathname.split('/').pop() || '';
-                if (httpMethod === 'DELETE') {
-                    db.deleteDraft(zaloId, threadId);
-                } else {
-                    db.upsertDraft(zaloId, threadId, params.content || '');
-                }
-                return { success: true };
-            }
-
-            // ── Pinned Conversations ──
-            if (pathname === '/api/command/pinned-conversations') {
-                db.setLocalPinnedConversation(zaloId, params.threadId, params.isPinned);
-                EventBroadcaster.emit('db:pinnedConversationChanged', { ownerZaloId: zaloId, threadId: params.threadId, isPinned: !!params.isPinned });
-                return { success: true };
-            }
-
-            // ── Settings ──
-            if (pathname.match(/^\/api\/command\/settings\/[^/]+$/)) {
-                const key = pathname.split('/').pop() || '';
-                db.setSetting(key, params.value || '');
-                return { success: true };
-            }
-
-            // ── Pinned Messages ──
-            if (pathname === '/api/command/pinned-messages') {
-                db.pinMessage(zaloId, params.threadId, params.pin);
-                EventBroadcaster.emit('db:pinnedMessageChanged', { action: 'pin', ownerZaloId: zaloId, threadId: params.threadId, pin: params.pin });
-                return { success: true };
-            }
-            if (pathname.match(/^\/api\/command\/pinned-messages\/[^/]+$/)) {
-                const msgId = pathname.split('/').pop() || '';
-                if (httpMethod === 'DELETE') {
-                    db.unpinMessage(zaloId, params.threadId, msgId);
-                    EventBroadcaster.emit('db:pinnedMessageChanged', { action: 'unpin', ownerZaloId: zaloId, threadId: params.threadId, msgId, zaloId });
-                } else if (msgId === 'bring-to-top') {
-                    db.bringPinnedToTop(zaloId, params.threadId, params.msgId);
-                    EventBroadcaster.emit('db:pinnedMessageChanged', { action: 'bringToTop', ownerZaloId: zaloId, threadId: params.threadId, msgId: params.msgId });
-                }
-                return { success: true };
-            }
-
-            // ── Stickers ──
-            if (pathname === '/api/command/stickers/save') {
-                db.saveStickers(params.stickers || []);
-                return { success: true };
-            }
-            if (pathname === '/api/command/sticker-packs/save') {
-                db.saveStickerPacks(params.packs || []);
-                return { success: true };
-            }
-
-            // ── CRM Tags (query trực tiếp + emit) ──
-            if (pathname === '/api/command/crm/tags') {
-                const tag = params.tag || params;
-                const existing = db.queryOne<any>(`SELECT id FROM crm_tags WHERE owner_zalo_id=? AND name=?`, [zaloId, tag.name]);
-                if (existing) {
-                    db.run(`UPDATE crm_tags SET name=?,color=? WHERE id=?`, [tag.name, tag.color, existing.id]);
-                    EventBroadcaster.emit('crm:tagChanged', { action: 'update', ownerZaloId: zaloId, tag: { ...tag, id: existing.id } });
-                    return { success: true, data: { id: existing.id } };
-                }
-                const rowId = db.runInsert(`INSERT INTO crm_tags (owner_zalo_id,name,color) VALUES (?,?,?)`, [zaloId, tag.name, tag.color]);
-                EventBroadcaster.emit('crm:tagChanged', { action: 'create', ownerZaloId: zaloId, tag: { ...tag, id: rowId } });
-                return { success: true, data: { id: rowId } };
-            }
-            if (pathname.match(/^\/api\/command\/crm\/tags\/\d+$/)) {
-                const id = parseInt(pathname.split('/').pop() || '0');
-                db.run(`DELETE FROM crm_contact_tags WHERE tag_id=?`, [id]);
-                db.run(`DELETE FROM crm_tags WHERE id=?`, [id]);
-                EventBroadcaster.emit('crm:tagChanged', { action: 'delete', ownerZaloId: zaloId, tagId: id });
-                return { success: true };
-            }
-            if (pathname === '/api/command/crm/tags/assign') {
-                db.run(`INSERT OR IGNORE INTO crm_contact_tags (owner_zalo_id,tag_id,contact_id) VALUES (?,?,?)`,
-                    [zaloId, params.tagId, params.contactId]);
-                EventBroadcaster.emit('crm:tagChanged', { action: 'assign', ownerZaloId: zaloId, tagId: params.tagId, contactId: params.contactId });
-                return { success: true };
-            }
-            if (pathname.match(/^\/api\/command\/crm\/tags\/\d+\/contacts\/[^/]+$/)) {
-                const parts = pathname.split('/');
-                const tagId = parseInt(parts[4] || '0');
-                const contactId = parts[6] || '';
-                db.run(`DELETE FROM crm_contact_tags WHERE owner_zalo_id=? AND tag_id=? AND contact_id=?`,
-                    [zaloId, tagId, contactId]);
-                EventBroadcaster.emit('crm:tagChanged', { action: 'remove', ownerZaloId: zaloId, tagId, contactId });
-                return { success: true };
-            }
-
-            // ── Bank Cards ──
-            if (pathname === '/api/command/bank-cards') {
-                const id = db.upsertBankCard(zaloId, { ...params.card, ...params });
-                return { success: true, data: { id } };
-            }
-            if (pathname.match(/^\/api\/command\/bank-cards\/\d+$/)) {
-                const id = parseInt(pathname.split('/').pop() || '0');
-                db.deleteBankCard(zaloId, id);
-                return { success: true };
-            }
-
-            // ── Proxies CRUD ──
-            if (pathname === '/api/command/proxies') {
-                const id = db.saveProxy(params.proxy || params);
-                return { success: true, data: { id } };
-            }
-            if (pathname.match(/^\/api\/command\/proxies\/\d+$/)) {
-                const id = parseInt(pathname.split('/').pop() || '0');
-                db.deleteProxy(id);
-                return { success: true };
-            }
-            if (pathname === '/api/command/accounts/proxy') {
-                // Assign proxy to account: params.zaloId, params.proxyId
-                db.run('UPDATE accounts SET proxy_id=? WHERE zalo_id=?', [params.proxyId || null, params.zaloId || zaloId]);
-                return { success: true };
-            }
-
-            // ── Messages — mark-read, mark-recalled, delete, reaction, local-paths ──
-            if (pathname === '/api/command/messages/mark-read') {
-                db.markAsRead(zaloId, params.contactId);
-                EventBroadcaster.emit('db:unreadChanged', { zaloId, contactId: params.contactId, unread: 0 });
-                return { success: true };
-            }
-            if (pathname === '/api/command/messages/mark-recalled') {
-                db.markMessageRecalled(zaloId, params.msgId);
-                // event:undo đã được relay từ Zalo webhook — emit thêm để đồng bộ
-                EventBroadcaster.emit('event:undo', { zaloId, msgId: params.msgId });
-                return { success: true };
-            }
-            if (pathname === '/api/command/messages/delete') {
-                db.deleteMessages(zaloId, params.msgIds || []);
-                EventBroadcaster.emit('event:delete', { zaloId, msgIds: params.msgIds || [] });
-                return { success: true };
-            }
-            if (pathname === '/api/command/messages/reaction') {
-                // Note: boss DB is already updated by EventBroadcaster.broadcastReaction()
-                // via runOnBossDb. Only the employee DB needs updating here, which was
-                // already done by HttpClientService.saveRelayReactionToWorkspaceDb().
-                // Do NOT emit event:reaction back to renderer — it was already forwarded
-                // by HttpClientService via sendDirect, and emitting again causes double display.
-                return { success: true };
-            }
-            if (pathname === '/api/command/messages/local-paths') {
-                db.updateLocalPaths(zaloId, params.msgId, params.localPaths || {});
-                EventBroadcaster.emit('event:localPath', { zaloId, msgId: params.msgId, threadId: params.threadId || '', localPaths: params.localPaths });
-                return { success: true };
-            }
-
-            // ── Stickers — recent, keyword ──
-            if (pathname === '/api/command/stickers/recent') {
-                db.addRecentSticker(parseInt(params.stickerId) || 0);
-                return { success: true };
-            }
-            if (pathname === '/api/command/stickers/keyword') {
-                db.saveKeywordStickers(params.keyword || '', params.stickerIds || []);
-                return { success: true };
-            }
-
-            // ── CRM — cloneCampaign, updateStatus, addContacts ──
-            if (pathname === '/api/command/crm/campaigns/clone') {
-                const id = db.cloneCRMCampaign(parseInt(params.campaignId) || 0, zaloId, params.includeContacts, params.newName);
-                EventBroadcaster.emit('crm:campaignChanged', { action: 'clone', ownerZaloId: zaloId, campaignId: id });
-                return { success: true, data: { id } };
-            }
-            if (pathname === '/api/command/crm/campaigns/status') {
-                db.updateCRMCampaignStatus(parseInt(params.campaignId) || 0, params.status);
-                EventBroadcaster.emit('crm:campaignChanged', { action: 'status', ownerZaloId: zaloId, campaignId: parseInt(params.campaignId) || 0, status: params.status });
-                return { success: true };
-            }
-            if (pathname === '/api/command/crm/campaigns/contacts') {
-                db.addCampaignContacts(parseInt(params.campaignId) || 0, zaloId, params.contacts || []);
-                return { success: true };
-            }
-            if (pathname === '/api/command/crm/campaigns/contacts/all' && (_method === 'DELETE' || _method === 'POST')) {
-                db.deleteAllCampaignContacts(parseInt(params.campaignId) || 0);
-                return { success: true };
-            }
-            if (pathname === '/api/command/crm/campaigns/contacts/delete' && _method === 'POST') {
-                db.deleteCampaignContacts(parseInt(params.campaignId) || 0, params.contactIds || []);
-                return { success: true };
-            }
-            if (pathname === '/api/command/crm/campaigns/contacts' && _method === 'DELETE') {
-                db.deleteCampaignContacts(parseInt(params.campaignId) || 0, params.contactIds || []);
-                return { success: true };
-            }
-
-            // ── Friends — CRUD ──
-            if (pathname === '/api/command/friends/batch') {
-                db.saveFriends(zaloId, params.friends || []);
-                return { success: true };
-            }
-            if (pathname === '/api/command/friends') {
-                db.addFriend(zaloId, params.friend || params);
-                return { success: true };
-            }
-            if (pathname.match(/^\/api\/command\/friends\/[^/]+$/)) {
-                const userId = pathname.split('/').pop() || '';
-                db.removeFriend(zaloId, userId);
-                return { success: true };
-            }
-
-            // ── Friend Requests — CRUD ──
-            if (pathname === '/api/command/friend-requests') {
-                db.upsertFriendRequest(zaloId, params.request || params, params.direction || 'received');
-                return { success: true };
-            }
-            if (pathname.match(/^\/api\/command\/friend-requests\/[^/]+$/)) {
-                const userId = pathname.split('/').pop() || '';
-                db.removeFriendRequest(zaloId, userId, params.direction || 'received');
-                return { success: true };
-            }
-
-            // ── Groups — upsert/remove member ──
-            if (pathname === '/api/command/groups/members/upsert') {
-                db.upsertGroupMember(zaloId, params.groupId, params.member);
-                return { success: true };
-            }
-            if (pathname.match(/^\/api\/command\/groups\/members\/[^/]+$/)) {
-                const memberId = pathname.split('/').pop() || '';
-                db.removeGroupMember(zaloId, params.groupId || params.group_id, memberId);
-                return { success: true };
-            }
-
-            // ── Links ──
-            if (pathname === '/api/command/links') {
-                db.saveLink(zaloId, params.threadId, params.msgId, params.url, params.title, params.domain, params.thumbUrl, parseInt(params.timestamp) || Date.now());
-                return { success: true };
-            }
-
-            // ── Quick Messages — bulk-replace, clone, setActive, setOrder ──
-            if (pathname === '/api/command/quick-messages/bulk-replace') {
-                db.bulkReplaceLocalQuickMessages(zaloId, params.items || []);
-                EventBroadcaster.emit('db:localQuickMessageChanged', { action: 'bulkReplace', ownerZaloId: zaloId });
-                return { success: true };
-            }
-            if (pathname === '/api/command/quick-messages/clone') {
-                const count = db.cloneLocalQuickMessages(params.sourceZaloId, params.targetZaloId);
-                return { success: true, data: { count } };
-            }
-            if (pathname.match(/^\/api\/command\/quick-messages\/\d+\/active$/)) {
-                const id = parseInt(pathname.split('/')[4]);
-                db.setLocalQMActive(id, params.isActive ?? 1);
-                EventBroadcaster.emit('db:localQuickMessageChanged', { action: 'active', id, isActive: params.isActive ?? 1 });
-                return { success: true };
-            }
-            if (pathname.match(/^\/api\/command\/quick-messages\/\d+\/order$/)) {
-                const id = parseInt(pathname.split('/')[4]);
-                db.setLocalQMOrder(id, parseInt(params.order) || 0);
-                EventBroadcaster.emit('db:localQuickMessageChanged', { action: 'reorder', id, order: parseInt(params.order) || 0 });
-                return { success: true };
-            }
-
-            // ── Labels — clone, setActive, setOrder ──
-            if (pathname === '/api/command/labels/clone') {
-                const count = db.cloneLocalLabels(params.sourceZaloId, params.targetZaloId);
-                return { success: true, data: { count } };
-            }
-            if (pathname.match(/^\/api\/command\/labels\/\d+\/active$/)) {
-                const id = parseInt(pathname.split('/')[3]);
-                db.setLocalLabelActive(id, params.isActive ?? 1);
-                EventBroadcaster.emit('db:localLabelChanged', { action: 'active', labelId: id, isActive: params.isActive ?? 1 });
-                return { success: true };
-            }
-            if (pathname.match(/^\/api\/command\/labels\/\d+\/order$/)) {
-                const id = parseInt(pathname.split('/')[3]);
-                db.setLocalLabelOrder(id, parseInt(params.order) || 0);
-                EventBroadcaster.emit('db:localLabelChanged', { action: 'reorder', labelId: id, order: parseInt(params.order) || 0 });
-                return { success: true };
-            }
-
-            // ── Drafts — cleanup ──
-            if (pathname === '/api/command/drafts/cleanup') {
-                db.deleteOldDrafts(parseInt(params.days) || 7);
-                return { success: true };
-            }
-
-            // ── Contacts — updatePhone ──
-            if (pathname === '/api/command/accounts/phone') {
-                db.updateAccountPhone(zaloId, params.phone || '');
-                return { success: true };
-            }
-
-            // ── Workflow CRUD ──
-            if (pathname === '/api/command/workflows') {
-                try {
-                    db.saveWorkflow(params.workflow || params);
-                } catch (wfErr: any) {
-                    return { success: false, error: wfErr.message };
-                }
-                EventBroadcaster.emit('workflow:executed', { action: 'save', workflowId: params.workflow?.id || params.id });
-                return { success: true };
-            }
-            if (pathname.match(/^\/api\/command\/workflows\/[^/]+\/toggle$/)) {
-                const id = pathname.split('/')[3];
-                db.toggleWorkflow(id, params.enabled !== false);
-                return { success: true };
-            }
-            if (pathname.match(/^\/api\/command\/workflows\/[^/]+$/)) {
-                const id = pathname.split('/').pop() || '';
-                db.deleteWorkflow(id);
-                return { success: true };
-            }
-
-            // ── Integration CRUD ──
-            if (pathname === '/api/command/integrations') {
-                const { IntegrationRegistry } = require('../integrations/IntegrationRegistry');
-                const saved = IntegrationRegistry.getInstance().saveIntegration(params.integration || params);
-                return { success: true, data: saved };
-            }
-            if (pathname.match(/^\/api\/command\/integrations\/[^/]+\/toggle$/)) {
-                const id = pathname.split('/')[3];
-                const { IntegrationRegistry } = require('../integrations/IntegrationRegistry');
-                IntegrationRegistry.getInstance().toggleIntegration(id, params.enabled !== false);
-                return { success: true };
-            }
-            if (pathname.match(/^\/api\/command\/integrations\/[^/]+$/)) {
-                const id = pathname.split('/').pop() || '';
-                const { IntegrationRegistry } = require('../integrations/IntegrationRegistry');
-                IntegrationRegistry.getInstance().deleteIntegration(id);
-                return { success: true };
-            }
-
-            // ── AI Assistant CRUD ──
-            if (pathname === '/api/command/ai/assistants') {
-                const AIAssistantService = require('../ai/AIAssistantService').default;
-                const savedId = AIAssistantService.getInstance().saveAssistant(params.assistant || params);
-                return { success: true, id: savedId };
-            }
-            if (pathname.match(/^\/api\/command\/ai\/assistants\/[^/]+$/)) {
-                const id = pathname.split('/').pop() || '';
-                const AIAssistantService = require('../ai/AIAssistantService').default;
-                AIAssistantService.getInstance().deleteAssistant(id);
-                return { success: true };
-            }
-
-            // ── ERP Tasks ──
-            if (pathname === '/api/command/erp/tasks') {
-                const ErpTaskService = require('../../services/erp/ErpTaskService').default;
-                const task = ErpTaskService.getInstance().createTask(params.input || params, employee.employee_id);
-                EventBroadcaster.emit('erp:event:taskCreated', { task });
-                return { success: true, task };
-            }
-            // ⚠️ Specific routes BEFORE regex catch-all
-            if (pathname === '/api/command/erp/tasks/assign') {
-                const ErpTaskService = require('../../services/erp/ErpTaskService').default;
-                ErpTaskService.getInstance().assignTask(params.id, params.employeeIds || [], employee.employee_id);
-                return { success: true };
-            }
-            if (pathname === '/api/command/erp/tasks/watcher') {
-                const ErpTaskService = require('../../services/erp/ErpTaskService').default;
-                if (params.action === 'remove') {
-                    ErpTaskService.getInstance().removeWatcher(params.taskId, params.employeeId || employee.employee_id);
-                } else {
-                    ErpTaskService.getInstance().addWatcher(params.taskId, params.employeeId || employee.employee_id);
-                }
-                return { success: true };
-            }
-            if (pathname === '/api/command/erp/tasks/comment') {
-                const ErpTaskService = require('../../services/erp/ErpTaskService').default;
-                const comment = ErpTaskService.getInstance().addComment(params.taskId, employee.employee_id, params.content, params.mentions || []);
-                return { success: true, comment };
-            }
-            if (pathname === '/api/command/erp/tasks/checklist') {
-                const ErpTaskService = require('../../services/erp/ErpTaskService').default;
-                const item = ErpTaskService.getInstance().addChecklist(params.taskId, params.content);
-                return { success: true, item };
-            }
-            if (pathname.match(/^\/api\/command\/erp\/tasks\/checklist\/\d+\/toggle$/)) {
-                const checkId = parseInt(pathname.split('/')[6]);
-                const ErpTaskService = require('../../services/erp/ErpTaskService').default;
-                const item = ErpTaskService.getInstance().toggleChecklist(checkId, !!params.done);
-                return { success: true, item };
-            }
-            // Regex catch-all for tasks/{id} — MUST be after specific routes
-            if (pathname.match(/^\/api\/command\/erp\/tasks\/[^/]+\/status$/)) {
-                const taskId = pathname.split('/')[5];
-                const ErpTaskService = require('../../services/erp/ErpTaskService').default;
-                const task = ErpTaskService.getInstance().updateTask(taskId, { status: params.status }, employee.employee_id);
-                return { success: true, task };
-            }
-            if (pathname.match(/^\/api\/command\/erp\/tasks\/[^/]+$/)) {
-                const taskId = pathname.split('/')[5];
-                const ErpTaskService = require('../../services/erp/ErpTaskService').default;
-                if (httpMethod === 'DELETE') {
-                    ErpTaskService.getInstance().deleteTask(taskId);
-                    return { success: true };
-                }
-                // PUT/PATCH — update
-                const task = ErpTaskService.getInstance().updateTask(taskId, params.patch || params, employee.employee_id);
-                return { success: true, task };
-            }
-            if (pathname === '/api/command/erp/projects') {
-                const ErpTaskService = require('../../services/erp/ErpTaskService').default;
-                const project = ErpTaskService.getInstance().createProject({
-                    name: params.name,
-                    description: params.description,
-                    color: params.color,
-                    department_id: params.department_id,
-                }, employee.employee_id);
-                return { success: true, project };
-            }
-
-            // ── ERP Calendar ──
-            if (pathname === '/api/command/erp/calendar') {
-                const { default: ErpCalendarService } = require('../../services/erp/ErpCalendarService');
-                const event = ErpCalendarService.getInstance().createEvent(params.input || params, employee.employee_id);
-                return { success: true, event };
-            }
-            if (pathname.match(/^\/api\/command\/erp\/calendar\/[^/]+$/)) {
-                const eventId = pathname.split('/').pop() || '';
-                const { default: ErpCalendarService } = require('../../services/erp/ErpCalendarService');
-                if (httpMethod === 'DELETE') {
-                    ErpCalendarService.getInstance().deleteEvent(eventId);
-                    return { success: true };
-                }
-                const event = ErpCalendarService.getInstance().updateEvent(eventId, params.patch || params);
-                return { success: true, event };
-            }
-
-            return { success: false, error: `Unknown command: ${httpMethod} ${pathname}` };
-        } catch (err: any) {
-            Logger.error(`[HttpRelayService] Command error: ${err.message}`);
-            return { success: false, error: err.message };
+    private async runRestCommand(employee: any, pathname: string, params: any, httpMethod: string): Promise<any> {
+        const hasPermission = (module: string) => EmployeeService.getInstance().hasPermission(employee.employee_id, module);
+        const denied = checkEmployeeAccess(employee, pathname, params, hasPermission)
+            || checkRestCommand(employee, pathname, params, hasPermission);
+        if (denied) {
+            Logger.warn(`[HttpRelayService] 🚫 ${httpMethod} ${pathname} employee=${employee.employee_id}: ${denied.code}`);
+            return { success: false, error: denied.error, code: denied.code, status: 403 };
         }
+        try {
+            // ERP: bảng ErpRestRoutes → handler IPC erp:* với danh tính ERP của nhân viên (quyền ERP kiểm tra trước IPC)
+            if (pathname.startsWith(ERP_REST_COMMAND_PREFIX)) {
+                const { status, body } = await this.executeErpRest(employee, httpMethod, pathname, params);
+                return status === 403 ? { ...body, status: 403 } : body;
+            }
+            const viaIpc = await this.executeRestCommandViaIpc(employee, pathname, params, httpMethod);
+            if (viaIpc !== undefined) return viaIpc;
+            return this.runOnPinnedDb(() => this.executeRestCommandOnDb(employee, pathname, params, httpMethod));
+        } catch (err: any) {
+            Logger.error(`[HttpRelayService] Command error (${httpMethod} ${pathname}): ${err.message}`);
+            return { success: false, error: err.message };
+        } finally {
+            // Vừa ghi DB: bỏ cache GET (1.5 s) để lần đọc ngay sau (UI tải lại sau khi lưu) thấy dữ liệu mới
+            this.restApiCache.clear();
+        }
+    }
+
+    /** Gọi handler IPC của chính Boss (như UI Boss gọi). `_fromRelay`: handler không proxy tiếp. */
+    private async invokeBossIpc(channel: string, params: any): Promise<any> {
+        const { ipcMain } = require('electron');
+        const handler: Function | undefined = (ipcMain as any)._invokeHandlers?.get(channel);
+        if (!handler) return { success: false, error: `No handler for channel: ${channel}` };
+        const result = await handler(null, { ...params, _fromRelay: true });
+        return result ?? { success: false, error: `Handler ${channel} không trả kết quả` };
+    }
+
+    /**
+     * ERP qua REST (GET /api/query/erp/*, lệnh /api/command/erp/*): route trong bảng ErpRestRoutes → ĐÚNG handler IPC
+     * erp:* của Boss, chạy với danh tính ERP của nhân viên (ErpAuthContext.forEmployee + runAs: role / quyền riêng theo
+     * hồ sơ ERP trên Boss — người làm không bao giờ lấy từ tham số). Quyền module 'erp' đã kiểm tra trước
+     * (employeeAccess / restCommandPolicy); ở đây kiểm tra quyền ERP của route TRƯỚC khi vào IPC (withErpAuth kiểm tra lại
+     * cùng action). Cùng service → event realtime phát đúng một lần như thao tác trên UI Boss; cùng phong bì
+     * `{ success, ...trường, error, code }`; từ chối quyền → `code: 'permission_denied'` + HTTP 403.
+     * Handler ERP đồng bộ (better-sqlite3): phần đọc / ghi DB chạy hết trong runOnPinnedDb trước lần `await` đầu tiên.
+     */
+    private async executeErpRest(employee: RegisteredEmployee, httpMethod: string, pathname: string, params: any): Promise<{ status: number; body: any }> {
+        const match = matchErpRestRoute(httpMethod, pathname, params);
+        if (!match) {
+            return { status: 404, body: { success: false, error: `Unknown endpoint: ${httpMethod} ${pathname}`, code: 'NOT_FOUND' } };
+        }
+        const { default: ErpAuthContext, ErpPermissionError } = require('../erp/ErpAuthContext');
+        try {
+            const body = await this.runOnPinnedDb(() => {
+                const ctx = ErpAuthContext.forEmployee(String(employee.employee_id));
+                if (match.route.action) ErpAuthContext.requirePermission(match.route.action, ctx);
+                const attachmentsDenied = this.checkErpTaskAttachments(employee, match.route.channel, match.input);
+                if (attachmentsDenied) return attachmentsDenied;
+                return ErpAuthContext.runAs(ctx, () => this.invokeBossIpc(match.route.channel, match.input));
+            });
+            if (body?.success === false && body?.code === 'permission_denied') {
+                Logger.warn(`[HttpRelayService] 🚫 ERP ${httpMethod} ${pathname} employee=${employee.employee_id}: ${body.error}`);
+            }
+            return { status: erpRestHttpStatus(body), body };
+        } catch (err: any) {
+            if (err instanceof ErpPermissionError) {
+                Logger.warn(`[HttpRelayService] 🚫 ERP ${httpMethod} ${pathname} employee=${employee.employee_id}: ${err.message}`);
+                return { status: 403, body: { success: false, error: err.message, code: 'permission_denied' } };
+            }
+            throw err;
+        }
+    }
+
+    /**
+     * Tệp đính kèm task do nhân viên gửi (tạo / sửa task): chỉ file đã đính trên chính task này, hoặc file trong thư mục
+     * media của Boss mà nhân viên được dùng (upload trước qua /api/media/upload) — cùng quy tắc đường dẫn với
+     * /api/proxy/action. Trước đây REST nhận đường dẫn tuỳ ý: Boss chép BẤT KỲ file nào trên máy Boss vào
+     * media/erp/tasks (mọi nhân viên tải được). Hợp lệ → đường dẫn đã chuẩn hoá (handler dùng đúng file vừa kiểm tra).
+     */
+    private checkErpTaskAttachments(employee: RegisteredEmployee, channel: string, input: any): any | null {
+        const holder = erpTaskAttachmentHolder(channel, input);
+        if (!holder) return null;
+        const existing = new Set<string>();
+        if (channel === 'erp:task:update' && input?.id) {
+            const rows = DatabaseService.getInstance().query<{ file_path: string }>(
+                'SELECT file_path FROM erp_task_attachments WHERE task_id = ?', [String(input.id)]) || [];
+            for (const row of rows) if (row?.file_path) existing.add(String(row.file_path));
+        }
+        let pathContext: ProxyPathContext | null = null;
+        const next: any[] = [];
+        for (const item of holder.attachments) {
+            const filePath = item?.file_path;
+            if (typeof filePath === 'string' && existing.has(filePath)) { next.push(item); continue; }
+            pathContext = pathContext || this.proxyFilePathContext(employee);
+            const decision = checkProxyFilePaths({ filePath }, pathContext);
+            if (decision.allowed === false) {
+                Logger.warn(`[HttpRelayService] 🚫 ERP ${channel} employee=${employee.employee_id}: tệp đính kèm ${decision.code} ${decision.path}`);
+                return { success: false, error: decision.error, code: decision.code };
+            }
+            next.push({ ...item, file_path: decision.params.filePath });
+        }
+        holder.attachments = next;
+        return null;
+    }
+
+    /** Lệnh theo tài khoản mà không gửi zaloId (nhân viên được giao nhiều tài khoản → không đoán). */
+    private static commandAccountRequired(): any {
+        return { success: false, error: 'Thiếu tài khoản (zaloId) cho thao tác này', code: 'ACCOUNT_REQUIRED' };
+    }
+
+    /**
+     * Chiến dịch của lệnh phải thuộc tài khoản được giao (và đúng zaloId nếu lệnh có gửi). `error` khác null = trả về
+     * ngay. Trước đây chỉ theo id: đổi trạng thái / xoá liên hệ / nhân bản chiến dịch của tài khoản khác được; xoá
+     * chiến dịch với zaloId của mình + id của người khác xoá sạch danh sách liên hệ của chiến dịch đó.
+     */
+    private requireCampaignOwner(campaignId: number, zaloId: string, assigned: readonly string[]): { owner: string; error: any } {
+        const owner = this.campaignOwner(campaignId);
+        if (!owner) return { owner: '', error: { success: false, error: 'Không tìm thấy chiến dịch' } };
+        if (!assigned.includes(owner) || (zaloId && zaloId !== owner)) {
+            return { owner: '', error: { success: false, error: 'Không có quyền với chiến dịch này', code: 'ACCOUNT_FORBIDDEN', status: 403 } };
+        }
+        return { owner, error: null };
+    }
+
+    /** Workflow đang có phải gắn toàn trang được giao (workflowPagesAllowed). null = được phép / chưa có workflow này. */
+    private checkWorkflowPages(workflowId: string, assigned: readonly string[]): any | null {
+        if (!workflowId) return null;
+        const row: any = this.runOnPinnedDb((db) => db.getWorkflowById(workflowId));
+        if (!row) return null;
+        if (workflowPagesAllowed(workflowPageIds(row.page_ids, row.page_id), assigned)) return null;
+        return { success: false, error: 'Workflow gắn trang không được giao cho bạn', code: 'ACCOUNT_FORBIDDEN', status: 403 };
+    }
+
+    /**
+     * Lệnh REST có handler IPC tương ứng trên Boss → chạy đúng handler đó: cùng chuẩn hoá, kiểm tra, event và nạp lại
+     * engine như UI Boss. Trước đây REST ghi thẳng DB: workflow lưu / bật tắt không nạp lại engine (chỉ có hiệu lực sau
+     * khi khởi động lại Boss), tích hợp gọi hàm không tồn tại (IntegrationRegistry.getInstance → luôn lỗi), chiến dịch
+     * chuyển "active" mà hàng đợi gửi không chạy, gắn nhãn không kích hoạt workflow "gắn nhãn", event cờ hội thoại thiếu
+     * ownerZaloId (nhân viên khác không lưu được), cắt id sai vị trí (`split('/')[3]` = "conversations" / "labels" /
+     * "workflows" / "integrations" → cờ, biệt danh, bật tắt ghi vào bản ghi tên đó).
+     * undefined = không phải lệnh loại này (ghi DB trực tiếp ở executeRestCommandOnDb).
+     */
+    private async executeRestCommandViaIpc(employee: any, pathname: string, params: any, httpMethod: string): Promise<any | undefined> {
+        const assigned: string[] = (employee.assigned_accounts || []).map(String);
+        const zaloId = defaultCommandAccount(params, assigned);
+        const isDelete = httpMethod === 'DELETE';
+        const accountRequired = HttpRelayService.commandAccountRequired;
+
+        // ── Hội thoại: cờ (tắt thông báo / mục Khác / @) + biệt danh ──
+        const flagsPath = commandPathParams(pathname, /^\/api\/command\/conversations\/([^/]+)\/flags$/);
+        if (flagsPath) {
+            if (!zaloId) return accountRequired();
+            return this.invokeBossIpc('db:setContactFlags', { zaloId, contactId: flagsPath[0], flags: params.flags || {} });
+        }
+        const aliasPath = commandPathParams(pathname, /^\/api\/command\/conversations\/([^/]+)\/alias$/);
+        if (aliasPath) {
+            if (!zaloId) return accountRequired();
+            return this.invokeBossIpc('db:setContactAlias', { zaloId, contactId: aliasPath[0], alias: String(params.alias ?? '') });
+        }
+        // Hồ sơ liên hệ: handler chỉ phát db:contactProfileUpdated khi hồ sơ thật sự đổi (REST cũ phát mọi lần)
+        // — PHẢI đứng trước route xoá (regex /conversations/<id> khớp cả "update-profile")
+        if (pathname === '/api/command/conversations/update-profile') {
+            if (!zaloId) return accountRequired();
+            return this.invokeBossIpc('db:updateContactProfile', {
+                zaloId, contactId: params.contactId, displayName: params.displayName, avatarUrl: params.avatarUrl,
+                phone: params.phone, contactType: params.contactType, gender: params.gender, birthday: params.birthday,
+                isBot: null, manualDetails: !!params.manualDetails,
+            });
+        }
+        const conversationPath = commandPathParams(pathname, /^\/api\/command\/conversations\/([^/]+)$/);
+        if (conversationPath && isDelete) {
+            if (!zaloId) return accountRequired();
+            return this.invokeBossIpc('db:deleteConversation', { zaloId, contactId: conversationPath[0] });
+        }
+
+        // ── Tin nhắn: đã đọc / xoá khỏi app (handler phát db:unreadChanged / event:delete như UI Boss) ──
+        if (pathname === '/api/command/messages/mark-read') {
+            if (!zaloId) return accountRequired();
+            return this.invokeBossIpc('db:markAsRead', { zaloId, contactId: params.contactId });
+        }
+        if (pathname === '/api/command/messages/delete') {
+            if (!zaloId) return accountRequired();
+            return this.invokeBossIpc('db:deleteMessages', {
+                zaloId, msgIds: Array.isArray(params.msgIds) ? params.msgIds.map(String) : [],
+                ...(params.threadId ? { threadId: String(params.threadId) } : {}),
+            });
+        }
+
+        // ── Ghim hội thoại / tin đánh dấu / ghim tin nhắn ──
+        if (pathname === '/api/command/pinned-conversations') {
+            if (!zaloId) return accountRequired();
+            return this.invokeBossIpc('db:setLocalPinnedConversation', { zaloId, threadId: String(params.threadId || ''), isPinned: !!params.isPinned });
+        }
+        if (pathname === '/api/command/starred-messages') {
+            if (!zaloId) return accountRequired();
+            return this.invokeBossIpc('db:setMessageStarred', {
+                zaloId, threadId: String(params.threadId || ''), msgId: String(params.msgId || ''), starred: !!params.starred, snapshot: params.snapshot,
+            });
+        }
+        if (pathname === '/api/command/pinned-messages') {
+            if (!zaloId) return accountRequired();
+            return this.invokeBossIpc('db:pinMessage', { zaloId, threadId: String(params.threadId || ''), pin: params.pin });
+        }
+        if (pathname === '/api/command/pinned-messages/bring-to-top') {
+            if (!zaloId) return accountRequired();
+            return this.invokeBossIpc('db:bringPinnedToTop', { zaloId, threadId: String(params.threadId || ''), msgId: String(params.msgId || '') });
+        }
+        const unpinPath = commandPathParams(pathname, /^\/api\/command\/pinned-messages\/([^/]+)$/);
+        if (unpinPath && isDelete) {
+            if (!zaloId) return accountRequired();
+            return this.invokeBossIpc('db:unpinMessage', { zaloId, threadId: String(params.threadId || ''), msgId: unpinPath[0] });
+        }
+
+        // ── Nhãn Local (định nghĩa dùng chung) + gắn nhãn hội thoại (kích hoạt workflow "gắn nhãn" như UI Boss) ──
+        if (pathname === '/api/command/labels' && !isDelete) {
+            return this.invokeBossIpc('db:upsertLocalLabel', { label: params.label || {} });
+        }
+        if (pathname === '/api/command/labels/clone') {
+            return this.invokeBossIpc('db:cloneLocalLabels', { sourceZaloId: params.sourceZaloId, targetZaloId: params.targetZaloId });
+        }
+        const labelFlagPath = commandPathParams(pathname, /^\/api\/command\/labels\/(\d+)\/(active|order)$/);
+        if (labelFlagPath) {
+            const id = positiveInt(labelFlagPath[0]);
+            return labelFlagPath[1] === 'active'
+                ? this.invokeBossIpc('db:setLocalLabelActive', { id, isActive: params.isActive ?? 1 })
+                : this.invokeBossIpc('db:setLocalLabelOrder', { id, order: parseInt(params.order) || 0 });
+        }
+        const labelPath = commandPathParams(pathname, /^\/api\/command\/labels\/(\d+)$/);
+        if (labelPath && isDelete) {
+            return this.invokeBossIpc('db:deleteLocalLabel', { id: positiveInt(labelPath[0]) });
+        }
+        if (pathname === '/api/command/label-threads/bulk') {
+            if (!zaloId) return accountRequired();
+            const labelIds = (Array.isArray(params.labelIds) ? params.labelIds : []).map(positiveInt).filter(Boolean);
+            const threadIds = (Array.isArray(params.threadIds) ? params.threadIds : []).map((id: unknown) => String(id ?? '')).filter(Boolean);
+            return this.invokeBossIpc('db:bulkAssignLocalLabelToThread', { zaloId, labelIds, threadIds });
+        }
+        if (pathname === '/api/command/label-threads') {
+            if (!zaloId) return accountRequired();
+            // Query string (DELETE) cho labelId dạng chuỗi — handler / event cần số như UI Boss
+            const labelId = positiveInt(params.labelId);
+            const threadId = String(params.threadId || '');
+            if (!labelId || !threadId) return { success: false, error: 'Thiếu nhãn hoặc hội thoại' };
+            return this.invokeBossIpc(isDelete ? 'db:removeLocalLabelFromThread' : 'db:assignLocalLabelToThread', {
+                zaloId, labelId, threadId,
+                threadType: params.threadType !== undefined ? Number(params.threadType) || 0 : undefined,
+                labelText: params.labelText, labelColor: params.labelColor, labelEmoji: params.labelEmoji,
+            });
+        }
+
+        // ── Tin nhắn nhanh local (theo tài khoản) ──
+        if (pathname === '/api/command/quick-messages' && !isDelete) {
+            if (!zaloId) return accountRequired();
+            return this.invokeBossIpc('db:upsertLocalQuickMessage', { zaloId, item: params.item || {} });
+        }
+        if (pathname === '/api/command/quick-messages/bulk-replace') {
+            if (!zaloId) return accountRequired();
+            return this.invokeBossIpc('db:bulkReplaceLocalQuickMessages', { zaloId, items: Array.isArray(params.items) ? params.items : [] });
+        }
+        if (pathname === '/api/command/quick-messages/clone') {
+            return this.invokeBossIpc('db:cloneLocalQuickMessages', { sourceZaloId: params.sourceZaloId, targetZaloId: params.targetZaloId });
+        }
+        const qmFlagPath = commandPathParams(pathname, /^\/api\/command\/quick-messages\/(\d+)\/(active|order)$/);
+        if (qmFlagPath) {
+            // Chỉ có id: tin nhắn nhanh phải thuộc tài khoản được giao
+            const id = positiveInt(qmFlagPath[0]);
+            const owner = this.quickMessageOwner(id);
+            if (owner && !assigned.includes(owner)) {
+                return { success: false, error: 'Không có quyền truy cập tài khoản này', code: 'ACCOUNT_FORBIDDEN', status: 403 };
+            }
+            return qmFlagPath[1] === 'active'
+                ? this.invokeBossIpc('db:setLocalQMActive', { id, isActive: params.isActive ?? 1 })
+                : this.invokeBossIpc('db:setLocalQMOrder', { id, order: parseInt(params.order) || 0 });
+        }
+        const qmPath = commandPathParams(pathname, /^\/api\/command\/quick-messages\/(\d+)$/);
+        if (qmPath && isDelete) {
+            if (!zaloId) return accountRequired();
+            return this.invokeBossIpc('db:deleteLocalQuickMessage', { zaloId, id: positiveInt(qmPath[0]) });
+        }
+
+        // ── CRM: ghi chú ──
+        if (pathname === '/api/command/crm/notes') {
+            if (!zaloId) return accountRequired();
+            return this.invokeBossIpc('crm:saveNote', { zaloId, note: params.note || {} });
+        }
+        const notePath = commandPathParams(pathname, /^\/api\/command\/crm\/notes\/(\d+)$/);
+        if (notePath && isDelete) {
+            if (!zaloId) return accountRequired();
+            return this.invokeBossIpc('crm:deleteNote', { zaloId, noteId: positiveInt(notePath[0]) });
+        }
+
+        // ── CRM: chiến dịch (kiểm tra kênh, chạy / dừng hàng đợi, event như UI Boss) ──
+        if (pathname === '/api/command/crm/campaigns') {
+            if (!zaloId) return accountRequired();
+            const campaign = params.campaign || {};
+            if (positiveInt(campaign.id)) {
+                const owned = this.requireCampaignOwner(positiveInt(campaign.id), zaloId, assigned);
+                if (owned.error) return owned.error;
+            }
+            return this.invokeBossIpc('crm:saveCampaign', { zaloId, campaign });
+        }
+        if (pathname === '/api/command/crm/campaigns/clone') {
+            const campaignId = positiveInt(params.campaignId);
+            const owned = this.requireCampaignOwner(campaignId, zaloId, assigned);
+            if (owned.error) return owned.error;
+            return this.invokeBossIpc('crm:cloneCampaign', {
+                zaloId: owned.owner, campaignId, includeContacts: !!params.includeContacts, newName: params.newName,
+            });
+        }
+        if (pathname === '/api/command/crm/campaigns/status') {
+            const campaignId = positiveInt(params.campaignId);
+            const owned = this.requireCampaignOwner(campaignId, zaloId, assigned);
+            if (owned.error) return owned.error;
+            return this.invokeBossIpc('crm:updateCampaignStatus', { campaignId, status: params.status });
+        }
+        if (pathname === '/api/command/crm/campaigns/contacts' && !isDelete) {
+            const campaignId = positiveInt(params.campaignId);
+            const owned = this.requireCampaignOwner(campaignId, zaloId, assigned);
+            if (owned.error) return owned.error;
+            return this.invokeBossIpc('crm:addCampaignContacts', {
+                zaloId: owned.owner, campaignId, contacts: Array.isArray(params.contacts) ? params.contacts : [],
+            });
+        }
+        if ((pathname === '/api/command/crm/campaigns/contacts' && isDelete) || pathname === '/api/command/crm/campaigns/contacts/delete') {
+            const campaignId = positiveInt(params.campaignId);
+            const owned = this.requireCampaignOwner(campaignId, zaloId, assigned);
+            if (owned.error) return owned.error;
+            const contactIds = (Array.isArray(params.contactIds) ? params.contactIds : []).map((id: unknown) => String(id ?? '')).filter(Boolean);
+            return this.invokeBossIpc('crm:deleteCampaignContacts', { campaignId, contactIds });
+        }
+        // DataAccessor gọi /contacts/delete-all — route cũ chỉ có /contacts/all ("Unknown command")
+        if (pathname === '/api/command/crm/campaigns/contacts/all' || pathname === '/api/command/crm/campaigns/contacts/delete-all') {
+            const campaignId = positiveInt(params.campaignId);
+            const owned = this.requireCampaignOwner(campaignId, zaloId, assigned);
+            if (owned.error) return owned.error;
+            return this.invokeBossIpc('crm:deleteAllCampaignContacts', { campaignId });
+        }
+        const campaignPath = commandPathParams(pathname, /^\/api\/command\/crm\/campaigns\/(\d+)$/);
+        if (campaignPath && isDelete) {
+            const campaignId = positiveInt(campaignPath[0]);
+            const owned = this.requireCampaignOwner(campaignId, zaloId, assigned);
+            if (owned.error) return owned.error;
+            return this.invokeBossIpc('crm:deleteCampaign', { zaloId: owned.owner, campaignId });
+        }
+
+        // ── Workflow (module workflow): chỉ workflow mà mọi trang thuộc tài khoản được giao ──
+        if (pathname === '/api/command/workflows' && !isDelete) {
+            const workflow = params.workflow || params;
+            if (!workflowPagesAllowed(workflowPageIds(workflow?.pageIds, workflow?.pageId), assigned)) {
+                return { success: false, error: 'Workflow gắn trang không được giao cho bạn', code: 'ACCOUNT_FORBIDDEN', status: 403 };
+            }
+            const existingDenied = this.checkWorkflowPages(String(workflow?.id || ''), assigned);
+            if (existingDenied) return existingDenied;
+            return this.invokeBossIpc('workflow:save', { workflow });
+        }
+        const workflowTogglePath = commandPathParams(pathname, /^\/api\/command\/workflows\/([^/]+)\/toggle$/);
+        if (workflowTogglePath) {
+            const pagesDenied = this.checkWorkflowPages(workflowTogglePath[0], assigned);
+            if (pagesDenied) return pagesDenied;
+            return this.invokeBossIpc('workflow:toggle', { id: workflowTogglePath[0], enabled: params.enabled !== false });
+        }
+        const workflowPath = commandPathParams(pathname, /^\/api\/command\/workflows\/([^/]+)$/);
+        if (workflowPath && isDelete) {
+            const pagesDenied = this.checkWorkflowPages(workflowPath[0], assigned);
+            if (pagesDenied) return pagesDenied;
+            return this.invokeBossIpc('workflow:delete', { id: workflowPath[0] });
+        }
+
+        // ── Tích hợp (module integration) — cấu hình cấp workspace ──
+        if (pathname === '/api/command/integrations' && !isDelete) {
+            return this.invokeBossIpc('integration:save', { integration: params.integration || params });
+        }
+        const integrationTogglePath = commandPathParams(pathname, /^\/api\/command\/integrations\/([^/]+)\/toggle$/);
+        if (integrationTogglePath) {
+            return this.invokeBossIpc('integration:toggle', { id: integrationTogglePath[0], enabled: params.enabled !== false });
+        }
+        const integrationPath = commandPathParams(pathname, /^\/api\/command\/integrations\/([^/]+)$/);
+        if (integrationPath && isDelete) {
+            return this.invokeBossIpc('integration:delete', { id: integrationPath[0] });
+        }
+
+        return undefined;
+    }
+
+    /** Lệnh ghi thẳng DB Boss (đồng bộ; executeRestCommand gọi trong runOnPinnedDb). */
+    private executeRestCommandOnDb(employee: any, pathname: string, params: any, httpMethod: string): any {
+        const zaloId = defaultCommandAccount(params, employee.assigned_accounts);
+        const db = DatabaseService.getInstance();
+        const isDelete = httpMethod === 'DELETE';
+        const accountRequired = HttpRelayService.commandAccountRequired;
+
+        // Hồ sơ liên hệ / xoá hội thoại / đã đọc / xoá tin: chạy handler IPC (executeRestCommandViaIpc)
+
+        // ── Nháp ── (cleanup TRƯỚC route theo threadId: trước đây "cleanup" bị coi là threadId → tạo nháp rỗng tên "cleanup")
+        if (pathname === '/api/command/drafts/cleanup') {
+            db.deleteOldDrafts(parseInt(params.days) || 7);
+            return { success: true };
+        }
+        const draftPath = commandPathParams(pathname, /^\/api\/command\/drafts\/([^/]+)$/);
+        if (draftPath) {
+            if (!zaloId) return accountRequired();
+            if (isDelete) {
+                db.deleteDraft(zaloId, draftPath[0]);
+            } else {
+                db.upsertDraft(zaloId, draftPath[0], params.content || '');
+            }
+            return { success: true };
+        }
+
+        // ── Settings ──
+        // Thông báo theo tài khoản (trước đây rơi vào route chung và ghi nhầm khoá "notif" rỗng)
+        if (pathname === '/api/command/settings/notif') {
+            if (!zaloId) return { success: false, error: 'Missing zaloId' };
+            db.setSetting(`notifSettings_${zaloId}`, JSON.stringify(params.settings ?? {}));
+            return { success: true };
+        }
+        // Một khoá: chỉ khoá trong allowlist — nhân viên không được sửa cài đặt của Boss
+        if (pathname.match(/^\/api\/command\/settings\/[^/]+$/)) {
+            const key = decodeURIComponent(pathname.split('/').pop() || '');
+            if (!isEmployeeSettingKey(key)) {
+                return { success: false, error: 'Không có quyền sửa cài đặt này', code: 'SETTING_FORBIDDEN' };
+            }
+            db.setSetting(key, params.value || '');
+            return { success: true };
+        }
+
+        // ── Stickers (cache dùng chung) ──
+        if (pathname === '/api/command/stickers/save') {
+            db.saveStickers(params.stickers || []);
+            return { success: true };
+        }
+        if (pathname === '/api/command/sticker-packs/save') {
+            db.saveStickerPacks(params.packs || []);
+            return { success: true };
+        }
+        if (pathname === '/api/command/stickers/recent') {
+            db.addRecentSticker(parseInt(params.stickerId) || 0);
+            return { success: true };
+        }
+        if (pathname === '/api/command/stickers/keyword') {
+            db.saveKeywordStickers(params.keyword || '', params.stickerIds || []);
+            return { success: true };
+        }
+
+        // ── CRM Tags (theo tài khoản) ──
+        if (pathname === '/api/command/crm/tags') {
+            if (!zaloId) return accountRequired();
+            const tag = params.tag || params;
+            const existing = db.queryOne<any>(`SELECT id FROM crm_tags WHERE owner_zalo_id=? AND name=?`, [zaloId, tag.name]);
+            if (existing) {
+                db.run(`UPDATE crm_tags SET name=?,color=? WHERE id=?`, [tag.name, tag.color, existing.id]);
+                EventBroadcaster.emit('crm:tagChanged', { action: 'update', ownerZaloId: zaloId, tag: { ...tag, id: existing.id } });
+                return { success: true, data: { id: existing.id } };
+            }
+            const rowId = db.runInsert(`INSERT INTO crm_tags (owner_zalo_id,name,color) VALUES (?,?,?)`, [zaloId, tag.name, tag.color]);
+            EventBroadcaster.emit('crm:tagChanged', { action: 'create', ownerZaloId: zaloId, tag: { ...tag, id: rowId } });
+            return { success: true, data: { id: rowId } };
+        }
+        if (pathname === '/api/command/crm/tags/assign') {
+            if (!zaloId) return accountRequired();
+            db.run(`INSERT OR IGNORE INTO crm_contact_tags (owner_zalo_id,tag_id,contact_id) VALUES (?,?,?)`,
+                [zaloId, params.tagId, params.contactId]);
+            EventBroadcaster.emit('crm:tagChanged', { action: 'assign', ownerZaloId: zaloId, tagId: params.tagId, contactId: params.contactId });
+            return { success: true };
+        }
+        // Trước đây cắt parts[4]/parts[6] = "tags"/"contacts" → không bao giờ gỡ được thẻ nào
+        const tagContactPath = commandPathParams(pathname, /^\/api\/command\/crm\/tags\/(\d+)\/contacts\/([^/]+)$/);
+        if (tagContactPath) {
+            if (!zaloId) return accountRequired();
+            const tagId = positiveInt(tagContactPath[0]);
+            const contactId = tagContactPath[1];
+            db.run(`DELETE FROM crm_contact_tags WHERE owner_zalo_id=? AND tag_id=? AND contact_id=?`, [zaloId, tagId, contactId]);
+            EventBroadcaster.emit('crm:tagChanged', { action: 'remove', ownerZaloId: zaloId, tagId, contactId });
+            return { success: true };
+        }
+        const tagPath = commandPathParams(pathname, /^\/api\/command\/crm\/tags\/(\d+)$/);
+        if (tagPath && isDelete) {
+            if (!zaloId) return accountRequired();
+            // Chỉ thẻ của tài khoản này (trước đây xoá được thẻ của mọi tài khoản theo id)
+            const tagId = positiveInt(tagPath[0]);
+            const owned = db.queryOne<any>(`SELECT id FROM crm_tags WHERE id=? AND owner_zalo_id=?`, [tagId, zaloId]);
+            if (!owned) return { success: false, error: 'Không tìm thấy thẻ' };
+            db.run(`DELETE FROM crm_contact_tags WHERE tag_id=? AND owner_zalo_id=?`, [tagId, zaloId]);
+            db.run(`DELETE FROM crm_tags WHERE id=? AND owner_zalo_id=?`, [tagId, zaloId]);
+            EventBroadcaster.emit('crm:tagChanged', { action: 'delete', ownerZaloId: zaloId, tagId });
+            return { success: true };
+        }
+
+        // ── Thẻ ngân hàng (theo tài khoản) ──
+        if (pathname === '/api/command/bank-cards') {
+            if (!zaloId) return accountRequired();
+            const id = db.upsertBankCard(zaloId, { ...params.card, ...params });
+            if (!(id > 0)) return { success: false, error: 'Không lưu được thẻ ngân hàng' };
+            return { success: true, data: { id } };
+        }
+        const bankCardPath = commandPathParams(pathname, /^\/api\/command\/bank-cards\/(\d+)$/);
+        if (bankCardPath && isDelete) {
+            if (!zaloId) return accountRequired();
+            db.deleteBankCard(zaloId, positiveInt(bankCardPath[0]));
+            return { success: true };
+        }
+
+        // Proxy mạng (/api/command/proxies*, /api/command/accounts/proxy): chỉ Boss — checkRestCommand đã từ chối.
+
+        // ── Tin nhắn — thu hồi, cảm xúc, đường dẫn media (đã đọc / xoá khỏi app: handler IPC) ──
+        if (pathname === '/api/command/messages/mark-recalled') {
+            if (!zaloId) return accountRequired();
+            db.markMessageRecalled(zaloId, params.msgId, params.threadId ? String(params.threadId) : undefined);
+            // event:undo đã được relay từ Zalo webhook — emit thêm để đồng bộ (threadId giúp UI cập nhật dòng hội thoại)
+            EventBroadcaster.emit('event:undo', { zaloId, msgId: params.msgId, ...(params.threadId ? { threadId: String(params.threadId) } : {}) });
+            return { success: true };
+        }
+        if (pathname === '/api/command/messages/reaction') {
+            // Note: boss DB is already updated by EventBroadcaster.broadcastReaction()
+            // via runOnBossDb. Only the employee DB needs updating here, which was
+            // already done by HttpClientService.saveRelayReactionToWorkspaceDb().
+            // Do NOT emit event:reaction back to renderer — it was already forwarded
+            // by HttpClientService via sendDirect, and emitting again causes double display.
+            return { success: true };
+        }
+        if (pathname === '/api/command/messages/local-paths') {
+            if (!zaloId) return accountRequired();
+            db.updateLocalPaths(zaloId, params.msgId, params.localPaths || {});
+            EventBroadcaster.emit('event:localPath', { zaloId, msgId: params.msgId, threadId: params.threadId || '', localPaths: params.localPaths });
+            return { success: true };
+        }
+
+        // ── Bạn bè / lời mời kết bạn (cache theo tài khoản) ──
+        if (pathname === '/api/command/friends/batch') {
+            if (!zaloId) return accountRequired();
+            db.saveFriends(zaloId, params.friends || []);
+            return { success: true };
+        }
+        if (pathname === '/api/command/friends') {
+            if (!zaloId) return accountRequired();
+            db.addFriend(zaloId, params.friend || params);
+            return { success: true };
+        }
+        const friendPath = commandPathParams(pathname, /^\/api\/command\/friends\/([^/]+)$/);
+        if (friendPath && isDelete) {
+            if (!zaloId) return accountRequired();
+            db.removeFriend(zaloId, friendPath[0]);
+            return { success: true };
+        }
+        if (pathname === '/api/command/friend-requests') {
+            if (!zaloId) return accountRequired();
+            db.upsertFriendRequest(zaloId, params.request || params, params.direction || 'received');
+            return { success: true };
+        }
+        const friendRequestPath = commandPathParams(pathname, /^\/api\/command\/friend-requests\/([^/]+)$/);
+        if (friendRequestPath && isDelete) {
+            if (!zaloId) return accountRequired();
+            db.removeFriendRequest(zaloId, friendRequestPath[0], params.direction || 'received');
+            return { success: true };
+        }
+
+        // ── Thành viên nhóm (cache theo tài khoản) ──
+        // DataAccessor.saveGroupMembers gọi POST /groups/members — trước đây không có route ("Unknown command")
+        if (pathname === '/api/command/groups/members') {
+            if (!zaloId) return accountRequired();
+            if (!params.groupId) return { success: false, error: 'Thiếu groupId' };
+            db.saveGroupMembers(zaloId, String(params.groupId), Array.isArray(params.members) ? params.members : []);
+            return { success: true };
+        }
+        if (pathname === '/api/command/groups/members/upsert') {
+            if (!zaloId) return accountRequired();
+            db.upsertGroupMember(zaloId, params.groupId, params.member);
+            return { success: true };
+        }
+        const groupMemberPath = commandPathParams(pathname, /^\/api\/command\/groups\/members\/([^/]+)$/);
+        if (groupMemberPath && isDelete) {
+            if (!zaloId) return accountRequired();
+            db.removeGroupMember(zaloId, params.groupId || params.group_id, groupMemberPath[0]);
+            return { success: true };
+        }
+
+        // ── Links ──
+        if (pathname === '/api/command/links') {
+            if (!zaloId) return accountRequired();
+            db.saveLink(zaloId, params.threadId, params.msgId, params.url, params.title, params.domain, params.thumbUrl, parseInt(params.timestamp) || Date.now());
+            return { success: true };
+        }
+
+        // ── Tài khoản — số điện thoại ──
+        if (pathname === '/api/command/accounts/phone') {
+            if (!zaloId) return accountRequired();
+            db.updateAccountPhone(zaloId, params.phone || '');
+            return { success: true };
+        }
+
+        // ── AI Assistant CRUD (module ai_assistant) — cùng hàm với ai:saveAssistant / ai:deleteAssistant ──
+        if (pathname === '/api/command/ai/assistants') {
+            const AIAssistantService = require('../ai/AIAssistantService').default;
+            const savedId = AIAssistantService.getInstance().saveAssistant(params.assistant || params);
+            return { success: true, id: savedId };
+        }
+        const assistantPath = commandPathParams(pathname, /^\/api\/command\/ai\/assistants\/([^/]+)$/);
+        if (assistantPath && isDelete) {
+            const AIAssistantService = require('../ai/AIAssistantService').default;
+            AIAssistantService.getInstance().deleteAssistant(assistantPath[0]);
+            return { success: true };
+        }
+
+        // ERP (/api/command/erp/*): runRestCommand → executeErpRest (handler IPC erp:* + RBAC theo danh tính nhân viên)
+
+        return { success: false, error: `Unknown command: ${httpMethod} ${pathname}` };
     }
 
     /** Max ms since last successful SSE write before considering connection stale */
     private static SSE_STALE_THRESHOLD_MS = 60_000;
+
+    /**
+     * Lệnh điều khiển cho đúng một nhân viên (kicked / snapshot / quyền / tài khoản được giao): Socket.IO nếu
+     * nhân viên đang nối (kênh tức thời, không buffer), không thì SSE → callback LAN như cũ. Chỉ đi MỘT đường —
+     * gửi cả hai thì renderer xử lý hai lần (vd tải lại hội thoại hai lần khi đổi tài khoản được giao).
+     * Nhân viên bản mới không mở SSE nữa: trước đây lệnh chỉ tới được qua callback LAN, nhân viên qua tunnel không nhận.
+     */
+    private pushControlToEmployee(emp: RegisteredEmployee, channel: string, data: any): void {
+        try {
+            const sio = SocketIOService.getInstance();
+            if (sio.isOnline(emp.employee_id)) {
+                sio.emitToEmployee(emp.employee_id, channel, data);
+                return;
+            }
+        } catch { /* rơi về SSE / callback */ }
+        if (!this.pushViaSSE(emp.employee_id, channel, data)) {
+            this.pushToEmployee(emp, channel, data).catch(() => {});
+        }
+    }
 
     /** Push an event via SSE to an employee. Returns true if SSE was available. */
     private pushViaSSE(employeeId: string, channel: string, data: any): boolean {
@@ -2386,57 +2878,308 @@ class HttpRelayService {
     }
 
     // ─── Tunnel management ────────────────────────────────────────────
+    //
+    // TunnelService giám sát tunnel (tự chạy lại khi cloudflared chết, đổi cấu hình kiểu make-before-break);
+    // relay chỉ nghe watch() của cổng mình: cập nhật trạng thái, phát relay:tunnelStatusUpdate, và khi địa chỉ
+    // WAN khác lần chạy trước (relay_tunnel_last_url, sống qua khởi động lại app) thì báo BOSS + nhân viên.
 
-    public async startTunnel(): Promise<{ success: boolean; tunnelUrl?: string; error?: string }> {
+    /** Bật tunnel theo cấu hình đã lưu. auto = tự bật (mở app / relay chạy lại): lỗi thì TunnelService tự thử lại. */
+    public async startTunnel(options: { auto?: boolean } = {}): Promise<{ success: boolean; tunnelUrl?: string; error?: string }> {
         if (!this.running) {
             return { success: false, error: 'Relay server chưa được bật' };
         }
+        const cloud = cloudTunnelIfAuto();
+        if (cloud) return this.startCloudTunnel(cloud, options);
+        this.ensureTunnelWatcher();
+        this.tunnelAutoStarted = !!options.auto;
         try {
-            const url = await TunnelService.start(this.port, 'Employee Relay', this.getTunnelOptions());
-            this.tunnelActive = true;
-            this.tunnelUrl = url;
+            const url = await TunnelService.start(this.port, 'Employee Relay', { ...this.getTunnelOptions(), keepAlive: !!options.auto });
             Logger.log(`[HttpRelayService] 🌐 Tunnel active: ${url}`);
-
-            // Listen for URL changes (relay reconnects)
-            TunnelService.onChange(this.port, (newUrl) => {
-                this.tunnelUrl = newUrl;
-                this.tunnelActive = !!newUrl;
-                EventBroadcaster.emit('relay:tunnelStatusUpdate', {
-                    active: this.tunnelActive,
-                    tunnelUrl: this.tunnelUrl,
-                });
-            });
-
-            EventBroadcaster.emit('relay:tunnelStatusUpdate', { active: true, tunnelUrl: url });
             return { success: true, tunnelUrl: url };
         } catch (err: any) {
             Logger.error(`[HttpRelayService] Tunnel start error: ${err.message}`);
+            EventBroadcaster.emit('relay:tunnelStatusUpdate', this.getTunnelStatus());
             return { success: false, error: err.message };
         }
     }
 
-    public async stopTunnel(): Promise<{ success: boolean }> {
+    /**
+     * Áp dụng cấu hình tunnel mới khi đang chạy (vd chuyển sang Địa chỉ cố định) mà không ngắt nhân viên:
+     * tunnel mới lên trước, nhân viên đang nối được báo địa chỉ mới qua tunnel cũ, tunnel cũ tắt sau ~10 s.
+     * Tunnel mới lỗi → tunnel cũ giữ nguyên. Chưa chạy → bật bình thường.
+     */
+    public async restartTunnel(): Promise<{ success: boolean; tunnelUrl?: string; error?: string }> {
+        if (!this.running) {
+            return { success: false, error: 'Relay server chưa được bật' };
+        }
+        const cloud = cloudTunnelIfAuto();
+        if (cloud) return this.startCloudTunnel(cloud, {});
+        this.ensureTunnelWatcher();
+        try {
+            const url = await TunnelService.replace(this.port, 'Employee Relay', this.getTunnelOptions());
+            return { success: true, tunnelUrl: url };
+        } catch (err: any) {
+            Logger.error(`[HttpRelayService] Tunnel switch error: ${err.message}`);
+            EventBroadcaster.emit('relay:tunnelStatusUpdate', this.getTunnelStatus());
+            return { success: false, error: err.message };
+        }
+    }
+
+    public async stopTunnel(): Promise<{ success: boolean; error?: string }> {
+        const cloud = cloudTunnelIfAuto();
+        if (cloud) {
+            // Cloudflare tự động: tắt dịch vụ 'relay' (bỏ khỏi ingress); cloudflared vẫn chạy nếu còn dịch vụ khác
+            try {
+                await cloud.cloudTunnel.setServiceEnabled('relay', false);
+            } catch (err: any) {
+                Logger.error(`[HttpRelayService] Cloudflare tunnel stop error: ${err.message}`);
+                return { success: false, error: err.message };
+            }
+            this.cloudRelayUrl = null;
+        }
+        this.tunnelPendingRestart = false;
         await TunnelService.stop(this.port);
         this.tunnelActive = false;
         this.tunnelUrl = null;
-        EventBroadcaster.emit('relay:tunnelStatusUpdate', { active: false, tunnelUrl: null });
+        EventBroadcaster.emit('relay:tunnelStatusUpdate', this.getTunnelStatus());
         return { success: true };
     }
 
-    public getTunnelStatus(): { active: boolean; tunnelUrl: string | null } {
-        return { active: this.tunnelActive, tunnelUrl: this.tunnelUrl };
+    public getTunnelStatus(): RelayTunnelStatus {
+        const cloud = cloudTunnelIfAuto();
+        if (cloud) return this.cloudTunnelStatus(cloud);
+        const state = TunnelService.getState(this.port);
+        const url = state?.url ?? null;
+        const change = url && this.tunnelUrlChange && this.tunnelUrlChange.newUrl === normalizeBossUrl(url)
+            ? this.tunnelUrlChange
+            : null;
+        return {
+            active: !!url,
+            tunnelUrl: url,
+            state: state ? state.state : 'stopped',
+            provider: state ? state.provider : null,
+            kind: state ? state.kind : null,
+            restarts: state?.restarts ?? 0,
+            attempt: state?.attempt ?? 0,
+            lastError: state?.lastError ?? null,
+            nextRetryAt: state?.nextRetryAt ?? null,
+            warning: state?.warning ?? null,
+            previousUrl: change?.previousUrl ?? null,
+            urlChangedAt: change?.at ?? null,
+            changeReason: change?.reason ?? null,
+            autoStart: this.isTunnelAutoStart(),
+        };
     }
 
-    /** Đọc provider config (cloudflare mặc định, hoặc ngrok static domain) từ DB. */
+    /** "Tự bật tunnel khi mở app" (Cài đặt → Nhân viên → Kết nối, relay_tunnel_autostart = '1'). */
+    private isTunnelAutoStart(): boolean {
+        try {
+            return DatabaseService.getInstance().getSetting(HttpRelayService.TUNNEL_AUTOSTART_KEY) === '1';
+        } catch {
+            return false;
+        }
+    }
+
+    /** Một watcher bền cho tunnel của cổng relay; cổng đổi (relay bật lại cổng khác) → đăng ký lại. */
+    private ensureTunnelWatcher(): void {
+        if (this.tunnelWatchOff && this.tunnelWatchPort === this.port) return;
+        this.tunnelWatchOff?.();
+        this.tunnelWatchPort = this.port;
+        this.tunnelWatchOff = TunnelService.watch(this.port, (url, info) => this.onTunnelChange(url, info));
+    }
+
+    private onTunnelChange(url: string | null, info: TunnelChangeInfo): void {
+        // Cloudflare tự động: tunnel kiểu cũ của cổng (đang chờ tắt) không còn quyết định địa chỉ của relay
+        if (cloudTunnelIfAuto()) {
+            EventBroadcaster.emit('relay:tunnelStatusUpdate', this.getTunnelStatus());
+            return;
+        }
+        this.tunnelUrl = url;
+        this.tunnelActive = !!url;
+        if (url && (info.reason === 'started' || info.reason === 'restarted' || info.reason === 'switched')) {
+            this.recordPublicUrl(url, info);
+        }
+        EventBroadcaster.emit('relay:tunnelStatusUpdate', this.getTunnelStatus());
+    }
+
+    // ─── Cloudflare tự động ───────────────────────────────────────────
+    //
+    // Chế độ 'cloudflare_auto': relay là dịch vụ 'relay' của tunnel cố định dùng chung (một cloudflared cho 9900 /
+    // 9888 / 9889). Bật / tắt tunnel của relay = bật / tắt dịch vụ (chỉ đổi ingress). Địa chỉ mới lên (vd từ Quick
+    // Tunnel sang tên miền riêng) → ghi nhận + báo nhân viên như khi đổi cấu hình (recordPublicUrl); tunnel kiểu cũ
+    // của cổng giữ thêm TUNNEL_SWITCH_GRACE_MS cho nhân viên kịp chuyển rồi tắt.
+
+    private async startCloudTunnel(cloud: CloudTunnelApi, options: { auto?: boolean }): Promise<{ success: boolean; tunnelUrl?: string; error?: string }> {
+        this.ensureCloudTunnelWatcher();
+        this.tunnelAutoStarted = !!options.auto;
+        try {
+            // Tự bật (mở app / relay chạy lại) chỉ khi relay đang bật ở Cloudflare tự động — không tự bật hộ BOSS
+            if (options.auto && !cloud.cloudTunnel.addressOf('relay').enabled) {
+                return { success: false, error: 'Relay chưa bật trong Cloudflare tự động' };
+            }
+            await cloud.cloudTunnel.setServiceEnabled('relay', true);
+            this.onCloudTunnelChange();
+            const status = this.getTunnelStatus();
+            if (status.active && status.tunnelUrl) {
+                Logger.log(`[HttpRelayService] 🌐 Cloudflare tự động: ${status.tunnelUrl}`);
+                return { success: true, tunnelUrl: status.tunnelUrl };
+            }
+            return { success: false, error: status.lastError || 'Địa chỉ Cloudflare chưa kết nối xong — đang tự thử lại' };
+        } catch (err: any) {
+            Logger.error(`[HttpRelayService] Cloudflare tunnel start error: ${err.message}`);
+            EventBroadcaster.emit('relay:tunnelStatusUpdate', this.getTunnelStatus());
+            return { success: false, error: err.message };
+        }
+    }
+
+    /** RelayTunnelStatus từ địa chỉ 'relay' của tunnel dùng chung (luôn provider 'cloudflare_named', kind 'fixed'). */
+    private cloudTunnelStatus(cloud: CloudTunnelApi): RelayTunnelStatus {
+        const address = cloud.cloudTunnel.addressOf('relay');
+        const proc = address.enabled ? cloud.cloudTunnelProcessInfo() : null;
+        const url = address.state === 'active' && address.url ? address.url : null;
+        const change = url && this.tunnelUrlChange && this.tunnelUrlChange.newUrl === normalizeBossUrl(url)
+            ? this.tunnelUrlChange
+            : null;
+        const state: RelayTunnelState = address.state === 'error' ? 'stopped' : address.state;
+        return {
+            active: !!url,
+            tunnelUrl: url,
+            state,
+            provider: address.enabled ? 'cloudflare_named' : null,
+            kind: address.enabled ? 'fixed' : null,
+            restarts: proc?.restarts ?? 0,
+            attempt: proc?.attempt ?? 0,
+            lastError: address.error ?? proc?.lastError ?? null,
+            nextRetryAt: proc?.nextRetryAt ?? null,
+            warning: address.state === 'error' ? address.error ?? null : null,
+            previousUrl: change?.previousUrl ?? null,
+            urlChangedAt: change?.at ?? null,
+            changeReason: change?.reason ?? null,
+            autoStart: this.isTunnelAutoStart(),
+        };
+    }
+
+    /** Nghe thay đổi của tunnel dùng chung (bật/tắt dịch vụ, tiến trình lên/xuống, đổi chế độ) — đăng ký một lần. */
+    private ensureCloudTunnelWatcher(): void {
+        if (this.cloudTunnelOff) return;
+        try {
+            const mod: CloudTunnelApi = require('../cloudflare/tunnel');
+            this.cloudTunnelOff = mod.onCloudTunnelChange(() => this.onCloudTunnelChange());
+        } catch { /* module Cloudflare không nạp được → chỉ có tunnel kiểu cũ */ }
+    }
+
+    private onCloudTunnelChange(): void {
+        const cloud = cloudTunnelIfAuto();
+        const wasCloud = this.cloudTunnelMode;
+        this.cloudTunnelMode = !!cloud;
+        if (!cloud) {
+            // Rời chế độ Cloudflare tự động → trạng thái quay về tunnel kiểu cũ của cổng
+            if (wasCloud) {
+                this.cloudRelayUrl = null;
+                this.tunnelUrl = TunnelService.getUrl(this.port);
+                this.tunnelActive = !!this.tunnelUrl;
+                EventBroadcaster.emit('relay:tunnelStatusUpdate', this.getTunnelStatus());
+            }
+            return;
+        }
+        const url = this.cloudTunnelStatus(cloud).tunnelUrl;
+        if (url && url !== this.cloudRelayUrl && this.running) {
+            const legacy = TunnelService.getState(this.port);
+            this.recordPublicUrl(url, {
+                port: this.port,
+                label: 'Employee Relay',
+                reason: legacy ? 'switched' : 'started',
+                provider: 'cloudflare_named',
+                kind: 'fixed',
+                previousUrl: this.cloudRelayUrl ?? legacy?.url ?? legacy?.lastUrl ?? null,
+            });
+            if (legacy) this.retireLegacyTunnel();
+        }
+        // Relay chưa chạy: chưa ghi nhận (lần chạy sau so lại với relay_tunnel_last_url)
+        if (this.running || !url) this.cloudRelayUrl = url;
+        this.tunnelUrl = url;
+        this.tunnelActive = !!url;
+        EventBroadcaster.emit('relay:tunnelStatusUpdate', this.getTunnelStatus());
+    }
+
+    /** Đã có địa chỉ Cloudflare tự động: tunnel kiểu cũ của relay giữ thêm một lúc (nhân viên kịp nhận địa chỉ mới) rồi tắt. */
+    private retireLegacyTunnel(): void {
+        if (this.legacyTunnelRetireTimer) return;
+        this.legacyTunnelRetireTimer = setTimeout(() => {
+            this.legacyTunnelRetireTimer = null;
+            if (!cloudTunnelIfAuto() || !TunnelService.getState(this.port)) return;
+            Logger.log('[HttpRelayService] Tắt tunnel kiểu cũ của relay — đã dùng địa chỉ Cloudflare tự động');
+            void TunnelService.stop(this.port).catch(() => {});
+        }, TUNNEL_SWITCH_GRACE_MS);
+    }
+
+    /**
+     * So địa chỉ vừa lên với địa chỉ lần chạy trước (lưu DB). Khác → ghi nhận lần đổi (BOSS thấy "Địa chỉ cho
+     * nhân viên đã đổi"), báo nhân viên còn nối được (LAN / tunnel cũ khi đổi cấu hình) qua Socket.IO, và
+     * thông báo hệ thống cho BOSS nếu đổi ngoài ý muốn (tunnel chạy lại / mở app).
+     */
+    private recordPublicUrl(url: string, info: TunnelChangeInfo): void {
+        const current = normalizeBossUrl(url);
+        let previous = '';
+        try {
+            const db = DatabaseService.getInstance();
+            previous = normalizeBossUrl(db.getSetting(HttpRelayService.TUNNEL_LAST_URL_KEY) || '');
+            if (previous !== current) db.setSetting(HttpRelayService.TUNNEL_LAST_URL_KEY, current);
+        } catch (err: any) {
+            Logger.warn(`[HttpRelayService] Không đọc/ghi được địa chỉ tunnel lần trước: ${err.message}`);
+            previous = normalizeBossUrl(info.previousUrl || '');
+        }
+        if (!previous || previous === current) return;
+
+        const reason: BossUrlChangeReason = info.reason === 'switched' ? 'switch' : info.reason === 'restarted' ? 'restart' : 'start';
+        const change: BossUrlChangedEvent = { previousUrl: previous, newUrl: current, kind: info.kind, reason, at: Date.now() };
+        this.tunnelUrlChange = change;
+        const notified = this.employees.size;
+        this.relayEventToEmployees(BOSS_URL_CHANGED_EVENT, change);
+        Logger.log(`[HttpRelayService] 📣 Địa chỉ cho nhân viên đổi: ${previous} → ${current} (${reason}, ${info.kind}) — đã báo ${notified} nhân viên đang đăng ký`);
+        // BOSS tự bấm bật / đổi cấu hình thì đã thấy ngay trong Cài đặt; chỉ báo hệ thống khi đổi "ngầm"
+        if (reason === 'restart' || (reason === 'start' && this.tunnelAutoStarted)) this.showTunnelUrlChangedNotification(change);
+    }
+
+    /** Thông báo hệ thống cho BOSS (app có thể đang ẩn dưới khay): bấm để sao chép địa chỉ mới. */
+    private showTunnelUrlChangedNotification(change: BossUrlChangedEvent): void {
+        try {
+            const { Notification, clipboard, BrowserWindow } = require('electron');
+            if (!Notification?.isSupported?.()) return;
+            const notification = new Notification({
+                title: 'Địa chỉ cho nhân viên đã đổi',
+                body: `${change.newUrl}\nNhấn để sao chép rồi gửi cho nhân viên làm việc từ xa.`,
+            });
+            notification.on('click', () => {
+                try { clipboard.writeText(change.newUrl); } catch { /* ignore */ }
+                const win = BrowserWindow.getAllWindows().find((w: any) => !w.isDestroyed());
+                if (win) { win.show(); win.focus(); }
+            });
+            notification.show();
+        } catch (err: any) {
+            Logger.warn(`[HttpRelayService] Không hiện được thông báo đổi địa chỉ: ${err?.message || err}`);
+        }
+    }
+
+    /** Đọc provider config (cloudflare mặc định, Cloudflare có tài khoản, hoặc ngrok static domain) từ DB. */
     private getTunnelOptions(): TunnelOptions {
         try {
             const db = DatabaseService.getInstance();
             const provider = (db.getSetting('relay_tunnel_provider') as TunnelProvider) || 'cloudflare';
+            const { decryptSecret } = require('../api/secretBox');
             if (provider === 'ngrok') {
                 return {
                     provider: 'ngrok',
-                    authtoken: db.getSetting('relay_ngrok_authtoken') || undefined,
+                    // relayIpc lưu mã hoá (enc:/plain:); giá trị cũ dạng thô vẫn đọc được
+                    authtoken: decryptSecret(db.getSetting('relay_ngrok_authtoken') || '') || undefined,
                     domain: db.getSetting('relay_ngrok_domain') || undefined,
+                };
+            }
+            if (provider === 'cloudflare_named') {
+                return {
+                    provider: 'cloudflare_named',
+                    token: decryptSecret(db.getSetting('relay_cf_tunnel_token') || '') || undefined,
+                    publicUrl: db.getSetting('relay_cf_public_url') || undefined,
                 };
             }
         } catch (err: any) {
@@ -2495,55 +3238,15 @@ class HttpRelayService {
     private relayEventToEmployees(channel: string, data: any): void {
         if (!this.running) return;
 
-        // Pre-compute zaloId for assigned_accounts filtering
-        const eventZaloId: string | undefined =
-            data?.zaloId || data?.zalo_id ||
-            (channel === 'event:message' ? data?.message?.zaloId : undefined);
-
-        for (const [empId, emp] of this.employees) {
-            if (!this.shouldRelayErpEventToEmployee(channel, data, empId)) continue;
-
-            // ─── Tối ưu: filter theo assigned_accounts ──────────────
-            // Không gửi event cho employee không được gán account này
-            const assigned = emp.assigned_accounts || [];
-            if (assigned.length > 0 && eventZaloId && !assigned.includes(eventZaloId)) {
-                continue;
-            }
-
-            // ─── Socket.IO (transport duy nhất) ──────────────────────
-            // Tất cả employee dùng Socket.IO, không còn SSE fallback.
-            // Event được buffer → EventBuffer → catch-up khi reconnect.
-            // Nếu employee offline → room rỗng → no-op, event ở buffer.
-            try {
-                SocketIOService.getInstance().emitToEmployee(empId, channel, data);
-            } catch {}
+        // ─── Socket.IO (transport duy nhất) ──────────────────────
+        // Buffer MỘT lần kèm người nhận (relayAudience.ts: tài khoản được giao — cùng assigned_accounts với kiểm tra
+        // quyền REST; ERP gửi đích danh; dữ liệu chung workspace) → chỉ phát tới phòng của nhân viên được nhận.
+        // Nhân viên offline → event ở buffer → catch-up (cùng quy tắc lọc) khi kết nối lại.
+        try {
+            SocketIOService.getInstance().publish(channel, data);
+        } catch (err: any) {
+            Logger.warn(`[HttpRelayService] relay ${channel} lỗi: ${err?.message || err}`);
         }
-    }
-
-    private shouldRelayErpEventToEmployee(channel: string, data: any, employeeId: string): boolean {
-        if (channel.startsWith('erp:event:calendarEvent')) {
-            const visibleEmployeeIds = Array.isArray(data?.visibleEmployeeIds) ? data.visibleEmployeeIds.filter(Boolean) : [];
-            const event = data?.event;
-            const derivedIds = event ? [event.organizer_id, ...(event.attendees || []).map((attendee: any) => attendee.employee_id)] : [];
-            const allowed = new Set<string>([...visibleEmployeeIds, ...derivedIds].filter(Boolean));
-            return allowed.size === 0 ? employeeId === 'boss' : allowed.has(employeeId);
-        }
-
-        if (channel.startsWith('erp:event:note')) {
-            const note = data?.note;
-            if (note?.share_scope === 'workspace' || data?.scope === 'workspace') return true;
-            const visibleEmployeeIds = Array.isArray(data?.visibleEmployeeIds) ? data.visibleEmployeeIds.filter(Boolean) : [];
-            const shareEmployeeIds = Array.isArray(data?.shares) ? data.shares.map((share: any) => share.employeeId || share.employee_id).filter(Boolean) : [];
-            const allowed = new Set<string>([
-                note?.author_id,
-                data?.authorId,
-                ...visibleEmployeeIds,
-                ...shareEmployeeIds,
-            ].filter(Boolean));
-            return allowed.size === 0 ? employeeId === 'boss' : allowed.has(employeeId);
-        }
-
-        return true;
     }
 
     /**
@@ -2618,6 +3321,13 @@ class HttpRelayService {
                     emp.lastSeen = now;
                     continue;
                 }
+                // Socket.IO còn sống (client hiện tại dùng Socket.IO, không dùng SSE) → vẫn online
+                try {
+                    if (SocketIOService.getInstance().isOnline(empId)) {
+                        emp.lastSeen = now;
+                        continue;
+                    }
+                } catch { /* socket server chưa chạy */ }
 
                 if (now - emp.lastSeen > HttpRelayService.HEARTBEAT_TIMEOUT_MS) {
                     Logger.log(`[HttpRelayService] 🔴 Employee offline (heartbeat timeout): ${emp.display_name}`);
@@ -2695,7 +3405,8 @@ class HttpRelayService {
             });
             if (account && account.cookies) {
                 return {
-                    cookies: account.cookies,
+                    // accounts.cookies lưu mã hoá (safeStorage) — đọc SQL trực tiếp nên phải tự giải mã
+                    cookies: DatabaseService.getInstance().decryptCookies(account.cookies),
                     imei: account.imei || '',
                     userAgent: account.user_agent || '',
                 };
@@ -2706,13 +3417,91 @@ class HttpRelayService {
         return null;
     }
 
-    private channelToModule(channel: string): string | null {
-        if (channel.startsWith('zalo:')) return 'chat';
-        if (channel.startsWith('crm:')) return 'crm';
-        if (channel.startsWith('workflow:')) return 'workflow';
-        if (channel.startsWith('integration:')) return 'integration';
-        if (channel.startsWith('ai:')) return 'ai_assistant';
-        if (channel.startsWith('db:')) return null;
+    /**
+     * Id tài khoản của lệnh proxy Facebook / Telegram → accounts.zalo_id (dạng trong danh sách được giao). Facebook: handler
+     * nhận cả id nội bộ fb_accounts.id (UUID) lẫn id Facebook thật (= accounts.zalo_id) → đổi UUID về facebook_id.
+     */
+    private canonicalProxyAccountId(channel: string, accountId: string): string {
+        if (!channel.startsWith('fb:') || /^\d+$/.test(accountId)) return accountId;
+        const fbAcc = this.runOnPinnedDb((db) => db.getFBAccount(accountId));
+        return fbAcc?.facebook_id ? String(fbAcc.facebook_id) : accountId;
+    }
+
+    /**
+     * Tài khoản có phiên đang chạy trên Boss, theo kênh: Zalo — ConnectionManager; Facebook — FacebookConnectionManager
+     * (theo fb_accounts.id); Telegram cá nhân — listener MTProto; bot Telegram — đang nhận update. Trước đây snapshot nhân
+     * viên tra ConnectionManager (chỉ có Zalo) cho mọi kênh → tài khoản Facebook / Telegram luôn "mất kết nối" ở máy nhân viên.
+     */
+    private isAccountSessionOnline(zaloId: string, channel?: string | null): boolean {
+        try {
+            if (channel === 'facebook') {
+                const fbAcc = this.runOnPinnedDb((db) => db.getFBAccountByFacebookId(zaloId));
+                const FacebookConnectionManager = require('../../utils/FacebookConnectionManager').default;
+                return !!(fbAcc?.id && FacebookConnectionManager.get(fbAcc.id)?.isConnected());
+            }
+            if (channel === 'telegram_user') return !!require('../telegram/TelegramUserListener').isConnected(zaloId);
+            if (channel === 'telegram_bot') return !!require('../telegram/TelegramBotChannelService').isBotPolling(zaloId);
+        } catch {
+            return false;
+        }
+        return ConnectionManager.isConnected(zaloId);
+    }
+
+    /**
+     * Thư mục media của Boss: luôn theo default workspace (Boss), không theo workspace đang active — khi máy Boss
+     * đang mở workspace nhân viên, getBaseDir() trỏ về media của workspace đó → Boss không thấy file của chính mình.
+     */
+    private getBossMediaBasePath(): string {
+        try {
+            const WorkspaceManager = require('../../utils/WorkspaceManager').default;
+            const wm = WorkspaceManager.getInstance();
+            const defaultWs = wm.getWorkspaceById('default');
+            if (defaultWs && defaultWs.dbPath) {
+                return path.join(path.dirname(wm.resolveDbPath(defaultWs.dbPath)), 'media');
+            }
+        } catch { /* dùng getBaseDir */ }
+        try { return FileStorageService.getBaseDir?.() || ''; } catch { return ''; }
+    }
+
+    /** Thư mục media/<id>/ có phải tài khoản không (accounts.zalo_id: Zalo / Facebook / Telegram) → id chuẩn. */
+    private lookupMediaAccountId(segment: string): string | null {
+        const row = this.runOnPinnedDb((db) => db.queryOne<{ zalo_id: string }>(
+            'SELECT zalo_id FROM accounts WHERE zalo_id = ? COLLATE NOCASE LIMIT 1', [segment]));
+        return row?.zalo_id ? String(row.zalo_id) : null;
+    }
+
+    /** Đường dẫn file trong lệnh proxy: chỉ thư mục media của Boss, cùng quy tắc tài khoản với tải /api/media. */
+    private proxyFilePathContext(employee: RegisteredEmployee): ProxyPathContext {
+        const realpath = (p: string): string => {
+            const abs = path.resolve(p);
+            try { return fs.realpathSync.native(abs); } catch { /* thử bản JS */ }
+            try { return fs.realpathSync(abs); } catch { return abs; }
+        };
+        const roots: string[] = [];
+        for (const dir of [this.getBossMediaBasePath(), (() => { try { return FileStorageService.getBaseDir(); } catch { return ''; } })()]) {
+            if (!dir) continue;
+            const real = realpath(dir);
+            if (!roots.includes(real)) roots.push(real);
+        }
+        return {
+            roots,
+            resolve: (value) => realpath(FileStorageService.resolveAbsolutePath(value) || value),
+            checkAccess: (rel) => checkMediaAccess(employee, classifyMediaPath(rel, (segment) => this.lookupMediaAccountId(segment))),
+        };
+    }
+
+    /** Item thư viện (_libraryUuid / _libraryUuids) phải thuộc trang nhân viên được dùng. Trả uuid bị từ chối, hoặc null. */
+    private checkProxyLibraryItems(employee: RegisteredEmployee, params: any): string | null {
+        const uuids: string[] = [];
+        if (typeof params?._libraryUuid === 'string' && params._libraryUuid) uuids.push(params._libraryUuid);
+        if (Array.isArray(params?._libraryUuids)) uuids.push(...params._libraryUuids.map(String).filter(Boolean));
+        if (uuids.length === 0) return null;
+        const LibraryService = require('../library/LibraryService').default;
+        for (const uuid of uuids) {
+            const item = this.runOnPinnedDb(() => LibraryService.getInstance().getItem(uuid));
+            // Không thấy item: để luồng cũ xử lý (báo "không tìm thấy file") — không có file nào bị lộ
+            if (item && !canAccessLibraryOwner(employee, String(item.owner_zalo_id || ''))) return uuid;
+        }
         return null;
     }
 
@@ -2744,6 +3533,8 @@ class HttpRelayService {
 
     /** Update assigned accounts when boss changes assignments */
     public updateEmployeeRooms(employeeId: string, newZaloIds: string[]): void {
+        // Realtime lọc theo danh sách mới ngay, kể cả socket của nhân viên chưa đăng ký lại (sau khi Boss khởi động)
+        try { SocketIOService.getInstance().updateEmployeeAccess(employeeId, newZaloIds); } catch {}
         const emp = this.employees.get(employeeId);
         if (!emp) return;
 
@@ -2756,9 +3547,7 @@ class HttpRelayService {
             accountsData: snapshot?.accountsData || [],
             permissions: snapshot?.permissions || [],
         };
-        if (!this.pushViaSSE(employeeId, 'relay:accountAccessUpdate', payload)) {
-            this.pushToEmployee(emp, 'relay:accountAccessUpdate', payload).catch(() => {});
-        }
+        this.pushControlToEmployee(emp, 'relay:accountAccessUpdate', payload);
     }
 
     /** Push a fresh employee snapshot to the employee */
@@ -2768,9 +3557,7 @@ class HttpRelayService {
 
         const snapshot = this.buildEmployeeSnapshot(employeeId);
         if (snapshot) {
-            if (!this.pushViaSSE(employeeId, 'relay:initialState', snapshot)) {
-                this.pushToEmployee(emp, 'relay:initialState', snapshot).catch(() => {});
-            }
+            this.pushControlToEmployee(emp, 'relay:initialState', snapshot);
             // Permission updates: send dedicated event that bypasses 60s throttle
             // on workspace:initialState in the renderer.
             if (reason === 'permissions-updated') {
@@ -2780,9 +3567,7 @@ class HttpRelayService {
                     erpExtraJson: snapshot.erpExtraJson,
                     employeesData: snapshot.employeesData,
                 };
-                if (!this.pushViaSSE(employeeId, 'relay:permissionUpdate', permPayload)) {
-                    this.pushToEmployee(emp, 'relay:permissionUpdate', permPayload).catch(() => {});
-                }
+                this.pushControlToEmployee(emp, 'relay:permissionUpdate', permPayload);
             }
         }
         Logger.log(`[HttpRelayService] refreshEmployeeState(${reason}) → employee=${employeeId}`);
@@ -2790,11 +3575,43 @@ class HttpRelayService {
 
     // ─── Utility ──────────────────────────────────────────────────────
 
-    private readBody(req: http.IncomingMessage, cb: (body: string) => void): void {
-        let body = '';
-        req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
-        req.on('end', () => cb(body));
+    /**
+     * Đọc body có giới hạn: nhiều endpoint đọc body TRƯỚC khi xác thực (login, heartbeat, proxy),
+     * không giới hạn thì qua tunnel ai cũng làm đầy RAM được. Gộp Buffer rồi mới giải mã UTF-8
+     * (cộng chuỗi theo chunk làm vỡ ký tự tiếng Việt nằm giữa hai chunk).
+     */
+    private readBody(req: http.IncomingMessage, cb: (body: string) => void, maxBytes = HttpRelayService.MAX_BODY_BYTES): void {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        let tooLarge = false;
+        req.on('data', (chunk: Buffer) => {
+            if (tooLarge) return;
+            size += chunk.length;
+            if (size > maxBytes) {
+                tooLarge = true;
+                chunks.length = 0;
+                Logger.warn(`[HttpRelayService] body vượt ${maxBytes} byte: ${req.method} ${req.url}`);
+                const res: http.ServerResponse | undefined = (req as any).__relayRes;
+                if (res && !res.headersSent) {
+                    res.writeHead(413, { 'Content-Type': 'application/json', Connection: 'close' });
+                    res.end(JSON.stringify({ error: 'Payload too large' }));
+                }
+                req.resume();
+                return;
+            }
+            chunks.push(chunk);
+        });
+        req.on('end', () => {
+            if (!tooLarge) cb(Buffer.concat(chunks).toString('utf8'));
+        });
     }
+
+    /** Body tối đa cho route nhân viên (upload file đi đường multipart/JSON riêng). */
+    static readonly MAX_BODY_BYTES = 50 * 1024 * 1024;
+    /** Upload media của nhân viên (POST /api/media/upload): Zalo PC gửi tệp tối đa 1 GB. Ghi thẳng xuống đĩa. */
+    static readonly MAX_MEDIA_UPLOAD_BYTES = 1024 * 1024 * 1024;
+    /** Login/heartbeat: chỉ vài trăm byte JSON. */
+    static readonly SMALL_BODY_BYTES = 256 * 1024;
 
     private json(res: http.ServerResponse, status: number, data: any): void {
         res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -2803,24 +3620,37 @@ class HttpRelayService {
 
     /** Cache-aware REST result - skips the synchronous better-sqlite3 query
      *  if a fresh cached response exists. This prevents main-thread blocking
-     *  when the employee calls many GET endpoints after every message. */
-    private getCachedRestResult(method: string, pathname: string, employeeId: string, fetchFn: () => any): any {
+     *  when the employee calls many GET endpoints after every message.
+     *  Chạy trong runOnPinnedDb (DB của relay). Entry chỉ dùng lại khi DB CHƯA đổi từ lúc lưu: Boss ghim / gắn nhãn /
+     *  tắt tiếng → ghi DB → phát event → nhân viên tải lại ngay — trước đây trong 1.5 s nhận lại giá trị CŨ đã cache và
+     *  giữ sai tới event sau. Kết quả lỗi không được cache. */
+    private getCachedRestResult(method: string, pathname: string, employeeId: string, fetchFn: () => any, params?: Record<string, any>): any {
         if (method !== 'GET') return fetchFn();
-        const cacheKey = `${method}:${pathname}:${employeeId}`;
-        const cached = this.restApiCache.get(cacheKey);
-        if (cached && Date.now() - cached.ts < HttpRelayService.REST_CACHE_TTL_MS) {
-            return cached.data;
-        }
+        // Khoá gồm cả tham số (zaloId…): trước đây chỉ theo pathname → tài khoản này nhận nhầm cờ/nhãn/ghim của tài khoản kia
+        const cacheKey = restCacheKey(method, pathname, employeeId, params);
+        const token = this.restCacheToken();
+        const cached = this.restApiCache.get(cacheKey, token);
+        if (cached !== undefined) return cached;
         const data = fetchFn();
-        this.restApiCache.set(cacheKey, { data, ts: Date.now() });
-        // Prune stale entries every 50 inserts
-        if (this.restApiCache.size > 50) {
-            const now = Date.now();
-            for (const [k, v] of this.restApiCache) {
-                if (now - v.ts > 5000) this.restApiCache.delete(k);
-            }
-        }
+        this.restApiCache.set(cacheKey, token, data);
         return data;
+    }
+
+    /**
+     * Mốc thay đổi của DB đang phục vụ relay: total_changes() (ghi qua chính kết nối này — IPC Boss, lệnh nhân viên,
+     * listener) + PRAGMA data_version (commit của kết nối KHÁC). Đổi ⇒ mọi entry cache hết hiệu lực. null (không đọc
+     * được) ⇒ không cache — đúng trước, nhanh sau.
+     */
+    private restCacheToken(): string | null {
+        try {
+            const db = DatabaseService.getInstance();
+            const changes = db.queryOne<{ n: number }>('SELECT total_changes() AS n');
+            const version = db.queryOne<{ data_version: number }>('PRAGMA data_version');
+            if (!changes || !version) return null;
+            return `${db.getDbPath()}|${changes.n}|${version.data_version}`;
+        } catch {
+            return null;
+        }
     }
 
     // ─── Utility ──────────────────────────────────────────────────────

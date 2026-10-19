@@ -8,6 +8,7 @@ import type {
   ErpLeaveRequest, ErpLeaveStatus, CreateLeaveInput,
 } from '../../models/erp/Hrm';
 import ErpNotificationService from './ErpNotificationService';
+import { canDecideLeave } from './erpAccessRules';
 
 /**
  * ErpEmployeeService - Phase 2 HRM.
@@ -343,6 +344,25 @@ export default class ErpEmployeeService {
     } catch (err: any) { Logger.warn(`[ErpEmployeeService] notify requester: ${err.message}`); }
     EventBroadcaster.emit('erp:event:leaveDecided', { leave });
     return leave;
+  }
+
+  /**
+   * Duyệt / từ chối đơn của người duyệt `approverId`: chỉ quản lý trực tiếp của người xin nghỉ (manager_employee_id)
+   * hoặc Boss — cùng phạm vi với listPendingForManager; đơn đã xử lý thì không duyệt lại (không báo lại người xin nghỉ).
+   * Trước đây ai có leave.approve cũng duyệt được đơn bất kỳ theo id (kể cả đơn của chính mình).
+   */
+  decideLeaveForEmployee(id: number, status: ErpLeaveStatus, approverId: string, note?: string): ErpLeaveRequest {
+    const row = this.db().queryOne<ErpLeaveRequest & { manager_employee_id?: string | null }>(
+      `SELECT l.*, p.manager_employee_id FROM erp_leave_requests l
+       LEFT JOIN erp_employee_profiles p ON p.employee_id = l.requester_id
+       WHERE l.id = ?`, [id]
+    );
+    if (!row) throw new Error('Không tìm thấy yêu cầu nghỉ');
+    if (!canDecideLeave(approverId, row.manager_employee_id)) {
+      throw new Error('Chỉ quản lý trực tiếp của người xin nghỉ mới duyệt được đơn này');
+    }
+    if (row.status !== 'pending') throw new Error('Đơn đã được xử lý');
+    return this.decideLeave(id, status, approverId, note);
   }
 
   cancelLeave(id: number, requesterId: string): void {

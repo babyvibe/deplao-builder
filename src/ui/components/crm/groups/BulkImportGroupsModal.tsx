@@ -340,11 +340,11 @@ export default function BulkImportGroupsModal({ pageId, onClose, onImported }: B
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className="bg-gray-800 border border-gray-600 rounded-2xl w-full max-w-[640px] max-h-[85vh] shadow-2xl flex flex-col overflow-hidden"
+      <div className="bg-card border border-input rounded-2xl w-full max-w-[640px] max-h-[85vh] shadow-2xl flex flex-col overflow-hidden"
         onClick={e => e.stopPropagation()}>
 
         {/* Header */}
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-700 flex-shrink-0">
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-border flex-shrink-0">
           <div className="w-10 h-10 rounded-xl bg-blue-500/15 border border-blue-500/30 flex items-center justify-center flex-shrink-0">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" strokeWidth="2.5">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
@@ -352,15 +352,15 @@ export default function BulkImportGroupsModal({ pageId, onClose, onImported }: B
             </svg>
           </div>
           <div className="flex-1">
-            <h3 className="font-semibold text-white text-sm">Nhập hàng loạt nhóm Zalo</h3>
-            <p className="text-xs text-gray-400 mt-0.5">
+            <h3 className="font-semibold text-foreground text-sm">Nhập hàng loạt nhóm Zalo</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">
               {step === 'upload' && 'Chọn file CSV chứa danh sách nhóm'}
               {step === 'preview' && `${groups.length} nhóm hợp lệ sẽ được xử lý`}
               {step === 'importing' && `Đang xử lý ${progress.current}/${progress.total}...`}
               {step === 'result' && 'Hoàn tất'}
             </p>
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-300 transition-colors p-1">
+          <button onClick={onClose} className="text-subtle-foreground hover:text-foreground/80 transition-colors p-1">
             {CloseIcon}
           </button>
         </div>
@@ -373,11 +373,11 @@ export default function BulkImportGroupsModal({ pageId, onClose, onImported }: B
             <div className="space-y-4">
               <div
                 onClick={() => fileInputRef.current?.click()}
-                className="border-2 border-dashed border-gray-600 hover:border-blue-500 rounded-xl p-8 text-center cursor-pointer transition-colors"
+                className="border-2 border-dashed border-input hover:border-blue-500 rounded-xl p-8 text-center cursor-pointer transition-colors"
               >
-                <div className="text-gray-400 mb-3">{UploadIcon}</div>
-                <p className="text-sm text-gray-300 font-medium">Chọn file CSV</p>
-                <p className="text-xs text-gray-500 mt-1">hoặc kéo thả file vào đây</p>
+                <div className="text-muted-foreground mb-3">{UploadIcon}</div>
+                <p className="text-sm text-foreground/80 font-medium">Chọn file CSV</p>
+                <p className="text-xs text-subtle-foreground mt-1">hoặc kéo thả file vào đây</p>
               </div>
               <input
                 ref={fileInputRef}
@@ -387,11 +387,11 @@ export default function BulkImportGroupsModal({ pageId, onClose, onImported }: B
                 className="hidden"
               />
 
-              <div className="text-xs text-gray-500 space-y-1">
-                <p className="font-medium text-gray-400">CSV cần có cột:</p>
-                <p>• <span className="text-gray-300">Link Nhóm Zalo</span> (bắt buộc) — https://zalo.me/g/xxx</p>
-                <p>• <span className="text-gray-300">Tên Nhóm Zalo</span> (tùy chọn)</p>
-                <p>• <span className="text-gray-300">Lĩnh Vực</span> (tùy chọn) — để map category</p>
+              <div className="text-xs text-subtle-foreground space-y-1">
+                <p className="font-medium text-muted-foreground">CSV cần có cột:</p>
+                <p>• <span className="text-foreground/80">Link Nhóm Zalo</span> (bắt buộc) — https://zalo.me/g/xxx</p>
+                <p>• <span className="text-foreground/80">Tên Nhóm Zalo</span> (tùy chọn)</p>
+                <p>• <span className="text-foreground/80">Lĩnh Vực</span> (tùy chọn) — để map category</p>
               </div>
             </div>
           )}
@@ -401,45 +401,45 @@ export default function BulkImportGroupsModal({ pageId, onClose, onImported }: B
             <div className="space-y-4">
               {/* Stats */}
               <div className="flex gap-3 text-xs">
-                <div className="flex-1 bg-gray-700/50 rounded-lg p-3 text-center">
-                  <p className="text-lg font-bold text-white">{groups.length}</p>
-                  <p className="text-gray-400">Nhóm hợp lệ</p>
+                <div className="flex-1 bg-muted/50 rounded-lg p-3 text-center">
+                  <p className="text-lg font-bold text-foreground">{groups.length}</p>
+                  <p className="text-muted-foreground">Nhóm hợp lệ</p>
                 </div>
-                <div className="flex-1 bg-gray-700/50 rounded-lg p-3 text-center">
-                  <p className="text-lg font-bold text-gray-500">{minMembers}</p>
-                  <p className="text-gray-400">Tối thiểu TV</p>
+                <div className="flex-1 bg-muted/50 rounded-lg p-3 text-center">
+                  <p className="text-lg font-bold text-subtle-foreground">{minMembers}</p>
+                  <p className="text-muted-foreground">Tối thiểu TV</p>
                 </div>
               </div>
 
               {/* Min members input */}
               <div className="flex items-center gap-2">
-                <label className="text-xs text-gray-400 whitespace-nowrap">Tối thiểu thành viên:</label>
+                <label className="text-xs text-muted-foreground whitespace-nowrap">Tối thiểu thành viên:</label>
                 <input
                   type="number"
                   value={minMembers}
                   onChange={e => setMinMembers(parseInt(e.target.value) || 0)}
-                  className="w-20 bg-gray-700 border border-gray-600 rounded-lg px-2 py-1.5 text-xs text-white text-center focus:outline-none focus:border-blue-500"
+                  className="w-20 bg-muted border border-input rounded-lg px-2 py-1.5 text-xs text-foreground text-center focus:outline-none focus:border-blue-500"
                 />
               </div>
 
               {/* Group list preview */}
-              <div className="max-h-[300px] overflow-y-auto border border-gray-700 rounded-xl">
+              <div className="max-h-[300px] overflow-y-auto border border-border rounded-xl">
                 {groups.slice(0, 20).map((g, i) => (
-                  <div key={i} className="flex items-center gap-2 px-3 py-2 border-b border-gray-700/50 last:border-0">
-                    <span className="text-xs text-gray-500 w-6 text-right">{i + 1}</span>
+                  <div key={i} className="flex items-center gap-2 px-3 py-2 border-b border-border/50 last:border-0">
+                    <span className="text-xs text-subtle-foreground w-6 text-right">{i + 1}</span>
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs text-white truncate">{g.csvName || g.groupId}</p>
-                      <p className="text-[10px] text-gray-500 truncate">{g.link}</p>
+                      <p className="text-xs text-foreground truncate">{g.csvName || g.groupId}</p>
+                      <p className="text-[10px] text-subtle-foreground truncate">{g.link}</p>
                     </div>
                     {g.lineVuc && (
-                      <span className="text-[10px] bg-gray-700 text-gray-400 px-1.5 py-0.5 rounded flex-shrink-0">
+                      <span className="text-[10px] bg-muted text-muted-foreground px-1.5 py-0.5 rounded flex-shrink-0">
                         {g.lineVuc}
                       </span>
                     )}
                   </div>
                 ))}
                 {groups.length > 20 && (
-                  <div className="px-3 py-2 text-center text-xs text-gray-500">
+                  <div className="px-3 py-2 text-center text-xs text-subtle-foreground">
                     ... và {groups.length - 20} nhóm nữa
                   </div>
                 )}
@@ -451,7 +451,7 @@ export default function BulkImportGroupsModal({ pageId, onClose, onImported }: B
           {step === 'importing' && (
             <div className="space-y-4">
               {/* Progress bar */}
-              <div className="w-full bg-gray-700 rounded-full h-2.5">
+              <div className="w-full bg-muted rounded-full h-2.5">
                 <div
                   className="bg-blue-500 h-2.5 rounded-full transition-all duration-300"
                   style={{ width: `${(progress.current / progress.total) * 100}%` }}
@@ -459,10 +459,10 @@ export default function BulkImportGroupsModal({ pageId, onClose, onImported }: B
               </div>
 
               <div className="text-center">
-                <p className="text-sm text-white font-medium">
+                <p className="text-sm text-foreground font-medium">
                   {progress.current}/{progress.total}
                 </p>
-                <p className="text-xs text-gray-400 mt-1">{progress.phase}</p>
+                <p className="text-xs text-muted-foreground mt-1">{progress.phase}</p>
               </div>
 
               {/* Live results */}
@@ -472,13 +472,13 @@ export default function BulkImportGroupsModal({ pageId, onClose, onImported }: B
                     {g.status === 'success' && <span className="text-green-400">✅</span>}
                     {g.status === 'error' && <span className="text-red-400">❌</span>}
                     {g.status === 'skipped' && <span className="text-yellow-400">⏭️</span>}
-                    <span className="text-gray-300 truncate flex-1">
+                    <span className="text-foreground/80 truncate flex-1">
                       {g.resolvedName || g.csvName || g.groupId}
                     </span>
                     {g.memberCount !== undefined && (
-                      <span className="text-gray-500">{g.memberCount.toLocaleString('vi-VN')} TV</span>
+                      <span className="text-subtle-foreground">{g.memberCount.toLocaleString('vi-VN')} TV</span>
                     )}
-                    {g.error && <span className="text-gray-500 text-[10px] truncate max-w-[150px]">{g.error}</span>}
+                    {g.error && <span className="text-subtle-foreground text-[10px] truncate max-w-[150px]">{g.error}</span>}
                   </div>
                 ))}
               </div>
@@ -500,19 +500,19 @@ export default function BulkImportGroupsModal({ pageId, onClose, onImported }: B
               <div className="grid grid-cols-3 gap-3 text-center text-xs">
                 <div className="bg-green-500/10 rounded-lg p-3">
                   <p className="text-lg font-bold text-green-400">{result.success}</p>
-                  <p className="text-gray-400">Thành công</p>
+                  <p className="text-muted-foreground">Thành công</p>
                 </div>
                 <div className="bg-red-500/10 rounded-lg p-3">
                   <p className="text-lg font-bold text-red-400">{result.error}</p>
-                  <p className="text-gray-400">Lỗi</p>
+                  <p className="text-muted-foreground">Lỗi</p>
                 </div>
                 <div className="bg-yellow-500/10 rounded-lg p-3">
                   <p className="text-lg font-bold text-yellow-400">{result.skipped}</p>
-                  <p className="text-gray-400">Bỏ qua</p>
+                  <p className="text-muted-foreground">Bỏ qua</p>
                 </div>
               </div>
 
-              <p className="text-xs text-gray-400 text-center">
+              <p className="text-xs text-muted-foreground text-center">
                 Nhóm đã import sẽ có trạng thái "chờ duyệt" trên admin.
               </p>
             </div>
@@ -520,9 +520,9 @@ export default function BulkImportGroupsModal({ pageId, onClose, onImported }: B
         </div>
 
         {/* Actions */}
-        <div className="flex gap-2 px-6 py-4 border-t border-gray-700 flex-shrink-0">
+        <div className="flex gap-2 px-6 py-4 border-t border-border flex-shrink-0">
           <button onClick={onClose}
-            className="flex-1 py-2.5 rounded-xl bg-gray-700 text-gray-300 text-sm hover:bg-gray-600 transition-colors">
+            className="flex-1 py-2.5 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent transition-colors">
             {step === 'result' ? 'Đóng' : 'Hủy'}
           </button>
           {step === 'preview' && (

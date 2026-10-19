@@ -9,6 +9,7 @@ import Logger from '../../src/utils/Logger';
 import ZaloLoginHelper from '../../src/utils/ZaloLoginHelper';
 import * as TelegramUserListener from '../../src/services/telegram/TelegramUserListener';
 import * as TelegramBotChannelService from '../../src/services/telegram/TelegramBotChannelService';
+import { signOutFacebookAccount } from './facebookIpc';
 function postLoginSetup(_zaloId: string, _mainWindow: BrowserWindow | null, _name?: string, _phone?: string) {
     // No-op in open-source build.
 }
@@ -238,6 +239,7 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
                 const isBotConnected = isTelegramBot && TelegramBotChannelService.isBotPolling(acc.zalo_id);
                 return {
                     ...acc,
+                    send2me_id: DatabaseService.getInstance().resolveMyDocumentsId(acc),
                     proxy_id: (acc as any).proxy_id ?? null,
                     listenerActive: !!(acc as any).listener_active,
                     isOnline: isFB
@@ -274,15 +276,10 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
             const isTelegramUser = account?.channel === 'telegram_user';
 
             if (isFB) {
-                // Facebook cleanup: tìm fb_account UUID → disconnect + xóa cookie
+                // Facebook: tìm fb_account UUID → đăng xuất (ngắt kết nối, xoá cookie + phiên trong fb_accounts — còn cookie
+                // thô thì lần mở app sau tài khoản đã gỡ tự kết nối lại). Bảng FB do deleteAccountData xử lý khi xoá hết dữ liệu.
                 const fbAcc = DatabaseService.getInstance().getFBAccountByFacebookId(zaloId);
-                if (fbAcc?.id) {
-                    const FacebookConnectionManager = require('../../src/utils/FacebookConnectionManager').default;
-                    await FacebookConnectionManager.disconnect(fbAcc.id).catch(() => {});
-                    const { secureDelete } = require('../../src/services/secure/SecureSettingsService');
-                    secureDelete(`fb_cookie_${fbAcc.id}`);
-                    // Không gọi deleteFBAccount ở đây - deleteAccountData sẽ xử lý FB tables
-                }
+                if (fbAcc?.id) await signOutFacebookAccount(fbAcc.id);
             } else if (isTelegramUser) {
                 // MTProto is independent from ConnectionManager. Stop the
                 // live GramJS client before removing its local session.
@@ -331,7 +328,14 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
             if (enabled) {
                 const FileStorageService = require('../../src/services/file/FileStorageService').default;
                 const deleted = FileStorageService.cleanupOldMedia(zaloId, days);
-                return { success: true, config, cleanedDirs: deleted, message: `Đã xoá ${deleted} thư mục media cũ. Cấu hình sẽ tự động chạy hàng ngày.` };
+                // R2 nhận việc (đang lưu media lên R2 + bật giải phóng ổ đĩa + tài khoản trong phạm vi): dọn chạy nền và chỉ
+                // xoá bản trên máy của file đã có trên R2. Còn lại (kể cả R2 bật nhưng giữ file trên máy) dọn như trước.
+                let viaR2 = false;
+                try { viaR2 = !!require('../../src/services/cloudflare/media').handlesAccountMediaCleanup(zaloId); } catch { viaR2 = false; }
+                const message = viaR2
+                    ? 'Đã lưu cấu hình. Media đang được lưu lên Cloudflare R2: chỉ xoá bản trên máy của file đã có trên R2, chạy nền hằng ngày.'
+                    : `Đã xoá ${deleted} thư mục media cũ. Cấu hình sẽ tự động chạy hàng ngày.`;
+                return { success: true, config, cleanedDirs: deleted, message };
             }
 
             return { success: true, config };
@@ -476,25 +480,6 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
         } catch (error: any) {
             Logger.error(`[AvatarCheck] ${zaloId}: error: ${error.message}`);
             return { success: false, refreshed: false, error: error.message };
-        }
-    });
-
-    // ─── Tải tin nhắn cũ của phiên đăng nhập (requestOldMessages) ────────
-    // Gọi listener.requestOldMessages cho cả User và Group threads
-    ipcMain.handle('login:requestOldMessages', async (_event, { zaloId }) => {
-        try {
-            const conn = ConnectionManager.getConnection(zaloId);
-            if (!conn || !conn.connected) {
-                return { success: false, error: 'Tài khoản không online' };
-            }
-            const { ThreadType } = await import('zca-js');
-            conn.api.listener.requestOldMessages(ThreadType.User, null);
-            conn.api.listener.requestOldMessages(ThreadType.Group, null);
-            Logger.log(`[loginIpc] requestOldMessages triggered for ${zaloId}`);
-            return { success: true };
-        } catch (error: any) {
-            Logger.error(`[loginIpc] requestOldMessages error: ${error.message}`);
-            return { success: false, error: error.message };
         }
     });
 }

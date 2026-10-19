@@ -7,7 +7,8 @@ import {
 import ipc from '@/lib/ipc';
 import PageLoading, { Spinner } from '@/components/common/PageLoading';
 import { toLocalMediaUrl } from '@/lib/localMedia';
-import { ActivityIcon, ChartIcon, ChatIcon, ClipboardListIcon, ClockIcon, FolderIcon, InboxIcon, PieChartIcon, RefreshIcon, TrendingUpIcon, UsersIcon } from '@/components/common/icons';
+import { addLocalDays } from '../../../shared/localTimeBuckets';
+import { ActivityIcon, ChartIcon, ChatIcon, ClipboardListIcon, ClockIcon, FolderIcon, InboxIcon, InfoIcon, PieChartIcon, RefreshIcon, TrendingUpIcon, UsersIcon } from '@/components/common/icons';
 
 
 
@@ -36,6 +37,10 @@ interface Props {
   sinceTs: number;
   untilTs: number;
   periodDays: number;
+  /** Reports account filter: only activity on these accounts; undefined = every account. */
+  zaloIds?: string[];
+  /** Bumped by the page's "Làm mới" (closed ranges keep the same sinceTs / untilTs). */
+  refreshKey?: number;
 }
 
 // ── Shared UI ───────────────────────────────────────────────────────────────
@@ -56,18 +61,18 @@ function KPICard({ icon, label, value, sub, color = 'blue' }: {
     <div className={`bg-gradient-to-br ${bg[color] || bg.blue} border rounded-xl p-4 flex flex-col gap-1`}>
       <div className="flex items-center gap-2">
         <span className="text-lg">{icon}</span>
-        <span className="text-xs text-gray-400 font-medium">{label}</span>
+        <span className="text-xs text-muted-foreground font-medium">{label}</span>
       </div>
-      <span className="text-2xl font-bold text-white">{typeof value === 'number' ? value.toLocaleString('vi-VN') : value}</span>
-      {sub && <span className="text-[11px] text-gray-400">{sub}</span>}
+      <span className="text-2xl font-bold text-foreground">{typeof value === 'number' ? value.toLocaleString('vi-VN') : value}</span>
+      {sub && <span className="text-[11px] text-muted-foreground">{sub}</span>}
     </div>
   );
 }
 
 function Section({ title, children, className = '' }: { title: React.ReactNode; children: React.ReactNode; className?: string }) {
   return (
-    <div className={`bg-gray-800/60 border border-white/5 rounded-2xl p-5 ${className}`}>
-      <h3 className="text-sm font-semibold text-gray-200 mb-4 flex items-center gap-1.5">{title}</h3>
+    <div className={`bg-card border border-foreground/5 rounded-2xl p-5 ${className}`}>
+      <h3 className="text-sm font-semibold text-foreground mb-4 flex items-center gap-1.5">{title}</h3>
       {children}
     </div>
   );
@@ -81,8 +86,11 @@ function formatResponseTime(ms: number): string {
 }
 
 // ── MAIN COMPONENT ─────────────────────────────────────────────────────────
-export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: Props) {
+export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays, zaloIds, refreshKey = 0 }: Props) {
   const [loading, setLoading] = useState(true);
+  const loadSeqRef = useRef(0);
+  // Content key: a new array holding the same accounts must not reload.
+  const zaloIdsKey = zaloIds ? JSON.stringify(zaloIds) : '';
   const [comparison, setComparison] = useState<EmployeeComparisonRow[]>([]);
   const [msgTimeline, setMsgTimeline] = useState<any[]>([]);
   const [onlineTimeline, setOnlineTimeline] = useState<any[]>([]);
@@ -120,23 +128,29 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
   const selectedEmployeeId = isAll ? 'all' : (filteredComparison[0]?.employee_id || 'all');
 
   const loadData = useCallback(async () => {
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     try {
+      const accountFilter: string[] | undefined = zaloIdsKey ? JSON.parse(zaloIdsKey) : undefined;
       const [compRes, msgRes, onlRes, respRes, hourRes] = await Promise.all([
-        ipc.employee?.analyticsComparison(sinceTs, untilTs),
-        ipc.employee?.analyticsMessageTimeline(sinceTs, untilTs),
+        ipc.employee?.analyticsComparison(sinceTs, untilTs, accountFilter),
+        ipc.employee?.analyticsMessageTimeline(sinceTs, untilTs, accountFilter),
+        // Online hours come from login sessions, which are not per account.
         ipc.employee?.analyticsOnlineTimeline(sinceTs, untilTs),
-        ipc.employee?.analyticsResponseDist(sinceTs, untilTs),
-        ipc.employee?.analyticsHourlyActivity(sinceTs, untilTs),
+        ipc.employee?.analyticsResponseDist(sinceTs, untilTs, accountFilter),
+        ipc.employee?.analyticsHourlyActivity(sinceTs, untilTs, accountFilter),
       ]);
+      if (seq !== loadSeqRef.current) return; // a newer load (filter / range change) owns the state
       if (compRes?.success) setComparison(compRes.data || []);
       if (msgRes?.success) setMsgTimeline(msgRes.data || []);
       if (onlRes?.success) setOnlineTimeline(onlRes.data || []);
       if (respRes?.success) setResponseDist(respRes.data || []);
       if (hourRes?.success) setHourlyActivity(hourRes.data || []);
     } catch { /* silent */ }
-    setLoading(false);
-  }, [sinceTs, untilTs]);
+    finally {
+      if (seq === loadSeqRef.current) setLoading(false);
+    }
+  }, [sinceTs, untilTs, zaloIdsKey, refreshKey]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -173,10 +187,10 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
   const msgTimelineChart = useMemo(() => {
     if (msgTimeline.length === 0 || filteredComparison.length === 0) return [];
     const maxDay = Math.max(...msgTimeline.map(r => r.day_index), 0);
-    const startDate = new Date(sinceTs);
     const rows: any[] = [];
     for (let d = 0; d <= maxDay; d++) {
-      const date = new Date(startDate.getTime() + d * 86400000);
+      // day_index = local calendar days from the day of sinceTs (DatabaseService employee timelines).
+      const date = new Date(addLocalDays(sinceTs, d));
       const label = `${date.getDate()}/${date.getMonth() + 1}`;
       const row: any = { day: label };
       for (const emp of filteredComparison) {
@@ -192,10 +206,10 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
   const onlineTimelineChart = useMemo(() => {
     if (onlineTimeline.length === 0 || filteredComparison.length === 0) return [];
     const maxDay = Math.max(...onlineTimeline.map(r => r.day_index), 0);
-    const startDate = new Date(sinceTs);
     const rows: any[] = [];
     for (let d = 0; d <= maxDay; d++) {
-      const date = new Date(startDate.getTime() + d * 86400000);
+      // day_index = local calendar days from the day of sinceTs (DatabaseService employee timelines).
+      const date = new Date(addLocalDays(sinceTs, d));
       const label = `${date.getDate()}/${date.getMonth() + 1}`;
       const row: any = { day: label };
       for (const emp of filteredComparison) {
@@ -324,9 +338,9 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
 
   if (comparison.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-16 text-gray-400">
+      <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
         <span className="text-4xl mb-3"><UsersIcon className="w-4 h-4" /></span>
-        <p className="text-sm">Chưa có nhân viên nào. Vào <span className="text-blue-400">Cài đặt → Quản lý nhân viên</span> để thêm.</p>
+        <p className="text-sm">Chưa có nhân viên nào. Vào <span className="text-blue-400">Cài đặt → Nhân viên</span> để thêm.</p>
       </div>
     );
   }
@@ -343,31 +357,31 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
         <div className="relative" ref={filterRef}>
           <button
             onClick={() => setFilterOpen(o => !o)}
-            className="flex items-center gap-2 bg-gray-700/60 border border-gray-600 rounded-lg px-2.5 py-1.5 text-xs text-gray-200 hover:border-blue-500 transition-colors focus:outline-none"
+            className="flex items-center gap-2 bg-muted/60 border border-input rounded-lg px-2.5 py-1.5 text-xs text-foreground hover:border-blue-500 transition-colors focus:outline-none"
           >
-            <span className="text-gray-400">Nhân viên:</span>
+            <span className="text-muted-foreground">Nhân viên:</span>
             {/* Stacked avatars */}
             <div className="flex -space-x-1.5">
               {(isAll ? comparison : comparison.filter(e => selectedIds.has(e.employee_id))).slice(0, 4).map((emp) => (
                 <div key={emp.employee_id}
-                  className="w-5 h-5 rounded-full border border-gray-700 bg-gray-600 flex items-center justify-center text-[9px] overflow-hidden flex-shrink-0"
+                  className="w-5 h-5 rounded-full border border-border bg-accent flex items-center justify-center text-[9px] overflow-hidden flex-shrink-0"
                   style={{ borderColor: empColorMap[emp.employee_id] }}>
                   {emp.avatar_url
                     ? <img src={emp.avatar_url} className="w-full h-full object-cover" alt="" />
-                    : <span className="text-gray-300">{emp.display_name?.charAt(0)?.toUpperCase()}</span>}
+                    : <span className="text-foreground/80">{emp.display_name?.charAt(0)?.toUpperCase()}</span>}
                 </div>
               ))}
             </div>
-            <span className="font-medium text-white">{filterLabel}</span>
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" className="text-gray-400 ml-0.5">
+            <span className="font-medium text-foreground">{filterLabel}</span>
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" className="text-muted-foreground ml-0.5">
               <path d="M1 3l4 4 4-4" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
             </svg>
           </button>
 
           {filterOpen && (
-            <div className="absolute left-0 top-full mt-1.5 w-64 bg-gray-800 border border-gray-600 rounded-xl shadow-2xl z-50 overflow-hidden">
-              <div className="px-3 py-2 border-b border-gray-700 flex items-center justify-between">
-                <span className="text-[11px] text-gray-400 font-semibold uppercase tracking-wide">Lọc nhân viên</span>
+            <div className="absolute left-0 top-full mt-1.5 w-64 bg-card border border-input rounded-xl shadow-2xl z-50 overflow-hidden">
+              <div className="px-3 py-2 border-b border-border flex items-center justify-between">
+                <span className="text-[11px] text-muted-foreground font-semibold uppercase tracking-wide">Lọc nhân viên</span>
                 <button onClick={() => setSelectedIds(new Set())}
                   className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors">
                   Tất cả
@@ -380,10 +394,10 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
                     <button
                       key={emp.employee_id}
                       onClick={() => toggleEmployee(emp.employee_id)}
-                      className={`w-full flex items-center gap-2.5 px-3 py-2 hover:bg-gray-700/60 transition-colors ${checked && !isAll ? 'bg-blue-600/10' : ''}`}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2 hover:bg-muted/60 transition-colors ${checked && !isAll ? 'bg-blue-600/10' : ''}`}
                     >
                       {/* Checkbox */}
-                      <div className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 border ${selectedIds.has(emp.employee_id) ? 'bg-blue-600 border-blue-600' : 'border-gray-500 bg-transparent'}`}>
+                      <div className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 border ${selectedIds.has(emp.employee_id) ? 'bg-blue-600 border-blue-600' : 'border-border-strong bg-transparent'}`}>
                         {selectedIds.has(emp.employee_id) && (
                           <svg width="9" height="9" viewBox="0 0 10 10" fill="white">
                             <path d="M1.5 5.5l2.5 2.5 5-5" stroke="white" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
@@ -391,16 +405,16 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
                         )}
                       </div>
                       {/* Avatar */}
-                      <div className="w-7 h-7 rounded-full bg-gray-600 flex items-center justify-center text-[10px] flex-shrink-0 overflow-hidden"
+                      <div className="w-7 h-7 rounded-full bg-accent flex items-center justify-center text-[10px] flex-shrink-0 overflow-hidden"
                         style={{ borderLeft: `3px solid ${empColorMap[emp.employee_id]}` }}>
                         {emp.avatar_url
                           ? <img src={emp.avatar_url} className="w-full h-full object-cover" alt="" />
-                          : <span className="text-gray-300">{emp.display_name?.charAt(0)?.toUpperCase()}</span>}
+                          : <span className="text-foreground/80">{emp.display_name?.charAt(0)?.toUpperCase()}</span>}
                       </div>
                       {/* Name + role */}
                       <div className="flex-1 text-left min-w-0">
-                        <p className="text-xs text-gray-200 font-medium truncate">{emp.display_name}</p>
-                        <p className="text-[9px] text-gray-400">{emp.role === 'boss' ? 'Boss' : 'Nhân viên'}{!emp.is_active ? ' · Tắt' : ''}</p>
+                        <p className="text-xs text-foreground font-medium truncate">{emp.display_name}</p>
+                        <p className="text-[9px] text-muted-foreground">{emp.role === 'boss' ? 'Boss' : 'Nhân viên'}{!emp.is_active ? ' · Tắt' : ''}</p>
                       </div>
                       {/* Color dot */}
                       <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: empColorMap[emp.employee_id] }} />
@@ -415,18 +429,28 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
         <div className="flex-1" />
         <button
           onClick={handleExportCSV}
-          className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-200 px-2.5 py-1.5 rounded-lg hover:bg-gray-700 border border-gray-700 transition-colors"
+          className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground px-2.5 py-1.5 rounded-lg hover:bg-muted border border-border transition-colors"
         ><InboxIcon className="w-4 h-4 inline" /> Xuất CSV
         </button>
         <button
           onClick={loadData}
           disabled={loading}
-          className="text-[11px] text-gray-400 hover:text-gray-200 px-2 py-1.5 rounded-lg hover:bg-gray-700 transition-colors"
+          className="text-[11px] text-muted-foreground hover:text-foreground px-2 py-1.5 rounded-lg hover:bg-muted transition-colors"
           title="Làm mới"
         >
           {loading ? <Spinner size={3} /> : <RefreshIcon className="w-4 h-4" />}
         </button>
       </div>
+
+      {zaloIds && (
+        <p className="flex items-start gap-1.5 text-[11px] text-muted-foreground">
+          <InfoIcon className="w-3.5 h-3.5 shrink-0 mt-px" />
+          <span>
+            Tin gửi, hội thoại, thời gian phản hồi và hoạt động theo giờ chỉ tính trên {zaloIds.length} tài khoản đã chọn.
+            Giờ online tính theo phiên đăng nhập của nhân viên, không tách theo tài khoản.
+          </span>
+        </p>
+      )}
 
       {/* ── KPI Summary ──────────────────────────────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
@@ -447,7 +471,7 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
         {/* Bar: Messages per employee */}
         <Section title={<><ChartIcon className="w-4 h-4" />  So sánh tin nhắn & hội thoại</>}>
           {barCompData.length === 0 ? (
-            <p className="text-xs text-gray-400 text-center py-8">Chưa có dữ liệu</p>
+            <p className="text-xs text-muted-foreground text-center py-8">Chưa có dữ liệu</p>
           ) : (
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
@@ -459,8 +483,8 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
                     if (!active || !payload?.length) return null;
                     const d = payload[0].payload;
                     return (
-                      <div className="bg-gray-800 border border-gray-600 rounded-xl px-3 py-2 text-xs shadow-xl">
-                        <p className="text-white font-medium mb-1">{d.name}</p>
+                      <div className="bg-card border border-input rounded-xl px-3 py-2 text-xs shadow-xl">
+                        <p className="text-foreground font-medium mb-1">{d.name}</p>
                         <p className="text-blue-400"><ChatIcon className="w-4 h-4 inline" /> {d.messages} tin gửi</p>
                         <p className="text-green-400"><FolderIcon className="w-4 h-4 inline" /> {d.conversations} hội thoại</p>
                         <p className="text-amber-400"><ClockIcon className="w-4 h-4 inline" /> {d.online}h online</p>
@@ -479,7 +503,7 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Section title={<><PieChartIcon className="w-4 h-4" />  Phân bổ tin nhắn</>}>
             {msgPieData.length === 0 ? (
-              <p className="text-xs text-gray-400 text-center py-8">Chưa có dữ liệu</p>
+              <p className="text-xs text-muted-foreground text-center py-8">Chưa có dữ liệu</p>
             ) : (
               <div className="h-48">
                 <ResponsiveContainer width="100%" height="100%">
@@ -494,13 +518,13 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
                       const total = msgPieData.reduce((s, p) => s + p.value, 0);
                       const pct = total > 0 ? Math.round(d.value / total * 100) : 0;
                       return (
-                        <div className="bg-gray-800 border border-gray-600 rounded-xl px-3 py-2 text-xs shadow-xl">
-                          <p className="text-white font-medium">{d.name}</p>
+                        <div className="bg-card border border-input rounded-xl px-3 py-2 text-xs shadow-xl">
+                          <p className="text-foreground font-medium">{d.name}</p>
                           <p className="text-blue-400 font-bold">{d.value} tin ({pct}%)</p>
                         </div>
                       );
                     }} />
-                    <Legend formatter={(v: string) => <span className="text-[10px] text-gray-400">{v}</span>} />
+                    <Legend formatter={(v: string) => <span className="text-[10px] text-muted-foreground">{v}</span>} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
@@ -509,7 +533,7 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
 
           <Section title={<><ClockIcon className="w-4 h-4" />  Phân bổ giờ online</>}>
             {onlinePieData.length === 0 ? (
-              <p className="text-xs text-gray-400 text-center py-8">Chưa có dữ liệu</p>
+              <p className="text-xs text-muted-foreground text-center py-8">Chưa có dữ liệu</p>
             ) : (
               <div className="h-48">
                 <ResponsiveContainer width="100%" height="100%">
@@ -524,13 +548,13 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
                       const total = onlinePieData.reduce((s, p) => s + p.value, 0);
                       const pct = total > 0 ? Math.round(d.value / total * 100) : 0;
                       return (
-                        <div className="bg-gray-800 border border-gray-600 rounded-xl px-3 py-2 text-xs shadow-xl">
-                          <p className="text-white font-medium">{d.name}</p>
+                        <div className="bg-card border border-input rounded-xl px-3 py-2 text-xs shadow-xl">
+                          <p className="text-foreground font-medium">{d.name}</p>
                           <p className="text-amber-400 font-bold">{d.value}h ({pct}%)</p>
                         </div>
                       );
                     }} />
-                    <Legend formatter={(v: string) => <span className="text-[10px] text-gray-400">{v}</span>} />
+                    <Legend formatter={(v: string) => <span className="text-[10px] text-muted-foreground">{v}</span>} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
@@ -543,7 +567,7 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
         <Section title={<><TrendingUpIcon className="w-4 h-4" />  Tin nhắn theo ngày (so sánh nhân viên)</>}>
           {msgTimelineChart.length === 0 ? (
-            <p className="text-xs text-gray-400 text-center py-8">Chưa có dữ liệu</p>
+            <p className="text-xs text-muted-foreground text-center py-8">Chưa có dữ liệu</p>
           ) : (
             <div className="h-56">
               <ResponsiveContainer width="100%" height="100%">
@@ -554,13 +578,13 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
                   <Tooltip content={({ active, payload, label }: any) => {
                     if (!active || !payload?.length) return null;
                     return (
-                      <div className="bg-gray-800 border border-gray-600 rounded-xl px-3 py-2 text-xs shadow-xl">
-                        <p className="text-gray-400 mb-1 font-medium">{label}</p>
+                      <div className="bg-card border border-input rounded-xl px-3 py-2 text-xs shadow-xl">
+                        <p className="text-muted-foreground mb-1 font-medium">{label}</p>
                         {payload.map((p: any) => (
                           <div key={p.dataKey} className="flex items-center gap-2">
                             <span className="w-2 h-2 rounded-full" style={{ backgroundColor: p.stroke || p.fill }} />
-                            <span className="text-gray-300">{empNameMap[p.dataKey] || p.dataKey}</span>
-                            <span className="font-bold text-white ml-auto">{p.value}</span>
+                            <span className="text-foreground/80">{empNameMap[p.dataKey] || p.dataKey}</span>
+                            <span className="font-bold text-foreground ml-auto">{p.value}</span>
                           </div>
                         ))}
                       </div>
@@ -579,7 +603,7 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
 
         <Section title={<><ClockIcon className="w-4 h-4" />  Giờ online theo ngày (so sánh nhân viên)</>}>
           {onlineTimelineChart.length === 0 ? (
-            <p className="text-xs text-gray-400 text-center py-8">Chưa có dữ liệu</p>
+            <p className="text-xs text-muted-foreground text-center py-8">Chưa có dữ liệu</p>
           ) : (
             <div className="h-56">
               <ResponsiveContainer width="100%" height="100%">
@@ -590,13 +614,13 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
                   <Tooltip content={({ active, payload, label }: any) => {
                     if (!active || !payload?.length) return null;
                     return (
-                      <div className="bg-gray-800 border border-gray-600 rounded-xl px-3 py-2 text-xs shadow-xl">
-                        <p className="text-gray-400 mb-1 font-medium">{label}</p>
+                      <div className="bg-card border border-input rounded-xl px-3 py-2 text-xs shadow-xl">
+                        <p className="text-muted-foreground mb-1 font-medium">{label}</p>
                         {payload.filter((p: any) => p.value > 0).map((p: any) => (
                           <div key={p.dataKey} className="flex items-center gap-2">
                             <span className="w-2 h-2 rounded-full" style={{ backgroundColor: p.fill }} />
-                            <span className="text-gray-300">{empNameMap[p.dataKey] || p.dataKey}</span>
-                            <span className="font-bold text-white ml-auto">{p.value}h</span>
+                            <span className="text-foreground/80">{empNameMap[p.dataKey] || p.dataKey}</span>
+                            <span className="font-bold text-foreground ml-auto">{p.value}h</span>
                           </div>
                         ))}
                       </div>
@@ -618,7 +642,7 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
         <Section title={<><ClockIcon className="w-4 h-4" />  Xếp hạng tốc độ phản hồi</>}>
           {responseBarData.length === 0 ? (
-            <p className="text-xs text-gray-400 text-center py-8">Chưa có dữ liệu phản hồi</p>
+            <p className="text-xs text-muted-foreground text-center py-8">Chưa có dữ liệu phản hồi</p>
           ) : (
             <div className="h-56">
               <ResponsiveContainer width="100%" height="100%">
@@ -631,8 +655,8 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
                     if (!active || !payload?.length) return null;
                     const d = payload[0].payload;
                     return (
-                      <div className="bg-gray-800 border border-gray-600 rounded-xl px-3 py-2 text-xs shadow-xl">
-                        <p className="text-white font-medium">{d.name}</p>
+                      <div className="bg-card border border-input rounded-xl px-3 py-2 text-xs shadow-xl">
+                        <p className="text-foreground font-medium">{d.name}</p>
                         <p className={`font-bold ${d.avg_ms < 300000 ? 'text-green-400' : d.avg_ms < 900000 ? 'text-amber-400' : 'text-red-400'}`}>
                           ⏱️ TB: {d.display}
                         </p>
@@ -652,7 +676,7 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
 
         <Section title={<><ActivityIcon className="w-4 h-4" />  So sánh đa chiều nhân viên</>}>
           {radarData.length === 0 || filteredComparison.length < 2 ? (
-            <p className="text-xs text-gray-400 text-center py-8">Cần ít nhất 2 nhân viên có dữ liệu</p>
+            <p className="text-xs text-muted-foreground text-center py-8">Cần ít nhất 2 nhân viên có dữ liệu</p>
           ) : (
             <div className="h-56">
               <ResponsiveContainer width="100%" height="100%">
@@ -667,17 +691,17 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
                       fill={empColorMap[emp.employee_id]}
                       fillOpacity={0.15} strokeWidth={2} />
                   ))}
-                  <Legend formatter={(v: string) => <span className="text-[10px] text-gray-400">{v}</span>} />
+                  <Legend formatter={(v: string) => <span className="text-[10px] text-muted-foreground">{v}</span>} />
                   <Tooltip content={({ active, payload, label }: any) => {
                     if (!active || !payload?.length) return null;
                     return (
-                      <div className="bg-gray-800 border border-gray-600 rounded-xl px-3 py-2 text-xs shadow-xl">
-                        <p className="text-gray-400 mb-1 font-medium">{label}</p>
+                      <div className="bg-card border border-input rounded-xl px-3 py-2 text-xs shadow-xl">
+                        <p className="text-muted-foreground mb-1 font-medium">{label}</p>
                         {payload.map((p: any) => (
                           <div key={p.dataKey} className="flex items-center gap-2">
                             <span className="w-2 h-2 rounded-full" style={{ backgroundColor: p.stroke }} />
-                            <span className="text-gray-300">{p.name}</span>
-                            <span className="font-bold text-white ml-auto">{p.value}%</span>
+                            <span className="text-foreground/80">{p.name}</span>
+                            <span className="font-bold text-foreground ml-auto">{p.value}%</span>
                           </div>
                         ))}
                       </div>
@@ -694,7 +718,7 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
         <Section title={<><ChartIcon className="w-4 h-4" /> Phân bổ thời gian phản hồi{!isAll ? ` - ${filterLabel}` : ''}</>}>
           {responseDistChart.every(r => r.count === 0) ? (
-            <p className="text-xs text-gray-400 text-center py-8">Chưa có dữ liệu</p>
+            <p className="text-xs text-muted-foreground text-center py-8">Chưa có dữ liệu</p>
           ) : (
             <div className="h-52">
               <ResponsiveContainer width="100%" height="100%">
@@ -705,9 +729,9 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
                   <Tooltip content={({ active, payload, label }: any) => {
                     if (!active || !payload?.length) return null;
                     return (
-                      <div className="bg-gray-800 border border-gray-600 rounded-xl px-3 py-2 text-xs shadow-xl">
-                        <p className="text-gray-400 mb-1">{label}</p>
-                        <p className="text-white font-bold">{payload[0].value} lượt</p>
+                      <div className="bg-card border border-input rounded-xl px-3 py-2 text-xs shadow-xl">
+                        <p className="text-muted-foreground mb-1">{label}</p>
+                        <p className="text-foreground font-bold">{payload[0].value} lượt</p>
                       </div>
                     );
                   }} />
@@ -725,7 +749,7 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
 
         <Section title={<><ClockIcon className="w-4 h-4" /> Hoạt động theo giờ{!isAll ? ` - ${filterLabel}` : ''}</>}>
           {hourlyChart.every(r => r.count === 0) ? (
-            <p className="text-xs text-gray-400 text-center py-8">Chưa có dữ liệu</p>
+            <p className="text-xs text-muted-foreground text-center py-8">Chưa có dữ liệu</p>
           ) : (
             <div className="h-52">
               <ResponsiveContainer width="100%" height="100%">
@@ -736,9 +760,9 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
                   <Tooltip content={({ active, payload, label }: any) => {
                     if (!active || !payload?.length) return null;
                     return (
-                      <div className="bg-gray-800 border border-gray-600 rounded-xl px-3 py-2 text-xs shadow-xl">
-                        <p className="text-gray-400 mb-1">{label}</p>
-                        <p className="text-white font-bold">{payload[0].value} tin nhắn</p>
+                      <div className="bg-card border border-input rounded-xl px-3 py-2 text-xs shadow-xl">
+                        <p className="text-muted-foreground mb-1">{label}</p>
+                        <p className="text-foreground font-bold">{payload[0].value} tin nhắn</p>
                       </div>
                     );
                   }} />
@@ -755,7 +779,7 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
-              <tr className="text-gray-400 border-b border-gray-700">
+              <tr className="text-muted-foreground border-b border-border">
                 <th className="text-left py-2.5 px-3 font-medium">#</th>
                 <th className="text-left py-2.5 px-3 font-medium">Nhân viên</th>
                 <th className="text-left py-2.5 px-3 font-medium">Vai trò</th>
@@ -772,53 +796,53 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays }: P
                 const perf = maxMsg > 0 ? Math.round(emp.messages_sent / maxMsg * 100) : 0;
                 return (
                   <tr key={emp.employee_id}
-                    className={`border-b border-gray-700/50 hover:bg-gray-700/30 transition-colors ${!emp.is_active ? 'opacity-50' : ''}`}>
-                    <td className="py-2.5 px-3 text-gray-400 font-mono">{idx + 1}</td>
+                    className={`border-b border-border/50 hover:bg-muted/30 transition-colors ${!emp.is_active ? 'opacity-50' : ''}`}>
+                    <td className="py-2.5 px-3 text-muted-foreground font-mono">{idx + 1}</td>
                     <td className="py-2.5 px-3">
                       <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 rounded-full bg-gray-600 flex items-center justify-center text-[10px] flex-shrink-0 overflow-hidden"
+                        <div className="w-7 h-7 rounded-full bg-accent flex items-center justify-center text-[10px] flex-shrink-0 overflow-hidden"
                           style={{ borderLeft: `3px solid ${empColorMap[emp.employee_id]}` }}>
                           {emp.avatar_url ? (
                             <img src={toLocalMediaUrl(emp.avatar_url)} className="w-full h-full object-cover" alt="" />
                           ) : (
-                            <span className="text-gray-300">{emp.display_name?.charAt(0)?.toUpperCase() || '?'}</span>
+                            <span className="text-foreground/80">{emp.display_name?.charAt(0)?.toUpperCase() || '?'}</span>
                           )}
                         </div>
                         <div>
-                          <span className="text-gray-200 font-medium">{emp.display_name}</span>
+                          <span className="text-foreground font-medium">{emp.display_name}</span>
                           {!emp.is_active && <span className="ml-1.5 text-[9px] px-1 py-0.5 rounded bg-red-600/25 text-red-400">Tắt</span>}
                         </div>
                       </div>
                     </td>
                     <td className="py-2.5 px-3">
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${emp.role === 'boss' ? 'bg-amber-600/25 text-amber-400' : 'bg-gray-600/40 text-gray-400'}`}>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${emp.role === 'boss' ? 'bg-amber-600/25 text-amber-400' : 'bg-accent/40 text-muted-foreground'}`}>
                         {emp.role === 'boss' ? 'Boss' : 'NV'}
                       </span>
                     </td>
-                    <td className="text-right py-2.5 px-3 text-gray-300 font-mono font-medium">{emp.messages_sent.toLocaleString('vi-VN')}</td>
-                    <td className="text-right py-2.5 px-3 text-gray-300 font-mono">{emp.conversations_handled}</td>
+                    <td className="text-right py-2.5 px-3 text-foreground/80 font-mono font-medium">{emp.messages_sent.toLocaleString('vi-VN')}</td>
+                    <td className="text-right py-2.5 px-3 text-foreground/80 font-mono">{emp.conversations_handled}</td>
                     <td className="text-right py-2.5 px-3">
-                      <span className={`font-medium ${emp.avg_response_time_ms > 300_000 ? 'text-red-400' : emp.avg_response_time_ms > 120_000 ? 'text-amber-400' : emp.avg_response_time_ms > 0 ? 'text-green-400' : 'text-gray-400'}`}>
+                      <span className={`font-medium ${emp.avg_response_time_ms > 300_000 ? 'text-red-400' : emp.avg_response_time_ms > 120_000 ? 'text-amber-400' : emp.avg_response_time_ms > 0 ? 'text-green-400' : 'text-muted-foreground'}`}>
                         {formatResponseTime(emp.avg_response_time_ms)}
                       </span>
                     </td>
-                    <td className="text-right py-2.5 px-3 text-gray-300">{emp.total_online_hours}h</td>
+                    <td className="text-right py-2.5 px-3 text-foreground/80">{emp.total_online_hours}h</td>
                     <td className="text-right py-2.5 px-3">
                       <div className="flex items-center justify-end gap-2">
-                        <div className="w-16 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                        <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden">
                           <div className="h-full rounded-full transition-all"
                             style={{ width: `${perf}%`, backgroundColor: empColorMap[emp.employee_id] }} />
                         </div>
-                        <span className="text-[10px] text-gray-400 font-mono w-8 text-right">{perf}%</span>
+                        <span className="text-[10px] text-muted-foreground font-mono w-8 text-right">{perf}%</span>
                       </div>
                     </td>
                   </tr>
                 );
               })}
               {/* Totals */}
-              <tr className="border-t border-gray-600 font-semibold bg-gray-700/20">
+              <tr className="border-t border-input font-semibold bg-muted/20">
                 <td className="py-2.5 px-3" colSpan={2}>
-                  <span className="text-gray-300">Tổng ({filteredComparison.length} NV)</span>
+                  <span className="text-foreground/80">Tổng ({filteredComparison.length} NV)</span>
                 </td>
                 <td className="py-2.5 px-3" />
                 <td className="text-right py-2.5 px-3 text-blue-400 font-mono">{totals.messages_sent.toLocaleString('vi-VN')}</td>

@@ -140,6 +140,55 @@ export async function checkCookieAlive(cookie: string, httpsAgent?: any): Promis
 }
 
 /**
+ * Login bằng username/password (mobile/Android qua b-graph hoặc Messenger Lite)
+ * chỉ trả về cookie phiên tối thiểu (c_user, xs, datr, fr). Trang www.facebook.com
+ * khi mở bằng trình duyệt còn set thêm cookie web (sb, wd, presence, ...) qua
+ * Set-Cookie; thiếu chúng, endpoint /api/graphql/ (dùng cho quét dữ liệu) có thể
+ * từ chối session. Hàm này mở homepage một lần, gom cookie mới từ Set-Cookie và
+ * gộp vào cookie gốc — KHÔNG ghi đè cookie đã có (giữ nguyên c_user/xs/datr/fr).
+ * Lỗi không ném: trả về cookie gốc nếu không lấy thêm được.
+ */
+export async function augmentWebCookies(cookie: string, httpsAgent?: any): Promise<string> {
+  const merged = new Map<string, string>();
+  for (const part of cookie.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq > 0) {
+      const key = part.slice(0, eq).trim();
+      if (key) merged.set(key, part.slice(eq + 1).trim());
+    }
+  }
+
+  try {
+    const response = await axios.get(FB_HOME_URL, {
+      headers: fbHeaders(cookie),
+      maxRedirects: 5,
+      timeout: 60000,
+      ...(httpsAgent ? { httpsAgent } : {}),
+    });
+
+    const setCookies = response.headers?.['set-cookie'];
+    if (Array.isArray(setCookies)) {
+      // Chỉ bỏ qua attribute cookie (expires/domain/path/...) — không phải tên cookie.
+      const attributeRe = /^(expires|domain|path|max-age|samesite|secure|httponly|priority|version|comment)$/i;
+      for (const raw of setCookies) {
+        const first = String(raw).split(';')[0];
+        const eq = first.indexOf('=');
+        if (eq <= 0) continue;
+        const key = first.slice(0, eq).trim();
+        const value = first.slice(eq + 1).trim();
+        if (!key || !value || attributeRe.test(key)) continue;
+        // Chỉ thêm cookie còn thiếu — không ghi đè cookie auth hiện có.
+        if (!merged.has(key)) merged.set(key, value);
+      }
+    }
+  } catch (err: any) {
+    Logger.warn(`[FacebookSession] augmentWebCookies: ${err.message}`);
+  }
+
+  return [...merged.entries()].map(([k, v]) => `${k}=${v}`).join('; ');
+}
+
+/**
  * Decode HTML entities và Unicode escapes
  */
 function decodeHtmlEntities(text: string): string {

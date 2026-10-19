@@ -1,6 +1,9 @@
 import { create } from 'zustand';
 import ipc from '@/lib/ipc';
 import { useWorkspaceStore } from './workspaceStore';
+import { computeEmployeeBadgeState, type EmployeeBadgeState } from '../../shared/employeeConnection';
+
+export type { EmployeeBadgeState };
 
 export type AppMode = 'standalone' | 'boss' | 'employee';
 
@@ -43,7 +46,22 @@ interface EmployeeStore {
     setAssignedAccounts: (ids: string[]) => void;
 
     // ─── Connection status (when mode === 'employee') ─────────────
+    // Hai nguồn: heartbeat của main ('workspace:connectionStatus') + REST client của renderer
+    // (RestQueryService status listener). Badge = kết hợp, xem computeEmployeeBadgeState.
+    /** Online tổng hợp (= connectionBadge === 'online'): heartbeat OK && REST không bị chặn && phiên còn hạn. */
     bossConnected: boolean;
+    /** Badge TopBar: online | recovering (REST đang hồi phục) | offline | expired (cần đăng nhập lại). */
+    connectionBadge: EmployeeBadgeState;
+    /** Heartbeat main → Boss OK (chỉ ghi từ trạng thái của main). */
+    heartbeatConnected: boolean;
+    /** REST client đang bị chặn / chưa có URL-token (chỉ ghi từ RestQueryService). */
+    restBlocked: boolean;
+    /** Boss từ chối token → phải đăng nhập lại. */
+    authExpired: boolean;
+    setHeartbeatConnected: (v: boolean) => void;
+    setRestBlocked: (v: boolean) => void;
+    setAuthExpired: (v: boolean) => void;
+    /** @deprecated Dùng setHeartbeatConnected — giữ để tương thích, chỉ ghi phần heartbeat. */
     setBossConnected: (v: boolean) => void;
     bossUrl: string;
     setBossUrl: (url: string) => void;
@@ -88,12 +106,28 @@ interface EmployeeStore {
     reset: () => void;
 }
 
+type ConnectionParts = { heartbeatConnected: boolean; restBlocked: boolean; authExpired: boolean };
+
+/** Trường suy ra (bossConnected, connectionBadge) từ 3 nguồn trạng thái. */
+function deriveConnection(parts: ConnectionParts): { bossConnected: boolean; connectionBadge: EmployeeBadgeState } {
+    const connectionBadge = computeEmployeeBadgeState({
+        heartbeatOk: parts.heartbeatConnected,
+        restBlocked: parts.restBlocked,
+        authExpired: parts.authExpired,
+    });
+    return { connectionBadge, bossConnected: connectionBadge === 'online' };
+}
+
 const initialState = {
     mode: 'standalone' as AppMode,
     currentEmployee: null as EmployeeInfo | null,
     permissions: {} as Record<string, boolean>,
     assignedAccounts: [] as string[],
     bossConnected: false,
+    connectionBadge: 'offline' as EmployeeBadgeState,
+    heartbeatConnected: false,
+    restBlocked: false,
+    authExpired: false,
     bossUrl: '',
     latency: 0,
     token: '',
@@ -128,7 +162,16 @@ export const useEmployeeStore = create<EmployeeStore>((set, get) => ({
         return !!permissions[module];
     },
     setAssignedAccounts: (ids) => set({ assignedAccounts: ids }),
-    setBossConnected: (v) => set({ bossConnected: v }),
+    setHeartbeatConnected: (v) => set((s) => (
+        s.heartbeatConnected === v ? s : { heartbeatConnected: v, ...deriveConnection({ ...s, heartbeatConnected: v }) }
+    )),
+    setRestBlocked: (v) => set((s) => (
+        s.restBlocked === v ? s : { restBlocked: v, ...deriveConnection({ ...s, restBlocked: v }) }
+    )),
+    setAuthExpired: (v) => set((s) => (
+        s.authExpired === v ? s : { authExpired: v, ...deriveConnection({ ...s, authExpired: v }) }
+    )),
+    setBossConnected: (v) => get().setHeartbeatConnected(v),
     setBossUrl: (url) => set({ bossUrl: url }),
     setLatency: (ms) => set({ latency: ms }),
     setToken: (token) => set({ token }),
@@ -145,22 +188,27 @@ export const useEmployeeStore = create<EmployeeStore>((set, get) => ({
                 return cachedEmployees;
             }
 
-            const profileRes = await ipc.erp?.employeeListByDepartment?.({});
+            // Hồ sơ ERP trên Boss (REST qua DataAccessor) — trước đây IPC ở máy nhân viên (DB cục bộ, thường trống).
+            // Import động: DataAccessor import store này. Đọc lỗi → giữ danh sách đang có
+            const { default: DataAccessor } = await import('@/lib/data/DataAccessor');
+            const profileRes: any = await DataAccessor.erpProfiles();
+            if (!profileRes?.success) return get().employees;
             const currentEmployee = get().currentEmployee;
-            const fallbackEmployees = profileRes?.success
-                ? (profileRes.profiles || []).map((profile: any) => ({
+            const fallbackEmployees = (profileRes.profiles || []).map((profile: any) => {
+                const isMe = profile.employee_id === currentEmployee?.employee_id;
+                return {
                     employee_id: profile.employee_id,
-                    username: profile.employee_id === currentEmployee?.employee_id ? currentEmployee?.username || '' : '',
-                    display_name: profile.employee_id === currentEmployee?.employee_id
+                    username: isMe ? currentEmployee?.username || '' : profile.username || '',
+                    display_name: isMe
                         ? currentEmployee?.display_name || profile.employee_id
-                        : profile.employee_id,
-                    avatar_url: profile.employee_id === currentEmployee?.employee_id ? currentEmployee?.avatar_url || '' : '',
-                    role: profile.employee_id === currentEmployee?.employee_id ? currentEmployee?.role || 'employee' : 'employee',
+                        : profile.display_name || profile.employee_id,
+                    avatar_url: isMe ? currentEmployee?.avatar_url || '' : profile.avatar_url || '',
+                    role: isMe ? currentEmployee?.role || 'employee' : 'employee',
                     is_active: 1,
                     permissions: [],
                     assigned_accounts: [],
-                  }))
-                : [];
+                };
+            });
             set({ employees: fallbackEmployees });
             return fallbackEmployees;
         }
@@ -175,7 +223,16 @@ export const useEmployeeStore = create<EmployeeStore>((set, get) => ({
         ...(avatarUrl ? { employeeAvatarMap: { ...s.employeeAvatarMap, [employeeId]: avatarUrl } } : {}),
     })),
     setPreviewEmployeeId: (id) => set({ previewEmployeeId: id }),
-    reset: () => set(initialState),
+    // restBlocked phản ánh RestQueryService (singleton dùng chung mọi workspace) → reset không xoá,
+    // chỉ được ghi lại bởi status listener của REST.
+    reset: () => set((s) => {
+        const parts: ConnectionParts = {
+            heartbeatConnected: initialState.heartbeatConnected,
+            restBlocked: s.restBlocked,
+            authExpired: initialState.authExpired,
+        };
+        return { ...initialState, ...parts, ...deriveConnection(parts) };
+    }),
 
     // ─── Computed helpers for preview/simulation ─────────────────
     isSimulating: () => {

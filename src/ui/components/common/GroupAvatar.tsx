@@ -12,7 +12,7 @@ function MemberCell({ member, onFallback, className }: { member: Member; onFallb
   return (
     <div className={`overflow-hidden${className ? ' ' + className : ''}`}>
       {showImage ? (
-        <img src={avatarUrl} alt="" className="w-full h-full object-cover"
+        <img src={avatarUrl} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover"
           onError={() => { setImgFailed(true); onFallback?.(); }} />
       ) : (
         <div className="w-full h-full bg-purple-600 flex items-center justify-center text-white font-bold"
@@ -50,32 +50,32 @@ function CompositeGrid({ allMembers, sizeClass }: { allMembers: Member[]; sizeCl
   // Grid 4 ô
   if (count >= 4) {
     return (
-      <div className={`${sizeClass} rounded-full overflow-hidden grid grid-cols-2 grid-rows-2 bg-gray-700 flex-shrink-0`}>
+      <div className={`${sizeClass} rounded-full overflow-hidden grid grid-cols-2 grid-rows-2 bg-muted flex-shrink-0`}>
         {active.slice(0, 4).map((m, i) => <MemberCell key={i} member={m} onFallback={() => handleFallback(i)} />)}
       </div>
     );
   }
   if (count === 3) {
     return (
-      <div className={`${sizeClass} rounded-full overflow-hidden flex flex-row bg-gray-700 flex-shrink-0`}>
+      <div className={`${sizeClass} rounded-full overflow-hidden flex flex-row bg-muted flex-shrink-0`}>
         <div className="flex-1 h-full"><MemberCell member={active[0]} onFallback={() => handleFallback(0)} className="h-full" /></div>
         <div className="flex-1 h-full flex flex-col">
           <div className="flex-1"><MemberCell member={active[1]} onFallback={() => handleFallback(1)} className="h-full" /></div>
-          <div className="flex-1 border-t border-gray-900/40"><MemberCell member={active[2]} onFallback={() => handleFallback(2)} className="h-full" /></div>
+          <div className="flex-1 border-t border-border/40"><MemberCell member={active[2]} onFallback={() => handleFallback(2)} className="h-full" /></div>
         </div>
       </div>
     );
   }
   if (count === 2) {
     return (
-      <div className={`${sizeClass} rounded-full overflow-hidden flex flex-row bg-gray-700 flex-shrink-0`}>
+      <div className={`${sizeClass} rounded-full overflow-hidden flex flex-row bg-muted flex-shrink-0`}>
         <div className="flex-1 h-full"><MemberCell member={active[0]} onFallback={() => handleFallback(0)} className="h-full" /></div>
-        <div className="flex-1 h-full border-l border-gray-900/40"><MemberCell member={active[1]} onFallback={() => handleFallback(1)} className="h-full" /></div>
+        <div className="flex-1 h-full border-l border-border/40"><MemberCell member={active[1]} onFallback={() => handleFallback(1)} className="h-full" /></div>
       </div>
     );
   }
   return (
-    <div className={`${sizeClass} rounded-full overflow-hidden bg-gray-700 flex-shrink-0`}>
+    <div className={`${sizeClass} rounded-full overflow-hidden bg-muted flex-shrink-0`}>
       <MemberCell member={active[0]} onFallback={() => handleFallback(0)} className="h-full w-full" />
     </div>
   );
@@ -112,24 +112,30 @@ interface GroupAvatarProps {
  * 2. Nếu không → composite grid từ members (2/3/4 ô)
  * 3. Fallback → chữ cái đầu trên nền tím
  */
-export default function GroupAvatar({ avatarUrl, groupInfo, name, size = 'md', className = '' }: GroupAvatarProps) {
-  const [imgError, setImgError] = useState(false);
+function GroupAvatar({ avatarUrl, groupInfo, name, size = 'md', className = '' }: GroupAvatarProps) {
+  // Nhớ URL bị lỗi (không phải cờ true/false) → avatar nhóm đổi sang URL mới thì thử hiển thị lại
+  const [failedAvatarUrl, setFailedAvatarUrl] = useState('');
   const { sizeClass, fallbackText } = SIZE_MAP[size];
   const cls = `${sizeClass} ${className}`.trim();
 
   // 1. Avatar URL → hiển thị ảnh (convert local path → Boss REST URL nếu cần)
   const mainAvatarUrl = avatarUrl ? toLocalMediaUrl(avatarUrl) : '';
-  if (mainAvatarUrl && !imgError) {
-    return <img src={mainAvatarUrl} alt="" className={`${cls} rounded-full object-cover flex-shrink-0`} onError={() => setImgError(true)} />;
+  if (mainAvatarUrl && mainAvatarUrl !== failedAvatarUrl) {
+    return <img src={mainAvatarUrl} alt="" loading="lazy" decoding="async" className={`${cls} rounded-full object-cover flex-shrink-0`} onError={() => setFailedAvatarUrl(mainAvatarUrl)} />;
   }
 
-  // 2. Composite avatar từ cache — lấy 10 người, grid hiển thị 4, 6 còn lại là pool fallback
-  const members = (groupInfo?.members || [])
-    .filter(m => m.userId && m.userId !== 'undefined')
-    .slice(0, 10)
-    .map(m => ({ avatar: m.avatar || '', displayName: m.displayName || m.userId }));
+  // 2. Composite avatar từ cache — ưu tiên thành viên có ảnh (giống header hội thoại),
+  //    lấy 10 người, grid hiển thị 4, 6 còn lại là pool fallback
+  const validMembers = (groupInfo?.members || []).filter(m => m.userId && m.userId !== 'undefined');
+  const picked = [...validMembers.filter(m => m.avatar), ...validMembers.filter(m => !m.avatar)].slice(0, 10);
 
-  if (members.length > 0) return <CompositeGrid allMembers={members} sizeClass={cls} />;
+  if (picked.length > 0) {
+    const members = picked.map(m => ({ avatar: m.avatar || '', displayName: m.displayName || m.userId }));
+    // CompositeGrid chỉ đọc danh sách lúc mount → key theo thành viên để dựng lại khi cache đổi.
+    // Nhóm mới: cache lúc đầu chỉ có người gửi tin đầu tiên (chưa có ảnh), sau mới đủ thành viên + ảnh.
+    const gridKey = picked.map(m => `${m.userId}:${m.avatar || ''}:${m.displayName || ''}`).join('|');
+    return <CompositeGrid key={gridKey} allMembers={members} sizeClass={cls} />;
+  }
 
   // 3. Fallback: chữ cái đầu
   return (
@@ -139,3 +145,8 @@ export default function GroupAvatar({ avatarUrl, groupInfo, name, size = 'md', c
   );
 }
 
+/**
+ * Ghi nhớ theo props (ảnh, cache nhóm, tên): danh sách hội thoại / tìm kiếm dựng lại thì các ảnh nhóm không đổi không
+ * dựng lại. Ảnh tải lười (`loading="lazy"`) — hàng ngoài vùng nhìn thấy chưa tải / giải mã ảnh.
+ */
+export default React.memo(GroupAvatar);

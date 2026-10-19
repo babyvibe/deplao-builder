@@ -1,18 +1,16 @@
 import { ipcMain } from 'electron';
 import ErpTaskService from '../../src/services/erp/ErpTaskService';
-import { withErpAuth, erpValidate } from './erpIpcMiddleware';
+import type { ErpAuthCtx } from '../../src/services/erp/ErpAuthContext';
+import { assignmentAction, taskDeleteAction } from '../../src/services/erp/erpAccessRules';
+import { withErpAuth, erpValidate, erpAllowed, requireErpPermission } from './erpIpcMiddleware';
 
 const PRIORITIES = ['low', 'normal', 'high', 'urgent'] as const;
 const STATUSES   = ['todo', 'doing', 'review', 'done', 'cancelled'] as const;
 
-function ensureAssignmentPermission(employeeIds: string[], ctx: any) {
-  if (!employeeIds.length) return;
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { erpCan } = require('../../src/services/erp/permissions');
-  const uniqueIds = Array.from(new Set(employeeIds.filter(Boolean)));
-  const isSelfOnly = uniqueIds.length === 1 && uniqueIds[0] === ctx.employeeId;
-  const action = isSelfOnly ? 'task.assign_self' : 'task.assign_others';
-  if (!erpCan(ctx.role, action)) throw new Error(`Permission denied: ${action}`);
+/** Quyền giao việc theo THAY ĐỔI người thực hiện so với hiện tại (erpAccessRules.assignmentAction). */
+function ensureAssignmentPermission(nextIds: string[], currentIds: string[], ctx: ErpAuthCtx) {
+  const action = assignmentAction(nextIds, currentIds, ctx.employeeId);
+  if (action) requireErpPermission(action, ctx);
 }
 
 export function registerErpTaskIpc(): void {
@@ -63,7 +61,7 @@ export function registerErpTaskIpc(): void {
     if (input.input.priority) erpValidate.enum(input.input.priority, 'priority', PRIORITIES);
     if (input.input.status) erpValidate.enum(input.input.status, 'status', STATUSES);
     const employeeIds: string[] = Array.isArray(input?.input?.assignees) ? input.input.assignees.filter(Boolean) : [];
-    ensureAssignmentPermission(employeeIds, ctx);
+    ensureAssignmentPermission(employeeIds, [], ctx);
     return { task: svc().createTask(input.input, ctx.employeeId) };
   }));
 
@@ -72,8 +70,10 @@ export function registerErpTaskIpc(): void {
     if (input.patch?.title !== undefined) erpValidate.string(input.patch.title, 'title', { max: 500 });
     if (input.patch?.priority) erpValidate.enum(input.patch.priority, 'priority', PRIORITIES);
     if (input.patch?.status)   erpValidate.enum(input.patch.status,   'status',   STATUSES);
-    const employeeIds: string[] = Array.isArray(input?.patch?.assignees) ? input.patch.assignees.filter(Boolean) : [];
-    ensureAssignmentPermission(employeeIds, ctx);
+    if (input.patch?.assignees !== undefined) {
+      const employeeIds: string[] = Array.isArray(input.patch.assignees) ? input.patch.assignees.filter(Boolean) : [];
+      ensureAssignmentPermission(employeeIds, svc().getTaskAssignees(input.id), ctx);
+    }
     return { task: svc().updateTask(input.id, input.patch ?? {}, ctx.employeeId) };
   }));
 
@@ -85,19 +85,21 @@ export function registerErpTaskIpc(): void {
 
   ipcMain.handle('erp:task:assign', withErpAuth(null, async (input: any, ctx) => {
     erpValidate.string(input?.id, 'id');
-    const employeeIds: string[] = Array.isArray(input?.employeeIds) ? input.employeeIds : [];
-    // Self-assign vs assigning others have different perms.
-    const isSelfOnly = employeeIds.length === 1 && employeeIds[0] === ctx.employeeId;
-    const action = isSelfOnly ? 'task.assign_self' : 'task.assign_others';
-    // Defensive re-check.
-    const { erpCan } = require('../../src/services/erp/permissions');
-    if (!erpCan(ctx.role, action)) throw new Error(`Permission denied: ${action}`);
+    const employeeIds: string[] = Array.isArray(input?.employeeIds) ? input.employeeIds.filter(Boolean) : [];
+    // Tự nhận việc (assign_self) khác giao cho người khác (assign_others) — xét theo thay đổi so với hiện tại
+    ensureAssignmentPermission(employeeIds, svc().getTaskAssignees(input.id), ctx);
     svc().assignTask(input.id, employeeIds, ctx.employeeId);
     return {};
   }));
 
-  ipcMain.handle('erp:task:delete', withErpAuth('task.delete', async (input: any) => {
+  // Người tạo task xoá được task của mình (cần quyền sửa task); task của người khác cần task.delete
+  // (cùng quy tắc REST nhân viên trước đây — giờ một chỗ cho UI Boss, nhân viên và API).
+  ipcMain.handle('erp:task:delete', withErpAuth(null, async (input: any, ctx) => {
     erpValidate.string(input?.id, 'id');
+    const reporterId = svc().getTaskReporterId(input.id);
+    if (reporterId === undefined) throw new Error('Không tìm thấy task');
+    const action = taskDeleteAction(reporterId, ctx.employeeId, erpAllowed('task.update', ctx));
+    if (action) requireErpPermission(action, ctx);
     svc().deleteTask(input.id);
     return {};
   }));
@@ -119,21 +121,30 @@ export function registerErpTaskIpc(): void {
     return { comment: svc().addComment(input.taskId, ctx.employeeId, input.content, input.mentions ?? []) };
   }));
 
-  ipcMain.handle('erp:task:editComment', withErpAuth('task.comment', async (input: any) => {
+  // Sửa / xoá bình luận: người viết, hoặc người có quyền sửa mọi task (trước đây ai có task.comment cũng sửa / xoá được
+  // bình luận của người khác theo id)
+  const ensureCommentAuthor = (commentId: number, ctx: ErpAuthCtx) => {
+    const authorId = svc().getCommentAuthorId(commentId);
+    if (authorId === undefined) throw new Error('Không tìm thấy bình luận');
+    if (authorId !== ctx.employeeId) requireErpPermission('task.edit_any', ctx);
+  };
+
+  ipcMain.handle('erp:task:editComment', withErpAuth('task.comment', async (input: any, ctx) => {
     erpValidate.int(input?.id, 'id');
     erpValidate.string(input?.content, 'content', { max: 5000 });
+    ensureCommentAuthor(Number(input.id), ctx);
     return { comment: svc().editComment(Number(input.id), input.content) };
   }));
 
-  ipcMain.handle('erp:task:deleteComment', withErpAuth('task.comment', async (input: any) => {
+  ipcMain.handle('erp:task:deleteComment', withErpAuth('task.comment', async (input: any, ctx) => {
     erpValidate.int(input?.id, 'id');
+    ensureCommentAuthor(Number(input.id), ctx);
     svc().deleteComment(Number(input.id));
     return {};
   }));
 
   ipcMain.handle('erp:task:listMyInbox', withErpAuth('erp.access', async (input: any, ctx) => {
-    const { erpCan } = require('../../src/services/erp/permissions');
-    const viewAll = erpCan(ctx.role, 'task.edit_any'); // owner, admin, manager
+    const viewAll = erpAllowed('task.edit_any', ctx); // owner, admin, manager (+ quyền riêng)
     return { tasks: svc().getMyInbox(ctx.employeeId, input?.filter || 'week', viewAll) };
   }));
 

@@ -1,66 +1,166 @@
 import { Spinner } from '@/components/common/PageLoading';
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { MESSAGE_LOAD_LIMIT, MESSAGE_AROUND_LIMIT, GROUP_MEMBER_LIMIT, LOAD_MORE_TIMEOUT_MS, PAGE_SIZE, MAX_PAGES, GROUP_INFO_CACHE_TTL_MS } from '@/lib/chat/constants';
-import { getMessageCacheKey, useChatStore } from '@/store/chatStore';
+import { flushSync } from 'react-dom';
+import { MESSAGE_LOAD_LIMIT, MESSAGE_LOAD_MORE_LIMIT, MESSAGE_AROUND_LIMIT, GROUP_MEMBER_LIMIT, LOAD_MORE_TIMEOUT_MS, LOAD_OLDER_PREFETCH_PX, GROUP_INFO_CACHE_TTL_MS } from '@/lib/chat/constants';
+import { getMessageCacheKey, useChatStore, type ContactItem, type MessageItem } from '@/store/chatStore';
+import { useShallow } from 'zustand/react/shallow';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
-import MediaViewer, { MediaViewerImage } from './MediaViewer';
+import type { MediaViewerImage } from './MediaViewer';
+import MediaGalleryViewer, { type MediaGalleryViewerHandle } from './MediaGalleryViewer';
+import { buildStarredSnapshot, starKey } from '@/lib/chat/starredMessages';
+import { useStarredStore } from '@/store/starredStore';
+import { isMyDocumentsThread, myDocumentsThreadId } from '@/lib/chat/myDocuments';
 import MessageContextMenu from './MessageContextMenu';
+import { BubbleTime, formatBubbleTime } from './MessageTime';
 import PinnedBar, { buildPinFromMsg, usePinnedData } from './PinnedMessages';
 import ChatHistoryList from './ChatHistoryList';
 import SharedMessageContent from './SharedMessageContent';
+import FacebookTemplateCard, { FacebookEmptyMessage } from './FacebookTemplateCard';
+import ZaloOaCard from './ZaloOaCard';
+import { isZinstantMsgType } from '../../../shared/zaloZinstant';
+import { FB_TEMPLATE_MSG_TYPE } from '../../../shared/facebookTemplate';
+
+/** Cột attachments có đính kèm thật (không phải '', '[]', 'null'). */
+function hasStoredAttachments(raw: unknown): boolean {
+  if (!raw) return false;
+  if (Array.isArray(raw)) return raw.length > 0;
+  const text = String(raw).trim();
+  return !!text && text !== '[]' && text !== 'null' && text !== '{}';
+}
 import TelegramWebViewModal from './TelegramWebViewModal';
 import VideoPlayer from './VideoPlayer';
 import * as channelIpc from '../../lib/channelIpc';
 import { getCapability, type Channel } from '@/../configs/channelConfig';
-import { CHANNEL, isNonZalo, isZalo, isFacebook, isTelegram as isTelegramCh, isTelegramForumGeneral } from '@/lib/channelHelper';
+import { CHANNEL, isNonZalo, isZalo, isFacebook, isTelegram as isTelegramCh, isTelegramForumGeneral, isTelegramUser } from '@/lib/channelHelper';
 import { ManagePanel } from './GroupInfoPanel';
 import { UserProfilePopup } from '../common/UserProfilePopup';
 import { RecalledBubble, BankCardBubble } from './MessageBubbles';
-import { getLocalMediaPath, getTelegramPostMeta } from '@/lib/mediaResolver';
+import { getLocalMediaPath, getTelegramForwardMeta, getTelegramPostMeta } from '@/lib/mediaResolver';
+import { canQueryTelegramReadReceipts } from '@/lib/chat/readReceipts';
 import { getAdapter } from '@/lib/adapters/registry';
 import FBVideoThumb from './FBVideoThumb';
-import DataAccessor from '@/lib/data/DataAccessor';
+import { ZaloRemoteVideoThumb } from './ZaloMediaExpiry';
+import { toZaloJpgUrl } from '../../../utils/zaloImageUrl';
+import DataAccessor, { isReadFailure, readFailureMessage } from '@/lib/data/DataAccessor';
+import { markLocalReaction } from '@/lib/chat/localReactionRegistry';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
 import { toLocalMediaUrl } from '@/lib/localMedia';
 import { useEmployeeStore } from '@/store/employeeStore';
 import { ChatIcon } from '@/components/common/icons';
 import { handleAvatarError } from '@/lib/avatarRetry';
 import { EMOJI_TO_REACTION } from '@/lib/chat/emojiUtils';
-import { parseContent, parseQuoteMsg, extractQuoteImage, extractMediaUrl, formatMsgTime, extractMsgText, getMentionRanges } from '@/lib/chat/messageParser';
+import { parseContent, parseQuoteMsg, getQuotedMediaCaption, extractQuoteImage, extractMediaUrl, formatMsgTime, formatDaySeparator, extractMsgText, getMentionRanges } from '@/lib/chat/messageParser';
 import { isCardType, isEcardType, isFileType, isStickerType, isRtfMsg, isMediaType, isVideoType, isVoiceType, isBankCardType } from '@/lib/chat/messageTypeUtils';
+import {
+  getForwardBlockReason, getForwardCaption, getForwardPlan, getZaloCardInfo, getZaloLinkInfo, getZaloRichText,
+  getZaloStickerId, getZaloVideoInfo, getZaloVoiceUrl, type ForwardKind,
+} from '@/lib/chat/forwardSupport';
 import { NoteViewModal } from './NoteViewModal';
 import ForwardMessageModal from './ForwardMessageModal';
 import PollBubble from './PollBubble';
 import TelegramPollBubble from './TelegramPollBubble';
 import FriendRequestBar from './FriendRequestBar';
 import { ReactionContextMenu, ReactionPopup, parseReactions, parseReactionsFull, displayReactionEmoji } from './ReactionComponents';
+import { ReactionHoverPicker } from './ReactionPicker';
+import { getReactionChoices, sameReaction, useTelegramChatReactions } from '@/lib/chat/reactionChoices';
 import {
   EmployeeAvatar, FileBubble, MediaBubble, VoiceBubble,
   QuotedStickerPreview, StickerGroupBubble, getGroupLayoutId, MediaGroupBubble,
-  StickerBubble, MsgActionBtn, EcardBubble, CardBubble, TextWithMentions, RtfBubble,
+  StickerBubble, MsgActionBtn, EcardBubble, CardBubble, TextWithMentions, RtfBubble, BubbleEmbedContext, TelegramForwardHeader,
+  TelegramVideoPending, getTelegramVideoMedia,
 } from './ChatWindowBubbles';
+import { getTelegramWebpageMeta, TelegramLinkPreviewCard, TelegramPreviewRefresh } from './TelegramLinkPreview';
+import { setInlineAutoplaySuspended } from '@/lib/media/inlineAutoplay';
+import StickyDayPill from './StickyDayPill';
+import { getDayStartIds } from '@/lib/chat/daySeparators';
+import { TelegramStickerSetHost } from './stickers/TelegramStickerSetDialog';
+import { openStickerSetOfMessage } from '@/lib/chat/telegramStickerStore';
+
+/** Video Telegram tự phát không tiếng trong khung chat: chỉ file nhỏ (= nhóm tự tải), như Telegram. */
+const TELEGRAM_INLINE_AUTOPLAY_MAX_BYTES = 10 * 1024 * 1024;
+
+/** Giá trị rỗng ổn định cho selector (không tạo mảng mới mỗi lần render → memo phía sau không chạy lại) */
+const EMPTY_MESSAGES: MessageItem[] = [];
+const EMPTY_CONTACTS: ContactItem[] = [];
+const EMPTY_MEMBERS: any[] = [];
+/** Telegram group / channel open: re-read reactions of the newest messages this often (Telegram: 15-30 s). */
+const TG_REACTION_POLL_MS = 20_000;
+const TG_REACTION_POLL_BATCH = 50;
+
+/** Reaction của tin (chuỗi JSON hoặc object { emoji: { [e]: { users } } }) có người dùng này không */
+function reactionsIncludeUser(raw: unknown, userId: string): boolean {
+  if (!raw || !userId) return false;
+  let parsed: any = raw;
+  if (typeof raw === 'string') {
+    if (!raw.includes(userId)) return false;
+    try { parsed = JSON.parse(raw); } catch { return false; }
+  }
+  const emoji = parsed?.emoji;
+  if (!emoji || typeof emoji !== 'object') return false;
+  return Object.values(emoji).some((entry: any) => !!entry?.users && Object.prototype.hasOwnProperty.call(entry.users, userId));
+}
+
+/** Chuỗi đại diện những người đang gõ trong 1 hội thoại — selector trả chuỗi nên so theo giá trị. */
+function typingSignature(typingUsers: Record<string, number>, prefix: string): string {
+  if (!prefix) return '';
+  let signature = '';
+  for (const key in typingUsers) {
+    if (key.startsWith(prefix)) signature += `${key}=${typingUsers[key]};`;
+  }
+  return signature;
+}
+
+/** Giữ chuột trên nút "Thả cảm xúc" bao lâu thì mới mở thanh chọn (lia ngang qua không tự bật). */
+const REACTION_PICKER_HOVER_DELAY_MS = 300;
 
 export default function ChatWindow() {
-  const { messages, activeThreadId, prependMessages, setMessages, contacts, setReplyTo, editingMsg, setEditingMsg, removeMessage, typingUsers, seenInfo, updateContact, messagesLoading, activeTopicId, activeForumTopicId, activeTopicTitle } = useChatStore();
-  const { activeAccountId, getActiveAccount, accounts: allAccounts } = useAccountStore();
-  const { showNotification, groupInfoCache, searchHighlightQuery } = useAppStore();
+  // Chỉ subscribe đúng phần store của hội thoại đang mở. `useChatStore()` không selector làm cả cửa sổ (mọi hàng
+  // tin) render lại với MỌI thay đổi: tin mới / đang gõ / đã xem ở hội thoại hay tài khoản khác → cuộn bị giật.
+  const { activeAccountId, getActiveAccount, accounts: allAccounts } = useAccountStore(useShallow(s => ({
+    activeAccountId: s.activeAccountId, getActiveAccount: s.getActiveAccount, accounts: s.accounts,
+  })));
+  const {
+    activeThreadId, prependMessages, setMessages, setReplyTo, editingMsg, setEditingMsg, removeMessage, updateContact,
+    messagesLoading, activeTopicId, activeForumTopicId, activeTopicTitle,
+  } = useChatStore(useShallow(s => ({
+    activeThreadId: s.activeThreadId, prependMessages: s.prependMessages, setMessages: s.setMessages,
+    setReplyTo: s.setReplyTo, editingMsg: s.editingMsg, setEditingMsg: s.setEditingMsg, removeMessage: s.removeMessage,
+    updateContact: s.updateContact, messagesLoading: s.messagesLoading, activeTopicId: s.activeTopicId,
+    activeForumTopicId: s.activeForumTopicId, activeTopicTitle: s.activeTopicTitle,
+  })));
+  const threadKey = activeAccountId && activeThreadId
+    ? getMessageCacheKey(activeAccountId, activeThreadId, activeTopicId)
+    : '';
+  const msgs = useChatStore(s => (threadKey ? s.messages[threadKey] : undefined)) ?? EMPTY_MESSAGES;
+  const contactList = useChatStore(s => (activeAccountId ? s.contacts[activeAccountId] : undefined)) ?? EMPTY_CONTACTS;
+  const typingPrefix = activeAccountId && activeThreadId ? `${activeAccountId}_${activeThreadId}_` : '';
+  const threadTypingKey = useChatStore(s => typingSignature(s.typingUsers, typingPrefix));
+  const threadSeen = useChatStore(s => (activeAccountId && activeThreadId ? s.seenInfo[`${activeAccountId}_${activeThreadId}`] : undefined));
+  const { showNotification, searchHighlightQuery } = useAppStore(useShallow(s => ({
+    showNotification: s.showNotification, searchHighlightQuery: s.searchHighlightQuery,
+  })));
+  const threadGroupInfo = useAppStore(s => (
+    activeAccountId && activeThreadId ? s.groupInfoCache?.[activeAccountId]?.[activeThreadId] : undefined
+  ));
 
   const activeContact = React.useMemo(() => {
     if (!activeAccountId || !activeThreadId) return undefined;
-    return (contacts[activeAccountId] || []).find(c => c.contact_id === activeThreadId);
-  }, [activeAccountId, activeThreadId, contacts]);
+    return contactList.find(c => c.contact_id === activeThreadId);
+  }, [activeAccountId, activeThreadId, contactList]);
   const channelCap = React.useMemo(() =>
     getCapability((activeContact?.channel || CHANNEL.ZALO) as Channel),
   [activeContact]);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
-  const firstMsgRef = useRef<HTMLDivElement>(null);
+  // Phần nội dung bên trong khung cuộn: ResizeObserver theo dõi phần này để bám đáy khi ảnh/video tải xong
+  const messagesContentRef = useRef<HTMLDivElement>(null);
   const pinnedBarWrapperRef = useRef<HTMLDivElement>(null);
   const prevPinnedBarHeightRef = useRef(0);
   const prevLastMsgIdRef = useRef<string>('');
   const savedScrollHeightRef = useRef(0);
+  const savedScrollTopRef = useRef(0);
   const shouldRestoreScrollRef = useRef(false);
   const isInitialThreadLoadRef = useRef(true);
   const initialScrollDoneRef = useRef(false);
@@ -80,15 +180,22 @@ export default function ChatWindow() {
     });
   }, []);
 
+  // Chỉ để hiện spinner (bật trễ khi trang tải lâu); chặn tải trùng dùng loadingMoreRef
   const [loadingMore, setLoadingMore] = useState(false);
+  // "Có thể còn tin cũ hơn" — false khi lần tải đã chắc chắn hết
   const [hasMore, setHasMore] = useState(true);
+  // Đã biết CHẮC còn tin cũ hơn (trang vừa tải trả dư 1 dòng) → mới hiện nút "Tải tin nhắn cũ hơn"
+  const [olderKnown, setOlderKnown] = useState(false);
   const [loadError, setLoadError] = useState(false);
+  // Mỗi lần tải tin cũ / đổi hội thoại tăng 1 — kết quả về muộn của lần tải cũ bị bỏ qua
+  const loadSeqRef = useRef(0);
+  // Đang cuộn mượt tới một tin (ghim / trích dẫn / tìm kiếm): chèn trang cũ lên trên lúc này làm lệch đích
+  const suppressLoadOlderUntilRef = useRef(0);
   // Facebook API cursor pagination (tạm thời vô hiệu hóa do API lỗi 500)
   const fbCursorRef = useRef<string | null>(null);
   const fbHasMoreRef = useRef(false);
   const fbProbeDoneRef = useRef(true);
-  const [viewerState, setViewerState] = useState<{ images: MediaViewerImage[]; index: number } | null>(null);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; msg: any; isSent: boolean; isGroupAdmin?: boolean } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; msg: any; mediaMsg?: any; isSent: boolean; isGroupAdmin?: boolean; recalled?: boolean } | null>(null);
   const [forwardMsgs, setForwardMsgs] = useState<any[] | null>(null);
   const [isSelecting, setIsSelecting] = useState(false);
   const [selectedMsgIds, setSelectedMsgIds] = useState<Set<string>>(new Set());
@@ -103,6 +210,45 @@ export default function ChatWindow() {
   const [isViewingHistory, setIsViewingHistory] = useState(false);
   const [loadingLatest, setLoadingLatest] = useState(false);
   const [reactionPickerMsgId, setReactionPickerMsgId] = useState<string | null>(null);
+  // Thanh chọn reaction đóng trễ 250 ms khi chuột rời (đi chéo / trượt ra ngoài một chút không bị mất ngay)
+  const reactionPickerCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Mở khi GIỮ chuột trên nút 1,5 s (lia chuột ngang qua không tự bật) hoặc bấm vào nút (mở ngay)
+  const reactionPickerOpenTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reactionPickerMsgIdRef = useRef<string | null>(null);
+  reactionPickerMsgIdRef.current = reactionPickerMsgId;
+  const openReactionPicker = useCallback((msgId: string) => {
+    if (reactionPickerCloseTimer.current) clearTimeout(reactionPickerCloseTimer.current);
+    if (reactionPickerOpenTimer.current) clearTimeout(reactionPickerOpenTimer.current);
+    reactionPickerOpenTimer.current = null;
+    setReactionPickerMsgId(msgId);
+  }, []);
+  const armReactionPicker = useCallback((msgId: string, onOpen?: () => void) => {
+    if (reactionPickerMsgIdRef.current === msgId) {
+      // Quay lại đúng tin đang mở (đi chéo giữa nút và thanh chọn): giữ thanh chọn
+      if (reactionPickerCloseTimer.current) clearTimeout(reactionPickerCloseTimer.current);
+      return;
+    }
+    // Tin khác: thanh chọn đang mở (nếu có) vẫn đóng theo hẹn 250 ms; tin này mở sau khi giữ đủ lâu
+    if (reactionPickerOpenTimer.current) clearTimeout(reactionPickerOpenTimer.current);
+    reactionPickerOpenTimer.current = setTimeout(() => {
+      reactionPickerOpenTimer.current = null;
+      setReactionPickerMsgId(msgId);
+      onOpen?.();
+    }, REACTION_PICKER_HOVER_DELAY_MS);
+  }, []);
+  const scheduleCloseReactionPicker = useCallback(() => {
+    // Rời nút trước REACTION_PICKER_HOVER_DELAY_MS → huỷ, không mở
+    if (reactionPickerOpenTimer.current) clearTimeout(reactionPickerOpenTimer.current);
+    reactionPickerOpenTimer.current = null;
+    if (reactionPickerCloseTimer.current) clearTimeout(reactionPickerCloseTimer.current);
+    reactionPickerCloseTimer.current = setTimeout(() => setReactionPickerMsgId(null), 250);
+  }, []);
+  useEffect(() => () => {
+    if (reactionPickerCloseTimer.current) clearTimeout(reactionPickerCloseTimer.current);
+    if (reactionPickerOpenTimer.current) clearTimeout(reactionPickerOpenTimer.current);
+  }, []);
+  // Telegram: reaction dùng được trong hội thoại đang mở (tải khi mở thanh chọn / menu chuột phải)
+  const telegramReactions = useTelegramChatReactions(activeAccountId, activeThreadId, activeContact?.channel === 'telegram_user');
   const [userProfilePopup, setUserProfilePopup] = useState<{ userId: string; x: number; y: number } | null>(null);
   // Track Facebook avatars that failed to load in message bubbles (per sender)
   const [failedMsgAvatars, setFailedMsgAvatars] = useState<Set<string>>(new Set());
@@ -124,6 +270,16 @@ export default function ChatWindow() {
     msgId?: string;
     threadId?: string;
   } | null>(null);
+  // Menu chuột phải của tin Telegram → tải danh sách reaction của hội thoại (1 lần / 10 phút)
+  useEffect(() => {
+    if (contextMenu?.msg?.channel === 'telegram_user') telegramReactions.load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contextMenu?.msg?.msg_id]);
+  // Đang xem video toàn màn hình (có tiếng) → dừng video tự phát trong khung chat
+  useEffect(() => {
+    setInlineAutoplaySuspended(!!videoPlayerState);
+    return () => setInlineAutoplaySuspended(false);
+  }, [videoPlayerState]);
   // Drag-and-drop state (forward to MessageInput)
   const dragCounterRef = useRef(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -158,13 +314,10 @@ export default function ChatWindow() {
   // OPTIMIZATION: Typing indicator - chỉ tick khi có typing trong thread hiện tại
   const [typingNow, setTypingNow] = useState(0);
 
-  // Trigger khi typingUsers thay đổi - chỉ setState nếu có typing trong thread hiện tại
+  // Trigger khi người đang gõ trong thread hiện tại thay đổi
   useEffect(() => {
-    const prefix = activeAccountId && activeThreadId ? `${activeAccountId}_${activeThreadId}_` : '';
-    if (!prefix) return;
-    const hasTyping = Object.keys(typingUsers).some(k => k.startsWith(prefix));
-    if (hasTyping) setTypingNow(Date.now());
-  }, [typingUsers, activeAccountId, activeThreadId]);
+    if (threadTypingKey) setTypingNow(Date.now());
+  }, [threadTypingKey]);
 
   // Interval chỉ chạy khi typingNow > 0 (có người đang typing)
   useEffect(() => {
@@ -174,8 +327,11 @@ export default function ChatWindow() {
       const prefix = activeAccountId && activeThreadId ? `${activeAccountId}_${activeThreadId}_` : '';
       if (!prefix) return;
       const store = useChatStore.getState();
-      const hasTyping = Object.keys(store.typingUsers).some(k => k.startsWith(prefix));
-      if (hasTyping) setTypingNow(Date.now());
+      // Chỉ tính người gõ trong 5s gần nhất (như indicator). Đếm cả key cũ thì interval không bao giờ dừng
+      // → cả cửa sổ chat render lại mỗi 500ms mãi khi có người gõ rồi không gửi.
+      const nowTs = Date.now();
+      const hasTyping = Object.entries(store.typingUsers).some(([k, ts]) => k.startsWith(prefix) && nowTs - ts < 5000);
+      if (hasTyping) setTypingNow(nowTs);
       else setTypingNow(0); // Dừng interval khi không còn typing
     }, 500);
 
@@ -280,10 +436,6 @@ export default function ChatWindow() {
     return () => { cancelled = true; };
   }, [activeAccountId, activeThreadId, activeTopicId, activeContact?.channel]);
 
-  const threadKey = activeAccountId && activeThreadId
-    ? getMessageCacheKey(activeAccountId, activeThreadId, activeTopicId)
-    : '';
-  const msgs = threadKey ? (messages[threadKey] || []) : [];
   msgsRef.current = msgs;
 
   useEffect(() => {
@@ -432,7 +584,49 @@ export default function ChatWindow() {
       }));
   }, [activeAccountId, activeThreadId, activeTopicId, activeContact?.channel, msgs, threadKey]);
 
-  const contactList = activeAccountId ? (contacts[activeAccountId] || []) : [];
+  // Telegram: lấy lại reaction chính thức (GetMessagesReactions) cho các tin có reaction của chính mình khi mở hội
+  // thoại. Sửa dần dữ liệu bị cộng dồn sai trước đây — reaction của bài kênh trùng ID bị ghi nhầm sang tin ở hội thoại
+  // khác (luôn kèm reaction của mình) — và đồng bộ reaction mình đổi trên thiết bị khác. Mỗi tin 1 lần / phiên.
+  const refreshedTgReactionsRef = useRef(new Set<string>());
+  useEffect(() => {
+    if (!threadReady || !activeAccountId || !activeThreadId || activeContact?.channel !== 'telegram_user') return;
+    const refresh = ipc.telegramUser?.refreshReactions;
+    if (!refresh) return;
+    const messageIds: string[] = [];
+    for (const message of msgs) {
+      const key = `${activeAccountId}:${activeThreadId}:${message.msg_id}`;
+      if (refreshedTgReactionsRef.current.has(key) || !reactionsIncludeUser(message.reactions, activeAccountId)) continue;
+      refreshedTgReactionsRef.current.add(key);
+      messageIds.push(String(message.msg_id));
+      if (messageIds.length >= 100) break;
+    }
+    if (!messageIds.length) return;
+    refresh({ accountId: activeAccountId, chatId: activeThreadId, messageIds }).catch(() => {});
+  }, [threadReady, activeAccountId, activeThreadId, activeContact?.channel, msgs]);
+
+  // Telegram nhóm / kênh: Telegram chỉ đẩy reaction cho TÁC GIẢ tin; reaction trên tin của người khác phải tự hỏi lại
+  // (khuyến nghị của Telegram: poll messages.getMessagesReactions cho tin đang hiển thị mỗi 15-30 giây). Chỉ hội thoại
+  // đang mở + cửa sổ đang hiện; main chỉ ghi DB / phát sự kiện khi reaction thực sự đổi. Chat riêng không cần: đổi
+  // reaction tới qua UpdateEditMessage.
+  const tgReactionPollMsgsRef = useRef(msgs);
+  tgReactionPollMsgsRef.current = msgs;
+  useEffect(() => {
+    if (!threadReady || !activeAccountId || !activeThreadId || activeContact?.channel !== 'telegram_user') return;
+    if (!activeThreadId.startsWith('-')) return;
+    const refresh = ipc.telegramUser?.refreshReactions;
+    if (!refresh) return;
+    const poll = () => {
+      if (document.hidden) return;
+      const messageIds = tgReactionPollMsgsRef.current
+        .filter(message => /^\d+$/.test(String(message.msg_id)) && message.is_recalled !== 1 && message.msg_type !== 'system')
+        .slice(-TG_REACTION_POLL_BATCH)
+        .map(message => String(message.msg_id));
+      if (messageIds.length) refresh({ accountId: activeAccountId, chatId: activeThreadId, messageIds }).catch(() => {});
+    };
+    const first = window.setTimeout(poll, 1500);
+    const timer = window.setInterval(poll, TG_REACTION_POLL_MS);
+    return () => { window.clearTimeout(first); window.clearInterval(timer); };
+  }, [threadReady, activeAccountId, activeThreadId, activeContact?.channel]);
 
   // OPTIMIZATION: Contact lookup O(1) với Map
   const contactMap = React.useMemo(() => {
@@ -443,9 +637,7 @@ export default function ChatWindow() {
   const getContact = (senderId: string) => contactMap.get(senderId);
 
   // Cache group members for current thread
-  const groupMembers: any[] = (activeAccountId && activeThreadId)
-    ? (groupInfoCache?.[activeAccountId]?.[activeThreadId]?.members || [])
-    : [];
+  const groupMembers: any[] = threadGroupInfo?.members || EMPTY_MEMBERS;
 
   // OPTIMIZATION: Group member lookup O(1) với Map
   const groupMemberMap = React.useMemo(() => {
@@ -458,14 +650,14 @@ export default function ChatWindow() {
   // Check if current user is group owner or deputy - can recall any member's message
   const isGroupAdmin = React.useMemo(() => {
     if (!activeAccountId || !activeThreadId) return false;
-    const cache = groupInfoCache?.[activeAccountId]?.[activeThreadId];
+    const cache = threadGroupInfo;
     if (!cache) return false;
     const me = cache.members?.find((m: any) => m.userId === activeAccountId);
     if (me && me.role >= 1) return true; // role 1=owner, 2=deputy
     if (cache.creatorId === activeAccountId) return true;
     if (cache.adminIds?.includes(activeAccountId)) return true;
     return false;
-  }, [groupInfoCache, activeAccountId, activeThreadId]);
+  }, [threadGroupInfo, activeAccountId, activeThreadId]);
 
   // ─── Group image messages với cùng groupLayoutId thành 1 bubble ───────────
   // Cũng gom các ảnh Facebook từ cùng người gửi trong 30 giây vào 1 bubble
@@ -607,6 +799,50 @@ export default function ChatWindow() {
     return { groupedStickerFirstMsgs: firstMsgs, groupedStickerSkipIds: skipIds };
   }, [msgs, groupedSkipIds, pollSkipIds]);
 
+  // Mốc ngày 1 lần / ngày (như Telegram): tin HIỂN THỊ đầu tiên của mỗi ngày lịch. Trước đây mốc "13:38 Hôm nay" lặp
+  // ở mỗi lần đổi người gửi / cách 30 phút trong khi giờ từng tin đã có trong bubble.
+  const dayStartIds = React.useMemo(
+    () => getDayStartIds(msgs, (id) => groupedSkipIds.has(id) || pollSkipIds.has(id) || groupedStickerSkipIds.has(id)),
+    [msgs, groupedSkipIds, pollSkipIds, groupedStickerSkipIds],
+  );
+  const renderDaySeparator = (timestamp: number) => {
+    const label = formatDaySeparator(timestamp);
+    return (
+      <div className="flex justify-center w-full my-2" data-day-label={label}>
+        <span className="text-[11px] text-white bg-black/20 dark:bg-white/15 px-2.5 py-0.5 rounded-full">{label}</span>
+      </div>
+    );
+  };
+
+  // Tra tin theo msg_id (giữ phần tử ĐẦU như find/findIndex): hàng có trích dẫn / cuối album trước đây quét cả
+  // danh sách ở mỗi lần render → O(n²) khi hội thoại dài
+  const msgIndexById = React.useMemo(() => {
+    const index = new Map<unknown, number>();
+    msgs.forEach((m, i) => { if (!index.has(m.msg_id)) index.set(m.msg_id, i); });
+    return index;
+  }, [msgs]);
+  const findMsgById = (id: unknown) => {
+    const i = msgIndexById.get(id);
+    return i === undefined ? undefined : msgs[i];
+  };
+
+  // Tên người gửi tin được trích dẫn. Zalo gửi sẵn `fromD`; quote Telegram cũ / tin tự gửi trả lời và Facebook thì không
+  // → tra theo senderId (hoặc người gửi tin gốc trong trang): liên hệ → thành viên nhóm; tin của mình → tên tài khoản.
+  const resolveQuoteAuthor = (q: any): string => {
+    const stored = String(q?.fromD || '').trim();
+    if (stored) return stored;
+    const orig = q?.msgId ? findMsgById(String(q.msgId)) : undefined;
+    const senderId = String(q?.senderId || q?.uidFrom || orig?.sender_id || '');
+    if ((senderId && senderId === activeAccountId) || (!senderId && orig?.is_sent)) {
+      return String(allAccounts.find((a) => a.zalo_id === activeAccountId)?.full_name || '');
+    }
+    if (!senderId) return '';
+    const contact = getContact(senderId) as any;
+    const contactName = String(contact?.alias || contact?.display_name || '');
+    const name = (contactName && contactName !== senderId ? contactName : '') || String(getGroupMember(senderId)?.displayName || '');
+    return name !== senderId ? name : '';
+  };
+
   // OPTIMIZATION: Message Type Cache - Parse JSON 1 lần cho tất cả messages
   // Tránh re-parse trong mỗi lần render, giảm ~85% JSON.parse() calls
   const msgTypeCache = React.useMemo(() => {
@@ -621,6 +857,7 @@ export default function ChatWindow() {
       isGroupMedia: boolean;
       isMedia: boolean;
       isFile: boolean;
+      isZinstant: boolean;
       content: string;
     }>();
 
@@ -634,20 +871,23 @@ export default function ChatWindow() {
       const isSticker = isStickerType(mt);
       const isRtf = isRtfMsg(mt, mc);
       const isPoll = mt === 'group.poll' || mt === 'telegram.poll' || (mt === 'poll' && isTelegramCh(msg.channel));
-      const isVideo = isVideoType(mt);
-      const isVoice = mt === 'chat.voice' || mt === 'audio';
+      // Bot Telegram: GIF (animation, mp4) phát như video; `voice` là tin ghi âm
+      const isVideo = isVideoType(mt) || mt === 'gif';
+      const isVoice = isVoiceType(mt);
       const isGroupMedia = !isPoll && !isVoice && !!groupedFirstMsgs[msg.msg_id];
-      const isMedia = !isCard && !isEcard && !isSticker && !isGroupMedia && !isRtf && !isPoll && !isVideo && !isVoice && isMediaType(mt, mc, msg.attachments);
-      const isFile = !isCard && !isEcard && !isSticker && !isMedia && !isRtf && !isPoll && !isVideo && !isVoice && isFileType(mt, mc, msg.attachments);
+      // Bản tin / thông báo của Official Account (zinstant) — thẻ riêng, không đoán thành ảnh / file
+      const isZinstant = isZinstantMsgType(mt, mc);
+      const isMedia = !isCard && !isEcard && !isSticker && !isGroupMedia && !isRtf && !isPoll && !isVideo && !isVoice && !isZinstant && isMediaType(mt, mc, msg.attachments);
+      const isFile = !isCard && !isEcard && !isSticker && !isMedia && !isRtf && !isPoll && !isVideo && !isVoice && !isZinstant && isFileType(mt, mc, msg.attachments);
 
       // Parse content 1 lần
-      const content = (isMedia || isFile || isCard || isEcard || isSticker || isGroupMedia || isRtf || isPoll || isVideo || isVoice)
+      const content = (isMedia || isFile || isCard || isEcard || isSticker || isGroupMedia || isRtf || isPoll || isVideo || isVoice || isZinstant)
         ? ''
         : parseContent(mc, mt);
 
       cache.set(msg.msg_id, {
         isCard, isEcard, isSticker, isRtf, isPoll, isVideo, isVoice,
-        isGroupMedia, isMedia, isFile, content
+        isGroupMedia, isMedia, isFile, isZinstant, content
       });
     });
 
@@ -660,9 +900,13 @@ export default function ChatWindow() {
   // useLayoutEffect đảm bảo reset state trước khi browser paint frame đầu tiên.
   useLayoutEffect(() => {
     setHasMore(true);
+    setOlderKnown(false);
     setLoadError(false);
+    // Lần tải tin cũ của hội thoại trước (nếu còn đang chạy) không được chặn / ghi đè hội thoại này
+    loadSeqRef.current++;
+    loadingMoreRef.current = false;
+    setLoadingMore(false);
     setAtTop(false);
-    hasMoreRetryRef.current = false;
     initialScrollDoneRef.current = false;
     setInitialScrollDone(false);
     setAtBottom(true);
@@ -678,9 +922,16 @@ export default function ChatWindow() {
     setInitialScrollDone(false);
     lastScrolledThreadRef.current = null;
     prevPinnedBarHeightRef.current = 0;
+    nearBottomRef.current = true; // hội thoại mới mở ở đáy (giá trị cũ có thể là của hội thoại trước)
     // Reset selection mode when switching threads
     setIsSelecting(false);
     setSelectedMsgIds(new Set());
+    // Thanh chọn reaction của hội thoại trước: tin đó bị gỡ khỏi DOM nên không có mouseleave → đóng + huỷ hẹn giờ
+    // (kẻo bật lên trên lớp "Đang tải..." hoặc quay lại hội thoại cũ vẫn thấy thanh mở)
+    if (reactionPickerOpenTimer.current) clearTimeout(reactionPickerOpenTimer.current);
+    if (reactionPickerCloseTimer.current) clearTimeout(reactionPickerCloseTimer.current);
+    reactionPickerOpenTimer.current = null;
+    setReactionPickerMsgId(null);
     // Reset Facebook API cursor khi đổi thread (tạm thời vô hiệu hóa)
     fbCursorRef.current = null;
     fbHasMoreRef.current = false;
@@ -916,22 +1167,20 @@ export default function ChatWindow() {
   useEffect(() => {
     const el = messagesContainerRef.current;
     if (!el || !threadReady) return;
-    let rafId = 0;
-    let prevScrollHeight = el.scrollHeight;
+    // Kéo về đáy NGAY trong callback (chạy sau layout, trước khi vẽ) thay vì đợi frame sau → không thấy khung
+    // bị đẩy rồi mới giật về. So khoảng cách tới đáy chứ không so scrollHeight: khi khung cuộn thấp đi (thanh
+    // ghim / "Đã xem" / "đang nhập" hiện ra muộn, ô soạn tin cao lên) scrollHeight không đổi nhưng đáy bị che.
     const ro = new ResizeObserver(() => {
-      if (rafId) cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(() => {
-        rafId = 0;
-        if (!nearBottomRef.current) return;
-        const newHeight = el.scrollHeight;
-        if (newHeight === prevScrollHeight) return;
-        prevScrollHeight = newHeight;
-        scrollToBottom('resize');
-      });
+      if (!nearBottomRef.current) return;
+      if (el.scrollHeight - el.scrollTop - el.clientHeight <= 1) return;
+      el.scrollTop = el.scrollHeight;
     });
     ro.observe(el);
-    return () => { ro.disconnect(); if (rafId) cancelAnimationFrame(rafId); };
-  }, [activeThreadId, threadReady, scrollToBottom]);
+    // Khung cuộn cao cố định nên chỉ observe khung thì không biết khi nội dung cao lên (ảnh / video tải xong
+    // sau khi đã cuộn xuống đáy) → theo dõi cả phần nội dung để vẫn bám đáy.
+    if (messagesContentRef.current) ro.observe(messagesContentRef.current);
+    return () => ro.disconnect();
+  }, [activeThreadId, threadReady]);
 
   // ─── Lazy scan: quét ảnh lỗi trong conversation khi mở thread ────────────────
   // Chạy 1 lần per thread, sau khi threadReady. Background, không block UI.
@@ -959,7 +1208,7 @@ export default function ChatWindow() {
         try {
           const parsed = JSON.parse(msg.content || '{}');
           const params = typeof parsed.params === 'string' ? JSON.parse(parsed.params) : (parsed.params || {});
-          remoteUrl = params.hd || params.rawUrl || parsed.href || parsed.thumb || '';
+          remoteUrl = toZaloJpgUrl(params.hd || params.rawUrl || parsed.href || parsed.thumb || '');
         } catch {}
 
         items.push({
@@ -1233,7 +1482,8 @@ export default function ChatWindow() {
               memberId: uid,
               displayName: '',
               avatar: '',
-              role: uid === creatorId ? 1 : adminList.includes(uid) ? 2 : 0,
+              // Quy ước Zalo trong DB: 2 = trưởng nhóm, 1 = phó nhóm (shared/groupMemberRoles) — trước đây lưu ngược
+              role: uid === creatorId ? 2 : adminList.includes(uid) ? 1 : 0,
             }));
 
             // Lưu vào DB
@@ -1425,7 +1675,7 @@ export default function ChatWindow() {
       };
       load();
     }
-  }, [activeAccountId, activeThreadId, msgs, groupInfoCache]);
+  }, [activeAccountId, activeThreadId, msgs, threadGroupInfo]);
 
   // Scroll event: track top/bottom position + nearBottomRef (dùng cho ResizeObserver)
   // Tối ưu: dùng rAF throttle + chỉ setState khi giá trị thay đổi để tránh re-render liên tục
@@ -1435,61 +1685,51 @@ export default function ChatWindow() {
     let rafId = 0;
     let lastAtTop = false;
     let lastAtBottom = true;
+    let lastScrollTop = el.scrollTop;
     const onScroll = () => {
       if (rafId) return; // throttle bằng rAF
       rafId = requestAnimationFrame(() => {
         rafId = 0;
         const { scrollTop, scrollHeight, clientHeight } = el;
-        nearBottomRef.current = scrollHeight - scrollTop - clientHeight < 150;
+        // Chỉ cuộn LÊN (người dùng / nhảy tới tin cũ) mới rời đáy. Nội dung cao lên cũng sinh scroll event (neo
+        // cuộn) hoặc đẩy đáy ra xa mà scrollTop không giảm — nếu tính lại ở đây thì ResizeObserver thấy "không ở
+        // đáy" và để hội thoại bị đẩy lên luôn.
+        if (scrollHeight - scrollTop - clientHeight < 150) nearBottomRef.current = true;
+        else if (scrollTop < lastScrollTop) nearBottomRef.current = false;
+        lastScrollTop = scrollTop;
         const newAtTop = scrollTop < 60;
         const newAtBottom = scrollHeight - scrollTop - clientHeight < 60;
         if (newAtTop !== lastAtTop) { lastAtTop = newAtTop; setAtTop(newAtTop); }
         if (newAtBottom !== lastAtBottom) { lastAtBottom = newAtBottom; setAtBottom(newAtBottom); }
+        maybeLoadOlder();
       });
     };
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => { el.removeEventListener('scroll', onScroll); if (rafId) cancelAnimationFrame(rafId); };
   }, [activeThreadId]);
 
-  // ─── Auto-load tin nhắn cũ: scroll event near top ────────────────────────
-  // Dùng scroll event + ref để tránh stale closure và observer recreate频繁.
-  // Khi scrollTop < 200px → trigger loadMore.
+  // ─── Tự tải tin cũ khi cuộn tới gần đỉnh ──────────────────────────────────
+  // Theo vị trí cuộn (scroll event, sau lần cuộn xuống đáy đầu tiên, sau mỗi trang) thay vì
+  // IntersectionObserver trên hàng đầu tiên: tin hệ thống / tin thu hồi render nhánh riêng không gắn ref nên
+  // không bao giờ tự tải; observer cũng chỉ báo khi trạng thái giao nhau ĐỔI → đang ở vùng đỉnh thì không
+  // tải tiếp.
   const loadMoreFnRef = useRef<() => void>(() => {});
   const hasMoreRef = useRef(true);
   const loadingMoreRef = useRef(false);
-  const hasMoreRetryRef = useRef(false); // tránh retry vô hạn
   useEffect(() => { loadMoreFnRef.current = handleLoadMore; });
   useEffect(() => { hasMoreRef.current = hasMore; }, [hasMore]);
-  useEffect(() => { loadingMoreRef.current = loadingMore; }, [loadingMore]);
-  // Fallback: nếu có >15 tin nhắn mà hasMore=false → retry 1 lần (không cần đủ 20)
-  const FALLBACK_MIN_MSGS = 15;
+  const maybeLoadOlder = useCallback(() => {
+    const el = messagesContainerRef.current;
+    if (!el || !initialScrollDoneRef.current || !hasMoreRef.current || loadingMoreRef.current) return;
+    if (Date.now() < suppressLoadOlderUntilRef.current) return;
+    if (el.scrollTop <= LOAD_OLDER_PREFETCH_PX) loadMoreFnRef.current();
+  }, []);
+  // Hội thoại ngắn (chưa cuộn được) hoặc đáy vẫn nằm trong vùng tải trước ngay sau khi mở
   useEffect(() => {
-    if (initialLoading || !initialScrollDoneRef.current || hasMore || loadingMore || hasMoreRetryRef.current) return;
-    const storeMsgs = useChatStore.getState().messages[getMessageCacheKey(activeAccountId || '', activeThreadId || '', activeTopicId)] || [];
-    const realMsgs = storeMsgs.filter((m: any) => !m.msg_id?.startsWith('temp_'));
-    if (realMsgs.length >= FALLBACK_MIN_MSGS) {
-      hasMoreRetryRef.current = true;
-      setHasMore(true);
-    }
-  }, [msgs.length, hasMore, loadingMore, initialLoading]);
-  // Auto-load tin nhắn cũ: khi tin nhắn đầu tiên (cũ nhất) xuất hiện trong viewport
-  // Chỉ activate SAU khi initial scroll-to-bottom hoàn tất
-  useEffect(() => {
-    if (initialLoading || !initialScrollDone) return;
-    const target = firstMsgRef.current;
-    const container = messagesContainerRef.current;
-    if (!target || !container || !activeThreadId) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting && hasMoreRef.current && !loadingMoreRef.current) {
-          loadMoreFnRef.current();
-        }
-      },
-      { root: container, rootMargin: '0px', threshold: 0 }
-    );
-    observer.observe(target);
-    return () => observer.disconnect();
-  }, [activeThreadId, msgs.length, initialLoading, initialScrollDone]);
+    if (!initialScrollDone) return;
+    const raf = requestAnimationFrame(maybeLoadOlder);
+    return () => cancelAnimationFrame(raf);
+  }, [initialScrollDone, activeThreadId, maybeLoadOlder]);
 
   // ─── Scroll to bottom khi AI suggestions bar xuất hiện/biến mất ──────────
   useEffect(() => {
@@ -1519,42 +1759,9 @@ export default function ChatWindow() {
         const isInitial = isInitialThreadLoadRef.current;
         isInitialThreadLoadRef.current = false;
         if (isInitial) {
-          const realMsgs = msgs.filter(m => !m.msg_id.startsWith('temp_'));
-          const realCount = realMsgs.length;
-          // Don't set hasMore=false on initial load when realCount < limit.
-          // Let user scroll up → handleLoadMore will probe DB and set hasMore=false
-          // if there truly are no more messages. This keeps the auto-load + manual
-          // button active on the first page.
-          if (realCount === MESSAGE_LOAD_LIMIT && activeAccountId && activeThreadId) {
-            // Exactly 20 items → probe if there are actually more
-            const minTs = realMsgs.reduce((min, m) => {
-              const ts = m.timestamp || 0;
-              return ts > 0 && ts < min ? ts : min;
-            }, Infinity);
-            if (minTs < Infinity) {
-              DataAccessor.getMessages({
-                zaloId: activeAccountId,
-                threadId: activeThreadId,
-                limit: 1,
-                before: minTs,
-                topicId: activeTopicId || undefined,
-              }).then(probeRes => {
-                if (!probeRes?.messages?.length) setHasMore(false);
-              }).catch(() => {});
-            }
-          }
-          // After initial load, check if viewport needs more messages
-          // This handles the case where initial 20 messages don't fill the viewport
-          setTimeout(() => {
-            const el = messagesContainerRef.current;
-            if (el && hasMoreRef.current && !loadingMoreRef.current) {
-              const needsMore = el.scrollHeight <= el.clientHeight + 100;
-              if (needsMore) {
-                loadMoreFnRef.current();
-              }
-            }
-          }, 500);
-          return; // initial scroll handled by consolidated effect
+          // Cuộn lần đầu do effect gộp phía trên lo; còn tin cũ hay không thì lần tải trang (maybeLoadOlder)
+          // xác định — dò bằng 1 truy vấn riêng ở đây vô dụng vì DB trả cả tin cùng mốc (timestamp <= before).
+          return;
         }
         // Realtime messages
         const isOutgoing =
@@ -1578,7 +1785,12 @@ export default function ChatWindow() {
     if (savedHeight > 0) {
       const delta = el.scrollHeight - savedHeight;
       if (delta > 0) {
-        el.scrollTop = delta;
+        // Vị trí lúc chèn + phần mới phía trên: đúng cả khi đang cách đỉnh (tải trước) và khi trình duyệt
+        // đã tự neo cuộn ([overflow-anchor:auto]) — đặt `delta` tuyệt đối sẽ nhảy về gần đỉnh.
+        const target = savedScrollTopRef.current + delta;
+        // Neo cuộn thường đã đặt đúng chỗ: gán lại scrollTop lúc người dùng đang cuộn (chuột / touchpad) sẽ
+        // cắt quán tính cuộn → cảm giác giật mỗi lần sang trang. Chỉ sửa khi thực sự lệch.
+        if (Math.abs(el.scrollTop - target) > 1) el.scrollTop = target;
       }
     }
   }, [msgs.length]);
@@ -1590,213 +1802,219 @@ export default function ChatWindow() {
     return buildZaloAuth(acc, activeAccountId);
   };
 
+  // Chụp vị trí cuộn NGAY trước khi chèn tin cũ lên đầu — không chụp trước lúc query DB: trong lúc chờ,
+  // người dùng vẫn cuộn / có tin mới nên vị trí khôi phục sẽ sai.
+  const snapshotScrollForPrepend = () => {
+    const el = messagesContainerRef.current;
+    savedScrollHeightRef.current = el?.scrollHeight || 0;
+    savedScrollTopRef.current = el?.scrollTop || 0;
+    shouldRestoreScrollRef.current = true;
+  };
+
+  // Một trang tin cũ hơn `before` từ DB (chủ: IPC, nhân viên: REST), mới → cũ. DB trả `timestamp <= before`
+  // nên các tin cùng mốc đã hiển thị quay lại — xin thêm đúng số đó + 1 dòng: dòng dư cho biết còn tin cũ hơn,
+  // khỏi truy vấn dò lần nữa.
+  const fetchOlderPage = async (accountId: string, threadId: string, topicId: string | null, before: number, loaded: any[]) => {
+    const loadedIds = new Set(loaded.map(m => String(m.msg_id)));
+    const sameTs = loaded.filter(m => m.timestamp === before).length;
+    const res: any = await DataAccessor.getMessages({
+      zaloId: accountId,
+      threadId,
+      limit: MESSAGE_LOAD_MORE_LIMIT + sameTs + 1,
+      before,
+      topicId: topicId || undefined,
+    });
+    // Lỗi đọc (employee: mất kết nối BOSS) ≠ "hết tin cũ": để handleLoadMore hiện "Lỗi - Thử lại", giữ hasMore
+    if (isReadFailure(res)) throw new Error(readFailureMessage(res));
+    const rows: any[] = res?.messages || res?.items || [];
+    const fresh = rows.filter(m => !loadedIds.has(String(m.msg_id)));
+    return { page: fresh.slice(0, MESSAGE_LOAD_MORE_LIMIT), more: fresh.length > MESSAGE_LOAD_MORE_LIMIT };
+  };
+
+  // reply_to_id → quote_data từ chính trang vừa tải (Facebook…); tin gốc nằm ngoài trang thì bổ sung sau
+  const mapReplyQuotes = (rows: any[]) => {
+    const lookup = new Map<string, { content: string; type: string }>();
+    for (const m of rows) lookup.set(m.msg_id, { content: m.content || '', type: m.msg_type || 'text' });
+    const missing: Array<{ msgId: string; replyToId: string }> = [];
+    const mapped = rows.map((m: any) => {
+      if (m.channel === 'telegram_user' || !m.reply_to_id || m.quote_data) return m;
+      const orig = lookup.get(m.reply_to_id);
+      if (orig) {
+        return { ...m, quote_data: JSON.stringify({ msgId: m.reply_to_id, msg: orig.content || '', senderId: '', msgType: orig.type || 'text' }) };
+      }
+      missing.push({ msgId: m.msg_id, replyToId: m.reply_to_id });
+      return m;
+    });
+    return { mapped, missing };
+  };
+
+  // Tin gốc của trích dẫn nằm ngoài trang: 1 truy vấn gộp + 1 lần cập nhật store. Trước đây mỗi tin 1 truy vấn
+  // + 1 lần setMessages → cả danh sách re-render nhiều lần ngay sau mỗi trang.
+  const fixupMissingQuotes = async (
+    accountId: string,
+    threadId: string,
+    topicId: string | null,
+    missing: Array<{ msgId: string; replyToId: string }>,
+  ) => {
+    try {
+      const replyIds = [...new Set(missing.map(item => item.replyToId))];
+      const found = new Map<string, any>();
+      const batch: any = await DataAccessor.getMessagesByIds({ zaloId: accountId, msgIds: replyIds });
+      for (const m of batch?.messages || []) found.set(String(m.msg_id), m);
+      // getMessagesByIds chỉ khớp msg_id; getMessageById còn khớp cli_msg_id (trích dẫn Zalo có msgId "0")
+      for (const id of replyIds) {
+        if (found.has(id)) continue;
+        const one: any = await DataAccessor.getMessageById({ zaloId: accountId, threadId, msgId: id });
+        if (one?.message) found.set(id, one.message);
+      }
+      const store = useChatStore.getState();
+      const list = store.messages[getMessageCacheKey(accountId, threadId, topicId)];
+      if (!list) return;
+      const replyOf = new Map(missing.map(item => [item.msgId, item.replyToId]));
+      let changed = false;
+      const updated = list.map((m: any) => {
+        const replyToId = replyOf.get(m.msg_id);
+        if (!replyToId || m.quote_data) return m;
+        const orig = found.get(replyToId);
+        if (!orig?.msg_type && !orig?.content) return m;
+        changed = true;
+        return {
+          ...m,
+          quote_data: JSON.stringify({ msgId: replyToId, msg: orig.content || '', senderId: '', msgType: orig.msg_type || 'text' }),
+        };
+      });
+      if (changed) store.setMessages(accountId, threadId, updated, topicId);
+    } catch {}
+  };
+
   // Tải thêm tin nhắn cũ dùng timestamp cursor (tránh lỗi offset khi có tin real-time)
   const handleLoadMore = async () => {
     // Double-guard: check refs to prevent race conditions
     if (!activeAccountId || !activeThreadId || loadingMoreRef.current || !hasMoreRef.current) return;
-    setLoadingMore(true);
-    loadingMoreRef.current = true;
-    setLoadError(false);
+    const accountId = activeAccountId;
+    const threadId = activeThreadId;
+    const topicId = activeTopicId;
+    // Re-read msgs from store to get the freshest oldest message (MIN timestamp, mảng có thể chưa sắp xếp)
+    const loaded = (useChatStore.getState().messages[getMessageCacheKey(accountId, threadId, topicId)] || [])
+      .filter(m => !m.msg_id.startsWith('temp_'));
+    // Store chưa có tin (lần tải đầu đang chạy) → để lần tải đầu xử lý, không kết luận là hết tin
+    if (loaded.length === 0) return;
+    let oldest: any = null;
+    for (const m of loaded) {
+      if ((m.timestamp || 0) > 0 && (!oldest || m.timestamp < oldest.timestamp)) oldest = m;
+    }
+    if (!oldest) {
+      // Không có timestamp hợp lệ → không có mốc để tải tiếp
+      hasMoreRef.current = false;
+      setHasMore(false);
+      return;
+    }
+    const before: number = oldest.timestamp;
 
+    const seq = ++loadSeqRef.current;
+    loadingMoreRef.current = true;
+    if (loadError) setLoadError(false);
+    // Spinner chỉ hiện khi tải lâu: trang từ DB thường xong trong vài chục ms; bật state ngay thì cả danh sách
+    // re-render thêm một lần mỗi trang (giật khi đang cuộn).
+    const spinnerTimer = setTimeout(() => {
+      if (loadSeqRef.current === seq) setLoadingMore(true);
+    }, 250);
     // Safety: reset loadingMore if it's been stuck for > 10 seconds
     const safetyTimer = setTimeout(() => {
-      if (loadingMoreRef.current) {
+      if (loadSeqRef.current === seq && loadingMoreRef.current) {
         console.warn('[LOADMORE] Safety reset: loadingMore stuck for >10s');
-        setLoadingMore(false);
+        loadSeqRef.current++;
         loadingMoreRef.current = false;
+        setLoadingMore(false);
       }
     }, LOAD_MORE_TIMEOUT_MS);
 
-    // Re-read msgs from store to get the freshest oldest message
-    // IMPORTANT: Use reduce to find MIN timestamp, not array order (array might not be sorted)
-    const currentMsgs = useChatStore.getState().messages[getMessageCacheKey(activeAccountId, activeThreadId, activeTopicId)] || [];
-    const realMsgs = currentMsgs.filter(m => !m.msg_id.startsWith('temp_'));
-    if (realMsgs.length === 0) {
-      // Store is empty — might be a race condition with initial load.
-      // Do NOT set hasMore=false here; just abort and let the initial load handle it.
-      setLoadingMore(false);
-      loadingMoreRef.current = false;
-      return;
-    }
-    // Find the message with the minimum timestamp (oldest)
-    const oldestTimestamp = realMsgs.reduce((min, m) => {
-      const ts = m.timestamp || 0;
-      return ts > 0 && ts < min ? ts : min;
-    }, Infinity);
-    const before = oldestTimestamp < Infinity ? oldestTimestamp : 0;
-    if (!before || before <= 0) {
-      // Không có tin nhắn thực hoặc timestamp invalid → không có thêm gì để tải
-      setHasMore(false);
-      setLoadingMore(false);
-      loadingMoreRef.current = false;
-      return;
-    }
-
-    // Lưu scrollHeight trước khi prepend để khôi phục vị trí
-    savedScrollHeightRef.current = messagesContainerRef.current?.scrollHeight || 0;
-    shouldRestoreScrollRef.current = true;
-
     try {
-      // Step 1: Try REST (employee) hoặc local DB (boss/standalone)
-      const isEmployee = useEmployeeStore.getState().mode === 'employee';
-      let res: any;
-      if (isEmployee) {
-        const DataAccessor = (await import('../../lib/data/DataAccessor')).default;
+      // `confirmed`: DB trả dư dòng → chắc chắn còn tin cũ (mới hiện nút). `maybe`: có thể còn (tiếp tục tự tải).
+      let { page, more: confirmed } = await fetchOlderPage(accountId, threadId, topicId, before, loaded);
+      let maybe = confirmed;
 
-        const restResult = await DataAccessor.getMessages({
-          zaloId: activeAccountId,
-          threadId: activeThreadId,
-          limit: MESSAGE_LOAD_LIMIT,
-          before,
-          topicId: activeTopicId || undefined,
-        });
-        res = { messages: restResult?.items || [] };
-      } else {
-        res = await DataAccessor.getMessages({
-          zaloId: activeAccountId,
-          threadId: activeThreadId,
-          limit: MESSAGE_LOAD_LIMIT,
-          before,
-          topicId: activeTopicId || undefined,
-        });
-      }
-      if (res?.messages?.length > 0) {
-        // Build a lookup map of msg_id → content+type for all loaded messages
-        // (used to populate reply quote_data with actual original message content)
-        const msgLookup = new Map<string, { content: string; type: string }>();
-        for (const m of res.messages) {
-          msgLookup.set(m.msg_id, { content: m.content || '', type: m.msg_type || 'text' });
-        }
-        // Convert reply_to_id → quote_data for Facebook messages so reply previews render
-        const missingLookup: Array<{ msgId: string; replyToId: string }> = [];
-        const mapped = res.messages.map((m: any) => {
-          if (m.channel !== 'telegram_user' && m.reply_to_id && !m.quote_data) {
-            const orig = msgLookup.get(m.reply_to_id);
-            if (orig) {
-              return { ...m, quote_data: JSON.stringify({ msgId: m.reply_to_id, msg: orig.content || '', senderId: '', msgType: orig.type || 'text' }) };
-            }
-            missingLookup.push({ msgId: m.msg_id, replyToId: m.reply_to_id });
-            return m;
-          }
-          return m;
-        });
-        // Count messages BEFORE prepend to detect if any new messages were added
-        const storeKey = getMessageCacheKey(activeAccountId, activeThreadId, activeTopicId);
-        const countBefore = (useChatStore.getState().messages[storeKey] || []).length;
-        prependMessages(activeAccountId, activeThreadId, [...mapped].reverse(), activeTopicId);
-        const countAfter = (useChatStore.getState().messages[storeKey] || []).length;
-        // If NO new messages were added (all duplicates), set hasMore = false
-        if (countAfter === countBefore) {
-          setHasMore(false);
-          return;
-        }
-        // Async fixup: query DB for original messages not in the loaded batch
-        if (missingLookup.length > 0 && activeAccountId && activeThreadId) {
-          (async () => {
-            for (const item of missingLookup) {
-              try {
-                const dbRes = await DataAccessor.getMessageById({ zaloId: activeAccountId, threadId: activeThreadId, msgId: item.replyToId });
-                const origMsg = dbRes?.message;
-                if (origMsg?.msg_type || origMsg?.content) {
-                  const store = useChatStore.getState();
-                  const msgs = (store.messages[storeKey] || []).slice();
-                  const idx = msgs.findIndex((m2: any) => m2.msg_id === item.msgId);
-                  if (idx >= 0 && !msgs[idx].quote_data) {
-                    msgs[idx] = {
-                      ...msgs[idx],
-                      quote_data: JSON.stringify({
-                        msgId: item.replyToId,
-                        msg: origMsg.content || '',
-                        senderId: '',
-                        msgType: origMsg.msg_type || 'text',
-                      }),
-                    };
-                    store.setMessages(activeAccountId!, activeThreadId, msgs, activeTopicId);
-                  }
-                }
-              } catch {}
-            }
-          })();
-        }
-        // Edge case: exactly 20 items returned → probe if there are actually more
-        if (res.messages.length === MESSAGE_LOAD_LIMIT) {
-          const probeRes = await DataAccessor.getMessages({
-            zaloId: activeAccountId,
-            threadId: activeThreadId,
-            limit: 1,
-            before: res.messages[res.messages.length - 1].timestamp,
-            topicId: activeTopicId || undefined,
+      if (getActiveAccount()?.channel === 'telegram_user') {
+        if (page.length === 0) {
+          // DB đã hết → xin Telegram lịch sử cũ hơn (được lưu vào DB) rồi đọc lại DB
+          const tgRes: any = await ipc.telegramUser?.getMessages({
+            accountId,
+            chatId: threadId,
+            offsetId: Number(oldest.msg_id),
+            limit: MESSAGE_LOAD_LIMIT,
+            topicRootMessageId: topicId || undefined,
           });
-          if (!probeRes?.messages?.length) setHasMore(false);
-        } else if (res.messages.length < MESSAGE_LOAD_LIMIT) {
-          setHasMore(false);
+          // Lỗi (mất kết nối, FLOOD_WAIT…) → "Lỗi - Thử lại", giữ hasMore để còn thử lại
+          if (!tgRes?.success) throw new Error(tgRes?.error || 'Telegram getMessages failed');
+          const fetched = tgRes.messages?.length || 0;
+          if (fetched > 0) ({ page, more: confirmed } = await fetchOlderPage(accountId, threadId, topicId, before, loaded));
+          // Telegram trả đủ trang → có thể còn; trả thiếu / rỗng → đã tới đầu lịch sử
+          maybe = confirmed || fetched >= MESSAGE_LOAD_LIMIT;
+        } else {
+          // DB còn ít hơn một trang không có nghĩa Telegram đã hết tin — lần sau hỏi server
+          maybe = true;
         }
-        return;
-      }
-
-      // Step 2: Telegram API fallback — fetch older messages từ Telegram khi DB hết
-      const activeAcc = getActiveAccount();
-      if (activeAcc?.channel === 'telegram_user') {
-        // Re-read oldest msg ID from fresh store state (use MIN timestamp, not array order)
-        const freshMsgs = useChatStore.getState().messages[getMessageCacheKey(activeAccountId, activeThreadId, activeTopicId)] || [];
-        const freshReal = freshMsgs.filter(m => !m.msg_id.startsWith('temp_'));
-        let oldestMsgId = '';
-        let minTs = Infinity;
-        for (const m of freshReal) {
-          const ts = m.timestamp || 0;
-          if (ts > 0 && ts < minTs) {
-            minTs = ts;
-            oldestMsgId = m.msg_id;
+      } else if (isFacebook(getActiveAccount()?.channel)) {
+        if (page.length === 0) {
+          // DB đã hết → một trang tin cũ hơn qua bridge (LightSpeed FetchMessagesTask, lưu DB) rồi đọc lại DB
+          const fbRes: any = await ipc.fb?.fetchOlderMessages({
+            accountId,
+            threadId,
+            beforeTimestampMs: before,
+            beforeMessageId: String(oldest.msg_id || ''),
+          });
+          if (fbRes?.success) {
+            if ((fbRes.stored || 0) > 0) ({ page, more: confirmed } = await fetchOlderPage(accountId, threadId, topicId, before, loaded));
+            maybe = confirmed || !!fbRes.hasMoreBefore;
+          } else if (['E2EE', 'BRIDGE_OLD', 'BRIDGE_DOWN', 'NOT_CONNECTED', 'BUSY', 'COOLDOWN', 'RISK', 'CANCELLED'].includes(fbRes?.code)) {
+            // Mã hoá đầu cuối / bridge cũ / bridge đang kết nối lại / đang tải nhiều (nhịp người dùng thật) / Facebook có
+            // dấu hiệu hạn chế: dừng, không báo lỗi mỗi lần mở hội thoại (mở / cuộn lại sau sẽ thử lại)
+            if (fbRes?.code === 'RISK') useAppStore.getState().showNotification(fbRes.error || 'Facebook có dấu hiệu hạn chế — tạm dừng tải tin cũ', 'warning');
+            maybe = false;
+          } else {
+            // Facebook chậm trả lời → "Lỗi - Thử lại", giữ hasMore
+            throw new Error(fbRes?.error || 'Facebook fetchOlderMessages failed');
           }
+        } else {
+          // DB còn ít hơn một trang không có nghĩa Facebook đã hết tin — lần sau hỏi server
+          maybe = true;
         }
-        if (oldestMsgId) {
-          try {
-            const tgRes = await ipc.telegramUser?.getMessages({
-              accountId: activeAccountId,
-              chatId: activeThreadId,
-              offsetId: Number(oldestMsgId),
-              limit: MESSAGE_LOAD_LIMIT,
-              topicRootMessageId: activeTopicId || undefined,
-            });
-            if (tgRes?.success && tgRes.messages?.length > 0) {
-              // Re-read the updated oldest timestamp after Telegram API persisted messages
-              const updatedMsgs = useChatStore.getState().messages[getMessageCacheKey(activeAccountId, activeThreadId, activeTopicId)] || [];
-              const updatedOldest = updatedMsgs.find(m => !m.msg_id.startsWith('temp_'));
-              const updatedBefore = updatedOldest?.timestamp || before;
-              // Telegram API đã persist vào DB, query lại từ DB
-              const dbRes = await DataAccessor.getMessages({
-                zaloId: activeAccountId,
-                threadId: activeThreadId,
-                limit: MESSAGE_LOAD_LIMIT,
-                before: updatedBefore,
-                topicId: activeTopicId || undefined,
-              });
-              if (dbRes?.messages?.length > 0) {
-                useChatStore.getState().prependMessages(activeAccountId!, activeThreadId, dbRes.messages, activeTopicId);
-                if (dbRes.messages.length < 20) setHasMore(false);
-                return;
-              }
-            }
-            // Telegram API returned empty — might be temporary, don't permanently disable
-            // setHasMore(false) is NOT called here to allow retry on next scroll
-          } catch {
-            // API error — don't disable hasMore, allow retry
-          }
-        }
-        shouldRestoreScrollRef.current = false;
-        return;
       }
+      if (loadSeqRef.current !== seq) return; // đã đổi hội thoại / lần tải này đã bị bỏ
 
-      // Step 3: Không có thêm tin nhắn
-      setHasMore(false);
+      const { mapped, missing } = mapReplyQuotes(page);
+      const nextHasMore = mapped.length > 0 && maybe;
+      // Một lần render cho cả trang mới lẫn trạng thái (trước đây 2–3 lần re-render toàn bộ danh sách / trang)
+      flushSync(() => {
+        if (mapped.length > 0) {
+          snapshotScrollForPrepend();
+          prependMessages(accountId, threadId, [...mapped].reverse(), topicId);
+        }
+        hasMoreRef.current = nextHasMore;
+        setHasMore(nextHasMore);
+        setOlderKnown(mapped.length > 0 && confirmed);
+        setLoadingMore(false);
+      });
+      // Trùng hết (store đã có) → không có render nào dùng mốc chụp: bỏ, kẻo lần đổi số tin sau khôi phục sai
       shouldRestoreScrollRef.current = false;
+      if (mapped.length > 0) {
+        if (missing.length > 0) void fixupMissingQuotes(accountId, threadId, topicId, missing);
+        // Trang vừa tải chưa đẩy đỉnh ra khỏi vùng tải trước (trang ngắn / không cuộn) → tải tiếp
+        requestAnimationFrame(maybeLoadOlder);
+      }
     } catch {
-      shouldRestoreScrollRef.current = false;
-      setLoadError(true);
+      if (loadSeqRef.current === seq) {
+        setLoadError(true);
+        // Không tự thử lại ở mỗi lần cuộn (Telegram FLOOD_WAIT…) — nút "Thử lại" vẫn bấm được ngay
+        suppressLoadOlderUntilRef.current = Date.now() + 15_000;
+      }
     } finally {
+      clearTimeout(spinnerTimer);
       clearTimeout(safetyTimer);
-      setLoadingMore(false);
-      loadingMoreRef.current = false;
+      if (loadSeqRef.current === seq) {
+        loadingMoreRef.current = false;
+        setLoadingMore(false);
+      }
     }
   };
 
@@ -1812,7 +2030,6 @@ export default function ChatWindow() {
     if (!auth) return;
     try {
       // Detect channel from the message or contact
-      const contactList = contacts[activeAccountId || ''] || [];
       const contact = contactList.find(c => c.contact_id === msg.thread_id);
       const ch = msg.channel || contact?.channel || CHANNEL.ZALO;
 
@@ -1834,12 +2051,14 @@ export default function ChatWindow() {
         threadId: msg.thread_id,
         type: msg.thread_type,
       });
-      await ipc.zalo?.undoMessage({ auth, message: messagePayload });
+      const undoRes: any = await ipc.zalo?.undoMessage({ auth, message: messagePayload });
+      // IPC trả { success: false } (không ném) khi Zalo / Boss từ chối — không được đánh dấu "đã thu hồi" giả
+      if (undoRes?.success === false) throw new Error(undoRes.error || 'Zalo từ chối');
       }
       // Đánh dấu thu hồi thay vì xóa - hiển thị "Tin nhắn đã thu hồi"
       if (activeAccountId) {
         useChatStore.getState().recallMessage(activeAccountId, msg.msg_id, msg.thread_id);
-        DataAccessor.markMessageRecalled?.({ zaloId: activeAccountId, msgId: msg.msg_id }).catch(() => {});
+        DataAccessor.markMessageRecalled?.({ zaloId: activeAccountId, msgId: msg.msg_id, threadId: msg.thread_id }).catch(() => {});
       }
       showNotification('Đã thu hồi tin nhắn', 'success');
     } catch (e: any) {
@@ -1851,7 +2070,6 @@ export default function ChatWindow() {
     const auth = getAuth();
     if (!auth) return;
     try {
-      const contactList = contacts[activeAccountId || ''] || [];
       const contact = contactList.find(c => c.contact_id === msg.thread_id);
       const ch = msg.channel || contact?.channel || CHANNEL.ZALO;
       if (isNonZalo(ch)) {
@@ -1862,12 +2080,13 @@ export default function ChatWindow() {
         threadId: msg.thread_id,
         type: msg.thread_type,
       });
-      await ipc.zalo?.deleteMessage({ auth, message: messagePayload, onlyMe: true });
+      const deleteRes: any = await ipc.zalo?.deleteMessage({ auth, message: messagePayload, onlyMe: true });
+      if (deleteRes?.success === false) throw new Error(deleteRes.error || 'Zalo từ chối');
       }
       // Đánh dấu đã xoá trong DB (recalled) thay vì xoá hẳn - nhất quán với thu hồi
       if (activeAccountId) {
         useChatStore.getState().recallMessage(activeAccountId, msg.msg_id, msg.thread_id);
-        DataAccessor.markMessageRecalled?.({ zaloId: activeAccountId, msgId: msg.msg_id }).catch(() => {});
+        DataAccessor.markMessageRecalled?.({ zaloId: activeAccountId, msgId: msg.msg_id, threadId: msg.thread_id }).catch(() => {});
       }
       showNotification('Đã xóa tin nhắn', 'success');
     } catch (e: any) {
@@ -1878,7 +2097,7 @@ export default function ChatWindow() {
   const handleDeleteFromDb = async (msg: any) => {
     if (!activeAccountId) return;
     try {
-      await DataAccessor.deleteMessages({ zaloId: activeAccountId, msgIds: [msg.msg_id] });
+      await DataAccessor.deleteMessages({ zaloId: activeAccountId, msgIds: [msg.msg_id], threadId: msg.thread_id });
       removeMessage(activeAccountId, msg.thread_id, msg.msg_id);
       showNotification('Đã xóa vĩnh viễn tin nhắn khỏi app', 'success');
     } catch (e: any) {
@@ -1888,16 +2107,22 @@ export default function ChatWindow() {
 
   const handleReact = async (msg: any, emoji: string) => {
     try {
-      const contactList = contacts[activeAccountId || ''] || [];
       const contact = contactList.find(c => c.contact_id === msg.thread_id);
       const ch = msg.channel || contact?.channel || CHANNEL.ZALO;
 
       // Optimistic update: show reaction immediately in UI
       const accId = activeAccountId || '';
-      useChatStore.getState().updateMessageReaction(accId, msg.thread_id, msg.msg_id, accId, emoji);
+      // Telegram: SendReaction THAY reaction của mình (mỗi người 1) và số đếm là tổng hợp do Telegram trả — main
+      // process lưu số chính thức từ kết quả gửi. Không cộng dồn vào DB kiểu Zalo (trước đây cộng nhầm vào tin
+      // trùng ID ở hội thoại khác → "1 đống icon").
+      const isTelegramUserMsg = ch === 'telegram_user';
+      useChatStore.getState().updateMessageReaction(accId, msg.thread_id, msg.msg_id, accId, emoji, isTelegramUserMsg ? 'set' : 'accumulate');
 
-      // Persist reaction to DB immediately (so it survives conversation switch)
-      DataAccessor.updateReaction?.({ zaloId: accId, msgId: msg.msg_id, userId: accId, emoji }).catch(() => {});
+      if (!isTelegramUserMsg) {
+        // Persist reaction to DB immediately (so it survives conversation switch); echo Zalo của lần bấm này bỏ qua
+        markLocalReaction(accId, msg.msg_id, emoji);
+        DataAccessor.updateReaction?.({ zaloId: accId, msgId: msg.msg_id, threadId: msg.thread_id, userId: accId, emoji }).catch(() => {});
+      }
 
       if (isNonZalo(ch)) {
         await channelIpc.addReaction(ch, {
@@ -1925,13 +2150,17 @@ export default function ChatWindow() {
   // Huỷ reaction: gửi Reactions.NONE = "" để xoá
   const handleCancelReaction = async (msg: any) => {
     try {
-      const contactList = contacts[activeAccountId || ''] || [];
       const contact = contactList.find(c => c.contact_id === msg.thread_id);
       const ch = msg.channel || contact?.channel || CHANNEL.ZALO;
 
       // Optimistic update: remove reaction immediately in UI
       const accId = activeAccountId || '';
       useChatStore.getState().updateMessageReaction(accId, msg.thread_id, msg.msg_id, accId, '');
+      // Lưu luôn việc gỡ (trước đây không lưu → mở lại hội thoại reaction hiện lại). Gỡ lặp lại với echo Zalo vô hại.
+      // Telegram: main process lưu số chính thức từ kết quả gửi.
+      if (ch !== 'telegram_user') {
+        DataAccessor.updateReaction?.({ zaloId: accId, msgId: msg.msg_id, threadId: msg.thread_id, userId: accId, emoji: '' }).catch(() => {});
+      }
 
       if (isNonZalo(ch)) {
         await channelIpc.addReaction(ch, {
@@ -1954,8 +2183,194 @@ export default function ChatWindow() {
     } catch {}
   };
 
+  // Album ảnh (nhiều tin ảnh cùng groupLayoutId, hiển thị 1 bubble) → chuyển tiếp cả album, không chỉ ảnh đầu
   const handleForward = (msg: any) => {
-    setForwardMsgs([msg]);
+    setForwardMsgs(groupedFirstMsgs[msg.msg_id] || [msg]);
+  };
+
+  /**
+   * Gửi các tin tới từng người nhận (chuyển tiếp / Lưu vào My Documents): album gộp 1 lần, còn lại từng tin;
+   * nội dung soạn kèm (nếu có) là 1 tin mới sau cùng. Chạy nền, không block UI.
+   */
+  const runForward = (
+    messages: any[],
+    targets: Array<{ threadId: string; threadType: number; accountId: string }>,
+    composeText: string,
+    labels: { progress: (done: number, total: number) => string; done: string } = {
+      progress: (done, total) => `Đang chuyển tiếp ${done}/${total}...`,
+      done: 'Đã chuyển tiếp xong',
+    },
+  ) => {
+    const units = groupForwardAlbums(messages, groupedFirstMsgs);
+    // Chạy lần lượt ở background, không block UI
+    (async () => {
+      const total = messages.length * targets.length;
+      let counter = 0;
+      let failCount = 0;
+      let firstFailure = '';
+      const companionText = composeText.trim();
+      for (const target of targets) {
+        let forwardedAny = false;
+        // Get auth + channel from target account once per recipient.
+        const targetAccount = allAccounts.find(a => a.zalo_id === target.accountId);
+        if (!targetAccount) {
+          failCount += messages.length;
+          firstFailure ||= 'Không tìm thấy tài khoản gửi';
+          continue;
+        }
+        const targetChannel = targetAccount.channel || CHANNEL.ZALO;
+        const targetAuth = isNonZalo(targetChannel)
+          ? { cookies: '', imei: '', userAgent: '' }
+          : buildZaloAuth(targetAccount);
+
+        for (const unit of units) {
+          // Album toàn ảnh (tải về nếu chưa có) → gửi gộp 1 lần để người nhận cũng thấy album.
+          const albumPaths = await prepareForwardAlbum(unit, targetChannel);
+          if (albumPaths) {
+            let albumDone = true;
+            try {
+              await sendForwardAlbum(
+                targetAuth,
+                unit,
+                albumPaths,
+                { threadId: target.threadId, threadType: target.threadType },
+                targetChannel,
+                target.accountId,
+              );
+              forwardedAny = true;
+            } catch (e: any) {
+              if (FORWARD_ALBUM_PRECHECK_ERROR_RE.test(e?.message || '')) {
+                // Lỗi kiểm tra file trước khi upload → chưa gửi gì → gửi từng ảnh bên dưới
+                albumDone = false;
+                console.warn(`[Forward] Album first=${unit[0].msg_id} → gửi từng ảnh:`, e.message);
+              } else {
+                // Lỗi lúc gửi: không gửi lại từng ảnh (có thể đã gửi một phần → trùng)
+                failCount += unit.length;
+                firstFailure ||= e?.message || 'Không rõ lỗi';
+                console.warn(`[Forward] Failed album first=${unit[0].msg_id} (${unit.length} ảnh) target=${target.threadId}:`, e.message);
+              }
+            }
+            if (albumDone) {
+              counter += unit.length;
+              if (total > 1) {
+                showNotification(labels.progress(counter, total), 'info');
+              }
+              continue;
+            }
+          }
+
+          for (const msg of unit) {
+            counter++;
+            try {
+              await sendOneForward(
+                targetAuth,
+                msg,
+                { threadId: target.threadId, threadType: target.threadType },
+                targetChannel,
+                target.accountId,
+                activeAccountId || undefined,
+              );
+              forwardedAny = true;
+            } catch (e: any) {
+              failCount++;
+              firstFailure ||= e?.message || 'Không rõ lỗi';
+              console.warn(`[Forward] Failed msg=${msg.msg_id} target=${target.threadId}:`, e.message);
+            }
+            if (total > 1) {
+              showNotification(labels.progress(counter, total), 'info');
+            }
+          }
+        }
+
+        // Nội dung người dùng soạn trong popup luôn là một tin mới, sau
+        // toàn bộ các tin được forward tới người nhận này. Nó không được
+        // phép thay thế text/caption của tin nguồn.
+        if (forwardedAny && companionText) {
+          try {
+            await sendForwardText(targetAuth, targetChannel, target.accountId, {
+              threadId: target.threadId,
+              threadType: target.threadType,
+            }, companionText);
+          } catch (e: any) {
+            failCount++;
+            firstFailure ||= e?.message || 'Không rõ lỗi';
+            console.warn(`[Forward] Failed companion target=${target.threadId}:`, e.message);
+          }
+        }
+      }
+      if (failCount === 0) {
+        showNotification(labels.done, 'success');
+      } else {
+        showNotification(`${labels.done} (${failCount} lỗi): ${firstFailure}`, 'error');
+      }
+    })();
+  };
+
+  // Zalo: "Lưu vào My Documents" = gửi bản sao tin vào hội thoại My Documents CÓ SẴN của Zalo (ID = send2me_id của
+  // phiên đăng nhập — không phải hội thoại với UID của chính mình)
+  const handleSaveToMyDocuments = async (target: any) => {
+    if (!activeAccountId || !target) return;
+    const myDocsId = myDocumentsThreadId(allAccounts.find(a => a.zalo_id === activeAccountId));
+    if (!myDocsId) {
+      showNotification('Chưa xác định được hội thoại My Documents của tài khoản này — hãy kết nối lại tài khoản Zalo rồi thử lại', 'error');
+      return;
+    }
+    // Ảnh trong album được bấm chuột phải → chỉ ảnh đó; còn lại cả album / tin
+    const messages = contextMenu?.mediaMsg ? [target] : (groupedFirstMsgs[target.msg_id] || [target]);
+    runForward(messages, [{ accountId: activeAccountId, threadId: myDocsId, threadType: 0 }], '', {
+      progress: (done, total) => `Đang lưu vào My Documents ${done}/${total}...`,
+      done: 'Đã lưu vào My Documents',
+    });
+  };
+
+  // ─── Tin đánh dấu (như Zalo) ──────────────────────────────────────────────
+  useEffect(() => {
+    if (activeAccountId) void useStarredStore.getState().load(activeAccountId);
+  }, [activeAccountId]);
+
+  const contextStarTarget = contextMenu ? (contextMenu.mediaMsg || contextMenu.msg) : null;
+  const contextTargetStarred = useStarredStore(s => !!(
+    contextStarTarget && activeAccountId && activeThreadId
+    && s.keys[activeAccountId]?.has(starKey(activeThreadId, String(contextStarTarget.msg_id)))
+  ));
+
+  /** Tên + ảnh người gửi như hàng tin nhắn đang hiển thị (lưu kèm đánh dấu). */
+  const resolveStarSender = (m: any): { name: string; avatar: string } => {
+    // Tin của chính tài khoản → tên + ảnh của tài khoản, kể cả khi thiếu is_sent (sender = tài khoản / Facebook id).
+    // Không lấy contact "chính mình": Zalo có 1 dòng contact cho chính tài khoản, ảnh có thể là URL cũ đã hỏng.
+    const account = allAccounts.find(a => a.zalo_id === activeAccountId);
+    const senderId = String(m?.sender_id || '');
+    if (Number(m?.is_sent) === 1 || (!!senderId && (senderId === activeAccountId || senderId === String(account?.facebook_id || '')))) {
+      return { name: account?.full_name || account?.display_name || 'Bạn', avatar: account?.avatar_url || '' };
+    }
+    const contact = getContact(m?.sender_id);
+    const member = getGroupMember(m?.sender_id);
+    const contactName = contact?.alias || contact?.display_name || '';
+    const name = (contactName && contactName !== m?.sender_id ? contactName : '') || member?.displayName || contactName || String(m?.sender_id || '');
+    return { name, avatar: contact?.avatar_url || member?.avatar || '' };
+  };
+
+  const handleToggleStar = async (target: any) => {
+    if (!activeAccountId || !activeThreadId || !target?.msg_id) return;
+    const store = useStarredStore.getState();
+    const msgId = String(target.msg_id);
+    const starred = !store.isStarred(activeAccountId, activeThreadId, msgId);
+    const sender = resolveStarSender(target);
+    const ok = await store.setStarred({
+      zaloId: activeAccountId,
+      threadId: activeThreadId,
+      msgId,
+      starred,
+      snapshot: starred ? buildStarredSnapshot(target, {
+        senderName: sender.name,
+        senderAvatar: sender.avatar,
+        threadName: activeContact?.alias || activeContact?.display_name || '',
+        threadAvatar: activeContact?.avatar_url || '',
+        channel: activeContact?.channel || CHANNEL.ZALO,
+      }) : undefined,
+    });
+    if (ok) showNotification(starred ? 'Đã đánh dấu tin nhắn - xem ở menu ⋮ → Tin đánh dấu' : 'Đã bỏ đánh dấu tin nhắn', 'success');
+    else showNotification('Không lưu được đánh dấu tin nhắn', 'error');
   };
 
   const handlePin = async (msg: any) => {
@@ -1995,9 +2410,15 @@ export default function ChatWindow() {
         }
       }
 
-      await ipc.db?.pinMessage({ zaloId: activeAccountId, threadId: activeThreadId, pin });
+      const pinRes: any = await ipc.db?.pinMessage({ zaloId: activeAccountId, threadId: activeThreadId, pin });
+      // Nhân viên: ghim chờ Boss xác nhận — Boss từ chối / mất kết nối thì báo lỗi (trước đây luôn "Đã ghim")
+      if (pinRes?.success === false) {
+        showNotification('Ghim thất bại: ' + (pinRes.error || 'lỗi không xác định'), 'error');
+        return;
+      }
       // Reload pins
-      const res = await ipc.db?.getPinnedMessages({ zaloId: activeAccountId, threadId: activeThreadId });
+      // Đọc qua DataAccessor: chế độ nhân viên lấy từ Boss (IPC trả stub rỗng → danh sách ghim bị xoá trắng sau khi ghim)
+      const res = await DataAccessor.getPinnedMessages({ zaloId: activeAccountId, threadId: activeThreadId });
       if (res?.success) setPins(res.pins || []);
       if (overLimit) {
         // Zalo API chỉ hỗ trợ 3 tin ghim - ghim thành công trong ứng dụng nhưng không đồng bộ lên API
@@ -2026,36 +2447,62 @@ export default function ChatWindow() {
     ipc.file?.openPath(parentDir);
   };
 
+  // ID (msg_id + cli_msg_id) của mọi tin một hàng hiển thị → data-msg-ids. Album ảnh / nhóm sticker chỉ có
+  // tin đầu mang id="msg-…"; quote có thể chỉ biết cliMsgId.
+  const getRowMsgIds = (msg: any): string =>
+    (groupedFirstMsgs[msg.msg_id] || groupedStickerFirstMsgs[msg.msg_id] || [msg])
+      .flatMap((m: any) => [m.msg_id, m.cli_msg_id])
+      .filter((id: any) => id && String(id) !== '0')
+      .join(' ');
+
   // Cuộn đến tin nhắn gốc khi click vào quote / pinned / search result
   // Nếu tin nhắn không có trong DOM (nằm ở trang cũ), load messages xung quanh nó
-  const handleScrollToMsg = async (msgId: string) => {
-    if (!msgId) return;
+  // altMsgId: cliMsgId của quote — Zalo để msgId (globalMsgId) = "0" khi trích dẫn tin chưa có ID chính thức
+  // (hay gặp với ảnh trong album), lúc đó chỉ tìm được theo cliMsgId.
+  const handleScrollToMsg = async (msgId: string, altMsgId?: string) => {
+    const ids = [msgId, altMsgId].map(id => String(id || '')).filter(id => id && id !== '0');
+    if (ids.length === 0) return;
 
     // Helper: highlight + scroll to element
     const scrollAndHighlight = (el: HTMLElement) => {
+      nearBottomRef.current = false; // rời đáy: ResizeObserver không được kéo về đáy giữa lúc cuộn tới tin
+      suppressLoadOlderUntilRef.current = Date.now() + 1500;
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       el.classList.add('ring-2', 'ring-yellow-400', 'ring-opacity-75', 'transition-all');
       setTimeout(() => el.classList.remove('ring-2', 'ring-yellow-400', 'ring-opacity-75', 'transition-all'), 2000);
     };
 
+    // Hàng đang hiển thị tin: id="msg-…", hoặc data-msg-ids (cliMsgId, ảnh trong album, sticker trong nhóm)
+    const findMsgElement = (id: string): HTMLElement | null =>
+      document.getElementById(`msg-${id}`)
+      || document.querySelector<HTMLElement>(`[data-msg-ids~="${CSS.escape(id)}"]`);
+
     // 1. Check if already in DOM
-    const el = document.getElementById(`msg-${msgId}`);
-    if (el) {
-      scrollAndHighlight(el);
-      return;
+    for (const id of ids) {
+      const el = findMsgElement(id);
+      if (el) {
+        scrollAndHighlight(el);
+        return;
+      }
     }
 
     // 2. Message not in DOM - fetch its info to get timestamp, then load messages around it
     if (!activeAccountId || !activeThreadId) return;
     try {
-      const msgRes = await DataAccessor.getMessageById({ zaloId: activeAccountId, threadId: activeThreadId, msgId });
-      let targetMsg = msgRes?.message;
+      let targetMsg: any;
+      for (const id of ids) {
+        const msgRes = await DataAccessor.getMessageById({ zaloId: activeAccountId, threadId: activeThreadId, msgId: id });
+        if (msgRes?.message?.timestamp) {
+          targetMsg = msgRes.message;
+          break;
+        }
+      }
       if (!targetMsg?.timestamp && isTelegramCh(activeContact?.channel)) {
         showNotification('Đang tải tin nhắn từ Telegram...', 'info');
         const ensured = await ipc.telegramUser?.ensureMessageAvailable({
           accountId: activeAccountId,
           chatId: activeThreadId,
-          messageId: msgId,
+          messageId: ids[0],
         });
         if (!ensured?.success) {
           const err = ensured?.error || '';
@@ -2075,7 +2522,7 @@ export default function ChatWindow() {
       // A Zalo quote can identify a media message by globalMsgId while the
       // persisted/DOM record uses a different cli_msg_id.  After resolving
       // the row, always use its canonical msg_id for the element we render.
-      const targetDomMessageId = String((targetMsg as any).msg_id || msgId);
+      const targetDomMessageId = String((targetMsg as any).msg_id || ids[0]);
 
       const aroundRes = await DataAccessor.getMessagesAround({
         zaloId: activeAccountId,
@@ -2103,6 +2550,8 @@ export default function ChatWindow() {
       });
 
       // Replace current messages with the "around" set
+      nearBottomRef.current = false; // danh sách mới không phải tin mới nhất → không bám đáy
+      suppressLoadOlderUntilRef.current = Date.now() + 1500;
       setMessages(activeAccountId, activeThreadId, mappedAround, activeTopicId);
       // Async fixup: query DB for original messages not in the loaded batch
       if (missingLookup2.length > 0 && activeAccountId && activeThreadId) {
@@ -2134,6 +2583,7 @@ export default function ChatWindow() {
         })();
       }
       setHasMore(true); // Có thể còn tin cũ hơn phía trên
+      setOlderKnown(false); // chưa biết chắc → không hiện nút, cuộn lên gần đỉnh sẽ tự tải
       setIsViewingHistory(true); // Đánh dấu đang xem tin cũ → hiện nút "Về tin mới nhất"
 
       // Wait for React to render new messages, then scroll
@@ -2143,7 +2593,7 @@ export default function ChatWindow() {
         });
       });
 
-      const el2 = document.getElementById(`msg-${targetDomMessageId}`);
+      const el2 = findMsgElement(targetDomMessageId);
       if (el2) {
         scrollAndHighlight(el2);
       }
@@ -2152,15 +2602,34 @@ export default function ChatWindow() {
     }
   };
 
+  // Nhảy tới tin của hội thoại KHÁC (Tin đánh dấu): hội thoại đang được mở → nhảy khi đã tải xong
+  const pendingJumpRef = useRef<{ accountId: string; threadId: string; messageId: string; at: number } | null>(null);
   useEffect(() => {
     const handleJumpRequest = (event: Event) => {
       const detail = (event as CustomEvent<{ accountId?: string; threadId?: string; messageId?: string }>).detail;
-      if (!detail?.messageId || detail.accountId !== activeAccountId || detail.threadId !== activeThreadId) return;
+      if (!detail?.messageId) return;
+      if (detail.accountId !== activeAccountId || detail.threadId !== activeThreadId || !threadReady) {
+        pendingJumpRef.current = {
+          accountId: String(detail.accountId || ''), threadId: String(detail.threadId || ''),
+          messageId: String(detail.messageId), at: Date.now(),
+        };
+        return;
+      }
       void handleScrollToMsg(detail.messageId);
     };
     window.addEventListener('chat:jumpToMessage', handleJumpRequest);
     return () => window.removeEventListener('chat:jumpToMessage', handleJumpRequest);
   });
+  useEffect(() => {
+    const pending = pendingJumpRef.current;
+    if (!pending || !threadReady || !initialScrollDone || messagesLoading) return;
+    if (pending.accountId !== activeAccountId || pending.threadId !== activeThreadId) return;
+    pendingJumpRef.current = null;
+    if (Date.now() - pending.at > 20_000) return;
+    const timer = setTimeout(() => { void handleScrollToMsg(pending.messageId); }, 60);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [threadReady, initialScrollDone, messagesLoading, activeAccountId, activeThreadId]);
 
   // Tải lại tin nhắn mới nhất và cuộn xuống cuối - dùng khi đang xem tin nhắn cũ (isViewingHistory)
   const handleReturnToLatest = async () => {
@@ -2193,6 +2662,7 @@ export default function ChatWindow() {
         const sorted = [...mappedLatest].reverse();
         setMessages(activeAccountId, activeThreadId, sorted, activeTopicId);
         setHasMore(res.messages.length >= 50);
+        setOlderKnown(false);
         // Async fixup: query DB for original messages not in the loaded batch
         if (missingLookup3.length > 0 && activeAccountId && activeThreadId) {
           (async () => {
@@ -2248,7 +2718,8 @@ export default function ChatWindow() {
         ? JSON.parse(msg.local_paths || '{}')
         : (msg.local_paths || {});
       const lf = lp.main || lp.hd || lp.thumb || (Object.values(lp)[0] as string) || '';
-      if (lf) {
+      // File JPEG XL (tải trước khi đổi sang bản JPG) không hiển thị được → bỏ qua
+      if (lf && !/\.jxl$/i.test(lf)) {
         localPath = lf;
         localUrl = toLocalMediaUrl(lf);
       }
@@ -2256,7 +2727,7 @@ export default function ChatWindow() {
     try {
       const p = JSON.parse(msg.content || '{}');
       const params = typeof p.params === 'string' ? JSON.parse(p.params || '{}') : (p.params || {});
-      remoteUrl = params.hd || params.rawUrl || p.href || p.thumb || '';
+      remoteUrl = toZaloJpgUrl(params.hd || params.rawUrl || p.href || p.thumb || '');
     } catch {}
     if (!remoteUrl && !localUrl) return null;
     const defaultName = localPath
@@ -2270,105 +2741,19 @@ export default function ChatWindow() {
       defaultName,
       msgId: msg?.msg_id ? String(msg.msg_id) : undefined,
       threadId: msg?.thread_id ? String(msg.thread_id) : undefined,
+      timestamp: Number(msg?.timestamp) || undefined,
     };
   }, []);
 
-  const dedupeViewerImages = React.useCallback((images: MediaViewerImage[]): MediaViewerImage[] => {
-    const seen = new Set<string>();
-    const out: MediaViewerImage[] = [];
-    for (const img of images) {
-      const key = `${img.src || ''}__${img.displaySrc || ''}`;
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-      out.push(img);
-    }
-    return out;
+  /**
+   * Bộ sưu tập của trình xem ảnh, phân trang như tin nhắn (kiểu Telegram/Zalo): mở ngay với ảnh đang có trong
+   * hội thoại, tải ảnh quanh ảnh được bấm theo cursor (timestamp, msg_id), thêm trang khi cuộn gần đầu/cuối dải
+   * hoặc ←/→ quá ảnh đầu/cuối đã tải. State nằm trong MediaGalleryViewer → tải trang không render lại ChatWindow.
+   */
+  const mediaGalleryRef = React.useRef<MediaGalleryViewerHandle>(null);
+  const openViewer = React.useCallback((clickedUrl: string) => {
+    mediaGalleryRef.current?.openFromMessages(msgsRef.current, clickedUrl);
   }, []);
-
-  const buildImagesFromCurrentThread = React.useCallback((): MediaViewerImage[] => {
-    const allImages: MediaViewerImage[] = [];
-    for (const msg of msgs) {
-      if (groupedSkipIds.has(msg.msg_id)) continue;
-      const groupBatch = groupedFirstMsgs[msg.msg_id];
-      if (groupBatch?.length) {
-        for (const gm of groupBatch) {
-          const entry = buildImageEntry(gm);
-          if (entry) allImages.push(entry);
-        }
-        continue;
-      }
-      const entry = buildImageEntry(msg);
-      if (entry) allImages.push(entry);
-    }
-    return dedupeViewerImages(allImages);
-  }, [msgs, groupedFirstMsgs, groupedSkipIds, buildImageEntry, dedupeViewerImages]);
-
-  const findViewerIndex = React.useCallback((images: MediaViewerImage[], clickedUrl: string): number => {
-    const normalizeUrl = (u?: string) => {
-      if (!u) return '';
-      return u
-        .replace(/^local-media:\/\//, 'local-media:///')
-        .replace(/\\/g, '/')
-        .split('?')[0]
-        .trim();
-    };
-
-    const exactIdx = images.findIndex(img => img.src === clickedUrl || img.displaySrc === clickedUrl);
-    if (exactIdx >= 0) return exactIdx;
-
-    const normalizedClicked = normalizeUrl(clickedUrl);
-    return images.findIndex(img => {
-      return normalizeUrl(img.src) === normalizedClicked || normalizeUrl(img.displaySrc) === normalizedClicked;
-    });
-  }, []);
-
-  /** Mở viewer ảnh với bộ sưu tập đầy đủ từ DB (giống panel ảnh/video), fallback nhanh từ messages hiện có */
-  const openViewer = React.useCallback(async (clickedUrl: string) => {
-    const initialImages = buildImagesFromCurrentThread();
-    if (initialImages.length > 0) {
-      const initialIdx = findViewerIndex(initialImages, clickedUrl);
-      setViewerState({ images: initialImages, index: initialIdx >= 0 ? initialIdx : 0 });
-    } else {
-      setViewerState({ images: [{ src: clickedUrl }], index: 0 });
-    }
-
-    if (!activeAccountId || !activeThreadId) return;
-    const fullImages: MediaViewerImage[] = [];
-
-    try {
-      for (let page = 0; page < MAX_PAGES; page++) {
-        const r = await DataAccessor.getMediaMessages({
-          zaloId: activeAccountId,
-          threadId: activeThreadId,
-          limit: PAGE_SIZE,
-          offset: page * PAGE_SIZE,
-        });
-        const batch = r?.messages || [];
-        if (!batch.length) break;
-        for (const msg of batch) {
-          const entry = buildImageEntry(msg);
-          if (entry) fullImages.push(entry);
-        }
-        if (batch.length < PAGE_SIZE) break;
-      }
-      const mergedImages = dedupeViewerImages(fullImages);
-      if (mergedImages.length > 0) {
-        setViewerState(prev => {
-          if (!prev) return null; // User đã đóng viewer trong khi load — không mở lại
-          const clickedIdx = findViewerIndex(mergedImages, clickedUrl);
-          if (clickedIdx >= 0) {
-            return { images: mergedImages, index: clickedIdx };
-          }
-          const prevCurrent = prev?.images?.[prev.index || 0];
-          const prevUrl = prevCurrent?.displaySrc || prevCurrent?.src || '';
-          const prevIdx = prevUrl ? findViewerIndex(mergedImages, prevUrl) : -1;
-          return { images: mergedImages, index: prevIdx >= 0 ? prevIdx : 0 };
-        });
-      }
-    } catch (err) {
-      console.error('[openViewer] Failed to load full media gallery:', err);
-    }
-  }, [activeAccountId, activeThreadId, buildImagesFromCurrentThread, buildImageEntry, dedupeViewerImages, findViewerIndex]);
 
   /** Mở video player inline từ 1 tin nhắn video */
   const openVideoPlayer = React.useCallback((msg: any) => {
@@ -2465,7 +2850,7 @@ export default function ChatWindow() {
 
   if (!activeThreadId) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center text-gray-400">
+      <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground">
         <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" className="mb-4 opacity-30">
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
         </svg>
@@ -2485,7 +2870,7 @@ export default function ChatWindow() {
       {/* Drag overlay */}
       {isDragging && (
         <div
-          className="absolute inset-0 z-40 flex items-center justify-center bg-gray-900/70 backdrop-blur-sm border-2 border-dashed border-blue-500 pointer-events-none"
+          className="absolute inset-0 z-40 flex items-center justify-center bg-background/70 backdrop-blur-sm border-2 border-dashed border-blue-500 pointer-events-none"
           onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); }}
           onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); }}
           onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
@@ -2498,14 +2883,14 @@ export default function ChatWindow() {
               <line x1="12" y1="3" x2="12" y2="15"/>
             </svg>
             <p className="text-blue-400 font-medium text-sm">Thả file / ảnh để gửi</p>
-            <p className="text-gray-400 text-xs">Hỗ trợ ảnh, video, file</p>
+            <p className="text-muted-foreground text-xs">Hỗ trợ ảnh, video, file</p>
           </div>
         </div>
       )}
 
       {/* ── Telegram Forum topic bar — shows active topic with back-to-topics ── */}
       {activeTopicId && activeTopicTitle && activeContact?.channel === 'telegram_user' && (
-        <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-800/80 border-b border-gray-700/50 text-xs">
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-card/80 border-b border-border/50 text-xs">
           <button
             onClick={() => {
               // Return to topic list: clear activeTopicId → ConversationList shows ForumTopicsPanel
@@ -2515,7 +2900,7 @@ export default function ChatWindow() {
                 activeTopicTitle: null,
               });
             }}
-            className="flex items-center gap-1 text-gray-400 hover:text-gray-200 transition-colors"
+            className="flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors"
             title="Quay lại danh sách chủ đề"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -2523,8 +2908,8 @@ export default function ChatWindow() {
             </svg>
             <span>{activeForumTopicId ? 'Chủ đề' : 'Bài đăng'}</span>
           </button>
-          <span className="text-gray-600">/</span>
-          <span className="text-gray-200 font-medium truncate">{activeTopicTitle}</span>
+          <span className="text-subtle-foreground">/</span>
+          <span className="text-foreground font-medium truncate">{activeTopicTitle}</span>
         </div>
       )}
 
@@ -2551,6 +2936,8 @@ export default function ChatWindow() {
         const contact = contactMap.get(activeThreadId);
         const isGroup = contact?.contact_type === 'group' || contact?.contact_type === '1';
         if (isGroup) return null;
+        // My Documents của Zalo không phải một người → không mời kết bạn
+        if (isMyDocumentsThread(allAccounts.find(a => a.zalo_id === activeAccountId), activeThreadId, contact?.avatar_url)) return null;
         return (
           <FriendRequestBar
             zaloId={activeAccountId}
@@ -2570,30 +2957,35 @@ export default function ChatWindow() {
       })()}
 
       {/* ── Floating button: cuộn xuống / về tin nhắn mới nhất ── */}
+      {/* z-30: trên chip reaction của tin (absolute z-20, nằm SAU nút trong DOM nên trước đây đè lên nút); dưới bảng chọn
+          reaction và lớp "Đang tải..." (z-30, sau trong DOM), lớp thả file (z-40), hộp thoại (z-50). Nền card + viền +
+          bóng nổi rõ trên nền hội thoại cả 2 theme (bg-muted/80 cũ gần trùng màu nền sáng #eceef3). */}
       {threadReady && !atBottom && (
-        <div className="absolute bottom-4 right-4 z-20 pointer-events-none">
+        <div className="absolute bottom-4 right-4 z-30 pointer-events-none">
           <button
             onClick={isViewingHistory ? handleReturnToLatest : () => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }}
             disabled={loadingLatest}
-            className={`pointer-events-auto flex items-center gap-1.5 px-3 py-3 rounded-full shadow-lg text-sm font-medium transition-all disabled:opacity-60 ${
+            title={isViewingHistory ? 'Về tin nhắn mới nhất' : 'Cuộn xuống tin mới nhất'}
+            aria-label={isViewingHistory ? 'Về tin nhắn mới nhất' : 'Cuộn xuống tin mới nhất'}
+            className={`pointer-events-auto flex items-center justify-center rounded-full transition-[color,background-color,box-shadow,transform] duration-150 active:scale-95 disabled:opacity-60 ${
               isViewingHistory
-                ? 'bg-blue-600 hover:bg-blue-500 text-white'
-                : 'bg-gray-700/80 hover:bg-gray-600 text-gray-200'
+                ? 'h-9 gap-1.5 pl-3 pr-3.5 bg-primary hover:bg-primary-hover text-primary-foreground text-[13px] font-medium shadow-[0_6px_16px_-4px_rgba(31,107,242,0.55),0_1px_3px_rgba(15,31,61,0.15)] dark:shadow-[0_6px_18px_-4px_rgba(0,0,0,0.65),0_1px_3px_rgba(0,0,0,0.5)]'
+                : 'w-10 h-10 bg-card dark:bg-muted text-muted-foreground border border-border hover:text-primary hover:-translate-y-px shadow-[0_6px_16px_-6px_rgba(15,31,61,0.28),0_1px_3px_rgba(15,31,61,0.10)] hover:shadow-[0_10px_22px_-8px_rgba(15,31,61,0.32),0_2px_4px_rgba(15,31,61,0.10)] dark:shadow-[0_6px_18px_-6px_rgba(0,0,0,0.7),0_1px_3px_rgba(0,0,0,0.45)] dark:hover:shadow-[0_10px_24px_-8px_rgba(0,0,0,0.75),0_2px_4px_rgba(0,0,0,0.45)]'
             }`}
           >
             {loadingLatest ? (
               <Spinner size={4} />
             ) : isViewingHistory ? (
               <>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <polyline points="6 9 12 15 18 9"/>
-                  <line x1="12" y1="3" x2="12" y2="15"/>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="12" y1="4" x2="12" y2="18"/>
+                  <polyline points="6 12 12 18 18 12"/>
                 </svg>
                 <span>Về tin nhắn mới nhất</span>
               </>
             ) : (
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <polyline points="6 9 12 15 18 9"/>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="6 9.5 12 15.5 18 9.5"/>
               </svg>
             )}
           </button>
@@ -2604,10 +2996,17 @@ export default function ChatWindow() {
       {/* Giúp tránh "double flash" do container mount/unmount khi chuyển thread */}
       {activeAccountId && activeThreadId && (
       <div ref={messagesContainerRef} className="flex-1 overflow-y-auto [overflow-anchor:auto] relative" style={{ willChange: 'scroll-position' }}>
-                {loadingSpinner && <div className="absolute inset-0 z-10 flex items-center justify-center bg-gray-900 pointer-events-none"><div className="flex flex-col items-center gap-3"><div className="w-8 h-8 border-4 border-blue-400 border-t-transparent rounded-full animate-spin"></div><p className="text-sm text-gray-400">Đang tải...</p></div></div>}
-        <div className="p-4 space-y-1.5">
-        {/* Load More Button - Hiển thị trên tin nhắn đầu tiên (cũ nhất) */}
-        {msgs.length > 0 && (hasMore || loadError) && (
+        <StickyDayPill containerRef={messagesContainerRef} />
+        {/* Lớp "Đang tải..." khi mở hội thoại: z-30 — trên chip reaction / nút 👍 (z-20), nhãn ngày dính (z-20) và nút cuộn
+            xuống (z-30, trước trong DOM); dưới popup ô soạn tin (z-30, sau trong DOM), lớp thả file (z-40), hộp thoại (z-50).
+            Không xuyên chuột: rê / bấm không trúng tin đang ẩn bên dưới (thanh chọn reaction z-30 không mở được khi đang tải).
+            Vòng xoay chỉ hiện khi tải lâu hơn ~300 ms (chat-loading-reveal): tin trong máy mở gần như tức thì → không nháy
+            "Đang tải..." mỗi lần chuyển hội thoại; lớp nền vẫn che ngay để không thấy danh sách trước khi cuộn xuống đáy. */}
+        {loadingSpinner && <div className="absolute inset-0 z-30 flex items-center justify-center bg-background"><div className="chat-loading-reveal flex flex-col items-center gap-3"><div className="w-8 h-8 border-4 border-blue-400 border-t-transparent rounded-full animate-spin"></div><p className="text-sm text-muted-foreground">Đang tải...</p></div></div>}
+        <div ref={messagesContentRef} className="p-4 space-y-1.5">
+        {/* Load More Button - Hiển thị trên tin nhắn đầu tiên (cũ nhất). Chỉ khi đang tải lâu, lỗi, hoặc đã biết
+            chắc còn tin cũ — "có thể còn" (mặc định khi mở) không hiện: cuộn gần đỉnh sẽ tự tải. */}
+        {msgs.length > 0 && (loadError || loadingMore || (hasMore && olderKnown)) && (
           <div className="flex justify-center py-3 mb-2">
             <button
               onClick={handleLoadMore}
@@ -2615,7 +3014,7 @@ export default function ChatWindow() {
               className={`text-xs px-4 py-2 rounded-full shadow-md transition-all disabled:opacity-50 flex items-center gap-2 ${
                 loadError
                   ? 'bg-red-800 text-red-200 hover:bg-red-700'
-                  : 'bg-gray-700 text-gray-200 hover:bg-gray-600 hover:scale-105'
+                  : 'bg-muted text-foreground hover:bg-accent hover:scale-105'
               }`}
             >
               {loadingMore ? (
@@ -2649,8 +3048,8 @@ export default function ChatWindow() {
         {msgs.length === 0 && !initialLoading && !messagesLoading && (
           <div className="flex-1 flex flex-col items-center justify-center text-center px-6 py-12 opacity-60">
             <div className="text-3xl mb-3"><ChatIcon className="w-4 h-4" /></div>
-            <p className="text-gray-400 text-sm font-medium">Chưa có tin nhắn nào</p>
-            <p className="text-gray-400 text-xs mt-1 max-w-xs">
+            <p className="text-muted-foreground text-sm font-medium">Chưa có tin nhắn nào</p>
+            <p className="text-muted-foreground text-xs mt-1 max-w-xs">
               Tin nhắn chỉ hiển thị từ lúc kết nối. Hãy gửi tin nhắn mới để bắt đầu.
             </p>
           </div>
@@ -2664,6 +3063,7 @@ export default function ChatWindow() {
 
           const isSent = !!msg.is_sent;
           const prevMsg = idx > 0 ? msgs[idx - 1] : null;
+          const daySeparator = dayStartIds.has(msg.msg_id) ? renderDaySeparator(Number(msg.timestamp) || 0) : null;
           // nextMsg: skip over non-first group images to find actual next visible msg
           let nextMsg = idx < msgs.length - 1 ? msgs[idx + 1] : null;
           if (nextMsg && groupedSkipIds.has(nextMsg.msg_id)) {
@@ -2671,7 +3071,7 @@ export default function ChatWindow() {
             const groupMsgsForThis = groupedFirstMsgs[msg.msg_id];
             if (groupMsgsForThis) {
               const lastInGroup = groupMsgsForThis[groupMsgsForThis.length - 1];
-              const lastInGroupIdx = msgs.findIndex(m => m.msg_id === lastInGroup.msg_id);
+              const lastInGroupIdx = msgIndexById.get(lastInGroup.msg_id) ?? -1;
               nextMsg = lastInGroupIdx >= 0 && lastInGroupIdx + 1 < msgs.length ? msgs[lastInGroupIdx + 1] : null;
             }
           }
@@ -2679,7 +3079,7 @@ export default function ChatWindow() {
             const stickerGroupForThis = groupedStickerFirstMsgs[msg.msg_id];
             if (stickerGroupForThis) {
               const lastInGroup = stickerGroupForThis[stickerGroupForThis.length - 1];
-              const lastInGroupIdx = msgs.findIndex(m => m.msg_id === lastInGroup.msg_id);
+              const lastInGroupIdx = msgIndexById.get(lastInGroup.msg_id) ?? -1;
               nextMsg = lastInGroupIdx >= 0 && lastInGroupIdx + 1 < msgs.length ? msgs[lastInGroupIdx + 1] : null;
             }
           }
@@ -2716,7 +3116,7 @@ export default function ChatWindow() {
                   <button
                     key={m.id}
                     onClick={(e) => setUserProfilePopup({ userId: m.id, x: e.clientX, y: e.clientY })}
-                    className="inline-flex items-center gap-1 align-middle font-medium text-gray-200 hover:text-white hover:underline transition-colors"
+                    className="inline-flex items-center gap-1 align-middle font-medium text-foreground hover:text-foreground hover:underline transition-colors"
                   >
                     {m.avatar ? (
                       <img src={m.avatar} alt={name} className="w-4 h-4 rounded-full object-cover inline-block flex-shrink-0" onError={e => { (e.target as HTMLImageElement).style.display='none'; }} />
@@ -2735,16 +3135,20 @@ export default function ChatWindow() {
             };
 
             return (
-              <div key={msg.msg_id + idx} className="flex justify-center my-2 px-4">
-                <span className="text-xs text-gray-400 bg-gray-700/60 px-3 py-1.5 rounded-full text-center max-w-sm leading-relaxed inline-flex items-center flex-wrap gap-x-0.5 justify-center">
-                  {isTelegramPinnedNotice && <span aria-hidden="true" className="mr-0.5">📌</span>}
-                  {renderSysContent()}
-                </span>
-              </div>
+              <React.Fragment key={msg.msg_id + idx}>
+                {daySeparator}
+                <div className="flex justify-center my-2 px-4">
+                  <span className="text-[11px] text-foreground bg-card border border-border px-3 py-1.5 rounded-full text-center max-w-sm leading-relaxed inline-flex items-center flex-wrap gap-x-0.5 justify-center shadow-sm">
+                    {isTelegramPinnedNotice && <span aria-hidden="true" className="mr-0.5">📌</span>}
+                    {renderSysContent()}
+                  </span>
+                </div>
+              </React.Fragment>
             );
           }
 
-          const showTime = !prevMsg ||
+          // Bắt đầu lượt tin (đổi người gửi / cách > 30 phút): hiện tên người gửi trong nhóm. Mốc ngày: daySeparator.
+          const startsRun = !prevMsg ||
             (msg.timestamp - prevMsg.timestamp > 30 * 60 * 1000) ||
             prevMsg.sender_id !== msg.sender_id;
 
@@ -2773,12 +3177,8 @@ export default function ChatWindow() {
             });
 
             return (
-              <div key={msg.msg_id + idx} id={`msg-${msg.msg_id}`} className={`flex flex-col mb-0.5 ${isSent ? 'items-end' : 'items-start'}`}>
-                {showTime && (
-                  <div className="flex justify-center w-full my-2">
-                    <span className="text-xs text-gray-400 bg-gray-800 px-2 py-0.5 rounded-full">{formatMsgTime(msg.timestamp)}</span>
-                  </div>
-                )}
+              <div key={msg.msg_id + idx} id={`msg-${msg.msg_id}`} data-msg-ids={getRowMsgIds(msg)} className={`flex flex-col mb-0.5 ${isSent ? 'items-end' : 'items-start'}`}>
+                {daySeparator}
                 <div className={`flex items-end gap-2 ${isSent ? 'flex-row-reverse' : 'flex-row'}`}>
                   {!isSent && (
                     <div className="w-7 h-7 flex-shrink-0 self-end mb-1">
@@ -2808,7 +3208,7 @@ export default function ChatWindow() {
                                 }
                               }} />
                           ) : (
-                            <div className="w-7 h-7 rounded-full bg-gray-600 flex items-center justify-center text-white text-xs font-bold">{(displayName || 'U').charAt(0).toUpperCase()}</div>
+                            <div className="w-7 h-7 rounded-full bg-accent flex items-center justify-center text-foreground text-xs font-bold">{(displayName || 'U').charAt(0).toUpperCase()}</div>
                           )}
                         </button>
                       ) : <div className="w-7 h-7" />}
@@ -2820,6 +3220,17 @@ export default function ChatWindow() {
                     displayName={displayName}
                     isRevealed={isRevealed}
                     onToggleReveal={toggleReveal}
+                    onView={openViewer}
+                    onOpenProfile={(userId, e) => setUserProfilePopup({ userId, x: e.clientX, y: e.clientY })}
+                    onContextMenu={(e, previewMsg) => {
+                      if (isSelecting) { e.preventDefault(); return; }
+                      // Đang bôi đen chữ → để trình duyệt xử lý (copy tự nhiên)
+                      const sel = window.getSelection();
+                      if (sel && sel.toString().length > 0) return;
+                      e.preventDefault();
+                      // Tin đã thu hồi: chỉ thao tác cục bộ (sao chép, lưu ảnh/file, đánh dấu, xoá khỏi app)
+                      setContextMenu({ x: e.clientX, y: e.clientY, msg: previewMsg, isSent, recalled: true });
+                    }}
                   />
                 </div>
               </div>
@@ -2837,16 +3248,43 @@ export default function ChatWindow() {
             || msg.msg_type === 'telegram.poll'
             || (msg.msg_type === 'poll' && isTelegramCh(msg.channel))
           );
-          const isVideoMsg = cached?.isVideo ?? isVideoType(msg.msg_type);
-          const isVoiceMsg = cached?.isVoice ?? (msg.msg_type === 'chat.voice' || msg.msg_type === 'audio');
+          const isVideoMsg = cached?.isVideo ?? (isVideoType(msg.msg_type) || msg.msg_type === 'gif');
+          const isVoiceMsg = cached?.isVoice ?? isVoiceType(msg.msg_type);
           const isBankCardMsg = isBankCardType(msg.msg_type, msg.content);
           const isLocationMsg = msg.msg_type === 'chat.location.new';
+          // Tin mẫu của Page Facebook (thẻ + nút) / tin Facebook cũ lưu rỗng (bản trước chưa đọc được tin mẫu)
+          const isFbTemplateMsg = msg.msg_type === FB_TEMPLATE_MSG_TYPE;
+          const isZinstantMsg = cached?.isZinstant ?? isZinstantMsgType(msg.msg_type, msg.content);
+          const isFbEmptyMsg = !isFbTemplateMsg && isFacebook(msg.channel) && (!msg.msg_type || msg.msg_type === 'text')
+            && !msg.is_recalled && !String(msg.content || '').trim() && !hasStoredAttachments(msg.attachments);
           const telegramPostMeta = getTelegramPostMeta(msg);
+          // Telegram: tin chuyển tiếp → "Chuyển tiếp từ <nguồn>" (tên lưu kèm tin; không có thì tra liên hệ / thành viên nhóm)
+          const telegramForward = getTelegramForwardMeta(msg);
+          const forwardKnown = telegramForward?.fromId ? (getContact(telegramForward.fromId) || getGroupMember(telegramForward.fromId)) as any : null;
+          const forwardKnownName = String(forwardKnown?.alias || forwardKnown?.display_name || forwardKnown?.displayName || '');
+          const forwardName = !telegramForward ? ''
+            : telegramForward.fromId && telegramForward.fromId === activeAccountId ? 'Bạn'
+            : telegramForward.fromName
+              || (forwardKnownName && forwardKnownName !== telegramForward.fromId ? forwardKnownName : '')
+              || (telegramForward.fromUsername ? `@${telegramForward.fromUsername}` : '')
+              || (telegramForward.fromType === 'channel' ? 'Kênh Telegram' : telegramForward.fromType === 'chat' ? 'Nhóm Telegram' : 'Người dùng Telegram');
+          const forwardAvatar = telegramForward ? toLocalMediaUrl(forwardKnown?.avatar_url || forwardKnown?.avatar || '') : '';
           const isGroupMedia = cached?.isGroupMedia ?? (!isPollMsg && !isVoiceMsg && !!groupedFirstMsgs[msg.msg_id]);
           const groupMediaMsgs = isGroupMedia ? groupedFirstMsgs[msg.msg_id] : null;
-          const isMediaMsg = cached?.isMedia ?? (!isCardMsg && !isEcardMsg && !isStickerMsg && !isGroupMedia && !isRtf && !isPollMsg && !isVideoMsg && !isVoiceMsg && !isBankCardMsg && !isLocationMsg && isMediaType(msg.msg_type, msg.content, msg.attachments));
-          const isFileMsg = cached?.isFile ?? (!isCardMsg && !isEcardMsg && !isStickerMsg && !isMediaMsg && !isRtf && !isPollMsg && !isVideoMsg && !isVoiceMsg && !isBankCardMsg && !isLocationMsg && isFileType(msg.msg_type, msg.content, msg.attachments));
-          const content = cached?.content ?? (isMediaMsg || isFileMsg || isCardMsg || isEcardMsg || isStickerMsg || isGroupMedia || isRtf || isPollMsg || isVideoMsg || isVoiceMsg || isBankCardMsg || isLocationMsg ? '' : parseContent(msg.content, msg.msg_type));
+          const isMediaMsg = cached?.isMedia ?? (!isCardMsg && !isEcardMsg && !isStickerMsg && !isGroupMedia && !isRtf && !isPollMsg && !isVideoMsg && !isVoiceMsg && !isBankCardMsg && !isLocationMsg && !isZinstantMsg && isMediaType(msg.msg_type, msg.content, msg.attachments));
+          const isFileMsg = cached?.isFile ?? (!isCardMsg && !isEcardMsg && !isStickerMsg && !isMediaMsg && !isRtf && !isPollMsg && !isVideoMsg && !isVoiceMsg && !isBankCardMsg && !isLocationMsg && !isZinstantMsg && isFileType(msg.msg_type, msg.content, msg.attachments));
+          const content = cached?.content ?? (isMediaMsg || isFileMsg || isCardMsg || isEcardMsg || isStickerMsg || isGroupMedia || isRtf || isPollMsg || isVideoMsg || isVoiceMsg || isBankCardMsg || isLocationMsg || isZinstantMsg ? '' : parseContent(msg.content, msg.msg_type));
+          // Tin hệ thống Telegram (vd. "Channel created") lưu nhầm thành "bài đăng kênh" rỗng ở bản cũ: không vẽ thẻ trống.
+          // Bài đăng thật luôn có chữ hoặc media; lần tải lịch sử kế tiếp sửa hàng thành dòng thông báo.
+          if (telegramPostMeta && msg.msg_type === 'text' && !String(msg.content || '').trim() && !isGroupMedia) return null;
+
+          // Tin trả lời loại ảnh / album / file / thẻ: MỘT khung bong bóng bao cả trích dẫn lẫn nội dung (như Telegram)
+          const isNoBubbleMsg = isMediaMsg || isGroupMedia || isFileMsg || isCardMsg || isEcardMsg || isStickerMsg || isBankCardMsg || isFbTemplateMsg || isZinstantMsg;
+          const hasQuote = !!(msg.quote_data || (msg.reply_to_id && !(
+            msg.channel === 'telegram_user' && msg.topic_id != null &&
+            String(msg.reply_to_id) === String(msg.topic_id)
+          )));
+          const quoteShell = hasQuote && isNoBubbleMsg && !isEcardMsg && !isStickerMsg && !isBankCardMsg && !telegramPostMeta;
 
           // Sticker nhóm: nhiều sticker liền nhau từ cùng người gửi trong 30 phút
           const isGroupedStickerFirst = isStickerMsg && !!groupedStickerFirstMsgs[msg.msg_id];
@@ -2881,10 +3319,8 @@ export default function ChatWindow() {
           };
 
           // First visible message: attach ref for IntersectionObserver (loadMore trigger)
-          const isFirstVisible = idx === 0 && !groupedSkipIds.has(msg.msg_id) && !pollSkipIds.has(msg.msg_id) && !groupedStickerSkipIds.has(msg.msg_id);
           return (
-            <div key={msg.msg_id + idx} id={`msg-${msg.msg_id}`}
-              ref={isFirstVisible ? firstMsgRef : undefined}
+            <div key={msg.msg_id + idx} id={`msg-${msg.msg_id}`} data-msg-ids={getRowMsgIds(msg)}
               className={`flex flex-col mb-0.5 rounded-lg transition-colors ${isEcardMsg ? 'items-center' : isSent ? 'items-end' : 'items-start'} group/msg${isMsgSelected ? ' bg-blue-500/10 ring-1 ring-blue-500/40 rounded-lg' : ''}${isSelecting && !isEcardMsg ? ' cursor-pointer' : ''}`}
               onClick={isSelecting && !isEcardMsg ? (e) => {
                 // Skip click nếu vừa kết thúc drag-select (tránh toggle ngay sau drag)
@@ -2902,20 +3338,14 @@ export default function ChatWindow() {
                 };
               } : undefined}
             >
-              {showTime && (
-                <div className="flex justify-center w-full my-2">
-                  <span className="text-xs text-gray-400 bg-gray-800 px-2 py-0.5 rounded-full">
-                    {formatMsgTime(msg.timestamp)}
-                  </span>
-                </div>
-              )}
+              {daySeparator}
 
               {/* Outer row: bubble + action buttons */}
               <div className={`flex items-end gap-1 ${isEcardMsg ? 'w-full justify-center' : isSent ? 'flex-row-reverse' : 'flex-row'}`} style={{ maxWidth: '100%' }}>
                 {/* Selection checkbox - visible when in selection mode */}
                 {isSelecting && !isEcardMsg && (
                   <div className="w-5 h-5 flex-shrink-0 self-center mb-1">
-                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isMsgSelected ? 'bg-blue-500 border-blue-500' : 'border-gray-500 bg-transparent'}`}>
+                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isMsgSelected ? 'bg-blue-500 border-blue-500' : 'border-border-strong bg-transparent'}`}>
                       {isMsgSelected && (
                         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
                       )}
@@ -2933,7 +3363,13 @@ export default function ChatWindow() {
                     const sel = window.getSelection();
                     if (sel && sel.toString().length > 0) return;
                     e.preventDefault();
-                    setContextMenu({ x: e.clientX, y: e.clientY, msg, isSent, isGroupAdmin });
+                    // Album: ảnh được bấm chuột phải (Copy hình ảnh / Lưu về máy / đánh dấu áp vào đúng ảnh đó, như Zalo)
+                    const albumTile = (e.target as HTMLElement)?.closest?.('[data-album-msg-id]') as HTMLElement | null;
+                    const albumMsgId = albumTile?.dataset.albumMsgId;
+                    const mediaMsg = albumMsgId
+                      ? (groupedFirstMsgs[msg.msg_id] || []).find((m: any) => String(m.msg_id) === albumMsgId)
+                      : undefined;
+                    setContextMenu({ x: e.clientX, y: e.clientY, msg, mediaMsg, isSent, isGroupAdmin });
                   }}
                 >
                   {!isSent && !isEcardMsg && (
@@ -2992,22 +3428,32 @@ export default function ChatWindow() {
 
                   <div className={`flex flex-col ${isEcardMsg ? 'w-full items-center' : isSent ? 'items-end' : 'items-start'} relative min-w-0${hasReactions && !isGroupedStickerFirst ? ' mb-3' : ''}`}>
                     {/* Sender name in group chats */}
-                    {!isSent && !isEcardMsg && msg.thread_type === 1 && showTime && displayName && displayName !== msg.sender_id && (
-                      <p className="text-xs text-gray-400 mb-0.5 px-1 truncate max-w-full">{displayName}</p>
+                    {!isSent && !isEcardMsg && msg.thread_type === 1 && startsRun && displayName && displayName !== msg.sender_id && (
+                      <p className="text-xs text-muted-foreground mb-0.5 px-1 truncate max-w-full">{displayName}</p>
                     )}
-                    <div className={`rounded-2xl text-sm break-words min-w-0 max-w-full overflow-hidden ${
-                      telegramPostMeta ? 'max-w-[520px] bg-gray-700 border border-sky-500/25 shadow-lg rounded-xl' :
-                      isMediaMsg || isGroupMedia || isFileMsg || isCardMsg || isEcardMsg || isStickerMsg || isBankCardMsg ? '' : isSent
-                        ? 'px-3 py-2 bg-blue-400/40 text-white border border-blue-200 dark:border-blue-600/50 rounded-br-sm'
-                        : 'px-3 py-2 bg-gray-700 text-gray-200 border border-gray-200 dark:border-gray-600 rounded-bl-sm'
+                    {/* Tin chuyển tiếp chỉ có ảnh / file / sticker (không khung chữ): nguồn đặt ngay trên bong bóng */}
+                    {telegramForward && isNoBubbleMsg && !telegramPostMeta && (
+                      <TelegramForwardHeader name={forwardName} avatarUrl={forwardAvatar} postAuthor={telegramForward.postAuthor} className="mb-0.5 px-1" />
+                    )}
+                    <div className={`rounded-lg text-sm break-words min-w-0 max-w-full overflow-hidden ${
+                      telegramPostMeta ? `max-w-[520px] ${isSent ? 'bg-bubble-out border border-bubble-out-border' : 'bg-bubble-in border border-bubble-in-border'} rounded-lg` :
+                      quoteShell ? (isSent ? 'bg-bubble-out text-foreground border border-bubble-out-border' : 'bg-bubble-in text-foreground border border-bubble-in-border') :
+                      isNoBubbleMsg ? '' : isSent
+                        ? 'px-3 py-2 bg-bubble-out text-foreground border border-bubble-out-border'
+                        : 'px-3 py-2 bg-bubble-in text-foreground border border-bubble-in-border'
                     } ${useEmployeeStore.getState().mode === 'employee' && (msg.send_status === 'pending' ? 'opacity-60' : msg.send_status === 'sending' ? 'opacity-80' : '')}`}>
                     {telegramPostMeta && (
-                      <div className="flex items-center justify-between gap-3 border-b border-sky-500/15 px-3 py-2 text-[11px] text-sky-300">
+                      <div className="flex items-center justify-between gap-3 border-b border-foreground/10 px-3 py-2 text-[11px] text-primary">
                         <span className="font-semibold uppercase tracking-wide">Bài đăng kênh</span>
-                        {telegramPostMeta.postAuthor && <span className="truncate text-gray-400">{telegramPostMeta.postAuthor}</span>}
+                        {telegramPostMeta.postAuthor && <span className="truncate text-muted-foreground">{telegramPostMeta.postAuthor}</span>}
                       </div>
                     )}
                     <div className={telegramPostMeta ? 'px-3 py-2' : undefined}>
+                    {/* Tin chữ / bài đăng kênh chuyển tiếp: nguồn ở đầu bong bóng, trên trích dẫn (như Telegram) */}
+                    {telegramForward && (!isNoBubbleMsg || telegramPostMeta) && (
+                      <TelegramForwardHeader name={forwardName} avatarUrl={forwardAvatar} postAuthor={telegramForward.postAuthor} className="mb-1" />
+                    )}
+                    <BubbleEmbedContext.Provider value={quoteShell}>
                     {/* Quote preview - supports both pre-built quote_data and reply_to_id fallback */}
                     {(msg.quote_data || (msg.reply_to_id && !(
                       msg.channel === 'telegram_user' && msg.topic_id != null &&
@@ -3019,7 +3465,7 @@ export default function ChatWindow() {
                         try { q = JSON.parse(msg.quote_data); } catch { q = {}; }
                       } else {
                         // Fallback: look up original message from msgs by reply_to_id
-                        const origFromMsgs = msgs.find(m => m.msg_id === msg.reply_to_id);
+                        const origFromMsgs = findMsgById(msg.reply_to_id);
                         q = {
                           msgId: msg.reply_to_id,
                           msg: origFromMsgs?.content || '',
@@ -3040,11 +3486,14 @@ export default function ChatWindow() {
                         let lookupContent = '';
                         // Content của sticker gốc (để QuotedStickerPreview tải ảnh)
                         let quotedStickerContent = '';
+                        // Nội dung tin gốc (lấy chú thích của ảnh / video được trích dẫn)
+                        let origContent = '';
                         const isQuotedSticker = q.msgType === 'chat.sticker';
 
                         if (q.msgId) {
-                          const origMsg = msgs.find(m => m.msg_id === String(q.msgId));
+                          const origMsg = findMsgById(String(q.msgId));
                           if (origMsg) {
+                            origContent = String(origMsg.content || '');
                             // Dùng msg_type thật từ tin nhắn gốc nếu quote_data đang fallback sai
                             if (origMsg.msg_type && origMsg.msg_type !== 'text') {
                               q.msgType = origMsg.msg_type;
@@ -3069,6 +3518,7 @@ export default function ChatWindow() {
                             : (q.attach ? JSON.stringify(q.attach) : (q.msg || ''));
                         }
                         const finalImgUrl = quotedImgUrl || lookupImgUrl;
+                        const quoteAuthor = resolveQuoteAuthor(q);
                         // Dùng lookupContent để parse quote nếu q.msg rỗng
                         const effectiveMsgForQuote = q.msg || lookupContent;
 
@@ -3104,32 +3554,39 @@ export default function ChatWindow() {
 
                         return (
                           <div
-                            className={`border-l-2 ${isSent ? 'border-blue-600 bg-blue-200/30' : 'border-gray-600 bg-gray-600/50'} rounded pl-2 pr-1 py-1 mb-1 text-xs cursor-pointer hover:opacity-100 overflow-hidden min-w-0 max-w-full`}
-                            onClick={() => q.msgId && handleScrollToMsg(String(q.msgId))}
+                            className={`border-l-2 ${(quoteShell || !isNoBubbleMsg) ? (isSent ? 'border-primary bg-primary/20' : 'border-border-strong bg-background') : (isSent ? 'border-primary bg-bubble-out' : 'border-border-strong bg-bubble-in')} rounded pl-2 pr-1 py-1 text-xs cursor-pointer hover:opacity-100 overflow-hidden min-w-0 ${quoteShell ? 'w-0 min-w-[calc(100%-1rem)] mx-2 mt-2 mb-1.5' : 'mb-1 max-w-full'}`}
+                            onClick={() => handleScrollToMsg(String(q.msgId || ''), String(q.cliMsgId || ''))}
                           >
-                            {q.fromD && <p className={`font-semibold truncate ${isSent ? 'text-white' : 'text-gray-200'}`}>{q.fromD}</p>}
-                            {isQuotedSticker ? (
-                              <QuotedStickerPreview content={quotedStickerContent} />
-                            ) : finalImgUrl ? (
-                              <img
-                                src={finalImgUrl}
-                                alt="ảnh trích dẫn"
-                                className="max-w-[120px] max-h-[80px] rounded object-cover mt-1"
-                                onError={(e) => {
-                                  const imgEl = e.target as HTMLImageElement;
-                                  imgEl.style.display = 'none';
-                                  // Hiện fallback text khi ảnh không tải được
-                                  const next = imgEl.nextElementSibling as HTMLElement | null;
-                                  if (next) next.style.display = '';
-                                }}
-                              />
-                            ) : null}
-                            <p
-                              className="line-clamp-2 break-words whitespace-pre-wrap mt-1 mb-1"
-                              style={(finalImgUrl || isQuotedSticker) ? { display: 'none' } : undefined}
-                            >
-                              {quoteDisplayText}
-                            </p>
+                            {(isQuotedSticker || finalImgUrl) ? (() => {
+                              // Như Telegram: ảnh thu nhỏ bên trái, tên + chú thích bên phải; ảnh không chú thích → nhãn "Hình ảnh"
+                              const quoteCaption = getQuotedMediaCaption(q, origContent || lookupContent);
+                              const quoteLabel = quoteCaption || quoteDisplayText.replace(/^\[(.*)\]$/, '$1');
+                              return (
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <div className="w-10 h-10 flex-shrink-0 overflow-hidden rounded bg-foreground/5 [&_img]:w-full [&_img]:h-full [&_img]:object-cover">
+                                    {isQuotedSticker ? (
+                                      <QuotedStickerPreview content={quotedStickerContent} />
+                                    ) : (
+                                      <img
+                                        src={finalImgUrl}
+                                        alt="ảnh trích dẫn"
+                                        className="w-full h-full object-cover"
+                                        onError={(e) => { const box = e.currentTarget.parentElement; if (box) box.style.display = 'none'; }}
+                                      />
+                                    )}
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    {quoteAuthor && <p className="font-semibold truncate text-foreground">{quoteAuthor}</p>}
+                                    <p className={`truncate ${quoteCaption ? 'text-foreground/80' : 'text-muted-foreground'}`}>{quoteLabel}</p>
+                                  </div>
+                                </div>
+                              );
+                            })() : (
+                              <>
+                                {quoteAuthor && <p className="font-semibold truncate text-foreground">{quoteAuthor}</p>}
+                                <p className="line-clamp-2 break-words whitespace-pre-wrap mt-1 mb-1">{quoteDisplayText}</p>
+                              </>
+                            )}
                           </div>
                         );
                       } catch { return null; }
@@ -3164,6 +3621,10 @@ export default function ChatWindow() {
                       isRtf={isRtf}
                       isBankCard={isBankCardMsg}
                       isLocation={isLocationMsg}
+                      isFbTemplate={isFbTemplateMsg}
+                      renderFbTemplate={() => <FacebookTemplateCard msg={msg} isSent={isSent} />}
+                      isZinstant={isZinstantMsg}
+                      renderZinstant={() => <ZaloOaCard msg={msg} isSent={isSent} />}
                       renderGroupMedia={() => <MediaGroupBubble msgs={groupMediaMsgs!} onView={openViewer} isSent={isSent} isSelecting={isSelecting} selectedMsgIds={selectedMsgIds}
                         allContacts={contactList} groupMembersList={groupMembers}
                         onMentionClick={(uid, e) => setUserProfilePopup({ userId: uid, x: e.clientX, y: e.clientY })}
@@ -3195,18 +3656,56 @@ export default function ChatWindow() {
                           videoCaption = typeof parsed === 'string' ? parsed : (parsed.title || parsed.text || parsed.caption || '');
                         } catch { videoCaption = ''; }
                         if (!videoCaption && msg.content && !msg.content.startsWith('{')) videoCaption = msg.content;
-                        const videoNode = <FBVideoThumb videoPath={videoPath} onPlay={() => openVideoPlayer(msg)} />;
-                        if (videoCaption) {
+                        // Zalo chưa có file local (vd tin đồng bộ từ điện thoại) → thumbnail + phát từ CDN,
+                        // hiện "Video đã hết hạn" khi Zalo không còn lưu file
+                        const videoNode = !videoPath && isZalo(msg.channel)
+                          ? <ZaloRemoteVideoThumb msg={msg} onPlay={() => openVideoPlayer(msg)} />
+                          // Telegram chưa có file: tải khi bấm (≤ 10 MB tự tải) rồi mở trình phát — trước đây bấm không làm gì
+                          : !videoPath && isTelegramUser(msg.channel)
+                            ? <TelegramVideoPending msg={msg} onPlay={(downloaded) => openVideoPlayer(downloaded)} />
+                            : (() => {
+                                // Telegram: khung theo tỉ lệ thật + ảnh bìa mờ trong lúc chụp khung hình đầu (khớp lúc chưa tải)
+                                const tgVideo = isTelegramUser(msg.channel) ? getTelegramVideoMedia(msg) : null;
+                                return (
+                                  <FBVideoThumb videoPath={videoPath} onPlay={() => openVideoPlayer(msg)} dimsMsg={msg}
+                                    width={tgVideo?.width || undefined} height={tgVideo?.height || undefined}
+                                    placeholderSrc={tgVideo?.thumb || undefined}
+                                    autoPlayInline={!!tgVideo && tgVideo.size > 0 && tgVideo.size <= TELEGRAM_INLINE_AUTOPLAY_MAX_BYTES}
+                                    duration={tgVideo?.duration || undefined} />
+                                );
+                              })();
+                        // Link preview có video (vd. fxTikTok): link ở trên, thẻ tên trang / tiêu đề / mô tả bọc video — như Telegram
+                        const videoWebpage = isTelegramUser(msg.channel) ? getTelegramWebpageMeta(msg) : null;
+                        // Chú thích: link / @tên bấm được (trước đây là chữ thô)
+                        const captionNode = videoCaption ? (
+                          <TextWithMentions text={videoCaption} channel={msg.channel} allContacts={contactList} groupMembersList={groupMembers}
+                            mentionRanges={getMentionRanges(msg.attachments)}
+                            highlight={searchHighlightQuery}
+                            onMentionClick={(uid, e) => setUserProfilePopup({ userId: uid, x: e.clientX, y: e.clientY })} />
+                        ) : null;
+                        // Bản ghi cũ (video link chưa có thẻ / thiếu tiêu đề): xin Telegram bù khi hiện ra, gom theo lô
+                        const previewRefresh = isTelegramUser(msg.channel) ? <TelegramPreviewRefresh msg={msg} /> : null;
+                        if (videoWebpage) {
+                          return (
+                            <div className="flex w-[19.5rem] max-w-full flex-col">
+                              {previewRefresh}
+                              {captionNode && <div className="pb-1.5 text-sm break-words">{captionNode}</div>}
+                              <TelegramLinkPreviewCard meta={videoWebpage}>{videoNode}</TelegramLinkPreviewCard>
+                            </div>
+                          );
+                        }
+                        if (captionNode) {
                           return (
                             <div className={`flex flex-col max-w-xs`}>
+                              {previewRefresh}
                               {videoNode}
-                              <div className={`px-3 py-2 text-sm break-words ${isSent ? 'bg-blue-400/40 text-white' : 'bg-gray-700 text-gray-200'}`}>
-                                {videoCaption}
+                              <div className="pt-1.5 text-sm break-words">
+                                {captionNode}
                               </div>
                             </div>
                           );
                         }
-                        return videoNode;
+                        return <>{previewRefresh}{videoNode}</>;
                       }}
                       renderVoice={() => <VoiceBubble msg={msg} isSent={isSent} />}
                       renderFile={() => <FileBubble msg={msg} isSent={isSent} />}
@@ -3234,18 +3733,27 @@ export default function ChatWindow() {
                               setContextMenu({ x: e.clientX, y: e.clientY, msg: stickerMsg, isSent, isGroupAdmin });
                             }}
                           />
-                        : <StickerBubble msg={msg} />
+                        : <StickerBubble msg={msg}
+                            onOpenSet={isTelegramUser(msg.channel) && /^\d+$/.test(String(msg.msg_id || '')) ? () => openStickerSetOfMessage(msg) : undefined} />
                       }
                       renderRtf={() => (
                         <RtfBubble msg={msg} allContacts={contactList} groupMembersList={groupMembers}
                           onMentionClick={(uid, e) => setUserProfilePopup({ userId: uid, x: e.clientX, y: e.clientY })} />
                       )}
-                      renderText={() => (
+                      renderText={() => isFbEmptyMsg ? <FacebookEmptyMessage msg={msg} /> : (
                         <>
                           <TextWithMentions text={content} channel={msg.channel} allContacts={contactList} groupMembersList={groupMembers}
                             mentionRanges={getMentionRanges(msg.attachments)}
                             highlight={searchHighlightQuery}
                             onMentionClick={(uid, e) => setUserProfilePopup({ userId: uid, x: e.clientX, y: e.clientY })} />
+                          {/* Link Telegram không có ảnh / video: thẻ tên trang, tiêu đề, mô tả như Telegram */}
+                          {msg.msg_type === 'telegram.webpage' && (() => {
+                            const webpage = getTelegramWebpageMeta(msg);
+                            return webpage ? (
+                              <TelegramLinkPreviewCard meta={webpage} className="mt-1.5"
+                                hideTitle={String(content || '').trim() === webpage.title} />
+                            ) : null;
+                          })()}
                           {msg.is_edited === 1 && (
                             <>
                               <span className="ml-1 text-[10px] opacity-60 select-none font-normal">
@@ -3281,7 +3789,7 @@ export default function ChatWindow() {
                                   {parsed.map((entry: any, i: number) => (
                                     <div
                                       key={i}
-                                      className={`px-3 py-1.5 rounded-lg text-xs opacity-60 ${isSent ? 'bg-blue-700/30 mr-8' : 'bg-gray-600/30 ml-8'}`}
+                                      className={`px-3 py-1.5 rounded-lg text-xs opacity-60 ${isSent ? 'bg-blue-700/30 mr-8' : 'bg-accent/30 ml-8'}`}
                                     >
                                       <div className="text-[10px] opacity-50 mb-0.5">
                                         {new Date(entry.editedAt).toLocaleString('vi-VN')}
@@ -3298,15 +3806,19 @@ export default function ChatWindow() {
                         </>
                       )}
                     />
+                    </BubbleEmbedContext.Provider>
                     </div>
+                    {!telegramPostMeta && !isNoBubbleMsg && (
+                      <BubbleTime timestamp={msg.timestamp} />
+                    )}
                     {telegramPostMeta && (
-                      <div className="flex items-center gap-4 border-t border-sky-500/15 px-3 py-2 text-[11px] text-gray-400">
+                      <div className="flex items-center gap-4 border-t border-foreground/10 px-3 py-2 text-[11px] text-muted-foreground">
                         {telegramPostMeta.views > 0 && <span>◉ {telegramPostMeta.views.toLocaleString('vi-VN')} lượt xem</span>}
                         {telegramPostMeta.forwards > 0 && <span>↗ {telegramPostMeta.forwards.toLocaleString('vi-VN')}</span>}
                         <button
                           type="button"
                           disabled={telegramPostMeta.comments <= 0}
-                          className={telegramPostMeta.comments > 0 ? 'font-medium text-sky-400 hover:text-sky-300' : 'cursor-default'}
+                          className={telegramPostMeta.comments > 0 ? 'font-medium text-primary hover:text-primary-hover' : 'cursor-default'}
                           onClick={(event) => {
                             event.stopPropagation();
                             if (!activeAccountId || !activeThreadId || telegramPostMeta.comments <= 0) return;
@@ -3321,12 +3833,15 @@ export default function ChatWindow() {
                         >
                           💬 {telegramPostMeta.comments.toLocaleString('vi-VN')} bình luận
                         </button>
+                        <span className="ml-auto text-subtle-foreground select-none">{formatBubbleTime(msg.timestamp)}</span>
                       </div>
                     )}
                   </div>
 
 
-                  {/* Single reaction button - position absolute at bottom corner (side matching bubble alignment) */}
+                  {/* Nút reaction ở góc dưới, phía TRONG khung chat (như các app lớn): tin của mình → góc trái, tin người
+                      khác → góc phải — gần giữa màn hình, dễ với tới; thanh chọn mọc lên từ nút, tin sát mép trên thì mọc
+                      xuống. Đang mở → z-30: chip reaction của các tin bên dưới (z-20, sau trong DOM) không đè lên thanh */}
                   {channelCap.supportsReaction && !isEcardMsg && !isGroupedStickerFirst && (() => {
                     const rFull = parseReactionsFull(msg.reactions, msg.channel);
                     const myEmoji = activeAccountId
@@ -3338,30 +3853,24 @@ export default function ChatWindow() {
                       : [];
                     return (
                       <div
-                        className={`absolute -bottom-2 z-20 transition-opacity duration-100${!hasReactions ? ' opacity-0 group-hover/msg:opacity-100' : ''}${isSent ? ' right-1.5' : ' left-1.5'}`}
-                        onMouseEnter={() => setReactionPickerMsgId(msg.msg_id)}
-                        onMouseLeave={() => setReactionPickerMsgId(null)}
+                        className={`absolute -bottom-4 ${reactionPickerMsgId === msg.msg_id ? 'z-30' : 'z-20'} transition-opacity duration-100${!hasReactions ? ' opacity-0 group-hover/msg:opacity-100' : ''}${isSent ? ' left-1.5' : ' right-1.5'}`}
+                        onMouseEnter={() => armReactionPicker(msg.msg_id, () => {
+                          if (msg.channel === 'telegram_user') telegramReactions.load();
+                        })}
+                        onMouseLeave={scheduleCloseReactionPicker}
                       >
-                        {/* Emoji picker - appears above on hover, always opens toward center */}
+                        {/* Thanh chọn reaction: hàng dọc trên / dưới nút tuỳ chỗ trống (như Telegram), cuộn được; bấm lại reaction của mình = gỡ */}
                         {reactionPickerMsgId === msg.msg_id && (
-                          <div className={`absolute bottom-full flex flex-col bg-gray-800 border border-gray-600 rounded-2xl shadow-2xl z-30 p-1.5${isSent ? ' right-0' : ' left-0'}`}>
-                            <div className="flex items-center gap-0.5">
-                              {(isTelegramCh(msg.channel)
-                                ? ['👍', '👎', '❤️', '🔥', '🥰', '👏', '😁', '🤔', '🤯', '😢', '🎉']
-                                : ['❤️', '😄', '😮', '😢', '😡', '👍']).map((e) => (
-                                <button key={e}
-                                  onClick={() => { handleReact(msg, e); setReactionPickerMsgId(null); }}
-                                  className={`text-xl p-1 rounded-lg hover:bg-gray-700 hover:scale-125 transition-all ${myEmoji === e ? 'bg-gray-700 ring-1 ring-blue-400' : ''}`}
-                                  title={e}>{e}</button>
-                              ))}
-                            </div>
-                            {myEmoji && (
-                              <button
-                                onClick={() => { handleCancelReaction(msg); setReactionPickerMsgId(null); }}
-                                className="mt-1.5 w-full text-xs py-1 px-2 rounded-full bg-gray-700 hover:bg-red-700 text-gray-300 hover:text-white transition-colors text-center"
-                              >✕ Huỷ reaction</button>
-                            )}
-                          </div>
+                          <ReactionHoverPicker
+                            emojis={getReactionChoices(msg.channel, telegramReactions.reactions).all}
+                            myEmoji={myEmoji}
+                            align={isSent ? 'left' : 'right'}
+                            onPick={(e) => {
+                              if (sameReaction(e, myEmoji)) handleCancelReaction(msg);
+                              else handleReact(msg, e);
+                              setReactionPickerMsgId(null);
+                            }}
+                          />
                         )}
                         {/* Button: reaction badge when reacted, 👍 when not */}
                         {hasReactions && isTelegramCh(msg.channel) ? (
@@ -3372,8 +3881,8 @@ export default function ChatWindow() {
                                 onClick={() => setReactionPopup({ msg, activeEmoji: emoji })}
                                 className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs shadow-sm transition-colors ${
                                   myEmoji === emoji
-                                    ? 'border-blue-600 bg-gray-700 text-gray-200 hover:bg-gray-600'
-                                    : 'border-gray-600 bg-gray-700 text-gray-200 hover:bg-gray-600'
+                                    ? 'border-blue-600 bg-muted text-foreground hover:bg-accent'
+                                    : 'border-input bg-muted text-foreground hover:bg-accent'
                                 }`}
                               >
                                 <span>{displayReactionEmoji(emoji)}</span>
@@ -3384,15 +3893,19 @@ export default function ChatWindow() {
                         ) : hasReactions ? (
                           <button
                             onClick={() => setReactionPopup({ msg, activeEmoji: 'all' })}
-                            className="flex items-center gap-0.5 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-full px-1.5 py-0.5 text-xs shadow-sm select-none transition-colors"
+                            className="flex items-center gap-0.5 bg-muted hover:bg-accent border border-input rounded-full px-1.5 py-0.5 text-xs shadow-sm select-none transition-colors"
                           >
                             {sortedEmojis.map(e => <span key={e}>{displayReactionEmoji(e)}</span>)}
-                            {totalReactions > 1 && <span className="text-gray-300 ml-0.5 text-[11px]">{totalReactions}</span>}
+                            {totalReactions > 1 && <span className="text-foreground/80 ml-0.5 text-[11px]">{totalReactions}</span>}
                           </button>
                         ) : (
                           <button
-                            className="w-6 h-6 bg-gray-800 hover:bg-gray-700 border border-gray-600 rounded-full flex items-center justify-center text-sm shadow-sm transition-colors"
-                            title="Thả cảm xúc"
+                            className="w-6 h-6 bg-card hover:bg-muted border border-input rounded-full flex items-center justify-center text-sm shadow-sm transition-colors"
+                            title="Thả cảm xúc (bấm hoặc giữ chuột)"
+                            onClick={() => {
+                              openReactionPicker(msg.msg_id);
+                              if (msg.channel === 'telegram_user') telegramReactions.load();
+                            }}
                           >👍</button>
                         )}
                       </div>
@@ -3405,7 +3918,7 @@ export default function ChatWindow() {
                     <div className="flex items-center gap-1 mt-0.5 px-1">
                       {msg.send_status === 'pending' && (
                         <span title="Đang chờ gửi">
-                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-gray-400 opacity-60">
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-muted-foreground opacity-60">
                             <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
                           </svg>
                         </span>
@@ -3419,7 +3932,7 @@ export default function ChatWindow() {
                       )}
                       {msg.send_status === 'sent' && (
                         <span title="Đã gửi">
-                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-gray-400">
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-muted-foreground">
                             <polyline points="20 6 9 17 4 12"/>
                           </svg>
                         </span>
@@ -3473,7 +3986,7 @@ export default function ChatWindow() {
                               className="text-[10px] text-red-400 hover:text-red-300 underline"
                             >Gửi lại</button>
                           ) : (
-                            <span className="text-[10px] text-gray-500 italic">Không thể gửi lại media</span>
+                            <span className="text-[10px] text-subtle-foreground italic">Không thể gửi lại media</span>
                           )}
                         </div>
                       )}
@@ -3517,10 +4030,10 @@ export default function ChatWindow() {
 
       {/* Selection action bar */}
       {isSelecting && (
-        <div className="flex items-center justify-between px-3 py-2 bg-gray-800 border-t border-blue-500/40 flex-shrink-0">
+        <div className="flex items-center justify-between px-3 py-2 bg-card border-t border-blue-500/40 flex-shrink-0">
           <div className="flex items-center gap-2">
             <button onClick={() => { setIsSelecting(false); setSelectedMsgIds(new Set()); }}
-              className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-gray-700 text-gray-400 hover:text-white transition-colors">
+              className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-muted text-muted-foreground hover:text-foreground transition-colors">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             </button>
             <span className="text-sm text-blue-400 font-medium">Đã chọn {selectedMsgIds.size} tin nhắn</span>
@@ -3537,15 +4050,26 @@ export default function ChatWindow() {
                 showNotification('Không có tin nhắn văn bản nào được chọn', 'info');
               }
             }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg hover:bg-gray-700 text-gray-300 hover:text-white text-xs transition-colors">
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg hover:bg-muted text-foreground/80 hover:text-foreground text-xs transition-colors">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
               Sao chép
             </button>
             {channelCap.supportsForward && (
               <button onClick={() => {
                 const selectedMsgs = msgs.filter(m => selectedMsgIds.has(m.msg_id));
-                if (selectedMsgs.length > 0) {
-                  setForwardMsgs(selectedMsgs);
+                // Cuộc gọi, bình chọn, tin hệ thống… không chuyển tiếp được → bỏ ra trước khi chọn người nhận
+                const forwardable = selectedMsgs.filter(m => !getForwardBlockReason(m));
+                const skipped = selectedMsgs.length - forwardable.length;
+                if (skipped > 0) {
+                  showNotification(
+                    forwardable.length > 0
+                      ? `Bỏ qua ${skipped} tin không chuyển tiếp được (cuộc gọi, bình chọn, tin hệ thống…)`
+                      : 'Các tin đã chọn không chuyển tiếp được (cuộc gọi, bình chọn, tin hệ thống…)',
+                    'info',
+                  );
+                }
+                if (forwardable.length > 0) {
+                  setForwardMsgs(forwardable);
                   setIsSelecting(false);
                   setSelectedMsgIds(new Set());
                 }
@@ -3563,13 +4087,12 @@ export default function ChatWindow() {
       {threadReady && activeAccountId && activeThreadId && typingNow > 0 && (() => {
         const prefix = `${activeAccountId}_${activeThreadId}_`;
         const nowTs = Date.now();
-        const typingEntries = Object.entries(typingUsers).filter(
+        const typingEntries = Object.entries(useChatStore.getState().typingUsers).filter(
           ([k, ts]) => k.startsWith(prefix) && nowTs - ts < 5000
         );
         if (!typingEntries.length) return null;
 
         const groupCache = useAppStore.getState().groupInfoCache?.[activeAccountId]?.[activeThreadId];
-        const contactList = contacts[activeAccountId] || [];
 
         const resolveName = (uid: string): string => {
           const c = contactList.find(x => x.contact_id === uid);
@@ -3600,17 +4123,17 @@ export default function ChatWindow() {
             {firstAvatar ? (
               <img src={firstAvatar} className="w-4 h-4 rounded-full object-cover flex-shrink-0 opacity-80" alt="" />
             ) : (
-              <div className="w-4 h-4 rounded-full bg-gray-600 flex items-center justify-center text-white flex-shrink-0 opacity-80" style={{ fontSize: '0.5625rem' }}>
+              <div className="w-4 h-4 rounded-full bg-accent flex items-center justify-center text-foreground flex-shrink-0 opacity-80" style={{ fontSize: '0.5625rem' }}>
                 {firstInitial}
               </div>
             )}
-            <div className="flex items-center gap-1.5 bg-gray-800/90 backdrop-blur-sm border border-gray-700/60 rounded-full px-2.5 py-1 shadow-md">
+            <div className="flex items-center gap-1.5 bg-card backdrop-blur-sm border border-border/60 rounded-full px-2.5 py-1 shadow-md">
               <div className="flex items-center gap-0.5">
                 <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
                 <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
                 <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
               </div>
-              <span className="text-[11px] text-gray-400 italic leading-none">{nameText}</span>
+              <span className="text-[11px] text-muted-foreground italic leading-none">{nameText}</span>
             </div>
           </div>
         );
@@ -3618,13 +4141,12 @@ export default function ChatWindow() {
 
       {/* Seen indicator for sent messages */}
       {threadReady && activeAccountId && activeThreadId && (() => {
-        const key = `${activeAccountId}_${activeThreadId}`;
-        const seen = seenInfo[key];
+        const seen = threadSeen;
         if (!seen || !seen.seenUids?.length) return null;
 
         // Lấy thông tin người đã seen
         const groupCache = useAppStore.getState().groupInfoCache?.[activeAccountId]?.[activeThreadId];
-        const allContacts = contacts[activeAccountId] || [];
+        const allContacts = contactList;
 
         interface SeenUser { userId: string; name: string; avatar: string; }
         const seenUsers: SeenUser[] = seen.seenUids.map((uid: string) => {
@@ -3643,10 +4165,10 @@ export default function ChatWindow() {
 
         return (
           <div className="px-4 pb-2 flex justify-end items-center gap-1.5">
-            <span className="text-[11px] text-gray-400 mr-0.5">Đã xem</span>
+            <span className="text-[11px] text-muted-foreground mr-0.5">Đã xem</span>
             <div className="flex items-center -space-x-1">
               {shown.map((u) => (
-                <div key={u.userId} title={u.name} className="w-4 h-4 rounded-full ring-1 ring-gray-800 overflow-hidden flex-shrink-0">
+                <div key={u.userId} title={u.name} className="w-4 h-4 rounded-full ring-1 ring-border overflow-hidden flex-shrink-0">
                   {u.avatar ? (
                     <img src={u.avatar} alt={u.name} className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                   ) : (
@@ -3657,7 +4179,7 @@ export default function ChatWindow() {
                 </div>
               ))}
               {extra > 0 && (
-                <div className="w-4 h-4 rounded-full ring-1 ring-gray-800 bg-gray-600 flex items-center justify-center text-white" style={{ fontSize: '0.4375rem' }}>
+                <div className="w-4 h-4 rounded-full ring-1 ring-border bg-accent flex items-center justify-center text-foreground" style={{ fontSize: '0.4375rem' }}>
                   +{extra}
                 </div>
               )}
@@ -3667,14 +4189,12 @@ export default function ChatWindow() {
       })()}
 
 
-      {viewerState && (
-        <MediaViewer
-          images={viewerState.images}
-          initialIndex={viewerState.index}
-          zaloId={activeAccountId || undefined}
-          onClose={() => setViewerState(null)}
-        />
-      )}
+      <MediaGalleryViewer
+        ref={mediaGalleryRef}
+        accountId={activeAccountId}
+        threadId={activeThreadId}
+        buildEntry={buildImageEntry}
+      />
 
       {/* Video player modal */}
       {videoPlayerState && (
@@ -3696,23 +4216,50 @@ export default function ChatWindow() {
           x={contextMenu.x}
           y={contextMenu.y}
           msg={contextMenu.msg}
+          mediaMsg={contextMenu.mediaMsg}
           isSent={contextMenu.isSent}
           isGroupAdmin={contextMenu.isGroupAdmin}
+          recalled={contextMenu.recalled}
           channelCap={channelCap}
           onClose={() => setContextMenu(null)}
           onReply={(m) => setReplyTo(m)}
-          onForward={(m) => { setForwardMsgs([m]); }}
-          onSelectMessages={(m) => { setIsSelecting(true); setSelectedMsgIds(new Set([m.msg_id])); }}
+          onForward={handleForward}
+          onSelectMessages={(m) => { setIsSelecting(true); setSelectedMsgIds(new Set((groupedFirstMsgs[m.msg_id] || [m]).map((x: any) => x.msg_id))); }}
           onUndo={handleUndo}
           onDelete={handleDelete}
           onDeleteFromDb={handleDeleteFromDb}
           onReact={handleReact}
+          onCancelReact={handleCancelReaction}
+          reactionChoices={getReactionChoices(contextMenu.msg?.channel, telegramReactions.reactions)}
+          myReaction={(() => {
+            if (!activeAccountId || !contextMenu.msg) return null;
+            const full = parseReactionsFull(contextMenu.msg.reactions, contextMenu.msg.channel);
+            return Object.entries(full.emoji || {}).find(([, data]) => (data as any).users?.[activeAccountId] > 0)?.[0] || null;
+          })()}
           onPin={handlePin}
           onEdit={(m) => {
             setEditingMsg(m);
             setContextMenu(null);
           }}
+          isStarred={contextTargetStarred}
+          onToggleStar={handleToggleStar}
+          onSaveToMyDocuments={(activeContact?.channel || CHANNEL.ZALO) === CHANNEL.ZALO && channelCap.supportsForward ? handleSaveToMyDocuments : undefined}
           showNotification={showNotification}
+          readReceipts={activeAccountId && canQueryTelegramReadReceipts(contextMenu.msg, {
+            isSent: contextMenu.isSent,
+            isChannelPost: !!getTelegramPostMeta(contextMenu.msg),
+            recalled: contextMenu.recalled,
+          }) ? {
+            accountId: activeAccountId,
+            // Tên / avatar người xem: liên hệ của tài khoản → thành viên nhóm đang mở (main có tên dự phòng)
+            resolvePerson: (userId: string) => {
+              const contact = getContact(userId) as any;
+              const member = getGroupMember(userId) as any;
+              const name = String(contact?.alias || contact?.display_name || member?.displayName || '');
+              const avatar = toLocalMediaUrl(contact?.avatar_url || member?.avatar || '');
+              return name && name !== userId ? { name, avatar } : (avatar ? { name: '', avatar } : null);
+            },
+          } : undefined}
         />
       )}
 
@@ -3723,71 +4270,7 @@ export default function ChatWindow() {
           onClose={() => setForwardMsgs(null)}
           onForward={(messages, targets, composeText) => {
             setForwardMsgs(null);
-            // Chạy lần lượt ở background, không block UI
-            (async () => {
-              const total = messages.length * targets.length;
-              let counter = 0;
-              let failCount = 0;
-              let firstFailure = '';
-              const companionText = composeText.trim();
-              for (const target of targets) {
-                let forwardedAny = false;
-                // Get auth + channel from target account once per recipient.
-                const targetAccount = allAccounts.find(a => a.zalo_id === target.accountId);
-                if (!targetAccount) {
-                  failCount += messages.length;
-                  firstFailure ||= 'Không tìm thấy tài khoản gửi';
-                  continue;
-                }
-                const targetChannel = targetAccount.channel || CHANNEL.ZALO;
-                const targetAuth = isNonZalo(targetChannel)
-                  ? { cookies: '', imei: '', userAgent: '' }
-                  : { cookies: targetAccount.cookies, imei: targetAccount.imei, userAgent: targetAccount.user_agent };
-
-                for (const msg of messages) {
-                  counter++;
-                  try {
-                    await sendOneForward(
-                      targetAuth,
-                      msg,
-                      { threadId: target.threadId, threadType: target.threadType },
-                      targetChannel,
-                      target.accountId,
-                      activeAccountId || undefined,
-                    );
-                    forwardedAny = true;
-                  } catch (e: any) {
-                    failCount++;
-                    firstFailure ||= e?.message || 'Không rõ lỗi';
-                    console.warn(`[Forward] Failed msg=${msg.msg_id} target=${target.threadId}:`, e.message);
-                  }
-                  if (total > 1) {
-                    showNotification(`Đang chuyển tiếp ${counter}/${total}...`, 'info');
-                  }
-                }
-
-                // Nội dung người dùng soạn trong popup luôn là một tin mới, sau
-                // toàn bộ các tin được forward tới người nhận này. Nó không được
-                // phép thay thế text/caption của tin nguồn.
-                if (forwardedAny && companionText) {
-                  try {
-                    await sendForwardText(targetAuth, targetChannel, target.accountId, {
-                      threadId: target.threadId,
-                      threadType: target.threadType,
-                    }, companionText);
-                  } catch (e: any) {
-                    failCount++;
-                    firstFailure ||= e?.message || 'Không rõ lỗi';
-                    console.warn(`[Forward] Failed companion target=${target.threadId}:`, e.message);
-                  }
-                }
-              }
-              if (failCount === 0) {
-                showNotification('Đã chuyển tiếp xong', 'success');
-              } else {
-                showNotification(`Đã chuyển tiếp xong (${failCount} lỗi): ${firstFailure}`, 'error');
-              }
-            })();
+            runForward(messages, targets, composeText);
           }}
         />
       )}
@@ -3837,9 +4320,9 @@ export default function ChatWindow() {
           className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
           onClick={(e) => { if (e.target === e.currentTarget) setManageGroupOpen(false); }}
         >
-          <div className="bg-gray-800 border border-gray-700 rounded-2xl shadow-2xl w-[380px] max-h-[80vh] flex flex-col overflow-hidden">
+          <div className="bg-card border border-border rounded-2xl shadow-2xl w-[380px] max-h-[80vh] flex flex-col overflow-hidden">
             <ManagePanel
-              groupInfo={(groupInfoCache[activeAccountId] || {})[activeThreadId] || null}
+              groupInfo={threadGroupInfo || null}
               groupId={activeThreadId}
               onBack={() => setManageGroupOpen(false)}
               myAccountId={activeAccountId}
@@ -3894,6 +4377,9 @@ export default function ChatWindow() {
           onClose={() => setWebviewModal(null)}
         />
       )}
+
+      {/* Popup bộ sticker Telegram (bấm sticker trong chat / bảng sticker của ô nhập) */}
+      <TelegramStickerSetHost />
     </div>
   );
 }
@@ -3907,25 +4393,26 @@ export default function ChatWindow() {
 
 type ForwardTarget = { threadId: string; threadType: number };
 
-function getForwardLocalPath(msg: any): string {
+/**
+ * File local đã tải của tin, đúng key theo loại (video có cả `thumb` — không được lấy nhầm ảnh bìa làm video).
+ * Bỏ qua file `.jxl` cũ (Chromium / Zalo không dùng được).
+ */
+function getForwardLocalPath(msg: any, kind?: ForwardKind): string {
   const resolved = getLocalMediaPath(msg);
   if (resolved) return resolved;
   try {
     const raw = typeof msg.local_paths === 'string' ? JSON.parse(msg.local_paths || '{}') : (msg.local_paths || {});
-    if (raw && typeof raw === 'object') {
-      return raw.file || raw.video || raw.voice || raw.main || raw.hd
-        || Object.values(raw).find(v => typeof v === 'string' && v) as string || '';
-    }
+    if (!raw || typeof raw !== 'object') return '';
+    const pick = (...keys: string[]): string =>
+      keys.map(key => raw[key]).find(value => typeof value === 'string' && value && !/\.jxl$/i.test(value)) || '';
+    if (kind === 'video') return pick('file', 'video');
+    if (kind === 'voice') return pick('file', 'voice');
+    if (kind === 'image' || kind === 'gif') return pick('main', 'hd', 'file');
+    if (kind === 'file') return pick('file', 'main');
+    return pick('file', 'video', 'voice', 'main', 'hd')
+      || (Object.values(raw).find(value => typeof value === 'string' && value) as string) || '';
   } catch {}
   return '';
-}
-
-/** Không tạo placeholder như "[Tin nhắn]" khi chuyển tiếp media không có caption. */
-function getForwardText(msg: any): string {
-  const content = msg?.content;
-  if (!content || content === 'null') return '';
-  const text = extractMsgText(msg).trim();
-  return text === '[Tin nhắn]' ? '' : text;
 }
 
 function ensureForwardSuccess(result: { success?: boolean; error?: string } | undefined, fallback: string): void {
@@ -3962,44 +4449,306 @@ async function sendForwardText(
   ensureForwardSuccess(result, 'Không gửi được tin nhắn Zalo');
 }
 
-/** Gửi một tin nguồn. Caption nguồn được gửi thành một tin độc lập khi phải resend media. */
+/** Đích Zalo (mặc định khi không rõ kênh) */
+const isZaloForwardTarget = (channel?: string) => !isFacebook(channel) && !isTelegramCh(channel);
+
+const FORWARD_DOWNLOAD_KINDS: Partial<Record<ForwardKind, 'image' | 'gif' | 'file' | 'voice' | 'video'>> = {
+  image: 'image', gif: 'gif', file: 'file', voice: 'voice', video: 'video',
+};
+
+/**
+ * File local để gửi lại media. Chưa tải (tin đồng bộ từ điện thoại, tin cũ…) → main process tải về theo link CDN
+ * trong content (chỉ tin Zalo), cập nhật local_paths để bubble hiện "đã có trên máy".
+ */
+async function ensureForwardLocalPath(msg: any, kind: ForwardKind): Promise<string> {
+  const existing = getForwardLocalPath(msg, kind);
+  if (existing) return existing;
+  const downloadKind = FORWARD_DOWNLOAD_KINDS[kind];
+  if (!downloadKind || !isZalo(msg.channel) || !msg.owner_zalo_id || !msg.msg_id) return '';
+  const res = await ipc.file?.downloadMessageMedia?.({
+    zaloId: String(msg.owner_zalo_id),
+    msgId: String(msg.msg_id),
+    threadId: msg.thread_id ? String(msg.thread_id) : undefined,
+    kind: downloadKind,
+  }).catch(() => null);
+  if (!res?.success || !res.localPath) {
+    if (res?.error) console.warn(`[Forward] Không tải được ${downloadKind} của tin ${msg.msg_id}:`, res.error);
+    return '';
+  }
+  if (res.localPaths && msg.thread_id) {
+    useChatStore.getState().updateMessageLocalPath(String(msg.owner_zalo_id), String(msg.thread_id), String(msg.msg_id), res.localPaths);
+  }
+  return res.localPath;
+}
+
+/**
+ * Gom các tin cùng album (liền nhau trong danh sách chuyển tiếp) thành 1 nhóm, theo thứ tự ảnh trong album.
+ * `albums`: msg_id ảnh đầu → toàn bộ tin của album (groupedFirstMsgs).
+ */
+function groupForwardAlbums(messages: any[], albums: Record<string, any[]>): any[][] {
+  const albumOf = new Map<string, any[]>();
+  for (const album of Object.values(albums)) {
+    for (const m of album) albumOf.set(m.msg_id, album);
+  }
+  const units: any[][] = [];
+  for (const m of messages) {
+    const album = albumOf.get(m.msg_id);
+    const last = units[units.length - 1];
+    if (album && last && albumOf.get(last[0].msg_id) === album) last.push(m);
+    else units.push([m]);
+  }
+  return units.map((unit) => {
+    const album = albumOf.get(unit[0].msg_id);
+    if (!album || unit.length < 2) return unit;
+    const order = new Map(album.map((m, i) => [m.msg_id, i]));
+    return [...unit].sort((a, b) => (order.get(a.msg_id) ?? 0) - (order.get(b.msg_id) ?? 0));
+  });
+}
+
+const FORWARD_ALBUM_FILE_RE = /\.(jpe?g|png|webp)$/i;
+/** Lỗi ZaloService.sendImages khi kiểm tra file, trước khi upload (giữ khớp câu chữ bên đó). */
+const FORWARD_ALBUM_PRECHECK_ERROR_RE = /Không tìm thấy một trong các tệp ảnh|không phải ảnh JPG, PNG hoặc WebP|Không đọc được kích thước ảnh/;
+
+/**
+ * File local của album nếu gửi gộp được: đích là Zalo, mọi tin là ảnh và có (hoặc tải về được) file JPG/PNG/WebP
+ * (định dạng sendImages chấp nhận). Ngược lại null → gửi từng tin.
+ */
+async function prepareForwardAlbum(unit: any[], channel?: string): Promise<string[] | null> {
+  if (unit.length < 2 || !isZaloForwardTarget(channel)) return null;
+  if (!unit.every(m => getForwardPlan(m).kind === 'image')) return null;
+  const paths: string[] = [];
+  for (const m of unit) {
+    const filePath = await ensureForwardLocalPath(m, 'image');
+    if (!FORWARD_ALBUM_FILE_RE.test(filePath)) return null;
+    paths.push(filePath);
+  }
+  return paths;
+}
+
+/** Gửi album bằng 1 lần sendImages (zca-js gán groupLayoutId → người nhận thấy album), caption gửi sau như sendOneForward. */
+async function sendForwardAlbum(
+  auth: any, unit: any[], filePaths: string[], target: ForwardTarget,
+  channel?: string, accountId?: string,
+): Promise<void> {
+  const result = await ipc.zalo?.sendImages({ auth, filePaths, threadId: target.threadId, type: target.threadType });
+  ensureForwardSuccess(result, 'Không gửi được album ảnh Zalo');
+  for (const msg of unit) {
+    const caption = getForwardCaption(msg, 'image');
+    if (caption) await sendForwardText(auth, channel, accountId, target, caption);
+  }
+}
+
+function getForwardVideoThumbPath(msg: any): string {
+  try {
+    const raw = typeof msg.local_paths === 'string' ? JSON.parse(msg.local_paths || '{}') : (msg.local_paths || {});
+    return typeof raw?.thumb === 'string' ? raw.thumb : '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Video sang Zalo phải gửi bằng sendVideo — sendFile ra tin file .mp4, không xem được ngay.
+ * Video Zalo còn link CDN → dùng lại link + ảnh bìa gốc, không upload lại (sendVideo của zca-js chính là API
+ * "forward" msgType 5, cách Zalo chuyển tiếp video). Link hết hạn / gửi lỗi / video kênh khác → upload file đã tải về.
+ * Trả false nếu không có link lẫn file (để thử native forward).
+ */
+async function sendZaloVideoForward(auth: any, msg: any, localPath: string, target: ForwardTarget): Promise<boolean> {
+  const info = getZaloVideoInfo(msg);
+  if (info) {
+    let expired = !!msg.media_expired;
+    if (!expired && msg.owner_zalo_id && msg.msg_id) {
+      const check = await ipc.file?.checkMediaExpired({
+        zaloId: String(msg.owner_zalo_id), msgId: String(msg.msg_id), urls: [info.videoUrl],
+      }).catch(() => null);
+      expired = !!check?.expired;
+    }
+    if (!expired) {
+      const result = await ipc.zalo?.sendVideo({
+        auth,
+        options: { videoUrl: info.videoUrl, thumbnailUrl: info.thumbUrl || info.videoUrl, duration: info.duration, width: info.width, height: info.height },
+        threadId: target.threadId,
+        type: target.threadType,
+      });
+      if (result?.success) return true;
+      // sendVideo lỗi = chưa gửi gì (lỗi ở bước HEAD link hoặc ở request forward duy nhất) → upload file nếu có
+      if (!localPath) ensureForwardSuccess(result, 'Không gửi được video Zalo');
+      console.warn('[Forward] Gửi video bằng link CDN lỗi → upload file đã tải về:', result?.error);
+    } else if (!localPath) {
+      // Native forward lúc này chỉ ra video không phát được ở người nhận
+      throw new Error('Video đã hết hạn trên Zalo và chưa tải về máy');
+    }
+  }
+  if (!localPath) return false;
+
+  const meta = await ipc.file?.getVideoMeta?.({ filePath: localPath }).catch(() => null);
+  const thumbPath: string = meta?.thumbPath || getForwardVideoThumbPath(msg);
+  let thumbUrl = '';
+  if (thumbPath) {
+    const uploadRes = await ipc.zalo?.uploadVideoThumb?.({ auth, thumbPath, threadId: target.threadId, type: target.threadType }).catch(() => null);
+    const resp = uploadRes?.response;
+    thumbUrl = resp?.normalUrl || resp?.hdUrl || resp?.url || resp?.thumbUrl || resp?.fileUrl || resp?.href || '';
+  }
+  const uploadVideoRes = await ipc.zalo?.uploadVideoFile?.({ auth, videoPath: localPath, threadId: target.threadId, type: target.threadType });
+  const videoUrl: string = uploadVideoRes?.response?.fileUrl || '';
+  if (!videoUrl) throw new Error(uploadVideoRes?.error || 'Tải video lên Zalo thất bại');
+  const result = await ipc.zalo?.sendVideo({
+    auth,
+    options: {
+      videoUrl,
+      thumbnailUrl: thumbUrl || videoUrl,
+      duration: meta?.duration ? meta.duration * 1000 : info?.duration,
+      width: meta?.width || info?.width,
+      height: meta?.height || info?.height,
+    },
+    threadId: target.threadId,
+    type: target.threadType,
+  });
+  ensureForwardSuccess(result, 'Không gửi được video Zalo');
+  return true;
+}
+
+/**
+ * Tin thoại sang Zalo: sendVoice (sendFile ra tin file .m4a). Dùng lại link m4a gốc như video (sendVoice của zca-js
+ * là API "forward" msgType 3); link hết hạn / gửi lỗi → tải file lên lại. Trả false nếu không có link lẫn file.
+ */
+async function sendZaloVoiceForward(auth: any, msg: any, target: ForwardTarget): Promise<boolean> {
+  const voiceUrl = isZalo(msg.channel) ? getZaloVoiceUrl(msg) : '';
+  if (voiceUrl && !msg.media_expired) {
+    const check = msg.owner_zalo_id && msg.msg_id
+      ? await ipc.file?.checkMediaExpired({ zaloId: String(msg.owner_zalo_id), msgId: String(msg.msg_id), urls: [voiceUrl] }).catch(() => null)
+      : null;
+    if (!check?.expired) {
+      const result = await ipc.zalo?.sendVoice({ auth, options: { voiceUrl }, threadId: target.threadId, type: target.threadType });
+      if (result?.success) return true;
+      // sendVoice lỗi = chưa gửi gì (lỗi ở bước HEAD link hoặc request forward duy nhất) → tải file lên lại
+      console.warn('[Forward] Gửi tin thoại bằng link gốc lỗi → tải file lên lại:', result?.error);
+    }
+  }
+  const localPath = await ensureForwardLocalPath(msg, 'voice');
+  if (!localPath) return false;
+  const uploadRes = await ipc.zalo?.uploadVoiceFile?.({ auth, voicePath: localPath, threadId: target.threadId, type: target.threadType });
+  const resp = uploadRes?.response;
+  const uploadedUrl: string = resp?.fileUrl || resp?.normalUrl || resp?.hdUrl || resp?.url || resp?.href || '';
+  if (!uploadedUrl) throw new Error(uploadRes?.error || 'Tải tin thoại lên Zalo thất bại');
+  const result = await ipc.zalo?.sendVoice({ auth, options: { voiceUrl: uploadedUrl }, threadId: target.threadId, type: target.threadType });
+  ensureForwardSuccess(result, 'Không gửi được tin thoại Zalo');
+  return true;
+}
+
+/**
+ * Gửi lại tin dạng chữ / thẻ của Zalo theo đúng loại (xem forwardSupport.ts). Trả false nếu loại tin cần gửi
+ * dạng media (xử lý ở sendOneForward).
+ */
+async function sendZaloStructuredForward(
+  auth: any, msg: any, kind: ForwardKind, target: ForwardTarget,
+  channel?: string, accountId?: string,
+): Promise<boolean> {
+  const toZalo = isZaloForwardTarget(channel);
+  switch (kind) {
+    case 'rtf': {
+      // Chữ định dạng: giữ in đậm / nghiêng / màu / cỡ chữ / danh sách
+      const { text, styles } = getZaloRichText(msg);
+      if (!text) throw new Error('Tin nhắn không có nội dung để chuyển tiếp');
+      if (toZalo && styles.length > 0) {
+        const result = await ipc.zalo?.sendMessage({ auth, message: text, styles, threadId: target.threadId, type: target.threadType });
+        ensureForwardSuccess(result, 'Không gửi được tin nhắn Zalo');
+      } else {
+        await sendForwardText(auth, channel, accountId, target, text);
+      }
+      return true;
+    }
+    case 'link': {
+      const { url, text } = getZaloLinkInfo(msg);
+      const fullText = !text ? url : (url && !text.includes(url) ? `${text}\n${url}` : text);
+      if (!fullText) throw new Error('Tin nhắn link không có nội dung');
+      if (toZalo && url) {
+        // sendLink: 1 tin gồm chữ (chứa link) + khung xem trước, giống tin gốc
+        const result = await ipc.zalo?.sendLink({ auth, url, message: text || undefined, threadId: target.threadId, type: target.threadType });
+        if (result?.success) return true;
+        // Không đọc được xem trước của link (parseLink lỗi, chưa gửi gì) → gửi dạng chữ, link vẫn bấm được
+        console.warn('[Forward] sendLink lỗi → gửi dạng chữ:', result?.error);
+      }
+      await sendForwardText(auth, channel, accountId, target, fullText);
+      return true;
+    }
+    case 'card': {
+      const { userId, phone, name } = getZaloCardInfo(msg);
+      if (toZalo && userId) {
+        const result = await ipc.zalo?.sendCard({
+          auth, options: { userId, ...(phone ? { phoneNumber: phone } : {}) }, threadId: target.threadId, type: target.threadType,
+        });
+        ensureForwardSuccess(result, 'Không gửi được danh thiếp Zalo');
+        return true;
+      }
+      // Kênh khác không có danh thiếp Zalo → gửi tên + số điện thoại
+      const cardText = [name && `👤 ${name}`, phone].filter(Boolean).join('\n');
+      if (!cardText) throw new Error('Không đọc được danh thiếp');
+      await sendForwardText(auth, channel, accountId, target, cardText);
+      return true;
+    }
+    case 'sticker': {
+      if (!toZalo) throw new Error('Sticker Zalo chỉ chuyển tiếp được sang Zalo');
+      const stickerId = getZaloStickerId(msg);
+      if (!stickerId) throw new Error('Không đọc được sticker');
+      const result = await ipc.zalo?.sendSticker({ auth, stickerId, threadId: target.threadId, type: target.threadType });
+      ensureForwardSuccess(result, 'Không gửi được sticker Zalo');
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
+/**
+ * Gửi một tin nguồn theo đúng loại. Caption nguồn được gửi thành một tin độc lập khi phải resend media.
+ * Không dùng `forwardMessage` của zca-js cho media: API đó chỉ chuyển tiếp văn bản (message rỗng → lỗi).
+ */
 async function sendOneForward(
   auth: any, msg: any, target: ForwardTarget,
   channel?: string, accountId?: string, sourceAccountId?: string,
 ): Promise<void> {
-  const msgType = msg.msg_type || '';
-  const content = msg.content || '';
-  const isVideo = isVideoType(msgType);
-  const isVoice = isVoiceType(msgType);
-  const isSticker = isStickerType(msgType);
-  const isAnimation = msgType === 'animation' || msgType === 'gif' || msgType === 'animated_image';
-  const isFile = !isVideo && !isVoice && !isSticker && isFileType(msgType, content, msg.attachments);
-  const isImage = !isVideo && !isVoice && !isSticker && !isAnimation && !isFile && isMediaType(msgType, content, msg.attachments);
-  const isMedia = isFile || isVideo || isVoice || isSticker || isAnimation || isImage;
-  const localPath = isMedia ? getForwardLocalPath(msg) : '';
-  const sourceText = getForwardText(msg);
-  const canUseNativeForward = !sourceAccountId || sourceAccountId === accountId;
+  const plan = getForwardPlan(msg);
+  const { kind } = plan;
+  if (kind === 'unsupported') throw new Error(`${plan.reason || 'Loại tin nhắn này'} không chuyển tiếp được`);
+  const caption = getForwardCaption(msg, kind);
+  const toZalo = isZaloForwardTarget(channel);
 
-  if (!isMedia) {
-    if (!sourceText) throw new Error('Loại tin nhắn này chưa có nội dung để chuyển tiếp');
-    await sendForwardText(auth, channel, accountId, target, sourceText);
+  if (kind === 'text' || kind === 'location') {
+    if (!caption) throw new Error('Loại tin nhắn này chưa có nội dung để chuyển tiếp');
+    await sendForwardText(auth, channel, accountId, target, caption);
     return;
   }
 
-  // Khi media đã tải về, gửi lại tệp để vẫn chuyển được giữa các tài khoản/kênh.
+  if (isZalo(msg.channel) && await sendZaloStructuredForward(auth, msg, kind, target, channel, accountId)) return;
+
+  // Video / tin thoại sang Zalo: tin xem / nghe được ngay, không phải tin file
+  if (kind === 'video' && toZalo && await sendZaloVideoForward(auth, msg, getForwardLocalPath(msg, 'video'), target)) {
+    if (caption) await sendForwardText(auth, channel, accountId, target, caption);
+    return;
+  }
+  if (kind === 'voice' && toZalo && await sendZaloVoiceForward(auth, msg, target)) return;
+
+  // Media còn lại: gửi lại từ file local (tải về nếu chưa có) để chuyển được giữa các tài khoản / kênh.
+  const localPath = await ensureForwardLocalPath(msg, kind);
   if (localPath) {
-    if (isFacebook(channel) || isTelegramCh(channel)) {
+    if (!toZalo) {
       if (!accountId) throw new Error('Không tìm thấy tài khoản gửi');
+      const fileType = kind === 'image' ? 'image'
+        : kind === 'video' ? (msg.msg_type === 'video_note' ? 'video_note' : 'video')
+          : kind === 'voice' ? 'voice'
+            : kind === 'sticker' ? 'sticker'
+              : kind === 'animation' || kind === 'gif' ? 'animation'
+                : 'file';
       const result = await getAdapter(channel as Channel).sendAttachment({
-        accountId,
-        threadId: target.threadId,
-        filePath: localPath,
-        threadType: target.threadType,
-        fileType: isImage ? 'image' : isVideo ? (msgType === 'video_note' ? 'video_note' : 'video') : isVoice ? 'voice' : isSticker ? 'sticker' : isAnimation ? 'animation' : 'file',
+        accountId, threadId: target.threadId, filePath: localPath, threadType: target.threadType, fileType,
       });
       ensureForwardSuccess(result, 'Không gửi được tệp đính kèm');
     } else {
-      const result = isImage
+      // Ảnh / GIF (zca-js gửi .gif thành tin GIF) / sticker kênh khác dạng ảnh → sendImage; còn lại → file
+      const asImage = (kind === 'image' || kind === 'gif' || kind === 'animation' || kind === 'sticker')
+        && /\.(jpe?g|png|webp|gif)$/i.test(localPath);
+      const result = asImage
         ? await ipc.zalo?.sendImage({ auth, filePath: localPath, threadId: target.threadId, type: target.threadType, message: '' })
         : await ipc.zalo?.sendFile({ auth, filePath: localPath, threadId: target.threadId, type: target.threadType });
       ensureForwardSuccess(result, 'Không gửi được tệp đính kèm Zalo');
@@ -4007,25 +4756,20 @@ async function sendOneForward(
 
     // Không nhét caption vào attachment: gửi riêng để giữ đúng thứ tự/behaviour
     // chung giữa các kênh, và không làm mất text khi chuyển nhiều message.
-    if (sourceText) await sendForwardText(auth, channel, accountId, target, sourceText);
+    if (caption) await sendForwardText(auth, channel, accountId, target, caption);
     return;
   }
 
-  // Không có file local thì chỉ native forward trên đúng tài khoản nguồn.
-  if (!canUseNativeForward) {
-    throw new Error('Tệp chưa được tải về; không thể chuyển tiếp sang tài khoản khác');
-  }
-  if (!msg.msg_id) throw new Error('Tin nhắn không có ID để chuyển tiếp');
-
-  if (isFacebook(channel) && accountId) {
-    const result = await getAdapter(channel as Channel).forwardMessage({
-      accountId, messageId: String(msg.msg_id), targetThreadId: target.threadId, threadType: target.threadType,
-    });
-    ensureForwardSuccess(result, 'Không chuyển tiếp được tin nhắn Facebook');
-    return;
-  }
-
-  if (isTelegramCh(channel) && accountId) {
+  // Không có file local: Facebook / Telegram còn native forward trên đúng tài khoản nguồn.
+  const canUseNativeForward = !sourceAccountId || sourceAccountId === accountId;
+  if (!toZalo && canUseNativeForward && msg.msg_id && accountId) {
+    if (isFacebook(channel)) {
+      const result = await getAdapter(channel as Channel).forwardMessage({
+        accountId, messageId: String(msg.msg_id), targetThreadId: target.threadId, threadType: target.threadType,
+      });
+      ensureForwardSuccess(result, 'Không chuyển tiếp được tin nhắn Facebook');
+      return;
+    }
     const sourceThreadId = msg.thread_id || msg.chat_id;
     if (!sourceThreadId) throw new Error('Tin nhắn Telegram không có hội thoại nguồn');
     const result = await getAdapter(channel as Channel).forwardMessage({
@@ -4034,12 +4778,7 @@ async function sendOneForward(
     ensureForwardSuccess(result, 'Không chuyển tiếp được tin nhắn Telegram');
     return;
   }
-
-  const result = await ipc.zalo?.forwardMessage({
-    auth,
-    payload: { message: '', reference: { id: String(msg.msg_id), ts: msg.timestamp || Date.now(), logSrcType: 0, fwLvl: 0 } },
-    threadIds: [target.threadId],
-    type: target.threadType,
-  });
-  ensureForwardSuccess(result, 'Không chuyển tiếp được tin nhắn Zalo');
+  throw new Error(isZalo(msg.channel)
+    ? 'Không tải được tệp từ Zalo (link đã hết hạn?) nên không chuyển tiếp được'
+    : 'Tệp chưa được tải về; không thể chuyển tiếp sang tài khoản khác');
 }
