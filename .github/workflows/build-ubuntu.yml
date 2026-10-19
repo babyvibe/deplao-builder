@@ -34,8 +34,8 @@ on:
     tags:
       - 'v*'
 
-# ─── SECRETS cần cấu hình ────────────────────────────────────────────────────
-#   GH_TOKEN - GitHub Personal Access Token (repo scope)
+# ─── SECRETS ─────────────────────────────────────────────────────────────────
+#   Không cần: publish dùng GITHUB_TOKEN có sẵn (permissions: contents: write ở trên).
 
 jobs:
   build-ubuntu:

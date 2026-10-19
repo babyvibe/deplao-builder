@@ -42,9 +42,9 @@ on:
     tags:
       - 'v*'
 
-# ─── SECRETS cần cấu hình trong GitHub repo Settings → Secrets ──────────────
-# Bắt buộc:
-#   GH_TOKEN          - GitHub Personal Access Token (repo scope)
+# ─── SECRETS ─────────────────────────────────────────────────────────────────
+# Publish dùng GITHUB_TOKEN có sẵn của workflow (permissions: contents: write ở trên) — không cần PAT.
+# (Trước đây dùng secrets.GH_TOKEN; repo không có secret này → token rỗng → "Parameter token or opts.auth is required".)
 #
 # Tùy chọn (Code Signing - thêm sau nếu có Apple Developer Account):
 #   CSC_LINK           - Base64 của file .p12 certificate
@@ -112,10 +112,26 @@ jobs:
           fi
           echo "✅ Tag: $(grep '^tag=' $GITHUB_OUTPUT | cut -d= -f2)"
 
+      # hdiutil trên runner macOS của GitHub lỗi chập chờn khi tạo DMG ("create failed - Device not configured",
+      # "Resource busy" — actions/runner-images#7522): tắt XProtect trước khi đóng gói và thử lại tối đa 3 lần.
+      # Giữ MỘT lần build cho cả DMG arm64 + x64 (mac.target trong package.json) để latest-mac.yml có đủ hai kiến trúc.
+      - name: 🛡️ Giảm lỗi hdiutil (tắt XProtect)
+        run: |
+          sudo pkill -9 XProtect >/dev/null 2>&1 || true
+          for i in $(seq 1 20); do pgrep XProtect >/dev/null || break; sleep 3; done
+
       - name: 📦 Build macOS app (arm64)
-        run: npx electron-builder --mac --arm64 --publish never
+        run: |
+          for attempt in 1 2 3; do
+            if npx electron-builder --mac --arm64 --publish never; then exit 0; fi
+            echo "::warning::Đóng gói macOS lỗi lần ${attempt}/3 (thường do hdiutil chập chờn trên runner), thử lại..."
+            for v in /Volumes/Deplao*; do [ -d "$v" ] && hdiutil detach "$v" -force || true; done
+            sudo pkill -9 XProtect >/dev/null 2>&1 || true
+            sleep 20
+          done
+          exit 1
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # CSC_LINK: ${{ secrets.CSC_LINK }}
           # CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
 
@@ -130,7 +146,7 @@ jobs:
             dist-electron-build/*.dmg
             dist-electron-build/*.blockmap
             dist-electron-build/latest-mac.yml
-          token: ${{ secrets.GH_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           draft: false
           prerelease: false
           make_latest: true

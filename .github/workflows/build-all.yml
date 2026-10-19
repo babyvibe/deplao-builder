@@ -31,8 +31,8 @@ on:
     tags:
       - 'v*'
 
-# ─── SECRETS cần cấu hình ────────────────────────────────────────────────────
-#   GH_TOKEN - GitHub Personal Access Token (repo scope)
+# ─── SECRETS ─────────────────────────────────────────────────────────────────
+#   Không cần: publish dùng GITHUB_TOKEN có sẵn (permissions: contents: write ở trên).
 
 jobs:
   # ═══════════════════════════════════════════════════════════════════════════
@@ -157,8 +157,26 @@ jobs:
       - name: 🔧 Rebuild native modules for Electron
         run: npm run rebuild:native
 
+      # hdiutil trên runner macOS của GitHub lỗi chập chờn khi tạo DMG ("create failed - Device not configured",
+      # "Resource busy" — actions/runner-images#7522): macOS quét file / giữ ổ ảo đúng lúc tạo. Cùng image + cùng
+      # cấu hình vẫn lúc qua lúc lỗi, nên tắt XProtect trước khi đóng gói và thử lại tối đa 3 lần.
+      # Giữ MỘT lần build cho cả DMG arm64 + x64 (mac.target trong package.json): latest-mac.yml phải có đủ hai
+      # kiến trúc cho tự cập nhật — tách thành hai lần build thì lần sau ghi đè mất kiến trúc kia.
+      - name: 🛡️ Giảm lỗi hdiutil (tắt XProtect)
+        run: |
+          sudo pkill -9 XProtect >/dev/null 2>&1 || true
+          for i in $(seq 1 20); do pgrep XProtect >/dev/null || break; sleep 3; done
+
       - name: 📦 Build macOS app (arm64)
-        run: npx electron-builder --mac --arm64 --publish never
+        run: |
+          for attempt in 1 2 3; do
+            if npx electron-builder --mac --arm64 --publish never; then exit 0; fi
+            echo "::warning::Đóng gói macOS lỗi lần ${attempt}/3 (thường do hdiutil chập chờn trên runner), thử lại..."
+            for v in /Volumes/Deplao*; do [ -d "$v" ] && hdiutil detach "$v" -force || true; done
+            sudo pkill -9 XProtect >/dev/null 2>&1 || true
+            sleep 20
+          done
+          exit 1
 
       - name: 🚀 Publish macOS → GitHub Releases
         if: needs.resolve-tag.outputs.should_publish == 'true'
