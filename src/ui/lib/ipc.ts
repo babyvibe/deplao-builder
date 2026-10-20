@@ -540,7 +540,7 @@ declare global {
         saveLink: (params: any) => Promise<{ success: boolean }>;
         getGroupMembers: (params: { zaloId: string; groupId: string }) => Promise<{ success: boolean; members: Array<{ member_id: string; display_name: string; avatar: string; role: number; username?: string; updated_at: number }> }>;
         /** Một trang thành viên nhóm + tổng (lọc theo `query`, không phân biệt dấu); `ownerRole` = role chủ nhóm của kênh. */
-        getGroupMembersPage: (params: { zaloId: string; groupId: string; query?: string; limit?: number; offset?: number; ownerRole?: number }) => Promise<{ success: boolean; members: Array<{ member_id: string; display_name: string; avatar: string; role: number; username?: string; updated_at: number }>; total: number; error?: string }>;
+        getGroupMembersPage: (params: { zaloId: string; groupId: string; query?: string; limit?: number; offset?: number; ownerRole?: number; namedOnly?: boolean }) => Promise<{ success: boolean; members: Array<{ member_id: string; display_name: string; avatar: string; role: number; username?: string; updated_at: number }>; total: number; error?: string }>;
         getAllGroupMembers: (params: { zaloId: string }) => Promise<{ success: boolean; rows: Array<{ group_id: string; member_id: string; display_name: string; avatar: string; role: number; updated_at: number }> }>;
         saveGroupMembers: (params: { zaloId: string; groupId: string; members: Array<{ memberId: string; displayName: string; avatar: string; role: number }> }) => Promise<{ success: boolean }>;
         upsertGroupMember: (params: { zaloId: string; groupId: string; member: { memberId: string; displayName: string; avatar: string; role: number } }) => Promise<{ success: boolean }>;
@@ -713,6 +713,8 @@ declare global {
       app: {
         setBadge: (count: number) => void;
         rendererReady: () => void;
+        /** Giao diện đã tải xong danh sách hội thoại — main mới chạy việc nền nặng (đồng bộ bù Telegram…) */
+        uiSettled: () => void;
         openThread: (params: { zaloId: string; threadId: string; threadType: number }) => void;
         sendBadgeImage: (params: { dataUrl: string; count: number }) => void;
         flashFrame: (active: boolean) => void;
@@ -1090,6 +1092,10 @@ declare global {
         getCallHistory:    (params: { accountId: string; missed?: boolean; offsetId?: number; limit?: number }) => Promise<{ success: boolean; items?: TelegramCallHistoryItem[]; nextOffsetId?: number; hasMore?: boolean; error?: string }>;
         declineCall:       (params: { accountId: string; callId: string; accessHash: string; video?: boolean }) => Promise<{ success: boolean; error?: string }>;
         getGroupMembers:   (params: { accountId: string; chatId: string; limit?: number }) => Promise<{ success: boolean; members?: any[]; error?: string }>;
+        /** Quản trị viên + chức vụ tự đặt của nhóm (role 1 = người tạo, 2 = quản trị viên); bản lưu < 6 giờ không gọi mạng. */
+        getGroupAdmins:    (params: { accountId: string; chatId: string; refresh?: boolean }) => Promise<{ success: boolean; admins?: Array<{ memberId: string; role: number; rank: string }>; error?: string }>;
+        /** Ô @nhắc đến: tìm thành viên nhóm lớn trên Telegram (tên / @username) và lưu DB; complete = đã đủ người khớp. */
+        searchGroupMembers: (params: { accountId: string; chatId: string; query: string; limit?: number }) => Promise<{ success: boolean; found?: number; complete?: boolean; error?: string }>;
         hydrateMessageSenders: (params: { accountId: string; chatId: string; messageIds: string[]; senderIds?: string[] }) => Promise<{ success: boolean; members?: any[]; error?: string }>;
         setDialogMute:     (params: { accountId: string; chatId: string; muteUntil: number }) => Promise<{ success: boolean; muteUntil?: number; error?: string }>;
         setDialogArchived: (params: { accountId: string; chatId: string; archived: boolean }) => Promise<{ success: boolean; folderId?: number; error?: string }>;

@@ -2,6 +2,7 @@ import React from 'react';
 import { useChatStore } from '@/store/chatStore';
 import { useAppStore } from '@/store/appStore';
 import { getAdapter } from '@/lib/adapters/registry';
+import PeerInitials from './PeerInitials';
 
 interface TelegramUserProfilePopupProps {
   userId: string;
@@ -102,9 +103,7 @@ export function TelegramUserProfilePopup({
             {avatarUrl ? (
               <img src={avatarUrl} alt={displayName} className="h-[72px] w-[72px] rounded-full border-4 border-border object-cover" />
             ) : (
-              <div className="flex h-[72px] w-[72px] items-center justify-center rounded-full border-4 border-border bg-sky-600 text-2xl font-bold text-white">
-                {(displayName || 'T').charAt(0).toUpperCase()}
-              </div>
+              <PeerInitials id={userId} name={displayName} fallback="T" className="h-[72px] w-[72px] border-4 border-border text-2xl" />
             )}
           </div>
           <div className="min-w-0 pl-20 pt-2">

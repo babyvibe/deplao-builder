@@ -4,6 +4,7 @@ import { getTelegramPostMeta } from '@/lib/mediaResolver';
 import { toLocalMediaUrl } from '@/lib/localMedia';
 import { useAccountStore } from '@/store/accountStore';
 import { mergeZaloReactionAliases } from '../../../shared/zaloReactions';
+import PeerInitials from '@/components/common/PeerInitials';
 
 /** Tin Zalo (bản ghi cũ không có channel). */
 const isZaloChannel = (channel?: string) => !channel || channel === 'zalo';
@@ -305,9 +306,7 @@ function ReactionPopup({ msg, initialEmoji, contacts, groupMembers, currentUserI
                 <img src={getAvatar(uid)} alt="" className="w-9 h-9 rounded-full object-cover flex-shrink-0"
                   onError={() => setBrokenAvatars((prev) => new Set(prev).add(uid))} />
               ) : (
-                <div className="w-9 h-9 rounded-full bg-blue-600 flex items-center justify-center text-white text-sm font-bold flex-shrink-0">
-                  {(getName(uid) || 'U').charAt(0).toUpperCase()}
-                </div>
+                <PeerInitials id={uid} name={getName(uid)} fallback="U" className="w-9 h-9 text-xs" />
               )}
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-foreground truncate">{getName(uid)}</p>

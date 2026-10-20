@@ -29,7 +29,7 @@ function ConversationGroupAvatar({ accountId, groupId, avatarUrl, name, observer
 
   return (
     <div ref={ref} data-avatar-account={accountId} data-avatar-group={groupId} className="flex">
-      <GroupAvatar avatarUrl={avatarUrl} groupInfo={groupInfo} name={name} size="md" />
+      <GroupAvatar avatarUrl={avatarUrl} groupInfo={groupInfo} name={name} id={groupId} size="md" />
     </div>
   );
 }

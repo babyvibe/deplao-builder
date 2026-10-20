@@ -180,6 +180,8 @@ export const TELEGRAM_USER_CHANNEL_ROUTES: Readonly<Record<string, EmployeeChann
   // ── Nhóm / forum ────────────────────────────────────────────────────────
   'telegramUser:getGroupInfo': proxy(),
   'telegramUser:getGroupMembers': proxy(CHAT, { timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }),
+  'telegramUser:getGroupAdmins': proxy(CHAT), // chức vụ cạnh tên người gửi (đọc)
+  'telegramUser:searchGroupMembers': proxy(CHAT, { timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }), // ô @nhắc đến: tìm trên Telegram + lưu DB Boss
   'telegramUser:getFullChat': proxy(),
   'telegramUser:addChatUser': proxy(),
   'telegramUser:deleteChatUser': proxy(),

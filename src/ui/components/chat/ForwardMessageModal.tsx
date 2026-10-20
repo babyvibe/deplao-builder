@@ -11,6 +11,7 @@ import ChannelBadge from '../common/ChannelBadge';
 import { toLocalMediaUrl } from '@/lib/localMedia';
 import { formatMsgTime } from '@/lib/chat/messageParser';
 import { CHANNEL, isZalo, isTelegram, isFacebook } from '@/lib/channelHelper';
+import PeerInitials from '@/components/common/PeerInitials';
 
 const PAGE_SIZE = 50;
 /** Ngay sau một lần tải lỗi, cuộn tới cuối chỉ thử lại sau chừng này (nút "Thử lại" thử ngay). */
@@ -533,7 +534,7 @@ export default function ForwardMessageModal({ messages, onClose, onForward }: {
                   {isSelected && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>}
                 </div>
                 {c.contact_type === 'group' ? (
-                  <GroupAvatar avatarUrl={c.avatar_url} groupInfo={grpCache[c.contact_id]} name={c.display_name || c.contact_id} size="md" />
+                  <GroupAvatar avatarUrl={c.avatar_url} groupInfo={grpCache[c.contact_id]} name={c.display_name || c.contact_id} id={c.contact_id} size="md" />
                 ) : c.avatar_url ? (
                   <img src={toLocalMediaUrl(c.avatar_url, c._accountId)} alt="" className="w-10 h-10 rounded-full object-cover flex-shrink-0"
                     onError={e => {
@@ -545,9 +546,7 @@ export default function ForwardMessageModal({ messages, onClose, onForward }: {
                       }
                     }} />
                 ) : (
-                  <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold flex-shrink-0 bg-blue-600">
-                    {(c.display_name || 'U').charAt(0).toUpperCase()}
-                  </div>
+                  <PeerInitials id={c.contact_id} name={c.display_name} fallback="U" className="w-10 h-10 text-sm" />
                 )}
                 <div className="flex-1 min-w-0">
                   <p className="text-sm text-foreground truncate">{c.alias || c.display_name || c.contact_id}</p>

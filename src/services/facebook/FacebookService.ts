@@ -38,6 +38,8 @@ import { resolveThreadKind } from './FacebookThreadKind';
 import { FacebookEventPipeline, EventPriority } from './FacebookEventPipeline';
 import { metricInc } from './FacebookMetrics';
 import EventBroadcaster from '../event/EventBroadcaster';
+import { messageTimestampById, recordPeerReceipt } from '../receipts/peerReceipts';
+import { mediaProgressReporter } from '../media/mediaProgress';
 import DatabaseService from '../database/DatabaseService';
 import FileStorageService from '../file/FileStorageService';
 import { createProxyAgent } from '../../utils/ProxyHelper';
@@ -371,6 +373,12 @@ export class FacebookService {
 
       this.listener.on('deliveryReceipt', (data: any) => {
         this.handleDeliveryReceipt(data);
+      });
+
+      this.listener.on('readReceipt', (data: any) => {
+        // Người kia đã đọc tới mốc → dấu ✓✓ (đã xem) cạnh giờ tin mình gửi
+        if (!data?.threadId || !data?.actorFbId || String(data.actorFbId) === this.getFacebookId()) return;
+        recordPeerReceipt(this.getFacebookId(), String(data.threadId), { readTs: Number(data.watermarkTimestampMs) || 0 });
       });
 
       this.listener.on('presence', (data: any) => {
@@ -968,6 +976,9 @@ export class FacebookService {
 
     // Skip self-receipts (when our own messages are delivered)
     if (data.actorFbId === this.getFacebookId()) return;
+
+    // Người kia đã nhận tới mốc → dấu ✓✓ (đã nhận) cạnh giờ tin mình gửi
+    recordPeerReceipt(this.getFacebookId(), String(data.threadId), { deliveredTs: Number(data.timestampMs) || 0 });
 
     EventBroadcaster.emit('fb:onSeen', {
       fbAccountId: this.getFacebookId(),
@@ -1639,10 +1650,32 @@ export class FacebookService {
         break;
       }
 
-      case 'e2eeReceipt':
-        // Delivery receipt for E2EE messages - informational only
-        // The bridge handles delivery tracking internally
+      case 'e2eeReceipt': {
+        // Tin mã hoá đầu cuối (whatsmeow Receipt): type '' = đã nhận, 'read' / 'played' = đã xem, theo id tin.
+        // 'read-self' / 'sender' (máy khác của chính mình) bỏ qua.
+        const userOf = (jid: unknown) => String(jid || '').replace(/@.*$/, '').replace(/[.:].*$/, '');
+        const threadId = String(data?.chat || '').replace(/@.*$/, '');
+        const receiptType = String(data?.type ?? '');
+        const owner = this.getFacebookId();
+        if (!threadId || userOf(data?.sender) === owner) break;
+        const isDelivered = receiptType === '' || receiptType === 'delivered';
+        const isRead = receiptType === 'read' || receiptType === 'played';
+        if (!isDelivered && !isRead) break;
+        const ts = messageTimestampById(owner, threadId, Array.isArray(data?.messageIds) ? data.messageIds : []);
+        if (ts) recordPeerReceipt(owner, threadId, isRead ? { readTs: ts } : { deliveredTs: ts });
         break;
+      }
+
+      case 'readReceipt': {
+        // Bridge (LightSpeed, tin thường): người đọc + mốc thời điểm đã đọc. Chính mình đọc (máy khác) bỏ qua.
+        const readerId = String(data?.readerId ?? '');
+        const threadId = String(data?.threadId ?? '');
+        const watermark = Number(data?.readWatermarkTimestampMs) || 0;
+        if (threadId && watermark && readerId && readerId !== this.getFacebookId()) {
+          recordPeerReceipt(this.getFacebookId(), threadId, { readTs: watermark });
+        }
+        break;
+      }
 
       case 'messageUnsend': {
         // E2EE 1:1 message unsend from bridge
@@ -2065,6 +2098,9 @@ export class FacebookService {
     const cookies = this.dataFB?.cookieFacebook;
     const localPaths: Record<string, string> = {};
     const attachments = msg.allAttachments?.length ? msg.allAttachments : [msg.attachments];
+    // Video đang tải: bong bóng hiện vòng tiến độ + "x / y MB", báo xong SAU khi đã gửi event:localPath
+    const videoProgress = mediaProgressReporter(fbId, threadId, msg.messageID);
+    let videoDownloading = false;
 
     Logger.log(`[FacebookService:${this.accountId}] [DEBUG_DOWNLOAD] downloadNonE2EEAttachments: msgId=${msg.messageID} attachments=${attachments.length} threadId=${threadId}`);
 
@@ -2102,7 +2138,9 @@ export class FacebookService {
             continue;
           }
           Logger.log(`[FacebookService:${this.accountId}] [DEBUG_DOWNLOAD] att[${i}]: calling downloadVideo`);
-          localPath = await FileStorageService.downloadVideo(fbId, url, filename, cookies, undefined);
+          if (!videoDownloading) videoProgress.queued();
+          videoDownloading = true;
+          localPath = await FileStorageService.downloadVideo(fbId, url, filename, cookies, undefined, videoProgress.progress);
         } else {
           // audio, file, unknown → dùng downloadFile
           Logger.log(`[FacebookService:${this.accountId}] [DEBUG_DOWNLOAD] att[${i}]: calling downloadFile (type=${attType})`);
@@ -2128,8 +2166,10 @@ export class FacebookService {
         threadId,
         localPaths,
       });
+      if (videoDownloading) videoProgress.done();
     } else {
       Logger.log(`[FacebookService:${this.accountId}] [DEBUG_DOWNLOAD] No local paths to broadcast`);
+      if (videoDownloading) videoProgress.failed();
     }
   }
 

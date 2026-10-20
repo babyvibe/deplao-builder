@@ -115,12 +115,15 @@ export function findLinkRanges(text: string): Array<[number, number]> {
   return [...findUrlRanges(text), ...findEmailRanges(text)].sort((a, b) => a[0] - b[0]);
 }
 
+/** Link trong tin (URL, email). chat-link: giao diện tối xanh da trời nhạt, không gạch chân (index.css); sáng giữ nguyên. */
+const LINK_CLASS = 'chat-link text-blue-400 hover:text-blue-300 underline underline-offset-2 cursor-pointer break-all';
+
 /**
  * Detect URL và @mentions trong text → trả về React nodes.
  * - URLs: link clickable
  * - @name: highlight xanh (mention trong group chat)
  * - @@, @@@: KHÔNG bắt (chỉ bắt @ + ít nhất 1 chữ cái/số)
- * - email (a@gmail.com): giữ nguyên là chữ thường — không mention, không biến tên miền thành link
+ * - email (a@gmail.com): MỘT link mailto: cho cả địa chỉ — không mention, không biến tên miền thành link riêng
  */
 export function linkifyText(text: string, options: { detectMentions?: boolean } = {}): React.ReactNode[] {
   if (!text) return [text];
@@ -149,9 +152,23 @@ export function linkifyText(text: string, options: { detectMentions?: boolean } 
     }
     const raw = match[0];
 
-    // Email: chữ thường, giữ nguyên cả địa chỉ
+    // Email: một link mailto: cho cả địa chỉ (bấm mở ứng dụng thư như Telegram) — không tách tên miền thành link riêng,
+    // "@" không phải mention
     if (EMAIL_EXACT_REGEX.test(raw)) {
-      parts.push(raw);
+      const mailto = `mailto:${raw}`;
+      parts.push(
+        React.createElement('a', {
+          key: `mail-${match.index}`,
+          href: mailto,
+          className: LINK_CLASS,
+          onClick: (e: React.MouseEvent) => {
+            e.preventDefault();
+            e.stopPropagation();
+            try { window.electronAPI?.shell?.openExternal?.(mailto); } catch {}
+          },
+          title: raw,
+        }, raw)
+      );
       lastIndex = match.index + raw.length;
       continue;
     }
@@ -185,7 +202,7 @@ export function linkifyText(text: string, options: { detectMentions?: boolean } 
           href,
           target: '_blank',
           rel: 'noopener noreferrer',
-          className: 'text-blue-400 hover:text-blue-300 underline underline-offset-2 cursor-pointer break-all',
+          className: LINK_CLASS,
           onClick: (e: React.MouseEvent) => {
             e.preventDefault();
             e.stopPropagation();
@@ -209,8 +226,18 @@ export function linkifyText(text: string, options: { detectMentions?: boolean } 
  * Parse content để hiển thị trong bubble — bao gồm cả attachment markers.
  * Khác với parseTxt: parseContent trả về '[Đính kèm]' cho link/file/params.
  */
-export function parseContent(content: string, msgType?: string): string {
+export function parseContent(content: string, msgType?: string, channel?: string | null): string {
   if (!content || content === 'null') return '';
+  // Telegram giữ nguyên chữ người gửi gõ (":))" vẫn là ":))" như Telegram) — mã cảm xúc chữ là quy ước của Zalo
+  if (typeof channel === 'string' && channel.startsWith('telegram')) {
+    try {
+      const parsed = JSON.parse(content);
+      if (typeof parsed === 'string') return parsed;
+      if (typeof parsed !== 'object' || parsed === null) return content;
+    } catch {
+      return content;
+    }
+  }
   // Bản tin / thông báo của Official Account (zinstant): chữ của OA thay vì "[Đính kèm]" / chuỗi JSON
   const zinstant = zinstantPreviewText(content, msgType);
   if (zinstant) return zinstant;

@@ -44,6 +44,13 @@ export interface FBDeliveryReceipt {
   timestampMs: number;
 }
 
+/** Người kia đã đọc hội thoại tới mốc thời điểm (delta ReadReceipt). */
+export interface FBReadReceipt {
+  threadId: string;
+  actorFbId: string;
+  watermarkTimestampMs: number;
+}
+
 export interface FBPresenceEntry {
   userId: string;
   status: 'active' | 'inactive' | 'offline';
@@ -59,6 +66,7 @@ export interface FBListenerEvents {
   threadEvent: (data: FBThreadEvent) => void;
   participantEvent: (data: FBGroupParticipantEvent) => void;
   deliveryReceipt: (data: FBDeliveryReceipt) => void;
+  readReceipt: (data: FBReadReceipt) => void;
   presence: (data: FBPresenceData) => void;
   typing: (data: { threadId: string; userId: string; state: number }) => void;
   reaction: (data: { messageId: string; reaction: string; actorFbId: string; threadId: string }) => void;
@@ -479,6 +487,21 @@ export class FacebookMQTTListener extends EventEmitter {
   }
 
   private processDelta(delta: any): void {
+    // ─── 0. Read receipt: người kia đã đọc tới mốc thời điểm (watermark) ────────
+    if (delta.class === 'ReadReceipt' && delta.actorFbId) {
+      const threadKey = delta.threadKey || {};
+      const threadId = threadKey.otherUserFbId || threadKey.threadFbId || '0';
+      const watermark = Number(delta.watermarkTimestampMs || delta.actionTimestampMs) || 0;
+      if (threadId && threadId !== '0' && watermark) {
+        this.emit('readReceipt', {
+          threadId: String(threadId),
+          actorFbId: String(delta.actorFbId),
+          watermarkTimestampMs: watermark,
+        });
+      }
+      return;
+    }
+
     // ─── 1. Delivery receipt (no messageMetadata) ────────────────────────────
     if (delta.deliveredReceiptMessageId) {
       const threadKey = delta.threadKey || {};

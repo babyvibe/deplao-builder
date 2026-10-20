@@ -11,6 +11,8 @@ import { channelSupports } from '@/../configs/channelConfig';
 import { CHANNEL, isFacebook, isTelegram } from '@/lib/channelHelper';
 import { Spinner } from '@/components/common/PageLoading';
 import { ChatIcon, CloseIcon} from '@/components/common/icons';
+import { lookupZaloUserByPhone } from '@/lib/chat/zaloPhoneLookup';
+import PeerInitials from '@/components/common/PeerInitials';
 
 // ─── Vietnamese-aware normalization for fuzzy matching ────────────────────────
 function normalizeStr(s: string): string {
@@ -187,6 +189,7 @@ function ContactResultItem({ contact, query, onClick, groupInfoCache }: {
             avatarUrl={contact.avatar_url}
             groupInfo={groupInfo}
             name={name}
+            id={contact.contact_id}
             size="search"
           />
         ) : (
@@ -206,7 +209,7 @@ function ContactResultItem({ contact, query, onClick, groupInfoCache }: {
                     .catch(() => {});
                 }
               }} />
-            : <div className="w-11 h-11 rounded-full flex items-center justify-center text-white font-bold text-sm bg-blue-600">{(name || '?').charAt(0).toUpperCase()}</div>
+            : <PeerInitials id={contact.contact_id} name={name} className="w-11 h-11 text-sm" />
         )}
       </div>
       <div className="flex-1 min-w-0">
@@ -242,6 +245,7 @@ function MessageResultItem({ msg, query, contacts, onClick, groupInfoCache }: {
           avatarUrl={contact?.avatar_url}
           groupInfo={groupInfo}
           name={convName}
+          id={msg.thread_id}
           size="search"
         />
       ) : (
@@ -255,7 +259,7 @@ function MessageResultItem({ msg, query, contacts, onClick, groupInfoCache }: {
                   .catch(() => {});
               }
             }} />
-          : <div className="w-11 h-11 rounded-full flex items-center justify-center text-white font-bold flex-shrink-0 text-sm bg-blue-600">{(convName || '?').charAt(0).toUpperCase()}</div>
+          : <PeerInitials id={msg.thread_id} name={convName} className="w-11 h-11 text-sm" />
       )}
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between gap-2">
@@ -293,7 +297,7 @@ function PhoneResultCard({ result, searching, onOpen, onAddFriend }: {
     <div className="mx-3 my-2 p-3 bg-card rounded-xl border border-border flex items-center gap-3">
       {result.avatar
         ? <img src={result.avatar} alt={name} className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
-        : <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-white font-bold flex-shrink-0">{(name || 'U').charAt(0).toUpperCase()}</div>}
+        : <PeerInitials id={result.uid} name={name} fallback="U" className="w-10 h-10 text-sm" />}
       <div className="flex-1 min-w-0">
         <p className="text-sm text-foreground truncate font-medium">{name}</p>
         {result.isBlocked === 1 ? <p className="text-xs text-red-400"><CloseIcon className="w-4 h-4 inline" /> Đã chặn</p>
@@ -333,7 +337,7 @@ function UsernameResultCard({ result, searching, onOpen }: {
     <div className="mx-3 my-2 p-3 bg-card rounded-xl border border-cyan-500/30 flex items-center gap-3">
       {result.avatar
         ? <img src={result.avatar} alt={name} className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
-        : <div className="w-10 h-10 rounded-full bg-cyan-600 flex items-center justify-center text-white font-bold flex-shrink-0">{(name || 'U').charAt(0).toUpperCase()}</div>}
+        : <PeerInitials id={result.id} name={name} fallback="U" className="w-10 h-10 text-sm" />}
       <div className="flex-1 min-w-0">
         <p className="text-sm text-foreground truncate font-medium">{name}</p>
         {result.username && <p className="text-xs text-cyan-400">@{result.username}</p>}
@@ -647,20 +651,8 @@ export default function GlobalSearchPanel({
     }
     setPhoneSearching(true); setPhoneResult(null); setPhonePendingAccounts(false);
     try {
-      const auth = buildZaloAuth(acc, acc.zalo_id);
-      const res = await ipc.zalo?.findUser({ auth, phone: phone.trim() });
-      const user = res?.response;
-      if (user?.uid) {
-        try {
-          const infoRes = await ipc.zalo?.getUserInfo({ auth, userId: user.uid });
-          const profile = infoRes?.response?.changed_profiles?.[user.uid];
-          setPhoneResult(profile
-            ? { ...user, isFr: profile.isFr ?? 0, isBlocked: profile.isBlocked ?? 0, _searchZaloId: acc.zalo_id }
-            : { ...user, _searchZaloId: acc.zalo_id });
-        } catch { setPhoneResult({ ...user, _searchZaloId: acc.zalo_id }); }
-      } else {
-        setPhoneResult({ _notFound: true });
-      }
+      // Dùng chung lần tìm với ô tìm kiếm của danh sách hội thoại (cùng số) — không gọi findUser của Zalo 2 lần
+      setPhoneResult(await lookupZaloUserByPhone(acc, phone));
     } catch {} finally { setPhoneSearching(false); }
   };
 

@@ -531,6 +531,8 @@ class FileStorageService {
         filename?: string,
         cookiesJson?: string,
         userAgent?: string,
+        /** Tiến độ (byte đã nhận, tổng — 0 khi máy chủ không báo) → vòng tiến độ trên bong bóng video (media/mediaProgress). */
+        onProgress?: (received: number, total: number) => void,
     ): Promise<string> {
         try {
             const dir = this.getAccountDir(zaloId);
@@ -568,6 +570,11 @@ class FileStorageService {
                 timeout: 120000,
                 headers,
                 maxContentLength: 200 * 1024 * 1024, // 200MB max
+                ...(onProgress ? {
+                    onDownloadProgress: (event: { loaded?: number; total?: number }) => {
+                        try { onProgress(Number(event.loaded) || 0, Number(event.total) || 0); } catch {}
+                    },
+                } : {}),
             });
             fs.writeFileSync(localPath, Buffer.from(response.data));
             this.noteCloudMediaWrite(localPath);

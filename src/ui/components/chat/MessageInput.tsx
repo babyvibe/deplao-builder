@@ -8,6 +8,7 @@ import {useEmployeeStore} from '@/store/employeeStore';
 import ipc, { buildZaloAuth } from '@/lib/ipc'
 import DataAccessor, { isReadFailure, readFailureMessage } from '@/lib/data/DataAccessor';
 import { useEmployeeResync } from '@/hooks/useEmployeeResync';
+import { useMentionMembers } from '@/hooks/useMentionMembers';
 import {
   EMPTY_THREAD_LOCAL_LABELS, nextThreadLocalLabels, sortActiveLocalLabels, threadLabelsKey, toLabelIdSet,
   type ThreadLocalLabelsState,
@@ -41,6 +42,7 @@ import PluginComposerButtons from '@/components/plugins/PluginComposerButtons';
 import { TelegramMediaPicker, lastTelegramPickerTab } from './stickers/TelegramMediaPicker';
 import { sendTelegramStickerItem, type TelegramStickerItem } from '@/lib/chat/telegramStickerStore';
 import { AlertIcon, AwardIcon, BellIcon, BookmarkIcon, BotIcon, ChartIcon, ChatIcon, CheckIcon, ClipboardListIcon, ClockIcon, CreditCardIcon, DollarIcon, EditIcon, FileTextIcon, FolderIcon, GiftIcon, GlobeIcon, KeyIcon, LightbulbIcon, LightningIcon, LinkIcon, PackageIcon, PinIcon, PluginIcon, RefreshIcon, SearchIcon, SettingsIcon, ShoppingCartIcon, SmartphoneIcon, SmileIcon, SparklesIcon, StarIcon, StoreIcon, TagIcon, TargetIcon, TrashIcon, TrendingUpIcon, TruckIcon, UserIcon } from '@/components/common/icons';
+import PeerInitials from '@/components/common/PeerInitials';
 
 interface LocalLabel {
   id: number;
@@ -436,116 +438,39 @@ export default function MessageInput() {
     }, 6000);
   }, [activeAccountId, activeThreadId, activeThreadType, activeContact?.channel, getActiveAccount]);
 
-  // @ mention: chỉ áp dụng cho thread nhóm, dùng groupMembers từ cache
+  // @ nhắc đến (như Telegram): danh sách đọc ngay từ DB theo trang, có @username đã lưu, cuộn để tải thêm; Telegram lấy
+  // thành viên gần đây / tìm theo chữ đã gõ trên Telegram khi cần rồi LƯU DB (hooks/useMentionMembers). Trước đây: cache
+  // nhóm tối đa 50 người + mỗi lần gõ @ hỏi @username từng người qua API mà không lưu. Kênh Telegram (broadcast) không có.
   const isGroupThread = activeThreadType === 1;
-  const groupMembers: Array<{ userId: string; displayName: string; avatar: string; username?: string }> =
-    (activeAccountId && activeThreadId && isGroupThread)
-      ? (threadGroupInfo?.members || [])
-      : [];
+  const mentionEnabled = isGroupThread
+    && !(isTelegramUser(activeContact?.channel) && activeContact?.telegram_peer_type === 'channel');
+  const mentionList = useMentionMembers({
+    open: showMentionDropdown && mentionEnabled,
+    accountId: activeAccountId,
+    groupId: activeThreadId,
+    channel: activeContact?.channel,
+    peerType: activeContact?.telegram_peer_type,
+    memberCount: Number(activeContact?.telegram_members_count) || 0,
+    query: mentionSearch,
+    cachedMembers: isGroupThread ? threadGroupInfo?.members : undefined,
+  });
 
-  // Fetch missing usernames for Telegram group members when @ is triggered
-  const [fetchingUsernames, setFetchingUsernames] = useState(false);
-  const usernameFetchDoneRef = useRef<Set<string>>(new Set()); // track which threads we've already fetched
-
-  useEffect(() => {
-    if (!showMentionDropdown || !isGroupThread || !activeAccountId || !activeThreadId) return;
-    if (!isTelegramUser(activeContact?.channel) && !isTelegramBot(activeContact?.channel)) return;
-
-    // Check if any members are missing username
-    const missingUsername = groupMembers.filter(m => m.userId && !m.username && m.userId !== 'all');
-    if (missingUsername.length === 0) return;
-
-    // Avoid re-fetching for the same thread in this session
-    const fetchKey = `${activeAccountId}:${activeThreadId}`;
-    if (usernameFetchDoneRef.current.has(fetchKey)) return;
-    usernameFetchDoneRef.current.add(fetchKey);
-
-    setFetchingUsernames(true);
-
-    (async () => {
-      const updates: Record<string, string> = {};
-
-      // Step 1: Get usernames from cached telegram_peers (fast DB query, no API call)
-      try {
-        const peersRes = await ipc.telegramUser?.getPeers({ accountId: activeAccountId });
-        if (peersRes?.success && peersRes.peers) {
-          const peerMap = new Map<string, string>();
-          for (const peer of peersRes.peers) {
-            if (peer.username) peerMap.set(String(peer.peer_id), peer.username);
-          }
-          for (const member of missingUsername) {
-            const username = peerMap.get(member.userId);
-            if (username) updates[member.userId] = username;
-          }
-        }
-      } catch {}
-
-      // Step 2: For members still missing username, try getUserProfile (slower, API call)
-      const stillMissing = missingUsername.filter(m => !updates[m.userId]);
-      if (stillMissing.length > 0) {
-        // Batch: resolve entities in parallel (limited concurrency to avoid rate limit)
-        const BATCH_SIZE = 3;
-        for (let i = 0; i < stillMissing.length; i += BATCH_SIZE) {
-          const batch = stillMissing.slice(i, i + BATCH_SIZE);
-          const results = await Promise.allSettled(
-            batch.map(member =>
-              ipc.telegramUser?.getUserProfile({
-                accountId: activeAccountId,
-                userId: member.userId,
-                chatId: activeThreadId,
-              }).catch(() => null) // catch individual failures
-            )
-          );
-          for (let j = 0; j < batch.length; j++) {
-            const result = results[j];
-            if (result.status === 'fulfilled' && result.value?.success) {
-              // Get username from profile
-              const username = result.value.profile?.username || '';
-              if (username) {
-                updates[batch[j].userId] = username;
-              }
-            }
-          }
-          // Small delay between batches to avoid rate limiting
-          if (i + BATCH_SIZE < stillMissing.length) {
-            await new Promise(r => setTimeout(r, 200));
-          }
-        }
-      }
-
-      // Update groupInfoCache with fetched usernames
-      if (Object.keys(updates).length > 0) {
-        const cached = useAppStore.getState().groupInfoCache?.[activeAccountId]?.[activeThreadId];
-        if (cached?.members) {
-          const updatedMembers = cached.members.map((m: any) =>
-            updates[m.userId] ? { ...m, username: updates[m.userId] } : m
-          );
-          setGroupInfo(activeAccountId, activeThreadId, {
-            ...cached,
-            members: updatedMembers,
-          });
-        }
-      }
-      setFetchingUsernames(false);
-    })();
-  }, [showMentionDropdown, isGroupThread, activeAccountId, activeThreadId, activeContact?.channel, groupMembers]);
-
-  const filteredMentions = showMentionDropdown && isGroupThread
+  const filteredMentions = showMentionDropdown && mentionEnabled
     ? [
         // @all option cho groups (Zalo: uid='-1', Telegram: uid='all')
         ...((!mentionSearch || 'all'.includes(mentionSearch.toLowerCase()) || '@all'.includes(mentionSearch.toLowerCase()))
           ? [{ userId: isZalo(activeContact?.channel) ? '-1' : 'all', displayName: '@all', avatar: '', username: '' }]
           : []),
-        ...groupMembers
-          .filter(m =>
-            m.displayName?.trim() &&   // ẩn thành viên không có tên (chỉ có UID)
-            (!mentionSearch ||
-              m.displayName.toLowerCase().includes(mentionSearch.toLowerCase()) ||
-              (m.username || '').toLowerCase().includes(mentionSearch.toLowerCase()) ||
-              m.userId.includes(mentionSearch))
-          ),
-      ].slice(0, 50)   // giới hạn 50 để tránh render quá nhiều (nhóm 5k thành viên)
+        ...mentionList.members,
+      ]
     : [];
+
+  // ↑ / ↓ trong danh sách @: giữ dòng đang chọn trong khung (dưới dòng tiêu đề dính)
+  useEffect(() => {
+    if (!showMentionDropdown) return;
+    const item = mentionListRef.current?.querySelector<HTMLElement>(`[data-mention-idx="${mentionSelectedIdx}"]`);
+    item?.scrollIntoView({ block: 'nearest' });
+  }, [mentionSelectedIdx, showMentionDropdown]);
 
   useEffect(() => {
     if (replyTo) textareaRef.current?.focus();
@@ -2888,7 +2813,7 @@ export default function MessageInput() {
         break;
       }
     }
-    if (isValidMention && isGroupThread && groupMembers.length > 0) {
+    if (isValidMention && mentionEnabled) {
       setShowMentionDropdown(true);
       setMentionSearch(mentionSearchText);
       setMentionTriggerPos(mentionTriggerIdx);
@@ -2981,7 +2906,12 @@ export default function MessageInput() {
     }
     // Handle mention dropdown navigation
     if (showMentionDropdown && filteredMentions.length > 0) {
-      if (e.key === 'ArrowDown') { e.preventDefault(); setMentionSelectedIdx(i => Math.min(i + 1, filteredMentions.length - 1)); return; }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (mentionSelectedIdx >= filteredMentions.length - 6) mentionList.loadMore();
+        setMentionSelectedIdx(i => Math.min(i + 1, filteredMentions.length - 1));
+        return;
+      }
       if (e.key === 'ArrowUp') { e.preventDefault(); setMentionSelectedIdx(i => Math.max(i - 1, 0)); return; }
       if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); handleSelectMention(filteredMentions[mentionSelectedIdx]); return; }
       if (e.key === 'Escape') { setShowMentionDropdown(false); return; }
@@ -3498,9 +3428,7 @@ export default function MessageInput() {
                   <img src={contactCardSuggestion.avatarUrl} alt="" className="w-full h-full object-cover"
                     onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                 ) : (
-                  <div className="w-full h-full flex items-center justify-center text-foreground text-sm font-bold">
-                    {(contactCardSuggestion.displayName || '?').charAt(0).toUpperCase()}
-                  </div>
+                  <PeerInitials id={contactCardSuggestion.userId} name={contactCardSuggestion.displayName} className="w-full h-full text-xs" />
                 )}
               </div>
               <div className="flex-1 min-w-0">
@@ -4134,35 +4062,38 @@ export default function MessageInput() {
           </div>
         )}
 
-        {/* @ Mention dropdown - chỉ hiện cho nhóm */}
-        {showMentionDropdown && filteredMentions.length > 0 && isGroupThread && (
+        {/* @ Mention dropdown - chỉ hiện cho nhóm; danh sách từ DB theo trang (cuộn gần cuối → trang sau) */}
+        {showMentionDropdown && mentionEnabled && (filteredMentions.length > 0 || mentionList.syncing || mentionList.searching) && (
           <div
             ref={mentionListRef}
             className="absolute bottom-full left-3 right-3 mb-1 bg-card border border-input rounded-xl shadow-2xl z-30 overflow-hidden"
             style={{ maxHeight: '15rem', overflowY: 'auto' }}
+            onScroll={(e) => {
+              const el = e.currentTarget;
+              if (el.scrollHeight - el.scrollTop - el.clientHeight < 160) mentionList.loadMore();
+            }}
           >
             <p className="text-xs text-muted-foreground px-3 py-1.5 border-b border-border sticky top-0 bg-card z-10 flex items-center gap-2">
-              <span>Nhắc đến thành viên{mentionSearch ? ` - "${mentionSearch}"` : ''}</span>
-              {fetchingUsernames && (
-                <span className="flex items-center gap-1 text-cyan-400">
+              <span className="min-w-0 truncate">Nhắc đến thành viên{mentionSearch ? ` - "${mentionSearch}"` : ''}</span>
+              {(mentionList.syncing || mentionList.searching) && (
+                <span className="flex items-center gap-1 text-cyan-400 flex-shrink-0">
                   <Spinner size={3} />
-                  <span className="text-[10px]">Đang tải @username...</span>
+                  <span className="text-[10px]">{mentionList.searching ? 'Đang tìm trên Telegram...' : 'Đang tải thành viên...'}</span>
                 </span>
               )}
             </p>
             {filteredMentions.map((member, idx) => (
               <button
                 key={member.userId}
+                data-mention-idx={idx}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => handleSelectMention(member)}
-                className={`w-full flex items-center gap-3 px-3 py-2 text-left transition-colors ${idx === mentionSelectedIdx ? 'bg-muted' : 'hover:bg-muted'}`}
+                className={`w-full flex items-center gap-3 px-3 py-2 text-left transition-colors scroll-mt-8 ${idx === mentionSelectedIdx ? 'bg-muted' : 'hover:bg-muted'}`}
               >
                 {member.avatar ? (
                   <img src={member.avatar} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
                 ) : (
-                  <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
-                    {(member.displayName || 'U').charAt(0).toUpperCase()}
-                  </div>
+                  <PeerInitials id={member.userId} name={member.displayName} fallback="U" className="w-7 h-7 text-[10px]" />
                 )}
                 <div className="flex-1 min-w-0">
                   <p className="text-sm text-foreground truncate">{member.displayName}</p>

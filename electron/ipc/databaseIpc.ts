@@ -605,10 +605,10 @@ export function registerDatabaseIpc() {
     });
 
     // Panel "Thành viên" của khung chat: phân trang + tìm trong DB (không tải cả nhóm vài nghìn người một lần)
-    ipcMain.handle('db:getGroupMembersPage', async (_event, params: { zaloId: string; groupId: string; query?: string; limit?: number; offset?: number; ownerRole?: number }) => {
+    ipcMain.handle('db:getGroupMembersPage', async (_event, params: { zaloId: string; groupId: string; query?: string; limit?: number; offset?: number; ownerRole?: number; namedOnly?: boolean }) => {
         try {
-            const { zaloId, groupId, query, limit, offset, ownerRole } = params || ({} as any);
-            const page = DatabaseService.getInstance().getGroupMembersPage(zaloId, groupId, { query, limit, offset, ownerRole });
+            const { zaloId, groupId, query, limit, offset, ownerRole, namedOnly } = params || ({} as any);
+            const page = DatabaseService.getInstance().getGroupMembersPage(zaloId, groupId, { query, limit, offset, ownerRole, namedOnly: !!namedOnly });
             return { success: true, ...page };
         } catch (error: any) {
             return { success: false, error: error.message, members: [], total: 0 };

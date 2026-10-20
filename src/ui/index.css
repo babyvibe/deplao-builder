@@ -51,6 +51,17 @@ html[data-theme="dark"] {
   --bubble-out-border: 42 79 138;  /* #2a4f8a */
   --selected: 29 44 71;            /* #1d2c47 active conversation row */
 
+  /* Peer colours, mọi kênh (tên / trích dẫn / ảnh đại diện chữ theo người, như Telegram Desktop tối): đỏ, cam,
+     tím, xanh lá, xanh ngọc, xanh dương, hồng — xem lib/chat/peerStyle.ts */
+  --chat-peer-0: 245 135 128;      /* #f58780 */
+  --chat-peer-1: 236 176 92;       /* #ecb05c */
+  --chat-peer-2: 176 128 240;      /* #b080f0 */
+  --chat-peer-3: 132 212 124;      /* #84d47c */
+  --chat-peer-4: 84 200 224;       /* #54c8e0 */
+  --chat-peer-5: 100 172 240;      /* #64acf0 */
+  --chat-peer-6: 240 128 176;      /* #f080b0 */
+  --chat-rank: 72 160 84;          /* #48a054 chức vụ (quản trị viên) */
+
   /* app frame (rail) */
   --sidebar: 22 24 27;             /* #16181b */
   --sidebar-hover: 35 39 45;       /* #23272d */
@@ -95,6 +106,16 @@ html[data-theme="light"] {
   --bubble-out: 228 239 253;       /* #e4effd outgoing message */
   --bubble-out-border: 197 220 250;/* #c5dcfa */
   --selected: 228 239 253;         /* #e4effd active conversation row */
+
+  /* Peer colours — giao diện sáng (đậm hơn để đọc được trên nền trắng) */
+  --chat-peer-0: 204 80 73;        /* #cc5049 */
+  --chat-peer-1: 214 119 34;       /* #d67722 */
+  --chat-peer-2: 149 92 219;       /* #955cdb */
+  --chat-peer-3: 64 169 32;        /* #40a920 */
+  --chat-peer-4: 48 158 186;       /* #309eba */
+  --chat-peer-5: 54 138 209;       /* #368ad1 */
+  --chat-peer-6: 199 80 139;       /* #c7508b */
+  --chat-rank: 46 140 64;          /* #2e8c40 */
 
   /* app frame (rail): pale blue-grey, solid blue selected tile */
   --sidebar: 238 242 249;          /* #eef2f9 */
@@ -388,6 +409,31 @@ html[data-theme="light"] input[type="datetime-local"] {
   opacity: 0;
   animation: chatLoadingReveal 150ms ease-out 300ms forwards;
 }
+
+/* Màu theo người kiểu Telegram, mọi kênh (ChatWindow, PeerInitials, lib/chat/peerStyle.ts): chat-peer-N chọn màu;
+   chat-peer-name = tên, chat-peer-quote = khung trích dẫn (vạch trái + nền nhạt cùng màu), chat-peer-avatar = ảnh
+   đại diện chữ (dải màu như Telegram), chat-rank = nhãn chức vụ */
+.chat-peer-0 { --chat-peer: var(--chat-peer-0); --chat-avatar-from: #ff845e; --chat-avatar-to: #d45246; }
+.chat-peer-1 { --chat-peer: var(--chat-peer-1); --chat-avatar-from: #febb5b; --chat-avatar-to: #f68136; }
+.chat-peer-2 { --chat-peer: var(--chat-peer-2); --chat-avatar-from: #b694f9; --chat-avatar-to: #6c61df; }
+.chat-peer-3 { --chat-peer: var(--chat-peer-3); --chat-avatar-from: #9ad164; --chat-avatar-to: #46ba43; }
+.chat-peer-4 { --chat-peer: var(--chat-peer-4); --chat-avatar-from: #5bcbe3; --chat-avatar-to: #359ad4; }
+.chat-peer-5 { --chat-peer: var(--chat-peer-5); --chat-avatar-from: #5caffa; --chat-avatar-to: #408acf; }
+.chat-peer-6 { --chat-peer: var(--chat-peer-6); --chat-avatar-from: #ff8aac; --chat-avatar-to: #d95574; }
+.chat-peer-name { color: rgb(var(--chat-peer)); }
+.chat-peer-quote { border-left-color: rgb(var(--chat-peer)); background-color: rgb(var(--chat-peer) / 0.12); }
+.chat-peer-avatar { background-image: linear-gradient(to bottom, var(--chat-avatar-from), var(--chat-avatar-to)); color: #fff; }
+.chat-rank { color: rgb(var(--chat-rank)); background-color: rgb(var(--chat-rank) / 0.16); }
+
+/* Link trong tin nhắn (linkifyText → .chat-link), CHỈ giao diện tối: xanh da trời nhạt, không gạch chân (gạch khi rê
+   chuột). Xanh dương cũ + gạch chân khó đọc trên bong bóng gửi (navy, tương phản 4.2); màu ngọc của Telegram lệch tông
+   với nền navy — #9ecbff: 7.8 trên bong bóng nhận, 6.3 trên bong bóng gửi. Giao diện sáng giữ text-blue-400 như cũ. */
+html:not([data-theme="light"]) .chat-link { color: #9ecbff; text-decoration-line: none; }
+html:not([data-theme="light"]) .chat-link:hover { color: #c6e2ff; text-decoration-line: underline; }
+
+/* Dấu ✓✓ "đã xem" cạnh giờ tin gửi (MessageTime StatusTicks); ✓ / ✓✓ khác giữ màu chữ của giờ */
+.chat-tick-read { color: rgb(var(--primary)); }
+html:not([data-theme="light"]) .chat-tick-read { color: #9ecbff; }
 
 /* Nháy đỏ 3 lần khi có tin nhắn mới */
 @keyframes flashRedBg {

@@ -8,6 +8,7 @@ import { useChatStore } from '@/store/chatStore';
 import { useAppStore } from '@/store/appStore';
 import ipc from '@/lib/ipc';
 import { toLocalMediaUrl } from '@/lib/localMedia';
+import PeerInitials from './PeerInitials';
 
 export function FBUserProfilePopup({ userId, anchorX, anchorY, contacts, activeAccountId, activeThreadId, onClose }: {
   userId: string; anchorX: number; anchorY: number;
@@ -137,9 +138,7 @@ export function FBUserProfilePopup({ userId, anchorX, anchorY, contacts, activeA
                   }
                 }} />
             ) : (
-              <div className="w-20 h-20 rounded-full bg-[#1877F2] border-4 border-white shadow-md flex items-center justify-center text-white text-2xl font-bold">
-                {(name || 'U').charAt(0).toUpperCase()}
-              </div>
+              <PeerInitials id={userId} name={name} fallback="U" className="w-20 h-20 border-4 border-white shadow-md text-2xl" />
             )}
           </div>
           <div className="pl-[5.5rem] pt-1.5 min-w-0">

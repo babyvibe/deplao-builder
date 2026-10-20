@@ -412,6 +412,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   app: {
     setBadge: (count: number) => ipcRenderer.send('app:setBadge', count),
     rendererReady: () => ipcRenderer.send('app:rendererReady'),
+    uiSettled: () => ipcRenderer.send('app:uiSettled'),
     openThread: (params: { zaloId: string; threadId: string; threadType: number }) =>
       ipcRenderer.send('app:openThread', params),
     sendBadgeImage: (params: { dataUrl: string; count: number }) =>
@@ -777,6 +778,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getCallHistory:    (params: any) => ipcRenderer.invoke('telegramUser:getCallHistory', params),
     declineCall:       (params: any) => ipcRenderer.invoke('telegramUser:declineCall', params),
     getGroupMembers:   (params: any) => ipcRenderer.invoke('telegramUser:getGroupMembers', params),
+    getGroupAdmins:    (params: any) => ipcRenderer.invoke('telegramUser:getGroupAdmins', params),
+    searchGroupMembers: (params: any) => ipcRenderer.invoke('telegramUser:searchGroupMembers', params),
     hydrateMessageSenders: (params: any) => ipcRenderer.invoke('telegramUser:hydrateMessageSenders', params),
     setDialogMute:     (params: any) => ipcRenderer.invoke('telegramUser:setDialogMute', params),
     setDialogArchived: (params: any) => ipcRenderer.invoke('telegramUser:setDialogArchived', params),
@@ -968,6 +971,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'event:pinsUpdated',
       'event:typing',
       'event:seen',
+      'event:receipt',
+      'event:mediaProgress',
       'qr:update',
       'update:available',
       'update:progress',

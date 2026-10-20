@@ -15,6 +15,7 @@ import GroupAvatarCommon from './GroupAvatar';
 import { FBUserProfilePopup } from './FBUserProfilePopup';
 import { TelegramUserProfilePopup } from './TelegramUserProfilePopup';
 import { Spinner } from '@/components/common/PageLoading';
+import PeerInitials from './PeerInitials';
 
 // ─── ActionRow ────────────────────────────────────────────────────────────────
 export function ActionRow({ icon, label, onClick, textColor = 'text-foreground/80' }: {
@@ -522,9 +523,7 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
                 </span>
               </button>
             ) : (
-              <div className="w-20 h-20 rounded-full bg-blue-600 border-4 border-border flex items-center justify-center text-white text-2xl font-bold">
-                {(name || 'U').charAt(0).toUpperCase()}
-              </div>
+              <PeerInitials id={userId} name={name} fallback="U" className="w-20 h-20 border-4 border-border text-2xl" />
             )}
           </div>
           <div className="pl-24 pt-2 pb-3 min-w-0">

@@ -17,6 +17,7 @@ import type { PinnedNote } from '@/components/chat/PinnedMessages';
 import { CHANNEL } from '@/lib/channelHelper';
 import { GiftIcon } from '@/components/common/icons';
 import type { Channel } from '../../../../configs/channelConfig';
+import PeerInitials from '@/components/common/PeerInitials';
 
 interface CRMContactDetailPanelProps {
   contact: CRMContact;
@@ -321,9 +322,7 @@ export default function CRMContactDetailPanel({ contact, channel = CHANNEL.ZALO,
       <div className="flex flex-col items-center gap-2 px-4 py-4 border-b border-border">
         {contact.avatar
           ? <img src={contact.avatar} alt="" className="w-16 h-16 rounded-full object-cover" />
-          : <div className="w-16 h-16 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-2xl font-bold">
-              {(name || 'U').charAt(0).toUpperCase()}
-            </div>}
+          : <PeerInitials id={contact.contact_id} name={name} fallback="U" className="w-16 h-16 text-xl" />}
         <div className="text-center">
           <p className="text-foreground font-semibold text-sm">{name}</p>
           {contact.alias && contact.alias !== contact.display_name &&

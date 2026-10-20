@@ -19,13 +19,15 @@ import {findLinkRanges, findUrlRanges, getMentionRanges, linkifyText, type Menti
 import {isMediaType, isOaListType} from '@/lib/chat/messageTypeUtils';
 import {TgsBubble} from './MessageBubbles';
 import OaListBubble from './OaListBubble';
-import {BubbleTime, MediaTimeBadge, formatBubbleTime} from './MessageTime';
+import {BubbleTime, MediaTimeBadge, TextWithInlineTime, formatBubbleTime} from './MessageTime';
 import {checkZaloMediaExpired, ExpiredMediaPlaceholder, isMediaExpired, setMediaExpiredInStore} from './ZaloMediaExpiry';
 import {toZaloJpgUrl} from '../../../utils/zaloImageUrl';
 import {fitMediaBox, getKnownDims, ratioDiffers, rememberDims, type MediaDims} from '@/lib/chat/mediaDims';
 import {getTelegramWebpageMeta, TelegramLinkPreviewCard} from './TelegramLinkPreview';
 import {requestTelegramPreviewRefresh} from '@/lib/chat/telegramPreviewRefresh';
 import {fitVideoBox} from './FBVideoThumb';
+import {DownloadProgressRing, VideoDownloadOverlay} from './MediaDownloadProgress';
+import {isTransferring, useMessageMediaProgress} from '@/lib/media/mediaProgress';
 
 type TelegramMediaRepairResult = {
     success: boolean;
@@ -785,15 +787,16 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
             <div className="flex max-w-xs flex-col gap-1.5">
                 {expiredNode}
                 <div className={`rounded-lg px-3 py-2 text-sm break-words ${surface}`}>
-                    <TextWithMentions
-                        text={caption}
-                        channel={msg.channel}
-                        allContacts={allContacts}
-                        groupMembersList={groupMembersList}
-                        mentionRanges={getMentionRanges(msg.attachments)}
-                        onMentionClick={onMentionClick}
-                    />
-                    <BubbleTime timestamp={mediaTime}/>
+                    <TextWithInlineTime timestamp={mediaTime}>
+                        <TextWithMentions
+                            text={caption}
+                            channel={msg.channel}
+                            allContacts={allContacts}
+                            groupMembersList={groupMembersList}
+                            mentionRanges={getMentionRanges(msg.attachments)}
+                            onMentionClick={onMentionClick}
+                        />
+                    </TextWithInlineTime>
                 </div>
             </div>
         );
@@ -866,15 +869,16 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
             <div className="flex w-full max-w-xs flex-col gap-1.5">
                 {failedNode}
                 <div className={`rounded-lg px-3 py-2 text-sm break-words ${surface}`}>
-                    <TextWithMentions
-                        text={caption}
-                        channel={msg.channel}
-                        allContacts={allContacts}
-                        groupMembersList={groupMembersList}
-                        mentionRanges={getMentionRanges(msg.attachments)}
-                        onMentionClick={onMentionClick}
-                    />
-                    <BubbleTime timestamp={mediaTime}/>
+                    <TextWithInlineTime timestamp={mediaTime}>
+                        <TextWithMentions
+                            text={caption}
+                            channel={msg.channel}
+                            allContacts={allContacts}
+                            groupMembersList={groupMembersList}
+                            mentionRanges={getMentionRanges(msg.attachments)}
+                            onMentionClick={onMentionClick}
+                        />
+                    </TextWithInlineTime>
                 </div>
             </div>
         );
@@ -996,15 +1000,16 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
         <div className={`flex flex-col rounded-lg overflow-hidden ${surface}`} style={{width: shellWidth, maxWidth: '100%'}}>
             {imgNode}
             <div className="px-3 py-2 text-sm break-words">
-                <TextWithMentions
-                    text={caption}
-                    channel={msg.channel}
-                    allContacts={allContacts}
-                    groupMembersList={groupMembersList}
-                    mentionRanges={getMentionRanges(msg.attachments)}
-                    onMentionClick={onMentionClick}
-                />
-                <BubbleTime timestamp={mediaTime}/>
+                <TextWithInlineTime timestamp={mediaTime}>
+                    <TextWithMentions
+                        text={caption}
+                        channel={msg.channel}
+                        allContacts={allContacts}
+                        groupMembersList={groupMembersList}
+                        mentionRanges={getMentionRanges(msg.attachments)}
+                        onMentionClick={onMentionClick}
+                    />
+                </TextWithInlineTime>
             </div>
         </div>
     );
@@ -1049,49 +1054,59 @@ export function getTelegramVideoMedia(msg: any): { size: number; duration: numbe
 export function TelegramVideoPending({msg, onPlay}: { msg: any; onPlay: (downloaded: any) => void }) {
     const {size, duration, width, height, thumb} = getTelegramVideoMedia(msg) || {size: 0, duration: 0, width: 0, height: 0, thumb: ''};
     const repair = useTelegramMediaRepair(msg, size > 0 && size <= TELEGRAM_VIDEO_AUTO_DOWNLOAD_BYTES);
+    // Lượt tải đang chạy (tin mới về tự tải / bấm tải): vòng tiến độ + "2.1 / 5.0 MB" như Telegram; trong lúc tải bấm
+    // không làm gì — tải xong bong bóng có file (FBVideoThumb) mới phát được, trình phát không gặp file dở
+    const progress = useMessageMediaProgress(msg);
+    const transferring = isTransferring(progress);
     const [failed, setFailed] = React.useState(false);
     // Cùng khung với FBVideoThumb sau khi tải (theo tỉ lệ thật, không cắt) → không nhảy kích thước
     const box = fitVideoBox(width && height ? {w: width, h: height} : null);
 
     const download = async (event: React.MouseEvent) => {
         event.stopPropagation();
-        if (repair.repairing) return;
+        if (repair.repairing || transferring) return;
         setFailed(false);
         const localPaths = await repair.requestRepair('manual_retry', true);
         if (localPaths) onPlay({...msg, local_paths: JSON.stringify(localPaths)});
         else setFailed(true);
     };
+    const busy = transferring || repair.repairing;
 
     return (
         <div
             onClick={download}
-            className="relative cursor-pointer overflow-hidden rounded-xl bg-black select-none"
+            className={`relative overflow-hidden rounded-xl bg-black select-none ${busy ? 'cursor-progress' : 'cursor-pointer'}`}
             style={{width: box.width, height: box.height, maxWidth: '100%'}}
-            title={repair.repairing ? 'Đang tải video…' : 'Tải và phát video'}
+            title={busy ? 'Đang tải video — xem được khi tải xong' : 'Tải và phát video'}
         >
             {thumb && <img src={thumb} alt="" className="absolute inset-0 h-full w-full scale-110 object-cover blur-md"/>}
-            <div className="absolute inset-0 bg-black/30"/>
-            <div className="absolute inset-0 flex items-center justify-center">
-                <div className="flex h-14 w-14 items-center justify-center rounded-full bg-black/60 shadow-lg backdrop-blur-sm text-white-important">
-                    {repair.repairing ? (
-                        <svg width="26" height="26" viewBox="0 0 24 24" className="animate-spin" aria-hidden>
-                            <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeOpacity="0.3" strokeWidth="2.5"/>
-                            <path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/>
-                        </svg>
-                    ) : (
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                            <path d="M12 4v11"/><polyline points="7 10 12 15 17 10"/><path d="M5 20h14"/>
-                        </svg>
-                    )}
-                </div>
-            </div>
+            {transferring && progress ? (
+                <VideoDownloadOverlay progress={progress} fallbackTotal={size}/>
+            ) : (
+                <>
+                    <div className="absolute inset-0 bg-black/30"/>
+                    <div className="absolute inset-0 flex items-center justify-center">
+                        {repair.repairing ? (
+                            <DownloadProgressRing fraction={null}/>
+                        ) : (
+                            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-black/60 shadow-lg backdrop-blur-sm text-white-important">
+                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                                    <path d="M12 4v11"/><polyline points="7 10 12 15 17 10"/><path d="M5 20h14"/>
+                                </svg>
+                            </div>
+                        )}
+                    </div>
+                </>
+            )}
             <div className="absolute bottom-2 left-2 flex items-center gap-1.5 text-[11px] font-medium text-white-important">
                 {duration > 0 && <span className="rounded bg-black/55 px-1.5 py-0.5">{formatVideoDuration(duration)}</span>}
-                <span className="rounded bg-black/55 px-1.5 py-0.5">
-                    {repair.repairing ? 'Đang tải…' : size > 0 ? formatVideoBytes(size) : 'Video'}
-                </span>
+                {!transferring && (
+                    <span className="rounded bg-black/55 px-1.5 py-0.5">
+                        {repair.repairing ? 'Đang tải…' : size > 0 ? formatVideoBytes(size) : 'Video'}
+                    </span>
+                )}
             </div>
-            {failed && (
+            {(failed || progress?.state === 'failed') && !busy && (
                 <div className="absolute left-2 right-2 top-2 rounded bg-black/65 px-2 py-1 text-center text-[11px] text-white-important">
                     Không tải được video — bấm để thử lại
                 </div>
@@ -1645,8 +1660,7 @@ export function MediaGroupBubble({
             </div>
             {telegramCaptionMessage && (
                 <div className="px-3 py-2">
-                    <div className="text-sm whitespace-pre-wrap break-words"
-                         style={{fontFamily: '"Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif'}}>
+                    <TextWithInlineTime timestamp={albumTime} className="text-sm whitespace-pre-wrap break-words">
                         <TextWithMentions
                             text={String(telegramCaptionMessage.content || '').trim()}
                             channel={telegramCaptionMessage.channel}
@@ -1655,8 +1669,7 @@ export function MediaGroupBubble({
                             mentionRanges={getMentionRanges(telegramCaptionMessage.attachments)}
                             onMentionClick={onMentionClick}
                         />
-                    </div>
-                    <BubbleTime timestamp={albumTime}/>
+                    </TextWithInlineTime>
                 </div>
             )}
         </div>

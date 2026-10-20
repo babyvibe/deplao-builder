@@ -272,6 +272,18 @@ export function registerTelegramUserIpc(): void {
     catch (err: any) { return { success: false, error: err.message }; }
   });
 
+  // Quản trị viên + chức vụ tự đặt của nhóm (nhãn góc phải tên người gửi); bản lưu < 6 giờ thì không gọi mạng
+  ipcMain.handle('telegramUser:getGroupAdmins', async (_event, params: { accountId: string; chatId: string; refresh?: boolean }) => {
+    try { return await TelegramUser.getGroupAdminsCached(params.accountId, params.chatId, !!params.refresh); }
+    catch (err: any) { return { success: false, error: err.message }; }
+  });
+
+  // Ô @nhắc đến: tìm thành viên nhóm lớn trên Telegram theo tên / @username, lưu DB (lần sau tìm trong DB)
+  ipcMain.handle('telegramUser:searchGroupMembers', async (_event, params: { accountId: string; chatId: string; query: string; limit?: number }) => {
+    try { return await TelegramUser.searchGroupMembers(params.accountId, params.chatId, params.query, params.limit); }
+    catch (err: any) { return { success: false, error: err.message }; }
+  });
+
   ipcMain.handle('telegramUser:addChatUser', async (_event, params: { accountId: string; chatId: string; userId: string }) => {
     try { return await TelegramUser.addChatUser(params.accountId, params.chatId, params.userId); }
     catch (err: any) { return { success: false, error: err.message }; }

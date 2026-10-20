@@ -24,6 +24,7 @@ import { BotIcon, CloudIcon, RefreshIcon } from '@/components/common/icons';
 import { MY_DOCUMENTS_NAME, isMyDocumentsThread } from '@/lib/chat/myDocuments';
 import { PluginPanelToggle } from '@/components/plugins/PluginChatPanel';
 import { CHANNEL, isZalo, isFacebook, isTelegram, isTelegramUser } from '@/lib/channelHelper';
+import PeerInitials from '@/components/common/PeerInitials';
 
 interface HeaderLocalLabel {
   id: number;
@@ -752,15 +753,11 @@ export default function ChatHeader() {
         );
       }
       return (
-        <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold bg-green-600">
-          {(displayName || 'G').charAt(0).toUpperCase()}
-        </div>
+        <PeerInitials id={activeThreadId} name={displayName} fallback="G" className="w-9 h-9 text-xs" />
       );
     }
     return (
-      <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold bg-blue-600 hover:ring-2 hover:ring-blue-400 transition-all">
-        {(displayName || 'U').charAt(0).toUpperCase()}
-      </div>
+      <PeerInitials id={activeThreadId} name={displayName} fallback="U" className="w-9 h-9 text-xs hover:ring-2 hover:ring-blue-400 transition-all" />
     );
   };
 

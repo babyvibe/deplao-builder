@@ -413,7 +413,7 @@ export function DesignSystemPage() {
                 { icon: <CheckCircleIcon className="h-4 w-4" />, cls: 'border-success/30 bg-success/10 text-success', text: 'Đã đồng bộ 1.284 tin nhắn.' },
                 { icon: <AlertIcon className="h-4 w-4" />, cls: 'border-warning/30 bg-warning/10 text-warning', text: 'Tài khoản Zalo sắp hết phiên đăng nhập.' },
                 { icon: <AlertIcon className="h-4 w-4" />, cls: 'border-destructive/30 bg-destructive/10 text-destructive', text: 'Không gửi được tin nhắn. Thử lại?' },
-                { icon: <InfoIcon className="h-4 w-4" />, cls: 'border-info/30 bg-info/10 text-info', text: 'Phiên bản 26.10.1 đã sẵn sàng cài đặt.' },
+                { icon: <InfoIcon className="h-4 w-4" />, cls: 'border-info/30 bg-info/10 text-info', text: 'Phiên bản 26.10.2 đã sẵn sàng cài đặt.' },
               ].map((n) => (
                 <div key={n.text} className={cn('flex items-center gap-2.5 rounded-lg border px-3 py-2 text-sm', n.cls)}>
                   {n.icon}

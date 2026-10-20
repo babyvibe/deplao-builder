@@ -1266,6 +1266,7 @@ function ZaloGroupMembersTab() {
                   className={`w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-muted/50 transition-colors
                     ${selectedGroupId === group.contact_id ? 'bg-blue-500/10 border-r-2 border-blue-500' : ''}`}>
                   <GroupAvatar
+                    id={group.contact_id}
                     avatarUrl={group.avatar_url}
                     groupInfo={activeAccountId ? (groupInfoCache[activeAccountId] || {})[group.contact_id] : undefined}
                     name={group.display_name}
@@ -1298,6 +1299,7 @@ function ZaloGroupMembersTab() {
             {/* Members header */}
             <div className="px-5 py-3 border-b border-border flex items-center gap-3 flex-shrink-0 flex-wrap">
               <GroupAvatar
+                id={selectedGroup.contact_id}
                 avatarUrl={selectedGroup.avatar_url}
                 groupInfo={activeAccountId ? (groupInfoCache[activeAccountId] || {})[selectedGroup.contact_id] : undefined}
                 name={selectedGroup.display_name}

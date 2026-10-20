@@ -30,6 +30,7 @@ import {
   mergeGroupMembers, withLiveMemberInfo,
 } from '@/lib/chat/groupMembersPanel';
 import { groupAdminRole, groupOwnerRole, groupRoleKind, groupRoleLabel, myGroupRoleKind } from '../../../shared/groupMemberRoles';
+import PeerInitials from '@/components/common/PeerInitials';
 
 
 type PanelView = 'info' | 'members' | 'manage' | 'media' | 'pending' | 'topics';
@@ -819,7 +820,7 @@ export default function GroupInfoPanel() {
         <div className={`relative ${channelCap.supportsChangeGroupAvatar ? 'group cursor-pointer' : ''}`}
           onClick={channelCap.supportsChangeGroupAvatar ? handleChangeAvatar : undefined}
           title={channelCap.supportsChangeGroupAvatar ? 'Đổi ảnh nhóm' : undefined}>
-          <GroupAvatar avatarUrl={groupInfo?.avatar || avatarUrl} groupInfo={groupInfo} name={displayName} size="lg" />
+          <GroupAvatar avatarUrl={groupInfo?.avatar || avatarUrl} groupInfo={groupInfo} name={displayName} id={activeThreadId || undefined} size="lg" />
           {channelCap.supportsChangeGroupAvatar && (
           <div className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
@@ -1487,9 +1488,7 @@ function MembersPanel({ groupInfo, groupId, onBack, onRefresh, onApiSync, myAcco
                   <img src={avatarSrc} alt="" loading="lazy" className="w-9 h-9 rounded-full object-cover"
                     onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                 ) : (
-                  <div className="w-9 h-9 rounded-full bg-blue-600 flex items-center justify-center text-white text-sm font-bold">
-                    {(m.displayName || '?').charAt(0).toUpperCase()}
-                  </div>
+                  <PeerInitials id={m.userId} name={m.displayName} className="w-9 h-9 text-xs" />
                 )}
               </button>
               <div className="flex-1 min-w-0">
@@ -1771,11 +1770,8 @@ function PendingPanel({ groupId, myAccountId, onBack, onCountChange }: {
                       }}
                     />
                   ) : null}
-                  <div
-                    className="avatar-fallback w-10 h-10 rounded-full bg-gradient-to-br from-yellow-500 to-orange-500 items-center justify-center text-white text-sm font-bold absolute inset-0"
-                    style={{ display: member.avatar ? 'none' : 'flex' }}>
-                    {(member.displayName || '?').charAt(0).toUpperCase()}
-                  </div>
+                  <PeerInitials id={member.userId} name={member.displayName} className="avatar-fallback w-10 h-10 text-sm absolute inset-0"
+                    style={{ display: member.avatar ? 'none' : 'flex' }} />
                 </div>
 
                 {/* Info */}
@@ -2023,10 +2019,8 @@ function PendingMembersSection({ groupId, isAdmin, channel }: { groupId: string;
                         if (fb) fb.style.display = 'flex';
                       }} />
                   ) : null}
-                  <div className="pm-fallback w-9 h-9 rounded-full bg-gradient-to-br from-yellow-500 to-orange-500 items-center justify-center text-white text-xs font-bold absolute inset-0"
-                    style={{ display: member.avatar ? 'none' : 'flex' }}>
-                    {(member.displayName || '?').charAt(0).toUpperCase()}
-                  </div>
+                  <PeerInitials id={member.userId} name={member.displayName} className="pm-fallback w-9 h-9 text-xs absolute inset-0"
+                    style={{ display: member.avatar ? 'none' : 'flex' }} />
                 </div>
 
                 <div className="flex-1 min-w-0">

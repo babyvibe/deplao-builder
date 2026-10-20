@@ -18,6 +18,7 @@ import ChatHistoryList from './ChatHistoryList';
 import SharedMessageContent from './SharedMessageContent';
 import { EMOJI_CATEGORIES, QUICK_EMOJIS } from '@/lib/chat/emojiUtils';
 import { CHANNEL } from '@/lib/channelHelper';
+import PeerInitials from '@/components/common/PeerInitials';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function fmtTime(ts: number): string {
@@ -259,7 +260,7 @@ function RecipientRow({ zaloId, contacts, accounts, onSelect }: {
               className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-muted text-left transition-colors">
               {c.avatar_url
                 ? <img src={c.avatar_url} alt="" className="w-8 h-8 rounded-full object-cover flex-shrink-0"/>
-                : <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0 ${c.contact_type==='group'?'bg-purple-600':'bg-blue-600'}`}>{(c.alias||c.display_name||'?').charAt(0).toUpperCase()}</div>}
+                : <PeerInitials id={c.contact_id} name={c.alias || c.display_name} className="w-8 h-8 text-xs" />}
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-foreground truncate">{c.alias||c.display_name||c.contact_id}</p>
                 <p className="text-[11px] text-muted-foreground truncate">{c.contact_type==='group'?'Nhóm':(c.phone||c.contact_id)}</p>
@@ -596,7 +597,7 @@ export default function QuickChatModal() {
               <>
                 {target.avatarUrl
                   ? <img src={target.avatarUrl} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0"/>
-                  : <div className={`w-7 h-7 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0 ${target.threadType===1?'bg-purple-600':'bg-blue-600'}`}>{target.displayName.charAt(0).toUpperCase()}</div>}
+                  : <PeerInitials id={target.userId} name={target.displayName} className="w-7 h-7 text-[10px]" />}
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-semibold text-foreground truncate leading-tight">{target.displayName}</p>
                   {(() => {

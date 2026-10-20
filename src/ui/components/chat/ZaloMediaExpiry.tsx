@@ -10,6 +10,8 @@ import React from 'react';
 import ipc from '@/lib/ipc';
 import {useChatStore} from '@/store/chatStore';
 import {isZalo} from '@/lib/channelHelper';
+import {isTransferring, useMessageMediaProgress} from '@/lib/media/mediaProgress';
+import {VideoDownloadOverlay} from './MediaDownloadProgress';
 
 export type ExpiredMediaKind = 'image' | 'video';
 
@@ -156,6 +158,10 @@ export function ZaloRemoteVideoThumb({msg, onPlay}: { msg: any; onPlay: () => vo
     const {href, thumb, durationSec} = React.useMemo(() => parseVideoContent(msg?.content), [msg?.content]);
     const [thumbFailed, setThumbFailed] = React.useState(false);
     const [checking, setChecking] = React.useState(false);
+    // Tin mới về: main đang tải file về máy → vòng tiến độ + "x / y MB"; tải xong mới phát (file trên máy). Trong lúc tải
+    // không mở trình phát từ CDN (hay lỗi khi CDN cần phiên đăng nhập).
+    const progress = useMessageMediaProgress(msg);
+    const transferring = isTransferring(progress);
 
     React.useEffect(() => {
         setThumbFailed(false);
@@ -176,7 +182,7 @@ export function ZaloRemoteVideoThumb({msg, onPlay}: { msg: any; onPlay: () => vo
 
     const handlePlay = async (e: React.MouseEvent) => {
         e.stopPropagation();
-        if (checking || !href) return;
+        if (checking || !href || transferring) return;
         // Hết hạn → store đánh dấu, bubble tự chuyển sang "Video đã hết hạn"
         if (await check(false)) return;
         onPlay();
@@ -185,8 +191,8 @@ export function ZaloRemoteVideoThumb({msg, onPlay}: { msg: any; onPlay: () => vo
     return (
         <div
             onClick={handlePlay}
-            title={href ? 'Phát video' : 'Không có đường dẫn video'}
-            className="relative group/video cursor-pointer rounded-xl overflow-hidden bg-black ring-1 ring-black/[0.12] select-none"
+            title={transferring ? 'Đang tải video — xem được khi tải xong' : href ? 'Phát video' : 'Không có đường dẫn video'}
+            className={`relative group/video rounded-xl overflow-hidden bg-black ring-1 ring-black/[0.12] select-none ${transferring ? 'cursor-progress' : 'cursor-pointer'}`}
             style={{width: '17.5rem', height: '10rem'}}
         >
             {thumb && !thumbFailed ? (
@@ -207,18 +213,22 @@ export function ZaloRemoteVideoThumb({msg, onPlay}: { msg: any; onPlay: () => vo
 
             <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-black/50"/>
 
-            <div className="absolute inset-0 flex items-center justify-center">
-                <div
-                    className="w-14 h-14 bg-black/60 backdrop-blur-sm rounded-full flex items-center justify-center group-hover/video:bg-black/80 transition-colors shadow-lg">
-                    {checking ? (
-                        <div className="w-6 h-6 rounded-full border-2 border-white/30 border-t-white animate-spin"/>
-                    ) : (
-                        <svg width="22" height="22" viewBox="0 0 24 24" fill="white">
-                            <polygon points="5 3 19 12 5 21 5 3"/>
-                        </svg>
-                    )}
+            {transferring && progress ? (
+                <VideoDownloadOverlay progress={progress}/>
+            ) : (
+                <div className="absolute inset-0 flex items-center justify-center">
+                    <div
+                        className="w-14 h-14 bg-black/60 backdrop-blur-sm rounded-full flex items-center justify-center group-hover/video:bg-black/80 transition-colors shadow-lg">
+                        {checking ? (
+                            <div className="w-6 h-6 rounded-full border-2 border-white/30 border-t-white animate-spin"/>
+                        ) : (
+                            <svg width="22" height="22" viewBox="0 0 24 24" fill="white">
+                                <polygon points="5 3 19 12 5 21 5 3"/>
+                            </svg>
+                        )}
+                    </div>
                 </div>
-            </div>
+            )}
 
             {durationSec > 0 && (
                 <span className="absolute bottom-2 right-2 text-[11px] text-white-important bg-black/60 rounded px-1.5 py-0.5">

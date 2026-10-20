@@ -29,6 +29,7 @@ import { useZaloEvents } from './hooks/useZaloEvents';
 import { useChatEvents } from './hooks/useChatEvents';
 import useIsMobile from './hooks/useIsMobile';
 import ipc, { buildZaloAuth } from './lib/ipc';
+import { reportUiSettledWhenReady } from '@/lib/startupSettled';
 import { sendSeenForThread } from './lib/sendSeenHelper';
 import { getFilteredUnreadCount } from './lib/badgeUtils';
 import DataAccessor, { isReadFailure } from './lib/data/DataAccessor';
@@ -1321,6 +1322,8 @@ export default function App() {
     // expensive channel recovery. A large contact table must not hold the
     // window blank while startup hydration is still running.
     ipc.app?.rendererReady?.();
+    // Danh sách hội thoại tải xong + trình duyệt rảnh → báo main bắt đầu việc nền nặng (đồng bộ bù tin cũ Telegram…)
+    reportUiSettledWhenReady();
     setInitializing(false);
 
     const init = async () => {

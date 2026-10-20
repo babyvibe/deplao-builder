@@ -728,10 +728,14 @@ class EventBroadcaster {
                     );
                 }
 
-                // Download video file (background, không block)
+                // Download video file (background, không block) — báo tiến độ: bong bóng hiện "2.1 / 5.0 MB" và chưa cho
+                // mở trình phát tới khi tải xong (như Telegram)
                 if (videoUrl) {
+                    const { mediaProgressReporter } = require('../media/mediaProgress') as typeof import('../media/mediaProgress');
+                    const progress = mediaProgressReporter(zaloId, String(message.threadId || ''), String(msgId));
+                    progress.queued();
                     downloads.push(
-                        FileStorageService.downloadVideo(zaloId, videoUrl, `vid_${msgId}.mp4`, mediaCookies, mediaUserAgent).then((videoPath) => {
+                        FileStorageService.downloadVideo(zaloId, videoUrl, `vid_${msgId}.mp4`, mediaCookies, mediaUserAgent, progress.progress).then((videoPath) => {
                             if (videoPath) {
                                 DatabaseService.getInstance().updateLocalPaths(zaloId, String(msgId), { file: videoPath });
                                 EventBroadcaster.send('event:localPath', {
@@ -739,8 +743,14 @@ class EventBroadcaster {
                                     localPaths: { file: videoPath },
                                 });
                                 Logger.log(`[EventBroadcaster] Downloaded video for msg ${msgId}: ${videoPath}`);
+                                progress.done();
+                            } else {
+                                progress.failed();
                             }
-                        }).catch((e) => Logger.warn(`[EventBroadcaster] Video download failed for ${msgId}: ${e.message}`))
+                        }).catch((e) => {
+                            Logger.warn(`[EventBroadcaster] Video download failed for ${msgId}: ${e.message}`);
+                            progress.failed();
+                        })
                     );
                 }
 

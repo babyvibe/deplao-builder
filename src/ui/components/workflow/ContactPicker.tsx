@@ -80,7 +80,7 @@ function ContactAvatar({ item, accountId }: { item: Pick<PickerItem, 'id' | 'nam
   const groupInfo = useAppStore(s => (item.type === 'group' ? s.groupInfoCache?.[accountId]?.[item.id] : undefined));
   const [failed, setFailed] = React.useState(false);
   if (item.type === 'group') {
-    return <GroupAvatar avatarUrl={item.avatar} groupInfo={groupInfo} name={item.name} size="sm" />;
+    return <GroupAvatar avatarUrl={item.avatar} groupInfo={groupInfo} name={item.name} id={item.id} size="sm" />;
   }
   const src = item.avatar && !failed ? toLocalMediaUrl(item.avatar) : '';
   return src ? (

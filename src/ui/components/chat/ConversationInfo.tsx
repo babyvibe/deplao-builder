@@ -21,6 +21,7 @@ import { getCapability, channelSupports, type Channel } from '../../../configs/c
 import { CHANNEL, isZalo as isZaloCh, isNonZalo, isFacebook, isTelegram as isTelegramCh } from '@/lib/channelHelper';
 import { fetchContactInfo } from '@/hooks/useZaloEvents';
 import { BellIcon, BellOffIcon, GiftIcon, MapPinIcon, PhoneIcon, PinIcon, UserIcon, UsersIcon } from '@/components/common/icons';
+import PeerInitials from '@/components/common/PeerInitials';
 
 function muteUntilToDuration(until: number): number | string {
   if (until === 0) return -1;
@@ -577,6 +578,7 @@ function UserConversationInfo() {
               onClick={() => { useChatStore.getState().setActiveThread(g.groupId, 1); setShowMutualGroups(false); }}
               className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-muted/50 transition-colors text-left">
               <GroupAvatar
+                id={g.groupId}
                 name={g.name || g.groupId}
                 avatarUrl={g.avatar}
                 groupInfo={useAppStore.getState().groupInfoCache?.[activeAccountId || '']?.[g.groupId] || null}
@@ -649,9 +651,7 @@ function UserConversationInfo() {
         {avatarUrl ? (
           <img src={toLocalMediaUrl(avatarUrl)} alt={displayName} className="w-16 h-16 rounded-full object-cover mb-3" />
         ) : (
-          <div className="w-16 h-16 rounded-full flex items-center justify-center text-white text-2xl font-bold mb-3 bg-blue-600">
-            {(displayName || 'U').charAt(0).toUpperCase()}
-          </div>
+          <PeerInitials id={activeThreadId} name={displayName} fallback="U" className="w-16 h-16 text-xl mb-3" />
         )}
         {editingAlias ? (
           <div className="flex items-center gap-2 mt-2 w-full px-2">

@@ -3,6 +3,7 @@ import { clearReplyDrafts } from '@/lib/chat/replyDrafts';
 import ipc from "@/lib/ipc";
 import type { Channel } from '@/../configs/channelConfig';
 import { CHANNEL } from '@/lib/channelHelper';
+import { mergePeerReceipts, type PeerReceipt } from '@/lib/chat/messageStatus';
 
 const MESSAGE_TOPIC_KEY_SEPARATOR = '__tg_topic__';
 const FORUM_TOPICS_STORAGE_PREFIX = 'deplao_forum_topics_';
@@ -144,6 +145,10 @@ export interface ContactItem {
   is_replied?: number;
   /** 1 = có tin nhắn chưa đọc có @mention (tag tên hoặc @all) */
   has_mention?: number;
+  /** Mốc người kia đã nhận / đã xem tin mình gửi (ms; Telegram theo id tin) — dấu ✓ / ✓✓, lib/chat/messageStatus */
+  peer_delivered_ts?: number;
+  peer_read_ts?: number;
+  peer_read_max_id?: number;
   channel?: Channel;
   /** Telegram: 0 = not forum, 1 = forum, null = chưa check */
   is_forum?: number | null;
@@ -247,6 +252,9 @@ interface ChatStore {
   // Typing & seen
   typingUsers: Record<string, number>;      // key=`${zaloId}_${threadId}_${userId}`, value=timestamp
   seenInfo: Record<string, SeenEntry>;       // key=`${zaloId}_${threadId}`
+  /** Mốc đã nhận / đã xem nhận realtime (event:receipt), key=`${zaloId}_${threadId}` — gộp với cột của hội thoại */
+  peerReceipts: Record<string, PeerReceipt>;
+  applyPeerReceipt: (zaloId: string, threadId: string, receipt: PeerReceipt) => void;
   setTyping: (zaloId: string, threadId: string, userId: string) => void;
   clearTypingForThread: (zaloId: string, threadId: string) => void;
   setSeen: (zaloId: string, threadId: string, seenUids: string[], msgId: string, isGroup: boolean) => void;
@@ -274,6 +282,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   editingMsg: null,
   typingUsers: {},
   seenInfo: {},
+  peerReceipts: {},
   userPresence: {},
   perAccountThread: {},
   drafts: {},
@@ -321,6 +330,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       draftTimestamps: {},
       typingUsers: {},
       seenInfo: {},
+      peerReceipts: {},
     });
   },
 
@@ -1014,6 +1024,16 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         if (key.startsWith(prefix)) { delete updated[key]; changed = true; }
       }
       return changed ? { typingUsers: updated } : state;
+    });
+  },
+
+  applyPeerReceipt: (zaloId, threadId, receipt) => {
+    const key = `${zaloId}_${threadId}`;
+    set((state) => {
+      const next = mergePeerReceipts(state.peerReceipts[key], receipt);
+      const prev = state.peerReceipts[key];
+      if (prev && prev.deliveredTs === next.deliveredTs && prev.readTs === next.readTs && prev.readMaxId === next.readMaxId) return state;
+      return { peerReceipts: { ...state.peerReceipts, [key]: next } };
     });
   },
 

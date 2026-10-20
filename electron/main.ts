@@ -47,6 +47,7 @@ import FileStorageService from '../src/services/file/FileStorageService';
 import TrackingService from '../src/services/tracking/TrackingService';
 import { SHOW_DEV_TOOLS, IS_DEV_BUILD } from '../src/configs/BuildConfig';
 import Logger from '../src/utils/Logger';
+import { armStartupSettleFallback, settleWhenMainIdle } from '../src/utils/startupSettle';
 
 // CHANNEL constant — same as src/ui/lib/channelHelper.ts (electron build excludes src/ui/)
 const CHANNEL = { ZALO: 'zalo', FACEBOOK: 'facebook', TELEGRAM_BOT: 'telegram_bot', TELEGRAM_USER: 'telegram_user' } as const;
@@ -1374,6 +1375,13 @@ app.whenReady().then(async () => {
     console.log('[main] Renderer app mounted');
     onRendererReportedReady?.();
   });
+  // Giao diện đã tải xong danh sách hội thoại → khi luồng chính rảnh mới chạy việc nền nặng (đồng bộ bù tin cũ
+  // Telegram…) — xem src/utils/startupSettle.ts. Chạy ngay lúc mở app làm app giật.
+  ipcMain.on('app:uiSettled', (event) => {
+    if (event.sender !== mainWindow?.webContents) return;
+    console.log('[main] Renderer UI settled');
+    settleWhenMainIdle('renderer UI loaded');
+  });
 
   // ── Handle deep link từ initial launch (first instance) ──────────
   // Khi click deplao:// link lần đầu:
@@ -1459,6 +1467,8 @@ app.whenReady().then(async () => {
     if (connectorStartupStarted) return;
     connectorStartupStarted = true;
     console.log('[main] Renderer visible; starting channel connectors');
+    // Renderer không báo giao diện đã tải xong (app:uiSettled) → vẫn bắt đầu việc nền sau 60 giây
+    armStartupSettleFallback(60_000);
 
     reconnectAllFBAccounts().catch(err => {
       console.error('[main] reconnectAllFBAccounts error:', err.message);

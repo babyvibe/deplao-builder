@@ -4,6 +4,7 @@ import Logger from "./Logger";
 import EventBroadcaster, { registerGroupCacheInvalidator } from "../services/event/EventBroadcaster";
 import DatabaseService from "../services/database/DatabaseService";
 import MobileSyncService from "../services/zalo/mobileSync/MobileSyncService";
+import { recordZaloReceipt } from "../services/receipts/peerReceipts";
 import * as fs from "fs";
 import { imageSize } from "image-size";
 import { extractUserProfile } from "./profileUtils";
@@ -906,11 +907,27 @@ class ZaloLoginHelper {
             } catch {}
         });
 
-        listener.on("seen", (data: any) => {
-            Logger.log(`[ZaloLoginHelper] 📩 RAW seen event: ${JSON.stringify(data)}`);
-            try {
-                EventBroadcaster.broadcastSeen(zaloId, data);
-            } catch {}
+        // zca-js 2.x phát "seen_messages" / "delivered_messages" (mảng). Trước đây nghe "seen" — tên không bao giờ được
+        // phát, nên "Đã xem" của Zalo chưa từng chạy. Đã xem / đã nhận → mốc của hội thoại (dấu ✓✓ cạnh giờ tin gửi).
+        const listenAny = listener as any;
+        listenAny.on("seen_messages", (messages: any) => {
+            for (const data of Array.isArray(messages) ? messages : [messages]) {
+                try {
+                    EventBroadcaster.broadcastSeen(zaloId, data);
+                    recordZaloReceipt(zaloId, data, 'read');
+                } catch (err: any) {
+                    Logger.warn(`[ZaloLoginHelper] seen_messages error: ${err?.message || err}`);
+                }
+            }
+        });
+        listenAny.on("delivered_messages", (messages: any) => {
+            for (const data of Array.isArray(messages) ? messages : [messages]) {
+                try {
+                    recordZaloReceipt(zaloId, data, 'delivered');
+                } catch (err: any) {
+                    Logger.warn(`[ZaloLoginHelper] delivered_messages error: ${err?.message || err}`);
+                }
+            }
         });
 
         listener.on("friend_event", async (event: any) => {

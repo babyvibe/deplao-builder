@@ -523,7 +523,7 @@ export class DataAccessor {
   }
 
   /** Một trang thành viên nhóm + tổng (panel "Thành viên"): tìm theo tên / @username / id trong DB, không phân biệt dấu. */
-  static async getGroupMembersPage(params: { zaloId: string; groupId: string; query?: string; limit?: number; offset?: number; ownerRole?: number }) {
+  static async getGroupMembersPage(params: { zaloId: string; groupId: string; query?: string; limit?: number; offset?: number; ownerRole?: number; namedOnly?: boolean }) {
     if (isEmployee()) {
       const res = await rest().get('/api/query/groups/members/page', params);
       if (!res.success) return { ...restFail(res), members: [] as any[], total: 0 };

@@ -1879,6 +1879,13 @@ export function useZaloEvents() {
         setSeen(zaloId, threadId, seenUids || [], msgId || '', !!isGroup);
       }
     });
+    // Mốc đã nhận / đã xem tin mình gửi (main services/receipts/peerReceipts) → dấu ✓ / ✓✓ cạnh giờ, mọi kênh
+    const unsubReceipt = ipc.on('event:receipt', (data: any) => {
+      const { zaloId, threadId, deliveredTs, readTs, readMaxId } = data || {};
+      if (zaloId && threadId) {
+        useChatStore.getState().applyPeerReceipt(String(zaloId), String(threadId), { deliveredTs, readTs, readMaxId });
+      }
+    });
 
     // ─── Group info update (background fetch result) ──────────────────────
     const unsubGroupInfoUpdate = ipc.on('event:groupInfoUpdate', (data: any) => {
@@ -2213,6 +2220,7 @@ export function useZaloEvents() {
       unsubListenerDead();
       unsubTyping();
       unsubSeen();
+      unsubReceipt();
       unsubGroupInfoUpdate();
       unsubForumTopicsChanged();
       unsubGroupMemberAvatar();

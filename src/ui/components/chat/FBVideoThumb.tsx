@@ -3,6 +3,8 @@ import { toLocalMediaUrl } from '@/lib/localMedia';
 import ipc from '@/lib/ipc';
 import { claimInlineSound, releaseInlineSound, useInlineAutoplay } from '@/lib/media/inlineAutoplay';
 import { fitMediaBox, getKnownDims, rememberDims, type MediaDims } from '@/lib/chat/mediaDims';
+import { isTransferring, useMessageMediaProgress } from '@/lib/media/mediaProgress';
+import { VideoDownloadOverlay } from './MediaDownloadProgress';
 
 interface FBVideoThumbProps {
   videoPath: string;
@@ -46,6 +48,9 @@ export default function FBVideoThumb({ videoPath, onPlay, width, height, dimsMsg
 
   const mediaUrl = videoPath ? toLocalMediaUrl(videoPath) : '';
   const playingInline = useInlineAutoplay(boxRef, !!autoPlayInline && !!mediaUrl && !inlineFailed);
+  // Chưa có file (Facebook: tin mới về, main đang tải) → vòng tiến độ + "x / y MB" thay nút phát
+  const progress = useMessageMediaProgress(videoPath ? null : dimsMsg);
+  const transferring = !videoPath && isTransferring(progress);
 
   // Ref: object tin đổi mỗi lần cập nhật (reaction…) — không được làm chạy lại việc chụp khung hình bên dưới
   const dimsMsgRef = React.useRef(dimsMsg);
@@ -213,9 +218,9 @@ export default function FBVideoThumb({ videoPath, onPlay, width, height, dimsMsg
     <div
       ref={boxRef}
       onClick={handlePlay}
-      className="relative group/video cursor-pointer rounded-xl overflow-hidden bg-black ring-1 ring-black/[0.12] select-none"
+      className={`relative group/video rounded-xl overflow-hidden bg-black ring-1 ring-black/[0.12] select-none ${transferring ? 'cursor-progress' : 'cursor-pointer'}`}
       style={{ width: box.width, height: box.height, maxWidth: '100%' }}
-      title={playingInline ? 'Bấm để xem toàn màn hình' : undefined}
+      title={transferring ? 'Đang tải video — xem được khi tải xong' : playingInline ? 'Bấm để xem toàn màn hình' : undefined}
     >
       {/* Background: captured thumbnail, blurred in-message thumb, or gray placeholder */}
       {thumbDataUrl ? (
@@ -277,6 +282,8 @@ export default function FBVideoThumb({ videoPath, onPlay, width, height, dimsMsg
             </svg>
           )}
         </button>
+      ) : transferring && progress ? (
+        <VideoDownloadOverlay progress={progress} />
       ) : (
         <>
           {/* Gradient overlay */}

@@ -476,6 +476,7 @@ export const handlers = {
       limit: params.limit !== undefined && params.limit !== '' ? Number(params.limit) : undefined,
       offset: params.offset !== undefined && params.offset !== '' ? Number(params.offset) : undefined,
       ownerRole: params.ownerRole !== undefined && params.ownerRole !== '' ? Number(params.ownerRole) : undefined,
+      namedOnly: params.namedOnly === true || params.namedOnly === 'true' || params.namedOnly === '1',
     });
     return success({ items: page.members, total: page.total });
   },

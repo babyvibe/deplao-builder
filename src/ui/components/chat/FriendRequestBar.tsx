@@ -7,6 +7,7 @@ import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import { channelSupports, type Channel } from '@/../configs/channelConfig';
 import { CHANNEL } from '@/lib/channelHelper';
+import PeerInitials from '@/components/common/PeerInitials';
 
 type FriendStatus =
   | 'loading'
@@ -291,9 +292,7 @@ export default function FriendRequestBar({ zaloId, userId, contact, getAuth, onR
                   <img src={contact.avatar_url} alt="" className="w-10 h-10 rounded-full object-cover"
                     onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                 ) : (
-                  <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-white font-bold">
-                    {(displayName || 'U').charAt(0).toUpperCase()}
-                  </div>
+                  <PeerInitials id={userId} name={displayName} fallback="U" className="w-10 h-10 text-sm" />
                 )}
                 <div>
                   <p className="font-semibold text-foreground text-sm">{displayName}</p>

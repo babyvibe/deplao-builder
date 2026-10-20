@@ -17,6 +17,7 @@ import { useAppStore } from '@/store/appStore';
 import { AccountInfo, useAccountStore } from '@/store/accountStore';
 import { useChatStore } from '@/store/chatStore';
 import { Spinner } from '@/components/common/PageLoading';
+import PeerInitials from '@/components/common/PeerInitials';
 import { ArrowLeftIcon, FileTextIcon, ImageIcon, StarIcon, WaveIcon } from '@/components/common/icons';
 import ChannelBadge from '../common/ChannelBadge';
 import type { Channel } from '@/../configs/channelConfig';
@@ -46,7 +47,7 @@ const selectAccountFields = (s: { accounts: AccountInfo[] }): string[] => s.acco
 ]);
 
 /** Round avatar: tries each source in turn (e.g. current account avatar → the one saved with the star), then the initial. */
-function Avatar({ sources, name, size = 40, zaloId }: { sources: string[]; name: string; size?: number; zaloId?: string }) {
+function Avatar({ sources, name, size = 40, zaloId, id }: { sources: string[]; name: string; size?: number; zaloId?: string; id?: string }) {
   const sourcesKey = JSON.stringify(sources);
   // Failures are counted per source list: a new list (avatar refreshed elsewhere) starts again from the first
   const [failed, setFailed] = useState({ key: sourcesKey, count: 0 });
@@ -58,12 +59,7 @@ function Avatar({ sources, name, size = 40, zaloId }: { sources: string[]; name:
         onError={() => setFailed(prev => ({ key: sourcesKey, count: (prev.key === sourcesKey ? prev.count : 0) + 1 }))} />
     );
   }
-  return (
-    <div style={{ ...style, fontSize: Math.max(8, Math.round(size * 0.36)) }}
-      className="rounded-full flex-shrink-0 flex items-center justify-center bg-primary text-primary-foreground font-bold leading-none">
-      {(name || '?').trim().charAt(0).toUpperCase()}
-    </div>
-  );
+  return <PeerInitials id={id} name={name} single={size < 24} style={{ ...style, fontSize: Math.max(8, Math.round(size * 0.34)) }} />;
 }
 
 /** Merged inbox: the account a starred message belongs to (small avatar + name). */
@@ -246,7 +242,7 @@ export default function StarredMessagesPanel({ accountIds, showChannel, onOpen, 
                     onClick={() => openItem(item)}
                     onKeyDown={e => { if (e.key === 'Enter') openItem(item); }}
                     className="group/star relative flex gap-3 px-4 py-3 border-b border-border/70 hover:bg-muted cursor-pointer transition-colors">
-                    <Avatar sources={sender.avatars} name={sender.name} zaloId={item.ownerId} />
+                    <Avatar sources={sender.avatars} name={sender.name} zaloId={item.ownerId} id={item.senderId} />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-baseline gap-1.5 min-w-0 pr-7">
                         <span className="text-sm font-semibold text-foreground truncate">{sender.name || 'Người gửi'}</span>

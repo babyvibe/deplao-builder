@@ -21,6 +21,7 @@ import { showConfirm } from '../common/ConfirmDialog';
 import LabelPicker, { EditLabelsModal } from './LabelPicker';
 import AddFriendModal from '../common/AddFriendModal';
 import ConversationGroupAvatar from './ConversationGroupAvatar';
+import PeerInitials from '@/components/common/PeerInitials';
 import { requestGroupAvatar } from '@/lib/chat/groupAvatarLoader';
 import { BellIcon, BellOffIcon, BookmarkIcon, ChatIcon, CheckCircleIcon, CheckIcon, CircleIcon, ClipboardListIcon, CloseIcon, CloudIcon, FolderIcon, GlobeIcon, HardDriveIcon, ImageIcon, LinkIcon, MapPinIcon, MessageCircleIcon, PaperclipIcon, PinIcon, PluginIcon, StarIcon, TargetIcon, TrashIcon, UsersIcon } from '@/components/common/icons';
 import { toLocalMediaUrl } from '@/lib/localMedia';
@@ -33,6 +34,7 @@ import { useStarredStore } from '@/store/starredStore';
 import type { StarredItem } from '@/lib/chat/starredMessages';
 import { MY_DOCUMENTS_NAME, isMyDocumentsContact, isPinnedMyDocuments, myDocumentsThreadId } from '@/lib/chat/myDocuments';
 import { isSameMessagePage, newestMessages } from '@/lib/chat/messagePage';
+import { lookupZaloUserByPhone } from '@/lib/chat/zaloPhoneLookup';
 import useIsMobile from '@/hooks/useIsMobile';
 import ChannelBadge, { ChannelBadgeOverlay } from '../common/ChannelBadge';
 import { getCapability, channelSupports, getChannelLabel, type Channel } from '@/../configs/channelConfig';
@@ -193,6 +195,8 @@ export default function ConversationList() {
   const [phoneSearching, setPhoneSearching] = useState(false);
   /** Số điện thoại đang chờ chọn tài khoản tìm kiếm (chế độ gộp trang, chưa chọn filter) */
   const [phoneSearchPendingPhone, setPhoneSearchPendingPhone] = useState<string | null>(null);
+  /** Lần tìm SĐT mới nhất — kết quả về muộn của lần cũ (đã gõ tiếp / đã ẩn) không được hiện lại. */
+  const phoneSearchSeqRef = useRef(0);
   const [addFriendModal, setAddFriendModal] = useState<{ userId: string; displayName: string; avatar: string } | null>(null);
   const [sendingFriendReq, setSendingFriendReq] = useState(false);
   const [filter, setFilter] = useState<FilterType>('all');
@@ -1313,29 +1317,29 @@ export default function ConversationList() {
   });
 
 
+  /** Ẩn kết quả tìm SĐT (nút X, xoá / đóng ô tìm, gõ tiếp); lần tìm đang chạy về sau sẽ bị bỏ qua. */
+  const clearPhoneSearch = () => {
+    phoneSearchSeqRef.current += 1;
+    setPhoneResult(null);
+    setPhoneSearching(false);
+    setPhoneSearchPendingPhone(null);
+  };
+
   // ── Helper: thực sự tìm kiếm SĐT với tài khoản đã xác định ──────────────────
   const doPhoneSearch = async (acc: import('@/store/accountStore').AccountInfo, phone: string) => {
     if (!channelSupports((acc.channel || CHANNEL.ZALO) as Channel, 'supportsCRMSearch')) { setPhoneResult({ _notFound: true }); setPhoneSearching(false); return; }
+    const seq = ++phoneSearchSeqRef.current;
     setPhoneSearching(true); setPhoneResult(null);
     try {
-      const auth = buildZaloAuth(acc);
-      const res = await ipc.zalo?.findUser({ auth, phone: phone.trim() });
-      const user = res?.response;
-      if (user?.uid) {
-        try {
-          const infoRes = await ipc.zalo?.getUserInfo({ auth, userId: user.uid });
-          const profile = infoRes?.response?.changed_profiles?.[user.uid];
-          setPhoneResult(profile ? { ...user, isFr: profile.isFr ?? 0, isBlocked: profile.isBlocked ?? 0, _searchZaloId: acc.zalo_id } : { ...user, _searchZaloId: acc.zalo_id });
-        } catch { setPhoneResult({ ...user, _searchZaloId: acc.zalo_id }); }
-      } else {
-        setPhoneResult({ _notFound: true });
-      }
-    } catch {} finally { setPhoneSearching(false); }
+      // Dùng chung lần tìm với GlobalSearchPanel (cùng số) — không gọi findUser của Zalo 2 lần
+      const result = await lookupZaloUserByPhone(acc, phone);
+      if (seq === phoneSearchSeqRef.current) setPhoneResult(result);
+    } catch {} finally { if (seq === phoneSearchSeqRef.current) setPhoneSearching(false); }
   };
 
   // Handle search input change
   const handleSearchChange = async (value: string) => {
-    setSearch(value); setPhoneResult(null); setPhoneSearchPendingPhone(null);
+    setSearch(value); clearPhoneSearch();
     // Auto-close search panel when input is completely cleared
     if (!value.trim()) {
       setSearchPanelOpen(false);
@@ -1734,7 +1738,7 @@ export default function ConversationList() {
     } else {
       handleSelect(user.uid, 0);
     }
-    setPhoneResult(null); setSearch(''); setPhoneSearchPendingPhone(null);
+    clearPhoneSearch(); setSearch('');
   };
 
   // Khi chuyển tài khoản: khôi phục thread đang xem của tài khoản đó (hoặc clear nếu chưa có)
@@ -2262,6 +2266,19 @@ export default function ConversationList() {
     );
   }
 
+  // Nút X ẩn kết quả tìm SĐT Zalo (đang tìm / không thấy / người dùng tìm được / chọn tài khoản để tìm)
+  const phoneSearchDismiss = (
+    <button
+      type="button"
+      onClick={clearPhoneSearch}
+      title="Ẩn kết quả tìm kiếm"
+      aria-label="Ẩn kết quả tìm kiếm"
+      className="p-1 rounded-lg flex items-center justify-center flex-shrink-0 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+    >
+      <CloseIcon className="w-4 h-4" />
+    </button>
+  );
+
   return (
     <div className={`flex flex-col h-full bg-card relative w-full`}>
       {/* Search row - Zalo style */}
@@ -2282,7 +2299,7 @@ export default function ConversationList() {
           />
           {search && (
             <button
-              onClick={() => { setSearch(''); setPhoneResult(null); setSearchPanelOpen(false); searchInputRef.current?.blur(); }}
+              onClick={() => { setSearch(''); clearPhoneSearch(); setSearchPanelOpen(false); searchInputRef.current?.blur(); }}
               className="w-4 h-4 rounded-full bg-accent hover:bg-gray-400 flex items-center justify-center text-gray-900 flex-shrink-0 transition-colors"
             >
               <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
@@ -2294,7 +2311,7 @@ export default function ConversationList() {
         {/* Đóng button when search is active */}
         {searchPanelOpen ? (
           <button
-            onClick={() => { setSearchPanelOpen(false); setSearch(''); setPhoneResult(null); searchInputRef.current?.blur(); }}
+            onClick={() => { setSearchPanelOpen(false); setSearch(''); clearPhoneSearch(); searchInputRef.current?.blur(); }}
             className="text-sm text-blue-400 hover:text-blue-300 flex-shrink-0 font-medium transition-colors"
           >
             Đóng
@@ -2688,10 +2705,13 @@ export default function ConversationList() {
       {/* Merged inbox: cần chọn tài khoản để tìm SĐT trên Zalo */}
       {phoneSearchPendingPhone && !phoneSearching && !phoneResult && (
         <div className="border-b border-border bg-card px-3 py-2">
-          <p className="text-xs text-yellow-400 mb-2 flex items-center gap-1">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-            Chọn tài khoản để tìm <span className="text-foreground font-medium">{phoneSearchPendingPhone}</span>:
-          </p>
+          <div className="flex items-start gap-2 mb-2">
+            <p className="flex-1 min-w-0 text-xs text-yellow-400 flex items-center gap-1">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              Chọn tài khoản để tìm <span className="text-foreground font-medium">{phoneSearchPendingPhone}</span>:
+            </p>
+            {phoneSearchDismiss}
+          </div>
           <div className="flex flex-wrap gap-1.5">
             {mergedInboxAccounts.map(zaloId => {
               const acc = allAccountsList.find(a => a.zalo_id === zaloId);
@@ -2720,13 +2740,21 @@ export default function ConversationList() {
       {/* Phone search result */}
       {(phoneSearching || phoneResult) && (
         <div className="border-b border-border bg-card px-3 py-2">
-          {phoneSearching ? <p className="text-xs text-muted-foreground">Đang tìm...</p> : phoneResult ? (
+          {phoneSearching ? (
+            <div className="flex items-center gap-2">
+              <p className="flex-1 text-xs text-muted-foreground">Đang tìm...</p>
+              {phoneSearchDismiss}
+            </div>
+          ) : phoneResult ? (
             phoneResult._notFound ? (
-              <p className="text-xs text-muted-foreground">Không tìm thấy người dùng với số này hoặc người dùng đã chặn tìm kiếm với người lạ</p>
+              <div className="flex items-center gap-2">
+                <p className="flex-1 min-w-0 text-xs text-muted-foreground">Không tìm thấy người dùng với số này hoặc người dùng đã chặn tìm kiếm với người lạ</p>
+                {phoneSearchDismiss}
+              </div>
             ) : (
             <div className="flex items-center gap-2">
               {phoneResult.avatar ? <img src={phoneResult.avatar} alt="" className="w-9 h-9 rounded-full object-cover flex-shrink-0" />
-                : <div className="w-9 h-9 rounded-full bg-blue-600 flex items-center justify-center text-white text-sm font-bold flex-shrink-0">{(phoneResult.display_name || 'U').charAt(0).toUpperCase()}</div>}
+                : <PeerInitials id={phoneResult.uid} name={phoneResult.display_name || phoneResult.zalo_name} fallback="U" className="w-9 h-9 text-xs" />}
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-foreground truncate">{phoneResult.display_name || phoneResult.zalo_name}</p>
                 {phoneResult.isBlocked === 1 ? <p className="text-xs text-red-400"><CloseIcon className="w-4 h-4 inline" /> Đã chặn</p>
@@ -2743,6 +2771,7 @@ export default function ConversationList() {
                   </button>
                 )}
                 <button onClick={() => handleOpenPhoneResult(phoneResult)} className="bg-muted hover:bg-accent text-foreground text-xs px-2 py-1 rounded-lg"><ChatIcon className="w-4 h-4" /></button>
+                {phoneSearchDismiss}
               </div>
             </div>
             )
@@ -2845,7 +2874,7 @@ export default function ConversationList() {
                       }
                     }} />
                 ) : (
-                  <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold bg-blue-600">{(contact.alias || contact.display_name).charAt(0).toUpperCase()}</div>
+                  <PeerInitials id={contact.contact_id} name={contact.alias || contact.display_name} className="w-10 h-10 text-sm" />
                 )}
                 {/* Badge tài khoản - chỉ hiện trong chế độ Gộp trang */}
                 {mergedInboxMode && ownerAcc && (

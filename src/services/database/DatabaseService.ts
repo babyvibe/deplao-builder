@@ -30,6 +30,21 @@ const SECONDARY_DB_TTL_MS = 30_000; // auto-close after 30s idle
 const MARK_READ_SCOPE = 200;
 /** getLinks: hội thoại (theo DB) đã bù link từ tin cũ trong phiên này. */
 const linksBackfilledThreads = new Set<string>();
+/**
+ * Ghi một thành viên nhóm: tên / ảnh / vai trò lấy bản mới như trước; @username mới rỗng (nơi gọi không có — Zalo, lịch
+ * sử tin, quét thành viên) thì GIỮ @username đã lưu. Trước đây INSERT OR REPLACE xoá mất @username của Telegram nên ô
+ * @nhắc đến phải hỏi lại từng người qua API mỗi lần gõ @.
+ */
+const GROUP_MEMBER_UPSERT_SQL = `
+    INSERT INTO page_group_member
+        (owner_zalo_id, group_id, member_id, display_name, avatar, role, username, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(owner_zalo_id, group_id, member_id) DO UPDATE SET
+        display_name = excluded.display_name,
+        avatar = excluded.avatar,
+        role = excluded.role,
+        username = CASE WHEN excluded.username <> '' THEN excluded.username ELSE page_group_member.username END,
+        updated_at = excluded.updated_at`;
 
 function getCachedSecondaryDb(targetDbPath: string): BetterSqlite3.Database {
     if (_cachedSecondaryPath === targetDbPath && _cachedSecondaryDb) {
@@ -623,6 +638,20 @@ class DatabaseService {
             );
             CREATE INDEX IF NOT EXISTS idx_telegram_peers_type
                 ON telegram_peers(owner_zalo_id, peer_type, updated_at);
+        `);
+
+        // Quản trị viên của nhóm Telegram + chức vụ tự đặt (rank) — nhãn ở góc phải dòng tên người gửi. Bảng riêng, chỉ
+        // getGroupAdmins ghi (thay cả nhóm mỗi lần): page_group_member bị ghi đè bằng INSERT OR REPLACE ở nhiều nơi.
+        this.exec(`
+            CREATE TABLE IF NOT EXISTS telegram_group_admins (
+                owner_zalo_id TEXT NOT NULL,
+                group_id TEXT NOT NULL,
+                member_id TEXT NOT NULL,
+                role INTEGER NOT NULL DEFAULT 2,
+                rank TEXT NOT NULL DEFAULT '',
+                updated_at INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (owner_zalo_id, group_id, member_id)
+            );
         `);
 
         // MTProto global update cursor. This is deliberately separate from
@@ -2161,6 +2190,14 @@ class DatabaseService {
                 Logger.log('[DatabaseService] Migration: added has_mention to contacts');
                 needSave = true;
             }
+            // Mốc người kia đã nhận / đã xem tin mình gửi (services/receipts/peerReceipts.ts): ms; Telegram theo id tin
+            for (const column of ['peer_delivered_ts', 'peer_read_ts', 'peer_read_max_id']) {
+                if (!names.includes(column)) {
+                    db!.exec(`ALTER TABLE contacts ADD COLUMN ${column} INTEGER DEFAULT 0`);
+                    Logger.log(`[DatabaseService] Migration: added ${column} to contacts`);
+                    needSave = true;
+                }
+            }
             if (!names.includes('alias')) {
                 db!.exec(`ALTER TABLE contacts ADD COLUMN alias TEXT DEFAULT ''`);
                 Logger.log('[DatabaseService] Migration: added alias to contacts');
@@ -2877,6 +2914,31 @@ class DatabaseService {
             `SELECT * FROM telegram_peers WHERE owner_zalo_id = ? AND peer_id = ?`,
             [ownerZaloId, peerId]
         );
+    }
+
+    /** Quản trị viên đã lưu của nhóm Telegram (role 1 = người tạo, 2 = quản trị viên; rank = chức vụ tự đặt). */
+    public getTelegramGroupAdmins(ownerZaloId: string, groupId: string): Array<{ member_id: string; role: number; rank: string; updated_at: number }> {
+        if (!this.initialized || !groupId) return [];
+        return this.query(
+            `SELECT member_id, role, rank, updated_at FROM telegram_group_admins WHERE owner_zalo_id = ? AND group_id = ?`,
+            [ownerZaloId, groupId]
+        );
+    }
+
+    /** Thay danh sách quản trị viên của nhóm (người bị gỡ quyền không còn nhãn). */
+    public replaceTelegramGroupAdmins(ownerZaloId: string, groupId: string, admins: Array<{ memberId: string; role: number; rank: string }>): void {
+        if (!this.initialized || !groupId) return;
+        const now = Date.now();
+        db!.transaction(() => {
+            db!.prepare(`DELETE FROM telegram_group_admins WHERE owner_zalo_id = ? AND group_id = ?`).run(ownerZaloId, groupId);
+            const insert = db!.prepare(
+                `INSERT OR REPLACE INTO telegram_group_admins (owner_zalo_id, group_id, member_id, role, rank, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?)`
+            );
+            for (const admin of admins) {
+                if (admin.memberId) insert.run(ownerZaloId, groupId, admin.memberId, admin.role || 2, admin.rank || '', now);
+            }
+        })();
     }
 
     public getTelegramUpdateState(ownerZaloId: string): { pts: number; qts: number; date: number; seq: number; updated_at: number } | null {
@@ -5955,11 +6017,7 @@ class DatabaseService {
     ): void {
         if (!this.initialized) return;
         const now = Date.now();
-        const stmt = db!.prepare(`
-            INSERT OR REPLACE INTO page_group_member
-                (owner_zalo_id, group_id, member_id, display_name, avatar, role, username, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `);
+        const stmt = db!.prepare(GROUP_MEMBER_UPSERT_SQL);
         // 1 transaction cho cả danh sách (nhóm vài nghìn thành viên: mỗi lệnh tự commit chặn main lâu hơn nhiều lần)
         db!.transaction(() => {
             for (const m of members) {
@@ -5977,11 +6035,8 @@ class DatabaseService {
         member: { memberId: string; displayName: string; avatar: string; role: number; username?: string }
     ): void {
         if (!this.initialized) return;
-        db!.prepare(
-            `INSERT OR REPLACE INTO page_group_member
-                (owner_zalo_id, group_id, member_id, display_name, avatar, role, username, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-        ).run(ownerZaloId, groupId, member.memberId, member.displayName || '', member.avatar || '', member.role || 0, member.username || '', Date.now());
+        db!.prepare(GROUP_MEMBER_UPSERT_SQL)
+            .run(ownerZaloId, groupId, member.memberId, member.displayName || '', member.avatar || '', member.role || 0, member.username || '', Date.now());
         this.save();
         // Individual member hydration is expected during Telegram catch-up;
         // emitting one line per member makes the Electron log unusable.
@@ -6031,11 +6086,13 @@ class DatabaseService {
      * ẩn, thu thập từ lịch sử tin Telegram, đồng bộ API. Tìm theo tên / @username / id, không phân biệt dấu và hoa /
      * thường. Thứ tự cố định để phân trang: chủ nhóm, phó nhóm / quản trị, thành viên; người có tên trước người chỉ có
      * id; rồi theo tên. `ownerRole` = giá trị role của chủ nhóm theo kênh (Zalo 2, Telegram 1 — shared/groupMemberRoles).
+     * @username: của hàng, hàng chưa có thì lấy @username Telegram đã biết của người đó (telegram_peers). `namedOnly`: bỏ
+     * người chưa có tên (chỉ có id) — ô @nhắc đến.
      */
     public getGroupMembersPage(
         ownerZaloId: string,
         groupId: string,
-        options: { query?: string; limit?: number; offset?: number; ownerRole?: number } = {},
+        options: { query?: string; limit?: number; offset?: number; ownerRole?: number; namedOnly?: boolean } = {},
     ): {
         members: Array<{ member_id: string; display_name: string; avatar: string; role: number; username: string; updated_at: number }>;
         total: number;
@@ -6045,28 +6102,60 @@ class DatabaseService {
         const limit = Math.min(Math.max(Math.floor(Number(options.limit) || 50), 1), 500);
         const offset = Math.max(Math.floor(Number(options.offset) || 0), 0);
         const ownerRole = Number(options.ownerRole) === 1 ? 1 : 2;
+        const { from, username } = this.groupMemberSource();
         // Id thành viên chỉ gồm chữ số (bỏ rác của các lần parse lỗi cũ như "profiles") — như CRM Nhóm
-        const conditions = [`owner_zalo_id = ?`, `group_id = ?`, `member_id GLOB '[0-9]*'`, `member_id NOT GLOB '*[^0-9]*'`];
+        const conditions = [`gm.owner_zalo_id = ?`, `gm.group_id = ?`, `gm.member_id GLOB '[0-9]*'`, `gm.member_id NOT GLOB '*[^0-9]*'`];
         const params: unknown[] = [ownerZaloId, groupId];
+        if (options.namedOnly) conditions.push(`TRIM(COALESCE(gm.display_name, '')) <> ''`, `gm.display_name <> gm.member_id`);
         const query = foldSearchText(options.query);
         if (query) {
             const like = `%${escapeLikePattern(query)}%`;
-            conditions.push(`(deplao_fold(display_name) LIKE ? ESCAPE '\\' OR deplao_fold(username) LIKE ? ESCAPE '\\' OR member_id LIKE ? ESCAPE '\\')`);
+            conditions.push(`(deplao_fold(gm.display_name) LIKE ? ESCAPE '\\' OR deplao_fold(${username}) LIKE ? ESCAPE '\\' OR gm.member_id LIKE ? ESCAPE '\\')`);
             params.push(like, like, like);
         }
         const where = conditions.join(' AND ');
-        const total = Number(this.queryOne<{ n: number }>(`SELECT COUNT(*) AS n FROM page_group_member WHERE ${where}`, params)?.n || 0);
+        const total = Number(this.queryOne<{ n: number }>(`SELECT COUNT(*) AS n FROM ${from} WHERE ${where}`, params)?.n || 0);
         const members = this.query<any>(
-            `SELECT member_id, display_name, avatar, role, username, updated_at
-             FROM page_group_member
+            `SELECT gm.member_id, gm.display_name, gm.avatar, gm.role, ${username} AS username, gm.updated_at
+             FROM ${from}
              WHERE ${where}
-             ORDER BY CASE WHEN role = ? THEN 0 WHEN role > 0 THEN 1 ELSE 2 END,
-                      CASE WHEN TRIM(COALESCE(display_name, '')) = '' OR display_name = member_id THEN 1 ELSE 0 END,
-                      deplao_fold(display_name), member_id
+             ORDER BY CASE WHEN gm.role = ? THEN 0 WHEN gm.role > 0 THEN 1 ELSE 2 END,
+                      CASE WHEN TRIM(COALESCE(gm.display_name, '')) = '' OR gm.display_name = gm.member_id THEN 1 ELSE 0 END,
+                      deplao_fold(gm.display_name), gm.member_id
              LIMIT ? OFFSET ?`,
             [...params, ownerRole, limit, offset],
         );
         return { members, total };
+    }
+
+    /**
+     * Nguồn đọc thành viên nhóm: page_group_member `gm`, @username lấy của hàng, thiếu thì @username Telegram đã biết của
+     * người đó (telegram_peers — lưu mỗi lần gặp người đó ở bất kỳ đâu, kể cả trước khi page_group_member giữ @username).
+     */
+    private groupMemberSource(): { from: string; username: string } {
+        if (!this.hasTable('telegram_peers')) return { from: 'page_group_member gm', username: `COALESCE(gm.username, '')` };
+        return {
+            from: 'page_group_member gm LEFT JOIN telegram_peers tp ON tp.owner_zalo_id = gm.owner_zalo_id AND tp.peer_id = gm.member_id',
+            username: `COALESCE(NULLIF(gm.username, ''), tp.username, '')`,
+        };
+    }
+
+    /** Bảng có trong DB đang dùng không — nhớ theo từng kết nối (DB chính và DB phụ của withDbPath khác nhau). */
+    private static readonly knownTables = new WeakMap<object, Map<string, boolean>>();
+
+    private hasTable(name: string): boolean {
+        if (!db) return false;
+        let tables = DatabaseService.knownTables.get(db);
+        if (!tables) {
+            tables = new Map();
+            DatabaseService.knownTables.set(db, tables);
+        }
+        let exists = tables.get(name);
+        if (exists === undefined) {
+            exists = !!this.queryOne<{ ok: number }>(`SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = ?`, [name]);
+            tables.set(name, exists);
+        }
+        return exists;
     }
 
     /** Lấy tất cả thành viên nhóm cho tất cả các nhóm của một tài khoản (bulk load) */

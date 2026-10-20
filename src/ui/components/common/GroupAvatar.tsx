@@ -1,8 +1,10 @@
 import React, { useState, useCallback } from 'react';
 import type { CachedGroupInfo } from '@/store/appStore';
 import { toLocalMediaUrl } from '@/lib/localMedia';
+import PeerInitials from './PeerInitials';
+import { nameInitial, peerColorIndex } from '@/lib/chat/peerStyle';
 
-type Member = { avatar: string; displayName: string };
+type Member = { avatar: string; displayName: string; userId?: string };
 
 // ─── MemberCell: render 1 ô trong composite grid ─────────────────────────────
 function MemberCell({ member, onFallback, className }: { member: Member; onFallback?: () => void; className?: string }) {
@@ -15,9 +17,9 @@ function MemberCell({ member, onFallback, className }: { member: Member; onFallb
         <img src={avatarUrl} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover"
           onError={() => { setImgFailed(true); onFallback?.(); }} />
       ) : (
-        <div className="w-full h-full bg-purple-600 flex items-center justify-center text-white font-bold"
+        <div className={`w-full h-full chat-peer-${peerColorIndex(member.userId, member.displayName) ?? 5} chat-peer-avatar flex items-center justify-center font-bold`}
           style={{ fontSize: 'clamp(6px, 35%, 12px)' }}>
-          {/^\d+$/.test(member.displayName) ? '?' : (member.displayName || '?').charAt(0).toUpperCase()}
+          {/^\d+$/.test(member.displayName) ? '?' : nameInitial(member.displayName)}
         </div>
       )}
     </div>
@@ -100,6 +102,8 @@ interface GroupAvatarProps {
   groupInfo?: CachedGroupInfo | null;
   /** Tên nhóm - dùng cho fallback chữ cái đầu */
   name: string;
+  /** id nhóm — màu của ảnh chữ dự phòng (cùng màu ở mọi nơi); thiếu → màu theo tên */
+  id?: string;
   /** Kích thước: xs(32) sm(36) md(40) lg(64) */
   size?: GroupAvatarSize;
   /** CSS class phụ (vd: hover:ring-2 ...) */
@@ -112,7 +116,7 @@ interface GroupAvatarProps {
  * 2. Nếu không → composite grid từ members (2/3/4 ô)
  * 3. Fallback → chữ cái đầu trên nền tím
  */
-function GroupAvatar({ avatarUrl, groupInfo, name, size = 'md', className = '' }: GroupAvatarProps) {
+function GroupAvatar({ avatarUrl, groupInfo, name, id, size = 'md', className = '' }: GroupAvatarProps) {
   // Nhớ URL bị lỗi (không phải cờ true/false) → avatar nhóm đổi sang URL mới thì thử hiển thị lại
   const [failedAvatarUrl, setFailedAvatarUrl] = useState('');
   const { sizeClass, fallbackText } = SIZE_MAP[size];
@@ -130,19 +134,15 @@ function GroupAvatar({ avatarUrl, groupInfo, name, size = 'md', className = '' }
   const picked = [...validMembers.filter(m => m.avatar), ...validMembers.filter(m => !m.avatar)].slice(0, 10);
 
   if (picked.length > 0) {
-    const members = picked.map(m => ({ avatar: m.avatar || '', displayName: m.displayName || m.userId }));
+    const members = picked.map(m => ({ avatar: m.avatar || '', displayName: m.displayName || m.userId, userId: m.userId }));
     // CompositeGrid chỉ đọc danh sách lúc mount → key theo thành viên để dựng lại khi cache đổi.
     // Nhóm mới: cache lúc đầu chỉ có người gửi tin đầu tiên (chưa có ảnh), sau mới đủ thành viên + ảnh.
     const gridKey = picked.map(m => `${m.userId}:${m.avatar || ''}:${m.displayName || ''}`).join('|');
     return <CompositeGrid key={gridKey} allMembers={members} sizeClass={cls} />;
   }
 
-  // 3. Fallback: chữ cái đầu
-  return (
-    <div className={`${cls} rounded-full bg-purple-600 flex items-center justify-center text-white ${fallbackText} font-bold flex-shrink-0`}>
-      {(name || 'G').charAt(0).toUpperCase()}
-    </div>
-  );
+  // 3. Fallback: chữ viết tắt kiểu Telegram, màu theo id nhóm
+  return <PeerInitials id={id} name={name} fallback="G" className={`${cls} ${fallbackText}`} />;
 }
 
 /**

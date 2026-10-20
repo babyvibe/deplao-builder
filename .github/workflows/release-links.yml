@@ -3,7 +3,8 @@
 #   - Commit đã build (commit mà tag trỏ tới)
 #   - Thay đổi so với bản trước (compare vTrước...vNày)
 #   - Danh sách commit đến bản này
-# Ghi chú bạn viết giữ nguyên; khối có marker ẩn nên chạy lại chỉ thay khối cũ, không nhân đôi.
+# và một bình luận trên commit đã build: "📦 Phát hành trong <link Release>" (mở commit là bấm được sang Release).
+# Ghi chú bạn viết giữ nguyên; khối / bình luận có marker ẩn nên chạy lại chỉ thay cái cũ, không nhân đôi.
 #
 # Chạy khi:
 #   - Build All Platforms publish xong (gọi qua workflow_call, kèm tag vừa phát hành)
@@ -91,6 +92,25 @@ jobs:
               }
               const commit = await github.rest.repos.getCommit({ owner, repo, ref: sha });
               const subject = commit.data.commit.message.split('\n')[0].replace(/[[\]]/g, '');
+
+              // Bình luận trên commit đã build: mở commit trên GitHub là thấy link Release (không sửa lịch sử git).
+              // Có marker ẩn nên chạy lại chỉ cập nhật bình luận cũ, không nhân đôi.
+              const COMMENT_MARK = '<!-- deplao-release-comment -->';
+              const commentBody = `${COMMENT_MARK}\n📦 Phát hành trong **[${rel.name || tag}](${rel.html_url})**`;
+              try {
+                const commitComments = await github.paginate(github.rest.repos.listCommentsForCommit, { owner, repo, commit_sha: sha, per_page: 100 });
+                const oldComment = commitComments.find(c => (c.body || '').includes(COMMENT_MARK));
+                if (!oldComment) {
+                  await github.rest.repos.createCommitComment({ owner, repo, commit_sha: sha, body: commentBody });
+                  core.info(`${tag}: đã bình luận link Release trên commit ${sha.slice(0, 7)}`);
+                } else if (oldComment.body !== commentBody) {
+                  await github.rest.repos.updateCommitComment({ owner, repo, comment_id: oldComment.id, body: commentBody });
+                  core.info(`${tag}: đã cập nhật bình luận trên commit ${sha.slice(0, 7)}`);
+                }
+              } catch (err) {
+                // Không bình luận được (vd thiếu quyền) thì vẫn gắn link vào ghi chú Release như trước.
+                core.warning(`${tag}: không bình luận được trên commit ${sha.slice(0, 7)} — ${err.message}`);
+              }
 
               const lines = [
                 START,

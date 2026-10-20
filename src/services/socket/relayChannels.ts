@@ -25,6 +25,7 @@ export const RELAY_CHANNELS: readonly string[] = Object.freeze([
   'event:delete',
   'event:localPath',
   'event:seen',
+  'event:receipt', // mốc đã nhận / đã xem tin gửi (dấu ✓ / ✓✓)
   'event:typing',
   'event:userPresence',
   'event:reminder',

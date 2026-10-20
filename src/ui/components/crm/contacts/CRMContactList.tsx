@@ -13,6 +13,7 @@ import PageLoading from '@/components/common/PageLoading';
 import { CalendarIcon, ClockIcon, CloseIcon, CloudIcon, EditIcon, FolderIcon, GhostIcon, GiftIcon, HardDriveIcon, PhoneIcon, StarIcon, TagIcon, UserCheckIcon, UserIcon, UsersIcon } from '@/components/common/icons';
 import { CHANNEL } from '@/lib/channelHelper';
 import type { Channel } from '../../../../configs/channelConfig';
+import PeerInitials from '@/components/common/PeerInitials';
 
 
 
@@ -753,6 +754,7 @@ export default function CRMContactList({
                   }}>
                   {contact.contact_type === 'group' ? (
                     <GroupAvatar
+                      id={contact.contact_id}
                       avatarUrl={contact.avatar}
                       groupInfo={(groupInfoCache[activeAccountId] || {})[contact.contact_id]}
                       name={name}
@@ -761,9 +763,7 @@ export default function CRMContactList({
                   ) : contact.avatar
                     ? <img key={contact.avatar} src={contact.avatar} alt="" className="w-full h-full object-cover"
                         onError={(e) => { e.currentTarget.style.display = 'none'; reportBrokenAvatar(activeAccountId, contact.contact_id); }} />
-                    : <div className="w-full h-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-xs font-bold">
-                        {(name || 'U').charAt(0).toUpperCase()}
-                      </div>}
+                    : <PeerInitials id={contact.contact_id} name={name} fallback="U" className="w-full h-full text-xs" />}
                   {/* hover overlay */}
                   <div className="absolute inset-0 bg-black/50 rounded-full flex items-center justify-center opacity-0 group-hover/av:opacity-100 transition-opacity">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">

@@ -15,6 +15,54 @@ interface VersionEntry {
 // ─── Changelog data - thêm entry mới vào ĐẦU mảng khi có bản cập nhật ────────
 const CHANGELOG: VersionEntry[] = [
   {
+    version: '26.10.2',
+    date: '10/2026',
+    type: 'minor',
+    highlights: [
+      '✅ Trạng thái tin nhắn như Telegram — tin bạn gửi có dấu ✓ đã gửi, ✓✓ đã nhận, ✓✓ xanh đã xem ngay cạnh giờ (Zalo, Facebook, Telegram); rê chuột vào giờ để xem đủ ngày giờ.',
+      '🎨 Khung chat kiểu Telegram cho mọi kênh — tên người gửi có màu riêng nằm trong bong bóng ở mọi loại tin, trích dẫn tô màu theo người, giờ nằm cuối dòng chữ; nhóm Telegram hiện chức vụ ở góc phải tên.',
+      '🔤 Ảnh đại diện chữ thống nhất — 2 ký tự viết tắt, màu theo người / nhóm, giống nhau từ danh sách hội thoại, khung chat đến CRM và các popup.',
+      '🚀 Mở lại app mượt hơn — Telegram đợi giao diện tải xong và app rảnh mới đồng bộ bù tin cũ, hết giật lúc khởi động.',
+      '🔗 Link dễ đọc hơn ở giao diện Tối, email bấm được để mở ứng dụng thư; kết quả tìm SĐT Zalo có nút X để ẩn.',
+      '🏷️ Gõ @ để nhắc tên như Telegram — danh sách thành viên hiện ngay kèm @username, cuộn xem đủ người; nhóm Telegram lớn tự tìm thêm trên Telegram.',
+      '⏬ Video đang tải hiện tiến độ "2.1 / 5.0 MB" như Telegram — tải xong mới phát, không còn mở trình phát bị lỗi.',
+    ],
+    changes: [
+      {
+        category: 'new',
+        items: [
+          'Dấu trạng thái cạnh giờ của tin bạn gửi, trên mọi loại tin (chữ, ảnh / video, file, thẻ): đồng hồ = đang gửi, ! đỏ = gửi lỗi, ✓ = đã gửi, ✓✓ = đã nhận, ✓✓ màu nhấn = đã xem. Zalo và Facebook (cả tin mã hoá đầu cuối) đủ 3 mức; Telegram cá nhân có đã gửi / đã xem (Telegram không có mức "đã nhận") và nhận cả khi người kia đọc lúc app đang tắt; Telegram Bot không có báo nên không hiện dấu. Trong nhóm, một người xem là tính đã xem (như Telegram). Người kia nhắn sau tin của bạn thì các tin trước đó cũng tính là đã xem (Zalo không phải lúc nào cũng báo "đã xem").',
+          'Rê chuột vào giờ tin nhắn để xem đầy đủ thứ, ngày, giờ.',
+          'Nhóm Telegram: chức vụ người gửi (chức vụ tự đặt, Quản trị viên, Chủ nhóm) ở góc phải dòng tên; danh sách quản trị viên được lưu, tự làm mới sau 6 giờ.',
+          'Email trong tin nhắn thành link — bấm để mở ứng dụng thư (mailto:), như Telegram.',
+          'Nút X ẩn kết quả tìm số điện thoại Zalo ở ô tìm kiếm hội thoại (khi đang tìm, không tìm thấy, đã tìm thấy hoặc đang chờ chọn tài khoản).',
+          'Video đang tải về máy hiện tiến độ như Telegram (Telegram, Zalo, Facebook): vòng tiến độ ở giữa + "2.1 / 5.0 MB" ở góc, đang chờ lượt tải thì vòng xoay; tải xong mới phát được — bấm trong lúc tải không mở trình phát (trước đây video Zalo vừa nhận phát thẳng từ máy chủ Zalo, hay lỗi).',
+        ],
+      },
+      {
+        category: 'improved',
+        items: [
+          'Khung chat kiểu Telegram cho mọi kênh (Zalo, Facebook, Telegram): tên người gửi trong nhóm nằm trong bong bóng ở mọi loại tin — cả ảnh, album, file, thẻ — mỗi người một màu cố định (7 màu, chỉnh riêng cho giao diện Sáng / Tối); khối trích dẫn tô màu theo người được trích.',
+          'Giờ gửi nằm cuối dòng chữ cuối khi còn chỗ (tin chữ, chú thích ảnh / file, tin Telegram chỉ có link) — bong bóng gọn hơn.',
+          'Ảnh đại diện chữ (2 ký tự viết tắt, màu theo người / nhóm) dùng chung ở danh sách hội thoại, khung chat, thông tin hội thoại, thành viên nhóm, CRM, tìm kiếm, chuyển tiếp, lời mời kết bạn, hồ sơ, tin đánh dấu và ô chọn liên hệ của workflow.',
+          'Mở lại app mượt hơn: Telegram chờ danh sách hội thoại hiện xong và app rảnh mới đồng bộ bù, tải lại tin cũ, kiểm tra kênh (chậm nhất 60 giây sau khi mở); tin mới vẫn về và hiện ngay.',
+          'Link trong tin ở giao diện Tối đổi sang xanh nhạt, không gạch chân (rê chuột mới gạch) — dễ đọc trên bong bóng xanh; giao diện Sáng giữ nguyên.',
+          'Tìm số điện thoại Zalo: ô tìm hội thoại và Tìm kiếm chung dùng chung một lần tìm (không hỏi Zalo 2 lần cho cùng số); kết quả về muộn không hiện lại sau khi đã ẩn hoặc gõ tiếp.',
+          'Gõ @ trong nhóm (mọi kênh): danh sách thành viên đọc ngay từ dữ liệu đã lưu, có @username, tìm không dấu theo tên / @username, cuộn hoặc ↓ để xem hết thành viên (trước chỉ hiện 50 người). Telegram: lần đầu lấy thành viên gần đây của nhóm, gõ tên trong nhóm lớn thì tìm thêm trên Telegram — kết quả lưu lại, lần sau không phải tải.',
+        ],
+      },
+      {
+        category: 'fixed',
+        items: [
+          'Sửa Zalo không bao giờ nhận được báo "đã xem" (app nghe sai tên sự kiện của thư viện Zalo) — nay hiện ✓✓ đã xem và dòng "Đã xem" kèm ảnh người xem.',
+          'Sửa Facebook bỏ qua báo đã nhận / đã xem từ người nhận (cả tin thường và tin mã hoá đầu cuối).',
+          'Sửa tin Telegram tự đổi mã cảm xúc chữ (vd ":))") thành biểu tượng kiểu Zalo — nay giữ nguyên như người gửi gõ.',
+          'Sửa gõ @ trong nhóm Telegram lần nào cũng "Đang tải @username..." rất lâu (tải lại từng người, không lưu) và nhóm đông không hiện hết người để nhắc tên.',
+        ],
+      },
+    ],
+  },
+  {
     version: '26.10.1',
     date: '10/2026',
     type: 'major',

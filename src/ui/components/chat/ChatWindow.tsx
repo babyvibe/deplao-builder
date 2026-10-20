@@ -11,8 +11,12 @@ import MediaGalleryViewer, { type MediaGalleryViewerHandle } from './MediaGaller
 import { buildStarredSnapshot, starKey } from '@/lib/chat/starredMessages';
 import { useStarredStore } from '@/store/starredStore';
 import { isMyDocumentsThread, myDocumentsThreadId } from '@/lib/chat/myDocuments';
+import { groupRankLabel, peerColorIndex, telegramRankLabel } from '@/lib/chat/peerStyle';
+import PeerInitials from '@/components/common/PeerInitials';
+import { useTelegramGroupAdmins } from '@/lib/chat/telegramGroupAdmins';
 import MessageContextMenu from './MessageContextMenu';
-import { BubbleTime, formatBubbleTime } from './MessageTime';
+import { BubbleTime, MessageStatusContext, StatusTicks, formatBubbleTime, formatFullDateTime } from './MessageTime';
+import { inferredPeerReadTs, mergePeerReceipts, outgoingMessageStatus } from '@/lib/chat/messageStatus';
 import PinnedBar, { buildPinFromMsg, usePinnedData } from './PinnedMessages';
 import ChatHistoryList from './ChatHistoryList';
 import SharedMessageContent from './SharedMessageContent';
@@ -151,6 +155,20 @@ export default function ChatWindow() {
   const channelCap = React.useMemo(() =>
     getCapability((activeContact?.channel || CHANNEL.ZALO) as Channel),
   [activeContact]);
+  // Mốc người kia đã nhận / đã xem tin mình gửi (cột của hội thoại + event:receipt realtime) → dấu ✓ / ✓✓ cạnh giờ
+  const liveReceipt = useChatStore(s => (activeAccountId && activeThreadId ? s.peerReceipts[`${activeAccountId}_${activeThreadId}`] : undefined));
+  // Người kia nhắn sau tin mình gửi ⇒ đã xem các tin trước đó (Zalo / Facebook không phải lúc nào cũng báo "đã xem")
+  const inferredReadTs = React.useMemo(() => inferredPeerReadTs(msgs, activeContact?.channel), [msgs, activeContact?.channel]);
+  const threadReceipt = React.useMemo(() => mergePeerReceipts(
+    activeContact ? { deliveredTs: activeContact.peer_delivered_ts, readTs: activeContact.peer_read_ts, readMaxId: activeContact.peer_read_max_id } : null,
+    liveReceipt,
+    inferredReadTs ? { readTs: inferredReadTs } : null,
+  ), [activeContact?.peer_delivered_ts, activeContact?.peer_read_ts, activeContact?.peer_read_max_id, liveReceipt, inferredReadTs]);
+  // Nhóm Telegram: chức vụ (chức vụ tự đặt / Quản trị viên / Chủ nhóm) ở góc phải tên người gửi, như Telegram
+  const telegramGroupAdmins = useTelegramGroupAdmins(
+    activeAccountId, activeThreadId,
+    isTelegramUser(activeContact?.channel) && activeContact?.contact_type === 'group',
+  );
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -883,7 +901,7 @@ export default function ChatWindow() {
       // Parse content 1 lần
       const content = (isMedia || isFile || isCard || isEcard || isSticker || isGroupMedia || isRtf || isPoll || isVideo || isVoice || isZinstant)
         ? ''
-        : parseContent(mc, mt);
+        : parseContent(mc, mt, msg.channel);
 
       cache.set(msg.msg_id, {
         isCard, isEcard, isSticker, isRtf, isPoll, isVideo, isVoice,
@@ -3121,9 +3139,7 @@ export default function ChatWindow() {
                     {m.avatar ? (
                       <img src={m.avatar} alt={name} className="w-4 h-4 rounded-full object-cover inline-block flex-shrink-0" onError={e => { (e.target as HTMLImageElement).style.display='none'; }} />
                     ) : (
-                      <span className="w-4 h-4 rounded-full bg-purple-600 inline-flex items-center justify-center text-white flex-shrink-0" style={{fontSize:'0.5rem'}}>
-                        {(name || '?').charAt(0).toUpperCase()}
-                      </span>
+                      <PeerInitials id={m.id} name={name} single className="w-4 h-4 text-[8px]" />
                     )}
                     <span>{name}</span>
                   </button>
@@ -3163,6 +3179,18 @@ export default function ChatWindow() {
           const preferredContactName = contactName && contactName !== msg.sender_id ? contactName : '';
           const avatarUrl = toLocalMediaUrl(contact?.avatar_url || groupMember?.avatar || '');
           const displayName = preferredContactName || groupMember?.displayName || contactName || msg.sender_id;
+
+          // Kiểu Telegram cho mọi kênh: màu theo người gửi (tên, ảnh đại diện chữ), chức vụ cạnh tên (lib/chat/peerStyle).
+          // Chức vụ: Telegram → danh sách quản trị viên (chức vụ tự đặt) khi đã tải, còn lại theo role thành viên nhóm.
+          const senderPeer = !isSent ? (peerColorIndex(msg.sender_id, displayName) ?? 5) : null;
+          const senderRank = !isSent && msg.thread_type === 1
+            ? (isTelegramCh(msg.channel) && telegramGroupAdmins.size > 0
+                ? telegramRankLabel(telegramGroupAdmins.get(String(msg.sender_id)))
+                : groupRankLabel(msg.channel, (groupMember as any)?.role))
+            : '';
+          const senderAvatarFallback = !isSent ? (
+            <PeerInitials id={msg.sender_id} name={displayName} fallback="U" className="w-7 h-7 text-[10px]" />
+          ) : null;
 
           const isRecalled = msg.is_recalled === 1 || msg.status === 'recalled' || msg.msg_type === 'recalled';
 
@@ -3208,7 +3236,7 @@ export default function ChatWindow() {
                                 }
                               }} />
                           ) : (
-                            <div className="w-7 h-7 rounded-full bg-accent flex items-center justify-center text-foreground text-xs font-bold">{(displayName || 'U').charAt(0).toUpperCase()}</div>
+                            senderAvatarFallback
                           )}
                         </button>
                       ) : <div className="w-7 h-7" />}
@@ -3273,7 +3301,7 @@ export default function ChatWindow() {
           const groupMediaMsgs = isGroupMedia ? groupedFirstMsgs[msg.msg_id] : null;
           const isMediaMsg = cached?.isMedia ?? (!isCardMsg && !isEcardMsg && !isStickerMsg && !isGroupMedia && !isRtf && !isPollMsg && !isVideoMsg && !isVoiceMsg && !isBankCardMsg && !isLocationMsg && !isZinstantMsg && isMediaType(msg.msg_type, msg.content, msg.attachments));
           const isFileMsg = cached?.isFile ?? (!isCardMsg && !isEcardMsg && !isStickerMsg && !isMediaMsg && !isRtf && !isPollMsg && !isVideoMsg && !isVoiceMsg && !isBankCardMsg && !isLocationMsg && !isZinstantMsg && isFileType(msg.msg_type, msg.content, msg.attachments));
-          const content = cached?.content ?? (isMediaMsg || isFileMsg || isCardMsg || isEcardMsg || isStickerMsg || isGroupMedia || isRtf || isPollMsg || isVideoMsg || isVoiceMsg || isBankCardMsg || isLocationMsg || isZinstantMsg ? '' : parseContent(msg.content, msg.msg_type));
+          const content = cached?.content ?? (isMediaMsg || isFileMsg || isCardMsg || isEcardMsg || isStickerMsg || isGroupMedia || isRtf || isPollMsg || isVideoMsg || isVoiceMsg || isBankCardMsg || isLocationMsg || isZinstantMsg ? '' : parseContent(msg.content, msg.msg_type, msg.channel));
           // Tin hệ thống Telegram (vd. "Channel created") lưu nhầm thành "bài đăng kênh" rỗng ở bản cũ: không vẽ thẻ trống.
           // Bài đăng thật luôn có chữ hoặc media; lần tải lịch sử kế tiếp sửa hàng thành dòng thông báo.
           if (telegramPostMeta && msg.msg_type === 'text' && !String(msg.content || '').trim() && !isGroupMedia) return null;
@@ -3285,6 +3313,22 @@ export default function ChatWindow() {
             String(msg.reply_to_id) === String(msg.topic_id)
           )));
           const quoteShell = hasQuote && isNoBubbleMsg && !isEcardMsg && !isStickerMsg && !isBankCardMsg && !telegramPostMeta;
+
+          // Tên người gửi trong nhóm (mọi kênh): trong bong bóng, màu theo người gửi + chức vụ góc phải (như Telegram).
+          // Tin ảnh / album / file / thẻ mở đầu lượt: bọc MỘT khung (như tin trả lời — quoteShell) để tên nằm trong khung;
+          // sticker / thiệp / thẻ ngân hàng không khung → tên trên tin như cũ (có màu).
+          // Tin mình gửi: ✓ đã gửi / ✓✓ đã nhận / ✓✓ màu nhấn đã xem (kênh không hỗ trợ → null, không vẽ dấu)
+          const outgoingStatus = isSent ? outgoingMessageStatus(msg, msg.channel || activeContact?.channel, threadReceipt) : null;
+          const showGroupName = !isSent && !isEcardMsg && msg.thread_type === 1 && startsRun && !!displayName && displayName !== msg.sender_id;
+          const nameShell = showGroupName && isNoBubbleMsg && !quoteShell && !isStickerMsg && !isBankCardMsg && !telegramPostMeta;
+          const bubbleShell = quoteShell || nameShell;
+          const nameInBubble = showGroupName && !telegramPostMeta && (!isNoBubbleMsg || bubbleShell);
+          // Giờ gửi ở góc dưới phải, chung dòng chữ cuối nếu đủ chỗ (như Telegram) — chỉ tin chữ thường; tin có khối riêng
+          // (thăm dò, video, thẻ link có tên trang / tiêu đề, nội dung cũ đang mở) giữ dòng giờ riêng. Tin link Telegram
+          // không có thẻ (chỉ URL) là tin chữ thường.
+          const inlineTime = !isNoBubbleMsg && !telegramPostMeta && !isFbEmptyMsg
+            && !isPollMsg && !isVideoMsg && !isVoiceMsg && !isRtf && !isLocationMsg
+            && !(msg.msg_type === 'telegram.webpage' && getTelegramWebpageMeta(msg)) && !revealedEditIds.has(msg.msg_id);
 
           // Sticker nhóm: nhiều sticker liền nhau từ cùng người gửi trong 30 phút
           const isGroupedStickerFirst = isStickerMsg && !!groupedStickerFirstMsgs[msg.msg_id];
@@ -3400,9 +3444,7 @@ export default function ChatWindow() {
                                 }
                               }} />
                           ) : (
-                            <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-bold">
-                              {(displayName || 'U').charAt(0).toUpperCase()}
-                            </div>
+                            senderAvatarFallback
                           )}
                         </button>
                       ) : (
@@ -3427,17 +3469,21 @@ export default function ChatWindow() {
                   })()}
 
                   <div className={`flex flex-col ${isEcardMsg ? 'w-full items-center' : isSent ? 'items-end' : 'items-start'} relative min-w-0${hasReactions && !isGroupedStickerFirst ? ' mb-3' : ''}`}>
-                    {/* Sender name in group chats */}
-                    {!isSent && !isEcardMsg && msg.thread_type === 1 && startsRun && displayName && displayName !== msg.sender_id && (
-                      <p className="text-xs text-muted-foreground mb-0.5 px-1 truncate max-w-full">{displayName}</p>
+                    {/* Tên người gửi trong nhóm cho tin không khung (sticker…); tin có khung: trong bong bóng — nameInBubble */}
+                    {showGroupName && !nameInBubble && (
+                      <p className="flex items-center gap-2 mb-0.5 px-1 min-w-0 max-w-full">
+                        <span className={`chat-peer-${senderPeer ?? 5} chat-peer-name truncate text-xs font-semibold`}>{displayName}</span>
+                        {senderRank && <span className="chat-rank shrink-0 rounded-full px-1.5 py-px text-[10px] leading-4">{senderRank}</span>}
+                      </p>
                     )}
                     {/* Tin chuyển tiếp chỉ có ảnh / file / sticker (không khung chữ): nguồn đặt ngay trên bong bóng */}
-                    {telegramForward && isNoBubbleMsg && !telegramPostMeta && (
+                    {telegramForward && isNoBubbleMsg && !telegramPostMeta && !bubbleShell && (
                       <TelegramForwardHeader name={forwardName} avatarUrl={forwardAvatar} postAuthor={telegramForward.postAuthor} className="mb-0.5 px-1" />
                     )}
-                    <div className={`rounded-lg text-sm break-words min-w-0 max-w-full overflow-hidden ${
+                    <MessageStatusContext.Provider value={outgoingStatus}>
+                    <div className={`rounded-lg text-sm break-words min-w-0 max-w-full overflow-hidden${inlineTime ? ' relative' : ''}${hasQuote && !isNoBubbleMsg ? ' min-w-[13rem]' : ''} ${
                       telegramPostMeta ? `max-w-[520px] ${isSent ? 'bg-bubble-out border border-bubble-out-border' : 'bg-bubble-in border border-bubble-in-border'} rounded-lg` :
-                      quoteShell ? (isSent ? 'bg-bubble-out text-foreground border border-bubble-out-border' : 'bg-bubble-in text-foreground border border-bubble-in-border') :
+                      bubbleShell ? (isSent ? 'bg-bubble-out text-foreground border border-bubble-out-border' : 'bg-bubble-in text-foreground border border-bubble-in-border') :
                       isNoBubbleMsg ? '' : isSent
                         ? 'px-3 py-2 bg-bubble-out text-foreground border border-bubble-out-border'
                         : 'px-3 py-2 bg-bubble-in text-foreground border border-bubble-in-border'
@@ -3449,11 +3495,31 @@ export default function ChatWindow() {
                       </div>
                     )}
                     <div className={telegramPostMeta ? 'px-3 py-2' : undefined}>
-                    {/* Tin chữ / bài đăng kênh chuyển tiếp: nguồn ở đầu bong bóng, trên trích dẫn (như Telegram) */}
-                    {telegramForward && (!isNoBubbleMsg || telegramPostMeta) && (
-                      <TelegramForwardHeader name={forwardName} avatarUrl={forwardAvatar} postAuthor={telegramForward.postAuthor} className="mb-1" />
+                    {/* Tên người gửi (màu theo người gửi, bấm mở hồ sơ) + chức vụ ở góc phải, đầu bong bóng. Khung bao ảnh /
+                        file (nameShell): tên không kéo rộng khung (w-0 min-w-full) — rộng theo ảnh như Telegram */}
+                    {nameInBubble && (
+                      <div className={`flex items-center gap-2 min-w-0 ${bubbleShell ? `px-2.5 pt-1.5${quoteShell ? '' : ' pb-1.5'}` : 'mb-0.5'}${nameShell ? ' w-0 min-w-full' : ''}`}>
+                        <button
+                          type="button"
+                          className={`chat-peer-${senderPeer ?? 5} chat-peer-name min-w-0 truncate text-left text-[13px] font-semibold leading-5 hover:underline`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setUserProfilePopup({ userId: msg.sender_id, x: e.clientX, y: e.clientY });
+                          }}
+                        >
+                          {displayName}
+                        </button>
+                        {senderRank && (
+                          <span className="chat-rank ml-auto shrink-0 rounded-full px-1.5 py-px text-[11px] leading-4">{senderRank}</span>
+                        )}
+                      </div>
                     )}
-                    <BubbleEmbedContext.Provider value={quoteShell}>
+                    {/* Tin chữ / bài đăng kênh chuyển tiếp: nguồn ở đầu bong bóng, trên trích dẫn (như Telegram) */}
+                    {telegramForward && (!isNoBubbleMsg || telegramPostMeta || bubbleShell) && (
+                      <TelegramForwardHeader name={forwardName} avatarUrl={forwardAvatar} postAuthor={telegramForward.postAuthor}
+                        className={bubbleShell ? 'mb-1 px-2.5 pt-1.5' : 'mb-1'} />
+                    )}
+                    <BubbleEmbedContext.Provider value={bubbleShell}>
                     {/* Quote preview - supports both pre-built quote_data and reply_to_id fallback */}
                     {(msg.quote_data || (msg.reply_to_id && !(
                       msg.channel === 'telegram_user' && msg.topic_id != null &&
@@ -3519,6 +3585,11 @@ export default function ChatWindow() {
                         }
                         const finalImgUrl = quotedImgUrl || lookupImgUrl;
                         const quoteAuthor = resolveQuoteAuthor(q);
+                        // Telegram: khung trích dẫn theo màu người được trích (vạch trái + nền nhạt + tên cùng màu); chữ trích dẫn
+                        // dài không kéo rộng bong bóng (w-0 min-w-full, chỉ tên người được trích tính) — tối thiểu 13rem, như Telegram
+                        const quoteSenderId = String(q.senderId || q.ownerId
+                          || (q.msgId ? findMsgById(String(q.msgId))?.sender_id : '') || '');
+                        const quotePeer = peerColorIndex(quoteSenderId, quoteAuthor);
                         // Dùng lookupContent để parse quote nếu q.msg rỗng
                         const effectiveMsgForQuote = q.msg || lookupContent;
 
@@ -3554,7 +3625,7 @@ export default function ChatWindow() {
 
                         return (
                           <div
-                            className={`border-l-2 ${(quoteShell || !isNoBubbleMsg) ? (isSent ? 'border-primary bg-primary/20' : 'border-border-strong bg-background') : (isSent ? 'border-primary bg-bubble-out' : 'border-border-strong bg-bubble-in')} rounded pl-2 pr-1 py-1 text-xs cursor-pointer hover:opacity-100 overflow-hidden min-w-0 ${quoteShell ? 'w-0 min-w-[calc(100%-1rem)] mx-2 mt-2 mb-1.5' : 'mb-1 max-w-full'}`}
+                            className={`${quotePeer !== null ? `border-l-[3px] chat-peer-${quotePeer} chat-peer-quote` : `border-l-2 ${(quoteShell || !isNoBubbleMsg) ? (isSent ? 'border-primary bg-primary/20' : 'border-border-strong bg-background') : (isSent ? 'border-primary bg-bubble-out' : 'border-border-strong bg-bubble-in')}`} rounded pl-2 pr-1 py-1 text-xs cursor-pointer hover:opacity-100 overflow-hidden min-w-0 ${quoteShell ? 'w-0 min-w-[calc(100%-1rem)] mx-2 mt-2 mb-1.5' : 'mb-1 max-w-full'}`}
                             onClick={() => handleScrollToMsg(String(q.msgId || ''), String(q.cliMsgId || ''))}
                           >
                             {(isQuotedSticker || finalImgUrl) ? (() => {
@@ -3576,15 +3647,15 @@ export default function ChatWindow() {
                                     )}
                                   </div>
                                   <div className="min-w-0 flex-1">
-                                    {quoteAuthor && <p className="font-semibold truncate text-foreground">{quoteAuthor}</p>}
-                                    <p className={`truncate ${quoteCaption ? 'text-foreground/80' : 'text-muted-foreground'}`}>{quoteLabel}</p>
+                                    {quoteAuthor && <p className={`font-semibold truncate ${quotePeer !== null ? 'chat-peer-name' : 'text-foreground'}`}>{quoteAuthor}</p>}
+                                    <p className={`truncate ${quoteCaption ? 'text-foreground/80' : 'text-muted-foreground'}${quotePeer !== null ? ' w-0 min-w-full' : ''}`}>{quoteLabel}</p>
                                   </div>
                                 </div>
                               );
                             })() : (
                               <>
-                                {quoteAuthor && <p className="font-semibold truncate text-foreground">{quoteAuthor}</p>}
-                                <p className="line-clamp-2 break-words whitespace-pre-wrap mt-1 mb-1">{quoteDisplayText}</p>
+                                {quoteAuthor && <p className={`font-semibold truncate ${quotePeer !== null ? 'chat-peer-name' : 'text-foreground'}`}>{quoteAuthor}</p>}
+                                <p className={`line-clamp-2 break-words whitespace-pre-wrap mt-1 mb-1${quotePeer !== null ? ' w-0 min-w-full' : ''}`}>{quoteDisplayText}</p>
                               </>
                             )}
                           </div>
@@ -3780,6 +3851,8 @@ export default function ChatWindow() {
                               })()}
                             </>
                           )}
+                          {/* Chừa chỗ cuối dòng chữ cuối cho giờ gửi ở góc dưới phải (inlineTime); thiếu chỗ thì xuống dòng */}
+                          {inlineTime && <span aria-hidden="true" className={`inline-block ${outgoingStatus ? 'w-[3.25rem]' : 'w-9'} select-none`} />}
                           {revealedEditIds.has(msg.msg_id) && (() => {
                             try {
                               const parsed = JSON.parse(msg.edit_history || '[]');
@@ -3808,9 +3881,15 @@ export default function ChatWindow() {
                     />
                     </BubbleEmbedContext.Provider>
                     </div>
-                    {!telegramPostMeta && !isNoBubbleMsg && (
+                    {!telegramPostMeta && !isNoBubbleMsg && (inlineTime ? (
+                      <span className="absolute bottom-1.5 right-2.5 inline-flex items-center gap-0.5 text-[11px] leading-none text-subtle-foreground select-none cursor-default"
+                        title={formatFullDateTime(msg.timestamp)}>
+                        {formatBubbleTime(msg.timestamp)}
+                        <StatusTicks status={outgoingStatus} />
+                      </span>
+                    ) : (
                       <BubbleTime timestamp={msg.timestamp} />
-                    )}
+                    ))}
                     {telegramPostMeta && (
                       <div className="flex items-center gap-4 border-t border-foreground/10 px-3 py-2 text-[11px] text-muted-foreground">
                         {telegramPostMeta.views > 0 && <span>◉ {telegramPostMeta.views.toLocaleString('vi-VN')} lượt xem</span>}
@@ -3837,6 +3916,7 @@ export default function ChatWindow() {
                       </div>
                     )}
                   </div>
+                  </MessageStatusContext.Provider>
 
 
                   {/* Nút reaction ở góc dưới, phía TRONG khung chat (như các app lớn): tin của mình → góc trái, tin người
@@ -4116,16 +4196,13 @@ export default function ChatWindow() {
         const firstMember = groupCache?.members?.find((m: any) => m.userId === firstUid);
         const rawAvatar = firstContact?.avatar_url || firstMember?.avatar || '';
         const firstAvatar = rawAvatar ? toLocalMediaUrl(rawAvatar, activeAccountId) : '';
-        const firstInitial = (resolveName(firstUid) || '?').charAt(0).toUpperCase();
 
         return (
           <div className="flex items-center gap-1.5 px-4 py-1.5 flex-shrink-0 pointer-events-none">
             {firstAvatar ? (
               <img src={firstAvatar} className="w-4 h-4 rounded-full object-cover flex-shrink-0 opacity-80" alt="" />
             ) : (
-              <div className="w-4 h-4 rounded-full bg-accent flex items-center justify-center text-foreground flex-shrink-0 opacity-80" style={{ fontSize: '0.5625rem' }}>
-                {firstInitial}
-              </div>
+              <PeerInitials id={firstUid} name={resolveName(firstUid)} single className="w-4 h-4 text-[9px] opacity-80" />
             )}
             <div className="flex items-center gap-1.5 bg-card backdrop-blur-sm border border-border/60 rounded-full px-2.5 py-1 shadow-md">
               <div className="flex items-center gap-0.5">
@@ -4172,9 +4249,7 @@ export default function ChatWindow() {
                   {u.avatar ? (
                     <img src={u.avatar} alt={u.name} className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                   ) : (
-                    <div className="w-full h-full bg-blue-500 flex items-center justify-center text-white" style={{ fontSize: '0.4375rem', fontWeight: 700 }}>
-                      {(u.name).charAt(0).toUpperCase()}
-                    </div>
+                    <PeerInitials id={u.userId} name={u.name} single className="w-full h-full text-[7px]" />
                   )}
                 </div>
               ))}
