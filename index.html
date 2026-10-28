@@ -4,6 +4,25 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
+    <!-- Deplao đã chuyển về https://deplaoapp.com: chuyển hướng ngay, giữ nguyên đường dẫn, query và hash -->
+    <script>
+      (function (l) {
+        var base = '/deplao-builder';
+        var path = l.pathname.indexOf(base) === 0 ? l.pathname.slice(base.length) : l.pathname;
+        var search = l.search;
+        // Đến từ 404.html cũ dạng "/?/terms&utm_source=x" (SPA trick của GitHub Pages)
+        if (search.charAt(1) === '/') {
+          var parts = search.slice(2).split('&');
+          path = '/' + parts.shift().replace(/~and~/g, '&');
+          search = parts.length ? '?' + parts.join('&').replace(/~and~/g, '&') : '';
+        }
+        if (path.charAt(0) !== '/') path = '/' + path;
+        if (path === '/index.html') path = '/';
+        l.replace('https://deplaoapp.com' + path + search + l.hash);
+      })(window.location);
+    </script>
+    <noscript><meta http-equiv="refresh" content="0; url=https://deplaoapp.com/" /></noscript>
+
     <!-- Primary SEO -->
     <title>Deplao - Phần Mềm Quản Lý Zalo & Facebook Đa Tài Khoản | CRM & WorkFlow & AI</title>
     <meta name="description" content="Deplao là phần mềm desktop quản lý nhiều tài khoản Zalo & Facebook cùng lúc. Tích hợp CRM, gửi tin nhắn tự động, quản lý nhóm, workflow engine. Dùng thử 3 ngày miễn phí." />
@@ -61,7 +80,7 @@
       "description": "Phần mềm quản lý đa tài khoản Zalo & Facebook & CRM & Workflow & AI giúp bạn quản lý hàng loạt tài khoản Zalo & Facebook, triển khai chiến dịch nhắn tin thông minh, chăm sóc khách hàng tự động và vận hành toàn bộ trong một giao diện duy nhất.",
     }
     </script>
-    <script type="module" crossorigin src="/deplao-builder/assets/index-IsIATtAo.js"></script>
+    <script type="module" crossorigin src="/deplao-builder/assets/index-B6vxU6Iw.js"></script>
     <link rel="stylesheet" crossorigin href="/deplao-builder/assets/index-CQGgl9jC.css">
   </head>
   <body>
