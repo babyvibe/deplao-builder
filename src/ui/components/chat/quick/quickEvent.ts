@@ -3,6 +3,7 @@
  * Ngày / giờ là giờ máy (input type="date" / "time"). Thuần — test ở src/__tests__/quickActions.test.ts.
  */
 import type { CreateCalendarEventInput, ErpEventType } from '../../../../models/erp/CalendarEvent';
+import { normalizeErpReminderMinutes } from '../../../../shared/erpReminderText';
 
 export type QuickEventDuration = '15' | '30' | '60' | '90' | '120' | 'all_day';
 
@@ -21,29 +22,33 @@ export const QUICK_EVENT_TYPES: Array<{ value: ErpEventType; label: string }> = 
   { value: 'reminder', label: 'Nhắc việc' },
 ];
 
-/** Phút nhắc trước ('' = không nhắc). */
-export const QUICK_EVENT_REMINDERS: Array<{ value: string; label: string }> = [
-  { value: '', label: 'Không nhắc' },
-  { value: '5', label: 'Trước 5 phút' },
-  { value: '15', label: 'Trước 15 phút' },
-  { value: '30', label: 'Trước 30 phút' },
-  { value: '60', label: 'Trước 1 giờ' },
-  { value: '1440', label: 'Trước 1 ngày' },
-];
-
 export interface QuickEventForm {
   title: string;
   date: string;   // yyyy-mm-dd
   time: string;   // HH:mm
   duration: QuickEventDuration;
   type: ErpEventType;
-  reminder: string;
+  /** Mốc nhắc (phút trước giờ hẹn, 0 = đúng giờ; rỗng = không nhắc): chọn nhiều, mặc định 15 phút + đúng giờ. */
+  reminders: number[];
   location: string;
   description: string;
   linkedContactId?: string;
+  /** Tài khoản chat của hội thoại gắn với lịch. */
+  linkedAccountId?: string;
+  /** Tin nhắn tạo ra lịch ("Thêm vào lịch" từ tin). */
+  linkedMsgId?: string;
 }
 
 const pad2 = (value: number) => String(value).padStart(2, '0');
+
+/** Thời điểm → giá trị ô ngày / giờ (giờ máy). */
+export function quickEventInputsAt(ts: number): { date: string; time: string } {
+  const start = new Date(ts);
+  return {
+    date: `${start.getFullYear()}-${pad2(start.getMonth() + 1)}-${pad2(start.getDate())}`,
+    time: `${pad2(start.getHours())}:${pad2(start.getMinutes())}`,
+  };
+}
 
 /** Ngày + giờ mặc định: nửa giờ tròn kế tiếp (14:10 → 14:30, 14:40 → 15:00). */
 export function defaultQuickEventStart(now: Date = new Date()): { date: string; time: string } {
@@ -51,10 +56,7 @@ export function defaultQuickEventStart(now: Date = new Date()): { date: string; 
   start.setSeconds(0, 0);
   const minutes = start.getMinutes();
   start.setMinutes(minutes < 30 ? 30 : 60);
-  return {
-    date: `${start.getFullYear()}-${pad2(start.getMonth() + 1)}-${pad2(start.getDate())}`,
-    time: `${pad2(start.getHours())}:${pad2(start.getMinutes())}`,
-  };
+  return quickEventInputsAt(start.getTime());
 }
 
 function localTime(date: string, time: string): number | null {
@@ -69,12 +71,14 @@ export function buildQuickEventInput(form: QuickEventForm): { ok: true; input: C
   const title = form.title.trim();
   if (!title) return { ok: false, error: 'Nhập tiêu đề lịch hẹn' };
   const allDay = form.duration === 'all_day';
+  // Tin chỉ có ngày ("Hôm nay giao hàng"): ô giờ để trống cho người dùng chọn
+  if (!allDay && !form.time) return { ok: false, error: 'Chọn giờ hẹn' };
   const start = localTime(form.date, allDay ? '00:00' : form.time);
   if (start === null) return { ok: false, error: 'Ngày giờ không hợp lệ' };
   const end = allDay
     ? new Date(new Date(start).getFullYear(), new Date(start).getMonth(), new Date(start).getDate() + 1).getTime() - 1
     : start + Number(form.duration) * 60_000;
-  const reminderMinutes = Number(form.reminder);
+  const reminders = normalizeErpReminderMinutes(form.reminders ?? []);
   const input: CreateCalendarEventInput = {
     title,
     type: form.type,
@@ -83,8 +87,11 @@ export function buildQuickEventInput(form: QuickEventForm): { ok: true; input: C
     all_day: allDay ? 1 : 0,
     ...(form.location.trim() ? { location: form.location.trim() } : {}),
     ...(form.description.trim() ? { description: form.description.trim() } : {}),
-    ...(form.reminder && reminderMinutes > 0 ? { reminders: [{ minutes_before: reminderMinutes, channel: 'toast' as const }] } : {}),
+    // 0 = đúng giờ hẹn (popup như nhắc hẹn Zalo); mốc trước = thông báo trong chuông + chuông rung trên thanh tiêu đề
+    ...(reminders.length ? { reminders: reminders.map(minutes => ({ minutes_before: minutes, channel: 'toast' as const })) } : {}),
     ...(form.linkedContactId ? { linked_contact_id: form.linkedContactId } : {}),
+    ...(form.linkedContactId && form.linkedAccountId ? { linked_account_id: form.linkedAccountId } : {}),
+    ...(form.linkedContactId && form.linkedMsgId ? { linked_msg_id: form.linkedMsgId } : {}),
   };
   return { ok: true, input };
 }

@@ -48,6 +48,8 @@ import TrackingService from '../src/services/tracking/TrackingService';
 import { SHOW_DEV_TOOLS, IS_DEV_BUILD } from '../src/configs/BuildConfig';
 import Logger from '../src/utils/Logger';
 import { armStartupSettleFallback, settleWhenMainIdle } from '../src/utils/startupSettle';
+import { startMainThreadWatchdog } from '../src/utils/mainThreadWatchdog';
+import { startRendererStartupProfile } from '../src/utils/startupProfiler';
 
 // CHANNEL constant — same as src/ui/lib/channelHelper.ts (electron build excludes src/ui/)
 const CHANNEL = { ZALO: 'zalo', FACEBOOK: 'facebook', TELEGRAM_BOT: 'telegram_bot', TELEGRAM_USER: 'telegram_user' } as const;
@@ -280,6 +282,8 @@ function createWindow() {
     },
     show: false,
   });
+  // Hồ sơ CPU giao diện lúc mở app — chỉ khi được yêu cầu (file cờ diagnostics/profile-next-startup, xem utils/startupProfiler)
+  startRendererStartupProfile(mainWindow.webContents);
 
   // Load Vite dev server or built files
   if (isDev) {
@@ -675,6 +679,24 @@ function registerWindowControls() {
     }
   });
 
+  // ── Quyền quản trị (Windows) ─────────────────────────────────────
+  // App chạy bằng "Run as administrator" thì Windows (UIPI) chặn kéo-thả file từ File Explorer vào app — mọi kênh đều
+  // không kéo được ảnh / file. Giao diện hỏi một lần lúc mở app để cảnh báo; `net session` chỉ chạy được khi có quyền.
+  let elevatedCheck: Promise<boolean> | null = null;
+  ipcMain.handle('app:isElevated', () => {
+    if (process.platform !== 'win32') return false;
+    elevatedCheck ??= new Promise<boolean>((resolve) => {
+      require('child_process').execFile('net', ['session'], { windowsHide: true, timeout: 5000 }, (err: unknown) => resolve(!err));
+    }).then((elevated) => {
+      if (elevated) {
+        Logger.warn('[Kéo thả] Deplao đang chạy bằng quyền quản trị (Run as administrator) — Windows chặn kéo-thả file '
+          + 'từ File Explorer vào app. Mở lại Deplao bình thường để kéo-thả được.');
+      }
+      return elevated;
+    });
+    return elevatedCheck;
+  });
+
   // ── Badge / taskbar unread count ─────────────────────────────────
   ipcMain.on('app:setBadge', (_event, count: number) => {
     if (!mainWindow) return;
@@ -1064,6 +1086,8 @@ function deferQuitForCloudShutdown(event: { preventDefault(): void }): boolean {
 }
 
 app.whenReady().then(async () => {
+  // Luồng chính bị chặn ≥ 1 s (SQLite đồng bộ, vòng lặp dài…) → Nhật ký "[Hiệu năng] …" — tìm nguyên nhân "Not Responding".
+  startMainThreadWatchdog();
   // A resume wakes the Electron main process and background sync services, but
   // Chromium's requests to Vite can remain suspended. The blank screen in dev
   // is therefore a renderer recovery problem, not a stopped message listener.
@@ -1476,6 +1500,15 @@ app.whenReady().then(async () => {
     reconnectAllTelegramAccounts().catch(err => {
       console.error('[main] reconnectAllTelegramAccounts error:', err.message);
     });
+    // Một lần: tin Telegram đã gửi trước 26.10.3 mang giờ máy → xếp lại theo tin kề trên Telegram (sau khi app ổn định).
+    // Máy nhân viên chỉ giữ bản sao DB của Boss → không sửa.
+    try {
+      if (require('../src/utils/AppModeManager').default.getInstance().getMode() !== 'employee') {
+        require('../src/services/telegram/telegramSentTimestampRepair').scheduleTelegramSentTimestampRepair();
+      }
+    } catch (err: any) {
+      console.error('[main] telegram sent timestamp repair schedule error:', err?.message || err);
+    }
     startTelegramBotHealthCheck();
     // Ordered startup: relay + Zalo for local workspaces, then remote workspaces.
     setTimeout(() => startupAllWorkspaces().catch(err => {

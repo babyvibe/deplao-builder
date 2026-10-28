@@ -21,6 +21,7 @@ import * as BotIngress from './TelegramBotIngressService';
 import type { BotAccount, NormalizedUpdate, BotUpdateConsumer } from './TelegramBotIngressService';
 import { getTelegramMessagePreview } from './TelegramMessagePreview';
 import { isTelegramBotToken } from '../../shared/storedCredential';
+import { telegramSentTimestamp } from '../../utils/serverClock';
 
 const TELEGRAM_API = 'https://api.telegram.org';
 const REQUEST_TIMEOUT = 30000;
@@ -841,6 +842,7 @@ export async function sendMessage(
     }
     if (replyMarkup) payload.reply_markup = replyMarkup;
 
+    const sentAt = Date.now();
     const res = await axios.post(`${TELEGRAM_API}/bot${bot.botToken}/sendMessage`, payload, {
       timeout: REQUEST_TIMEOUT,
     });
@@ -862,6 +864,8 @@ export async function sendMessage(
 
     // Detect threadType: Telegram group/channel IDs are negative
     const threadType = chatId.startsWith('-') ? 1 : 0;
+    // Giờ server của tin (Bot API `date`), không phải giờ máy — máy nhanh vài giây thì khách trả lời ngay bị xếp trước
+    const sentTimestamp = telegramSentTimestamp(result, sentAt);
 
     // Save sent message to DB
     await saveMessage({
@@ -873,7 +877,7 @@ export async function sendMessage(
       messageId: msgId,
       content: text,
       msgType: 'text',
-      timestamp: Date.now(),
+      timestamp: sentTimestamp,
       isSelf: true,
       attachments: mentionAttachments,
     });
@@ -895,7 +899,7 @@ export async function sendMessage(
           preview: text,
           msgType: 'text',
           channel: 'telegram_bot',
-          ts: String(Date.now()),
+          ts: String(sentTimestamp),
           dName: bot.botFirstName,
           attachments: mentionAttachments,
         },
@@ -919,11 +923,14 @@ async function saveSentBotMessage(
   content: string,
   msgType: string,
   attachments: any[] = [],
+  /** Kết quả Bot API (`result`) — lấy giờ server `date` làm mốc thời gian của tin */
+  sentResult?: unknown,
 ): Promise<void> {
   if (!msgId) return;
   const threadType = chatId.startsWith('-') ? 1 : 0;
   const bot = registeredAccounts.get(accountId);
   const botName = bot?.botFirstName || 'Bot';
+  const sentTimestamp = telegramSentTimestamp(sentResult);
 
   await saveMessage({
     accountId,
@@ -934,7 +941,7 @@ async function saveSentBotMessage(
     messageId: msgId,
     content: content || '',
     msgType,
-    timestamp: Date.now(),
+    timestamp: sentTimestamp,
     isSelf: true,
     attachments,
   });
@@ -956,7 +963,7 @@ async function saveSentBotMessage(
           preview: getTelegramMessagePreview(msgType, content || ''),
           msgType,
           channel: 'telegram_bot',
-          ts: String(Date.now()),
+          ts: String(sentTimestamp),
           dName: botName,
           attachments,
         },
@@ -979,6 +986,7 @@ async function recordSentBotPhoto(accountId: string, chatId: string, bot: BotAcc
     // Save sent photo to DB and emit event
     if (msgId) {
       const threadType = chatId.startsWith('-') ? 1 : 0;
+      const sentTimestamp = telegramSentTimestamp(result); // giờ server (`date`), không phải giờ máy
       // Extract photo attachments from API response
       const photoAttachments = (result?.photo || []).map((p: any) => ({
         type: 'photo',
@@ -997,7 +1005,7 @@ async function recordSentBotPhoto(accountId: string, chatId: string, bot: BotAcc
         messageId: msgId,
         content: caption || '',
         msgType: 'photo',
-        timestamp: Date.now(),
+        timestamp: sentTimestamp,
         isSelf: true,
         attachments: photoAttachments,
       });
@@ -1021,7 +1029,7 @@ async function recordSentBotPhoto(accountId: string, chatId: string, bot: BotAcc
               preview: getTelegramMessagePreview('photo', caption || ''),
               msgType: 'photo',
               channel: 'telegram_bot',
-              ts: String(Date.now()),
+              ts: String(sentTimestamp),
               dName: bot.botFirstName,
               attachments: photoAttachments,
             },
@@ -1166,7 +1174,7 @@ export async function sendVideo(accountId: string, chatId: string, videoPath: st
         width: res.data.result.video.width, height: res.data.result.video.height,
         duration: res.data.result.video.duration, file_size: res.data.result.video.file_size,
       }] : [];
-      await saveSentBotMessage(accountId, chatId, msgId, caption || '', 'video', videoAttachments);
+      await saveSentBotMessage(accountId, chatId, msgId, caption || '', 'video', videoAttachments, res.data?.result);
     }
     return { success: true, messageId: msgId };
   } catch (err: any) {
@@ -1202,7 +1210,7 @@ export async function sendDocument(accountId: string, chatId: string, filePath: 
         mime_type: res.data.result.document.mime_type,
         file_size: res.data.result.document.file_size,
       }] : [];
-      await saveSentBotMessage(accountId, chatId, msgId, caption || '', 'file', docAttachments);
+      await saveSentBotMessage(accountId, chatId, msgId, caption || '', 'file', docAttachments, res.data?.result);
     }
     return { success: true, messageId: msgId };
   } catch (err: any) {
@@ -1237,7 +1245,7 @@ export async function sendAudio(accountId: string, chatId: string, audioPath: st
         title: res.data.result.audio.title,
         file_size: res.data.result.audio.file_size,
       }] : [];
-      await saveSentBotMessage(accountId, chatId, msgId, caption || '', 'audio', audioAttachments);
+      await saveSentBotMessage(accountId, chatId, msgId, caption || '', 'audio', audioAttachments, res.data?.result);
     }
     return { success: true, messageId: msgId };
   } catch (err: any) {
@@ -1340,6 +1348,7 @@ export async function sendPoll(accountId: string, chatId: string, question: stri
         String(result.poll?.question || question),
         'telegram.poll',
         [normalizeBotPollAttachment(result.poll || { question, options })],
+        result,
       );
     }
     return { success: true, messageId };
@@ -1392,7 +1401,7 @@ export async function sendSticker(accountId: string, chatId: string, stickerPath
         file_unique_id: res.data.result.sticker.file_unique_id,
         emoji: res.data.result.sticker.emoji,
       }] : [];
-      await saveSentBotMessage(accountId, chatId, msgId, '', 'sticker', stickerAttachments);
+      await saveSentBotMessage(accountId, chatId, msgId, '', 'sticker', stickerAttachments, res.data?.result);
     }
     return { success: true, messageId: msgId };
   } catch (err: any) {
@@ -1424,7 +1433,7 @@ export async function sendVoice(accountId: string, chatId: string, voicePath: st
         duration: res.data.result.voice.duration,
         file_size: res.data.result.voice.file_size,
       }] : [];
-      await saveSentBotMessage(accountId, chatId, msgId, caption || '', 'voice', voiceAttachments);
+      await saveSentBotMessage(accountId, chatId, msgId, caption || '', 'voice', voiceAttachments, res.data?.result);
     }
     return { success: true, messageId: msgId };
   } catch (err: any) {
@@ -1460,7 +1469,7 @@ export async function sendAnimation(accountId: string, chatId: string, animPath:
         file_size: res.data.result.animation.file_size,
         mime_type: res.data.result.animation.mime_type || '',
       }] : [];
-      await saveSentBotMessage(accountId, chatId, msgId, caption || '', 'gif', animAttachments);
+      await saveSentBotMessage(accountId, chatId, msgId, caption || '', 'gif', animAttachments, res.data?.result);
     }
     return { success: true, messageId: msgId };
   } catch (err: any) {
@@ -1494,7 +1503,7 @@ export async function sendVideoNote(accountId: string, chatId: string, videoPath
         duration: res.data.result.video_note.duration,
         file_size: res.data.result.video_note.file_size,
       }] : [];
-      await saveSentBotMessage(accountId, chatId, msgId, '', 'video_note', vnAttachments);
+      await saveSentBotMessage(accountId, chatId, msgId, '', 'video_note', vnAttachments, res.data?.result);
     }
     return { success: true, messageId: msgId };
   } catch (err: any) {

@@ -584,6 +584,35 @@ export function registerZaloIpc() {
     // ─── Hội thoại ────────────────────────────────────────────────────────
     wrap('zalo:getPinConversations', (s) => s.getPinConversations());
 
+    // ─── Trạng thái truy cập (ZL-01) / tự xoá tin nhắn (ZL-05) — SRS Deplao ───
+    wrap('zalo:getPresence', (s, p) => s.getPresence(String(p.userId || ''), !!p.force));
+    wrap('zalo:getFriendOnlines', (s, p) => s.getFriendOnlineIds(!!p.force));
+    wrap('zalo:getAutoDeleteChats', (s) => s.syncAutoDeleteChats());
+    wrap('zalo:setAutoDeleteChat', (s, p) => s.setAutoDeleteChat(Number(p.ttl), String(p.threadId || ''), p.type ?? p.threadType));
+
+    // ─── Cài đặt quyền riêng tư (ZL-02) — máy nhân viên cần quyền settings_accounts (proxyActionPolicy) ───
+    wrap('zalo:getAccountSettings', (s) => s.getAccountSettings());
+    wrap('zalo:updateAccountSetting', (s, p) => s.updateAccountSetting(String(p.key || ''), Number(p.value), p.previous));
+
+    // ─── Hội thoại ẩn bằng PIN (ZL-03): PIN so ở main của Boss, MD5 không rời main; đổi PIN cần settings_accounts ───
+    wrap('zalo:hiddenStatus', (s, p) => s.hiddenConversationStatus(!!p.force));
+    wrap('zalo:hiddenUnlock', (s, p) => s.unlockHiddenConversations(String(p.pin || '')));
+    wrap('zalo:setConversationHidden', (s, p) => s.setConversationHidden(String(p.threadId || ''), p.type ?? p.threadType, !!p.hidden));
+    wrap('zalo:hiddenSetPin', (s, p) => s.setHiddenConversationPin(String(p.pin || ''), p.oldPin ? String(p.oldPin) : undefined));
+    wrap('zalo:hiddenResetPin', (s) => s.resetHiddenConversationPin());
+
+    // ─── Danh mục sản phẩm Zalo Business (ZL-04): đọc = quyền Chat, ghi = quyền CRM (proxyActionPolicy, Q7) ───
+    wrap('zalo:getCatalogs', (s, p) => s.getCatalogs(Number(p.page) || 0, Number(p.limit) || 20));
+    wrap('zalo:createCatalog', (s, p) => s.createCatalog(String(p.name || '')));
+    wrap('zalo:updateCatalog', (s, p) => s.updateCatalog(String(p.catalogId || ''), String(p.name || '')));
+    wrap('zalo:deleteCatalog', (s, p) => s.deleteCatalog(String(p.catalogId || '')));
+    wrap('zalo:getCatalogProducts', (s, p) => s.getCatalogProducts(String(p.catalogId || ''), Number(p.page) || 0, Number(p.limit) || 100));
+    wrap('zalo:createCatalogProduct', (s, p) => s.createCatalogProduct(p.product || {}));
+    wrap('zalo:updateCatalogProduct', (s, p) => s.updateCatalogProduct(p.product || {}));
+    wrap('zalo:deleteCatalogProducts', (s, p) =>
+        s.deleteCatalogProducts(String(p.catalogId || ''), Array.isArray(p.productIds) ? p.productIds.map(String) : []));
+    wrap('zalo:uploadProductPhoto', (s, p) => s.uploadProductPhoto(FileStorageService.resolveAbsolutePath(p.photoPath)));
+
     wrap('zalo:setPinConversation', (s, p) =>
         s.setPinConversations(p.conversations, p.isPin)
     );

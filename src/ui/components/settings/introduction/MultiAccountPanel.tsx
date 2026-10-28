@@ -93,7 +93,7 @@ export function MultiAccountPanel() {
           '<strong class="text-foreground">Bật:</strong> Dashboard → <em>Gộp tài khoản</em> (hiện khi có từ 2 tài khoản) → chọn tài khoản (mặc định chọn tất cả, tối thiểu 2) → <em>Vào chế độ gộp</em>. App mở màn Chat với danh sách hội thoại chung, mới nhất ở trên.',
           '<strong class="text-foreground">Lọc theo tài khoản:</strong> thanh bên trái hiện biểu tượng "tất cả tài khoản" và avatar từng tài khoản đã gộp (kèm số hội thoại chưa đọc) - bấm một avatar để chỉ xem hội thoại của tài khoản đó, bấm lại để bỏ lọc.',
           '<strong class="text-foreground">Trả lời đúng tài khoản:</strong> mỗi hội thoại có avatar nhỏ của tài khoản sở hữu và biểu tượng kênh; bấm vào hội thoại là app tự chuyển sang đúng tài khoản đó.',
-          '<strong class="text-foreground">Bộ lọc dùng chung:</strong> Tất cả · Chưa đọc · Nhãn và menu ⋮ (Khác, Tin đánh dấu, lọc theo Kênh) áp dụng cho mọi tài khoản đã gộp; nhãn trùng tên giữa các tài khoản được gộp thành một.',
+          '<strong class="text-foreground">Bộ lọc dùng chung:</strong> Tất cả · Chưa đọc · Nhãn và menu ⋮ (Khác (lưu trữ), Chưa trả lời, Theo khoảng ngày, Tin đánh dấu, lọc theo Kênh) áp dụng cho mọi tài khoản đã gộp; nhãn trùng tên giữa các tài khoản được gộp thành một.',
           '<strong class="text-foreground">Tìm kiếm:</strong> tìm theo tên / biệt danh trên toàn bộ hội thoại đã gộp; khi nhập số điện thoại, app hỏi chọn tài khoản để tra cứu.',
           '<strong class="text-foreground">Thoát:</strong> bấm <em>Đang Gộp tài khoản</em> trên Dashboard, hoặc nút × cạnh biểu tượng "tất cả tài khoản" ở thanh bên trái.',
         ]} />

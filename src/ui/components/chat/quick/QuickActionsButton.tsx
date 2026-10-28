@@ -9,10 +9,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from '@/store/appStore';
 import { useAccountStore, type AccountInfo } from '@/store/accountStore';
-import { useEmployeeStore } from '@/store/employeeStore';
-import { useFeatureVisibilityStore } from '@/store/featureVisibilityStore';
 import { useVisibleAccounts } from '@/hooks/useVisibleAccounts';
-import { useErpPermissions } from '@/hooks/erp/useErpContext';
+import { useQuickErpAccess } from '@/hooks/erp/useQuickErpAccess';
 import { cn } from '@/lib/cn';
 import { DropdownMenu, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator } from '@/components/ui';
 import {
@@ -50,15 +48,6 @@ const ADD_FRIEND_LABEL: Record<string, { title: string; hint: string }> = {
   zalo: { title: 'Thêm bạn Zalo', hint: 'Tìm theo số điện thoại, gửi lời mời' },
   telegram_user: { title: 'Thêm liên hệ Telegram', hint: 'Theo số điện thoại hoặc @tên người dùng' },
 };
-
-/** Lịch / ghi chú: giống điều kiện hiện mục "Quản lý công việc" ở Sidebar + quyền tạo tương ứng. */
-function useQuickErpAccess(): { event: boolean; note: boolean } {
-  const erpVisible = useFeatureVisibilityStore(s => s.enabled.erp);
-  const erpModule = useEmployeeStore(s => s.hasPermission('erp'));
-  const { can } = useErpPermissions();
-  const base = erpVisible && erpModule && can('erp.access');
-  return { event: base && can('calendar.create_personal'), note: base && can('note.create') };
-}
 
 function ActionItem({ icon, title, hint, reason, onSelect }: {
   icon: React.ReactNode;

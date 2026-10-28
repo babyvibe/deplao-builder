@@ -4,6 +4,7 @@ import ipc from "@/lib/ipc";
 import type { Channel } from '@/../configs/channelConfig';
 import { CHANNEL } from '@/lib/channelHelper';
 import { mergePeerReceipts, type PeerReceipt } from '@/lib/chat/messageStatus';
+import { replyStateFromMessages } from '../../shared/replyState';
 
 const MESSAGE_TOPIC_KEY_SEPARATOR = '__tg_topic__';
 const FORUM_TOPICS_STORAGE_PREFIX = 'deplao_forum_topics_';
@@ -47,6 +48,24 @@ function clearPersistedForumTopics(cacheKey: string): void {
 export function getMessageCacheKey(accountId: string, threadId: string, topicRootMessageId?: string | null): string {
   const base = `${accountId}_${threadId}`;
   return topicRootMessageId ? `${base}${MESSAGE_TOPIC_KEY_SEPARATOR}${topicRootMessageId}` : base;
+}
+
+/**
+ * Thứ tự hiển thị tin: theo thời gian; cùng mốc (Telegram chỉ có giây) thì theo id số của nền tảng — id Telegram / Zalo
+ * tăng dần theo thứ tự gửi trong một hội thoại (so như số nguyên lớn: độ dài rồi tới chữ số). id không phải số
+ * (Facebook `mid.$…`, tin tạm `temp_…`) giữ nguyên thứ tự cũ (sort ổn định).
+ */
+export function compareMessagesChronologically(
+  a: { timestamp?: number | null; msg_id?: string | null },
+  b: { timestamp?: number | null; msg_id?: string | null },
+): number {
+  const dt = (a.timestamp || 0) - (b.timestamp || 0);
+  if (dt !== 0) return dt;
+  const ai = String(a.msg_id ?? '');
+  const bi = String(b.msg_id ?? '');
+  if (!/^\d+$/.test(ai) || !/^\d+$/.test(bi)) return 0;
+  if (ai.length !== bi.length) return ai.length - bi.length;
+  return ai < bi ? -1 : ai > bi ? 1 : 0;
 }
 
 export function getMessageCacheKeysForThread(messages: Record<string, MessageItem[]>, accountId: string, threadId: string): string[] {
@@ -143,8 +162,14 @@ export interface ContactItem {
   isFr?: number; // 1 = bạn bè, 0 = không phải bạn bè, dùng để hiển thị icon friend ở danh sách
   /** 1 = tin nhắn cuối là do mình gửi (đã trả lời), dùng để hiển thị icon "đã trả lời" ở danh sách */
   is_replied?: number;
+  /** Đánh dấu đã trả lời tay / hàng loạt: mốc tin mới nhất lúc đánh dấu (ms) — shared/replyState. */
+  reply_marked_at?: number;
   /** 1 = có tin nhắn chưa đọc có @mention (tag tên hoặc @all) */
   has_mention?: number;
+  /** Zalo tự xoá tin mới sau N ms (ZL-05, 0 = tắt) — Deplao vẫn giữ tin */
+  zalo_auto_delete_ttl?: number;
+  /** 1 = hội thoại đang ẩn trên Zalo (ZL-03, cần PIN để xem) */
+  zalo_hidden?: number;
   /** Mốc người kia đã nhận / đã xem tin mình gửi (ms; Telegram theo id tin) — dấu ✓ / ✓✓, lib/chat/messageStatus */
   peer_delivered_ts?: number;
   peer_read_ts?: number;
@@ -183,6 +208,12 @@ interface ChatStore {
   /** Telegram ForumTopic.id: used only for topic metadata actions (edit/close/pin). */
   activeForumTopicId: string | null;
   activeTopicTitle: string | null;  // Telegram Forum: topic display name
+  /**
+   * Telegram: đang xem bình luận của một bài đăng kênh. Màn bình luận phủ lên danh sách bài (danh sách vẫn giữ nguyên →
+   * quay lại đúng vị trí bài), bình luận lấy từ nhóm thảo luận (TelegramPostDiscussion).
+   */
+  postDiscussion: { accountId: string; channelId: string; postId: string } | null;
+  setPostDiscussion: (value: { accountId: string; channelId: string; postId: string } | null) => void;
   /** Forum topic list cache: key = `${accountId}_${parentPeerId}` → topics[] */
   forumTopics: Record<string, any[]>;
   setForumTopics: (key: string, topics: any[]) => void;
@@ -217,6 +248,8 @@ interface ChatStore {
   markReplied: (zaloId: string, contactId: string) => void;
   /** Sync is_replied dựa trên tin nhắn cuối thực tế (gọi sau khi load messages) */
   syncRepliedState: (zaloId: string, contactId: string, ownZaloId: string) => void;
+  /** Trạng thái đã trả lời mới từ DB (đánh dấu tay / hàng loạt, db:replyStateChanged) — chỉ đổi hội thoại thật sự khác. */
+  applyReplyStates: (zaloId: string, items: Array<{ contact_id: string; is_replied?: number | null; reply_marked_at?: number | null }>) => void;
   setReplyTo: (msg: MessageItem | null) => void;
   setEditingMsg: (msg: MessageItem | null) => void;
   /** Lưu draft cho thread (gọi khi chuyển thread hoặc khi text thay đổi) - debounced persist to DB */
@@ -277,6 +310,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   activeTopicId: null,
   activeForumTopicId: null,
   activeTopicTitle: null,
+  postDiscussion: null,
+  setPostDiscussion: (value) => set({ postDiscussion: value }),
   forumTopics: loadPersistedForumTopics(),
   replyTo: null,
   editingMsg: null,
@@ -322,6 +357,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       activeTopicId: null,
       activeForumTopicId: null,
       activeTopicTitle: null,
+      postDiscussion: null,
       forumTopics: {},
       replyTo: null,
       editingMsg: null,
@@ -496,7 +532,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       const updated = [...filtered, message];
       // Sort by timestamp ASC to maintain chronological order
       // (needed when old messages arrive after new ones, e.g. getGroupChatHistory)
-      updated.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+      updated.sort(compareMessagesChronologically);
       return { messages: { ...state.messages, [key]: updated } };
     });
   },
@@ -510,7 +546,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       if (newMessages.length === 0) return state;
       // Sort by timestamp ASC to maintain chronological order after prepend
       const merged = [...newMessages, ...existing];
-      merged.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+      merged.sort(compareMessagesChronologically);
       return { messages: { ...state.messages, [key]: merged } };
     });
   },
@@ -565,7 +601,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       // A forum topic belongs to exactly one chat. Any ordinary navigation
       // must clear it or subsequent messages/history get filtered as topic UI.
       ...(threadId !== state.activeThreadId
-        ? { activeTopicId: null, activeForumTopicId: null, activeTopicTitle: null }
+        ? { activeTopicId: null, activeForumTopicId: null, activeTopicTitle: null, postDiscussion: null }
         : {}),
     })),
 
@@ -617,15 +653,17 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       const key = `${zaloId}_${contactId}`;
       const msgs = state.messages[key] || [];
       if (msgs.length === 0) return state;
-      // Tìm tin nhắn cuối không phải system/temp
-      const lastReal = [...msgs].reverse().find(m =>
-        !m.msg_id.startsWith('temp_') && m.msg_type !== 'system'
-      );
-      if (!lastReal) return state;
-      const isReplied = lastReal.sender_id === ownZaloId || lastReal.is_sent === 1 ? 1 : 0;
+      // Tin THẬT mới nhất (shared/replyState — cùng quy tắc với cột is_replied của DB): bỏ tin đang gửi, thông báo hệ
+      // thống, bản tin OA, tin mẫu của Trang, tin đã xoá
       const list = state.contacts[zaloId] || [];
-      // Không đổi → giữ mảng cũ (gọi mỗi lần mở hội thoại; mảng mới làm cả danh sách hội thoại vẽ lại)
       const current = list.find((c) => c.contact_id === contactId);
+      // Đánh dấu đã trả lời tay (reply_marked_at): tin của người kia không mới hơn mốc vẫn tính là đã trả lời
+      const fromMessages = replyStateFromMessages(msgs.map(m => (
+        ownZaloId && m.sender_id === ownZaloId && m.is_sent !== 1 ? { ...m, is_sent: 1 } : m
+      )), current?.reply_marked_at);
+      if (fromMessages === null) return state;
+      const isReplied = fromMessages;
+      // Không đổi → giữ mảng cũ (gọi mỗi lần mở hội thoại; mảng mới làm cả danh sách hội thoại vẽ lại)
       if (!current || (current.is_replied ?? 0) === isReplied) return state;
       return {
         contacts: {
@@ -635,6 +673,24 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           ),
         },
       };
+    }),
+
+  applyReplyStates: (zaloId, items) =>
+    set((state) => {
+      const list = state.contacts[zaloId];
+      if (!list || !items?.length) return state;
+      const byId = new Map(items.map((item) => [String(item.contact_id), item]));
+      let changed = false;
+      const next = list.map((c) => {
+        const item = byId.get(c.contact_id);
+        if (!item) return c;
+        const isReplied = item.is_replied === null || item.is_replied === undefined ? c.is_replied : Number(item.is_replied);
+        const markedAt = Number(item.reply_marked_at) || 0;
+        if (c.is_replied === isReplied && (Number(c.reply_marked_at) || 0) === markedAt) return c;
+        changed = true;
+        return { ...c, is_replied: isReplied, reply_marked_at: markedAt };
+      });
+      return changed ? { contacts: { ...state.contacts, [zaloId]: next } } : state;
     }),
 
   setReplyTo: (msg) => set({ replyTo: msg }),

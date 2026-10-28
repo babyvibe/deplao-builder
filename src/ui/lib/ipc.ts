@@ -487,12 +487,59 @@ declare global {
         getReminder: (params: any) => Promise<any>;
         sendSeenEvent: (params: any) => Promise<any>;
         sendBankCard: (params: any) => Promise<any>;
+        /** Trạng thái truy cập (ZL-01): main đệm 60 s, `force` = hỏi lại ngay. */
+        getPresence: (params: { auth: any; userId: string; force?: boolean }) => Promise<{
+          success: boolean; error?: string;
+          response?: { status: 'online' | 'offline' | 'hidden' | 'unknown'; lastSeenAt?: number; showOnlineStatus: boolean };
+        }>;
+        /** Id bạn bè đang online (ZL-01 giai đoạn 2, chấm xanh): main đệm 60 s; giao diện tự giới hạn 1 lần / 2 phút. */
+        getFriendOnlines: (params: { auth: any; force?: boolean }) => Promise<{
+          success: boolean; error?: string; response?: { supported?: boolean; userIds: string[] };
+        }>;
+        /** Hội thoại đang bật tự xoá tin nhắn trên Zalo (ZL-05) — main ghi luôn vào DB. */
+        getAutoDeleteChats: (params: { auth: any }) => Promise<{ success: boolean; error?: string; response?: Array<{ threadId: string; ttl: number }> }>;
+        setAutoDeleteChat: (params: { auth: any; threadId: string; type: number; ttl: number }) => Promise<{
+          success: boolean; error?: string; errorCode?: number; response?: { ttl: number };
+        }>;
+        /** Cài đặt quyền riêng tư Zalo (ZL-02): getSettings / updateSettings — mỗi lần một mục. */
+        getAccountSettings: (params: { auth: any }) => Promise<{ success: boolean; error?: string; response?: Record<string, any> }>;
+        updateAccountSetting: (params: { auth: any; key: string; value: number; previous?: number | null }) => Promise<{
+          success: boolean; error?: string; errorCode?: number; response?: { key: string; value: number };
+        }>;
+        /** Hội thoại ẩn bằng PIN (ZL-03) — không IPC nào trả MD5 của PIN. */
+        hiddenStatus: (params: { auth: any; force?: boolean }) => Promise<{
+          success: boolean; error?: string; response?: { known: boolean; hasPin: boolean; hiddenCount: number };
+        }>;
+        hiddenUnlock: (params: { auth: any; pin: string }) => Promise<{
+          success: boolean; error?: string;
+          response?: { ok: boolean; threadIds?: string[]; reason?: 'wrong' | 'locked' | 'no-pin' | 'invalid'; retryAfterMs?: number };
+        }>;
+        setConversationHidden: (params: { auth: any; threadId: string; type: number; hidden: boolean }) => Promise<{
+          success: boolean; error?: string; response?: { known: boolean; hasPin: boolean; hiddenCount: number };
+        }>;
+        hiddenSetPin: (params: { auth: any; pin: string; oldPin?: string }) => Promise<{
+          success: boolean; error?: string; response?: { known: boolean; hasPin: boolean; hiddenCount: number };
+        }>;
+        /** Quên PIN → đặt lại trên Zalo (Zalo có thể xoá tin của hội thoại đang ẩn trên thiết bị Zalo). */
+        hiddenResetPin: (params: { auth: any }) => Promise<{
+          success: boolean; error?: string; response?: { known: boolean; hasPin: boolean; hiddenCount: number };
+        }>;
+        /** Danh mục sản phẩm Zalo Business (ZL-04) — dữ liệu đã chuẩn hoá theo shared/zaloCatalog. */
+        getCatalogs: (params: { auth: any; page?: number; limit?: number }) => Promise<{ success: boolean; error?: string; response?: { items: any[]; hasMore: boolean } }>;
+        createCatalog: (params: { auth: any; name: string }) => Promise<{ success: boolean; error?: string; response?: any }>;
+        updateCatalog: (params: { auth: any; catalogId: string; name: string }) => Promise<{ success: boolean; error?: string; response?: any }>;
+        deleteCatalog: (params: { auth: any; catalogId: string }) => Promise<{ success: boolean; error?: string; response?: { deleted: true } }>;
+        getCatalogProducts: (params: { auth: any; catalogId: string; page?: number; limit?: number }) => Promise<{ success: boolean; error?: string; response?: { items: any[]; hasMore: boolean } }>;
+        createCatalogProduct: (params: { auth: any; product: { catalogId: string; name: string; price: string; description?: string; photos?: string[] } }) => Promise<{ success: boolean; error?: string; response?: any }>;
+        updateCatalogProduct: (params: { auth: any; product: { catalogId: string; productId: string; name: string; price: string; description?: string; photos?: string[]; createTime?: number } }) => Promise<{ success: boolean; error?: string; response?: any }>;
+        deleteCatalogProducts: (params: { auth: any; catalogId: string; productIds: string[] }) => Promise<{ success: boolean; error?: string; response?: { deleted: number } }>;
+        uploadProductPhoto: (params: { auth: any; photoPath: string }) => Promise<{ success: boolean; error?: string; response?: { url: string; thumbUrl: string } }>;
       };
       db: {
         getMessages: (params: any) => Promise<any>;
         getMessagesAround: (params: { zaloId: string; threadId: string; timestamp: number; limit?: number }) => Promise<any>;
         getContacts: (zaloId: string) => Promise<any>;
-        getContactsFiltered: (params: { zaloId: string; channel?: string; search?: string; othersOnly?: boolean; excludeOthers?: boolean; unreadOnly?: boolean; contactIds?: string[]; limit?: number; offset?: number }) => Promise<{ success: boolean; contacts: any[] }>;
+        getContactsFiltered: (params: { zaloId: string; channel?: string; search?: string; othersOnly?: boolean; excludeOthers?: boolean; unreadOnly?: boolean; unrepliedOnly?: boolean; fromTs?: number; toTs?: number; contactIds?: string[]; limit?: number; offset?: number }) => Promise<{ success: boolean; contacts: any[] }>;
         /** Ô chọn liên hệ workflow: tìm không dấu + lọc loại + phân trang ở main process */
         searchContactsForPicker: (params: { zaloId: string; search?: string; type?: 'user' | 'group' | 'all'; limit?: number; offset?: number; ids?: string[] }) => Promise<{
           success: boolean;
@@ -515,6 +562,8 @@ declare global {
         getFileMessages: (params: { zaloId: string; threadId: string; limit?: number; offset?: number }) => Promise<any>;
         getUnreadCount: (zaloId: string) => Promise<any>;
         markAsRead: (params: any) => Promise<any>;
+        /** Đánh dấu đã trả lời / bỏ đánh dấu (không gửi tin); trả trạng thái mới từng hội thoại. */
+        markConversationsReplied: (params: { zaloId: string; contactIds: string[]; replied?: boolean }) => Promise<{ success: boolean; items: Array<{ contact_id: string; is_replied: number | null; reply_marked_at: number }>; error?: string }>;
         markMessageRecalled: (params: any) => Promise<any>;
         deleteMessages: (params: { zaloId: string; msgIds: string[] }) => Promise<{ success: boolean; error?: string }>;
         updateContactProfile: (params: any) => Promise<any>;
@@ -592,9 +641,6 @@ declare global {
         getStarredMessageKeys: (params: { zaloId: string }) => Promise<{ success: boolean; keys: Array<{ thread_id: string; msg_id: string }>; error?: string }>;
         getStarredMessages: (params: { zaloIds: string[]; limit?: number; offset?: number }) => Promise<{ success: boolean; items: any[]; hasMore: boolean; error?: string }>;
         setMessageStarred: (params: { zaloId: string; threadId: string; msgId: string; starred: boolean; snapshot?: any }) => Promise<{ success: boolean; error?: string }>;
-        // Per-account Notification Settings
-        getNotifSettings: (zaloId: string) => Promise<{ success: boolean; settings: any | null; error?: string }>;
-        setNotifSettings: (zaloId: string, settings: any) => Promise<{ success: boolean; error?: string }>;
         // Local Labels
         getLocalLabels: (params: { zaloId?: string }) => Promise<{ success: boolean; labels: any[] }>;
         upsertLocalLabel: (params: { label: { id?: number; name: string; color: string; textColor?: string; emoji: string; pageIds: string; isActive?: number; sortOrder?: number; shortcut?: string } }) => Promise<{ success: boolean; id?: number; error?: string }>;
@@ -718,6 +764,8 @@ declare global {
         openThread: (params: { zaloId: string; threadId: string; threadType: number }) => void;
         sendBadgeImage: (params: { dataUrl: string; count: number }) => void;
         flashFrame: (active: boolean) => void;
+        /** Windows: app đang chạy bằng quyền quản trị (kéo-thả từ File Explorer bị chặn) */
+        isElevated?: () => Promise<boolean>;
       };
       lockScreen: {
         status: () => Promise<{ success: boolean; enabled?: boolean; biometricEnabled?: boolean; biometricAvailable?: boolean; failedAttempts?: number; isCoolingDown?: boolean; remainingCooldown?: number; error?: string }>;
@@ -1061,7 +1109,7 @@ declare global {
         syncPinnedMessages: (params: { accountId: string; chatId: string }) => Promise<{ success: boolean; pins?: any[]; error?: string }>;
         ensureMessageAvailable: (params: { accountId: string; chatId: string; messageId: string }) => Promise<{ success: boolean; message?: any; error?: string }>;
         sendFile:       (params: { accountId: string; chatId: string; filePath: string; caption?: string }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
-        sendTopicFile:  (params: TelegramForumTopicContext & { filePath: string; caption?: string }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
+        sendTopicFile:  (params: TelegramForumTopicContext & { filePath: string; caption?: string; fileType?: string; replyToMsgId?: string }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
         sendTyping:     (params: { accountId: string; chatId: string }) => Promise<{ success: boolean; error?: string }>;
         sendReaction:   (params: { accountId: string; chatId: string; messageId: string; emoji?: string }) => Promise<{ success: boolean; error?: string }>;
         /** Reaction dùng được trong hội thoại, hay dùng trước (chuỗi đúng như Telegram, không U+FE0F) */
@@ -1119,10 +1167,32 @@ declare global {
         blockUser:         (params: { accountId: string; userId: string }) => Promise<{ success: boolean; error?: string }>;
         unblockUser:       (params: { accountId: string; userId: string }) => Promise<{ success: boolean; error?: string }>;
         exportChatInvite:  (params: { accountId: string; chatId: string }) => Promise<{ success: boolean; link?: string; error?: string }>;
-        readChatHistory:   (params: { accountId: string; chatId: string }) => Promise<{ success: boolean; error?: string }>;
+        /** historyOnly: chỉ ReadHistory (tin mới khi đang chat), không đọc @ / reaction — mặc định đọc cả hai */
+        readChatHistory:   (params: { accountId: string; chatId: string; historyOnly?: boolean }) => Promise<{ success: boolean; error?: string }>;
         readForumTopic:    (params: { accountId: string; chatId: string; topMsgId: string; readMaxId?: string }) => Promise<{ success: boolean; error?: string }>;
         getMessages:       (params: { accountId: string; chatId: string; limit?: number; offsetId?: number; topicRootMessageId?: string; returnMessages?: boolean }) => Promise<{ success: boolean; messages?: any[]; count?: number; error?: string }>;
-        repairMessageMedia:(params: { accountId: string; chatId: string; messageId: string }) => Promise<{ success: boolean; localPaths?: Record<string, string>; attachments?: any[]; msgType?: string; error?: string }>;
+        /** urgent = người dùng bấm tải / thử lại (lên đầu hàng tải) */
+        repairMessageMedia:(params: { accountId: string; chatId: string; messageId: string; urgent?: boolean }) => Promise<{ success: boolean; localPaths?: Record<string, string>; attachments?: any[]; msgType?: string; error?: string }>;
+        /** Hội thoại Telegram đang mở → hàng tải file ưu tiên hội thoại này (null = không mở hội thoại Telegram nào) */
+        setDownloadFocus?: (params: { accountId: string | null; threadId: string | null }) => Promise<{ success: boolean }>;
+        /** Bình luận bài đăng kênh (nhóm thảo luận): quyền bình luận + bình luận cũ → mới */
+        getPostDiscussion?: (params: { accountId: string; channelId: string; postId: string; mode?: 'initial' | 'older' | 'newer' | 'latest'; offsetId?: number; limit?: number }) => Promise<{
+          success: boolean; error?: string;
+          discussion?: {
+            chatId: string; rootId: string; title: string; avatar: string; isMember: boolean; canWrite: boolean; joinMode: 'none' | 'join' | 'request'; reason: string;
+            total: number; unreadCount: number; readInboxMaxId: number; maxId: number;
+          };
+          comments?: any[];
+          /** null = trang này không xét phía đó */
+          hasOlder?: boolean | null; hasNewer?: boolean | null;
+          anchor?: 'top' | 'unread' | 'bottom' | null;
+        }>;
+        /** Đã đọc bình luận tới readMaxId (messages.readDiscussion); có channelId / postId → attachments mới của bài kênh */
+        readPostDiscussion?: (params: { accountId: string; chatId: string; rootId: string; readMaxId: number; channelId?: string; postId?: string }) => Promise<{ success: boolean; attachments?: string; error?: string }>;
+        refreshPostStats?: (params: { accountId: string; chatId: string; messageIds: string[]; increment?: boolean }) => Promise<{
+          success: boolean; error?: string; updates?: Array<{ msgId: string; attachments: string }>; peers?: Record<string, { name: string; avatar: string }>;
+        }>;
+        downloadRichMedia?: (params: { accountId: string; chatId: string; messageId: string; mediaId?: string }) => Promise<{ success: boolean; localPaths?: Record<string, string>; error?: string }>;
         /** Thẻ link của bản ghi cũ: lấy lại attachments theo lô (≤ 100 tin / hội thoại), không tải media */
         refreshMessageAttachments?: (params: { accountId: string; chatId: string; messageIds: string[] }) => Promise<{
           success: boolean; messages?: Array<{ messageId: string; attachments: any[] }>; error?: string;
@@ -1141,7 +1211,7 @@ declare global {
         getForumTopicMessages:(params: TelegramForumTopicContext & { limit?: number }) => Promise<{ success: boolean; messages?: any[]; error?: string }>;
         createForumTopic:     (params: { accountId: string; chatId: string; title: string; iconColor?: number; iconEmojiId?: string }) => Promise<{ success: boolean; topicId?: string; error?: string }>;
         editForumTopic:       (params: TelegramForumTopicContext & { title?: string; iconEmojiId?: string; closed?: boolean; pinned?: boolean }) => Promise<{ success: boolean; error?: string }>;
-        sendTopicMessage:     (params: TelegramForumTopicContext & { text: string }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
+        sendTopicMessage:     (params: TelegramForumTopicContext & { text: string; replyToMsgId?: string; mentions?: Array<{ uid: string; pos: number; len: number }> }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
         // Sticker / GIF
         getStickerSets:       (params: { accountId: string }) => Promise<{ success: boolean; sets?: any[]; error?: string }>;
         getStickerSetStickers:(params: { accountId: string; setId: string; accessHash?: string; shortName?: string }) => Promise<{ success: boolean; stickers?: any[]; error?: string }>;

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import ipc, { buildZaloAuth } from '@/lib/ipc'
 import DataAccessor, { isReadFailure, readFailureMessage } from '@/lib/data/DataAccessor';
 import { useEmployeeResync } from '@/hooks/useEmployeeResync';
@@ -12,7 +12,12 @@ import { CHANNEL, isFacebook, isTelegram } from '@/lib/channelHelper';
 import { Spinner } from '@/components/common/PageLoading';
 import { ChatIcon, CloseIcon} from '@/components/common/icons';
 import { lookupZaloUserByPhone } from '@/lib/chat/zaloPhoneLookup';
+import { useHiddenLockedPredicate } from '@/hooks/useZaloHidden';
 import PeerInitials from '@/components/common/PeerInitials';
+import {
+  buildSearchIndex, contactSearchFields, filterSearchIndex, foldForSearch, friendSearchFields, matchesSearch,
+  MESSAGE_SEARCH_DEBOUNCE_MS, MESSAGE_SEARCH_MIN_LENGTH,
+} from '@/lib/chat/conversationSearch';
 
 // ─── Vietnamese-aware normalization for fuzzy matching ────────────────────────
 function normalizeStr(s: string): string {
@@ -24,19 +29,7 @@ function normalizeStr(s: string): string {
     .trim();
 }
 
-// Build a stripped version (no combining diacritics) for fallback matching
-function stripDiacritics(s: string): string {
-  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-}
-
-function matchQuery(haystack: string, needle: string): boolean {
-  if (!haystack || !needle) return false;
-  const h = normalizeStr(haystack);
-  const n = normalizeStr(needle);
-  if (h.includes(n)) return true;
-  // Fallback: strip diacritics (e.g. "em yeu" matches "Em yêu")
-  return stripDiacritics(h).includes(stripDiacritics(n));
-}
+// So khớp liên hệ / bạn bè (bỏ dấu, cả đ → d, khoá tính sẵn): lib/chat/conversationSearch.
 
 function isPhoneNumber(s: string): boolean {
   return /^(\+84|0)\d{8,10}$/.test(s.trim().replace(/\s/g, ''));
@@ -354,6 +347,8 @@ function UsernameResultCard({ result, searching, onOpen }: {
 
 // ─── Types & constants ────────────────────────────────────────────────────────
 type SearchTab = 'all' | 'contacts' | 'messages';
+/** Gõ @username: chờ ngừng gõ chừng này rồi mới hỏi Telegram (resolveUsername bị giới hạn chặt). */
+const TELEGRAM_USERNAME_DEBOUNCE_MS = 600;
 const ALL_CONTACT_LIMIT = 10;
 const ALL_MESSAGE_LIMIT = 20;
 const PAGE_SIZE = 20;
@@ -363,9 +358,9 @@ interface ServerContactResults { accountId: string; query: string; items: any[] 
 const NO_SERVER_CONTACTS: ServerContactResults = { accountId: '', query: '', items: [] };
 
 /** Liên hệ khớp từ khoá (bí danh, tên, SĐT, ID) — cùng điều kiện lọc danh sách hội thoại trong bộ nhớ. */
-function contactMatchesQuery(c: any, query: string): boolean {
-  return matchQuery(c?.alias || '', query) || matchQuery(c?.display_name || '', query)
-    || matchQuery(c?.phone || '', query) || matchQuery(c?.contact_id || '', query);
+/** Liên hệ có khớp từ khoá đã bỏ dấu (foldForSearch) không — cùng quy tắc với danh sách đã tính sẵn khoá. */
+function contactMatchesQuery(c: any, needle: string): boolean {
+  return matchesSearch(contactSearchFields(c), needle);
 }
 
 /** Báo lỗi tải gọn ngay trong kết quả (chế độ nhân viên: mất kết nối BOSS) — không trông như "Không tìm thấy". */
@@ -399,7 +394,13 @@ export default function GlobalSearchPanel({
   const storeGroupInfoCache = useAppStore(s => s.groupInfoCache);
   const groupInfoCache = groupInfoCacheProp ?? storeGroupInfoCache;
   const [tab, setTab] = useState<SearchTab>('all');
-  const [msgResults, setMsgResults] = useState<any[]>([]);
+  const [rawMsgResults, setMsgResults] = useState<any[]>([]);
+  // Hội thoại ẩn bằng PIN của Zalo (ZL-03) khi tài khoản đang khoá: không lộ trong kết quả tìm
+  const isHiddenLocked = useHiddenLockedPredicate();
+  const msgResults = useMemo(
+    () => rawMsgResults.filter((m: any) => !isHiddenLocked(String(m.owner_zalo_id || activeAccountId || ''), String(m.thread_id || ''))),
+    [rawMsgResults, isHiddenLocked, activeAccountId],
+  );
   const [searching, setSearching] = useState(false);
   const [contactsPage, setContactsPage] = useState(1);
   const [messagesPage, setMessagesPage] = useState(1);
@@ -526,6 +527,11 @@ export default function GlobalSearchPanel({
   }, [query, activeAccountId, isEmployeeMode, runServerContactSearch]);
 
   // ── Contact filtering with Vietnamese normalization ──────────────────────────
+  // Khoá tìm kiếm (đã bỏ dấu, cả đ → d) của từng hội thoại / bạn bè tính MỘT lần khi danh sách đổi; mỗi lần gõ chỉ
+  // còn includes trên khoá (trước: chuẩn hoá Unicode lại tên + từ khoá cho từng trường của từng liên hệ, mỗi phím).
+  // Lọc theo từ khoá "hoãn" (useDeferredValue): ô nhập luôn mượt, danh sách lớn (gộp trang) lọc lại khi rảnh.
+  const deferredQuery = useDeferredValue(query);
+
   // Build a set of contact IDs already in conversations for quick lookup
   const contactIdSet = useMemo(() => {
     const set = new Set<string>();
@@ -535,26 +541,22 @@ export default function GlobalSearchPanel({
     return set;
   }, [contacts]);
 
+  // Tên gợi nhớ và tên đầy đủ là hai trường riêng: "Em yêu" vẫn khớp khi tên gợi nhớ chỉ là "Em"
+  const contactIndex = useMemo(() => buildSearchIndex(contacts, contactSearchFields), [contacts]);
+  // Bạn bè chưa có hội thoại (đã có thì nằm trong contactIndex)
+  const friendIndex = useMemo(
+    () => buildSearchIndex(friendsList.filter(f => !contactIdSet.has(f.userId)), friendSearchFields),
+    [friendsList, contactIdSet],
+  );
+
   const contactResults = useMemo(() => {
-    if (!query.trim()) return [];
+    const needle = foldForSearch(deferredQuery);
+    if (!needle) return [];
     // 1. Filter from existing contacts (conversations)
-    const fromContacts = contacts.filter(c => {
-      // Search both alias AND display_name independently so full display name
-      // (e.g. "Em yêu") still matches even when alias is shorter (e.g. "Em")
-      const alias = c.alias || '';
-      const displayName = c.display_name || '';
-      const phone = c.phone || '';
-      return matchQuery(alias, query) || matchQuery(displayName, query) || matchQuery(phone, query) || matchQuery(c.contact_id || '', query);
-    });
+    const fromContacts = filterSearchIndex(contactIndex, needle);
 
     // 2. Filter from friends list (those NOT already in contacts/conversations)
-    const fromFriends = friendsList
-      .filter(f => {
-        if (contactIdSet.has(f.userId)) return false; // already in conversations
-        const name = f.displayName || '';
-        const phone = f.phoneNumber || '';
-        return matchQuery(name, query) || matchQuery(phone, query) || matchQuery(f.userId || '', query);
-      })
+    const fromFriends = filterSearchIndex(friendIndex, needle)
       .map(f => ({
         // Transform friend to ContactItem-like shape for display
         contact_id: f.userId,
@@ -573,15 +575,16 @@ export default function GlobalSearchPanel({
     const seenIds = new Set([...fromContacts.map(c => c.contact_id), ...fromFriends.map(c => c.contact_id)]);
     const serverItems = serverContacts.accountId !== (activeAccountId || '')
       ? []
-      : serverContacts.query === query.trim()
+      : serverContacts.query === deferredQuery.trim()
         ? serverContacts.items
-        : serverContacts.items.filter(c => contactMatchesQuery(c, query));
+        : serverContacts.items.filter(c => contactMatchesQuery(c, needle));
     const fromServer = serverItems
       .filter(c => c.contact_id && !seenIds.has(c.contact_id))
       .map(c => ({ ...c, _isServerResult: true }));
 
-    return [...fromContacts, ...fromFriends, ...fromServer];
-  }, [contacts, friendsList, contactIdSet, query, activeAccountId, serverContacts]);
+    return [...fromContacts, ...fromFriends, ...fromServer]
+      .filter((c: any) => !isHiddenLocked(String(c.owner_zalo_id || activeAccountId || ''), String(c.contact_id || '')));
+  }, [contactIndex, friendIndex, deferredQuery, activeAccountId, serverContacts, isHiddenLocked]);
 
   // ── Message search (debounced) ───────────────────────────────────────────────
   const runMessageSearch = useCallback(async (accountId: string, q: string) => {
@@ -613,18 +616,21 @@ export default function GlobalSearchPanel({
     setSearching(false);
   }, []);
 
+  // Từ khoá quá ngắn (1 chữ cái): chỉ lọc danh bạ, không tìm tin nhắn (khớp gần như mọi tin, chỉ tốn DB)
+  const msgQueryTooShort = query.trim().length > 0 && query.trim().length < MESSAGE_SEARCH_MIN_LENGTH;
+
   useEffect(() => {
     if (timerRef.current) clearTimeout(timerRef.current);
     const isPhone = isPhoneNumber(query);
-    if (!query.trim() || !activeAccountId || isPhone) {
+    const q = query.trim();
+    if (!q || !activeAccountId || isPhone || q.length < MESSAGE_SEARCH_MIN_LENGTH) {
       msgSearchSeqRef.current += 1; // bỏ lần tìm đang chạy
       msgResultsKeyRef.current = '';
       setMsgResults([]); setSearching(false); setMsgSearchFailed(false); return;
     }
     setSearching(true);
     const accountId = activeAccountId;
-    const q = query.trim();
-    timerRef.current = setTimeout(() => { void runMessageSearch(accountId, q); }, 300);
+    timerRef.current = setTimeout(() => { void runMessageSearch(accountId, q); }, MESSAGE_SEARCH_DEBOUNCE_MS);
     return () => { if (timerRef.current) clearTimeout(timerRef.current); };
   }, [query, activeAccountId, runMessageSearch]);
 
@@ -668,14 +674,18 @@ export default function GlobalSearchPanel({
   }, [query, activeAccountId]);
 
   // ── Telegram username search ─────────────────────────────────────────────────
+  // Mỗi lần tìm mang số thứ tự: kết quả của từ khoá cũ về muộn không ghi đè kết quả mới (trước đây hiện nhầm người).
+  const usernameSeqRef = useRef(0);
   const doUsernameSearch = async (acc: any, rawQuery: string) => {
     const username = rawQuery.trim().replace(/^@/, '');
     if (!username) return;
+    const seq = ++usernameSeqRef.current;
     setUsernameSearching(true);
     setUsernameResult(null);
     setUsernamePendingAccounts(false);
     try {
       const res = await ipc.telegramUser?.resolveUsername({ accountId: acc.zalo_id, username });
+      if (seq !== usernameSeqRef.current) return;
       if (res?.success && res.peer) {
         const peer = res.peer;
         const userId = String(peer.peerId || '');
@@ -687,6 +697,7 @@ export default function GlobalSearchPanel({
             avatar = profileRes.profile.avatarUrl || profileRes.profile.avatar;
           }
         } catch {}
+        if (seq !== usernameSeqRef.current) return;
         setUsernameResult({
           id: userId,
           displayName: peer.displayName || peer.username || username,
@@ -699,14 +710,15 @@ export default function GlobalSearchPanel({
         setUsernameResult({ _notFound: true, _query: username });
       }
     } catch {
-      setUsernameResult({ _notFound: true, _query: username });
+      if (seq === usernameSeqRef.current) setUsernameResult({ _notFound: true, _query: username });
     } finally {
-      setUsernameSearching(false);
+      if (seq === usernameSeqRef.current) setUsernameSearching(false);
     }
   };
 
   useEffect(() => {
     if (!isTelegramUsername(query) || !query.trim()) {
+      usernameSeqRef.current += 1; // bỏ lần tìm đang chạy
       setUsernameResult(null);
       setUsernameSearching(false);
       setUsernamePendingAccounts(false);
@@ -725,7 +737,14 @@ export default function GlobalSearchPanel({
       setUsernameResult(null);
       return;
     }
-    doUsernameSearch(telegramAccounts[0], query);
+    // Chờ ngừng gõ: trước đây mỗi phím sau "@abcde" là một lần resolveUsername + getUserProfile lên Telegram
+    // (Telegram giới hạn resolveUsername rất chặt → dễ FLOOD_WAIT).
+    usernameSeqRef.current += 1;
+    setUsernameSearching(true);
+    setUsernameResult(null);
+    const acc = telegramAccounts[0];
+    const timer = setTimeout(() => { void doUsernameSearch(acc, query); }, TELEGRAM_USERNAME_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, activeAccountId]);
 
@@ -985,7 +1004,7 @@ export default function GlobalSearchPanel({
             )}
             {!searching && msgResults.length === 0 && query.trim() && !msgSearchFailed && (
               <div className="flex flex-col items-center py-16 text-muted-foreground">
-                <p className="text-sm">Không tìm thấy tin nhắn nào</p>
+                <p className="text-sm">{msgQueryTooShort ? 'Gõ thêm để tìm trong tin nhắn' : 'Không tìm thấy tin nhắn nào'}</p>
               </div>
             )}
             {msgsForTab.map((msg, i) => (

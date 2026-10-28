@@ -3,9 +3,14 @@
  *
  * - Chỉ hoạt động khi build production (GitHub Actions / NODE_ENV=production).
  * - Cache local: mỗi ngày push 1 lần. Nếu có page mới tích hợp → track lại ngay trong ngày.
- * - Gửi pageId (zalo_id / facebook_id / telegram:xxx), machineId, lastTrackedAt lên Google Sheets.
+ * - Gửi pageId (UID Zalo / UID Facebook / telegram:<id>), machineId, lastTrackedAt lên Google Sheets.
  * - Không gửi các field nhạy cảm khác (name, phone,...).
  * - Tính năng phục vụ gia hạn tính năng premium, không thu thập thông tin cá nhân.
+ *
+ * Chỉ gửi trang đã tích hợp có UID thật (trackedPageIds): tài khoản đang dùng của các workspace trên máy này (không
+ * đọc workspace nhân viên — đó là trang của Boss). Không có trang nào → không gửi gì. Trước 23/10/2026 máy chưa có
+ * trang (hoặc chỉ có Telegram — kênh bị lọc sai) gửi "machine:<id>", và machineId sinh lại ở mỗi chỗ dùng nên một máy
+ * mới tạo 2 dòng rác trong cùng ngày.
  *
  * API: POST https://deplaoapp.com/api/tracking/page
  * Rate limit: 10 req/giờ/IP - trả về 429 nếu vượt quá.
@@ -13,6 +18,7 @@
 
 import { IS_DEV_BUILD } from '../../configs/BuildConfig';
 import DatabaseService from '../database/DatabaseService';
+import WorkspaceManager from '../../utils/WorkspaceManager';
 import Logger from '../../utils/Logger';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -43,11 +49,50 @@ interface TrackingApiResponse {
   retryAfterSec?: number;
 }
 
+/** Hàng bảng accounts (Zalo, Facebook, Telegram cá nhân / bot). */
+export interface TrackedAccountRow {
+  zalo_id?: string | null;
+  channel?: string | null;
+  is_active?: number | null;
+}
+
+/** Hàng bảng fb_accounts (Facebook). */
+export interface TrackedFacebookRow {
+  facebook_id?: string | null;
+  status?: string | null;
+}
+
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const API_URL = 'https://deplaoapp.com/api/tracking/page';
 const CACHE_FILENAME = 'tracking-cache.json';
 const CHECK_INTERVAL_MS = 60 * 60 * 1000; // 60 phút
+const DEFAULT_DB_NAME = 'deplao-tool.db';
+
+/** UID của nền tảng (Zalo, Facebook, Telegram) là dãy số. ID nội bộ (UUID), "9", rỗng… không phải trang tích hợp. */
+const PLATFORM_UID = /^\d{5,20}$/;
+
+/**
+ * Trang gửi lên tracking: tài khoản đang dùng (accounts.is_active = 1) có UID thật — Zalo / Facebook: UID,
+ * Telegram cá nhân + bot: "telegram:<id>"; thêm Facebook đang kết nối trong fb_accounts (bản cũ có thể thiếu hàng
+ * accounts). Kênh lạ / ID không phải UID bị bỏ. Không có trang nào → [] (không gửi gì).
+ */
+export function trackedPageIds(accounts: TrackedAccountRow[], facebookAccounts: TrackedFacebookRow[]): string[] {
+  const ids = new Set<string>();
+  for (const acc of accounts) {
+    if (acc.is_active !== undefined && acc.is_active !== null && Number(acc.is_active) !== 1) continue;
+    const uid = String(acc.zalo_id ?? '').trim();
+    if (!PLATFORM_UID.test(uid)) continue;
+    const channel = String(acc.channel || 'zalo');
+    if (channel === 'zalo' || channel === 'facebook') ids.add(uid);
+    else if (channel === 'telegram_user' || channel === 'telegram_bot' || channel === 'telegram') ids.add(`telegram:${uid}`);
+  }
+  for (const fb of facebookAccounts) {
+    const uid = String(fb.facebook_id ?? '').trim();
+    if (PLATFORM_UID.test(uid) && fb.status !== 'disconnected') ids.add(uid);
+  }
+  return Array.from(ids).sort();
+}
 
 // ─── TrackingService ────────────────────────────────────────────────────────
 
@@ -57,6 +102,8 @@ class TrackingService {
   private cachePath = '';
   private timer: ReturnType<typeof setInterval> | null = null;
   private running = false;
+  /** Lần trước đã ghi "chưa có trang" — không ghi lại mỗi giờ. */
+  private loggedNoPages = false;
 
   public static getInstance(): TrackingService {
     if (!TrackingService.instance) {
@@ -86,6 +133,7 @@ class TrackingService {
     try {
       this.cachePath = path.join(app.getPath('userData'), CACHE_FILENAME);
       this.loadCache();
+      this.ensureMachineId();
 
       Logger.log(`[TrackingService] ✅ Khởi động - machineId=${this.cache?.machineId?.slice(0, 8)}... lastTracked=${this.cache?.lastTrackedDate || 'never'}`);
 
@@ -114,39 +162,30 @@ class TrackingService {
   // ── Core logic ──────────────────────────────────────────────────────────
 
   /**
-   * Thu thập danh sách pageId hiện tại (Zalo + Facebook + Telegram).
-   * Dùng để so sánh với cache, phát hiện page mới tích hợp.
+   * Trang đã tích hợp trên máy này: mọi workspace local (mặc định + workspace local khác), không gồm workspace nhân
+   * viên (remote — bản sao trang của Boss, máy Boss tự gửi). Dùng chung cho so sánh với cache và payload gửi đi.
    */
   private collectCurrentPageIds(): string[] {
-    const ids: string[] = [];
-
+    const db = DatabaseService.getInstance();
+    const read = () => trackedPageIds(db.getAccounts() || [], db.getFBAccounts() || []);
+    let localDbPaths: string[] = [];
     try {
-      const allAccounts = DatabaseService.getInstance().getAccounts() || [];
-      for (const acc of allAccounts) {
-        const ch = acc.channel || 'zalo';
-        if (ch === 'telegram') {
-          ids.push(`telegram:${acc.zalo_id}`);
-        } else {
-          ids.push(acc.zalo_id);
-        }
-      }
-    } catch (_) { /* ignore */ }
+      const wm = WorkspaceManager.getInstance();
+      localDbPaths = wm.listWorkspaces()
+        .filter((ws) => ws.type === 'local')
+        .map((ws) => wm.resolveDbPath(ws.dbPath || DEFAULT_DB_NAME));
+    } catch { /* WorkspaceManager chưa sẵn sàng → chỉ đọc DB đang mở */ }
+    if (localDbPaths.length === 0) return read();
 
-    try {
-      const allFb = DatabaseService.getInstance().getFBAccounts() || [];
-      for (const fb of allFb) {
-        if (fb.facebook_id && fb.status !== 'disconnected') {
-          ids.push(fb.facebook_id);
-        }
+    const ids = new Set<string>();
+    for (const dbPath of localDbPaths) {
+      try {
+        for (const id of db.withDbPath(dbPath, read)) ids.add(id);
+      } catch (err: any) {
+        Logger.warn(`[TrackingService] ⚠️ Không đọc được tài khoản của một workspace: ${err.message}`);
       }
-    } catch (_) { /* ignore */ }
-
-    if (ids.length === 0) {
-      const machineId = this.cache?.machineId || this.generateMachineId();
-      ids.push(`machine:${machineId.slice(0, 12)}`);
     }
-
-    return ids.sort();
+    return Array.from(ids).sort();
   }
 
   /**
@@ -165,6 +204,14 @@ class TrackingService {
       const today = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
       const currentIds = this.collectCurrentPageIds();
 
+      // Chưa tích hợp trang nào có UID → không gửi gì (không còn dòng "machine:<id>")
+      if (currentIds.length === 0) {
+        if (!this.loggedNoPages) Logger.log('[TrackingService] ℹ️ Chưa có trang tích hợp có UID - không gửi tracking');
+        this.loggedNoPages = true;
+        return;
+      }
+      this.loggedNoPages = false;
+
       // Nếu đã track hôm nay và danh sách page không đổi → bỏ qua
       if (this.cache?.lastTrackedDate === today) {
         const sameIds = this.areSameIds(this.cache.trackedPageIds, currentIds);
@@ -176,11 +223,15 @@ class TrackingService {
         Logger.log('[TrackingService] 📡 Bắt đầu gửi tracking hôm nay...');
       }
 
-      await this.sendTracking();
+      const machineId = this.ensureMachineId();
+      const lastTrackedAt = this.formatDate(new Date());
+      const payload: TrackingPayload[] = currentIds.map((pageId) => ({ pageId, machineId, lastTrackedAt }));
+      Logger.log(`[TrackingService] 📤 Gửi ${payload.length} page(s) lên API...`);
+      await this.postTracking(payload);
 
       // Cập nhật cache sau khi gửi thành công
       this.cache = {
-        machineId: this.cache?.machineId || this.generateMachineId(),
+        machineId,
         lastTrackedDate: today,
         lastTrackedAt: new Date().toISOString(),
         trackedPageIds: currentIds,
@@ -192,74 +243,6 @@ class TrackingService {
       Logger.warn(`[TrackingService] ⚠️ Gửi tracking thất bại: ${err.message}`);
       // Không crash app - thử lại vào lần tick sau (60 phút)
     }
-  }
-
-  /**
-   * Thu thập dữ liệu accounts (Zalo + Facebook + Telegram) và gửi lên API.
-   */
-  private async sendTracking(): Promise<void> {
-    const machineId = this.cache?.machineId || this.generateMachineId();
-
-    // ── Lấy tất cả accounts ────────────────────────────────────────────
-    let allAccounts: Array<{ zalo_id: string; channel?: string }> = [];
-    try {
-      allAccounts = DatabaseService.getInstance().getAccounts() || [];
-    } catch (dbErr: any) {
-      Logger.warn(`[TrackingService] ⚠️ Không thể đọc accounts từ DB: ${dbErr.message}`);
-    }
-
-    // ── Lấy Facebook accounts (bảng riêng) ────────────────────────────
-    let fbAccounts: Array<{ facebook_id: string }> = [];
-    try {
-      const allFb = DatabaseService.getInstance().getFBAccounts() || [];
-      fbAccounts = allFb
-        .filter((fb: any) => fb.facebook_id && fb.status !== 'disconnected')
-        .map((fb: any) => ({ facebook_id: fb.facebook_id }));
-    } catch (dbErr: any) {
-      Logger.warn(`[TrackingService] ⚠️ Không thể đọc Facebook accounts từ DB: ${dbErr.message}`);
-    }
-
-    // ── Phân loại theo channel ─────────────────────────────────────────
-    const zaloAccounts = allAccounts.filter(a => (a.channel || 'zalo') === 'zalo');
-    const telegramAccounts = allAccounts.filter(a => a.channel === 'telegram');
-
-    // ── Không có account nào ───────────────────────────────────────────
-    if (zaloAccounts.length === 0 && fbAccounts.length === 0 && telegramAccounts.length === 0) {
-      Logger.log('[TrackingService] ℹ️ Không có account nào - gửi machineId không');
-      const payload: TrackingPayload[] = [
-        {
-          pageId: `machine:${machineId.slice(0, 12)}`,
-          machineId,
-          lastTrackedAt: this.formatDate(new Date()),
-        },
-      ];
-      await this.postTracking(payload);
-      return;
-    }
-
-    // ── Build payload: mỗi account 1 entry ────────────────────────────
-    const now = new Date();
-    const lastTrackedAt = this.formatDate(now);
-    const payload: TrackingPayload[] = [];
-
-    // Zalo accounts → pageId = zalo_id
-    for (const acc of zaloAccounts) {
-      payload.push({ pageId: acc.zalo_id, machineId, lastTrackedAt });
-    }
-
-    // Facebook accounts → pageId = facebook_id
-    for (const acc of fbAccounts) {
-      payload.push({ pageId: acc.facebook_id, machineId, lastTrackedAt });
-    }
-
-    // Telegram accounts → pageId = telegram:{zalo_id}
-    for (const acc of telegramAccounts) {
-      payload.push({ pageId: `telegram:${acc.zalo_id}`, machineId, lastTrackedAt });
-    }
-
-    Logger.log(`[TrackingService] 📤 Gửi ${payload.length} page(s) lên API (Zalo=${zaloAccounts.length}, FB=${fbAccounts.length}, Tele=${telegramAccounts.length})...`);
-
-    await this.postTracking(payload);
   }
 
   /**
@@ -321,12 +304,15 @@ class TrackingService {
   }
 
   /**
-   * Sinh hoặc lấy machineId cố định cho máy này.
-   * Lưu trong cache để không đổi mỗi lần chạy app.
+   * machineId cố định cho máy này: lấy từ cache, chưa có thì tạo MỘT lần và lưu ngay (trước đây mỗi chỗ dùng tự sinh
+   * UUID mới khi chưa có cache → một lần gửi mang machineId khác với cái được lưu).
    */
-  private generateMachineId(): string {
+  private ensureMachineId(): string {
+    if (this.cache?.machineId) return this.cache.machineId;
     const id = uuidv4();
+    this.cache = { lastTrackedDate: '', lastTrackedAt: '', trackedPageIds: [], ...(this.cache || {}), machineId: id };
     Logger.log(`[TrackingService] 🆔 Đã tạo machineId mới: ${id.slice(0, 8)}...`);
+    if (this.cachePath) this.saveCache();
     return id;
   }
 

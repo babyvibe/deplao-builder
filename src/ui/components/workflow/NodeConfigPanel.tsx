@@ -114,6 +114,11 @@ export interface Field {
   /** Key của field boolean dùng để bật HTML editor (vd: 'isHtml') */
   htmlToggle?: string;
   /**
+   * Dùng khi type === 'assistant-picker': có giá trị → thêm lựa chọn đầu tiên "không chọn" với nhãn này (giá trị '').
+   * Node của ứng dụng dùng để "để trống = ứng dụng tự quyết định"; node có sẵn không đặt (giữ tự chọn trợ lý đầu tiên).
+   */
+  emptyLabel?: string;
+  /**
    * Dùng khi type === 'label-picker':
    * - 'single'  = chọn 1 nhãn (Zalo giới hạn 1 nhãn / hội thoại)
    * - 'multi'   = chọn nhiều nhãn (Local)
@@ -4489,8 +4494,11 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
   }, [node.type, accountIds]); // Use stable accountIds string instead of accounts array
 
   // ── Load AI assistant list for assistant-picker ─────────────────────────
+  // Node AI có sẵn + node ứng dụng có trường x-widget "assistant".
+  const needsAssistants = node.type === 'ai.generateText' || node.type === 'ai.classify'
+    || allFields.some(f => f.type === 'assistant-picker');
   useEffect(() => {
-    if (node.type !== 'ai.generateText' && node.type !== 'ai.classify') {
+    if (!needsAssistants) {
       setAssistantList([]);
       return;
     }
@@ -4515,7 +4523,7 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
     };
     load();
     return () => { cancelled = true; };
-  }, [node.type]);
+  }, [node.type, needsAssistants]);
 
   // ── Load Integration list for integration-picker ───────────────────────
   useEffect(() => {
@@ -4963,7 +4971,29 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
             );
           }
 
+          // Node ứng dụng: lựa chọn "không chọn" (giá trị '') đứng đầu — ứng dụng tự dùng trợ lý theo cài đặt của nó.
+          const emptyChoice = field.emptyLabel ? (
+            <button
+              type="button"
+              onClick={() => update(field.key, '')}
+              className="wf-choice"
+              data-active={String(!selected || !enabledList.some(a => a.id === selected))}
+            >
+              <span className="wf-icon-tile" data-size="sm">
+                <SlidersIcon className="wf-icon-tile__glyph" />
+              </span>
+              <span className="flex-1 min-w-0">
+                <span className="wf-choice__title block truncate">{field.emptyLabel}</span>
+                {selected && !enabledList.some(a => a.id === selected) && (
+                  <span className="wf-choice__meta block truncate">Trợ lý đã chọn trước đây không còn / đang tắt</span>
+                )}
+              </span>
+              {(!selected || !enabledList.some(a => a.id === selected)) && <CheckCircleIcon className="w-[18px] h-[18px] flex-shrink-0 text-[color:var(--wf-focus)]" />}
+            </button>
+          ) : null;
+
           if (enabledList.length === 0) {
+            if (emptyChoice) return <div className="space-y-1.5">{emptyChoice}</div>;
             return (
               <div className="wf-callout" data-tone="warn">
                 <AlertIcon className="w-3.5 h-3.5" />
@@ -4977,6 +5007,7 @@ export default function NodeConfigPanel({ node, nodes, edges, onConfigChange, on
 
           return (
             <div className="space-y-1.5">
+              {emptyChoice}
               {enabledList.map(a => {
                 const isActive = selected === a.id;
                 const PlatformIcon = a.platform === 'openai' ? BotIcon : a.platform === 'gemini' ? DiamondIcon : a.platform === 'deepseek' ? HelpCircleIcon : a.platform === 'grok' ? LightningIcon : BotIcon;

@@ -5,15 +5,25 @@
  *    cùng kiểm tra scope/tài khoản, cùng validate, cùng IPC handler với app ngoài và UI.
  *  - Hàm riêng của plugin (storage, settings, log, events, http, workflow.trigger, media.upload,
  *    system) kiểm tra quyền plugin ở đây rồi mới chạm dữ liệu.
+ *  - deplao.cloudflare.* (chỉ backend, quyền "cloudflare:workers"): kiểm quyền manifest, tên Worker / D1 theo tiền tố
+ *    (pluginShortName) và thư mục nằm trong ứng dụng TẠI ĐÂY, rồi mới gọi kênh cloudflare:workers:* qua IpcInvoker
+ *    kèm giấy uỷ quyền (PluginGrant) — kênh quản trị duy nhất plugin chạm được, token Cloudflare không ra khỏi main.
  */
+import * as fs from 'fs';
+import * as path from 'path';
 import { ApiError, Principal } from '../api/types';
 import type { EventHub, ApiEvent } from '../api/events/EventHub';
 import type { UploadStore } from '../api/UploadStore';
+import type { PluginGrant } from '../api/IpcInvoker';
 import { guardedRequest } from '../api/netGuard';
 import { getApiSettingBool } from '../api/settings';
+import { CloudError } from '../cloudflare/contracts';
+import {
+    assertResourceName, normalizeDeployOptions, normalizeQuery, WORKERS_ERROR_STATUS, WORKERS_PERMISSION,
+} from '../cloudflare/workers/validate';
 import type { PluginRecord, PluginRuntimeHandle } from './PluginManager';
 import type { PluginLogStore, PluginStorage } from './PluginStorage';
-import { PLUGIN_API_VERSION } from './manifest';
+import { isSafeRelativePath, PLUGIN_API_VERSION, pluginShortName } from './manifest';
 
 export interface OperationInfo {
     method: string;
@@ -29,10 +39,16 @@ export interface BridgeDeps {
         storage: PluginStorage;
         logs: PluginLogStore;
     };
-    invoke: (target: string, input: { principal: Principal; params?: any; query?: any; body?: any }) => Promise<{ status: number; payload: any }>;
+    invoke: (target: string, input: { principal: Principal; params?: any; query?: any; body?: any; binary?: { maxBytes: number } }) => Promise<{ status: number; payload: any }>;
     operations: () => Map<string, OperationInfo>;
     hub: () => EventHub;
     invokeIpc: (channel: string, payload: any, principal: Principal) => Promise<any>;
+    /**
+     * Kênh quản trị được uỷ quyền cho plugin (cloudflare:workers:*, xem PLUGIN_DELEGATED_CHANNEL_PREFIXES): bridge đã kiểm
+     * quyền + tiền tố, `grant` đi kèm tới handler. Trả NGUYÊN kết quả handler ({ success, result } | { success:false,
+     * error, code }) để giữ mã lỗi CF_*. Thiếu (bản test cũ) → deplao.cloudflare báo NOT_IMPLEMENTED.
+     */
+    invokeDelegated?: (channel: string, payload: any, principal: Principal, grant: PluginGrant, timeoutMs: number) => Promise<any>;
     uploads: () => UploadStore;
     appVersion: () => string;
     requestImpl?: typeof guardedRequest;
@@ -40,12 +56,53 @@ export interface BridgeDeps {
 
 const HTTP_MAX_BYTES = 5 * 1024 * 1024;
 const UPLOAD_MAX_BYTES = 25 * 1024 * 1024;
+/** Hàm API trả file (downloadMessageMedia, downloadLibraryItem…): plugin nhận base64, tối đa bằng giới hạn upload. */
+const FILE_MAX_BYTES = UPLOAD_MAX_BYTES;
 const TEXT_TYPES = /^(text\/|application\/(json|xml|javascript|x-www-form-urlencoded)|.*\+json|.*\+xml)/i;
+
+/** Không có Content-Type: coi là chữ chỉ khi là UTF-8 hợp lệ và không có byte 0 (file nhị phân → base64, không hỏng). */
+function looksLikeText(body: Buffer): boolean {
+    if (!body.length) return true;
+    if (body.includes(0)) return false;
+    try {
+        new TextDecoder('utf-8', { fatal: true }).decode(body);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+/** Thời gian chờ tối đa từng hàm deplao.cloudflare (triển khai tải asset + script có thể vài phút). */
+const CLOUDFLARE_TIMEOUTS_MS = {
+    status: 60_000,
+    get: 60_000,
+    d1Ensure: 60_000,
+    d1Query: 60_000,
+    d1Migrate: 5 * 60_000,
+    deploy: 10 * 60_000,
+};
 
 function need(rec: PluginRecord, perm: string): void {
     if (!rec.granted_permissions.includes(perm)) {
         throw new ApiError(403, 'FORBIDDEN_SCOPE', `Plugin cần quyền "${perm}" trong manifest`, { required: perm });
     }
+}
+
+/** Mã lỗi của handler cloudflare:workers:* / CloudError → ApiError (giữ mã CF_* của hợp đồng). */
+function cloudflareApiError(code: unknown, message: unknown, retryAfterMs?: unknown): ApiError {
+    const raw = typeof code === 'string' ? code : '';
+    const text = String(message || 'Lỗi không rõ');
+    const details = typeof retryAfterMs === 'number' && retryAfterMs > 0 ? { retryAfterMs } : undefined;
+    const mapped = raw === 'BAD_INPUT' ? 'VALIDATION_ERROR' : raw;
+    if (WORKERS_ERROR_STATUS[mapped]) return new ApiError(WORKERS_ERROR_STATUS[mapped], mapped, text, details);
+    if (['APP_ONLY', 'EMPLOYEE_MACHINE', 'REMOTE_WORKSPACE'].includes(raw)) return new ApiError(403, 'FORBIDDEN_SCOPE', text);
+    return new ApiError(500, 'INTERNAL_ERROR', text);
+}
+
+function toCloudflareApiError(err: unknown): ApiError {
+    if (err instanceof ApiError) return err;
+    if (err instanceof CloudError) return cloudflareApiError(err.code, err.message, err.retryAfterMs);
+    return new ApiError(500, 'INTERNAL_ERROR', String((err as any)?.message || err));
 }
 
 /** Tách tham số phẳng của SDK thành path params / query / body theo route. */
@@ -82,7 +139,8 @@ export class PluginApiBridge {
     }
 
     private async callApi(principal: Principal, target: string, input: { params?: any; query?: any; body?: any }): Promise<any> {
-        const { status, payload } = await this.deps.invoke(target, { principal, ...input });
+        // binary: route file trả { name, mime, size, base64 } thay vì "chỉ gọi được qua HTTP" (route khác bỏ qua).
+        const { status, payload } = await this.deps.invoke(target, { principal, ...input, binary: { maxBytes: FILE_MAX_BYTES } });
         if (!payload?.success) {
             const e = payload?.error || {};
             throw new ApiError(status || 500, e.code || 'INTERNAL_ERROR', e.message || 'Lỗi không rõ', e.details);
@@ -203,7 +261,10 @@ export class PluginApiBridge {
                     throw new ApiError(502, 'UPSTREAM_ERROR', `http.fetch: ${err?.message || err}`);
                 });
                 const type = String(res.headers['content-type'] || '');
-                const textual = TEXT_TYPES.test(type) || !type;
+                // responseType: 'text' | 'base64' ép kiểu trả; mặc định đoán theo Content-Type (thiếu thì xem nội dung).
+                const textual = init.responseType === 'text' ? true
+                    : init.responseType === 'base64' ? false
+                        : TEXT_TYPES.test(type) || (!type && looksLikeText(res.body));
                 return {
                     status: res.status,
                     url: res.url,
@@ -222,6 +283,14 @@ export class PluginApiBridge {
                 return { upload_id: record.id, name: record.name, kind: record.kind, size: record.size, mime: record.mime, expires_at: record.expires_at };
             }
 
+            case 'cloudflare.status':
+            case 'cloudflare.workers.get':
+            case 'cloudflare.workers.deployBundle':
+            case 'cloudflare.d1.ensure':
+            case 'cloudflare.d1.migrate':
+            case 'cloudflare.d1.query':
+                return this.cloudflare(rec, principal, m, p, origin);
+
             default: {
                 // operationId của API v1: "sendMessage" hoặc "api.sendMessage".
                 const opId = m.startsWith('api.') ? m.slice(4) : m;
@@ -237,5 +306,110 @@ export class PluginApiBridge {
     cleanup(pluginId: string): void {
         this.backendSubs.get(pluginId)?.();
         this.backendSubs.delete(pluginId);
+    }
+
+    /**
+     * deplao.cloudflare.* — kiểm TRƯỚC khi gọi IPC: chỉ backend, quyền manifest "cloudflare:workers" (PLUGIN_PERMISSION),
+     * tên Worker / D1 = tiền tố hoặc "<tiền tố>-…" (CF_NAME_FORBIDDEN), bundleDir / dir là thư mục tương đối nằm trong
+     * ứng dụng (CF_BUNDLE_INVALID). Rồi gọi kênh cloudflare:workers:* kèm giấy uỷ quyền; handler ở main kiểm lại lần nữa.
+     */
+    private async cloudflare(rec: PluginRecord, principal: Principal, method: string, p: any, origin: 'ui' | 'backend'): Promise<any> {
+        if (origin !== 'backend') throw new ApiError(400, 'VALIDATION_ERROR', 'deplao.cloudflare chỉ dùng ở backend của ứng dụng (UI gọi qua deplao.backend.call)');
+        if (!rec.granted_permissions.includes(WORKERS_PERMISSION)) {
+            throw new ApiError(403, 'PLUGIN_PERMISSION', `Ứng dụng cần quyền "${WORKERS_PERMISSION}" trong manifest`, { required: WORKERS_PERMISSION });
+        }
+        const prefix = pluginShortName(rec.id);
+        let channel = '';
+        let payload: Record<string, unknown> = {};
+        let timeoutMs = CLOUDFLARE_TIMEOUTS_MS.status;
+        let pluginDir = '';
+        try {
+            pluginDir = this.pluginRoot(rec);
+            switch (method) {
+                case 'cloudflare.status':
+                    channel = 'cloudflare:workers:status';
+                    payload = {};
+                    timeoutMs = CLOUDFLARE_TIMEOUTS_MS.status;
+                    break;
+                case 'cloudflare.workers.get':
+                    channel = 'cloudflare:workers:get';
+                    payload = { name: assertResourceName(p.name, prefix, 'Worker') };
+                    timeoutMs = CLOUDFLARE_TIMEOUTS_MS.get;
+                    break;
+                case 'cloudflare.workers.deployBundle': {
+                    const opts = normalizeDeployOptions(p, prefix); // tên Worker + D1 trong bindings, binding, secret
+                    channel = 'cloudflare:workers:deploy';
+                    payload = {
+                        name: opts.name,
+                        bundleDir: this.pluginDirectory(rec, p.bundleDir, 'bundleDir'),
+                        bindings: p.bindings ?? {},
+                        secrets: p.secrets ?? {},
+                        workersDev: opts.workersDev,
+                    };
+                    timeoutMs = CLOUDFLARE_TIMEOUTS_MS.deploy;
+                    break;
+                }
+                case 'cloudflare.d1.ensure':
+                    channel = 'cloudflare:workers:d1Ensure';
+                    payload = { name: assertResourceName(p.name, prefix, 'D1') };
+                    timeoutMs = CLOUDFLARE_TIMEOUTS_MS.d1Ensure;
+                    break;
+                case 'cloudflare.d1.migrate':
+                    channel = 'cloudflare:workers:d1Migrate';
+                    payload = { name: assertResourceName(p.name, prefix, 'D1'), dir: this.pluginDirectory(rec, p.dir, 'dir') };
+                    timeoutMs = CLOUDFLARE_TIMEOUTS_MS.d1Migrate;
+                    break;
+                case 'cloudflare.d1.query': {
+                    const name = assertResourceName(p.name, prefix, 'D1');
+                    const q = normalizeQuery(p.sql, p.params);
+                    channel = 'cloudflare:workers:d1Query';
+                    payload = { name, sql: q.sql, params: q.params };
+                    timeoutMs = CLOUDFLARE_TIMEOUTS_MS.d1Query;
+                    break;
+                }
+                default:
+                    throw new ApiError(404, 'NOT_FOUND', `Không có hàm "${method}"`);
+            }
+        } catch (err) {
+            throw toCloudflareApiError(err);
+        }
+        if (!this.deps.invokeDelegated) throw new ApiError(501, 'NOT_IMPLEMENTED', 'Bản app này chưa hỗ trợ deplao.cloudflare');
+        const grant: PluginGrant = Object.freeze({
+            pluginId: rec.id,
+            permission: WORKERS_PERMISSION,
+            resourcePrefix: prefix,
+            pluginDir,
+            log: (level: 'info' | 'warn' | 'error', message: string) => this.deps.manager.logs.append(rec.id, level, String(message).slice(0, 4000)),
+        });
+        const res = await this.deps.invokeDelegated(channel, payload, principal, grant, timeoutMs);
+        if (res && typeof res === 'object' && res.success === false) throw cloudflareApiError(res.code, res.error, res.retryAfterMs);
+        return res && typeof res === 'object' && 'result' in res ? res.result : null;
+    }
+
+    /** realpath thư mục ứng dụng đã cài. */
+    private pluginRoot(rec: PluginRecord): string {
+        try {
+            return fs.realpathSync(rec.install_path);
+        } catch {
+            throw new CloudError('CF_BUNDLE_INVALID', 'Không thấy thư mục của ứng dụng trên máy');
+        }
+    }
+
+    /** Thư mục tương đối trong ứng dụng → đường dẫn tuyệt đối (realpath), từ chối mọi thứ nằm ngoài (.., tuyệt đối, symlink). */
+    private pluginDirectory(rec: PluginRecord, rel: unknown, label: string): string {
+        if (typeof rel !== 'string' || !isSafeRelativePath(rel)) {
+            throw new CloudError('CF_BUNDLE_INVALID', `${label} phải là thư mục tương đối trong ứng dụng, vd "vendor/fintrack"`);
+        }
+        const root = this.pluginRoot(rec);
+        const full = path.resolve(root, ...rel.split('/').filter(Boolean));
+        let real: string;
+        try {
+            real = fs.realpathSync(full);
+        } catch {
+            throw new CloudError('CF_BUNDLE_INVALID', `Không thấy thư mục "${rel}" trong ứng dụng`);
+        }
+        if (real !== root && !real.startsWith(root + path.sep)) throw new CloudError('CF_BUNDLE_INVALID', `${label} phải nằm trong thư mục của ứng dụng`);
+        if (!fs.statSync(real).isDirectory()) throw new CloudError('CF_BUNDLE_INVALID', `"${rel}" không phải thư mục`);
+        return real;
     }
 }

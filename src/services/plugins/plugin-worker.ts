@@ -105,6 +105,18 @@ async function api(method: string, params?: any): Promise<any> {
     return data;
 }
 
+/** Nhóm có hàm riêng (media.upload) vẫn gọi được operationId: deplao.media.downloadLibraryItem({ uuid }). */
+function apiGroup<T extends Record<string, any>>(own: T): T {
+    return new Proxy(own, {
+        get(target, fn) {
+            if (typeof fn !== 'string') return undefined;
+            if (fn in target) return (target as any)[fn];
+            if (fn === 'then') return undefined;
+            return (params?: any) => api(fn, params);
+        },
+    });
+}
+
 const SPECIAL: Record<string, any> = {
     call: (operationId: string, params?: any) => api(operationId, params),
     api: {
@@ -148,13 +160,27 @@ const SPECIAL: Record<string, any> = {
     http: {
         fetch: (url: string, init: any = {}) => hostCall('http.fetch', { url, init }),
     },
-    media: {
+    media: apiGroup({
         upload: (name: string, data: Buffer | string, mime = '') => hostCall('media.upload', {
             name, mime, dataBase64: Buffer.isBuffer(data) ? data.toString('base64') : Buffer.from(String(data)).toString('base64'),
         }),
-    },
+    }),
     system: {
         info: () => hostCall('system.info'),
+    },
+    // Worker + D1 trên Cloudflare đã kết nối trong Deplao (quyền cloudflare:workers). Host kiểm quyền + tiền tố tên;
+    // bundleDir / dir là thư mục tương đối trong plugin — main tự đọc file, không gửi nội dung qua RPC.
+    cloudflare: {
+        status: () => hostCall('cloudflare.status'),
+        d1: {
+            ensure: (name: string) => hostCall('cloudflare.d1.ensure', { name }),
+            migrate: (name: string, dir: string) => hostCall('cloudflare.d1.migrate', { name, dir }),
+            query: (name: string, sql: string, params?: Array<string | number | null>) => hostCall('cloudflare.d1.query', { name, sql, params: params ?? [] }),
+        },
+        workers: {
+            get: (name: string) => hostCall('cloudflare.workers.get', { name }),
+            deployBundle: (input: any) => hostCall('cloudflare.workers.deployBundle', input ?? {}),
+        },
     },
 };
 

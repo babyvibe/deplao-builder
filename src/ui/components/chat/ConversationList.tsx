@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { getMessageCacheKey, useChatStore } from '@/store/chatStore';
+import { compareMessagesChronologically, getMessageCacheKey, useChatStore } from '@/store/chatStore';
 import { useShallow } from 'zustand/react/shallow';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
@@ -12,10 +12,16 @@ import DataAccessor, {
 import { useEmployeeStore } from '@/store/employeeStore';
 import { useEmployeeResync } from '@/hooks/useEmployeeResync';
 import { Button, EmptyState } from '@/components/ui';
-import { sendSeenForThread } from '@/lib/sendSeenHelper';
+import { liveReadSync } from '@/lib/chat/liveReadSync';
 import { getFilteredUnreadCount } from '@/lib/badgeUtils';
 import { InviteToGroupModal } from './GroupModals';
 import QuickActionsButton from './quick/QuickActionsButton';
+import ZaloHiddenMark from './zalo/ZaloHiddenMark';
+import { ZaloOnlineDot } from './zalo/ZaloOnlinePresence';
+import { useZaloFriendOnlines } from '@/hooks/useZaloFriendOnlines';
+import { ZALO_FRIEND_ONLINES_ENABLED } from '../../../shared/zaloPresence';
+import { showZaloPinDialog } from './zalo/ZaloHiddenPinDialog';
+import { setZaloConversationHidden, tryUnlockHiddenFromSearch, useHiddenAutoRelock } from '@/hooks/useZaloHidden';
 import type { OpenQuickConversation } from './quick/quickActions';
 import { showConfirm } from '../common/ConfirmDialog';
 import LabelPicker, { EditLabelsModal } from './LabelPicker';
@@ -23,7 +29,7 @@ import AddFriendModal from '../common/AddFriendModal';
 import ConversationGroupAvatar from './ConversationGroupAvatar';
 import PeerInitials from '@/components/common/PeerInitials';
 import { requestGroupAvatar } from '@/lib/chat/groupAvatarLoader';
-import { BellIcon, BellOffIcon, BookmarkIcon, ChatIcon, CheckCircleIcon, CheckIcon, CircleIcon, ClipboardListIcon, CloseIcon, CloudIcon, FolderIcon, GlobeIcon, HardDriveIcon, ImageIcon, LinkIcon, MapPinIcon, MessageCircleIcon, PaperclipIcon, PinIcon, PluginIcon, StarIcon, TargetIcon, TrashIcon, UsersIcon } from '@/components/common/icons';
+import { BellIcon, BellOffIcon, BookmarkIcon, BoxIcon, EyeIcon, EyeOffIcon, CalendarIcon, ChatIcon, CheckCircleIcon, CheckIcon, CircleIcon, ClipboardListIcon, CloseIcon, CloudIcon, FolderIcon, GlobeIcon, HardDriveIcon, ImageIcon, InboxIcon, LinkIcon, MapPinIcon, MessageCircleIcon, PaperclipIcon, PinIcon, PluginIcon, StarIcon, TargetIcon, TrashIcon, UsersIcon } from '@/components/common/icons';
 import { toLocalMediaUrl } from '@/lib/localMedia';
 import GlobalSearchPanel from './GlobalSearchPanel';
 import StarredMessagesPanel from './StarredMessagesPanel';
@@ -34,7 +40,18 @@ import { useStarredStore } from '@/store/starredStore';
 import type { StarredItem } from '@/lib/chat/starredMessages';
 import { MY_DOCUMENTS_NAME, isMyDocumentsContact, isPinnedMyDocuments, myDocumentsThreadId } from '@/lib/chat/myDocuments';
 import { isSameMessagePage, newestMessages } from '@/lib/chat/messagePage';
+import { hiddenViewRows } from '@/lib/chat/hiddenView';
+import { registerConversationOpener } from '@/lib/chat/openConversation';
+import {
+  activeMenuFilters, isConversationListFiltered, othersFolderCount, toggleMenuFilter,
+} from '@/lib/chat/conversationListFilters';
 import { lookupZaloUserByPhone } from '@/lib/chat/zaloPhoneLookup';
+import { isManuallyMarkedReplied, isUnrepliedConversation } from '../../../shared/replyState';
+import BulkMarkRepliedModal from './BulkMarkRepliedModal';
+import {
+  customDateRange, inConversationDateRange, toDateInputValue,
+  type ConversationDateRange,
+} from '@/lib/chat/conversationDateRange';
 import useIsMobile from '@/hooks/useIsMobile';
 import ChannelBadge, { ChannelBadgeOverlay } from '../common/ChannelBadge';
 import { getCapability, channelSupports, getChannelLabel, type Channel } from '@/../configs/channelConfig';
@@ -174,7 +191,8 @@ export default function ConversationList() {
   // một nhóm tải xong ảnh / thành viên là cả danh sách dựng lại.
   const { labels: allLabels, setLabels, showNotification, setMuted, clearMuted, isMuted: isMutedFn, setGroupInfo,
     othersConversations: allOthers, loadFlags, addToOthers, removeFromOthers,
-    mergedInboxMode, mergedInboxAccounts, mergedInboxFilterAccount, setMobileShowChat } = useAppStore(useShallow(s => ({
+    mergedInboxMode, mergedInboxAccounts, mergedInboxFilterAccount, setMobileShowChat,
+    hiddenConversations: hiddenAccounts, hiddenUnlocked } = useAppStore(useShallow(s => ({
     labels: s.labels, setLabels: s.setLabels, showNotification: s.showNotification, setMuted: s.setMuted,
     clearMuted: s.clearMuted, isMuted: s.isMuted, setGroupInfo: s.setGroupInfo,
     othersConversations: s.othersConversations, loadFlags: s.loadFlags, addToOthers: s.addToOthers,
@@ -182,7 +200,19 @@ export default function ConversationList() {
     mergedInboxFilterAccount: s.mergedInboxFilterAccount, setMobileShowChat: s.setMobileShowChat,
     // isMuted() đọc mutedThreads → biểu tượng tắt thông báo phải cập nhật khi đổi
     mutedThreads: s.mutedThreads,
+    hiddenConversations: s.hiddenConversations, hiddenUnlocked: s.hiddenUnlocked,
   })));
+  // Hội thoại ẩn bằng PIN của Zalo (ZL-03): ẩn + tài khoản đang khoá → không hiện; tự ẩn lại khi đổi tài khoản / 5 phút
+  const hiddenLocked = useCallback((zaloId: string | null | undefined, contactId: string) =>
+    !!zaloId && !!hiddenAccounts[zaloId]?.has(contactId) && !hiddenUnlocked[zaloId], [hiddenAccounts, hiddenUnlocked]);
+  useHiddenAutoRelock(activeAccountId, mergedInboxMode);
+  // Chấm xanh bạn bè Zalo đang online (ZL-01 giai đoạn 2): tài khoản đang xem / các tài khoản Zalo của hộp thư gộp
+  useZaloFriendOnlines((mergedInboxMode ? mergedInboxAccounts : [activeAccountId || ''])
+    .filter((id) => !!id && isZalo(allAccountsList.find((a) => a.zalo_id === id)?.channel)));
+  useEffect(() => {
+    // Đang mở một hội thoại ẩn mà tài khoản khoá lại → đóng hội thoại (không để nội dung trên màn hình)
+    if (activeThreadId && activeAccountId && hiddenLocked(activeAccountId, activeThreadId)) setActiveThread(null);
+  }, [activeThreadId, activeAccountId, hiddenLocked, setActiveThread]);
   // Local labels work across every channel. Remote Zalo labels must not be
   // shown or loaded while viewing a standalone Telegram/Facebook inbox.
   const canUseZaloLabelFilter = mergedInboxMode || isZalo(activeAccountObj?.channel);
@@ -200,6 +230,11 @@ export default function ConversationList() {
   const [addFriendModal, setAddFriendModal] = useState<{ userId: string; displayName: string; avatar: string } | null>(null);
   const [sendingFriendReq, setSendingFriendReq] = useState(false);
   const [filter, setFilter] = useState<FilterType>('all');
+  /** Lọc theo khoảng ngày của tin cuối (menu ⋮) — dùng kèm mọi bộ lọc khác. */
+  const [dateRange, setDateRange] = useState<ConversationDateRange | null>(null);
+  const [customRangeOpen, setCustomRangeOpen] = useState(false);
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
   const [channelFilter, setChannelFilter] = useState<Channel | 'all'>('all');
   const [filterLabelIds, setFilterLabelIds] = useState<number[]>([]);
   const [filterLabelSource, setFilterLabelSource] = useState<LabelSource>('local');
@@ -220,6 +255,8 @@ export default function ConversationList() {
   const [starredPanelOpen, setStarredPanelOpen] = useState(false);
   // "Tự động đánh dấu đã đọc" (menu ⋮ → Tự động)
   const [autoReadOpen, setAutoReadOpen] = useState(false);
+  // "Đánh dấu đã trả lời hàng loạt" (menu ⋮ → Tự động)
+  const [bulkRepliedOpen, setBulkRepliedOpen] = useState(false);
   const autoReadProgress = useAutoReadStore(s => (s.job.status === 'running' ? `${s.job.done}/${s.job.total}` : ''));
   const [failedAvatars, setFailedAvatars] = useState<Set<string>>(() => new Set());
   const [ctxMenu, setCtxMenu] = useState<{ contactId: string; zaloId: string; x: number; y: number } | null>(null);
@@ -298,30 +335,38 @@ export default function ConversationList() {
   // archived or brand-new conversation shows up without switching tabs.
   const othersSnapshotKey = mergedInboxMode ? allOthers : allOthers[activeAccountId || ''];
   useEffect(() => {
-    const hasFilter = channelFilter !== 'all' || !!search || filter === 'unread' || filter === 'others';
+    const hasFilter = channelFilter !== 'all' || !!search || filter === 'unread' || filter === 'others'
+      || filter === 'unreplied' || !!dateRange;
     if (!hasFilter) { setDbFilteredContacts(null); return; }
 
     let cancelled = false;
-    const ipc = (window as any).electronAPI?.db;
     const filterOpts = {
       channel: channelFilter !== 'all' ? channelFilter : undefined,
       search: search || undefined,
       unreadOnly: filter === 'unread' ? true : undefined,
       othersOnly: filter === 'others' ? true : undefined,
       excludeOthers: filter !== 'others' ? true : undefined,
+      // Chưa trả lời: hội thoại 1:1 mà tin thật mới nhất là của người kia (shared/replyState, tính trong DB)
+      unrepliedOnly: filter === 'unreplied' ? true : undefined,
+      fromTs: dateRange?.fromTs,
+      toTs: dateRange?.toTs,
     };
 
+    // DataAccessor: Boss / dùng một mình đọc DB máy này (IPC), nhân viên đọc DB Boss (REST) — trước đây gọi thẳng IPC nên
+    // ở máy nhân viên mọi bộ lọc ra danh sách trống
     if (mergedInboxMode && mergedInboxAccounts.length > 0) {
       // Merged mode: query DB cho từng account rồi gộp
       Promise.all(
         mergedInboxAccounts.map(zaloId =>
-          ipc?.getContactsFiltered({ zaloId, ...filterOpts })
-            .then((r: any) => r?.success ? (r.contacts || []) : [])
-            .catch(() => [])
+          DataAccessor.getContactsFiltered({ zaloId, ...filterOpts })
+            .then((r) => (r?.success ? (r.contacts || []) : null))
+            .catch(() => null)
         )
       ).then((results) => {
         if (cancelled) return;
-        const merged = results.flat();
+        // Mọi tài khoản đọc lỗi (nhân viên mất kết nối Boss): giữ danh sách đang hiện, không thay bằng danh sách trống
+        if (results.every((items) => items === null)) return;
+        const merged = results.flatMap((items) => items || []);
         // Dedup theo contact_id (giữ bản mới nhất)
         const seen = new Map<string, any>();
         for (const c of merged) {
@@ -331,9 +376,9 @@ export default function ConversationList() {
         setDbFilteredContacts(Array.from(seen.values()));
       });
     } else if (activeAccountId) {
-      // Single mode: query DB cho account hiện tại
-      ipc?.getContactsFiltered({ zaloId: activeAccountId, ...filterOpts })
-        .then((res: any) => {
+      // Single mode: query DB cho account hiện tại (đọc lỗi → giữ danh sách đang hiện)
+      DataAccessor.getContactsFiltered({ zaloId: activeAccountId, ...filterOpts })
+        .then((res) => {
           if (!cancelled && res?.success && Array.isArray(res.contacts)) {
             setDbFilteredContacts(res.contacts);
           }
@@ -341,7 +386,7 @@ export default function ConversationList() {
     }
 
     return () => { cancelled = true; };
-  }, [activeAccountId, mergedInboxMode, mergedInboxAccounts.join(','), channelFilter, search, filter, othersSnapshotKey]);
+  }, [activeAccountId, mergedInboxMode, mergedInboxAccounts.join(','), channelFilter, search, filter, othersSnapshotKey, dateRange?.fromTs, dateRange?.toTs]);
 
   // A filtered DB query is a snapshot. Selection immediately clears unread in
   // the Zustand store, so overlay the live item before rendering; otherwise a
@@ -402,7 +447,7 @@ export default function ConversationList() {
   // hội thoại của tài khoản khác (đổi tài khoản đang mở làm số hàng về 60).
   const listBaseKey = [
     mergedInboxMode ? `merged:${mergedInboxFilterAccount || ''}` : `acc:${activeAccountId || ''}`,
-    filter, filterLabelIds.join(','), channelFilter,
+    filter, filterLabelIds.join(','), channelFilter, dateRange ? `${dateRange.fromTs}-${dateRange.toTs}` : '',
   ].join('|');
   const listViewKey = search ? `${listBaseKey}|q:${search}` : listBaseKey;
   const listViewStateRef = useRef(new Map<string, { top: number; count: number }>());
@@ -923,6 +968,7 @@ export default function ConversationList() {
   // Không tính unread của hội thoại trong thư mục "Khác"
   const unreadCount = accountContacts.reduce((s, c) => {
     if (othersConversations.has(c.contact_id)) return s;
+    if (hiddenAccounts[activeAccountId || '']?.has(c.contact_id)) return s; // hội thoại ẩn: không tính chưa đọc (Q3)
     return s + (c.unread_count > 0 ? 1 : 0);
   }, 0);
   // Unread riêng của thư mục "Khác" - chỉ dùng để hiện dấu chấm đỏ
@@ -930,8 +976,13 @@ export default function ConversationList() {
     if (!othersConversations.has(c.contact_id) || isTelegramNonMember(c)) return s;
     return s + (c.unread_count > 0 ? 1 : 0);
   }, 0);
-  // const unrepliedCount = accountContacts.reduce((s, c) => s + (c.unread_count > 0 && c.is_replied !== 1 ? 1 : 0), 0);
-  const othersCount = accountContacts.reduce((s, c) => s + (othersConversations.has(c.contact_id) ? 1 : 0), 0);
+  // Số hội thoại trong "Khác (lưu trữ)": theo cờ trong DB (cả trang chưa tải) — trước đây chỉ đếm phần đã tải (menu 172,
+  // nhãn khi mở thư mục 183)
+  const othersCount = useMemo(() => othersFolderCount(
+    mergedInboxMode ? (mergedInboxFilterAccount ? [mergedInboxFilterAccount] : mergedInboxAccounts) : [activeAccountId || ''],
+    allOthers,
+    hiddenLocked,
+  ), [mergedInboxMode, mergedInboxFilterAccount, mergedInboxAccounts, activeAccountId, allOthers, hiddenLocked]);
 
   // Zalo "My Documents": hội thoại CÓ SẴN của Zalo, đồng bộ với Zalo (ID = loginInfo.send2me_id, KHÔNG phải UID của
   // mình). Như Zalo: luôn ở đầu danh sách của tài khoản, không bỏ ghim được; hộp thư gộp chỉ ghim khi đã có tin.
@@ -999,6 +1050,43 @@ export default function ConversationList() {
     }
   }, [mergedMyDocsKey, requestPinnedExtras]);
 
+  // Hội thoại ẩn (ZL-03): gõ đúng PIN → danh sách CHỈ gồm hội thoại ẩn của tài khoản đó (như Zalo), không trộn hội thoại
+  // thường; hội thoại ẩn chưa có trong trang nào đã tải thì tải bù theo id (DB, không gọi Zalo).
+  const hiddenViewAccounts = useMemo(
+    () => (mergedInboxMode ? mergedInboxAccounts : [activeAccountId || ''])
+      .filter((id) => !!id && !!hiddenUnlocked[id] && (hiddenAccounts[id]?.size || 0) > 0),
+    [mergedInboxMode, mergedInboxAccounts, activeAccountId, hiddenUnlocked, hiddenAccounts],
+  );
+  const hiddenViewKey = hiddenViewAccounts
+    .map((id) => `${id}:${Array.from(hiddenAccounts[id] || []).sort().join('|')}`)
+    .join(',');
+  useEffect(() => {
+    for (const id of hiddenViewAccounts) requestPinnedExtras(id, Array.from(hiddenAccounts[id] || []));
+  }, [hiddenViewKey, requestPinnedExtras]); // eslint-disable-line react-hooks/exhaustive-deps
+  const hiddenViewContacts = useMemo(
+    () => (hiddenViewAccounts.length > 0 ? hiddenViewRows(hiddenViewAccounts, hiddenAccounts, pinnedExtrasByAccount, contacts) : null),
+    [hiddenViewAccounts, hiddenAccounts, pinnedExtrasByAccount, contacts],
+  );
+  const relockHiddenView = useCallback(() => {
+    for (const id of hiddenViewAccounts) useAppStore.getState().setHiddenUnlocked(id, false);
+  }, [hiddenViewAccounts]);
+
+  // "Tất cả" = danh sách đầy đủ: chỉ sáng khi không lọc gì, bấm vào bỏ mọi bộ lọc (tab, nhãn, menu ⋮: Khác / Chưa trả lời /
+  // khoảng ngày / kênh) và thoát xem hội thoại ẩn. Trước đây chỉ đổi tab: lọc khoảng ngày / kênh vẫn giữ.
+  const listFilterState = { filter, dateRange, channel: channelFilter, hiddenView: !!hiddenViewContacts };
+  const listFiltered = isConversationListFiltered(listFilterState);
+  const menuFilters = activeMenuFilters(listFilterState);
+  const showAllConversations = useCallback(() => {
+    setFilter('all');
+    setFilterLabelIds([]);
+    setDateRange(null);
+    setCustomRangeOpen(false);
+    setChannelFilter('all');
+    setFilterDropdownOpen(false);
+    setMoreMenuOpen(false);
+    relockHiddenView();
+  }, [relockHiddenView]);
+
   // Danh sách hiển thị = các trang đã tải + hội thoại ghim tải bù (chưa có trong trang nào, vẫn đang được ghim)
   const pinnedExtras = (activeAccountId && pinnedExtrasByAccount[activeAccountId]) || EMPTY_PINNED_EXTRAS;
   const accountContactsWithPinned = useMemo(() => {
@@ -1013,17 +1101,21 @@ export default function ConversationList() {
 
   // ── Filtered list: dùng DB result khi có filter, fallback memory filter ──
   const filtered = useMemo(() => {
-    // Ưu tiên DB-filtered result (nhanh, đã filter channel/search/unread/others ở DB level)
-    const rawSource = dbFilteredContactsWithLiveState ?? accountContactsWithPinned;
+    // Ưu tiên DB-filtered result (nhanh, đã filter channel/search/unread/others ở DB level). Không còn bộ lọc DB → danh
+    // sách trong bộ nhớ ngay (ảnh chụp của bộ lọc cũ còn tới khi effect chạy → danh sách nháy trống)
+    const hasDbFilter = channelFilter !== 'all' || !!search || filter === 'unread' || filter === 'others'
+      || filter === 'unreplied' || !!dateRange;
+    const rawSource = (hasDbFilter ? dbFilteredContactsWithLiveState : null) ?? accountContactsWithPinned;
     // Safety: luôn loại bỏ hội thoại "Khác" khi không ở tab "Khác"
-    const source = filter === 'others'
+    const source = (filter === 'others'
       ? rawSource.filter(c => othersConversations.has(c.contact_id))
-      : rawSource.filter(c => !othersConversations.has(c.contact_id));
+      : rawSource.filter(c => !othersConversations.has(c.contact_id)))
+      .filter(c => !hiddenLocked(c.owner_zalo_id || activeAccountId, c.contact_id));
 
-    // Label filter + unreplied filter vẫn cần làm ở memory (DB chưa hỗ trợ)
+    // Label filter ở memory (DB chưa hỗ trợ). Chưa trả lời: DB đã lọc, áp lại trên trạng thái sống (vừa trả lời → bỏ ngay)
     const preFiltered = (filter === 'label' || filter === 'unreplied')
       ? source.filter((c) => {
-          if (filter === 'unreplied') return c.unread_count > 0 && c.is_replied !== 1;
+          if (filter === 'unreplied') return isUnrepliedConversation(c);
           // label filter
           if (effectiveFilterLabelSource === 'local') {
             const threadMap = localLabelThreadMapByAccount[activeAccountId || ''] || {};
@@ -1054,8 +1146,8 @@ export default function ConversationList() {
     // The DB snapshot can be stale after opening a conversation. Reapply the
     // unread predicate against live store state so both standard and Others
     // views react in the same render as clearUnread().
-    const liveFiltered = filter === 'unread'
-      ? preFiltered.filter(c => c.unread_count > 0)
+    const liveFiltered = (filter === 'unread' || dateRange)
+      ? preFiltered.filter(c => (filter !== 'unread' || c.unread_count > 0) && inConversationDateRange(c.last_message_time, dateRange))
       : preFiltered;
 
     // Khoá sắp xếp tính 1 lần / hội thoại (thứ tự y hệt): trước đây mỗi lần so sánh lại ghép chuỗi + tra Set
@@ -1084,7 +1176,7 @@ export default function ConversationList() {
       if (ka.hasDraft && kb.hasDraft) return kb.draftTs - ka.draftTs;
       return kb.time - ka.time;
     });
-  }, [dbFilteredContactsWithLiveState, accountContactsWithPinned, filter, othersConversations, filterLabelIds, effectiveFilterLabelSource, filterLabelMode, labels, localLabelThreadMapByAccount, activeAccountId, localPinnedThreads, pinnedThreads, activeThreadId, drafts, draftTimestamps, activeAccountObj]);
+  }, [dbFilteredContactsWithLiveState, accountContactsWithPinned, filter, othersConversations, hiddenLocked, filterLabelIds, effectiveFilterLabelSource, filterLabelMode, labels, localLabelThreadMapByAccount, activeAccountId, localPinnedThreads, pinnedThreads, activeThreadId, drafts, draftTimestamps, activeAccountObj, dateRange, channelFilter, search]);
 
   // Nhãn Zalo đầu tiên (theo thứ tự nhãn của tài khoản) của mỗi hội thoại: tính 1 lần khi nhãn đổi, thay vì mỗi hàng
   // quét toàn bộ nhãn × danh sách hội thoại của nhãn ở mỗi lần render
@@ -1159,7 +1251,8 @@ export default function ConversationList() {
   const filteredMerged = useMemo(() => {
     if (!mergedContacts) return null;
     // Ưu tiên DB-filtered result khi có filter
-    const hasFilter = channelFilter !== 'all' || !!search || filter === 'unread' || filter === 'others';
+    const hasFilter = channelFilter !== 'all' || !!search || filter === 'unread' || filter === 'others'
+      || filter === 'unreplied' || !!dateRange;
     const rawSource = (hasFilter && dbFilteredContactsWithLiveState) ? dbFilteredContactsWithLiveState : mergedContacts;
 
     // Account filter (from sidebar)
@@ -1171,15 +1264,15 @@ export default function ConversationList() {
     const source = filter === 'others'
       ? accountFiltered.filter(c => {
           const ownerOthers = (allOthers[c.owner_zalo_id!] || new Set()) as Set<string>;
-          return ownerOthers.has(c.contact_id);
+          return ownerOthers.has(c.contact_id) && !hiddenLocked(c.owner_zalo_id, c.contact_id);
         })
       : accountFiltered.filter(c => {
           const ownerOthers = (allOthers[c.owner_zalo_id!] || new Set()) as Set<string>;
-          return !ownerOthers.has(c.contact_id);
+          return !ownerOthers.has(c.contact_id) && !hiddenLocked(c.owner_zalo_id, c.contact_id);
         });
 
-    const unreadFiltered = filter === 'unread'
-      ? source.filter(c => c.unread_count > 0)
+    const unreadFiltered = (filter === 'unread' || dateRange)
+      ? source.filter(c => (filter !== 'unread' || c.unread_count > 0) && inConversationDateRange(c.last_message_time, dateRange))
       : source;
 
     // Label filter (memory, vì DB chưa hỗ trợ cross-account label)
@@ -1215,13 +1308,13 @@ export default function ConversationList() {
       });
     }
 
-    // Unreplied filter
+    // Chưa trả lời: hội thoại 1:1 mà tin thật mới nhất là của người kia (đọc hay chưa đọc đều tính)
     if (filter === 'unreplied') {
-      return unreadFiltered.filter(c => c.unread_count > 0 && c.is_replied !== 1);
+      return unreadFiltered.filter(c => isUnrepliedConversation(c));
     }
 
     return unreadFiltered;
-  }, [mergedContacts, dbFilteredContactsWithLiveState, mergedInboxFilterAccount, channelFilter, search, filter, filterLabelIds, allOthers, allLabels, mergedLabels, effectiveFilterLabelSource, filterLabelMode, localLabelThreadMapByAccount]);
+  }, [mergedContacts, dbFilteredContactsWithLiveState, mergedInboxFilterAccount, channelFilter, search, filter, filterLabelIds, allOthers, hiddenLocked, allLabels, mergedLabels, effectiveFilterLabelSource, filterLabelMode, localLabelThreadMapByAccount, dateRange]);
 
   const mergedUnreadCount = mergedContacts
     ? mergedContacts.reduce((s, c) => {
@@ -1237,10 +1330,13 @@ export default function ConversationList() {
         return s + (c.unread_count > 0 ? 1 : 0);
       }, 0) : 0;
 
+  // Danh sách đang vẽ: đang xem hội thoại ẩn (đã gõ đúng PIN) → chỉ hội thoại ẩn; ngược lại danh sách thường
+  const listItems = hiddenViewContacts ?? (mergedInboxMode ? (filteredMerged ?? []) : filtered);
+
   // Sentinel cuộn vô hạn có đang hiển thị: observer phải gắn lại khi sentinel xuất hiện SAU lần render đầu
   // (danh sách tải xong / trang lỗi được thử lại) — trước đây chỉ gắn khi đổi panel, bộ lọc hoặc tài khoản.
-  const showConversationSentinel = displayCount < (mergedInboxMode ? (filteredMerged?.length ?? 0) : filtered.length)
-    || (!mergedInboxMode && conversationHasMore);
+  const showConversationSentinel = displayCount < listItems.length
+    || (!hiddenViewContacts && !mergedInboxMode && conversationHasMore);
 
   // Infinite scroll: IntersectionObserver trên sentinel element
   useEffect(() => {
@@ -1308,7 +1404,7 @@ export default function ConversationList() {
           const kept = fresh.length >= MESSAGE_LOAD_LIMIT && oldestFresh > newestCached
             ? cached.filter(isTemp)
             : cached.filter((m) => !freshIds.has(String(m.msg_id)));
-          const merged = [...kept, ...fresh].sort((a: any, b: any) => (a.timestamp || 0) - (b.timestamp || 0));
+          const merged = [...kept, ...fresh].sort(compareMessagesChronologically);
           latest.setMessages(accountId, threadId, merged);
         }));
       }
@@ -1340,6 +1436,13 @@ export default function ConversationList() {
   // Handle search input change
   const handleSearchChange = async (value: string) => {
     setSearch(value); clearPhoneSearch();
+    // Gõ đúng 4 số PIN → mở khoá hội thoại ẩn Zalo (ZL-03); sai thì vẫn là tìm kiếm thường (không báo gì)
+    if (/^\d{4}$/.test(value.trim())) {
+      void tryUnlockHiddenFromSearch(value, mergedInboxMode ? mergedInboxAccounts : [activeAccountId]).then((ok) => {
+        if (!ok || (searchInputRef.current?.value || '').trim() !== value.trim()) return;
+        setSearch(''); clearPhoneSearch(); setSearchPanelOpen(false); searchInputRef.current?.blur();
+      });
+    }
     // Auto-close search panel when input is completely cleared
     if (!value.trim()) {
       setSearchPanelOpen(false);
@@ -1437,17 +1540,10 @@ export default function ConversationList() {
     });
     if (isMobile) setMobileShowChat(true);
     DataAccessor.markAsRead({ zaloId, contactId }).catch(() => {});
-    // Telegram needs an MTProto read acknowledgement as well as the local DB
-    // unread reset (ReadHistory + @-mentions + reactions). This applies to channels,
-    // groups, forums and their topics. Facebook: read receipt (was missing here).
-    // Zalo: sendSeenForThread once the messages are loaded (below).
+    // Báo đã đọc lên nền tảng (liveReadSync): Telegram ReadHistory + @ + reaction (kênh, nhóm, forum), Facebook read
+    // receipt — ngay; Zalo "đã xem" khi tải xong tin (cần tin nhận mới nhất làm mốc, bên dưới).
     const openedChannel = selectedContact?.channel || accChannel;
-    if (isTelegramUser(openedChannel) || isFacebook(openedChannel)) {
-      void import('@/lib/adapters/registry')
-        .then(({ getAdapter }) => getAdapter(isFacebook(openedChannel) ? 'facebook' : 'telegram_user')
-          .markAsRead({ accountId: zaloId, threadId: contactId }))
-        .catch(() => {});
-    }
+    if (!isZalo(openedChannel)) void liveReadSync.syncOpenedThread({ accountId: zaloId, threadId: contactId, threadType });
     clearUnread(zaloId, contactId);
     // Clear @mention flag when conversation is opened — chỉ khi cờ đang bật / chưa biết: mỗi lần ghi là 1 lệnh DB + phát
     // event cho nhân viên + sắp lại cả danh sách hội thoại.
@@ -1526,9 +1622,8 @@ export default function ConversationList() {
       const page = [...mapped].reverse();
       // Bộ nhớ đã đúng trang này (mở lại hội thoại vừa xem) → giữ mảng cũ, khỏi vẽ lại mọi tin ngay sau khi vừa hiện
       if (!isSameMessagePage(useChatStore.getState().messages[messageKey], page)) setMessages(zaloId, contactId, page);
-      // Gửi sự kiện đã đọc — truyền lastMsg để tránh query lại DB
-      const lastMsg = dbMessages[0]; // already sorted DESC
-      sendSeenForThread(zaloId, contactId, threadType, null, lastMsg);
+      // Zalo "đã xem": tin nhận mới nhất của trang vừa tải (bỏ tin của mình / tin hệ thống) — không query lại DB
+      if (isZalo(openedChannel)) void liveReadSync.syncOpenedThread({ accountId: zaloId, threadId: contactId, threadType }, dbMessages);
       // Async fixup: batch query DB for original messages not in the loaded batch
       if (missingLookup.length > 0) {
         (async () => {
@@ -1708,11 +1803,13 @@ export default function ConversationList() {
               const displayName = profile.displayName || [profile.firstName, profile.lastName].filter(Boolean).join(' ') || '';
               if (!displayName) return;
               const patch: any = { contact_id: contactId, display_name: displayName };
-              if (profile.avatar) patch.avatar_url = profile.avatar;
+              // Hồ sơ Telegram trả ảnh ở avatarUrl (trước đây đọc nhầm `avatar` nên không bao giờ có ảnh)
+              const avatarUrl = profile.avatarUrl || profile.avatar || '';
+              if (avatarUrl) patch.avatar_url = avatarUrl;
               if (profile.username) patch.username = profile.username;
               useChatStore.getState().updateContact(zaloId!, patch);
               DataAccessor.updateContactProfile({
-                zaloId: zaloId!, contactId, displayName, avatarUrl: profile.avatar || '',
+                zaloId: zaloId!, contactId, displayName, avatarUrl,
               }).catch(() => {});
             })
             .catch(() => {});
@@ -1813,6 +1910,12 @@ export default function ConversationList() {
       void handleSelect(threadId, threadType);
     }
   };
+  // "Nhắn tin" của hồ sơ người dùng, nhóm chung... (lib/chat/openConversation) mở hội thoại đúng như bấm trong danh sách
+  const openQuickActionConversationRef = useRef(openQuickActionConversation);
+  openQuickActionConversationRef.current = openQuickActionConversation;
+  useEffect(() => registerConversationOpener((request) => {
+    openQuickActionConversationRef.current(request.accountId, request.threadId, request.threadType, request.info);
+  }), []);
 
 
   const handleTogglePin = async (contactId: string, threadType: number) => {
@@ -1949,12 +2052,25 @@ export default function ConversationList() {
     zaloApi('setMute', { auth, threadId: contactId, threadType, action: 3 }).catch(() => {});
   };
 
+  // Ẩn / bỏ ẩn hội thoại Zalo bằng mã PIN (ZL-03): đồng bộ với Zalo; chưa có PIN → hộp đặt PIN trước
+  const handleSetHidden = async (contactId: string, zaloId: string, isGroup: boolean, hidden: boolean) => {
+    setCtxMenu(null);
+    if (!zaloId) return;
+    const res = await setZaloConversationHidden(zaloId, contactId, isGroup, hidden,
+      () => showZaloPinDialog({ accountId: zaloId, mode: 'setup' }));
+    if (!res.ok) {
+      if (res.error) showNotification(res.error, 'error');
+      return;
+    }
+    showNotification(hidden ? 'Đã ẩn hội thoại — gõ mã PIN vào ô tìm kiếm để xem lại' : 'Đã bỏ ẩn hội thoại', 'success');
+  };
+
   const handleMoveToOthers = (contactId: string, overrideZaloId?: string) => {
     const zId = overrideZaloId || activeAccountId;
     if (!zId) return;
     addToOthers(zId, contactId);
     setMuted(zId, contactId, 0);
-    showNotification('Đã chuyển vào thư mục Khác và tắt thông báo', 'success');
+    showNotification('Đã chuyển vào Khác (lưu trữ) — không phát âm thanh, không hiện thông báo', 'success');
     setCtxMenu(null);
     // Cập nhật badge taskbar - conversation giờ nằm trong "Khác" nên không đếm nữa
     ipc.app?.setBadge(getFilteredUnreadCount());
@@ -1999,6 +2115,20 @@ export default function ConversationList() {
     const contact = (useChatStore.getState().contacts[zId] || []).find(c => c.contact_id === contactId);
     const threadType = contact?.contact_type === 'group' ? 1 : 0;
     zaloApi('setMute', { auth: auth2, threadId: contactId, threadType, action: 3 }).catch(() => {});
+  };
+
+  /** Đánh dấu đã trả lời / chưa trả lời một hội thoại (không gửi tin) — lưu DB, máy khác cập nhật qua db:replyStateChanged. */
+  const handleMarkReplied = async (contactId: string, replied: boolean, overrideZaloId?: string) => {
+    const zaloId = overrideZaloId || activeAccountId;
+    setCtxMenu(null);
+    if (!zaloId) return;
+    const res = await DataAccessor.markConversationsReplied({ zaloId, contactIds: [contactId], replied });
+    if (!res.success) {
+      showNotification(res.error || 'Không cập nhật được trạng thái trả lời', 'error');
+      return;
+    }
+    useChatStore.getState().applyReplyStates(zaloId, res.items);
+    if (!replied && res.items[0]?.is_replied === 1) showNotification('Tin cuối là của bạn nên hội thoại vẫn là đã trả lời', 'info');
   };
 
   const handleMarkRead = async (contactId: string, asRead: boolean, overrideZaloId?: string) => {
@@ -2149,6 +2279,7 @@ export default function ConversationList() {
     const isMuted = isMutedFn(ctxZaloId, contact.contact_id);
     const hasUnread = contact.unread_count > 0;
     const ctxOthers: Set<string> = (allOthers[ctxZaloId] || new Set()) as Set<string>;
+    const ctxHidden = !!hiddenAccounts[ctxZaloId]?.has(contact.contact_id);
     const ctxLabels: LabelData[] = allLabels[ctxZaloId] || [];
     // My Documents: Zalo luôn ghim ở đầu, không bỏ ghim / chuyển vào Khác / mời vào nhóm
     const ctxIsMyDocs = isMyDocumentsContact(contact, accountOf(ctxZaloId));
@@ -2156,6 +2287,13 @@ export default function ConversationList() {
       <div ref={ctxRef} className="fixed z-50 bg-card border border-border rounded-xl shadow-2xl py-1 min-w-[190px]"
         style={{ top: Math.min(ctxMenu.y, window.innerHeight - 320), left: Math.min(ctxMenu.x, window.innerWidth - 210) }}>
         <CtxItem icon={hasUnread ? <CheckIcon className="w-4 h-4" /> : <CircleIcon className="w-4 h-4" />} label={hasUnread ? 'Đánh dấu đã đọc' : 'Đánh dấu chưa đọc'} onClick={() => handleMarkRead(contact.contact_id, hasUnread, ctxZaloId)} />
+        {/* Đã / chưa trả lời (1:1, không gửi tin): khách nhắn tiếp thì tự thành chưa trả lời lại */}
+        {threadType === 0 && isUnrepliedConversation(contact) && (
+          <CtxItem icon={<ChatIcon className="w-4 h-4" />} label="Đánh dấu đã trả lời" onClick={() => handleMarkReplied(contact.contact_id, true, ctxZaloId)} />
+        )}
+        {threadType === 0 && isManuallyMarkedReplied(contact) && (
+          <CtxItem icon={<ChatIcon className="w-4 h-4" />} label="Đánh dấu chưa trả lời" onClick={() => handleMarkReplied(contact.contact_id, false, ctxZaloId)} />
+        )}
 
         {/* Mute sub-menu */}
         <div className="relative"
@@ -2184,23 +2322,28 @@ export default function ConversationList() {
         {!ctxIsMyDocs && (
           <CtxItem icon={isLocalPinned ? <BookmarkIcon className="w-4 h-4" /> : <PaperclipIcon className="w-4 h-4" />} label={isLocalPinned ? 'Bỏ ghim trong app' : 'Ghim trong app'} onClick={() => handleToggleLocalPin(contact.contact_id)} />
         )}
+        {!ctxIsMyDocs && isZalo(contact.channel) && (ctxHidden ? (
+          <CtxItem icon={<EyeIcon className="w-4 h-4" />} label="Bỏ ẩn hội thoại" onClick={() => void handleSetHidden(contact.contact_id, ctxZaloId, contact.contact_type === 'group', false)} />
+        ) : (
+          <CtxItem icon={<EyeOffIcon className="w-4 h-4" />} label="Ẩn hội thoại (mã PIN)" onClick={() => void handleSetHidden(contact.contact_id, ctxZaloId, contact.contact_type === 'group', true)} />
+        ))}
         {ctxIsMyDocs ? null : ctxOthers.has(contact.contact_id) ? (
-          <CtxItem icon={<GlobeIcon className="w-4 h-4" />} label="Chuyển về Chính" onClick={() => handleRemoveFromOthers(contact.contact_id, ctxZaloId)} />
+          <CtxItem icon={<InboxIcon className="w-4 h-4" />} label="Đưa về danh sách chính" onClick={() => handleRemoveFromOthers(contact.contact_id, ctxZaloId)} />
         ) : (
           <div className="flex items-center">
             <button
               onClick={() => handleMoveToOthers(contact.contact_id, ctxZaloId)}
               className="flex-1 flex items-center gap-2 px-3 py-1.5 text-sm text-foreground/80 hover:bg-muted hover:text-foreground text-left transition-colors"
             >
-              <span><FolderIcon className="w-4 h-4" /></span>
-              <span>Chuyển vào Khác</span>
+              <span><BoxIcon className="w-4 h-4" /></span>
+              <span>Chuyển vào Khác (lưu trữ)</span>
             </button>
             <div className="relative group pr-2">
               <span className="w-4 h-4 rounded-full border border-border-strong text-muted-foreground hover:border-gray-300 hover:text-foreground/80 flex items-center justify-center text-xs cursor-default select-none transition-colors">
                 ?
               </span>
               <div className="absolute right-0 bottom-full mb-1 w-64 bg-popover border border-input rounded-lg shadow-xl p-3 text-xs text-foreground/80 leading-relaxed z-[60] hidden group-hover:block pointer-events-none">
-                <p>Dùng để lưu các hội thoại không quan trọng. Các hội thoại trong thư mục này sẽ <span className="text-yellow-400 font-medium">không phát âm thanh</span> và <span className="text-yellow-400 font-medium">không hiện thông báo</span> khi có tin nhắn mới.</p>
+                <p>Nơi <span className="font-medium text-foreground">lưu trữ</span> hội thoại không quan trọng: có tin mới vẫn nhận nhưng <span className="text-yellow-400 font-medium">không phát âm thanh</span>, <span className="text-yellow-400 font-medium">không hiện thông báo</span> và không tính vào số chưa đọc. Hội thoại Telegram đã lưu trữ (Archived) cũng nằm ở đây.</p>
               </div>
             </div>
           </div>
@@ -2285,9 +2428,8 @@ export default function ConversationList() {
       <div className="px-2 pt-2 pb-1 border-b border-border flex items-center gap-1.5">
         {/* Search input wrapper */}
         <div className={`flex items-center gap-2 bg-muted/60 border rounded-full px-3 py-1.5 transition-all flex-1 min-w-0 ${searchPanelOpen ? 'border-blue-500 bg-muted' : 'border-input hover:border-border-strong'}`}>
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted-foreground flex-shrink-0">
-            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-          </svg>
+          {/* Kính lúp kiêm dấu hội thoại ẩn Zalo (ZL-03): đỏ = có hội thoại ẩn (bấm = đọc lại từ Zalo); đang xem → bấm để ẩn lại */}
+          <ZaloHiddenMark accountIds={mergedInboxMode ? mergedInboxAccounts : [activeAccountId]} onFocusSearch={() => searchInputRef.current?.focus()} />
           <input
             ref={searchInputRef}
             type="text"
@@ -2425,7 +2567,7 @@ export default function ConversationList() {
       {/* Filter tabs + Contact list - hidden when global search / Tin đánh dấu is open */}
       {!searchPanelOpen && !starredPanelOpen && (<>
       <div className="flex border-b border-border relative">
-        <TabBtn label="Tất cả" active={filter === 'all'} onClick={() => { setFilter('all'); setFilterLabelIds([]); setFilterDropdownOpen(false); setMoreMenuOpen(false); }} />
+        <TabBtn label="Tất cả" active={!listFiltered} onClick={showAllConversations} />
         <TabBtn label="Chưa đọc" active={filter === 'unread'} onClick={() => { setFilter('unread'); setFilterLabelIds([]); setFilterDropdownOpen(false); setMoreMenuOpen(false); }} badge={mergedInboxMode ? mergedUnreadCount : unreadCount} />
 
         {/* Tab Nhãn (Local + Zalo) */}
@@ -2441,7 +2583,7 @@ export default function ConversationList() {
             fullWidth
           />
           {filter === 'label' && filterDropdownOpen && (
-            <div className="absolute top-full left-0 z-30 bg-card border border-border rounded-xl shadow-xl min-w-[220px] py-1">
+            <div className="absolute top-full left-0 z-50 bg-card border border-border rounded-xl shadow-xl min-w-[220px] py-1">
               {/* Local / Zalo sub-tabs */}
               <div className="px-2 pt-1.5 pb-1 border-b border-border/60">
                 <div className="flex bg-muted/60 rounded-md p-0.5 gap-0.5">
@@ -2599,15 +2741,15 @@ export default function ConversationList() {
           )}
         </div>
 
-        {/* Menu 3 chấm - Chứa Chưa trả lời & Khác */}
+        {/* Menu 3 chấm: Khác (lưu trữ), Chưa trả lời, khoảng ngày, Tin đánh dấu, Tự động, Kênh */}
         <div className="flex-shrink-0 relative" ref={moreMenuRef}>
           <button
             onClick={() => {
               setFilterDropdownOpen(false);
               setMoreMenuOpen(p => !p);
             }}
-            className={`h-10 px-3 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors ${(filter === 'unreplied' || filter === 'others' || channelFilter !== 'all' || moreMenuOpen) ? 'bg-muted text-foreground' : ''}`}
-            title="Thêm"
+            className={`h-10 px-3 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors ${(menuFilters.length > 0 || moreMenuOpen) ? 'bg-muted text-foreground' : ''}`}
+            title="Bộ lọc khác"
           >
             <div className="relative">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
@@ -2621,32 +2763,21 @@ export default function ConversationList() {
             </div>
           </button>
 
+          {/* z-50: menu nổi trên khung chat bên phải, kể cả phần bình luận bài đăng kênh (lớp phủ z-30) */}
           {moreMenuOpen && (
-            <div className="absolute top-full left-0 z-30 bg-card border border-border rounded-xl shadow-xl min-w-[160px] py-1 mt-1">
-              {/*<button*/}
-              {/*  onClick={() => {*/}
-              {/*    setFilter('unreplied');*/}
-              {/*    setFilterLabelId(null);*/}
-              {/*    setMoreMenuOpen(false);*/}
-              {/*  }}*/}
-              {/*  className={`w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted text-left ${filter === 'unreplied' ? 'text-foreground bg-muted/50' : 'text-foreground/80'}`}*/}
-              {/*>*/}
-              {/*  <span><ChatIcon className="w-4 h-4" /></span>*/}
-              {/*  <span>Chưa trả lời</span>*/}
-              {/*  {unrepliedCount > 0 && <span className="ml-auto bg-blue-600 text-white text-xs rounded-full px-1.5 min-w-[18px] text-center">{unrepliedCount}</span>}*/}
-              {/*  {filter === 'unreplied' && <span className="ml-auto text-blue-400">✓</span>}*/}
-              {/*</button>*/}
-
+            <div className="absolute top-full left-0 z-50 bg-card border border-border rounded-xl shadow-xl min-w-[210px] py-1 mt-1">
+              {/* Khác (lưu trữ) trên cùng — bấm lại khi đang xem = về danh sách chính */}
               <button
                 onClick={() => {
-                  setFilter('others');
+                  setFilter(prev => toggleMenuFilter(prev, 'others'));
                   setFilterLabelIds([]);
                   setMoreMenuOpen(false);
                 }}
+                title={filter === 'others' ? 'Bấm để về danh sách chính' : undefined}
                 className={`w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted text-left ${filter === 'others' ? 'text-foreground bg-muted/50' : 'text-foreground/80'}`}
               >
-                <span><PluginIcon className="w-4 h-4" /></span>
-                <span>Khác</span>
+                <span><BoxIcon className="w-4 h-4" /></span>
+                <span>Khác (lưu trữ)</span>
                 {othersCount > 0 && <span className="ml-auto bg-accent text-foreground text-xs rounded-full px-1.5 min-w-[18px] text-center">{othersCount}</span>}
                 {filter === 'others' && <span className="ml-auto text-blue-400">✓</span>}
                 <div className="relative group pr-2">
@@ -2654,10 +2785,85 @@ export default function ConversationList() {
                     ?
                   </span>
                     <div className="absolute right-0 top-full mb-1 w-64 bg-popover border border-input rounded-lg shadow-xl p-3 text-xs text-foreground/80 leading-relaxed z-[60] hidden group-hover:block pointer-events-none">
-                      <p>Dùng để lưu các hội thoại không quan trọng. Các hội thoại trong thư mục này sẽ <span className="text-yellow-400 font-medium">không phát âm thanh</span> và <span className="text-yellow-400 font-medium">không hiện thông báo</span> khi có tin nhắn mới.</p>
+                      <p>Nơi <span className="font-medium text-foreground">lưu trữ</span> hội thoại không quan trọng: có tin mới vẫn nhận nhưng <span className="text-yellow-400 font-medium">không phát âm thanh</span>, <span className="text-yellow-400 font-medium">không hiện thông báo</span> và không tính vào số chưa đọc. Hội thoại Telegram đã lưu trữ (Archived) cũng nằm ở đây.</p>
                     </div>
                 </div>
               </button>
+
+              {/* Chưa trả lời: hội thoại 1:1 mà tin thật mới nhất là của người kia (đọc hay chưa đọc đều tính) */}
+              <button
+                onClick={() => {
+                  setFilter(prev => toggleMenuFilter(prev, 'unreplied'));
+                  setFilterLabelIds([]);
+                  setMoreMenuOpen(false);
+                }}
+                className={`w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted text-left ${filter === 'unreplied' ? 'text-foreground bg-muted/50' : 'text-foreground/80'}`}
+                title="Hội thoại 1:1 mà tin nhắn cuối là của khách — đã đọc hay chưa đều tính"
+              >
+                <span><ChatIcon className="w-4 h-4" /></span>
+                <span>Chưa trả lời</span>
+                {filter === 'unreplied' && <span className="ml-auto text-blue-400">✓</span>}
+              </button>
+
+              {/* Theo khoảng ngày của tin cuối — một mục: mở ô Từ / Đến (dùng kèm mọi bộ lọc khác) */}
+              <div className={`flex items-center ${dateRange ? 'bg-muted/50' : ''}`}>
+                <button
+                  onClick={() => {
+                    if (!customRangeOpen) {
+                      const today = toDateInputValue(Date.now());
+                      setCustomFrom(dateRange ? toDateInputValue(dateRange.fromTs) : today);
+                      setCustomTo(dateRange ? toDateInputValue(dateRange.toTs) : today);
+                    }
+                    setCustomRangeOpen(open => !open);
+                  }}
+                  className={`flex-1 min-w-0 flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted text-left ${dateRange ? 'text-foreground' : 'text-foreground/80'}`}
+                >
+                  <span><CalendarIcon className="w-4 h-4" /></span>
+                  <span className="truncate">{dateRange ? `Khoảng ngày: ${dateRange.label}` : 'Theo khoảng ngày…'}</span>
+                  {dateRange && <span className="ml-auto text-blue-400">✓</span>}
+                </button>
+                {dateRange && (
+                  <button
+                    type="button"
+                    onClick={() => { setDateRange(null); setCustomRangeOpen(false); }}
+                    title="Bỏ lọc ngày"
+                    aria-label="Bỏ lọc ngày"
+                    className="px-2 py-2 text-muted-foreground hover:text-foreground hover:bg-muted"
+                  >
+                    <CloseIcon className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+              {customRangeOpen && (
+                <div className="px-3 pb-2 pt-1 space-y-1.5">
+                  <label className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                    <span className="w-7 flex-shrink-0">Từ</span>
+                    <input type="date" value={customFrom} max={customTo || undefined} onChange={(e) => setCustomFrom(e.target.value)}
+                      className="flex-1 min-w-0 rounded-md border border-input bg-background px-1.5 py-1 text-xs text-foreground" />
+                  </label>
+                  <label className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                    <span className="w-7 flex-shrink-0">Đến</span>
+                    <input type="date" value={customTo} min={customFrom || undefined} onChange={(e) => setCustomTo(e.target.value)}
+                      className="flex-1 min-w-0 rounded-md border border-input bg-background px-1.5 py-1 text-xs text-foreground" />
+                  </label>
+                  <div className="flex justify-end">
+                    <button
+                      disabled={!customFrom && !customTo}
+                      onClick={() => {
+                        const range = customDateRange(customFrom, customTo);
+                        if (!range) return;
+                        setDateRange(range);
+                        setCustomRangeOpen(false);
+                        setMoreMenuOpen(false);
+                      }}
+                      className="text-xs font-medium text-blue-400 hover:text-blue-300 disabled:opacity-40"
+                    >
+                      Áp dụng
+                    </button>
+                  </div>
+                </div>
+              )}
+
 
               {/* Tin đánh dấu (như Zalo) */}
               <button
@@ -2680,6 +2886,13 @@ export default function ConversationList() {
                   <span>Tự động đánh dấu đã đọc</span>
                   {autoReadProgress && <span className="ml-auto text-[10px] text-blue-400 tabular-nums" title="Đang chạy">{autoReadProgress}</span>}
                 </button>
+                <button
+                  onClick={() => { setBulkRepliedOpen(true); setMoreMenuOpen(false); }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted text-left text-foreground/80"
+                >
+                  <span><ChatIcon className="w-4 h-4" /></span>
+                  <span>Đánh dấu đã trả lời hàng loạt</span>
+                </button>
               </div>
 
               {/* Channel filter submenu */}
@@ -2701,6 +2914,64 @@ export default function ConversationList() {
           )}
         </div>
       </div>
+
+      {/* Đang xem hội thoại ẩn (đã gõ đúng PIN): chỉ hội thoại ẩn — bấm ✕ để ẩn lại */}
+      {hiddenViewContacts && (
+        <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-border text-[11px]">
+          <span className="inline-flex items-center gap-1 rounded-full bg-red-500/10 text-red-500 px-2 py-0.5" title="Chỉ hiện hội thoại ẩn (đã nhập đúng mã PIN)">
+            <EyeOffIcon className="w-3 h-3" />
+            Hội thoại ẩn
+            <button type="button" onClick={relockHiddenView} title="Ẩn lại" aria-label="Ẩn lại hội thoại ẩn" className="hover:opacity-70">
+              <CloseIcon className="w-3 h-3" />
+            </button>
+          </span>
+          <span className="ml-auto text-muted-foreground tabular-nums">{hiddenViewContacts.length.toLocaleString('vi-VN')} hội thoại</span>
+        </div>
+      )}
+
+      {/* Bộ lọc đang bật từ menu ⋮: Khác / Chưa trả lời / khoảng ngày / kênh — bấm ✕ để bỏ từng cái, "Tất cả" bỏ hết */}
+      {!hiddenViewContacts && menuFilters.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 px-3 py-1.5 border-b border-border text-[11px]">
+          {filter === 'others' && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 text-primary px-2 py-0.5" title="Đang xem hội thoại đã lưu trữ">
+              <BoxIcon className="w-3 h-3" />
+              Khác (lưu trữ)
+              <button type="button" onClick={() => setFilter('all')} title="Về danh sách chính" aria-label="Về danh sách chính" className="hover:opacity-70">
+                <CloseIcon className="w-3 h-3" />
+              </button>
+            </span>
+          )}
+          {filter === 'unreplied' && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 text-primary px-2 py-0.5">
+              Chưa trả lời
+              <button type="button" onClick={() => setFilter('all')} title="Bỏ lọc" aria-label="Bỏ lọc Chưa trả lời" className="hover:opacity-70">
+                <CloseIcon className="w-3 h-3" />
+              </button>
+            </span>
+          )}
+          {dateRange && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 text-primary px-2 py-0.5">
+              <CalendarIcon className="w-3 h-3" />
+              {dateRange.label}
+              <button type="button" onClick={() => setDateRange(null)} title="Bỏ lọc ngày" aria-label="Bỏ lọc ngày" className="hover:opacity-70">
+                <CloseIcon className="w-3 h-3" />
+              </button>
+            </span>
+          )}
+          {channelFilter !== 'all' && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 text-primary px-2 py-0.5">
+              <ChannelBadge channel={channelFilter as Channel} size="sm" />
+              {getChannelLabel(channelFilter as Channel)}
+              <button type="button" onClick={() => setChannelFilter('all')} title="Bỏ lọc kênh" aria-label="Bỏ lọc kênh" className="hover:opacity-70">
+                <CloseIcon className="w-3 h-3" />
+              </button>
+            </span>
+          )}
+          <span className="ml-auto text-muted-foreground tabular-nums">
+            {(mergedInboxMode ? (filteredMerged?.length ?? 0) : filtered.length).toLocaleString('vi-VN')} hội thoại
+          </span>
+        </div>
+      )}
 
       {/* Merged inbox: cần chọn tài khoản để tìm SĐT trên Zalo */}
       {phoneSearchPendingPhone && !phoneSearching && !phoneResult && (
@@ -2783,7 +3054,7 @@ export default function ConversationList() {
       <div className="flex-1 overflow-y-auto relative" ref={setListContainer} onScroll={handleListScroll}>
         {initialLoading && activeAccountId && accountContacts.length === 0 ? (
           <PageLoading variant="skeleton" skeletonVariant="table" />
-        ) : (mergedInboxMode ? (filteredMerged?.length ?? 0) : filtered.length) === 0 ? (
+        ) : listItems.length === 0 ? (
           useChatStore.getState().conversationsLoading[activeAccountId || ''] ? (
             <div className="flex flex-col items-center justify-center h-full text-muted-foreground text-sm gap-2">
               <span className="w-5 h-5 border-2 border-border-strong border-t-transparent rounded-full animate-spin" />
@@ -2801,10 +3072,10 @@ export default function ConversationList() {
           ) : (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground text-sm"><p>Không có hội thoại</p></div>
           )
-        ) : (mergedInboxMode ? filteredMerged! : filtered).slice(0, displayCount).map((contact, index) => {
+        ) : listItems.slice(0, displayCount).map((contact, index) => {
           const threadType = contact.contact_type === 'group' ? 1 : 0;
           const membershipNotice = getTelegramMembershipNotice(contact);
-          const startsNonMemberSection = index === nonMemberSectionIndex;
+          const startsNonMemberSection = !hiddenViewContacts && index === nonMemberSectionIndex;
           const contactZaloId = contact.owner_zalo_id || activeAccountId || '';
           const isPinned = pinnedThreads.has(contact.contact_id);
           const isLocalPinned = localPinnedThreads.has(contact.contact_id);
@@ -2875,6 +3146,11 @@ export default function ConversationList() {
                     }} />
                 ) : (
                   <PeerInitials id={contact.contact_id} name={contact.alias || contact.display_name} className="w-10 h-10 text-sm" />
+                )}
+                {/* Bạn bè Zalo đang online (gộp trang: góc trên phải — góc dưới là badge tài khoản); đang tạm tắt — xem ZALO_FRIEND_ONLINES_ENABLED */}
+                {ZALO_FRIEND_ONLINES_ENABLED && threadType === 0 && !isMyDocs && isZalo(contact.channel || contactAccount?.channel) && (
+                  <ZaloOnlineDot accountId={contactZaloId} userId={contact.contact_id}
+                    className={mergedInboxMode ? '-top-0.5 -right-0.5' : 'bottom-0 right-0'} />
                 )}
                 {/* Badge tài khoản - chỉ hiện trong chế độ Gộp trang */}
                 {mergedInboxMode && ownerAcc && (
@@ -3057,6 +3333,13 @@ export default function ConversationList() {
           accountIds={autoReadAccountIds}
           scopeLabel={autoReadScopeLabel}
           onClose={() => setAutoReadOpen(false)}
+        />
+      )}
+      {bulkRepliedOpen && (
+        <BulkMarkRepliedModal
+          accountIds={autoReadAccountIds}
+          scopeLabel={autoReadScopeLabel}
+          onClose={() => setBulkRepliedOpen(false)}
         />
       )}
 

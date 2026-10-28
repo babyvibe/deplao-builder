@@ -177,6 +177,10 @@ export function FeatureNeeds({ className }: { className?: string }) {
         {storeChoice && (
           <li>Đồng bộ dữ liệu cũng dùng được kho Google Drive (chỉ cần tài khoản Google) — chọn ở thẻ Kho lưu.</li>
         )}
+        <li>
+          <strong className="text-foreground">Worker, D1 (cho ứng dụng):</strong> quyền Workers Scripts (Edit) và D1 (Edit) — chỉ
+          cần khi cài ứng dụng tự triển khai lên Cloudflare của bạn; ứng dụng chỉ đụng tới tài nguyên mang tên của nó.
+        </li>
         <li>Không có Cloudflare, Địa chỉ Internet vẫn dùng được với địa chỉ tạm và ngrok.</li>
       </ul>
     </div>
@@ -199,8 +203,8 @@ export function ConnectCard({ title = 'Kết nối Cloudflare', className, ...fo
         <div className="min-w-0">
           <p className="text-sm font-semibold text-foreground">{title}</p>
           <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-            Dùng tài khoản Cloudflare của bạn. Deplao chỉ tạo tunnel, tên miền con và bucket có tên deplao-…; dữ liệu
-            đã có trên Cloudflare không bị đụng tới.
+            Dùng tài khoản Cloudflare của bạn. Deplao chỉ tạo tunnel, tên miền con và bucket có tên deplao-… (ứng dụng
+            được cấp quyền chỉ tạo Worker, D1 mang tên của ứng dụng); dữ liệu đã có trên Cloudflare không bị đụng tới.
           </p>
         </div>
       </div>

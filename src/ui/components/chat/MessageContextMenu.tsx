@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import ipc from '@/lib/ipc';
 import type { ChannelCapability } from '@/../configs/channelConfig';
-import { ClipboardListIcon, CloudIcon, ReplyIcon, StarIcon } from '@/components/common/icons';
+import { CalendarIcon, ClipboardListIcon, CloudIcon, FileTextIcon, ReplyIcon, StarIcon } from '@/components/common/icons';
 import { getForwardBlockReason } from '@/lib/chat/forwardSupport';
 import { copyImageToClipboard } from '@/lib/chat/copyImage';
 import TelegramReadReceipts, { type ReadReceiptPerson } from './TelegramReadReceipts';
@@ -39,6 +39,10 @@ interface MessageContextMenuProps {
   onToggleStar?: (msg: any) => void;
   /** Zalo only: send a copy of the message to My Documents (Cloud của tôi). */
   onSaveToMyDocuments?: (msg: any) => void;
+  /** Quản lý công việc: tạo lịch hẹn từ tin (ngày giờ đọc trong tin, tới giờ có nhắc) — chỉ truyền khi được tạo lịch. */
+  onAddToCalendar?: (msg: any) => void;
+  /** Quản lý công việc: lưu tin vào Ghi chú — chỉ truyền khi được tạo ghi chú. */
+  onSaveToNote?: (msg: any) => void;
   showNotification?: (msg: string, type: 'success' | 'error' | 'info') => void;
   /** Tin đã thu hồi: chỉ còn thao tác cục bộ (sao chép, lưu ảnh/file, đánh dấu, xoá khỏi app) — ẩn mọi thao tác đồng bộ lên nền tảng. */
   recalled?: boolean;
@@ -116,7 +120,7 @@ function getDefaultFilename(msg: any): string {
 
 export default function MessageContextMenu({
   x, y, msg, mediaMsg, isSent, isGroupAdmin, channelCap, onClose, onReply, onForward, onSelectMessages, onUndo, onDelete, onDeleteFromDb, onReact, onPin, onEdit,
-  isStarred, onToggleStar, onSaveToMyDocuments, showNotification, recalled = false, readReceipts,
+  isStarred, onToggleStar, onSaveToMyDocuments, onAddToCalendar, onSaveToNote, showNotification, recalled = false, readReceipts,
   onCancelReact, reactionChoices, myReaction = null,
 }: MessageContextMenuProps) {
   const quickReactions = reactionChoices?.quick ?? QUICK_REACTIONS;
@@ -404,6 +408,14 @@ export default function MessageContextMenu({
           label={isStarred ? 'Bỏ đánh dấu tin nhắn' : 'Đánh dấu tin nhắn'}
           onClick={() => { onToggleStar(target); onClose(); }}
         />
+      )}
+
+      {/* Quản lý công việc: lịch hẹn (đọc ngày giờ trong tin, tới giờ có nhắc) / ghi chú từ tin */}
+      {onAddToCalendar && (
+        <MenuItem icon={<CalendarIcon className="w-4 h-4" />} label="Thêm vào lịch" onClick={() => { onAddToCalendar(msg); onClose(); }} />
+      )}
+      {onSaveToNote && (
+        <MenuItem icon={<FileTextIcon className="w-4 h-4" />} label="Lưu vào ghi chú" onClick={() => { onSaveToNote(msg); onClose(); }} />
       )}
 
       {/* Sửa tin nhắn — chỉ cho tin nhắn text đã gửi, channel hỗ trợ */}

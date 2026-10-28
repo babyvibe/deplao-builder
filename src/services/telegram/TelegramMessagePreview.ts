@@ -27,6 +27,9 @@ export function getTelegramMessagePreview(msgType: string, content?: string): st
     case 'telegram.story': return '📖 Tin';
     case 'telegram.giveaway': return '🎁 Giveaway';
     case 'telegram.webpage': return '🔗 Liên kết';
+    // Danh sách việc cần làm: dòng đầu = tiêu đề
+    case 'telegram.todo': return `☑️ ${String(content || '').split('\n')[0].trim() || 'Danh sách việc cần làm'}`;
+    case 'telegram.livestream': return '📡 Phát trực tiếp';
     default: return String(content || '').trim();
   }
 }

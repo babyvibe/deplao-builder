@@ -4,19 +4,16 @@
     <meta charset="utf-8" />
     <title>Deplao</title>
     <script>
-      // SPA redirect trick for GitHub Pages
-      // Redirects all 404s back to index.html with the path encoded in the query string
-      var pathSegmentsToKeep = 1; // number of path segments in the repo name (1 = /deplao-builder)
-      var l = window.location;
-      l.replace(
-        l.protocol + '//' + l.hostname + (l.port ? ':' + l.port : '') +
-        l.pathname.split('/').slice(0, 1 + pathSegmentsToKeep).join('/') + '/?/' +
-        l.pathname.slice(1).split('/').slice(pathSegmentsToKeep).join('/').replace(/&/g, '~and~') +
-        (l.search ? '&' + l.search.slice(1).replace(/&/g, '~and~') : '') +
-        l.hash
-      );
+      // Deplao đã chuyển về https://deplaoapp.com: mọi đường dẫn cũ dưới /deplao-builder
+      // chuyển thẳng sang đúng trang tương ứng, giữ nguyên query và hash.
+      (function (l) {
+        var base = '/deplao-builder';
+        var path = l.pathname.indexOf(base) === 0 ? l.pathname.slice(base.length) : l.pathname;
+        if (path.charAt(0) !== '/') path = '/' + path;
+        l.replace('https://deplaoapp.com' + path + l.search + l.hash);
+      })(window.location);
     </script>
+    <noscript><meta http-equiv="refresh" content="0; url=https://deplaoapp.com/" /></noscript>
   </head>
   <body></body>
 </html>
-

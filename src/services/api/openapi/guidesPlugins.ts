@@ -74,6 +74,7 @@ const REFERENCE = `
 | \`permissions\` | có | scope API (xem "Xác thực & quyền") + quyền plugin bên dưới. Không được xin \`admin\`, \`plugins:manage\`, \`employees:manage\`, \`settings:write\` |
 | \`ui.entry\` | khi có UI | file \`.html\` trong plugin; remote: URL cùng origin với \`remote.baseUrl\` |
 | \`ui.connectSrc\` | không | origin https UI được fetch trực tiếp (cần quyền \`network\`) |
+| \`ui.imgSrc\` | không | nguồn ảnh ngoài UI được hiển thị, \`https://tên-miền\` hoặc \`https://*.tên-miền\` (vd ảnh đại diện Zalo \`https://*.zadn.vn\`; cần quyền \`network\`) |
 | \`minDeplaoVersion\` | không | semver |
 | \`contributes\` | không | các điểm mở rộng bên dưới |
 
@@ -85,10 +86,12 @@ const REFERENCE = `
 | \`ui:pages\` | trang ở thanh điều hướng |
 | \`ui:chat-panel\` | panel bên phải màn chat, biết hội thoại đang mở |
 | \`ui:composer\` | nút trong ô soạn tin, \`deplao.ui.insertComposerText\` |
+| \`ui:microphone\` | micro trong giao diện ứng dụng (khung được gắn \`allow="microphone"\`; thiếu quyền → trình duyệt chặn \`getUserMedia\`) |
 | \`workflow:nodes\` | node và trigger workflow, \`deplao.workflow.trigger\` |
 | \`events:emit\` | \`deplao.events.emit\` (tên khai báo trong \`contributes.events\`) |
 | \`network\` | \`deplao.http.fetch\` ở backend, \`ui.connectSrc\` |
 | \`schedules\` | \`contributes.schedules\` (cron) |
+| \`cloudflare:workers\` | \`deplao.cloudflare\` ở backend (runtime \`local\`): tạo / sửa Worker và D1 tên \`<tiền tố>\` hoặc \`<tiền tố>-…\` (tiền tố = phần cuối id) trên Cloudflare đã kết nối trong Deplao; token Cloudflare không đưa cho ứng dụng |
 
 ### Điểm mở rộng (\`contributes\`)
 
@@ -98,7 +101,7 @@ const REFERENCE = `
 | \`chatPanels\` | \`{ id, title, path, width }\` | nhận \`deplao.ui.context()\` và \`onContext\` |
 | \`composerButtons\` | \`{ id, title, icon, target: 'ui' \\| 'backend' }\` | backend: \`commands[id](context)\` trả \`{ insertText }\` hoặc \`{ toast }\` |
 | \`settings.schema\` | JSON Schema (string, number, integer, boolean, enum; \`x-secret\`, \`x-multiline\`) | form tự sinh ở trang Ứng dụng, API & Webhook (bấm ô ứng dụng → Cài đặt); secret được mã hoá |
-| \`workflowNodes\` | \`{ type: '<tiền tố>.<tên>', label, configSchema, outputs }\` | backend \`nodes[type](cfg, run, ctx)\`; \`x-widget: account\\|thread\\|label\`, \`x-template\` |
+| \`workflowNodes\` | \`{ type: '<tiền tố>.<tên>', label, configSchema, outputs }\` | backend \`nodes[type](cfg, run, ctx)\`; \`x-widget: account\\|thread\\|label\\|assistant\` (assistant = chọn trợ lý AI của Deplao, lưu id; có lựa chọn "Mặc định" = để trống), \`x-template\` |
 | \`triggers\` | \`{ type: '<tiền tố>.trigger.<tên>', label, configSchema }\` | bắn bằng \`deplao.workflow.trigger(type, payload)\`; trường payload dùng như \`{{ $trigger.<field> }}\` |
 | \`routes\` | \`{ method, path, scope }\` | \`/api/v1/plugins/<id><path>\`; người gọi cần \`scope\`; body ≤ 1 MB |
 | \`schedules\` | \`{ id, cron, handler }\` | gọi \`handlers[handler]\`; lượt trước chưa xong thì bỏ lượt sau |
@@ -108,19 +111,20 @@ const REFERENCE = `
 
 | Nhóm | Hàm |
 |---|---|
-| API v1 | \`deplao.<nhóm>.<operationId>(params)\`, \`deplao.call(operationId, params)\`, \`deplao.api.request(method, path, { query, body })\` |
+| API v1 | \`deplao.<nhóm>.<operationId>(params)\`, \`deplao.call(operationId, params)\`, \`deplao.api.request(method, path, { query, body })\`. Hàm trả file (\`downloadMessageMedia\`, \`downloadLibraryItem\`, \`downloadLibraryThumb\`) trả \`{ name, mime, size, base64 }\` (≤ 25 MB, cần \`media:read\`; ghi âm Zalo chưa có trên máy thì app tự tải) |
 | \`storage\` | \`get\`, \`set\`, \`delete\`, \`list(prefix)\`; backend: \`dataDir()\` |
 | \`settings\` | \`get()\`, \`onChange(cb)\` |
 | \`events\` | \`on(type, handler)\` (cần \`events:subscribe\`), \`emit(name, data)\` |
 | \`workflow\` | \`trigger(type, payload)\` |
-| \`media\` | \`upload(file)\` → \`upload_id\` dùng trong \`attachments\` khi gửi tin (≤ 25 MB) |
+| \`media\` | \`upload(file)\` → \`upload_id\` dùng trong \`attachments\` khi gửi tin (≤ 25 MB); các operationId nhóm Media gọi được như nhóm khác |
 | \`log\` | \`debug/info/warn/error\` → nhật ký plugin (trang Ứng dụng, API & Webhook → bấm ô ứng dụng → Nhật ký) |
 | \`system\` | \`info()\` |
 | \`ui\` (chỉ UI) | \`context\`, \`onContext\`, \`theme\`, \`openConversation\`, \`insertComposerText\`, \`toast\`, \`navigate(pageId)\`, \`openExternal(url)\`, \`onCommand\` |
 | \`backend\` (chỉ UI) | \`call(name, params)\` → \`commands[name]\` trong backend của chính plugin |
-| \`http\` (chỉ backend) | \`fetch(url, init)\` — cần \`network\`, chặn mạng nội bộ, ≤ 5 MB |
+| \`http\` (chỉ backend) | \`fetch(url, init)\` — cần \`network\`, chặn mạng nội bộ, ≤ 5 MB; trả \`text\` hoặc \`base64\` theo Content-Type (thiếu thì xem nội dung), \`init.responseType\` = \`'text'\` / \`'base64'\` để ép |
+| \`cloudflare\` (chỉ backend) | \`status()\`, \`d1.ensure(name)\`, \`d1.migrate(name, dir)\`, \`d1.query(name, sql, params)\`, \`workers.get(name)\`, \`workers.deployBundle({ name, bundleDir, bindings, secrets, workersDev })\` — cần \`cloudflare:workers\`; mỗi lời gọi tính vào ngân sách 100 request / 5 phút của app |
 
-Lỗi trả về là \`Error\` có \`code\` (cùng mã lỗi API: \`FORBIDDEN_SCOPE\`, \`FORBIDDEN_ACCOUNT\`, \`VALIDATION_ERROR\`…) và \`status\`.
+Lỗi trả về là \`Error\` có \`code\` (cùng mã lỗi API: \`FORBIDDEN_SCOPE\`, \`FORBIDDEN_ACCOUNT\`, \`VALIDATION_ERROR\`…) và \`status\`. \`deplao.cloudflare\` thêm \`PLUGIN_PERMISSION\`, \`CF_NOT_CONNECTED\`, \`CF_PERMISSION\`, \`CF_NAME_FORBIDDEN\`, \`CF_BUNDLE_INVALID\`, \`CF_API\`.
 
 ### Backend (runtime \`local\`)
 
@@ -150,10 +154,10 @@ module.exports = {
 
 ### An toàn
 
-- UI plugin chạy ở origin riêng \`deplao-plugin://<id>\` trong iframe sandbox (không popup, không điều hướng trang app, không đọc được DOM, store hay IPC của app); CSP chặn script ngoài và kết nối ra ngoài trừ \`ui.connectSrc\`.
+- UI plugin chạy ở origin riêng \`deplao-plugin://<id>\` trong iframe sandbox (không popup, không điều hướng trang app, không đọc được DOM, store hay IPC của app); CSP chặn script ngoài, kết nối ra ngoài trừ \`ui.connectSrc\` và ảnh ngoài trừ \`ui.imgSrc\`.
 - Mọi lời gọi dữ liệu đi qua API v1 với principal \`plugin:<id>\`: đúng scope, đúng tài khoản được cấp lúc cài, ghi nhật ký request như API key.
 - Gói zip được kiểm tra: tối đa 50 MB, giải nén tối đa 200 MB, không đường dẫn tuyệt đối hay \`..\`, không symlink, CRC khớp.
-- Kênh quản trị plugin (\`plugins:*\`) không gọi được qua API hay từ plugin.
+- Kênh quản trị plugin (\`plugins:*\`) không gọi được qua API hay từ plugin. Kênh Cloudflare (\`cloudflare:*\`) cũng vậy, trừ \`cloudflare:workers:*\` khi ứng dụng có quyền \`cloudflare:workers\`: Deplao kiểm quyền + tiền tố tên trước khi gọi.
 `;
 
 export const PLUGIN_GUIDES: Guide[] = [

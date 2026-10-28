@@ -410,6 +410,33 @@ html[data-theme="light"] input[type="datetime-local"] {
   animation: chatLoadingReveal 150ms ease-out 300ms forwards;
 }
 
+/* Thông báo tin nhắn trong app (InAppMessageToasts): trượt vào từ phải, hết giờ / bấm ✕ thì mờ dần (160 ms) */
+@keyframes inAppToastIn {
+  from { opacity: 0; transform: translateX(1rem); }
+  to { opacity: 1; transform: none; }
+}
+.in-app-toast-in { animation: inAppToastIn 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.in-app-toast-out { opacity: 0; transform: translateX(0.5rem); transition: opacity 150ms ease-in, transform 150ms ease-in; }
+@media (prefers-reduced-motion: reduce) {
+  .in-app-toast-in { animation: none; }
+  .in-app-toast-out { transition: none; }
+}
+
+/* Lịch sắp tới (TopBar, store/erp/erpReminderAttentionStore): chuông lắc từng hồi tới khi người dùng mở chuông */
+@keyframes erpBellRing {
+  0%, 36%, 100% { transform: rotate(0); }
+  4% { transform: rotate(16deg); }
+  8% { transform: rotate(-14deg); }
+  12% { transform: rotate(10deg); }
+  16% { transform: rotate(-8deg); }
+  20% { transform: rotate(5deg); }
+  24% { transform: rotate(-3deg); }
+}
+.erp-bell-ring { transform-origin: 50% 1px; animation: erpBellRing 2.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .erp-bell-ring { animation: none; }
+}
+
 /* Màu theo người kiểu Telegram, mọi kênh (ChatWindow, PeerInitials, lib/chat/peerStyle.ts): chat-peer-N chọn màu;
    chat-peer-name = tên, chat-peer-quote = khung trích dẫn (vạch trái + nền nhạt cùng màu), chat-peer-avatar = ảnh
    đại diện chữ (dải màu như Telegram), chat-rank = nhãn chức vụ */
@@ -430,6 +457,13 @@ html[data-theme="light"] input[type="datetime-local"] {
    với nền navy — #9ecbff: 7.8 trên bong bóng nhận, 6.3 trên bong bóng gửi. Giao diện sáng giữ text-blue-400 như cũ. */
 html:not([data-theme="light"]) .chat-link { color: #9ecbff; text-decoration-line: none; }
 html:not([data-theme="light"]) .chat-link:hover { color: #c6e2ff; text-decoration-line: underline; }
+
+/* "Chuyển tiếp từ …" (TelegramForwardHeader) và @nhắc tên trong tin (TextWithMentions): xanh như cũ; riêng tin mình gửi
+   ở giao diện tối (hàng [data-out] của ChatWindow, bong bóng xanh đậm: xanh cũ chìm) dùng xanh sáng như link */
+.chat-forward { color: rgb(var(--primary)); }
+.chat-mention { color: #5398f3; }
+html:not([data-theme="light"]) [data-out] .chat-forward,
+html:not([data-theme="light"]) [data-out] .chat-mention { color: #9ecbff; }
 
 /* Dấu ✓✓ "đã xem" cạnh giờ tin gửi (MessageTime StatusTicks); ✓ / ✓✓ khác giữ màu chữ của giờ */
 .chat-tick-read { color: rgb(var(--primary)); }

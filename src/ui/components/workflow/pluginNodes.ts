@@ -17,8 +17,11 @@ export interface PluginConfigField {
   enum?: Array<string | number>;
   'x-template'?: boolean;
   'x-multiline'?: boolean;
-  'x-widget'?: 'account' | 'thread' | 'label';
+  'x-widget'?: 'account' | 'thread' | 'label' | 'assistant';
 }
+
+/** Nhãn lựa chọn "không chọn trợ lý" của node ứng dụng (giá trị '' — ứng dụng tự dùng trợ lý theo cài đặt của nó). */
+export const PLUGIN_ASSISTANT_EMPTY_LABEL = 'Mặc định — theo cài đặt của ứng dụng';
 
 export interface PluginNodeDefUi {
   pluginId: string;
@@ -90,6 +93,7 @@ export function toPanelField(key: string, f: PluginConfigField, required: boolea
   if (f['x-widget'] === 'account') return { ...base, type: 'account-picker' };
   if (f['x-widget'] === 'thread') return { ...base, type: 'contact-picker' };
   if (f['x-widget'] === 'label') return { ...base, type: 'label-picker' };
+  if (f['x-widget'] === 'assistant') return { ...base, type: 'assistant-picker', emptyLabel: PLUGIN_ASSISTANT_EMPTY_LABEL };
   return {
     ...base,
     type: f['x-multiline'] ? 'textarea' : 'text',

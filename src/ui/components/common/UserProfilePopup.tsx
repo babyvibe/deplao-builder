@@ -16,6 +16,9 @@ import { FBUserProfilePopup } from './FBUserProfilePopup';
 import { TelegramUserProfilePopup } from './TelegramUserProfilePopup';
 import { Spinner } from '@/components/common/PageLoading';
 import PeerInitials from './PeerInitials';
+import ZaloPresenceLine from '../chat/zalo/ZaloPresenceLine';
+import { isMyDocumentsThread } from '@/lib/chat/myDocuments';
+import { openConversation } from '@/lib/chat/openConversation';
 
 // ─── ActionRow ────────────────────────────────────────────────────────────────
 export function ActionRow({ icon, label, onClick, textColor = 'text-foreground/80' }: {
@@ -39,8 +42,7 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
   contacts: any[]; activeAccountId: string; activeThreadId: string | null;
   onClose: () => void;
 }) {
-  const { setActiveThread } = useChatStore();
-  const { setView, showNotification } = useAppStore();
+  const showNotification = useAppStore((state) => state.showNotification);
   const overlayRef = React.useRef<HTMLDivElement>(null);
 
   const [userInfo, setUserInfo] = React.useState<any>(null);
@@ -321,6 +323,11 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
   const bio = userInfo?.bio || '';
   const isFriend = !!(userInfo?.isFr === 1 || userInfo?.isFriend || userInfo?.is_friend);
   const isMe = userId === activeAccountId;
+  // Trạng thái truy cập Zalo (ZL-01): chỉ người dùng Zalo 1:1, không phải chính mình / My Documents
+  const presenceAccount = useAccountStore.getState().accounts.find((a) => a.zalo_id === activeAccountId);
+  const presenceContact = contacts.find((c) => c.contact_id === userId);
+  const presenceEnabled = !isMe && !!presenceAccount && isZalo(presenceAccount.channel) && isZalo(presenceContact?.channel)
+    && presenceContact?.contact_type !== 'group' && !isMyDocumentsThread(presenceAccount as any, userId);
 
   const formatGender = (g: number | undefined) => {
     if (g === undefined || g === null) return null;
@@ -336,7 +343,17 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
     return '**/**/****';
   };
 
-  const handleOpenChat = () => { setActiveThread(userId, 0); setView('chat'); onClose(); };
+  // Nhắn ngay trong popup Nhắn tin nhanh (không rời màn hình đang xem); trong popup có nút mở hội thoại đầy đủ
+  const handleOpenChat = () => {
+    useAppStore.getState().openQuickChat({
+      zaloId: activeAccountId,
+      target: {
+        userId, displayName: userInfo?.alias || userInfo?.display_name || userId,
+        avatarUrl: userInfo?.avatar_url || '', threadType: 0, phone: userInfo?.phone || '',
+      },
+    });
+    onClose();
+  };
 
   // ── Add-friend inline compose ──────────────────────────────────────────
   const [friendCompose, setFriendCompose] = React.useState(false);
@@ -449,7 +466,10 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
               </div>
             )}
             {mutualGroups.map(g => (
-              <button key={g.groupId} onClick={() => { setActiveThread(g.groupId, 1); setView('chat'); onClose(); }}
+              <button key={g.groupId} onClick={() => {
+                openConversation({ accountId: activeAccountId, threadId: g.groupId, threadType: 1, info: { display_name: g.name, avatar_url: g.avatar } });
+                onClose();
+              }}
                 className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-muted/50 transition-colors text-left">
                 <GroupAvatarCommon name={g.name || g.groupId} avatarUrl={g.avatar} size="sm" />
                 <span className="text-sm text-foreground truncate flex-1">{g.name || g.groupId}</span>
@@ -567,6 +587,7 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
             {userInfo?.zaloName && userInfo.zaloName !== name && userInfo.zaloName !== realName && (
               <p className="text-muted-foreground text-xs truncate mt-0.5">{userInfo.zaloName}</p>
             )}
+            <ZaloPresenceLine accountId={activeAccountId} userId={userId} enabled={presenceEnabled} className="mt-1" />
           </div>
         </div>
 

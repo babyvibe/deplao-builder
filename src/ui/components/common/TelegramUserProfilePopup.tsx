@@ -18,8 +18,9 @@ interface TelegramUserProfilePopupProps {
 export function TelegramUserProfilePopup({
   userId, anchorX, anchorY, contacts, activeAccountId, activeThreadId, onClose,
 }: TelegramUserProfilePopupProps) {
-  const { setActiveThread, getPresence } = useChatStore();
-  const { setView, showNotification } = useAppStore();
+  const showNotification = useAppStore((state) => state.showNotification);
+  // Chỉ vẽ lại khi trạng thái của người này đổi (không theo mọi thay đổi của store)
+  useChatStore((state) => state.userPresence[`${activeAccountId}_${userId}`]);
   const overlayRef = React.useRef<HTMLDivElement>(null);
   const contact = contacts.find(contactItem => String(contactItem.contact_id) === String(userId));
   const [profile, setProfile] = React.useState<any>(null);
@@ -33,7 +34,7 @@ export function TelegramUserProfilePopup({
   const top = Math.max(8, Math.min(anchorY - 60, window.innerHeight - 500));
   const username = profile?.username ? `@${profile.username}` : '';
   const bio = profile?.bio || '';
-  const presence = getPresence(activeAccountId, userId);
+  const presence = useChatStore.getState().getPresence(activeAccountId, userId);
   const presenceText = presence?.status === 'online' ? '🟢 Trực tuyến'
     : presence?.status === 'offline' && presence?.lastSeen
       ? `⚫ Hoạt động ${new Date(presence.lastSeen * 1000).toLocaleString('vi-VN')}`
@@ -152,7 +153,15 @@ export function TelegramUserProfilePopup({
 
           {!isMe && (
             <button
-              onClick={() => { setActiveThread(userId, 0); setView('chat'); onClose(); }}
+              onClick={() => {
+                // Nhắn ngay trong popup Nhắn tin nhanh (không rời bài đăng / hội thoại đang xem); trong popup có nút mở
+                // hội thoại đầy đủ
+                useAppStore.getState().openQuickChat({
+                  zaloId: activeAccountId,
+                  target: { userId, displayName, avatarUrl: avatarUrl || '', threadType: 0, phone },
+                });
+                onClose();
+              }}
               className="mt-3 w-full rounded-xl bg-sky-600 py-2 text-sm font-medium text-white hover:bg-sky-500"
             >
               Nhắn tin

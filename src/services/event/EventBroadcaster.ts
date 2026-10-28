@@ -339,6 +339,19 @@ class EventBroadcaster {
                 message._silent = true;
             }
 
+            // ─── Zalo giao trùng một tin (id khác, cùng người gửi + cliMsgId + nội dung — thường tin nhóm) ─────────
+            // Bản đầu đã lưu → bỏ hẳn bản sau: không lưu, không gửi giao diện, không chạy workflow / webhook
+            try {
+                const dbs = DatabaseService.getInstance();
+                const duplicate = bossDbPath
+                    ? dbs.withDbPath(bossDbPath, () => dbs.isDuplicateZaloDelivery(zaloId, message))
+                    : dbs.isDuplicateZaloDelivery(zaloId, message);
+                if (duplicate) {
+                    Logger.log(`[EventBroadcaster] Bỏ tin Zalo giao trùng: msgId=${message.data?.msgId} cliMsgId=${message.data?.cliMsgId} threadId=${message.threadId}`);
+                    return;
+                }
+            } catch { /* kiểm tra lỗi → xử lý như tin mới */ }
+
             // ─── Early-detect webchat/msginfo.actionlist notifications ───────────────
             // Zalo sends general conversation notifications (group setting changes,
             // reminders, member actions, etc.) as regular "message" events with
@@ -878,6 +891,14 @@ class EventBroadcaster {
     }
 
     /**
+     * Hồ sơ của chính tài khoản vừa đổi (hiện có: cờ Zalo Business). Renderer cập nhật accountStore; relay cho nhân viên
+     * được giao tài khoản (id trong zaloId).
+     */
+    public static broadcastAccountProfile(zaloId: string, profile: { is_business?: 0 | 1 }): void {
+        this.sendAware('event:accountProfile', { zaloId, ...profile });
+    }
+
+    /**
      * Broadcast ngắt kết nối
      */
     public static broadcastDisconnected(zaloId: string, reason?: string): void {
@@ -1324,8 +1345,9 @@ class EventBroadcaster {
         try {
             this.runOnBossDb((db) => {
                 db.run(
+                    // CAST: không để SQLite quét cả nhóm theo index thread (xem SAME_THREAD_SQL ở DatabaseService)
                     `UPDATE messages SET content = ?, attachments = ?
-                     WHERE owner_zalo_id = ? AND thread_id = ? AND msg_id = ? AND content = ?`,
+                     WHERE owner_zalo_id = ? AND CAST(thread_id AS TEXT) = ? AND msg_id = ? AND content = ?`,
                     [text, JSON.stringify(members), job.zaloId, job.groupId, job.msgId, job.placeholder],
                 );
                 db.run(
@@ -1477,10 +1499,23 @@ class EventBroadcaster {
         }
     }
 
+    /** Tin Zalo đã hết hạn tự xoá (FR-ZL05.6): Zalo dọn tin trên thiết bị Zalo, Deplao giữ nguyên nội dung. */
+    private static ttlExpiredIds(zaloId: string, msgIds: string[], threadId?: string): Set<string> {
+        try {
+            return this.withBossDb((db) => db.zaloTtlExpiredMessageIds(zaloId, msgIds, threadId));
+        } catch {
+            return new Set();
+        }
+    }
+
     /**
      * Broadcast undo message - marks as recalled in DB (keeps the row, changes status/type)
      */
     public static broadcastUndo(zaloId: string, msgId: string, threadId?: string): void {
+        if (msgId && this.ttlExpiredIds(zaloId, [String(msgId)], threadId).size > 0) {
+            Logger.log(`[EventBroadcaster] broadcastUndo: msgId=${msgId} đã hết hạn tự xoá trên Zalo — giữ nguyên nội dung`);
+            return;
+        }
         if (msgId) {
             this.runOnBossDb((db) => {
                 db.markMessageRecalled(zaloId, String(msgId), threadId);
@@ -1496,6 +1531,12 @@ class EventBroadcaster {
      * Không xoá khỏi DB để giữ lịch sử - chỉ đánh dấu recalled.
      */
     public static broadcastDeleteMessages(zaloId: string, msgIds: string[], threadId: string): void {
+        const expired = msgIds.length > 0 ? this.ttlExpiredIds(zaloId, msgIds.map(String), threadId) : new Set<string>();
+        if (expired.size > 0) {
+            Logger.log(`[EventBroadcaster] broadcastDeleteMessages: ${expired.size} tin hết hạn tự xoá trên Zalo — giữ nguyên nội dung`);
+            msgIds = msgIds.filter((id) => !expired.has(String(id)));
+            if (msgIds.length === 0) return;
+        }
         if (msgIds.length > 0) {
             this.runOnBossDb((db) => {
                 for (const msgId of msgIds) {

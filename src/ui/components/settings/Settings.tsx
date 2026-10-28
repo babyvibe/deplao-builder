@@ -15,6 +15,7 @@ import WorkspaceSettings from './WorkspaceSettings';
 import ProxySettings from './ProxySettings';
 import LockScreenSettings from './LockScreenSettings';
 import AccountSettings from './AccountSettings';
+import InAppNotifySettings from './InAppNotifySettings';
 import LogViewer from './LogViewer';
 import CloudSettings, { type CloudSection } from './cloud/CloudSettings';
 import CloudMediaSummary from './cloud/CloudMediaSummary';
@@ -48,7 +49,10 @@ export default function Settings() {
   const [copyProgress, setCopyProgress] = useState<number>(0);
   const [copyTotal, setCopyTotal] = useState<number>(0);
   const { accounts } = useAccountStore();
-  const { showNotification, notifSettings, setNotifSettings, getNotifSettingsForAccount, setNotifSettingsForAccount, theme, setTheme } = useAppStore();
+  const {
+    showNotification, notifSettings, setNotifSettings, notifSettingsOverrides, getNotifSettingsForAccount, setNotifSettingsForAccount,
+    resetNotifSettingsForAccount, theme, setTheme,
+  } = useAppStore();
   const [selectedNotifAccount, setSelectedNotifAccount] = useState<string>('__global__');
 
   useEffect(() => {
@@ -353,18 +357,33 @@ export default function Settings() {
               >
                 <option value="__global__"><GlobeIcon className="w-4 h-4 inline" /> Mặc định (tất cả tài khoản)</option>
                 {accounts.filter(a => isZalo(a.channel)).map(acc => (
-                  <option key={acc.zalo_id} value={acc.zalo_id}><SmartphoneIcon className="w-4 h-4 inline" /> {acc.full_name || acc.zalo_id}
+                  <option key={acc.zalo_id} value={acc.zalo_id}><SmartphoneIcon className="w-4 h-4 inline" /> {acc.full_name || acc.zalo_id}{notifSettingsOverrides[acc.zalo_id] ? ' (cài đặt riêng)' : ''}
                   </option>
                 ))}
                 {accounts.filter(a => isFacebook(a.channel)).map(acc => (
-                  <option key={acc.zalo_id} value={acc.zalo_id}><BookIcon className="w-4 h-4 inline" /> {acc.full_name || acc.zalo_id}
+                  <option key={acc.zalo_id} value={acc.zalo_id}><BookIcon className="w-4 h-4 inline" /> {acc.full_name || acc.zalo_id}{notifSettingsOverrides[acc.zalo_id] ? ' (cài đặt riêng)' : ''}
                   </option>
                 ))}
                 {accounts.filter(a => isTelegram(a.channel)).map(acc => (
-                  <option key={acc.zalo_id} value={acc.zalo_id}>✈️ {acc.full_name || acc.zalo_id}
+                  <option key={acc.zalo_id} value={acc.zalo_id}>✈️ {acc.full_name || acc.zalo_id}{notifSettingsOverrides[acc.zalo_id] ? ' (cài đặt riêng)' : ''}
                   </option>
                 ))}
               </select>
+              {selectedNotifAccount !== '__global__' && (
+                notifSettingsOverrides[selectedNotifAccount] ? (
+                  <div className="mt-1.5 flex items-center gap-2 text-xs text-muted-foreground">
+                    <span>Tài khoản này đang dùng cài đặt riêng.</span>
+                    <button
+                      onClick={() => resetNotifSettingsForAccount(selectedNotifAccount)}
+                      className="text-blue-400 hover:text-blue-300 hover:underline"
+                    >
+                      Dùng cài đặt mặc định
+                    </button>
+                  </div>
+                ) : (
+                  <p className="mt-1.5 text-xs text-muted-foreground">Đang theo cài đặt mặc định. Chỉnh bên dưới để đặt riêng cho tài khoản này.</p>
+                )
+              )}
             </div>
 
             <Section>
@@ -428,11 +447,17 @@ export default function Settings() {
                 })()}
                 <p className="text-xs text-muted-foreground leading-relaxed">
                   * Thông báo không hiện với những hội thoại đã tắt thông báo.<br />
+                  * Cài đặt lưu trên máy này (máy nhân viên chỉnh riêng, không ảnh hưởng máy khác).<br />
                   * <strong>Windows:</strong> Kiểm tra quyền trong Settings &gt; Notifications.<br />
                   * <strong>macOS:</strong> Kiểm tra trong System Settings &gt; Notifications &gt; Deplao.<br />
                   * Khi tắt notification ở cấp hệ điều hành, âm thanh cũng sẽ bị tắt theo.
                 </p>
               </div>
+            </Section>
+
+            <h3 className="pt-2 text-sm font-semibold text-foreground">Thông báo tin nhắn trong app</h3>
+            <Section>
+              <InAppNotifySettings />
             </Section>
           </>
         )}

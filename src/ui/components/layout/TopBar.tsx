@@ -14,12 +14,15 @@ import { hasUnseenAffiliate, markAffiliateSeen } from '@/utils/settingsSeenTabs'
 import { useChatStore } from '@/store/chatStore';
 import WorkspaceSwitcher from '@/components/common/WorkspaceSwitcher';
 import { useErpNotificationStore } from '@/store/erp/erpNotificationStore';
+import { useErpReminderAttention } from '@/store/erp/erpReminderAttentionStore';
 import { useErpEmployeeStore } from '@/store/erp/erpEmployeeStore';
 import { useCurrentEmployeeId, useErpPermissions } from '@/hooks/erp/useErpContext';
 import { useEmployeeResync } from '@/hooks/useEmployeeResync';
 import NotificationCenter from '@/features/erp/notifications/NotificationCenter';
 import { Spinner } from '@/components/common/PageLoading';
-import { AlertIcon, KeyIcon, MonitorIcon, PluginIcon, RefreshIcon, StarIcon } from '@/components/common/icons';
+import { AlertIcon, BellOffIcon, KeyIcon, MonitorIcon, PluginIcon, RefreshIcon, StarIcon } from '@/components/common/icons';
+import { useInAppNotifyStore } from '@/store/inAppNotifyStore';
+import { summarizeInAppNotify } from '@/lib/chat/inAppNotify';
 import FeatureLauncherPanel from './FeatureLauncherPanel';
 import MobileSyncButton from './MobileSyncButton';
 import FacebookSyncButton from './FacebookSyncButton';
@@ -27,6 +30,7 @@ import { isTelegram, isTelegramBot, isTelegramUser } from '@/lib/channelHelper';
 import RestQueryService from '../../../services/http/RestQueryService';
 import { AUTH_EXPIRED_MESSAGE, isWrongPasswordLogin, normalizeBossUrl } from '../../../shared/employeeConnection';
 import { normalizePastedBossUrl } from '../../../shared/tunnelAddress';
+import { erpReminderLeadText } from '../../../shared/erpReminderText';
 import { useBossAddressWatch } from './useBossAddressWatch';
 
 
@@ -340,6 +344,25 @@ export default function TopBar() {
   const loadTodayAttendance = useErpEmployeeStore(s => s.loadTodayAttendance);
   const [bellOpen, setBellOpen] = useState(false);
   const bellRef = useRef<HTMLDivElement>(null);
+  // Thông báo tin nhắn trong app đang tắt cho mọi tài khoản → chuông gạch chéo (trạng thái trên chính nút, không thêm icon)
+  const inAppNotifyAllOff = useInAppNotifyStore(s => summarizeInAppNotify(s.prefs, accounts.map(a => a.zalo_id)).allOff);
+  // Lịch sắp tới (nhắc trước): chuông rung + "15 phút nữa tới lịch hẹn" ngay trên nút chuông, đếm ngược tới giờ hẹn
+  const upcomingReminders = useErpReminderAttention(s => s.items);
+  const reminderRinging = useErpReminderAttention(s => s.ringing);
+  const [reminderClock, setReminderClock] = useState(() => Date.now());
+  useEffect(() => {
+    if (!upcomingReminders.length) return;
+    const tick = () => {
+      const now = Date.now();
+      setReminderClock(now);
+      useErpReminderAttention.getState().prune(now);
+    };
+    tick();
+    const timer = window.setInterval(tick, 15_000);
+    return () => window.clearInterval(timer);
+  }, [upcomingReminders.length]);
+  const nextReminder = upcomingReminders.find(item => item.startAt > reminderClock) ?? null;
+  const reminderLead = nextReminder ? erpReminderLeadText(nextReminder.startAt - reminderClock) : '';
 
   useEffect(() => {
     if (!erpPerms.can('erp.access')) return;
@@ -837,31 +860,44 @@ export default function TopBar() {
         {/*  </button>*/}
         {/*)}*/}
 
-        {/* ── ERP Notifications bell ── */}
-        {erpPerms.can('erp.access') && (
-          <div className="relative" ref={bellRef}>
-            <button
-              onClick={() => setBellOpen(v => !v)}
-              className="w-9 h-9 flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground transition-colors relative"
-              title="Thông báo ERP"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-                <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-              </svg>
-              {unreadCount > 0 && (
-                <span className="absolute top-1 right-1 min-w-[14px] h-3.5 px-1 bg-red-500 text-white text-[9px] rounded-full flex items-center justify-center">
+        {/* ── Chuông thông báo: cập nhật, ERP (khi có quyền), ⚙ cài đặt thông báo tin nhắn trong app ── */}
+        <div className="relative" ref={bellRef}>
+          <button
+            onClick={() => { setBellOpen(v => !v); useErpReminderAttention.getState().acknowledge(); }}
+            className={`h-9 flex items-center justify-center transition-colors relative ${nextReminder
+              ? `gap-2.5 px-2.5 text-amber-500 hover:bg-amber-500/10 ${bellOpen ? 'bg-amber-500/10' : ''}`
+              : `w-9 hover:bg-muted hover:text-foreground ${bellOpen ? 'bg-muted text-foreground' : 'text-muted-foreground'}`}`}
+            title={nextReminder
+              ? `${reminderLead}: ${nextReminder.title}`
+              : inAppNotifyAllOff ? 'Thông báo (thông báo tin nhắn trong app đang tắt)' : 'Thông báo'}
+            aria-label={nextReminder ? `Thông báo: ${reminderLead}` : 'Thông báo'}
+            aria-expanded={bellOpen}
+          >
+            <span className="relative inline-flex">
+              <span className={`inline-flex ${nextReminder && reminderRinging ? 'erp-bell-ring' : ''}`}>
+                {inAppNotifyAllOff && !nextReminder ? (
+                  <BellOffIcon className="w-3.5 h-3.5" />
+                ) : (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                    <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                  </svg>
+                )}
+              </span>
+              {erpPerms.can('erp.access') && unreadCount > 0 && (
+                <span className="absolute -top-[7px] -right-[7px] min-w-[14px] h-3.5 px-1 bg-red-500 text-white text-[9px] rounded-full flex items-center justify-center">
                   {unreadCount > 99 ? '99+' : unreadCount}
                 </span>
               )}
-            </button>
-            {bellOpen && (
-              <div className="absolute right-0 top-full mt-1 z-[9999]">
-                <NotificationCenter onClose={() => setBellOpen(false)} />
-              </div>
-            )}
-          </div>
-        )}
+            </span>
+            {nextReminder && <span className="max-w-[190px] truncate text-[11px] font-semibold">{reminderLead}</span>}
+          </button>
+          {bellOpen && (
+            <div className="absolute right-0 top-full mt-1 z-[9999]">
+              <NotificationCenter onClose={() => setBellOpen(false)} />
+            </div>
+          )}
+        </div>
 
         {/* GitHub Star button */}
         <button

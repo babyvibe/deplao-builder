@@ -312,10 +312,16 @@ export class CloudflareApiClient implements CloudflareApi {
             Accept: 'application/json',
             Authorization: `Bearer ${token}`,
         };
-        let payload: string | undefined;
+        let payload: string | Buffer | undefined;
         if (body !== undefined && body !== null) {
-            headers['Content-Type'] = 'application/json';
-            payload = JSON.stringify(body);
+            if (opts.contentType && (typeof body === 'string' || Buffer.isBuffer(body))) {
+                // Body dựng sẵn (multipart tải script Worker) — gửi nguyên, token vẫn chỉ nằm ở đây.
+                headers['Content-Type'] = opts.contentType;
+                payload = body;
+            } else {
+                headers['Content-Type'] = 'application/json';
+                payload = JSON.stringify(body);
+            }
         }
         const delays = this.opts.retryDelaysMs ?? CF_RETRY_DELAYS_MS;
         const fetchImpl: FetchLike = this.opts.fetchImpl ?? ((u, init) => (globalThis as any).fetch(u, init));

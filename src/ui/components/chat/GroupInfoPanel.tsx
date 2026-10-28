@@ -22,6 +22,7 @@ import { Spinner } from '@/components/common/PageLoading';
 import * as channelIpc from '@/lib/channelIpc';
 import { getAdapter } from '@/lib/adapters/registry';
 import TelegramChatSettings from './quick/telegram/TelegramChatSettings';
+import ZaloAutoDeleteSection from './zalo/ZaloAutoDeleteSection';
 import { useGroupMemberSync } from '@/hooks/useGroupMemberSync';
 import { ArrowDownIcon, ArrowUpIcon, BellIcon, BellOffIcon, CloseIcon, MapPinIcon, PinIcon, SettingsIcon, TrashIcon, UserIcon, UsersIcon } from '@/components/common/icons';
 import { toLocalMediaUrl } from '@/lib/localMedia';
@@ -2326,6 +2327,11 @@ export function ManagePanel({ groupInfo, groupId, onBack, myAccountId, asModal, 
 
       {/* Danh sách chờ duyệt - visible for admin khi bật joinAppr */}
       <PendingMembersSection groupId={groupId} isAdmin={isAdmin} channel={channel || CHANNEL.ZALO} />
+
+      {/* Tự xoá tin nhắn trên Zalo (ZL-05) — Deplao vẫn giữ tin */}
+      {isZalo && myAccountId && groupId && (
+        <ZaloAutoDeleteSection accountId={myAccountId} threadId={groupId} isGroup />
+      )}
 
       {/* Group link */}
       <div className="border-t border-border px-4 py-3 space-y-2">

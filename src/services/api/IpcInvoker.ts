@@ -6,7 +6,8 @@
  *  - danh tính ERP của principal (ErpAuthContext.runAs),
  *  - ngữ cảnh "lời gọi từ API" (apiCallContext) để handler/EventHub biết nguồn.
  *
- * Kiểm tra quyền đã chạy ở ApiRouter TRƯỚC khi tới đây.
+ * Kiểm tra quyền đã chạy ở ApiRouter TRƯỚC khi tới đây (kênh uỷ quyền cho plugin — PLUGIN_DELEGATED_CHANNEL_PREFIXES —
+ * thì ở PluginApiBridge, kèm giấy uỷ quyền PluginGrant).
  */
 import { AsyncLocalStorage } from 'async_hooks';
 import { ApiError, IpcCallOptions, Principal, principalLogId } from './types';
@@ -145,7 +146,24 @@ export const defaultErpRunner: ErpRunner = {
     },
 };
 
-function fakeEvent(principal: Principal): any {
+/**
+ * Giấy uỷ quyền PluginApiBridge cấp cho MỘT lời gọi kênh quản trị được uỷ quyền (PLUGIN_DELEGATED_CHANNEL_PREFIXES),
+ * SAU KHI bridge đã kiểm quyền manifest + tiền tố tài nguyên. Chỉ code trong main tạo được (plugin chạy ở tiến trình
+ * riêng, API key đi qua route có kênh cố định). Handler đọc lại qua event.pluginGrant — không tin payload.
+ */
+export interface PluginGrant {
+    pluginId: string;
+    /** Quyền manifest đã kiểm, vd 'cloudflare:workers'. */
+    permission: string;
+    /** Tiền tố tên tài nguyên của plugin (pluginShortName). */
+    resourcePrefix: string;
+    /** realpath thư mục plugin đã cài — đường dẫn file plugin gửi lên phải nằm trong đây. */
+    pluginDir: string;
+    /** Ghi tiến độ vào nhật ký của plugin (tuỳ chọn). */
+    log?: (level: 'info' | 'warn' | 'error', message: string) => void;
+}
+
+function fakeEvent(principal: Principal, pluginGrant?: PluginGrant): any {
     return {
         sender: {
             id: -1,
@@ -155,6 +173,7 @@ function fakeEvent(principal: Principal): any {
         senderFrame: null,
         fromApi: true,
         apiPrincipalId: principalLogId(principal),
+        ...(pluginGrant ? { pluginGrant } : {}),
     };
 }
 
@@ -164,8 +183,27 @@ function fakeEvent(principal: Principal): any {
  */
 export const ADMIN_CHANNEL_PREFIXES = ['api:', 'plugins:', 'cloudflare:'];
 
+/**
+ * Ngoại lệ DUY NHẤT của luật trên: kênh quản trị mà principal 'plugin' được gọi khi — và chỉ khi — lời gọi mang giấy
+ * uỷ quyền (info.pluginGrant) của chính plugin đó do PluginApiBridge cấp sau khi kiểm quyền manifest + tiền tố.
+ * API key, nhân viên, plugin không có giấy (vd route API v1 gọi thay plugin) vẫn bị chặn như mọi kênh quản trị khác.
+ * Handler (electron/ipc/cloudflareWorkersIpc.ts) kiểm lại giấy + tiền tố + thư mục.
+ */
+export const PLUGIN_DELEGATED_CHANNEL_PREFIXES = ['cloudflare:workers:'];
+
 export function isAdminChannel(channel: string): boolean {
     return ADMIN_CHANNEL_PREFIXES.some(p => channel.startsWith(p));
+}
+
+export function isPluginDelegatedChannel(channel: string): boolean {
+    return PLUGIN_DELEGATED_CHANNEL_PREFIXES.some(p => channel.startsWith(p));
+}
+
+/** Lời gọi này có được uỷ quyền cho plugin không: principal plugin + giấy của CHÍNH plugin đó + kênh được uỷ quyền. */
+function delegatedGrant(channel: string, principal: Principal, grant: PluginGrant | undefined): PluginGrant | undefined {
+    if (principal.kind !== 'plugin' || !grant || !isPluginDelegatedChannel(channel)) return undefined;
+    if (typeof grant.pluginId !== 'string' || grant.pluginId !== principal.id) return undefined;
+    return grant;
 }
 
 export class IpcInvoker {
@@ -186,15 +224,16 @@ export class IpcInvoker {
         return !!this.source.get(channel);
     }
 
-    async invoke(channel: string, args: any[], principal: Principal, info: { requestId: string; timeoutMs?: number }): Promise<any> {
-        if (principal.kind !== 'system' && isAdminChannel(channel)) {
+    async invoke(channel: string, args: any[], principal: Principal, info: { requestId: string; timeoutMs?: number; pluginGrant?: PluginGrant }): Promise<any> {
+        const grant = delegatedGrant(channel, principal, info.pluginGrant);
+        if (principal.kind !== 'system' && isAdminChannel(channel) && !grant) {
             // Kênh quản trị API/plugin chỉ dành cho giao diện của chủ máy — không tự nâng quyền qua API.
             throw new ApiError(403, 'FORBIDDEN_SCOPE', `Kênh ${channel} chỉ dùng trong app`);
         }
         const handler = this.source.get(channel);
         if (!handler) throw new ApiError(501, 'NOT_IMPLEMENTED', `Thiếu kênh IPC ${channel}`);
         const timeoutMs = info.timeoutMs || this.limits.timeoutMs() || 30_000;
-        const event = fakeEvent(principal);
+        const event = fakeEvent(principal, grant);
         const call: ApiCallInfo = {
             principalId: principalLogId(principal),
             kind: principal.kind,

@@ -9,6 +9,7 @@ import Logger from '../../src/utils/Logger';
 import ZaloLoginHelper from '../../src/utils/ZaloLoginHelper';
 import * as TelegramUserListener from '../../src/services/telegram/TelegramUserListener';
 import * as TelegramBotChannelService from '../../src/services/telegram/TelegramBotChannelService';
+import { applyZaloBusinessFlag } from '../../src/utils/zaloBusinessFlag';
 import { signOutFacebookAccount } from './facebookIpc';
 function postLoginSetup(_zaloId: string, _mainWindow: BrowserWindow | null, _name?: string, _phone?: string) {
     // No-op in open-source build.
@@ -74,7 +75,6 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
             }
 
             if (zaloId) {
-                const bizPkgId = accountInfo?.profile?.bizPkg?.pkgId ?? accountInfo?.bizPkg?.pkgId ?? 0;
                 const fullName = accountInfo?.profile?.displayName || accountInfo?.name || '';
                 const phoneNum = accountInfo?.profile?.phoneNumber || accountInfo?.phoneNumber || '';
                 DatabaseService.getInstance().saveAccount({
@@ -82,7 +82,6 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
                     full_name: fullName,
                     avatar_url: accountInfo?.profile?.avatar || accountInfo?.avatar || '',
                     phone: phoneNum,
-                    is_business: bizPkgId > 0 ? 1 : 0,
                     imei,
                     user_agent: userAgent,
                     cookies,
@@ -93,6 +92,8 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
                 if (proxyId) {
                     DatabaseService.getInstance().setAccountProxy(zaloId, proxyId);
                 }
+                // Cờ Zalo Business đọc từ hồ sơ vừa lấy (không đọc được thì giữ giá trị đang lưu)
+                applyZaloBusinessFlag(zaloId, accountInfo);
                 DatabaseService.getInstance().setListenerActive(zaloId, true);
                 postLoginSetup(zaloId, mainWindow, fullName, phoneNum);
             }
@@ -125,7 +126,6 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
             }
 
             if (zaloId) {
-                const bizPkgId2 = accountInfo?.profile?.bizPkg?.pkgId ?? accountInfo?.bizPkg?.pkgId ?? 0;
                 const fullName2 = accountInfo?.profile?.displayName || accountInfo?.name || '';
                 const phoneNum2 = accountInfo?.profile?.phoneNumber || accountInfo?.phoneNumber || '';
                 DatabaseService.getInstance().saveAccount({
@@ -133,13 +133,14 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
                     full_name: fullName2,
                     avatar_url: accountInfo?.profile?.avatar || accountInfo?.avatar || '',
                     phone: phoneNum2,
-                    is_business: bizPkgId2 > 0 ? 1 : 0,
                     imei,
                     user_agent: userAgent,
                     cookies,
                     is_active: 1,
                     created_at: new Date().toISOString(),
                 });
+                // Cờ Zalo Business đọc từ hồ sơ vừa lấy (không đọc được thì giữ giá trị đang lưu)
+                applyZaloBusinessFlag(zaloId, accountInfo);
                 DatabaseService.getInstance().setListenerActive(zaloId, true);
                 postLoginSetup(zaloId, mainWindow, fullName2, phoneNum2);
             }
@@ -274,6 +275,7 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
             const account = accounts.find((a: any) => a.zalo_id === zaloId);
             const isFB = account?.channel === 'facebook';
             const isTelegramUser = account?.channel === 'telegram_user';
+            const isTelegramBot = account?.channel === 'telegram_bot';
 
             if (isFB) {
                 // Facebook: tìm fb_account UUID → đăng xuất (ngắt kết nối, xoá cookie + phiên trong fb_accounts — còn cookie
@@ -284,6 +286,10 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
                 // MTProto is independent from ConnectionManager. Stop the
                 // live GramJS client before removing its local session.
                 TelegramUserListener.stopListener(zaloId);
+            } else if (isTelegramBot) {
+                // Bot API cũng không thuộc ConnectionManager: dừng nhận tin của bot trước khi gỡ. Trước đây bot rơi vào
+                // nhánh Zalo nên vẫn kéo tin cho tài khoản đã xoá tới lần mở app sau.
+                TelegramBotChannelService.stopBot(zaloId);
             } else {
                 // Zalo cleanup
                 const ZaloLoginHelper = require('../../src/utils/ZaloLoginHelper').default;
@@ -454,15 +460,15 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
 
             // URL expired hoặc không có → gọi Zalo API để refresh
             const accountInfo = await conn.api.fetchAccountInfo();
+            // Cờ Zalo Business cập nhật mỗi lần đọc được hồ sơ, không phụ thuộc avatar có đổi hay không
+            applyZaloBusinessFlag(zaloId, accountInfo);
             const newAvatar = accountInfo?.profile?.avatar || (accountInfo as any)?.avatar || '';
             const newName = accountInfo?.profile?.displayName || (accountInfo as any)?.displayName || '';
 
             if (newAvatar && newAvatar !== currentAvatarUrl) {
                 // Update DB với avatar + name mới
                 const phone = accountInfo?.profile?.phoneNumber || (accountInfo as any)?.phoneNumber || '';
-                const bizPkgId = accountInfo?.profile?.bizPkg?.pkgId ?? (accountInfo as any)?.bizPkg?.pkgId ?? 0;
-                const isBusiness = bizPkgId > 0 ? 1 : 0;
-                DatabaseService.getInstance().updateAccountInfo(zaloId, phone, isBusiness, newAvatar, newName || undefined);
+                DatabaseService.getInstance().updateAccountInfo(zaloId, phone, null, newAvatar, newName || undefined);
 
                 Logger.log(`[AvatarCheck] ${zaloId}: refreshed avatar: ${newAvatar.substring(0, 60)}...${newName ? ', name: ' + newName : ''}`);
                 return { success: true, refreshed: true, avatar_url: newAvatar, full_name: newName || undefined };

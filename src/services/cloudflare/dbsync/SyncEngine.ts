@@ -30,6 +30,12 @@ import type { StateStore, WorkspaceSyncState } from './state';
 import type { LogInput } from './syncLog';
 
 export const START_DELAY_MS = 20_000;
+/**
+ * Vài phút đầu sau khi MỞ APP không chạy chu kỳ tự động: lúc này giao diện đang dựng và các kênh đang đồng bộ bù,
+ * còn một chu kỳ có thể phải cài lại trigger + chụp bản gốc (DB 2,7 GB thật: ~1,5 phút CPU / ổ đĩa — đo 10/2026).
+ * "Đồng bộ ngay" và yêu cầu chụp gốc của người dùng (requestBase) không phải chờ.
+ */
+export const STARTUP_QUIET_MS = 5 * 60_000;
 export const RECHECK_DELAY_MS = 3_000;
 export const REALTIME_DELAY_MS = 5_000;
 export const HOUR_MS = 3_600_000;
@@ -90,6 +96,8 @@ export interface EngineContext {
     notify(urgent?: boolean): void;
     baseLock: Mutex;
     now(): number;
+    /** Lúc tiến trình app khởi động (ms). Có → chu kỳ tự động không chạy trước mốc này + STARTUP_QUIET_MS. */
+    appStartedAt?(): number;
     /** Một workspaceUid chỉ được một engine dùng (DB sao chép giữa hai workspace → không ghi đè bản sao của nhau). */
     claimUid(uid: string, engineId: string): string | null;
     onBaseDone(engine: SyncEngine, manifest: DbManifest, bucket: string): void;
@@ -549,7 +557,9 @@ export class SyncEngine {
 
     private scheduleAt(ts: number): void {
         if (this.stopped || this.paused || this.ctx.mode() === 'off') return;
-        const at = Math.max(ts, this.backoffUntil);
+        // Chu kỳ tự động (hẹn giờ, Realtime) chờ hết STARTUP_QUIET_MS sau khi mở app; chụp gốc do người dùng yêu cầu thì không.
+        const quietUntil = !this.forceBaseReason && this.ctx.appStartedAt ? this.ctx.appStartedAt() + STARTUP_QUIET_MS : 0;
+        const at = Math.max(ts, this.backoffUntil, quietUntil);
         if (this.timer && this.timerAt <= at) return; // đã có lịch sớm hơn
         if (this.timer) clearTimeout(this.timer);
         this.timerAt = at;

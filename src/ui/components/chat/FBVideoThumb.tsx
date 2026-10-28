@@ -5,6 +5,7 @@ import { claimInlineSound, releaseInlineSound, useInlineAutoplay } from '@/lib/m
 import { fitMediaBox, getKnownDims, rememberDims, type MediaDims } from '@/lib/chat/mediaDims';
 import { isTransferring, useMessageMediaProgress } from '@/lib/media/mediaProgress';
 import { VideoDownloadOverlay } from './MediaDownloadProgress';
+import { TelegramPostLayoutContext, telegramPostMediaAspect } from './telegramPostLayout';
 
 interface FBVideoThumbProps {
   videoPath: string;
@@ -36,6 +37,9 @@ function formatClock(seconds: number): string {
 export default function FBVideoThumb({ videoPath, onPlay, width, height, dimsMsg, placeholderSrc, autoPlayInline, duration }: FBVideoThumbProps) {
   const [measured, setMeasured] = React.useState<MediaDims | null>(() => (dimsMsg ? getKnownDims(dimsMsg) : null));
   const box = fitVideoBox(width && height ? { w: width, h: height } : measured);
+  // Bài đăng kênh Telegram: rộng hết khung bài (video dọc không làm khung hẹp lại, như Telegram)
+  const postLayout = React.useContext(TelegramPostLayoutContext);
+  const postBox = postLayout ? telegramPostMediaAspect(width || measured?.w, height || measured?.h) : null;
   const boxRef = React.useRef<HTMLDivElement>(null);
   const inlineVideoRef = React.useRef<HTMLVideoElement | null>(null);
   const soundToken = React.useRef({}).current;
@@ -218,13 +222,17 @@ export default function FBVideoThumb({ videoPath, onPlay, width, height, dimsMsg
     <div
       ref={boxRef}
       onClick={handlePlay}
-      className={`relative group/video rounded-xl overflow-hidden bg-black ring-1 ring-black/[0.12] select-none ${transferring ? 'cursor-progress' : 'cursor-pointer'}`}
-      style={{ width: box.width, height: box.height, maxWidth: '100%' }}
+      className={`relative group/video overflow-hidden bg-black select-none ${postBox ? '' : 'rounded-xl ring-1 ring-black/[0.12] '}${transferring ? 'cursor-progress' : 'cursor-pointer'}`}
+      style={postBox ? { width: '100%', aspectRatio: String(postBox.box) } : { width: box.width, height: box.height, maxWidth: '100%' }}
       title={transferring ? 'Đang tải video — xem được khi tải xong' : playingInline ? 'Bấm để xem toàn màn hình' : undefined}
     >
+      {/* Bài đăng kênh, video dọc: hai bên lấp bằng chính khung hình làm mờ (như Telegram) */}
+      {postBox?.letterbox && (thumbDataUrl || placeholderSrc) && (
+        <img src={thumbDataUrl || placeholderSrc} alt="" aria-hidden className="pointer-events-none absolute inset-0 w-full h-full object-cover scale-110 blur-2xl opacity-60" />
+      )}
       {/* Background: captured thumbnail, blurred in-message thumb, or gray placeholder */}
       {thumbDataUrl ? (
-        <img src={thumbDataUrl} alt="video thumb" className="w-full h-full object-cover" />
+        <img src={thumbDataUrl} alt="video thumb" className={`w-full h-full ${postBox?.letterbox ? 'relative object-contain' : 'object-cover'}`} />
       ) : placeholderSrc ? (
         <img src={placeholderSrc} alt="" className="w-full h-full object-cover blur-md scale-110" />
       ) : (
@@ -246,7 +254,7 @@ export default function FBVideoThumb({ videoPath, onPlay, width, height, dimsMsg
           playsInline
           preload="auto"
           disablePictureInPicture
-          className={`absolute inset-0 w-full h-full object-cover pointer-events-none transition-opacity duration-200 ${inlineStarted ? 'opacity-100' : 'opacity-0'}`}
+          className={`absolute inset-0 w-full h-full ${postBox?.letterbox ? 'object-contain' : 'object-cover'} pointer-events-none transition-opacity duration-200 ${inlineStarted ? 'opacity-100' : 'opacity-0'}`}
           onLoadedMetadata={(event) => noteDims(event.currentTarget.videoWidth, event.currentTarget.videoHeight)}
           onPlaying={() => setInlineStarted(true)}
           onTimeUpdate={(event) => {

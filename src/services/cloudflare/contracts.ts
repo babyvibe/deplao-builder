@@ -36,6 +36,11 @@ export interface CfRequestOptions {
     timeoutMs?: number;
     /** Không tính vào ngân sách (chỉ dùng cho verify token lúc kết nối). */
     unbudgeted?: boolean;
+    /**
+     * Body là Buffer / chuỗi dựng sẵn, gửi nguyên với Content-Type này thay vì JSON (multipart tải script Worker —
+     * workers/WorkersDeployer). Thiếu = body gửi dạng JSON như cũ.
+     */
+    contentType?: string;
 }
 
 /**

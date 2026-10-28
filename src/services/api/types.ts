@@ -204,6 +204,19 @@ export interface ApiContext {
     zaloAuth: (accountId: string) => Promise<Record<string, string>>;
     /** Request/response gốc — chỉ có khi gọi qua HTTP. */
     raw?: { req: import('http').IncomingMessage; res: import('http').ServerResponse };
+    /**
+     * Gọi route file (rawResponse.file) không qua HTTP (plugin): streamFile trả FileContent (base64) thay vì stream,
+     * file lớn hơn maxBytes → 413.
+     */
+    binary?: { maxBytes: number };
+}
+
+/** Nội dung file khi route file được gọi không qua HTTP (ApiContext.binary). */
+export interface FileContent {
+    name: string;
+    mime: string;
+    size: number;
+    base64: string;
 }
 
 export interface RouteExample {
@@ -226,8 +239,11 @@ export interface RouteDef {
     body?: Schema<any>;
     /** Schema phần `data` (dùng cho docs). */
     response?: Schema<any>;
-    /** Response không phải JSON envelope (file, SSE). */
-    rawResponse?: { contentType: string; description: string };
+    /**
+     * Response không phải JSON envelope (file, SSE). `file: true` = handler trả file trên máy qua streamFile →
+     * plugin gọi được (nhận FileContent base64, xem ApiRouter.invoke `binary`); route khác chỉ gọi qua HTTP.
+     */
+    rawResponse?: { contentType: string; description: string; file?: boolean };
     /** Content-Type body đặc biệt (upload). */
     rawBody?: { contentType: string; description: string };
     /** Giới hạn body riêng (byte). */

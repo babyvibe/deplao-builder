@@ -81,6 +81,8 @@ export interface SendVideoParams {
   height?: number;
   body?: string;
   quote?: any;
+  /** Telegram: trả lời tin này (cả trong chủ đề forum / chuỗi bình luận) */
+  replyToMsgId?: string;
   auth?: any;
   /** Item thư viện khi máy nhân viên không có file (xem SendAttachmentParams.libraryUuid). */
   libraryUuid?: string;

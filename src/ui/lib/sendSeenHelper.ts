@@ -1,71 +1,25 @@
-import ipc, { buildZaloAuth } from '@/lib/ipc'
-import DataAccessor from '@/lib/data/DataAccessor';;
 import { useAccountStore } from '@/store/accountStore';
-import { channelSupports, type Channel } from '@/../configs/channelConfig';
 import { CHANNEL } from '@/lib/channelHelper';
+import { liveReadSync, type ReadRow } from '@/lib/chat/liveReadSync';
 
 /**
- * Gửi sự kiện đã đọc (sendSeenEvent) cho Zalo.
- * Nếu lastMsg được truyền vào → dùng luôn, nếu không → query DB.
+ * Gửi sự kiện đã xem (sendSeenEvent) cho một hội thoại Zalo — giữ cho code cũ. Đường mới: liveReadSync (mọi kênh, mốc là
+ * tin NHẬN mới nhất; trước đây lấy tin mới nhất kể cả tin của mình / tin hệ thống nên Zalo không nhận).
  *
  * @param zaloId - owner zalo ID
  * @param threadId - contactId / groupId
  * @param threadType - 0 = User, 1 = Group
- * @param authOverride - nếu có sẵn auth thì truyền vào, không thì tự lấy
- * @param lastMsg - tin nhắn cuối cùng đã có sẵn (tránh query lại DB)
+ * @param _authOverride - không dùng nữa (auth lấy theo tài khoản)
+ * @param lastMsg - tin vừa có sẵn (tránh query lại DB); không phải tin nhận thì đọc DB
  */
 export function sendSeenForThread(
   zaloId: string,
   threadId: string,
   threadType: number,
-  authOverride?: { cookies: string; imei: string; userAgent: string } | null,
-  lastMsg?: { msg_id: string; cli_msg_id?: string; sender_id?: string; msg_type?: string; status?: string; timestamp?: number } | null,
+  _authOverride?: { cookies: string; imei: string; userAgent: string } | null,
+  lastMsg?: ReadRow | null,
 ): void {
-  try {
-    // Skip for channels that don't support seen status
-    const accObj = useAccountStore.getState().accounts.find(a => a.zalo_id === zaloId);
-    if (!accObj) return;
-    const accChannel = (accObj.channel || CHANNEL.ZALO) as Channel;
-    if (!channelSupports(accChannel, 'supportsSeenStatus')) return;
-    // Chỉ gọi Zalo IPC cho Zalo accounts — các channel khác dùng adapter riêng
-    if (accChannel !== CHANNEL.ZALO) return;
-
-    // Resolve auth
-    let auth = authOverride;
-    if (!auth) {
-      auth = buildZaloAuth(accObj);
-    }
-    if (!auth) return;
-
-    const finalAuth = auth;
-
-    const buildAndSend = (msg: any) => {
-      if (!msg) return;
-      const seenMessages = [{
-        msgId: msg.msg_id || '',
-        cliMsgId: msg.cli_msg_id || msg.msg_id || '',
-        uidFrom: msg.sender_id || '',
-        idTo: threadId,
-        msgType: msg.msg_type || 'text',
-        st: msg.status === 'sent' ? 1 : 0,
-        at: 0,
-        cmd: 0,
-        ts: msg.timestamp || Date.now(),
-      }];
-      ipc.zalo?.sendSeenEvent({ auth: finalAuth, messages: seenMessages, type: threadType }).catch(() => {});
-    };
-
-    if (lastMsg) {
-      buildAndSend(lastMsg);
-    } else {
-      DataAccessor.getMessages({ zaloId, threadId, limit: 1, offset: 0 }).then((res: any) => {
-        const msgs = res?.messages || [];
-        if (msgs.length === 0) return;
-        buildAndSend(msgs[0]);
-      }).catch(() => {});
-    }
-  } catch {
-    // Silent fail - seen event is best-effort
-  }
+  const account = useAccountStore.getState().accounts.find(a => a.zalo_id === zaloId);
+  if (!account || (account.channel || CHANNEL.ZALO) !== CHANNEL.ZALO) return;
+  void liveReadSync.syncOpenedThread({ accountId: zaloId, threadId, threadType }, lastMsg ? [lastMsg] : undefined);
 }
-

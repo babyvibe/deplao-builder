@@ -15,8 +15,7 @@ export function FBUserProfilePopup({ userId, anchorX, anchorY, contacts, activeA
   contacts: any[]; activeAccountId: string; activeThreadId: string | null;
   onClose: () => void;
 }) {
-  const { setActiveThread } = useChatStore();
-  const { setView, showNotification } = useAppStore();
+  const showNotification = useAppStore((state) => state.showNotification);
   const overlayRef = React.useRef<HTMLDivElement>(null);
 
   const [userInfo, setUserInfo] = React.useState<any>(() => {
@@ -70,7 +69,14 @@ export function FBUserProfilePopup({ userId, anchorX, anchorY, contacts, activeA
   const left = Math.max(8, Math.min(anchorX + 12, window.innerWidth - modalW - 8));
   const topPos = Math.max(8, Math.min(anchorY - 60, window.innerHeight - 520));
 
-  const handleOpenChat = () => { setActiveThread(userId, 0); setView('chat'); onClose(); };
+  // Nhắn ngay trong popup Nhắn tin nhanh (không rời màn hình đang xem); trong popup có nút mở hội thoại đầy đủ
+  const handleOpenChat = () => {
+    useAppStore.getState().openQuickChat({
+      zaloId: activeAccountId,
+      target: { userId, displayName: name, avatarUrl: avatar || '', threadType: 0 },
+    });
+    onClose();
+  };
 
   const handleOpenFBProfile = () => {
     ipc.shell?.openExternal(`https://facebook.com/${userId}`);

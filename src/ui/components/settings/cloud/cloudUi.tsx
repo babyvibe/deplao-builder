@@ -293,6 +293,26 @@ export function permissionOf(c: CloudConnectionStatus | null | undefined, featur
   return c?.permissions?.find(p => p.feature === feature) ?? null;
 }
 
+/** Tên từng nhóm quyền của token (dòng kiểm tra ở dải tài khoản Cloudflare). */
+export const CLOUD_FEATURE_LABELS: Record<CloudFeature, string> = {
+  tunnel: 'Địa chỉ cố định',
+  r2: 'Đồng bộ dữ liệu',
+  workers: 'Worker, D1 (cho ứng dụng)',
+};
+
+/**
+ * Dòng "Worker, D1 (cho ứng dụng)": quyền KHÔNG bắt buộc (chỉ ứng dụng tự triển khai lên Cloudflare cần) nên chỉ là
+ * thông tin, không phải vấn đề của kết nối. null khi chưa kết nối hoặc main chưa kiểm (bản app cũ, chưa Kiểm tra lại).
+ */
+export function workersAccessLine(c: CloudConnectionStatus | null | undefined): { ok: boolean; text: string } | null {
+  if (!c?.connected) return null;
+  const p = permissionOf(c, 'workers');
+  if (!p) return null;
+  if (p.ok) return { ok: true, text: `${CLOUD_FEATURE_LABELS.workers}: đủ quyền` };
+  const detail = p.missing?.length ? p.missing.join(', ') : 'thiếu quyền Workers Scripts, D1';
+  return { ok: false, text: `${CLOUD_FEATURE_LABELS.workers}: ${detail} — chỉ cần khi dùng ứng dụng triển khai lên Cloudflare` };
+}
+
 /** Đã kết nối và R2 dùng được (chưa có kết quả kiểm tra thì coi là được, main sẽ báo lỗi rõ khi gọi). */
 export function isR2Ready(c: CloudConnectionStatus | null | undefined): boolean {
   if (!c?.connected) return false;

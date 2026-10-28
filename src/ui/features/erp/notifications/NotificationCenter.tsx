@@ -1,16 +1,84 @@
 import React, { useEffect, useState } from 'react';
 import { useErpNotificationStore } from '@/store/erp/erpNotificationStore';
+import { useErpReminderAttention } from '@/store/erp/erpReminderAttentionStore';
+import { hasLinkedConversation, openLinkedConversation } from '@/lib/erp/erpLinkedConversation';
+import type { ErpNotification } from '../../../../models/erp';
 import { useCurrentEmployeeId, useErpPermissions } from '@/hooks/erp/useErpContext';
 import { useUpdateStore } from '@/store/updateStore';
-import { DownloadIcon, MonitorIcon, RefreshIcon, SparklesIcon } from '@/components/common/icons';
+import { ArrowLeftIcon, DownloadIcon, MonitorIcon, RefreshIcon, SettingsIcon, SparklesIcon } from '@/components/common/icons';
+import InAppNotifySettings from '@/components/settings/InAppNotifySettings';
 
 
 interface Props { onClose?: () => void; }
 
+/**
+ * Chuông thông báo trên thanh tiêu đề: bản cập nhật, thông báo ERP (khi có quyền) và ⚙ Cài đặt thông báo tin nhắn trong
+ * app (bật / tắt từng tài khoản hoặc tất cả). Nhắc lịch sắp tới ("15 phút nữa tới lịch hẹn"): bấm = đã đọc + mở hội thoại
+ * gắn với lịch (không có thì mở Lịch), chuông trên thanh tiêu đề thôi báo.
+ */
 export default function NotificationCenter({ onClose }: Props) {
+  const [view, setView] = useState<'list' | 'settings'>('list');
+  if (view === 'settings') {
+    return (
+      <div className="w-80 max-h-[520px] bg-card border border-input rounded-xl shadow-2xl overflow-hidden flex flex-col">
+        <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
+          <button onClick={() => setView('list')} className="text-muted-foreground hover:text-foreground" title="Quay lại" aria-label="Quay lại">
+            <ArrowLeftIcon className="w-4 h-4" />
+          </button>
+          <span className="flex-1 text-sm font-semibold text-foreground">Thông báo tin nhắn trong app</span>
+          {onClose && (
+            <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-xs" title="Đóng">✕</button>
+          )}
+        </div>
+        <div className="flex-1 overflow-y-auto p-1.5">
+          <InAppNotifySettings />
+        </div>
+      </div>
+    );
+  }
+  return <NotificationList onClose={onClose} onOpenSettings={() => setView('settings')} />;
+}
+
+/** payload lưu JSON (IPC / REST trả chuỗi hoặc object). */
+function payloadOf(n: ErpNotification): Record<string, any> {
+  if (n.payload && typeof n.payload === 'object') return n.payload;
+  try { return JSON.parse(String(n.payload || '{}')) || {}; } catch { return {}; }
+}
+
+/** Nhắc lịch: id lịch để tắt chuông trên thanh tiêu đề khi đã đọc / xoá. */
+function reminderEventIds(items: ErpNotification[]): string[] {
+  return items.filter(n => n.type === 'event_reminder').map(n => String(payloadOf(n).eventId || '')).filter(Boolean);
+}
+
+function NotificationList({ onClose, onOpenSettings }: Props & { onOpenSettings: () => void }) {
   const eid = useCurrentEmployeeId();
   const erpPerms = useErpPermissions();
-  const { inbox, loadInbox, markRead, markAllRead, deleteNotifications, deleteAllNotifications } = useErpNotificationStore();
+  const inbox = useErpNotificationStore(s => s.inbox);
+  const loadInbox = useErpNotificationStore(s => s.loadInbox);
+  const markRead = useErpNotificationStore(s => s.markRead);
+  const markAllRead = useErpNotificationStore(s => s.markAllRead);
+  const deleteNotifications = useErpNotificationStore(s => s.deleteNotifications);
+  const deleteAllNotifications = useErpNotificationStore(s => s.deleteAllNotifications);
+  const dismissReminders = (items: ErpNotification[]) => {
+    const ids = reminderEventIds(items);
+    if (ids.length) useErpReminderAttention.getState().dismiss(ids);
+  };
+  const readOne = (n: ErpNotification) => {
+    dismissReminders([n]);
+    if (!n.read) void markRead([n.id]);
+  };
+  const openOne = (n: ErpNotification) => {
+    readOne(n);
+    if (n.type !== 'event_reminder') return;
+    const payload = payloadOf(n);
+    if (hasLinkedConversation(payload)) {
+      openLinkedConversation(payload);
+    } else {
+      window.dispatchEvent(new CustomEvent('nav:view', { detail: { view: 'erp' } }));
+      window.setTimeout(() => window.dispatchEvent(new CustomEvent('nav:erp', { detail: { subView: 'calendar' } })), 80);
+    }
+    onClose?.();
+  };
   const { status, updateInfo, progress, platform, setShowPopup, openUpdatePopup } = useUpdateStore();
   const isMac = platform === 'darwin';
   const hasUpdate = !!updateInfo && status === 'available';
@@ -45,17 +113,25 @@ export default function NotificationCenter({ onClose }: Props) {
           {hasErpNotifs && (
             <>
               <button
-                onClick={() => markAllRead(eid)}
+                onClick={() => { useErpReminderAttention.getState().dismiss(); void markAllRead(eid); }}
                 className="text-[11px] text-muted-foreground hover:text-foreground"
                 title="Đánh dấu tất cả đã đọc"
               >Đọc hết</button>
               <button
-                onClick={() => deleteAllNotifications(eid)}
+                onClick={() => { useErpReminderAttention.getState().dismiss(); void deleteAllNotifications(eid); }}
                 className="text-[11px] text-muted-foreground hover:text-red-400"
                 title="Xoá tất cả thông báo"
               >Xoá hết</button>
             </>
           )}
+          <button
+            onClick={onOpenSettings}
+            className="text-muted-foreground hover:text-foreground"
+            title="Cài đặt thông báo tin nhắn trong app"
+            aria-label="Cài đặt thông báo"
+          >
+            <SettingsIcon className="w-3.5 h-3.5" />
+          </button>
           {onClose && (
             <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-xs" title="Đóng">✕</button>
           )}
@@ -105,20 +181,22 @@ export default function NotificationCenter({ onClose }: Props) {
                 {g.items.map(n => (
                   <button
                     key={n.id}
-                    onClick={() => !n.read && markRead([n.id])}
+                    onClick={() => openOne(n)}
                     className={`w-full text-left px-3 py-2 border-b border-border/40 hover:bg-muted/60 flex items-start gap-2 group ${n.read ? 'opacity-60' : ''}`}
                   >
-                    {!n.read && <span className="mt-1 w-1.5 h-1.5 bg-blue-400 rounded-full flex-shrink-0" />}
-                    {n.read && <span className="mt-1 w-1.5 h-1.5 flex-shrink-0" />}
+                    {!n.read && <span className={`mt-1 w-1.5 h-1.5 rounded-full flex-shrink-0 ${n.type === 'event_reminder' ? 'bg-amber-400' : 'bg-blue-400'}`} />}
+                    {!!n.read && <span className="mt-1 w-1.5 h-1.5 flex-shrink-0" />}
                     <div className="flex-1 min-w-0">
-                      <div className="text-xs text-foreground font-medium truncate">{n.title}</div>
+                      <div className={`text-xs font-medium truncate ${n.type === 'event_reminder' && !n.read ? 'text-amber-500' : 'text-foreground'}`}>
+                        {n.type === 'event_reminder' ? `⏰ ${n.title}` : n.title}
+                      </div>
                       {n.body && <div className="text-[11px] text-muted-foreground truncate">{n.body}</div>}
                       <div className="text-[10px] text-muted-foreground mt-0.5">{formatTime(n.created_at)}</div>
                     </div>
                     <div className="flex items-center gap-0.5 flex-shrink-0">
                       {!n.read && (
                         <button
-                          onClick={(e) => { e.stopPropagation(); markRead([n.id]); }}
+                          onClick={(e) => { e.stopPropagation(); readOne(n); }}
                           className="w-5 h-5 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-blue-500/20 text-muted-foreground hover:text-blue-400 transition-all"
                           title="Đánh dấu đã đọc"
                         >
@@ -128,7 +206,7 @@ export default function NotificationCenter({ onClose }: Props) {
                         </button>
                       )}
                       <button
-                        onClick={(e) => { e.stopPropagation(); deleteNotifications([n.id]); }}
+                        onClick={(e) => { e.stopPropagation(); dismissReminders([n]); void deleteNotifications([n.id]); }}
                         className="w-5 h-5 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-muted-foreground hover:text-red-400 transition-all"
                         title="Xoá thông báo này"
                       >

@@ -92,7 +92,7 @@ export function BugReportPanel() {
             </ol>
           </div>
           <p className="text-muted-foreground leading-relaxed">
-            <strong className="text-foreground">Môi trường:</strong> Deplao v26.10.2, Windows 11, Zalo cá nhân, dùng một mình (không có nhân viên).
+            <strong className="text-foreground">Môi trường:</strong> Deplao v26.10.3, Windows 11, Zalo cá nhân, dùng một mình (không có nhân viên).
             Đã thử 50 người (bình thường), 100 người (bình thường), 150 người (lỗi). Đính kèm: ảnh chụp + file nhật ký.
           </p>
           <div className="bg-success/10 border border-success/30 rounded-lg p-2 mt-2">

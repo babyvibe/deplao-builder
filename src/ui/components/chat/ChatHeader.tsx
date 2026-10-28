@@ -20,11 +20,13 @@ import { fetchContactInfo } from '@/hooks/useZaloEvents';
 import { extractUserProfile } from '../../../utils/profileUtils';
 import { fetchAllAliases } from '@/lib/zaloAliasUtils';
 import { Spinner } from '@/components/common/PageLoading';
-import { BotIcon, CloudIcon, RefreshIcon } from '@/components/common/icons';
+import { BotIcon, ClockIcon, CloudIcon, RefreshIcon } from '@/components/common/icons';
+import { zaloAutoDeleteLabel } from '../../../shared/zaloAutoDelete';
 import { MY_DOCUMENTS_NAME, isMyDocumentsThread } from '@/lib/chat/myDocuments';
 import { PluginPanelToggle } from '@/components/plugins/PluginChatPanel';
 import { CHANNEL, isZalo, isFacebook, isTelegram, isTelegramUser } from '@/lib/channelHelper';
 import PeerInitials from '@/components/common/PeerInitials';
+import { ZaloHeaderPresence } from './zalo/ZaloOnlinePresence';
 
 interface HeaderLocalLabel {
   id: number;
@@ -808,6 +810,13 @@ export default function ChatHeader() {
                   </svg>
               }
             </button>
+            {/* Tự xoá tin nhắn đang bật trên Zalo (ZL-05) — Deplao vẫn giữ tin */}
+            {isZalo(activeAccount?.channel) && Number(contact?.zalo_auto_delete_ttl) > 0 && (
+              <span className="flex-shrink-0 text-muted-foreground ml-1"
+                title={`Zalo tự xoá tin nhắn mới sau ${zaloAutoDeleteLabel(Number(contact?.zalo_auto_delete_ttl))} — Deplao vẫn giữ tin trên máy này`}>
+                <ClockIcon className="w-3.5 h-3.5" />
+              </span>
+            )}
             {/* Group rename button - chỉ cho nhóm Zalo (có API) */}
             {isGroup && channelCap.supportsGroupRename && isZalo(activeAccount?.channel) && (
               <button
@@ -865,6 +874,10 @@ export default function ChatHeader() {
               </button>
             )}
           </div>
+          {/* Zalo 1:1: "Trực tuyến" / "Truy cập 14:05" từ dữ liệu đã có — không hỏi Zalo thêm (ZL-01 giai đoạn 2) */}
+          {!isGroup && !isMyDocs && isZalo(activeAccount?.channel) && (
+            <ZaloHeaderPresence accountId={activeAccountId} userId={activeThreadId} />
+          )}
           {isTelegramGroup && (telegramMemberCount > 0 || telegramOnlineCount > 0) && (
             <button
               type="button"

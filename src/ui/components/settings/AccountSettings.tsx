@@ -1,11 +1,35 @@
-import React, { useState, useEffect, useCallback } from 'react';
+/**
+ * Cài đặt → Tài khoản: mỗi tài khoản là một thẻ, cài đặt riêng của tài khoản hiện ngay dưới dòng tài khoản kèm trạng
+ * thái hiện tại, bấm dòng nào mở phần chỉnh của dòng đó ngay bên dưới (trước đây giấu sau nút bánh răng → hộp thoại).
+ * "Thông báo trong app" là công tắc ngay trên dòng (InAppNotifySettings).
+ * "Tự động xoá media" có ở mọi kênh và đọc cấu hình khi mở trang (chỉ đọc app_settings trên máy); Zalo thêm
+ * "Quyền riêng tư Zalo" và "Hội thoại ẩn" — hai mục này gọi Zalo nên chỉ tải khi mở ra.
+ */
+import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import ipc from '@/lib/ipc';
-import { useAccountStore } from '@/store/accountStore';
+import { useAccountStore, type AccountInfo } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
 import { showConfirm } from '../common/ConfirmDialog';
 import { extractApiError } from '@/utils/apiError';
-import { FolderIcon, GlobeIcon, HardDriveIcon, SettingsIcon, TrashIcon, UserIcon } from '@/components/common/icons';
-import { isFacebook } from '@/lib/channelHelper';
+import { ChevronDownIcon, EyeOffIcon, FolderIcon, ShieldIcon, TrashIcon, UserIcon } from '@/components/common/icons';
+import { Button, Switch } from '@/components/ui';
+import { getChannelLabel, resolveAccountChannel } from '../../../configs/channelConfig';
+import { isZalo } from '@/lib/channelHelper';
+import ZaloPrivacySettings from './ZaloPrivacySettings';
+import ZaloHiddenPinSection from './ZaloHiddenPinSection';
+import { InAppNotifyAccountLine } from './InAppNotifySettings';
+
+type MediaConfig = { enabled: boolean; days: number };
+type MediaDraft = { enabled: boolean; days: string };
+type SettingId = 'media' | 'privacy' | 'hidden';
+
+const DEFAULT_MEDIA: MediaConfig = { enabled: false, days: 30 };
+const toDraft = (config: MediaConfig): MediaDraft => ({ enabled: config.enabled, days: String(config.days) });
+/** Số ngày 1–365; ô để trống / gõ sai thì giữ số đã lưu. */
+const clampDays = (text: string, fallback: number) => {
+  const n = parseInt(text, 10);
+  return Number.isFinite(n) ? Math.min(365, Math.max(1, n)) : fallback;
+};
 
 function Section({ children }: { children: React.ReactNode }) {
   return (
@@ -15,60 +39,209 @@ function Section({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
+/** Một dòng cài đặt dưới tài khoản: tên + trạng thái hiện tại; bấm để mở / đóng phần chỉnh ngay bên dưới. */
+function SettingLine({ panelId, icon, title, summary, open, onToggle, children }: {
+  panelId: string;
+  icon: React.ReactNode;
+  title: string;
+  summary: React.ReactNode;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
   return (
-    <button onClick={() => onChange(!value)}
-      className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${value ? 'bg-blue-600' : 'bg-accent'}`}>
-      <span className={`absolute top-0.5 left-0 w-5 h-5 bg-white rounded-full shadow transition-transform ${value ? 'translate-x-5' : 'translate-x-0.5'}`} />
-    </button>
+    <div>
+      <button type="button" onClick={onToggle} aria-expanded={open} aria-controls={open ? panelId : undefined}
+        className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-muted">
+        <span className="flex-shrink-0 text-muted-foreground">{icon}</span>
+        <span className="flex-shrink-0 text-[13px] text-foreground">{title}</span>
+        <span className="ml-auto min-w-0 truncate text-right text-xs text-muted-foreground">{summary}</span>
+        <ChevronDownIcon className={`h-3.5 w-3.5 flex-shrink-0 text-muted-foreground transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && <div id={panelId} className="max-w-lg px-2 pb-3 pt-1.5">{children}</div>}
+    </div>
+  );
+}
+
+function AccountCard({ acc, onDelete }: { acc: AccountInfo; onDelete: () => void }) {
+  const showNotification = useAppStore((s) => s.showNotification);
+  const baseId = useId();
+  const zalo = isZalo(acc.channel);
+  const [open, setOpen] = useState<ReadonlySet<SettingId>>(() => new Set());
+
+  // Tự động xoá media — saved = cấu hình đang lưu (null khi chưa đọc xong / đọc lỗi), draft = đang chỉnh
+  const [saved, setSaved] = useState<MediaConfig | null>(null);
+  const [draft, setDraft] = useState<MediaDraft>(() => toDraft(DEFAULT_MEDIA));
+  const [loadError, setLoadError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const loadSeq = useRef(0);
+
+  const loadMedia = useCallback(async () => {
+    const mySeq = ++loadSeq.current;
+    setLoadError('');
+    try {
+      const res = await ipc.login?.getMediaAutoDelete(acc.zalo_id);
+      if (mySeq !== loadSeq.current) return;
+      if (res?.success) {
+        const config = res.config ? { enabled: !!res.config.enabled, days: Number(res.config.days) || DEFAULT_MEDIA.days } : DEFAULT_MEDIA;
+        setSaved(config);
+        setDraft(toDraft(config));
+      } else {
+        setLoadError(extractApiError(res, 'Không đọc được cấu hình'));
+      }
+    } catch (err: any) {
+      if (mySeq === loadSeq.current) setLoadError(err?.message || 'Không đọc được cấu hình');
+    }
+  }, [acc.zalo_id]);
+
+  useEffect(() => {
+    void loadMedia();
+    return () => { loadSeq.current++; };
+  }, [loadMedia]);
+
+  const toggle = (id: SettingId) => {
+    const closing = open.has(id);
+    // Đóng "Tự động xoá media" = bỏ thay đổi chưa lưu
+    if (closing && id === 'media' && saved) setDraft(toDraft(saved));
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (closing) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const draftDays = clampDays(draft.days, saved?.days ?? DEFAULT_MEDIA.days);
+  const dirty = !!saved && (draft.enabled !== saved.enabled || draftDays !== saved.days);
+
+  const saveMedia = async () => {
+    if (!saved || saving) return;
+    setSaving(true);
+    try {
+      const res = await ipc.login?.setMediaAutoDelete(acc.zalo_id, draft.enabled, draftDays);
+      if (res?.success) {
+        const config = res.config ?? { enabled: draft.enabled, days: draftDays };
+        setSaved(config);
+        setDraft(toDraft(config));
+        setOpen((prev) => {
+          const next = new Set(prev);
+          next.delete('media');
+          return next;
+        });
+        showNotification(res.message || 'Đã lưu cấu hình xoá media', 'success');
+      } else {
+        showNotification(extractApiError(res, 'Lỗi lưu cấu hình'), 'error');
+      }
+    } catch (err: any) {
+      showNotification(err?.message || 'Lỗi lưu cấu hình', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const mediaSummary = saved
+    ? (saved.enabled ? <><span className="font-medium text-foreground">Bật</span> · xoá media cũ hơn {saved.days} ngày</> : 'Tắt')
+    : (loadError ? 'Không đọc được' : 'Đang tải...');
+
+  return (
+    <div className="rounded-xl border border-border/60 bg-card">
+      {/* Dòng tài khoản */}
+      <div className="flex items-center gap-3 p-2.5">
+        <div className={`w-2 h-2 rounded-full flex-shrink-0 ${acc.isOnline ? 'bg-green-400' : 'bg-accent'}`} />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <p className="text-sm text-foreground truncate font-medium">{acc.full_name || acc.zalo_id}</p>
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-900/50 text-blue-300">
+              {getChannelLabel(resolveAccountChannel(acc))}
+            </span>
+          </div>
+          <p className="text-xs text-muted-foreground">{acc.zalo_id}</p>
+        </div>
+        <span className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0 ${acc.isOnline ? 'bg-green-900/50 text-green-400' : 'bg-accent text-muted-foreground'}`}>
+          {acc.isOnline ? 'Online' : 'Offline'}
+        </span>
+        <button
+          onClick={onDelete}
+          className="text-red-400 hover:text-red-300 text-xs flex-shrink-0 ml-1"
+        >
+          Xóa
+        </button>
+      </div>
+
+      {/* Cài đặt riêng của tài khoản */}
+      <div className="border-t border-border/60 px-1.5 py-1">
+        <InAppNotifyAccountLine accountId={acc.zalo_id} />
+        <SettingLine panelId={`${baseId}-media`} icon={<FolderIcon className="h-4 w-4" />} title="Tự động xoá media"
+          summary={mediaSummary} open={open.has('media')} onToggle={() => toggle('media')}>
+          {saved ? (
+            <div className="space-y-3">
+              <Switch size="sm" checked={draft.enabled} disabled={saving}
+                onCheckedChange={(on) => setDraft((d) => ({ ...d, enabled: on }))}
+                label="Bật tự động xoá" description="Xoá file media (ảnh, video, file) cũ hơn số ngày cài đặt" />
+              <div className="flex items-center gap-2">
+                <label htmlFor={`${baseId}-days`} className="text-xs text-muted-foreground">Xoá sau</label>
+                <input
+                  id={`${baseId}-days`}
+                  type="number"
+                  min={1}
+                  max={365}
+                  value={draft.days}
+                  disabled={!draft.enabled || saving}
+                  onChange={(e) => setDraft((d) => ({ ...d, days: e.target.value }))}
+                  onBlur={() => setDraft((d) => ({ ...d, days: String(clampDays(d.days, saved.days)) }))}
+                  className="w-20 rounded-lg border border-input bg-muted px-2.5 py-1.5 text-sm text-foreground transition-colors disabled:opacity-60"
+                />
+                <span className="text-xs text-muted-foreground">ngày</span>
+              </div>
+              <p className="text-[11px] leading-relaxed text-muted-foreground">
+                Hệ thống tự kiểm tra và xoá media cũ mỗi ngày một lần (3:00 AM). Lưu khi đang bật thì dọn dẹp chạy ngay lập tức.
+              </p>
+              <div className="flex justify-end gap-2">
+                {dirty && (
+                  <Button variant="ghost" size="sm" onClick={() => setDraft(toDraft(saved))} disabled={saving}>Huỷ</Button>
+                )}
+                <Button size="sm" onClick={() => void saveMedia()} disabled={saving || (!dirty && !draft.enabled)}>
+                  {saving ? 'Đang lưu...' : draft.enabled ? 'Lưu & chạy ngay' : 'Lưu'}
+                </Button>
+              </div>
+            </div>
+          ) : loadError ? (
+            <div className="flex items-center gap-2 text-xs">
+              <span role="alert" className="text-destructive">{loadError}</span>
+              <Button variant="ghost" size="sm" onClick={() => void loadMedia()}>Thử lại</Button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 py-1 text-xs text-muted-foreground">
+              <div className="w-3 h-3 border-2 border-border-strong border-t-transparent rounded-full animate-spin" />
+              Đang tải cấu hình...
+            </div>
+          )}
+        </SettingLine>
+
+        {zalo && (
+          <>
+            <SettingLine panelId={`${baseId}-privacy`} icon={<ShieldIcon className="h-4 w-4" />} title="Quyền riêng tư Zalo"
+              summary="Nhắn tin, gọi điện, ngày sinh, trạng thái truy cập…" open={open.has('privacy')} onToggle={() => toggle('privacy')}>
+              <ZaloPrivacySettings accountId={acc.zalo_id} />
+            </SettingLine>
+            <SettingLine panelId={`${baseId}-hidden`} icon={<EyeOffIcon className="h-4 w-4" />} title="Hội thoại ẩn"
+              summary="Mã PIN, đặt lại khi quên" open={open.has('hidden')} onToggle={() => toggle('hidden')}>
+              <ZaloHiddenPinSection accountId={acc.zalo_id} />
+            </SettingLine>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 
 export default function AccountSettings() {
-  const { accounts, removeAccount } = useAccountStore();
-  const { showNotification } = useAppStore();
-
-  // Settings modal state
-  const [settingsModalAcc, setSettingsModalAcc] = useState<string | null>(null);
-  const [localConfig, setLocalConfig] = useState<{ enabled: boolean; days: number }>({ enabled: false, days: 30 });
-  const [configLoaded, setConfigLoaded] = useState(false);
-  const [savingMedia, setSavingMedia] = useState(false);
+  const accounts = useAccountStore((s) => s.accounts);
+  const removeAccount = useAccountStore((s) => s.removeAccount);
+  const showNotification = useAppStore((s) => s.showNotification);
 
   // Delete modal state
   const [deleteModalAcc, setDeleteModalAcc] = useState<string | null>(null);
   const [deleteWithData, setDeleteWithData] = useState(true);
-
-  // Load config khi mở modal
-  useEffect(() => {
-    if (settingsModalAcc) {
-      setConfigLoaded(false);
-      setLocalConfig({ enabled: false, days: 30 });
-      ipc.login?.getMediaAutoDelete(settingsModalAcc).then((res: any) => {
-        if (res?.success && res.config) {
-          setLocalConfig(res.config);
-        }
-        setConfigLoaded(true);
-      });
-    }
-  }, [settingsModalAcc]);
-
-  const handleSaveMediaConfig = async () => {
-    if (!settingsModalAcc) return;
-    setSavingMedia(true);
-    try {
-      const res = await ipc.login?.setMediaAutoDelete(settingsModalAcc, localConfig.enabled, localConfig.days);
-      if (res?.success) {
-        showNotification(res.message || 'Đã lưu cấu hình xoá media', 'success');
-        setSettingsModalAcc(null);
-      } else {
-        showNotification('Lỗi lưu cấu hình', 'error');
-      }
-    } catch (err: any) {
-      showNotification('Lỗi lưu cấu hình', 'error');
-    } finally {
-      setSavingMedia(false);
-    }
-  };
 
   const handleDeleteAccount = async (zaloId: string) => {
     const ok = await showConfirm({
@@ -101,127 +274,11 @@ export default function AccountSettings() {
       <Section>
         <div className="space-y-2">
           {accounts.map((acc) => (
-            <div key={acc.zalo_id}>
-              {/* Account card row */}
-              <div className="flex items-center gap-3 p-2.5 bg-card border border-border/60 rounded-xl">
-                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${acc.isOnline ? 'bg-green-400' : 'bg-accent'}`} />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm text-foreground truncate font-medium">{acc.full_name || acc.zalo_id}</p>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${isFacebook(acc.channel) ? 'bg-blue-900/50 text-blue-400' : 'bg-blue-900/50 text-blue-300'}`}>
-                      {isFacebook(acc.channel) ? 'FB' : 'Zalo'}
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">{acc.zalo_id}</p>
-                </div>
-                <span className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0 ${acc.isOnline ? 'bg-green-900/50 text-green-400' : 'bg-accent text-muted-foreground'}`}>
-                  {acc.isOnline ? 'Online' : 'Offline'}
-                </span>
-                {/* Settings gear icon */}
-                <button
-                  onClick={() => setSettingsModalAcc(acc.zalo_id)}
-                  className="text-muted-foreground hover:text-foreground transition-colors p-1"
-                  title="Cài đặt tài khoản"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                </button>
-                {/* Delete button */}
-                <button
-                  onClick={() => setDeleteModalAcc(acc.zalo_id)}
-                  className="text-red-400 hover:text-red-300 text-xs flex-shrink-0 ml-1"
-                >
-                  Xóa
-                </button>
-              </div>
-            </div>
+            <AccountCard key={acc.zalo_id} acc={acc} onDelete={() => setDeleteModalAcc(acc.zalo_id)} />
           ))}
           {accounts.length === 0 && <p className="text-muted-foreground text-sm">Chưa có tài khoản nào</p>}
         </div>
       </Section>
-
-      {/* ── Settings popup (auto-delete media) ── */}
-      {settingsModalAcc && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => setSettingsModalAcc(null)}>
-          <div className="bg-card border border-input rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
-            {/* Header */}
-            <div className="px-5 pt-5 pb-3 border-b border-border">
-              <div className="flex items-center gap-3 mb-1">
-                <SettingsIcon className="w-6 h-6" />
-                <h3 className="text-base font-semibold text-foreground">Cài đặt tài khoản</h3>
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                {accounts.find(a => a.zalo_id === settingsModalAcc)?.full_name || settingsModalAcc}
-              </p>
-            </div>
-
-            {/* Body */}
-            <div className="p-5 space-y-5">
-              {/* Auto-delete media */}
-              <div>
-                <p className="text-sm font-semibold text-foreground mb-3"><FolderIcon className="w-4 h-4 inline" /> Tự động xoá media</p>
-                {configLoaded ? (
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-foreground/80">Bật tự động xoá</p>
-                        <p className="text-xs text-muted-foreground">Xoá file media cũ hơn số ngày cài đặt</p>
-                      </div>
-                      <Toggle
-                        value={localConfig.enabled}
-                        onChange={(v) => setLocalConfig(prev => ({ ...prev, enabled: v }))}
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs text-muted-foreground mb-1.5 block">Xoá sau (ngày)</label>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="number"
-                          min={1}
-                          max={365}
-                          value={localConfig.days}
-                          onChange={(e) => setLocalConfig(prev => ({ ...prev, days: parseInt(e.target.value) || 30 }))}
-                          className={`w-full bg-muted text-foreground text-sm rounded-lg px-3 py-2 border transition-colors ${localConfig.enabled ? 'border-input' : 'border-border opacity-60'}`}
-                          disabled={!localConfig.enabled}
-                        />
-                        <span className="text-xs text-muted-foreground flex-shrink-0">ngày</span>
-                      </div>
-                    </div>
-                    <p className="text-[11px] text-muted-foreground leading-relaxed">
-                      Hệ thống sẽ tự động kiểm tra và xoá media cũ mỗi ngày một lần (3:00 AM).
-                      Khi lưu, thao tác dọn dẹp sẽ được chạy ngay lập tức.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground py-3">
-                    <div className="w-3 h-3 border-2 border-border-strong border-t-transparent rounded-full animate-spin" />
-                    Đang tải cấu hình...
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Footer */}
-            <div className="px-5 pb-5 flex gap-2">
-              <button
-                onClick={() => setSettingsModalAcc(null)}
-                className="flex-1 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-xl transition-colors"
-              >
-                Huỷ
-              </button>
-              <button
-                onClick={handleSaveMediaConfig}
-                disabled={savingMedia || !configLoaded}
-                className="flex-1 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-500 rounded-xl transition-colors disabled:opacity-50"
-              >
-                {savingMedia ? 'Đang lưu...' : 'Lưu & chạy ngay'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ── Delete account confirmation modal ── */}
       {deleteModalAcc && (

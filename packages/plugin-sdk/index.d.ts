@@ -26,6 +26,18 @@ export interface Pagination {
 /** Danh sách trả về có thêm thuộc tính pagination (không liệt kê). */
 export type Paged<T> = T[] & { readonly pagination?: Pagination };
 
+/**
+ * Hàm API trả file (qua HTTP là stream): downloadMessageMedia, downloadLibraryItem, downloadLibraryThumb.
+ * Ứng dụng nhận nội dung base64, tối đa 25 MB (lớn hơn → lỗi PAYLOAD_TOO_LARGE). Cần quyền media:read.
+ * Ghi âm Zalo (msg_type chat.voice) chưa có trên máy thì Deplao tự tải bằng phiên của tài khoản.
+ */
+export interface FileContent {
+  name: string;
+  mime: string;
+  size: number;
+  base64: string;
+}
+
 export interface DeplaoEvent<T = any> {
   id: string;
   seq: number;
@@ -96,6 +108,7 @@ export interface DeplaoCommon {
   integrations: ApiGroup;
   erp: ApiGroup;
   ai: ApiGroup;
+  /** Ngoài upload: mọi operationId (vd downloadLibraryItem → FileContent). */
   media: ApiGroup & { upload?: any };
   analytics: ApiGroup;
   [group: string]: any;
@@ -123,15 +136,80 @@ export interface DeplaoWeb extends DeplaoCommon {
   ready(cb: (init: { pluginId: string; kind: 'page' | 'panel'; context: ChatContext | null; theme: ThemeInfo; settings: Record<string, any> }) => void): () => void;
 }
 
+/**
+ * Worker + D1 trên tài khoản Cloudflare đã kết nối trong Deplao (chỉ backend, quyền manifest "cloudflare:workers").
+ * Token Cloudflare không bao giờ đưa cho ứng dụng. Tên Worker / D1 phải ĐÚNG BẰNG tiền tố của ứng dụng (phần cuối id,
+ * vd "io.github.acme.fintrack" → "fintrack") hoặc bắt đầu bằng "<tiền tố>-" (1–63 ký tự a-z, 0-9, "-").
+ * Lỗi: DeplaoApiError với code PLUGIN_PERMISSION | CF_NOT_CONNECTED | CF_PERMISSION | CF_NAME_FORBIDDEN |
+ * CF_BUNDLE_INVALID | CF_API (+ VALIDATION_ERROR, NOT_FOUND, CONFLICT, TIMEOUT).
+ * Mỗi lời gọi tốn request trong ngân sách 100 request / 5 phút dùng chung của Deplao — đừng gọi theo vòng lặp.
+ */
+export interface DeplaoCloudflare {
+  /** Không gọi Cloudflare nếu chưa kết nối; kết quả nhớ ~60 giây. */
+  status(): Promise<{
+    connected: boolean;
+    accountId: string | null;
+    accountName: string | null;
+    /** <subdomain>.workers.dev của tài khoản; null nếu chưa bật / chưa đọc được. */
+    workersSubdomain: string | null;
+    /** Tiền tố tên tài nguyên của ứng dụng, vd "fintrack". */
+    prefix: string;
+    /** Quyền token còn thiếu, vd ["Account · D1 · Edit"]; rỗng = đủ. */
+    missing: string[];
+  }>;
+  d1: {
+    /** Tìm theo tên, chưa có thì tạo (location hint 'apac'). */
+    ensure(name: string): Promise<{ uuid: string; name: string; created: boolean }>;
+    /**
+     * Áp migration như `wrangler d1 migrations apply`: bảng d1_migrations(id, name, applied_at), file *.sql sắp theo
+     * tên, bỏ file đã áp. `dir` là thư mục tương đối trong thư mục ứng dụng đã cài. Lỗi → dừng, message nêu tên file.
+     */
+    migrate(name: string, dir: string): Promise<{ applied: string[]; skipped: string[] }>;
+    /** Một câu lệnh (đọc kiểm tra). */
+    query<T = any>(name: string, sql: string, params?: Array<string | number | null>): Promise<{ results: T[] }>;
+  };
+  workers: {
+    /** Worker đã có chưa (để hỏi người dùng trước khi ghi đè). */
+    get(name: string): Promise<{ exists: boolean; modifiedOn: string | null; url: string | null }>;
+    /**
+     * Triển khai gói dựng sẵn trong thư mục ứng dụng (main tự đọc file, không gửi qua IPC). Có thể mất vài phút:
+     * gọi từ commands thì trả kết quả sớm cho UI và ghi tiến độ bằng storage / log thay vì chờ.
+     */
+    deployBundle(input: {
+      /** Tên Worker (theo quy tắc tiền tố). */
+      name: string;
+      /** Thư mục tương đối trong ứng dụng, có bundle.json, worker/, assets/ (tuỳ chọn). */
+      bundleDir: string;
+      bindings?: {
+        /** Tên binding → tên D1 (theo quy tắc tiền tố; tạo trước bằng d1.ensure), vd { DB: "fintrack" }. */
+        d1?: Record<string, string>;
+        /** Tên binding Workers AI, vd "AI". */
+        ai?: string;
+        /** Biến thường (mỗi biến ≤ 5 KB). */
+        vars?: Record<string, string>;
+      };
+      /** Ghi bằng API secrets của Worker (mỗi secret ≤ 5 KB), không log. Secret cũ được giữ khi triển khai lại. */
+      secrets?: Record<string, string>;
+      /** Bật route <tên>.<subdomain>.workers.dev (mặc định true). */
+      workersDev?: boolean;
+    }): Promise<{ name: string; url: string | null; deployedAt: number }>;
+  };
+}
+
 /** SDK ở backend. */
 export interface DeplaoBackend extends DeplaoCommon {
   media: ApiGroup & {
     upload(name: string, data: Buffer | string, mime?: string): Promise<{ upload_id: string; name: string; kind: string; size: number; mime: string; expires_at: number }>;
   };
   http: {
-    /** Cần quyền network; chặn mạng nội bộ; body tối đa 5 MB. */
-    fetch(url: string, init?: { method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number }): Promise<{ status: number; url: string; headers: Record<string, any>; truncated: boolean; text?: string; base64?: string }>;
+    /**
+     * Cần quyền network; chặn mạng nội bộ; body tối đa 5 MB. Kết quả có `text` (chữ) hoặc `base64` (nhị phân):
+     * mặc định đoán theo Content-Type (thiếu thì xem nội dung); `responseType` ép một kiểu.
+     */
+    fetch(url: string, init?: { method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number; responseType?: 'auto' | 'text' | 'base64' }): Promise<{ status: number; url: string; headers: Record<string, any>; truncated: boolean; text?: string; base64?: string }>;
   };
+  /** Cần quyền cloudflare:workers (runtime local). */
+  cloudflare: DeplaoCloudflare;
 }
 
 export interface BackendContext {

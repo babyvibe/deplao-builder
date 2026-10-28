@@ -2,7 +2,7 @@ import React from 'react';
 import {
   AlertIcon, CalendarIcon, ChartIcon, ChatIcon, ClipboardIcon, ClockIcon, CreditCardIcon, EditIcon, FileTextIcon,
   FolderIcon, ImageIcon, InfoIcon, LightningIcon, PaperclipIcon, PinIcon, ReplyIcon, SearchIcon, SendIcon,
-  SettingsIcon, ShareIcon, SmileIcon, TagIcon, UserIcon, WaveIcon,
+  SettingsIcon, ShareIcon, ShieldIcon, SmileIcon, TagIcon, UserIcon, WaveIcon,
 } from '@/components/common/icons';
 import { BulletList, Card, Paragraph, SectionTitle } from './introUi';
 
@@ -58,10 +58,14 @@ export function MessagingPanel() {
           Muốn xử lý nhiều tài khoản trong cùng một danh sách, bật chế độ Gộp trang (xem mục Đa tài khoản).
         </Paragraph>
         <BulletList items={[
-          `${b('Bộ lọc:')} Tất cả · Chưa đọc · Nhãn (Nhãn Local hoặc Nhãn Zalo; chọn nhiều nhãn theo kiểu "Tất cả nhãn đã chọn" hoặc "Có chứa 1 trong số nhãn").`,
-          `${b('Menu ⋮ cạnh bộ lọc:')} thư mục ${b('Khác')} (hội thoại ít quan trọng — không phát âm thanh, không hiện thông báo), ${b('Tin đánh dấu')}, ${b('Tự động đánh dấu đã đọc')} và lọc theo ${b('Kênh')} (Zalo · Facebook · Telegram · Telegram Bot).`,
-          `${b('Tự động đánh dấu đã đọc')} (menu ⋮ → Tự động): đánh dấu đã đọc hàng loạt các hội thoại chưa đọc theo thời gian tin nhắn cuối (Tất cả · Hôm nay · 7 ngày qua · 30 ngày qua · Cũ hơn 7 ngày · Tuỳ chọn), có thể gồm cả thư mục Khác và đồng bộ "đã đọc" lên Zalo, Facebook, Telegram. Xem trước số hội thoại rồi bấm Bắt đầu; đóng popup vẫn chạy nền.`,
-          `${b('Chuột phải vào hội thoại:')} Đánh dấu đã đọc / chưa đọc · Tắt thông báo (Trong 1 giờ · Trong 4 giờ · Cho đến 8:00 AM · Cho đến khi được mở lại) · Ghim (đồng bộ Zalo / Telegram) hoặc Ghim trong app · Chuyển vào Khác · Mời vào nhóm · Xóa hội thoại (chỉ xoá trên app này).`,
+          `${b('Bộ lọc:')} Tất cả · Chưa đọc · Nhãn (Nhãn Local hoặc Nhãn Zalo; chọn nhiều nhãn theo kiểu "Tất cả nhãn đã chọn" hoặc "Có chứa 1 trong số nhãn"). Bấm ${b('Tất cả')} là bỏ mọi bộ lọc đang bật (kể cả các bộ lọc của menu ⋮) và về danh sách đầy đủ.`,
+          `${b('Menu ⋮ cạnh bộ lọc:')} thư mục ${b('Khác (lưu trữ)')} (hội thoại ít quan trọng — không phát âm thanh, không hiện thông báo, không tính vào số chưa đọc; hội thoại Telegram đã lưu trữ cũng nằm ở đây), lọc ${b('Chưa trả lời')} và ${b('Theo khoảng ngày')} (chọn Từ – Đến ngày của tin cuối; dùng kèm các bộ lọc khác), ${b('Tin đánh dấu')}, ${b('Tự động đánh dấu đã đọc')}, ${b('Đánh dấu đã trả lời hàng loạt')} và lọc theo ${b('Kênh')} (Zalo · Facebook · Telegram · Telegram Bot). Bộ lọc đang bật hiện thành nhãn dưới thanh bộ lọc — bấm ✕ để bỏ từng cái; bấm lại Khác (lưu trữ) / Chưa trả lời trong menu cũng là bỏ.`,
+          `${b('Đã trả lời / Chưa trả lời:')} theo tin nhắn cuối của hội thoại — của bạn (gửi từ app hay máy khác) là đã trả lời (biểu tượng mũi tên trả lời), của khách là chưa trả lời; thông báo hệ thống, bản tin OA không tính. Bộ lọc Chưa trả lời chỉ gồm hội thoại 1:1, đã đọc hay chưa đều tính.`,
+          `${b('Đã đọc trên Zalo / Facebook / Telegram:')} mở hội thoại (bấm trong danh sách, bấm thông báo, phím Tab, Chat nhanh) là báo đã đọc lên nền tảng; đang chat thì tin mới cũng được báo — khi hội thoại đang hiện, cửa sổ đang mở và bạn có thao tác chuột / phím trong 1 phút (bỏ máy đi thì báo khi bạn quay lại). Đang ở trang khác (Tổng quan, CRM, Cài đặt…) thì tin mới vẫn là chưa đọc. Telegram Bot không có trạng thái đã đọc.`,
+          `${b('Thông báo tin nhắn trong app:')} tin mới hiện thành thẻ ở góc trên bên phải (ảnh và tên tài khoản, tên hội thoại, tin tối đa 2 dòng) trong 2 giây, tối đa 3 thẻ; bấm thẻ để mở hội thoại, ✕ để tắt nhanh, rê chuột để giữ lại. Không hiện với hội thoại đã tắt thông báo, ở thư mục Khác, đang mở, hoặc tin tải lại / đồng bộ lại. Bật / tắt từng tài khoản hoặc tất cả (cả tài khoản thêm sau): chuông trên thanh tiêu đề → ⚙, Cài đặt → Thông báo, hoặc dưới mỗi tài khoản ở Cài đặt → Tài khoản.`,
+          `${b('Đánh dấu đã trả lời hàng loạt')} (menu ⋮ → Tự động): chọn thời gian tin nhắn cuối, xem trước số hội thoại chưa trả lời rồi đánh dấu đã trả lời mà không cần gửi tin (chỉ trong app). Khách nhắn tiếp thì hội thoại tự chuyển lại Chưa trả lời.`,
+          `${b('Tự động đánh dấu đã đọc')} (menu ⋮ → Tự động): đánh dấu đã đọc hàng loạt các hội thoại chưa đọc theo thời gian tin nhắn cuối (Tất cả · Hôm nay · 7 ngày qua · 30 ngày qua · Cũ hơn 7 ngày · Tuỳ chọn), có thể gồm cả Khác (lưu trữ) và đồng bộ "đã đọc" lên Zalo, Facebook, Telegram. Xem trước số hội thoại rồi bấm Bắt đầu; đóng popup vẫn chạy nền.`,
+          `${b('Chuột phải vào hội thoại:')} Đánh dấu đã đọc / chưa đọc · Đánh dấu đã trả lời / chưa trả lời (hội thoại 1:1) · Tắt thông báo (Trong 1 giờ · Trong 4 giờ · Cho đến 8:00 AM · Cho đến khi được mở lại) · Ghim (đồng bộ Zalo / Telegram) hoặc Ghim trong app · Ẩn hội thoại bằng mã PIN (Zalo) · Chuyển vào Khác (lưu trữ) / Đưa về danh sách chính · Mời vào nhóm · Xóa hội thoại (chỉ xoá trên app này).`,
           `${b('Nút "+" (Thao tác nhanh)')} cạnh ô tìm kiếm: chọn tài khoản rồi tạo nhóm Zalo / Telegram / Messenger, tham gia nhóm bằng link (xem trước nhóm trước khi vào), thêm bạn Zalo theo số điện thoại hoặc thêm liên hệ Telegram. Mục "Công việc của tôi" có Thêm lịch hẹn và Ghi chú nhanh (khi được dùng Quản lý công việc).`,
           'Hội thoại ghim luôn nằm đầu danh sách; My Documents của Zalo luôn ở trên cùng như trên Zalo.',
         ]} />
@@ -70,7 +74,7 @@ export function MessagingPanel() {
       <Card>
         <SectionTitle><SearchIcon className="w-4 h-4 inline" /> Tìm kiếm hội thoại và tin nhắn</SectionTitle>
         <BulletList items={[
-          `${b('Ô "Tìm kiếm..."')} (${kbd('Ctrl+K')}): tìm liên hệ theo tên, biệt danh, số điện thoại — gõ không dấu vẫn ra (gõ "nguyen" tìm được "Nguyễn"). Kết quả chia tab Tất cả · Liên hệ · Tin nhắn; bấm một tin để mở đúng chỗ đó trong hội thoại.`,
+          `${b('Ô "Tìm kiếm..."')} (${kbd('Ctrl+K')}): tìm liên hệ theo tên, biệt danh, số điện thoại — gõ không dấu vẫn ra (gõ "nguyen" tìm được "Nguyễn", "duc" tìm được "Đức"). Tin nhắn cũng tìm không dấu và tìm được khi đang gõ dở ("don ha" ra "Đơn hàng"); từ 2 ký tự trở lên mới tìm trong tin nhắn. Kết quả chia tab Tất cả · Liên hệ · Tin nhắn; bấm một tin để mở đúng chỗ đó trong hội thoại.`,
           `${b('Tra số điện thoại Zalo:')} nhập SĐT để tìm người dùng Zalo, kết bạn hoặc nhắn tin ngay. Khi Gộp trang, app hỏi dùng tài khoản nào để tra.`,
           `${b('Tìm người dùng Telegram:')} nhập @tên_người_dùng.`,
           `${b('Tìm trong hội thoại:')} biểu tượng kính lúp ở đầu khung chat (${kbd('Ctrl+F')}); ${kbd('Enter')} / ${kbd('Shift+Enter')} để tới kết quả tiếp theo / trước đó.`,
@@ -119,6 +123,8 @@ export function MessagingPanel() {
           `${b('Thả cảm xúc:')} bấm hoặc giữ chuột trên nút 👍 dưới tin nhắn để mở thanh cảm xúc dạng dọc (tự mở lên / xuống theo chỗ trống); bấm lại cảm xúc của mình để gỡ. Zalo, Facebook có 6 cảm xúc quen thuộc; Telegram có đủ bộ cảm xúc của hội thoại (cuộn trong thanh, hoặc menu chuột phải → nút mở rộng).`,
           `${b('Trả lời · Chuyển tiếp · Sao chép')}, Sao chép link, Copy hình ảnh, Mở trong thư mục, Lưu về máy.`,
           `${b('Chọn tin nhắn:')} chọn nhiều tin (hoặc giữ chuột kéo qua nhiều tin) để Sao chép hoặc Chuyển tiếp một lần.`,
+          `${b('Thêm vào lịch · Lưu vào ghi chú')} (khi được dùng Quản lý công việc): tạo lịch hẹn từ tin, ngày giờ tự đọc trong tin ("Mai 9h" thành 9:00 ngày mai), ghi chú là nội dung tin kèm người gửi; nhắc trước thì chuông trên thanh tiêu đề báo "15 phút nữa tới lịch hẹn", tới giờ hiện popup nhắc như nhắc hẹn Zalo, bấm Mở hội thoại để về đúng tin. Chọn nhiều tin thì thanh dưới cũng có hai nút này.`,
+          `${b('Tạo lịch hẹn')} ngay dưới tin có ngày giờ sắp tới ("mai 9h", "20 phút nữa", "thứ 6", "20/11"), như Zalo: bấm là điền sẵn ngày giờ theo tin; tin chỉ có ngày thì bạn chọn giờ. Nút tự ẩn khi đã qua giờ hẹn.`,
           `${b('Thu hồi tin nhắn')} của bạn; trưởng / phó nhóm có thêm Xoá tin nhắn của thành viên. Ngoài ra có Xóa (chỉ mình tôi) và Xóa vĩnh viễn khỏi app.`,
           `${b('Sửa tin nhắn')} đã gửi: có ở Telegram. Tin Telegram bạn gửi có thêm dòng "Đã xem" cho biết ai đã xem (trong nhóm) hoặc xem lúc nào (chat riêng).`,
         ]} />
@@ -131,6 +137,17 @@ export function MessagingPanel() {
           `Trong hộp chuyển tiếp: thêm lời nhắn kèm, chọn ${b('Tài khoản gửi')}, tìm người nhận theo tên / SĐT / ID hoặc theo tab Gần nhất · Bạn bè · Nhóm · Nhãn; chọn nhiều người nhận rồi bấm ${b('Chuyển tiếp (n)')}.`,
           'Zalo: chuyển tiếp đúng mọi loại tin — chữ có định dạng, link, danh thiếp, sticker, tin thoại, video, album, cả ảnh chưa tải về máy.',
           'Không chuyển tiếp được cuộc gọi, bình chọn, thẻ thông báo, bản tin OA, tin hệ thống — app tự bỏ qua và báo cho bạn.',
+        ]} />
+      </Card>
+
+      <Card>
+        <SectionTitle><ShieldIcon className="w-4 h-4 inline" /> Zalo: trạng thái truy cập, tự xoá tin, hội thoại ẩn, sản phẩm</SectionTitle>
+        <BulletList items={[
+          `${b('Trạng thái truy cập')} (Zalo 1:1): bấm avatar trên đầu khung chat hoặc mở chi tiết hội thoại → "Trực tuyến", "Truy cập 14:05" hoặc "Đã ẩn trạng thái truy cập" (theo Zalo, hỏi lại tối đa mỗi phút). Dòng dưới tên trên đầu khung chat nhắc lại trạng thái đã biết.`,
+          `${b('Tự xoá tin nhắn')} (Zalo): chi tiết hội thoại hoặc Quản lý nhóm → Tắt · 1 ngày · 7 ngày · 14 ngày. Zalo xoá tin trên điện thoại và Zalo PC của mọi người; ${b('Deplao vẫn giữ nguyên tin trên máy này')}. Đồng hồ cạnh tên hội thoại và cạnh giờ của tin có hẹn tự xoá. Tin gửi từ Deplao vào hội thoại đang bật (trừ sticker) cũng tự xoá trên Zalo. Tin đã quá hạn: đồng hồ gạch chéo và "(đã tự xoá trên Zalo)" — nội dung vẫn còn trong Deplao.`,
+          `${b('Hội thoại ẩn')} (Zalo, dùng chung mã PIN với app Zalo): chuột phải → Ẩn hội thoại (mã PIN), lần đầu đặt PIN 4 số. Kính lúp của ô tìm kiếm màu đỏ = tài khoản có hội thoại ẩn; gõ đúng 4 số PIN vào ô tìm kiếm thì danh sách chỉ còn các hội thoại ẩn — bấm kính lúp đỏ hoặc ✕ ở dòng "Hội thoại ẩn" để ẩn lại. Tự ẩn lại khi khoá app, đổi tài khoản hoặc 5 phút không thao tác. Hội thoại ẩn không phát âm thanh, không thông báo, không tính chưa đọc. Quên mã PIN: Cài đặt → Tài khoản → Quyền riêng tư Zalo → "Quên mã PIN? Đặt lại" (hỏi 2 lần, khoá màn hình đang bật thì nhập lại mật khẩu; Zalo có thể xoá tin của các hội thoại đang ẩn trên điện thoại, Deplao vẫn giữ). Đổi / xoá mã PIN trên điện thoại: bấm kính lúp đỏ để Deplao đọc lại từ Zalo — xoá PIN thì các hội thoại hiện lại như thường.`,
+          `${b('Gửi sản phẩm')} (tài khoản Zalo Business): nút túi hàng trên thanh soạn tin → chọn danh mục, chọn sản phẩm (chọn nhiều thì gửi cách nhau 2 giây) → gửi link sản phẩm kèm tên và giá. Bấm Quản lý để thêm / sửa / xoá danh mục và sản phẩm (tối đa 5 ảnh).`,
+          `${b('Quyền riêng tư Zalo')}: Cài đặt → Tài khoản, dòng Quyền riêng tư Zalo ngay dưới tài khoản Zalo (ngày sinh, trạng thái truy cập, "Đã xem", ai được nhắn tin / gọi điện, nguồn kết bạn); dòng Hội thoại ẩn bên dưới để đặt / đổi / đặt lại mã PIN.`,
         ]} />
       </Card>
 

@@ -57,8 +57,11 @@ export async function sendAttachment(channel: Channel, params: {
   filePath: string;
   threadType?: number;
   body?: string;
-  fileType?: 'image' | 'video' | 'audio' | 'file';
+  /** voice = ghi âm trong app (Telegram: tin thoại thật) */
+  fileType?: 'image' | 'video' | 'audio' | 'voice' | 'file';
   quote?: string | null;
+  /** Telegram: trả lời tin này (cả trong chủ đề forum / chuỗi bình luận) */
+  replyToMsgId?: string;
   libraryUuid?: string;
 }) {
   return getAdapter(channel).sendAttachment(params);
@@ -76,6 +79,8 @@ export async function sendVideo(channel: Channel, params: {
   height?: number;
   body?: string;
   quote?: any;
+  /** Telegram: trả lời tin này (cả trong chủ đề forum / chuỗi bình luận) */
+  replyToMsgId?: string;
   auth?: any;
   libraryUuid?: string;
 }) {

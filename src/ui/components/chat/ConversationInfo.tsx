@@ -22,6 +22,9 @@ import { CHANNEL, isZalo as isZaloCh, isNonZalo, isFacebook, isTelegram as isTel
 import { fetchContactInfo } from '@/hooks/useZaloEvents';
 import { BellIcon, BellOffIcon, GiftIcon, MapPinIcon, PhoneIcon, PinIcon, UserIcon, UsersIcon } from '@/components/common/icons';
 import PeerInitials from '@/components/common/PeerInitials';
+import ZaloPresenceLine from './zalo/ZaloPresenceLine';
+import ZaloAutoDeleteSection from './zalo/ZaloAutoDeleteSection';
+import { isMyDocumentsThread } from '@/lib/chat/myDocuments';
 
 function muteUntilToDuration(until: number): number | string {
   if (until === 0) return -1;
@@ -98,6 +101,10 @@ function UserConversationInfo() {
   const activeAccount = getActiveAccount();
   const effectiveChannel = (contact?.channel || activeAccount?.channel || CHANNEL.ZALO) as Channel;
   const effectiveChannelCap = getCapability(effectiveChannel);
+  // Hội thoại Zalo 1:1 thật (không phải nhóm / chính mình / My Documents): trạng thái truy cập (ZL-01), tự xoá tin (ZL-05)
+  const zaloDirect = isZaloCh(effectiveChannel) && !!activeAccountId && !!activeThreadId
+    && contact?.contact_type !== 'group' && activeThreadId !== activeAccountId
+    && !isMyDocumentsThread((activeAccount || {}) as any, activeThreadId);
   // Hiển thị: ưu tiên alias → display_name
   const displayName = contact?.alias || contact?.display_name || activeThreadId || '';
   const avatarUrl = contact?.avatar_url || '';
@@ -698,6 +705,7 @@ function UserConversationInfo() {
             <PhoneDisplay phone={contact.phone} className="text-muted-foreground text-xs" showIcon={true} />
           </p>
         )}
+        <ZaloPresenceLine accountId={activeAccountId} userId={activeThreadId} enabled={zaloDirect} className="mt-1" />
       </div>
 
       {/* Contact detail info - editable phone, birthday, gender */}
@@ -791,6 +799,13 @@ function UserConversationInfo() {
         )}
       </div>
 
+
+      {/* Tự xoá tin nhắn trên Zalo (ZL-05) — Deplao vẫn giữ tin */}
+      {zaloDirect && activeAccountId && activeThreadId && (
+        <div className="border-b border-border">
+          <ZaloAutoDeleteSection accountId={activeAccountId} threadId={activeThreadId} isGroup={false} bordered={false} />
+        </div>
+      )}
 
       {/* Shared media / file / link section */}
       {activeThreadId && (

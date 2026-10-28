@@ -36,6 +36,8 @@ export interface ChannelCapability {
   // ─── Tính năng chỉ Zalo ──────────────────────────────────────
   supportsBusinessCard: boolean;
   supportsBankCard: boolean;
+  /** Danh mục sản phẩm (Zalo Business — SRS ZL-04); nút chỉ hiện khi tài khoản là zBusiness. */
+  supportsProductCatalog: boolean;
   supportsTextStyle: boolean;
   supportsAlias: boolean;        // Biệt danh (Zalo API)
   supportsMuteSync: boolean;     // Đồng bộ mute lên server
@@ -111,6 +113,7 @@ export const CHANNEL_CONFIG: Record<Channel, ChannelCapability> = {
 
     supportsBusinessCard: true,
     supportsBankCard: true,
+    supportsProductCatalog: true,
     supportsTextStyle: true,
     supportsAlias: true,
     supportsMuteSync: true,
@@ -177,6 +180,7 @@ export const CHANNEL_CONFIG: Record<Channel, ChannelCapability> = {
     supportsPin: true,    supportsEdit: true,              // Facebook: editMessage
     supportsBusinessCard: false,
     supportsBankCard: false,
+    supportsProductCatalog: false,
     supportsTextStyle: false,
     supportsAlias: true,
     supportsMuteSync: false,
@@ -245,6 +249,7 @@ export const CHANNEL_CONFIG: Record<Channel, ChannelCapability> = {
 
     supportsBusinessCard: false,
     supportsBankCard: false,
+    supportsProductCatalog: false,
     supportsTextStyle: false,
     supportsAlias: false,
     supportsMuteSync: false,
@@ -315,6 +320,7 @@ export const CHANNEL_CONFIG: Record<Channel, ChannelCapability> = {
 
     supportsBusinessCard: false,
     supportsBankCard: false,
+    supportsProductCatalog: false,
     supportsTextStyle: false,
     supportsAlias: false,
     supportsMuteSync: false,

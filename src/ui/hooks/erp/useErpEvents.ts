@@ -87,9 +87,7 @@ export function useErpEvents() {
       const n = d?.notification;
       if (n && (n.recipient_id === undefined || String(n.recipient_id) === myIdRef.current)) notifications()._onNewNotification(n);
     }));
-    unsubs.push(ipc.on('erp:event:reminder', (d: any) => {
-      document.dispatchEvent(new CustomEvent('erp:reminder', { detail: d }));
-    }));
+    // 'erp:event:reminder' (tới giờ nhắc lịch): App.tsx nghe ở mọi trang và hiện popup như nhắc hẹn Zalo
 
     // Nghỉ phép: cập nhật đơn đang hiện; người duyệt đang mở danh sách chờ duyệt thì tải lại (đơn mới của người mình
     // quản lý — Boss lọc theo quản lý trực tiếp)

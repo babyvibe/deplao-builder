@@ -197,7 +197,7 @@ export default function AutoMarkReadModal({ accountIds, scopeLabel, onClose }: P
             <div className="space-y-2">
               <label className="flex items-start gap-2.5 cursor-pointer">
                 <input type="checkbox" checked={includeOthers} onChange={e => setIncludeOthers(e.target.checked)} className="mt-0.5 accent-blue-500 w-4 h-4" />
-                <span className="text-sm text-foreground">Gồm cả hội thoại trong thư mục "Khác"</span>
+                <span className="text-sm text-foreground">Gồm cả hội thoại trong "Khác (lưu trữ)"</span>
               </label>
               <label className="flex items-start gap-2.5 cursor-pointer">
                 <input type="checkbox" checked={syncPlatform} onChange={e => setSyncPlatform(e.target.checked)} className="mt-0.5 accent-blue-500 w-4 h-4" />

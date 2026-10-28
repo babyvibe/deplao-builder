@@ -348,6 +348,7 @@ export class ApiRouter {
         requestId: string;
         ip: string;
         raw?: ApiContext['raw'];
+        binary?: ApiContext['binary'];
     }): Promise<{ status: number; payload: any; headers?: Record<string, string>; handled?: boolean }> {
         const { def } = route;
         const { principal, requestId } = input;
@@ -369,7 +370,7 @@ export class ApiRouter {
             const query = def.query ? parseOrThrow(def.query, input.query, true, 'query') : {};
             const body = def.body ? parseOrThrow(def.body, input.body, false, 'body') : undefined;
 
-            const ctx = this.buildContext(principal, params, query, body, requestId, input.ip, input.raw);
+            const ctx = this.buildContext(principal, params, query, body, requestId, input.ip, input.raw, input.binary);
             const result = await def.handler(ctx);
             if (result === RESPONSE_HANDLED) {
                 return { status: input.raw?.res.statusCode || 200, payload: null, handled: true };
@@ -385,7 +386,7 @@ export class ApiRouter {
         }
     }
 
-    buildContext(principal: Principal, params: any, query: any, body: any, requestId: string, ip: string, raw?: ApiContext['raw']): ApiContext {
+    buildContext(principal: Principal, params: any, query: any, body: any, requestId: string, ip: string, raw?: ApiContext['raw'], binary?: ApiContext['binary']): ApiContext {
         const invoker = this.deps.invoker;
         const accounts = this.deps.accounts;
         return {
@@ -396,6 +397,7 @@ export class ApiRouter {
             requestId,
             ip,
             raw,
+            ...(binary ? { binary } : {}),
             ipc: (channel: string, ...args: any[]) => invoker.invoke(channel, args, principal, { requestId }),
             call: async (channel: string, payload?: any, opts?: IpcCallOptions) => {
                 const res = await invoker.invoke(channel, payload === undefined ? [] : [payload], principal, { requestId, timeoutMs: opts?.timeoutMs });
@@ -417,7 +419,8 @@ export class ApiRouter {
 
     /**
      * Gọi route không qua HTTP (plugin, test). `target` = operationId hoặc "METHOD /path".
-     * Route trả stream (raw) không gọi được theo cách này.
+     * Route trả stream (raw) không gọi được theo cách này — trừ route file (rawResponse.file) khi người gọi truyền
+     * `binary`: cùng handler, cùng kiểm quyền / IPC, chỉ khác là nhận FileContent (base64, ≤ maxBytes) thay vì stream.
      */
     async invoke(target: string, input: {
         principal: Principal;
@@ -426,6 +429,7 @@ export class ApiRouter {
         body?: any;
         requestId?: string;
         ip?: string;
+        binary?: { maxBytes: number };
     }): Promise<{ status: number; payload: any }> {
         const requestId = input.requestId || randomUUID();
         let route: CompiledRoute | undefined = this.byOperationId.get(target);
@@ -445,7 +449,8 @@ export class ApiRouter {
             const err = new ApiError(404, 'NOT_FOUND', `Không có thao tác ${target}`);
             return { status: 404, payload: errorEnvelope(err, requestId) };
         }
-        if (route.def.rawResponse || route.def.rawBody) {
+        const binary = route.def.rawResponse?.file && input.binary && input.binary.maxBytes > 0 ? { maxBytes: input.binary.maxBytes } : undefined;
+        if (route.def.rawBody || (route.def.rawResponse && !binary)) {
             const err = new ApiError(400, 'VALIDATION_ERROR', `${route.operationId} chỉ gọi được qua HTTP`);
             return { status: 400, payload: errorEnvelope(err, requestId) };
         }
@@ -461,6 +466,7 @@ export class ApiRouter {
             body: input.body,
             requestId,
             ip: input.ip || input.principal.kind,
+            binary,
         });
         this.deps.log.record({
             principal_id: principalLogId(input.principal),

@@ -11,6 +11,7 @@ import { labelRoutes } from './labels';
 import { labelExtraRoutes } from './labelsExtra';
 import { groupRoutes } from './groups';
 import { groupExtraRoutes } from './groupsExtra';
+import { zaloFeatureRoutes } from './zaloFeatures';
 import { crmRoutes } from './crm';
 import { workflowRoutes } from './workflows';
 import { integrationRoutes } from './integrations';
@@ -35,6 +36,7 @@ export function buildRoutes(deps: RouteDeps): RouteDef[] {
         labelExtraRoutes(),
         groupRoutes(),
         groupExtraRoutes({ uploads: deps.uploads }),
+        zaloFeatureRoutes({ uploads: deps.uploads }),
         crmRoutes(),
         workflowRoutes(),
         integrationRoutes(),

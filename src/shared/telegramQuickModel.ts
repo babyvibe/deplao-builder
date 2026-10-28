@@ -4,6 +4,7 @@
  * Test: src/__tests__/telegramQuickModel.test.ts
  */
 import type { TelegramPeerType } from '../models/telegram';
+import { describeLastSeen } from './presenceText';
 
 // ─── Link công khai t.me/<tên> (kênh / siêu nhóm) ────────────────────────────
 
@@ -206,27 +207,12 @@ export function telegramPresenceOf(status: any): TelegramPresence {
   }
 }
 
-const pad2 = (value: number) => String(value).padStart(2, '0');
-
-function startOfDay(ts: number): number {
-  const d = new Date(ts);
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-}
-
 /** "trực tuyến", "truy cập 14:05", "truy cập hôm qua 21:30", "truy cập 03/10", "truy cập gần đây"… */
 export function describeTelegramPresence(presence: TelegramPresence, now: number = Date.now()): string {
   switch (presence.kind) {
     case 'online':
       return presence.expires && presence.expires < now ? 'truy cập gần đây' : 'trực tuyến';
-    case 'offline': {
-      if (!presence.wasOnline) return 'truy cập đã lâu';
-      const d = new Date(presence.wasOnline);
-      const time = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-      const today = startOfDay(now);
-      if (presence.wasOnline >= today) return `truy cập ${time}`;
-      if (presence.wasOnline >= today - 86400000) return `truy cập hôm qua ${time}`;
-      return `truy cập ${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}${d.getFullYear() !== new Date(now).getFullYear() ? `/${d.getFullYear()}` : ''}`;
-    }
+    case 'offline': return describeLastSeen(presence.wasOnline, now);
     case 'recently': return 'truy cập gần đây';
     case 'lastWeek': return 'truy cập trong tuần';
     case 'lastMonth': return 'truy cập trong tháng';

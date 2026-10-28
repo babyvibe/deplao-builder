@@ -2,6 +2,7 @@ import { Spinner } from '@/components/common/PageLoading';
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { MESSAGE_LOAD_LIMIT, MESSAGE_LOAD_MORE_LIMIT, MESSAGE_AROUND_LIMIT, GROUP_MEMBER_LIMIT, LOAD_MORE_TIMEOUT_MS, LOAD_OLDER_PREFETCH_PX, GROUP_INFO_CACHE_TTL_MS } from '@/lib/chat/constants';
+import { readDropPayload } from '@/lib/chat/dropFiles';
 import { getMessageCacheKey, useChatStore, type ContactItem, type MessageItem } from '@/store/chatStore';
 import { useShallow } from 'zustand/react/shallow';
 import { useAccountStore } from '@/store/accountStore';
@@ -15,7 +16,7 @@ import { groupRankLabel, peerColorIndex, telegramRankLabel } from '@/lib/chat/pe
 import PeerInitials from '@/components/common/PeerInitials';
 import { useTelegramGroupAdmins } from '@/lib/chat/telegramGroupAdmins';
 import MessageContextMenu from './MessageContextMenu';
-import { BubbleTime, MessageStatusContext, StatusTicks, formatBubbleTime, formatFullDateTime } from './MessageTime';
+import { BubbleTime, MessageStatusContext, MessageTtlContext, StatusTicks, TtlExpiredNote, TtlMark, formatBubbleTime, formatFullDateTime, inlineTimeSpacerClass } from './MessageTime';
 import { inferredPeerReadTs, mergePeerReceipts, outgoingMessageStatus } from '@/lib/chat/messageStatus';
 import PinnedBar, { buildPinFromMsg, usePinnedData } from './PinnedMessages';
 import ChatHistoryList from './ChatHistoryList';
@@ -35,7 +36,11 @@ function hasStoredAttachments(raw: unknown): boolean {
 import TelegramWebViewModal from './TelegramWebViewModal';
 import VideoPlayer from './VideoPlayer';
 import * as channelIpc from '../../lib/channelIpc';
-import { getCapability, type Channel } from '@/../configs/channelConfig';
+import { getCapability, getChannelLabel, type Channel } from '@/../configs/channelConfig';
+import { useQuickErpAccess } from '@/hooks/erp/useQuickErpAccess';
+import { QuickEventDialog, QuickNoteDialog } from './quick/QuickErpDialogs';
+import ScheduleChip from './ScheduleChip';
+import { eventDraftFromMessages, noteDraftFromMessages, type ErpSourceMessage } from '@/lib/chat/messageToErp';
 import { CHANNEL, isNonZalo, isZalo, isFacebook, isTelegram as isTelegramCh, isTelegramForumGeneral, isTelegramUser } from '@/lib/channelHelper';
 import { ManagePanel } from './GroupInfoPanel';
 import { UserProfilePopup } from '../common/UserProfilePopup';
@@ -51,7 +56,7 @@ import { markLocalReaction } from '@/lib/chat/localReactionRegistry';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
 import { toLocalMediaUrl } from '@/lib/localMedia';
 import { useEmployeeStore } from '@/store/employeeStore';
-import { ChatIcon } from '@/components/common/icons';
+import { CalendarIcon, ChatIcon, FileTextIcon } from '@/components/common/icons';
 import { handleAvatarError } from '@/lib/avatarRetry';
 import { EMOJI_TO_REACTION } from '@/lib/chat/emojiUtils';
 import { parseContent, parseQuoteMsg, getQuotedMediaCaption, extractQuoteImage, extractMediaUrl, formatMsgTime, formatDaySeparator, extractMsgText, getMentionRanges } from '@/lib/chat/messageParser';
@@ -65,8 +70,8 @@ import ForwardMessageModal from './ForwardMessageModal';
 import PollBubble from './PollBubble';
 import TelegramPollBubble from './TelegramPollBubble';
 import FriendRequestBar from './FriendRequestBar';
-import { ReactionContextMenu, ReactionPopup, parseReactions, parseReactionsFull, displayReactionEmoji } from './ReactionComponents';
-import { ReactionHoverPicker } from './ReactionPicker';
+import { ReactionContextMenu, ReactionPopup, parseReactions, parseReactionsFull } from './ReactionComponents';
+import { MessageReactionCorner, useReactionHoverPicker } from './MessageReactionCorner';
 import { getReactionChoices, sameReaction, useTelegramChatReactions } from '@/lib/chat/reactionChoices';
 import {
   EmployeeAvatar, FileBubble, MediaBubble, VoiceBubble,
@@ -80,6 +85,10 @@ import StickyDayPill from './StickyDayPill';
 import { getDayStartIds } from '@/lib/chat/daySeparators';
 import { TelegramStickerSetHost } from './stickers/TelegramStickerSetDialog';
 import { openStickerSetOfMessage } from '@/lib/chat/telegramStickerStore';
+import { TELEGRAM_POST_MAX_WIDTH, TELEGRAM_POST_WIDTH, TelegramPostLayoutContext, pickTelegramPostStats } from './telegramPostLayout';
+import { TelegramPostCommentsBar, TelegramPostFooter, TelegramPostReactions } from './telegram/TelegramPostParts';
+import TelegramRichMessageBody, { getRichMessageBlocks } from './telegram/TelegramRichMessageBody';
+import { useTelegramPostStats } from '@/hooks/useTelegramPostStats';
 
 /** Video Telegram tự phát không tiếng trong khung chat: chỉ file nhỏ (= nhóm tự tải), như Telegram. */
 const TELEGRAM_INLINE_AUTOPLAY_MAX_BYTES = 10 * 1024 * 1024;
@@ -114,9 +123,6 @@ function typingSignature(typingUsers: Record<string, number>, prefix: string): s
   }
   return signature;
 }
-
-/** Giữ chuột trên nút "Thả cảm xúc" bao lâu thì mới mở thanh chọn (lia ngang qua không tự bật). */
-const REACTION_PICKER_HOVER_DELAY_MS = 300;
 
 export default function ChatWindow() {
   // Chỉ subscribe đúng phần store của hội thoại đang mở. `useChatStore()` không selector làm cả cửa sổ (mọi hàng
@@ -169,6 +175,9 @@ export default function ChatWindow() {
     activeAccountId, activeThreadId,
     isTelegramUser(activeContact?.channel) && activeContact?.contact_type === 'group',
   );
+  // Kênh Telegram: lượt xem / số bình luận của bài làm mới khi mở kênh + mỗi 60 s (như Telegram); hồ sơ người bình luận
+  // gần đây cho thanh bình luận
+  const postReplierPeers = useTelegramPostStats(activeAccountId, activeThreadId, activeContact?.channel, msgs);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -215,6 +224,9 @@ export default function ChatWindow() {
   const fbProbeDoneRef = useRef(true);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; msg: any; mediaMsg?: any; isSent: boolean; isGroupAdmin?: boolean; recalled?: boolean } | null>(null);
   const [forwardMsgs, setForwardMsgs] = useState<any[] | null>(null);
+  // Quản lý công việc: "Thêm vào lịch" / "Lưu vào ghi chú" từ tin (chuột phải một tin, hoặc chọn nhiều tin)
+  const [erpDraft, setErpDraft] = useState<{ kind: 'event' | 'note'; msgs: any[] } | null>(null);
+  const erpAccess = useQuickErpAccess();
   const [isSelecting, setIsSelecting] = useState(false);
   const [selectedMsgIds, setSelectedMsgIds] = useState<Set<string>>(new Set());
   const [reactionPopup, setReactionPopup] = useState<{ msg: any; activeEmoji: string } | null>(null);
@@ -227,44 +239,12 @@ export default function ChatWindow() {
   // Track khi đang xem tin nhắn cũ (do click vào ghim / quote / search) - cần nút "Về tin mới nhất"
   const [isViewingHistory, setIsViewingHistory] = useState(false);
   const [loadingLatest, setLoadingLatest] = useState(false);
-  const [reactionPickerMsgId, setReactionPickerMsgId] = useState<string | null>(null);
-  // Thanh chọn reaction đóng trễ 250 ms khi chuột rời (đi chéo / trượt ra ngoài một chút không bị mất ngay)
-  const reactionPickerCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Mở khi GIỮ chuột trên nút 1,5 s (lia chuột ngang qua không tự bật) hoặc bấm vào nút (mở ngay)
-  const reactionPickerOpenTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const reactionPickerMsgIdRef = useRef<string | null>(null);
-  reactionPickerMsgIdRef.current = reactionPickerMsgId;
-  const openReactionPicker = useCallback((msgId: string) => {
-    if (reactionPickerCloseTimer.current) clearTimeout(reactionPickerCloseTimer.current);
-    if (reactionPickerOpenTimer.current) clearTimeout(reactionPickerOpenTimer.current);
-    reactionPickerOpenTimer.current = null;
-    setReactionPickerMsgId(msgId);
-  }, []);
-  const armReactionPicker = useCallback((msgId: string, onOpen?: () => void) => {
-    if (reactionPickerMsgIdRef.current === msgId) {
-      // Quay lại đúng tin đang mở (đi chéo giữa nút và thanh chọn): giữ thanh chọn
-      if (reactionPickerCloseTimer.current) clearTimeout(reactionPickerCloseTimer.current);
-      return;
-    }
-    // Tin khác: thanh chọn đang mở (nếu có) vẫn đóng theo hẹn 250 ms; tin này mở sau khi giữ đủ lâu
-    if (reactionPickerOpenTimer.current) clearTimeout(reactionPickerOpenTimer.current);
-    reactionPickerOpenTimer.current = setTimeout(() => {
-      reactionPickerOpenTimer.current = null;
-      setReactionPickerMsgId(msgId);
-      onOpen?.();
-    }, REACTION_PICKER_HOVER_DELAY_MS);
-  }, []);
-  const scheduleCloseReactionPicker = useCallback(() => {
-    // Rời nút trước REACTION_PICKER_HOVER_DELAY_MS → huỷ, không mở
-    if (reactionPickerOpenTimer.current) clearTimeout(reactionPickerOpenTimer.current);
-    reactionPickerOpenTimer.current = null;
-    if (reactionPickerCloseTimer.current) clearTimeout(reactionPickerCloseTimer.current);
-    reactionPickerCloseTimer.current = setTimeout(() => setReactionPickerMsgId(null), 250);
-  }, []);
-  useEffect(() => () => {
-    if (reactionPickerCloseTimer.current) clearTimeout(reactionPickerCloseTimer.current);
-    if (reactionPickerOpenTimer.current) clearTimeout(reactionPickerOpenTimer.current);
-  }, []);
+  // Thanh chọn cảm xúc: giữ chuột 300 ms trên nút mới mở (lia ngang qua không tự bật), bấm thì mở ngay, rời thì đóng sau
+  // 250 ms — dùng chung với phần bình luận bài đăng kênh (MessageReactionCorner)
+  const {
+    openId: reactionPickerMsgId, open: openReactionPicker, arm: armReactionPicker,
+    scheduleClose: scheduleCloseReactionPicker, close: closeReactionPicker,
+  } = useReactionHoverPicker();
   // Telegram: reaction dùng được trong hội thoại đang mở (tải khi mở thanh chọn / menu chuột phải)
   const telegramReactions = useTelegramChatReactions(activeAccountId, activeThreadId, activeContact?.channel === 'telegram_user');
   const [userProfilePopup, setUserProfilePopup] = useState<{ userId: string; x: number; y: number } | null>(null);
@@ -554,6 +534,8 @@ export default function ChatWindow() {
   useEffect(() => {
     if (!activeAccountId || !activeThreadId || activeContact?.channel !== 'telegram_user') return;
     const candidates = msgs.filter(message => {
+      // Tin lưu thành "chưa hỗ trợ" khi app còn dùng API layer cũ (tin định dạng phong phú, checklist…): lấy lại theo id
+      if (message.msg_type === 'telegram.unsupported') return true;
       if (String(message.content || '').trim() || message.msg_type !== 'text') return false;
       try {
         const attachments = JSON.parse(message.attachments || '[]');
@@ -664,6 +646,20 @@ export default function ChatWindow() {
     return map;
   }, [groupMembers]);
   const getGroupMember = (senderId: string) => groupMemberMap.get(String(senderId));
+
+  /** Tin → nguồn cho lịch / ghi chú Quản lý công việc (tên người gửi như đang hiện trong khung chat). */
+  const erpSourceOf = (m: any): ErpSourceMessage => {
+    const mine = m.is_sent === 1 || m.is_sent === true || String(m.sender_id) === String(activeAccountId);
+    let sender = 'Bạn';
+    if (!mine) {
+      const contact = getContact(m.sender_id);
+      const member = getGroupMember(m.sender_id);
+      const isGroupThread = activeContact?.contact_type === 'group';
+      sender = contact?.alias || member?.displayName || contact?.display_name
+        || (!isGroupThread ? (activeContact?.alias || activeContact?.display_name) : '') || 'Thành viên';
+    }
+    return { text: extractMsgText(m), sender, timestamp: Number(m.timestamp) || Date.now() };
+  };
 
   // Check if current user is group owner or deputy - can recall any member's message
   const isGroupAdmin = React.useMemo(() => {
@@ -946,10 +942,7 @@ export default function ChatWindow() {
     setSelectedMsgIds(new Set());
     // Thanh chọn reaction của hội thoại trước: tin đó bị gỡ khỏi DOM nên không có mouseleave → đóng + huỷ hẹn giờ
     // (kẻo bật lên trên lớp "Đang tải..." hoặc quay lại hội thoại cũ vẫn thấy thanh mở)
-    if (reactionPickerOpenTimer.current) clearTimeout(reactionPickerOpenTimer.current);
-    if (reactionPickerCloseTimer.current) clearTimeout(reactionPickerCloseTimer.current);
-    reactionPickerOpenTimer.current = null;
-    setReactionPickerMsgId(null);
+    closeReactionPicker();
     // Reset Facebook API cursor khi đổi thread (tạm thời vô hiệu hóa)
     fbCursorRef.current = null;
     fbHasMoreRef.current = false;
@@ -2772,6 +2765,10 @@ export default function ChatWindow() {
   const openViewer = React.useCallback((clickedUrl: string) => {
     mediaGalleryRef.current?.openFromMessages(msgsRef.current, clickedUrl);
   }, []);
+  /** Ảnh trong tin định dạng phong phú Telegram: trình xem với các ảnh của tin đó */
+  const openImageList = React.useCallback((items: MediaViewerImage[], index: number) => {
+    mediaGalleryRef.current?.open(items, index);
+  }, []);
 
   /** Mở video player inline từ 1 tin nhắn video */
   const openVideoPlayer = React.useCallback((msg: any) => {
@@ -2856,14 +2853,10 @@ export default function ChatWindow() {
     setIsDragging(false);
     dragCounterRef.current = 0;
 
-    const files = Array.from(e.dataTransfer.files || []);
-    if (files.length === 0) return;
     if (!activeThreadId) return;
-
-    // Dispatch custom event cho MessageInput xử lý
-    window.dispatchEvent(new CustomEvent('chat:dragDropFiles', {
-      detail: { files },
-    }));
+    // Đọc ngay trong sự kiện (sau đó dữ liệu kéo bị khoá): file thật, hoặc link ảnh khi kéo từ trang web / app khác.
+    // MessageInput xử lý (tải ảnh từ link, phân loại ảnh / video / file, gửi qua hàng đợi)
+    window.dispatchEvent(new CustomEvent('chat:dragDropFiles', { detail: readDropPayload(e.dataTransfer) }));
   }, [activeThreadId]);
 
   if (!activeThreadId) {
@@ -3301,6 +3294,14 @@ export default function ChatWindow() {
           const groupMediaMsgs = isGroupMedia ? groupedFirstMsgs[msg.msg_id] : null;
           const isMediaMsg = cached?.isMedia ?? (!isCardMsg && !isEcardMsg && !isStickerMsg && !isGroupMedia && !isRtf && !isPollMsg && !isVideoMsg && !isVoiceMsg && !isBankCardMsg && !isLocationMsg && !isZinstantMsg && isMediaType(msg.msg_type, msg.content, msg.attachments));
           const isFileMsg = cached?.isFile ?? (!isCardMsg && !isEcardMsg && !isStickerMsg && !isMediaMsg && !isRtf && !isPollMsg && !isVideoMsg && !isVoiceMsg && !isBankCardMsg && !isLocationMsg && !isZinstantMsg && isFileType(msg.msg_type, msg.content, msg.attachments));
+          // Bài đăng kênh Telegram (như Telegram): ảnh / album / video sát mép khung bài; số liệu lấy cả album (Telegram gắn
+          // số bình luận vào MỘT tin của album — trước đây đọc tin đầu nên lệch / mất)
+          const postEdgeMedia = !!telegramPostMeta && (isMediaMsg || isGroupMedia || isVideoMsg);
+          const postStats = telegramPostMeta
+            ? pickTelegramPostStats((groupMediaMsgs || [msg]).map((m: any) => ({ msgId: String(m.msg_id), meta: getTelegramPostMeta(m) })))
+            : null;
+          // Tin định dạng phong phú (tiêu đề, danh sách, bảng, ảnh / video trong tin)
+          const richBlocks = isTelegramUser(msg.channel) ? getRichMessageBlocks(msg) : null;
           const content = cached?.content ?? (isMediaMsg || isFileMsg || isCardMsg || isEcardMsg || isStickerMsg || isGroupMedia || isRtf || isPollMsg || isVideoMsg || isVoiceMsg || isBankCardMsg || isLocationMsg || isZinstantMsg ? '' : parseContent(msg.content, msg.msg_type, msg.channel));
           // Tin hệ thống Telegram (vd. "Channel created") lưu nhầm thành "bài đăng kênh" rỗng ở bản cũ: không vẽ thẻ trống.
           // Bài đăng thật luôn có chữ hoặc media; lần tải lịch sử kế tiếp sửa hàng thành dòng thông báo.
@@ -3321,12 +3322,15 @@ export default function ChatWindow() {
           const outgoingStatus = isSent ? outgoingMessageStatus(msg, msg.channel || activeContact?.channel, threadReceipt) : null;
           const showGroupName = !isSent && !isEcardMsg && msg.thread_type === 1 && startsRun && !!displayName && displayName !== msg.sender_id;
           const nameShell = showGroupName && isNoBubbleMsg && !quoteShell && !isStickerMsg && !isBankCardMsg && !telegramPostMeta;
-          const bubbleShell = quoteShell || nameShell;
+          // Ảnh / album / file chuyển tiếp: "Chuyển tiếp từ …" chung khung với nội dung, chữ xuống dòng theo bề rộng ảnh (như
+          // Telegram); trước đây dòng nguồn nằm trên ảnh, ngoài khung, dài hơn ảnh thì kéo lệch cả tin
+          const forwardShell = !!telegramForward && isNoBubbleMsg && !telegramPostMeta && !isStickerMsg && !isEcardMsg && !isBankCardMsg;
+          const bubbleShell = quoteShell || nameShell || forwardShell;
           const nameInBubble = showGroupName && !telegramPostMeta && (!isNoBubbleMsg || bubbleShell);
           // Giờ gửi ở góc dưới phải, chung dòng chữ cuối nếu đủ chỗ (như Telegram) — chỉ tin chữ thường; tin có khối riêng
           // (thăm dò, video, thẻ link có tên trang / tiêu đề, nội dung cũ đang mở) giữ dòng giờ riêng. Tin link Telegram
           // không có thẻ (chỉ URL) là tin chữ thường.
-          const inlineTime = !isNoBubbleMsg && !telegramPostMeta && !isFbEmptyMsg
+          const inlineTime = !isNoBubbleMsg && !telegramPostMeta && !isFbEmptyMsg && !richBlocks
             && !isPollMsg && !isVideoMsg && !isVoiceMsg && !isRtf && !isLocationMsg
             && !(msg.msg_type === 'telegram.webpage' && getTelegramWebpageMeta(msg)) && !revealedEditIds.has(msg.msg_id);
 
@@ -3364,7 +3368,7 @@ export default function ChatWindow() {
 
           // First visible message: attach ref for IntersectionObserver (loadMore trigger)
           return (
-            <div key={msg.msg_id + idx} id={`msg-${msg.msg_id}`} data-msg-ids={getRowMsgIds(msg)}
+            <div key={msg.msg_id + idx} id={`msg-${msg.msg_id}`} data-msg-ids={getRowMsgIds(msg)} data-out={isSent ? '' : undefined}
               className={`flex flex-col mb-0.5 rounded-lg transition-colors ${isEcardMsg ? 'items-center' : isSent ? 'items-end' : 'items-start'} group/msg${isMsgSelected ? ' bg-blue-500/10 ring-1 ring-blue-500/40 rounded-lg' : ''}${isSelecting && !isEcardMsg ? ' cursor-pointer' : ''}`}
               onClick={isSelecting && !isEcardMsg ? (e) => {
                 // Skip click nếu vừa kết thúc drag-select (tránh toggle ngay sau drag)
@@ -3468,7 +3472,10 @@ export default function ChatWindow() {
                     return <EmployeeAvatar key={empId} name={empName} avatarUrl={empAvatar} />;
                   })()}
 
-                  <div className={`flex flex-col ${isEcardMsg ? 'w-full items-center' : isSent ? 'items-end' : 'items-start'} relative min-w-0${hasReactions && !isGroupedStickerFirst ? ' mb-3' : ''}`}>
+                  {/* Bài đăng kênh: cột không rộng hơn khung bài. Khung bài rộng min(30rem, 100%) theo chính cột này, lúc đo cột
+                      trình duyệt bỏ qua phần trăm → cột giãn hết khung chat, nút 👍 (góc của cột) và nút Trả lời lệch ra ngoài bài */}
+                  <div className={`flex flex-col ${isEcardMsg ? 'w-full items-center' : isSent ? 'items-end' : 'items-start'} relative min-w-0${hasReactions && !isGroupedStickerFirst && !telegramPostMeta ? ' mb-3' : ''}`}
+                    style={telegramPostMeta ? { maxWidth: TELEGRAM_POST_MAX_WIDTH } : undefined}>
                     {/* Tên người gửi trong nhóm cho tin không khung (sticker…); tin có khung: trong bong bóng — nameInBubble */}
                     {showGroupName && !nameInBubble && (
                       <p className="flex items-center gap-2 mb-0.5 px-1 min-w-0 max-w-full">
@@ -3476,25 +3483,23 @@ export default function ChatWindow() {
                         {senderRank && <span className="chat-rank shrink-0 rounded-full px-1.5 py-px text-[10px] leading-4">{senderRank}</span>}
                       </p>
                     )}
-                    {/* Tin chuyển tiếp chỉ có ảnh / file / sticker (không khung chữ): nguồn đặt ngay trên bong bóng */}
+                    {/* Sticker chuyển tiếp (không khung): nguồn đặt ngay trên sticker */}
                     {telegramForward && isNoBubbleMsg && !telegramPostMeta && !bubbleShell && (
-                      <TelegramForwardHeader name={forwardName} avatarUrl={forwardAvatar} postAuthor={telegramForward.postAuthor} className="mb-0.5 px-1" />
+                      <TelegramForwardHeader name={forwardName} sourceId={telegramForward.fromId} avatarUrl={forwardAvatar}
+                        postAuthor={telegramForward.postAuthor} className="mb-0.5 px-1" />
                     )}
+                    <MessageTtlContext.Provider value={Number((msg as any).ttl) || 0}>
                     <MessageStatusContext.Provider value={outgoingStatus}>
-                    <div className={`rounded-lg text-sm break-words min-w-0 max-w-full overflow-hidden${inlineTime ? ' relative' : ''}${hasQuote && !isNoBubbleMsg ? ' min-w-[13rem]' : ''} ${
-                      telegramPostMeta ? `max-w-[520px] ${isSent ? 'bg-bubble-out border border-bubble-out-border' : 'bg-bubble-in border border-bubble-in-border'} rounded-lg` :
+                    <div style={telegramPostMeta ? (postEdgeMedia ? { width: TELEGRAM_POST_WIDTH } : { maxWidth: TELEGRAM_POST_WIDTH, minWidth: 'min(18rem, 100%)' }) : undefined}
+                      className={`rounded-lg text-sm break-words min-w-0 max-w-full overflow-hidden${inlineTime ? ' relative' : ''}${hasQuote && !isNoBubbleMsg ? ' min-w-[13rem]' : ''} ${
+                      telegramPostMeta ? `${isSent ? 'bg-bubble-out border border-bubble-out-border' : 'bg-bubble-in border border-bubble-in-border'} rounded-lg` :
                       bubbleShell ? (isSent ? 'bg-bubble-out text-foreground border border-bubble-out-border' : 'bg-bubble-in text-foreground border border-bubble-in-border') :
                       isNoBubbleMsg ? '' : isSent
                         ? 'px-3 py-2 bg-bubble-out text-foreground border border-bubble-out-border'
                         : 'px-3 py-2 bg-bubble-in text-foreground border border-bubble-in-border'
                     } ${useEmployeeStore.getState().mode === 'employee' && (msg.send_status === 'pending' ? 'opacity-60' : msg.send_status === 'sending' ? 'opacity-80' : '')}`}>
-                    {telegramPostMeta && (
-                      <div className="flex items-center justify-between gap-3 border-b border-foreground/10 px-3 py-2 text-[11px] text-primary">
-                        <span className="font-semibold uppercase tracking-wide">Bài đăng kênh</span>
-                        {telegramPostMeta.postAuthor && <span className="truncate text-muted-foreground">{telegramPostMeta.postAuthor}</span>}
-                      </div>
-                    )}
-                    <div className={telegramPostMeta ? 'px-3 py-2' : undefined}>
+                    {/* Bài đăng: media sát mép (chữ tự đệm trong khung ảnh / video), bài chữ có đệm; người đăng ở chân bài */}
+                    <div className={telegramPostMeta && !postEdgeMedia ? 'px-3 pt-2' : undefined}>
                     {/* Tên người gửi (màu theo người gửi, bấm mở hồ sơ) + chức vụ ở góc phải, đầu bong bóng. Khung bao ảnh /
                         file (nameShell): tên không kéo rộng khung (w-0 min-w-full) — rộng theo ảnh như Telegram */}
                     {nameInBubble && (
@@ -3514,12 +3519,16 @@ export default function ChatWindow() {
                         )}
                       </div>
                     )}
-                    {/* Tin chữ / bài đăng kênh chuyển tiếp: nguồn ở đầu bong bóng, trên trích dẫn (như Telegram) */}
+                    {/* Tin chuyển tiếp: nguồn ở đầu bong bóng, trên trích dẫn (như Telegram). Khung bao ảnh / file: chữ xuống dòng
+                        theo bề rộng ảnh, không kéo rộng khung (w-0 min-w-full) */}
                     {telegramForward && (!isNoBubbleMsg || telegramPostMeta || bubbleShell) && (
-                      <TelegramForwardHeader name={forwardName} avatarUrl={forwardAvatar} postAuthor={telegramForward.postAuthor}
-                        className={bubbleShell ? 'mb-1 px-2.5 pt-1.5' : 'mb-1'} />
+                      <TelegramForwardHeader name={forwardName} sourceId={telegramForward.fromId} avatarUrl={forwardAvatar}
+                        postAuthor={telegramForward.postAuthor}
+                        className={bubbleShell ? `w-0 min-w-full px-2.5 pb-1.5${nameInBubble ? '' : ' pt-1.5'}` : postEdgeMedia ? 'mb-1 px-3 pt-2' : 'mb-1'} />
                     )}
-                    <BubbleEmbedContext.Provider value={bubbleShell}>
+                    <TelegramPostLayoutContext.Provider value={postEdgeMedia}>
+                    {/* Bài đăng kênh: tệp / thoại / bình chọn… nằm trong khung bài, không lồng thêm bong bóng riêng */}
+                    <BubbleEmbedContext.Provider value={bubbleShell || !!telegramPostMeta}>
                     {/* Quote preview - supports both pre-built quote_data and reply_to_id fallback */}
                     {(msg.quote_data || (msg.reply_to_id && !(
                       msg.channel === 'telegram_user' && msg.topic_id != null &&
@@ -3625,7 +3634,7 @@ export default function ChatWindow() {
 
                         return (
                           <div
-                            className={`${quotePeer !== null ? `border-l-[3px] chat-peer-${quotePeer} chat-peer-quote` : `border-l-2 ${(quoteShell || !isNoBubbleMsg) ? (isSent ? 'border-primary bg-primary/20' : 'border-border-strong bg-background') : (isSent ? 'border-primary bg-bubble-out' : 'border-border-strong bg-bubble-in')}`} rounded pl-2 pr-1 py-1 text-xs cursor-pointer hover:opacity-100 overflow-hidden min-w-0 ${quoteShell ? 'w-0 min-w-[calc(100%-1rem)] mx-2 mt-2 mb-1.5' : 'mb-1 max-w-full'}`}
+                            className={`${quotePeer !== null ? `border-l-[3px] chat-peer-${quotePeer} chat-peer-quote` : `border-l-2 ${(quoteShell || !isNoBubbleMsg) ? (isSent ? 'border-primary bg-primary/20' : 'border-border-strong bg-background') : (isSent ? 'border-primary bg-bubble-out' : 'border-border-strong bg-bubble-in')}`} rounded pl-2 pr-1 py-1 text-xs cursor-pointer hover:opacity-100 overflow-hidden min-w-0 ${quoteShell ? 'w-0 min-w-[calc(100%-1rem)] mx-2 mt-2 mb-1.5' : postEdgeMedia ? 'mx-3 mt-2 mb-1.5' : 'mb-1 max-w-full'}`}
                             onClick={() => handleScrollToMsg(String(q.msgId || ''), String(q.cliMsgId || ''))}
                           >
                             {(isQuotedSticker || finalImgUrl) ? (() => {
@@ -3758,7 +3767,7 @@ export default function ChatWindow() {
                         const previewRefresh = isTelegramUser(msg.channel) ? <TelegramPreviewRefresh msg={msg} /> : null;
                         if (videoWebpage) {
                           return (
-                            <div className="flex w-[19.5rem] max-w-full flex-col">
+                            <div className={telegramPostMeta ? 'flex w-full flex-col px-3 pt-2' : 'flex w-[19.5rem] max-w-full flex-col'}>
                               {previewRefresh}
                               {captionNode && <div className="pb-1.5 text-sm break-words">{captionNode}</div>}
                               <TelegramLinkPreviewCard meta={videoWebpage}>{videoNode}</TelegramLinkPreviewCard>
@@ -3767,10 +3776,10 @@ export default function ChatWindow() {
                         }
                         if (captionNode) {
                           return (
-                            <div className={`flex flex-col max-w-xs`}>
+                            <div className={telegramPostMeta ? 'flex w-full flex-col' : 'flex flex-col max-w-xs'}>
                               {previewRefresh}
                               {videoNode}
-                              <div className="pt-1.5 text-sm break-words">
+                              <div className={telegramPostMeta ? 'px-3 pt-2 text-sm break-words' : 'pt-1.5 text-sm break-words'}>
                                 {captionNode}
                               </div>
                             </div>
@@ -3813,10 +3822,15 @@ export default function ChatWindow() {
                       )}
                       renderText={() => isFbEmptyMsg ? <FacebookEmptyMessage msg={msg} /> : (
                         <>
+                          {richBlocks ? (
+                            <TelegramRichMessageBody msg={msg} onOpenImages={openImageList} highlight={searchHighlightQuery}
+                              allContacts={contactList} groupMembersList={groupMembers} />
+                          ) : (
                           <TextWithMentions text={content} channel={msg.channel} allContacts={contactList} groupMembersList={groupMembers}
                             mentionRanges={getMentionRanges(msg.attachments)}
                             highlight={searchHighlightQuery}
                             onMentionClick={(uid, e) => setUserProfilePopup({ userId: uid, x: e.clientX, y: e.clientY })} />
+                          )}
                           {/* Link Telegram không có ảnh / video: thẻ tên trang, tiêu đề, mô tả như Telegram */}
                           {msg.msg_type === 'telegram.webpage' && (() => {
                             const webpage = getTelegramWebpageMeta(msg);
@@ -3827,9 +3841,11 @@ export default function ChatWindow() {
                           })()}
                           {msg.is_edited === 1 && (
                             <>
-                              <span className="ml-1 text-[10px] opacity-60 select-none font-normal">
-                                (đã chỉnh sửa)
-                              </span>
+                              {!telegramPostMeta && (
+                                <span className="ml-1 text-[10px] opacity-60 select-none font-normal">
+                                  (đã chỉnh sửa)
+                                </span>
+                              )}
                               {(() => {
                                 try {
                                   const parsed = JSON.parse(msg.edit_history || '[]');
@@ -3851,8 +3867,21 @@ export default function ChatWindow() {
                               })()}
                             </>
                           )}
-                          {/* Chừa chỗ cuối dòng chữ cuối cho giờ gửi ở góc dưới phải (inlineTime); thiếu chỗ thì xuống dòng */}
-                          {inlineTime && <span aria-hidden="true" className={`inline-block ${outgoingStatus ? 'w-[3.25rem]' : 'w-9'} select-none`} />}
+                          {/* Tin hẹn tự xoá đã quá hạn: Zalo xoá trên thiết bị Zalo, Deplao giữ nội dung (FR-ZL05.6) */}
+                          <TtlExpiredNote ttl={(msg as any).ttl} sentAt={msg.timestamp} />
+                          {/* Chừa chỗ cuối dòng chữ cuối cho giờ gửi ở góc dưới phải (inlineTime); thiếu chỗ thì xuống dòng.
+                              Tin có ngày giờ sắp tới ("mai 9h", "20 phút nữa"): nút "Tạo lịch hẹn" ngay dưới, cùng dòng với giờ gửi */}
+                          {(() => {
+                            const spacer = inlineTime
+                              ? <span aria-hidden="true" className={`inline-block ${inlineTimeSpacerClass(!!outgoingStatus, (msg as any).ttl)} select-none`} />
+                              : null;
+                            return erpAccess.event && !isSelecting && !richBlocks && !telegramPostMeta && content ? (
+                              <ScheduleChip msgId={msg.msg_id} timestamp={msg.timestamp} text={content}
+                                onCreate={() => setErpDraft({ kind: 'event', msgs: [msg] })}>
+                                {spacer}
+                              </ScheduleChip>
+                            ) : spacer;
+                          })()}
                           {revealedEditIds.has(msg.msg_id) && (() => {
                             try {
                               const parsed = JSON.parse(msg.edit_history || '[]');
@@ -3880,10 +3909,12 @@ export default function ChatWindow() {
                       )}
                     />
                     </BubbleEmbedContext.Provider>
+                    </TelegramPostLayoutContext.Provider>
                     </div>
                     {!telegramPostMeta && !isNoBubbleMsg && (inlineTime ? (
                       <span className="absolute bottom-1.5 right-2.5 inline-flex items-center gap-0.5 text-[11px] leading-none text-subtle-foreground select-none cursor-default"
                         title={formatFullDateTime(msg.timestamp)}>
+                        <TtlMark ttl={(msg as any).ttl} sentAt={msg.timestamp} />
                         {formatBubbleTime(msg.timestamp)}
                         <StatusTicks status={outgoingStatus} />
                       </span>
@@ -3891,32 +3922,36 @@ export default function ChatWindow() {
                       <BubbleTime timestamp={msg.timestamp} />
                     ))}
                     {telegramPostMeta && (
-                      <div className="flex items-center gap-4 border-t border-foreground/10 px-3 py-2 text-[11px] text-muted-foreground">
-                        {telegramPostMeta.views > 0 && <span>◉ {telegramPostMeta.views.toLocaleString('vi-VN')} lượt xem</span>}
-                        {telegramPostMeta.forwards > 0 && <span>↗ {telegramPostMeta.forwards.toLocaleString('vi-VN')}</span>}
-                        <button
-                          type="button"
-                          disabled={telegramPostMeta.comments <= 0}
-                          className={telegramPostMeta.comments > 0 ? 'font-medium text-primary hover:text-primary-hover' : 'cursor-default'}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            if (!activeAccountId || !activeThreadId || telegramPostMeta.comments <= 0) return;
-                            useChatStore.getState().setMessages(activeAccountId, activeThreadId, [], msg.msg_id);
-                            useChatStore.setState({
-                              activeTopicId: String(msg.msg_id),
-                              activeForumTopicId: null,
-                              activeTopicTitle: `Bình luận bài đăng`,
-                              messagesLoading: true,
-                            });
-                          }}
-                        >
-                          💬 {telegramPostMeta.comments.toLocaleString('vi-VN')} bình luận
-                        </button>
-                        <span className="ml-auto text-subtle-foreground select-none">{formatBubbleTime(msg.timestamp)}</span>
-                      </div>
+                      <>
+                        {/* Cảm xúc trong khung bài, bấm = thả / gỡ (như Telegram) */}
+                        {hasReactions && (() => {
+                          const rFull = parseReactionsFull(msg.reactions, msg.channel);
+                          const mine = activeAccountId
+                            ? (Object.entries(rFull.emoji || {}).find(([, d]) => (d as any).users?.[activeAccountId] > 0)?.[0] || null)
+                            : null;
+                          return (
+                            <TelegramPostReactions counts={reactionCounts} myEmoji={mine}
+                              onToggle={(emoji, isMine) => {
+                                if (isMine) void handleCancelReaction(msg);
+                                else void handleReact(msg, emoji);
+                              }} />
+                          );
+                        })()}
+                        <TelegramPostFooter postAuthor={postStats?.postAuthor || telegramPostMeta.postAuthor}
+                          views={postStats?.views ?? telegramPostMeta.views} edited={msg.is_edited === 1} timestamp={msg.timestamp} />
+                        {/* Bình luận nằm ở nhóm thảo luận của kênh: mở ngay trong khung chat, quay lại đúng chỗ bài đang xem */}
+                        {postStats?.hasDiscussion && activeAccountId && activeThreadId && (
+                          <TelegramPostCommentsBar count={postStats.comments} repliers={postStats.recentRepliers} peers={postReplierPeers}
+                            isSent={isSent} unread={postStats.unread}
+                            onOpen={() => useChatStore.getState().setPostDiscussion({
+                              accountId: activeAccountId, channelId: activeThreadId, postId: postStats.postId,
+                            })} />
+                        )}
+                      </>
                     )}
                   </div>
                   </MessageStatusContext.Provider>
+                  </MessageTtlContext.Provider>
 
 
                   {/* Nút reaction ở góc dưới, phía TRONG khung chat (như các app lớn): tin của mình → góc trái, tin người
@@ -3927,68 +3962,32 @@ export default function ChatWindow() {
                     const myEmoji = activeAccountId
                       ? (Object.entries(rFull.emoji || {}).find(([, d]) => (d as any).users?.[activeAccountId] > 0)?.[0] || null)
                       : null;
-                    const totalReactions = hasReactions ? Object.values(reactionCounts).reduce((a, b) => a + b, 0) : 0;
-                    const sortedEmojis = hasReactions
-                      ? Object.entries(reactionCounts).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([e]) => e)
-                      : [];
+                    const loadTelegramReactions = () => {
+                      if (msg.channel === 'telegram_user') telegramReactions.load();
+                    };
                     return (
-                      <div
-                        className={`absolute -bottom-4 ${reactionPickerMsgId === msg.msg_id ? 'z-30' : 'z-20'} transition-opacity duration-100${!hasReactions ? ' opacity-0 group-hover/msg:opacity-100' : ''}${isSent ? ' left-1.5' : ' right-1.5'}`}
-                        onMouseEnter={() => armReactionPicker(msg.msg_id, () => {
-                          if (msg.channel === 'telegram_user') telegramReactions.load();
-                        })}
-                        onMouseLeave={scheduleCloseReactionPicker}
-                      >
-                        {/* Thanh chọn reaction: hàng dọc trên / dưới nút tuỳ chỗ trống (như Telegram), cuộn được; bấm lại reaction của mình = gỡ */}
-                        {reactionPickerMsgId === msg.msg_id && (
-                          <ReactionHoverPicker
-                            emojis={getReactionChoices(msg.channel, telegramReactions.reactions).all}
-                            myEmoji={myEmoji}
-                            align={isSent ? 'left' : 'right'}
-                            onPick={(e) => {
-                              if (sameReaction(e, myEmoji)) handleCancelReaction(msg);
-                              else handleReact(msg, e);
-                              setReactionPickerMsgId(null);
-                            }}
-                          />
-                        )}
-                        {/* Button: reaction badge when reacted, 👍 when not */}
-                        {hasReactions && isTelegramCh(msg.channel) ? (
-                          <div className="flex items-center gap-1 select-none">
-                            {Object.entries(reactionCounts).sort((a, b) => b[1] - a[1]).map(([emoji, count]) => (
-                              <button
-                                key={emoji}
-                                onClick={() => setReactionPopup({ msg, activeEmoji: emoji })}
-                                className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs shadow-sm transition-colors ${
-                                  myEmoji === emoji
-                                    ? 'border-blue-600 bg-muted text-foreground hover:bg-accent'
-                                    : 'border-input bg-muted text-foreground hover:bg-accent'
-                                }`}
-                              >
-                                <span>{displayReactionEmoji(emoji)}</span>
-                                <span className="font-medium">{count}</span>
-                              </button>
-                            ))}
-                          </div>
-                        ) : hasReactions ? (
-                          <button
-                            onClick={() => setReactionPopup({ msg, activeEmoji: 'all' })}
-                            className="flex items-center gap-0.5 bg-muted hover:bg-accent border border-input rounded-full px-1.5 py-0.5 text-xs shadow-sm select-none transition-colors"
-                          >
-                            {sortedEmojis.map(e => <span key={e}>{displayReactionEmoji(e)}</span>)}
-                            {totalReactions > 1 && <span className="text-foreground/80 ml-0.5 text-[11px]">{totalReactions}</span>}
-                          </button>
-                        ) : (
-                          <button
-                            className="w-6 h-6 bg-card hover:bg-muted border border-input rounded-full flex items-center justify-center text-sm shadow-sm transition-colors"
-                            title="Thả cảm xúc (bấm hoặc giữ chuột)"
-                            onClick={() => {
-                              openReactionPicker(msg.msg_id);
-                              if (msg.channel === 'telegram_user') telegramReactions.load();
-                            }}
-                          >👍</button>
-                        )}
-                      </div>
+                      <MessageReactionCorner
+                        isSent={isSent}
+                        counts={reactionCounts}
+                        myEmoji={myEmoji}
+                        variant={isTelegramCh(msg.channel) ? 'chips' : 'summary'}
+                        // Bài đăng kênh: cảm xúc đã vẽ trong khung bài → ở đây chỉ còn nút 👍 khi rê chuột
+                        hideCounts={!!telegramPostMeta}
+                        pickerOpen={reactionPickerMsgId === msg.msg_id}
+                        pickerEmojis={getReactionChoices(msg.channel, telegramReactions.reactions).all}
+                        onArm={() => armReactionPicker(msg.msg_id, loadTelegramReactions)}
+                        onLeave={scheduleCloseReactionPicker}
+                        onOpenPicker={() => {
+                          openReactionPicker(msg.msg_id);
+                          loadTelegramReactions();
+                        }}
+                        onPick={(e) => {
+                          if (sameReaction(e, myEmoji)) handleCancelReaction(msg);
+                          else handleReact(msg, e);
+                          closeReactionPicker();
+                        }}
+                        onShowReactors={(emoji) => setReactionPopup({ msg, activeEmoji: emoji })}
+                      />
                     );
                   })()}
 
@@ -4134,6 +4133,24 @@ export default function ChatWindow() {
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
               Sao chép
             </button>
+            {/* Quản lý công việc: các tin đã chọn → một lịch hẹn (ghi chú = nội dung các tin) / một ghi chú */}
+            {(erpAccess.event || erpAccess.note) && (['event', 'note'] as const).filter(kind => erpAccess[kind]).map(kind => (
+              <button key={kind} onClick={() => {
+                const selectedMsgs = msgs.filter(m => selectedMsgIds.has(m.msg_id))
+                  .sort((a, b) => (Number(a.timestamp) || 0) - (Number(b.timestamp) || 0));
+                if (!selectedMsgs.some(m => { const t = extractMsgText(m); return t && t !== '[Tin nhắn]'; })) {
+                  showNotification('Các tin đã chọn không có nội dung chữ', 'info');
+                  return;
+                }
+                setErpDraft({ kind, msgs: selectedMsgs });
+                setIsSelecting(false);
+                setSelectedMsgIds(new Set());
+              }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg hover:bg-muted text-foreground/80 hover:text-foreground text-xs transition-colors">
+                {kind === 'event' ? <CalendarIcon className="w-3.5 h-3.5" /> : <FileTextIcon className="w-3.5 h-3.5" />}
+                {kind === 'event' ? 'Thêm vào lịch' : 'Lưu ghi chú'}
+              </button>
+            ))}
             {channelCap.supportsForward && (
               <button onClick={() => {
                 const selectedMsgs = msgs.filter(m => selectedMsgIds.has(m.msg_id));
@@ -4319,6 +4336,8 @@ export default function ChatWindow() {
           isStarred={contextTargetStarred}
           onToggleStar={handleToggleStar}
           onSaveToMyDocuments={(activeContact?.channel || CHANNEL.ZALO) === CHANNEL.ZALO && channelCap.supportsForward ? handleSaveToMyDocuments : undefined}
+          onAddToCalendar={erpAccess.event ? (m) => setErpDraft({ kind: 'event', msgs: groupedFirstMsgs[m.msg_id] || [m] }) : undefined}
+          onSaveToNote={erpAccess.note ? (m) => setErpDraft({ kind: 'note', msgs: groupedFirstMsgs[m.msg_id] || [m] }) : undefined}
           showNotification={showNotification}
           readReceipts={activeAccountId && canQueryTelegramReadReceipts(contextMenu.msg, {
             isSent: contextMenu.isSent,
@@ -4349,6 +4368,32 @@ export default function ChatWindow() {
           }}
         />
       )}
+
+      {/* Quản lý công việc: lịch hẹn / ghi chú từ tin (điền sẵn tiêu đề, ngày giờ đọc trong tin, nội dung tin) */}
+      {erpDraft && activeAccountId && activeThreadId && (() => {
+        const conversation = activeContact?.alias || activeContact?.display_name || activeThreadId;
+        const account = allAccounts.find(a => a.zalo_id === activeAccountId);
+        const ctx = {
+          conversation,
+          channelLabel: getChannelLabel(((activeContact?.channel || account?.channel || CHANNEL.ZALO) as Channel)),
+          accountName: account?.full_name || '',
+        };
+        const sources = erpDraft.msgs.map(erpSourceOf);
+        if (erpDraft.kind === 'note') {
+          return <QuickNoteDialog initial={noteDraftFromMessages(sources, ctx)} onClose={() => setErpDraft(null)} />;
+        }
+        const draft = eventDraftFromMessages(sources, ctx);
+        const linkedMsg = erpDraft.msgs[draft.sourceIndex];
+        const msgId = linkedMsg && !/^(temp|retry)_/.test(String(linkedMsg.msg_id)) ? String(linkedMsg.msg_id) : undefined;
+        return (
+          <QuickEventDialog
+            heading="Thêm vào lịch"
+            activeThread={{ id: activeThreadId, name: conversation, accountId: activeAccountId, msgId }}
+            initial={draft}
+            onClose={() => setErpDraft(null)}
+          />
+        );
+      })()}
 
       {/* Reaction context menu (right-click on reaction pill) */}
       {channelCap.supportsReaction && reactionContextMenu && (

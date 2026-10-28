@@ -87,10 +87,12 @@ function userDataDir(): string {
     }
 }
 
+/** Cùng nguồn với API / plugin (dev đọc package.json — electron.exe dev mang version cũ). */
 function appVersion(): string {
     try {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
-        return String(require('electron').app.getVersion() || '0.0.0');
+        const v = String(require('../../api/runtime').appVersion() || '');
+        return v && v !== 'dev' ? v : '0.0.0';
     } catch {
         return '0.0.0';
     }
@@ -321,6 +323,9 @@ function onBaseDone(_engine: SyncEngine, m: DbManifest, bucket: string): void {
         .catch(err => logLine('warn', `[CloudDb] không cập nhật được ${INDEX_KEY}: ${err?.message || err}`));
 }
 
+/** Lúc tiến trình app khởi động — chu kỳ đồng bộ tự động chờ STARTUP_QUIET_MS sau mốc này (SyncEngine.scheduleAt). */
+const APP_STARTED_AT = Date.now() - Math.round(process.uptime() * 1000);
+
 const engineCtx: EngineContext = {
     core: cloudflare,
     get ops() { return ops(); },
@@ -333,6 +338,7 @@ const engineCtx: EngineContext = {
     notify,
     baseLock,
     now: () => Date.now(),
+    appStartedAt: () => APP_STARTED_AT,
     claimUid,
     onBaseDone,
 } as EngineContext;

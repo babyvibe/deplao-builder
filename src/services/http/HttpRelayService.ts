@@ -1663,6 +1663,10 @@ class HttpRelayService {
             if (method === 'GET' && pathname === '/api/query/conversations/unread') {
                 return this.json(res, 200, restHandlers.getUnreadConversations(employee, params));
             }
+            // Bộ lọc danh sách hội thoại của nhân viên (kênh / tìm / Chưa đọc / Khác / Chưa trả lời / khoảng ngày)
+            if (method === 'GET' && pathname === '/api/query/conversations/filtered') {
+                return this.json(res, 200, restHandlers.getConversationsFiltered(employee, params));
+            }
             // ⚠️ Route cụ thể /api/query/conversations/<tên> phải đặt TRƯỚC regex catch-all này (employeeRestContract.test)
             if (method === 'GET' && pathname.match(/^\/api\/query\/conversations\/[^/]+$/)) {
                 const contactId = pathname.split('/').pop() || '';
@@ -2365,6 +2369,15 @@ class HttpRelayService {
                 zaloId, contactId: params.contactId, displayName: params.displayName, avatarUrl: params.avatarUrl,
                 phone: params.phone, contactType: params.contactType, gender: params.gender, birthday: params.birthday,
                 isBot: null, manualDetails: !!params.manualDetails,
+            });
+        }
+        // Đánh dấu đã trả lời / bỏ đánh dấu hàng loạt (handler phát db:replyStateChanged như UI Boss) — trước regex xoá
+        if (pathname === '/api/command/conversations/replied') {
+            if (!zaloId) return accountRequired();
+            return this.invokeBossIpc('db:markConversationsReplied', {
+                zaloId,
+                contactIds: Array.isArray(params.contactIds) ? params.contactIds.map(String) : [],
+                replied: params.replied !== false,
             });
         }
         const conversationPath = commandPathParams(pathname, /^\/api\/command\/conversations\/([^/]+)$/);

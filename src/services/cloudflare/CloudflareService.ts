@@ -2,7 +2,8 @@
  * CloudflareService — lõi dùng chung của tính năng "Internet & Đám mây" (singleton `cloudflare`).
  *
  *  - connect: kiểm token (tokens/verify; token 'cfat_' là token của tài khoản) → liệt kê tên miền → thử quyền
- *    từng tính năng (tunnel, R2) bằng các GET rẻ → lưu token (safeStorage) + tokenId + tokenKind.
+ *    từng tính năng (tunnel, R2, Worker + D1 cho ứng dụng — không bắt buộc) bằng các GET rẻ → lưu token (safeStorage)
+ *    + tokenId + tokenKind.
  *  - status(): trạng thái nhớ trong RAM (không gọi mạng). recheck() thử lại quyền.
  *  - api(): client REST dùng chung (ngân sách 100 request / 5 phút cho cả app). r2(bucket) / store(bucket): client của
  *    KHO ĐANG CHỌN — R2 (S3 theo bucket) hoặc Google Drive (thư mục Deplao/<bucket>, ./gdrive) — media và đồng bộ DB chỉ
@@ -26,6 +27,7 @@ import { cloudCrypto } from './crypto/cloudCrypto';
 import { CloudSettings, cloudSettings } from './cloudSettings';
 import { createGoogleDrive } from './gdrive';
 import { createCloudUsage } from './usage';
+import { WORKERS_PERMISSION_LABELS } from './workers/validate';
 import Logger from '../../utils/Logger';
 
 type Area = 'connection' | 'tunnel' | 'media' | 'db';
@@ -38,6 +40,9 @@ export const CF_PERMISSION_LABELS = {
     r2: 'Account · Workers R2 Storage · Edit',
     /** Không bắt buộc: chỉ để xem mức dùng R2 toàn tài khoản (Cài đặt → Đồng bộ dữ liệu → Mức sử dụng & chi phí). */
     analytics: 'Account · Account Analytics · Read',
+    /** Không bắt buộc: chỉ ứng dụng (plugin) có quyền cloudflare:workers dùng — Worker + D1 (workers/WorkersDeployer). */
+    workersScripts: WORKERS_PERMISSION_LABELS.workers,
+    d1: WORKERS_PERMISSION_LABELS.d1,
 } as const;
 
 /**
@@ -52,6 +57,10 @@ export const TOKEN_TEMPLATE_PERMISSIONS: ReadonlyArray<{ key: string; type: 'rea
     { key: 'workers_r2', type: 'edit' },
     // Mức dùng R2 toàn tài khoản (GraphQL Analytics) — key theo developers.cloudflare.com/fundamentals/api/how-to/account-owned-token-template
     { key: 'account_analytics', type: 'read' },
+    // Worker + D1 cho ứng dụng (deplao.cloudflare) — key `workers_scripts`, `d1` theo bảng "Permission reference" của
+    // trang account-owned-token-template ở trên (đối chiếu 20/10/2026); tên hiển thị "Workers Scripts Edit", "D1 Edit".
+    { key: 'workers_scripts', type: 'edit' },
+    { key: 'd1', type: 'edit' },
 ];
 
 /** Link trang tạo API token của Cloudflare, điền sẵn quyền cần cho Deplao. */
@@ -500,10 +509,12 @@ export class CloudflareService implements CloudflareCore {
 
     /** Liệt kê tên miền + thử quyền từng tính năng bằng các GET rẻ (không tạo gì trên Cloudflare). */
     private async probe(client: CloudflareApiClient, accountId: string): Promise<ProbeResult> {
-        const [zonesRes, tunnelRes, r2Res] = await Promise.allSettled([
+        const [zonesRes, tunnelRes, r2Res, scriptsRes, d1Res] = await Promise.allSettled([
             client.requestAll<any>('/zones', { query: { 'account.id': accountId, status: 'active' }, perPage: 50, maxPages: 10 }),
             client.request('GET', `/accounts/${accountId}/cfd_tunnel`, undefined, { query: { per_page: 1 } }),
             client.request('GET', `/accounts/${accountId}/r2/buckets`, undefined, { query: { per_page: 1 } }),
+            client.request('GET', `/accounts/${accountId}/workers/scripts`, undefined, { query: { per_page: 1 } }),
+            client.request('GET', `/accounts/${accountId}/d1/database`, undefined, { query: { per_page: 1 } }),
         ]);
         const transient: string[] = [];
 
@@ -563,8 +574,27 @@ export class CloudflareService implements CloudflareCore {
             r2 = { feature: 'r2', ok: false, missing: [`Chưa kiểm tra được: ${msg}`] };
         }
 
-        return { zones, accountName, permissions: [tunnel, r2], lastError: transient[0] ?? null };
+        return { zones, accountName, permissions: [tunnel, r2, workersCheck(scriptsRes, d1Res)], lastError: transient[0] ?? null };
     }
+}
+
+/**
+ * Worker + D1 (cho ứng dụng, quyền cloudflare:workers): KHÔNG bắt buộc — thiếu quyền không là lỗi của kết nối, lỗi tạm
+ * thời của hai GET này cũng không thành lastError (giao diện chỉ hiện một dòng thông tin, không chấm đỏ).
+ * GET chỉ chứng minh quyền đọc; thiếu Edit thì lời gọi ghi của ứng dụng báo CF_PERMISSION.
+ */
+function workersCheck(scripts: PromiseSettledResult<unknown>, d1: PromiseSettledResult<unknown>): CloudPermissionCheck {
+    const missing: string[] = [];
+    const unchecked: string[] = [];
+    const probes: Array<[PromiseSettledResult<unknown>, string]> = [[scripts, CF_PERMISSION_LABELS.workersScripts], [d1, CF_PERMISSION_LABELS.d1]];
+    for (const [res, label] of probes) {
+        if (res.status === 'fulfilled') continue;
+        if (isPermissionError(res.reason)) missing.push(missingPermission(label));
+        else unchecked.push(errMessage(res.reason));
+    }
+    if (missing.length) return { feature: 'workers', ok: false, missing };
+    if (unchecked.length) return { feature: 'workers', ok: false, missing: [`Chưa kiểm tra được: ${unchecked[0]}`] };
+    return { feature: 'workers', ok: true };
 }
 
 /**

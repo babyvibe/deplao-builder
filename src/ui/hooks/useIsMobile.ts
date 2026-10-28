@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 
-const MOBILE_BREAKPOINT = 768; // px - below this, use single-panel Telegram-style layout
+export const MOBILE_BREAKPOINT = 768; // px - below this, use single-panel Telegram-style layout
 
 export default function useIsMobile(breakpoint = MOBILE_BREAKPOINT): boolean {
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < breakpoint);

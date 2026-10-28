@@ -104,6 +104,9 @@ export default function TermsPage() {
                 <span><strong className="text-white">Phiên đăng nhập Zalo được mã hóa:</strong> Cookie phiên được lưu bảo mật trong vùng dữ liệu riêng của ứng dụng</span>
               </li>
               <li className="flex items-start gap-2"><span className="text-blue-400 mt-0.5">•</span>
+                <span><strong className="text-white">Tin nhắn tự xoá trên Zalo:</strong> Khi hội thoại bật &quot;Tự xoá tin nhắn&quot;, Zalo xoá tin trên các thiết bị Zalo nhưng Deplao vẫn giữ bản đã lưu trên máy bạn (và trong bản sao lưu nếu có)</span>
+              </li>
+              <li className="flex items-start gap-2"><span className="text-blue-400 mt-0.5">•</span>
                 <span><strong className="text-white">Sao lưu định kỳ:</strong> Khuyến nghị backup thư mục dữ liệu hàng tuần để phòng mất dữ liệu khi hỏng ổ cứng</span>
               </li>
             </ul>

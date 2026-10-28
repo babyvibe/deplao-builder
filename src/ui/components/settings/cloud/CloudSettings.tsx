@@ -59,6 +59,7 @@ import {
   useCloudAction,
   useCloudChanged,
   useVisibleInterval,
+  workersAccessLine,
   type CloudArea,
   type CloudSection,
 } from './cloudUi';
@@ -303,6 +304,8 @@ export default function CloudSettings({ initialSubtab, initial }: CloudSettingsP
     );
   } else if (connected && !editingToken) {
     const summary = connectionSummary(connection!, Date.now(), storage?.provider ?? 'r2');
+    // Worker + D1 cho ứng dụng: không bắt buộc → dòng thông tin, không đổi chấm màu / vấn đề của kết nối.
+    const workersLine = workersAccessLine(connection);
     strip = (
       <Card className="flex flex-wrap items-center gap-3 px-4 py-3" title={connection!.checkedAt ? `Kiểm tra lúc ${new Date(connection!.checkedAt).toLocaleString('vi-VN')}` : undefined}>
         <span className={cn('h-2.5 w-2.5 flex-shrink-0 rounded-full', summary.dot)} aria-hidden="true" />
@@ -314,6 +317,7 @@ export default function CloudSettings({ initialSubtab, initial }: CloudSettingsP
           {summary.issues.map(issue => (
             <p key={issue.text} className={cn('text-xs', issue.tone === 'destructive' ? 'text-destructive' : 'text-warning')}>{issue.text}</p>
           ))}
+          {workersLine && <p className="text-xs text-muted-foreground">{workersLine.text}</p>}
         </div>
         <DropdownMenu
           align="end"

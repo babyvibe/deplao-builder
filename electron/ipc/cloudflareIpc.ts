@@ -6,7 +6,9 @@
  * Mọi handler:
  *  - chỉ chạy trên máy chủ với workspace local: máy nhân viên / workspace từ xa bị từ chối (cùng cách kiểm như
  *    pluginIpc: AppModeManager + api/runtime.isWorkspaceAvailable);
- *  - từ chối lời gọi đến từ API v1 / plugin (event giả của IpcInvoker có fromApi) — chỉ giao diện của chủ máy;
+ *  - từ chối lời gọi đến từ API v1 / plugin (event giả của IpcInvoker có fromApi) — chỉ giao diện của chủ máy.
+ *    Ngoại lệ duy nhất: cloudflare:workers:* (Worker + D1 cho ứng dụng) đăng ký ở cloudflareWorkersIpc.ts với guard
+ *    riêng — ứng dụng gọi được khi PluginApiBridge đã kiểm quyền "cloudflare:workers" + tiền tố và cấp giấy uỷ quyền;
  *  - trả { success: true, ...data } hoặc { success: false, error, code }. KHÔNG trả / log token, mật khẩu sao lưu
  *    hay tham số đầu vào.
  * Module tunnel / media / dbsync được require khi gọi (lỗi nạp một module không làm hỏng các kênh khác).
@@ -20,6 +22,7 @@ import {
     automationsPausedAfterRestore, restorePendingRelogin, resumeAutomationsAfterRestore,
 } from '../../src/services/cloudflare/restoreGate';
 import { applySyncConfig, readSyncOverview, type SyncFacadeDeps } from '../../src/services/cloudflare/syncFacade';
+import { registerCloudflareWorkersIpc } from './cloudflareWorkersIpc';
 import {
     CLOUD_CLEANUP_PROGRESS_EVENT, CLOUD_RESTORE_PROGRESS_EVENT, CLOUD_STORAGE_PROVIDERS, normalizeScope, storageLabel,
 } from '../../src/shared/cloudContracts';
@@ -479,4 +482,7 @@ export function registerCloudflareIpc(): void {
         resumeAutomationsAfterRestore();
         cloudflare.notifyChanged('db');
     });
+
+    // ── Worker + D1 cho ứng dụng (cloudflare:workers:*) — guard riêng: ứng dụng có giấy uỷ quyền của PluginApiBridge ──
+    registerCloudflareWorkersIpc();
 }

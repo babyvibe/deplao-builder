@@ -6,6 +6,7 @@ import ConversationList from './components/chat/ConversationList';
 import ChatHeader from './components/chat/ChatHeader';
 import ChatWindow from './components/chat/ChatWindow';
 import MessageInput from './components/chat/MessageInput';
+import { TelegramPostDiscussionHost } from './components/chat/telegram/TelegramPostDiscussion';
 import ConversationInfo from './components/chat/ConversationInfo';
 import GroupBoardPanel from './components/chat/GroupBoardPanel';
 import IntegrationQuickPanel from './components/integration/IntegrationQuickPanel';
@@ -13,8 +14,17 @@ import PluginPagesHost from './components/plugins/PluginPagesHost';
 import PluginChatPanel from './components/plugins/PluginChatPanel';
 import { initPluginStore } from './store/pluginStore';
 import AIQuickPanel from './components/integration/AIQuickPanel';
-import ReminderNotification from './components/chat/ReminderNotification';
+import ReminderNotification, { type ReminderData } from './components/chat/ReminderNotification';
+import {
+  ERP_EVENT_EMOJI, erpReminderHeading, erpReminderNote, erpReminderWhen, isErpReminderForMe, isMissedErpReminder,
+} from './lib/erp/erpReminder';
+import { playNotificationSound, showDesktopNotification } from './utils/NotificationService';
+import { openLinkedConversation } from './lib/erp/erpLinkedConversation';
+import { useErpReminderAttention } from './store/erp/erpReminderAttentionStore';
+import { erpReminderLeadText } from '../shared/erpReminderText';
 import FriendRequestNotification, { FriendRequestNotifData } from './components/common/FriendRequestNotification';
+import InAppMessageToasts from './components/common/InAppMessageToasts';
+import { useInAppNotifyStore } from './store/inAppNotifyStore';
 import QuickChatModal from './components/chat/QuickChatModal';
 import AccountInitPanel from './components/common/AccountInitPanel';
 import AccountSwitcherOverlay from './components/common/AccountSwitcherOverlay';
@@ -30,11 +40,10 @@ import { useChatEvents } from './hooks/useChatEvents';
 import useIsMobile from './hooks/useIsMobile';
 import ipc, { buildZaloAuth } from './lib/ipc';
 import { reportUiSettledWhenReady } from '@/lib/startupSettled';
-import { sendSeenForThread } from './lib/sendSeenHelper';
+import { liveReadSync } from './lib/chat/liveReadSync';
 import { getFilteredUnreadCount } from './lib/badgeUtils';
 import DataAccessor, { isReadFailure } from './lib/data/DataAccessor';
 import { reloadAccountContacts } from './lib/chat/accountContacts';
-import { playNotificationSound, showDesktopNotification } from './utils/NotificationService';
 import { checkAccountInitNeeds } from './lib/zaloInitUtils';
 import AddAccountModal from "@/components/auth/AddAccountModal";
 import EmployeeConnectionBanner from "@/components/common/EmployeeConnectionBanner";
@@ -246,12 +255,20 @@ export default function App() {
   const { setContacts, activeThreadId, activeThreadType } = useChatStore(useShallow(s => ({
     setContacts: s.setContacts, activeThreadId: s.activeThreadId, activeThreadType: s.activeThreadType,
   })));
+  // Đang mở phần bình luận của một bài trong kênh đang xem (TelegramPostDiscussionHost)
+  const postDiscussionOpen = useChatStore(s => (
+    !!s.postDiscussion && s.postDiscussion.accountId === activeAccountId && s.postDiscussion.channelId === activeThreadId
+  ));
   const activeContact = useChatStore(s => (
     activeAccountId && activeThreadId ? s.contacts[activeAccountId]?.find(c => c.contact_id === activeThreadId) : undefined
   ));
   const [initializing, setInitializing] = useState(true);
   const [lockEnabled, setLockEnabled] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
+  // Khoá app → ẩn lại hội thoại Zalo đã mở bằng PIN (ZL-03)
+  useEffect(() => { if (isLocked) useAppStore.getState().lockAllHidden(); }, [isLocked]);
+  // Khoá app → không hiện thông báo tin nhắn trong app (lộ nội dung trên màn khoá), bỏ thẻ đang hiện
+  useEffect(() => { useInAppNotifyStore.getState().setSuspended(lockEnabled && isLocked); }, [lockEnabled, isLocked]);
   const startupInitStartedRef = useRef(false);
   const isMobile = useIsMobile();
   const { mobileShowChat, setMobileShowChat } = useAppStore(useShallow(s => ({
@@ -492,17 +509,9 @@ export default function App() {
     if (!isMobile) setMobileShowChat(false);
   }, [isMobile]);
 
-  const [reminderNotification, setReminderNotification] = useState<{
-    emoji: string;
-    title: string;
-    description: string;
-    accountName: string;
-    conversationName: string;
-    color: number;
-    zaloId: string;
-    threadId: string;
-    threadType: number;
-  } | null>(null);
+  // Popup nhắc hẹn (Zalo chat.ecard + lịch Quản lý công việc): hàng đợi, hiện lần lượt từng cái
+  const [reminderQueue, setReminderQueue] = useState<Array<ReminderData & { key: string; kind: 'zalo' | 'erp'; msgId?: string }>>([]);
+  const reminderNotification = reminderQueue[0] || null;
   const healthTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isWindowFocusedRef = useRef(true);
   /** Queue of friend request notifications (show one at a time) */
@@ -1187,70 +1196,40 @@ export default function App() {
         const zaloId = data?.zaloId || '';
         const threadId = data?.message?.threadId || '';
         const isSelf = !!data?.message?.isSelf;
-        const suppressNotification = data?.message?._silentNotification === true;
+        const suppressNotification = data?.message?._silentNotification === true
+          || data?.message?._commentOnly === true; // bình luận ở nhóm thảo luận chưa tham gia
         // Không flash cho tin nhắn của chính mình, hội thoại muted hoặc trong thư mục "Khác"
         if (isSelf || suppressNotification) return;
-        const { isMuted, isInOthers } = useAppStore.getState();
-        if (isMuted(zaloId, threadId) || isInOthers(zaloId, threadId)) return;
+        const { isMuted, isInOthers, isZaloHidden } = useAppStore.getState();
+        if (isMuted(zaloId, threadId) || isInOthers(zaloId, threadId) || isZaloHidden(zaloId, threadId)) return;
         window.electronAPI?.app?.flashFrame?.(true);
       }
     });
     return () => unsub?.();
   }, []);
 
-  // ─── Facebook: flash taskbar + notification on new message ───────────────
+  // ─── Facebook: flash taskbar on new message when window not focused ─────────
+  // Âm thanh, thông báo trong app và popup hệ điều hành của tin FB: hooks/useChatEvents (trước đây báo ở cả hai nơi →
+  // mỗi tin kêu 2 lần, 2 popup).
   useEffect(() => {
     const unsub = window.electronAPI?.on('fb:onMessage', (data: any) => {
-      const body = data?.message?.body;
+      if (isWindowFocusedRef.current) return;
       const threadId = data?.message?.replyToID || '';
       const accountId = data?.fbAccountId || '';
       // The backend owns Facebook sender attribution. `senderID` was not
       // even the event field name (`userID` is), and client-side fallback can
       // mark another participant's message as the logged-in account.
-      const isSelf = data?.message?.isSelf === true;
-
-      // Don't notify for own messages
-      if (isSelf) return;
-
-      // Check mute/others
-      const appState = useAppStore.getState();
-      const { notifSettings, isMuted, isInOthers } = appState;
-      if (isMuted(accountId, threadId) || isInOthers(accountId, threadId)) return;
-
-      // Flash taskbar when window not focused
-      if (!isWindowFocusedRef.current) {
-        window.electronAPI?.app?.flashFrame?.(true);
-      }
-
-      // Check if this thread is currently active and window is focused → skip notification
-      const { activeThreadId } = useChatStore.getState();
-      const { activeAccountId } = useAccountStore.getState();
-      if (threadId === activeThreadId && accountId === activeAccountId && isWindowFocusedRef.current) return;
-
-      // Sound
-      const notifAllowed = !('Notification' in window) || Notification.permission === 'granted';
-      if (notifSettings.soundEnabled && notifAllowed) {
-        playNotificationSound(notifSettings.volume);
-      }
-
-      // Desktop notification
-      if (notifSettings.desktopEnabled && notifAllowed && body) {
-        const contacts = useChatStore.getState().contacts[accountId] || [];
-        const contact = contacts.find((c: any) => c.contact_id === threadId);
-        const contactName = contact?.alias || contact?.display_name || 'Facebook';
-        showDesktopNotification(
-          contactName,
-          body.slice(0, 120),
-          contact?.avatar_url,
-          { zaloId: accountId, threadId, threadType: 0 }
-        );
-      }
+      if (data?.message?.isSelf === true) return;
+      const { isMuted, isInOthers, isZaloHidden } = useAppStore.getState();
+      if (isMuted(accountId, threadId) || isInOthers(accountId, threadId) || isZaloHidden(accountId, threadId)) return;
+      window.electronAPI?.app?.flashFrame?.(true);
     });
     return () => unsub?.();
   }, []);
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.shiftKey && e.key === 'N') {
+      // e.code: Caps Lock bật thì e.key là 'n'
+      if (e.ctrlKey && e.shiftKey && !e.altKey && (e.code === 'KeyN' || e.key.toLowerCase() === 'n')) {
         e.preventDefault();
         openQuickChat();
       }
@@ -1291,7 +1270,9 @@ export default function App() {
         const conversationName = contact?.display_name || 'Hội thoại';
 
         // Hiển thị notification
-        setReminderNotification({
+        setReminderQueue(queue => [...queue, {
+          key: `zalo:${zaloId}:${threadId}:${Date.now()}`,
+          kind: 'zalo',
           emoji: reminderData.emoji || '⏰',
           title: reminderData.params?.title || content.title || 'Nhắc hẹn',
           description: content.description || '',
@@ -1301,7 +1282,7 @@ export default function App() {
           zaloId,
           threadId,
           threadType: contact?.contact_type === 'group' ? 1 : 0,
-        });
+        }]);
       } catch (err) {
         console.error('[ReminderNotification] Parse error:', err);
       }
@@ -1309,6 +1290,94 @@ export default function App() {
 
     window.addEventListener('zalo:reminder', handleReminderEvent);
     return () => window.removeEventListener('zalo:reminder', handleReminderEvent);
+  }, []);
+
+  // ─── Nhắc lịch Quản lý công việc (ERP): popup như nhắc hẹn Zalo ──────────────
+  // Main (ErpCalendarService) phát 'erp:event:reminder' tới giờ nhắc; trước đây chỉ trang ERP nghe và không hiện gì.
+  // Đúng giờ → popup; nhắc trước → thông báo thường trong chuông (main tạo) + chuông rung "15 phút nữa tới lịch hẹn".
+  useEffect(() => {
+    const unsub = window.electronAPI?.on('erp:event:reminder', (payload: any) => {
+      const event = payload?.event;
+      if (!event?.id) return;
+      const employee = useEmployeeStore.getState();
+      const myId = employee.mode === 'employee' ? String(employee.currentEmployee?.employee_id || '') : 'boss';
+      // Máy Boss nhận nhắc lịch của cả workspace: chỉ hiện lịch mình tổ chức / được mời
+      if (!isErpReminderForMe(event, myId)) return;
+      const now = Date.now();
+      const when = erpReminderWhen(event, new Date(now));
+      if ((Number(payload?.minutesBefore) || 0) > 0) {
+        const startAt = Number(event.start_at) || 0;
+        if (startAt <= now) return;
+        useErpReminderAttention.getState().raise({ eventId: String(event.id), title: String(event.title || ''), startAt });
+        const { notifSettings } = useAppStore.getState();
+        if (notifSettings.soundEnabled) playNotificationSound(notifSettings.volume);
+        // Cửa sổ đang ở nền: popup hệ điều hành + nháy taskbar
+        if (!isWindowFocusedRef.current) {
+          if (notifSettings.desktopEnabled) {
+            showDesktopNotification(
+              `${ERP_EVENT_EMOJI[event.type as keyof typeof ERP_EVENT_EMOJI] || '📅'} ${event.title}`,
+              `${erpReminderLeadText(startAt - now)} · ${when}`,
+            );
+          }
+          window.electronAPI?.app?.flashFrame?.(true);
+        }
+        return;
+      }
+      // Tới giờ: popup đúng giờ thay chữ đếm ngược trên thanh tiêu đề
+      useErpReminderAttention.getState().dismiss([String(event.id)]);
+      if (isMissedErpReminder(event, now)) {
+        // Máy tắt lúc tới giờ, mở lại mới nhắc bù → báo nhẹ, không bật popup có nhạc
+        useAppStore.getState().showNotification(`Đã lỡ lịch "${event.title}" (${when})`, 'info');
+        return;
+      }
+      const accountId = String(event.linked_account_id || '');
+      const threadId = String(event.linked_contact_id || '');
+      const account = accountId ? useAccountStore.getState().accounts.find(a => a.zalo_id === accountId) : undefined;
+      const contact = account && threadId
+        ? (useChatStore.getState().contacts[accountId] || []).find(c => c.contact_id === threadId)
+        : undefined;
+      const heading = erpReminderHeading(Number(payload?.minutesBefore) || 0);
+      setReminderQueue(queue => [...queue, {
+        key: `erp:${event.id}:${payload?.minutesBefore ?? ''}:${now}`,
+        kind: 'erp',
+        emoji: ERP_EVENT_EMOJI[event.type as keyof typeof ERP_EVENT_EMOJI] || '📅',
+        heading,
+        title: event.title,
+        description: [when, event.location].filter(Boolean).join(' · '),
+        note: erpReminderNote(event.description, 6, !!(account && threadId)),
+        color: -1,
+        colorHex: /^#[0-9a-f]{6}$/i.test(String(event.color || '')) ? event.color : '#3b82f6',
+        ...(account && threadId ? {
+          zaloId: accountId,
+          threadId,
+          threadType: contact?.contact_type === 'group' ? 1 : 0,
+          accountName: account.full_name || accountId,
+          conversationName: contact?.alias || contact?.display_name || 'Hội thoại',
+          msgId: event.linked_msg_id ? String(event.linked_msg_id) : undefined,
+        } : {
+          secondaryAction: {
+            label: 'Xem lịch',
+            onClick: () => {
+              window.dispatchEvent(new CustomEvent('nav:view', { detail: { view: 'erp' } }));
+              window.setTimeout(() => window.dispatchEvent(new CustomEvent('nav:erp', { detail: { subView: 'calendar' } })), 80);
+            },
+          },
+        }),
+      }]);
+      // Cửa sổ đang ở nền: thêm popup hệ điều hành + nháy taskbar để không lỡ
+      if (!isWindowFocusedRef.current) {
+        if (useAppStore.getState().notifSettings.desktopEnabled) {
+          showDesktopNotification(
+            `${ERP_EVENT_EMOJI[event.type as keyof typeof ERP_EVENT_EMOJI] || '📅'} ${event.title}`,
+            `${heading} · ${when}`,
+            undefined,
+            account && threadId ? { zaloId: accountId, threadId, threadType: contact?.contact_type === 'group' ? 1 : 0 } : undefined,
+          );
+        }
+        window.electronAPI?.app?.flashFrame?.(true);
+      }
+    });
+    return () => unsub?.();
   }, []);
 
   // Initialize on app start
@@ -1325,6 +1394,16 @@ export default function App() {
     // Danh sách hội thoại tải xong + trình duyệt rảnh → báo main bắt đầu việc nền nặng (đồng bộ bù tin cũ Telegram…)
     reportUiSettledWhenReady();
     setInitializing(false);
+    // Chạy bằng "Run as administrator": Windows chặn kéo-thả file từ File Explorer vào app → báo người dùng một lần
+    ipc.app?.isElevated?.().then((elevated) => {
+      if (elevated) {
+        useAppStore.getState().showNotification(
+          'Deplao đang chạy bằng quyền quản trị — Windows chặn kéo-thả ảnh / file từ File Explorer vào app. '
+          + 'Đóng và mở lại Deplao bình thường (không chọn "Run as administrator") để kéo-thả được.',
+          'warning',
+        );
+      }
+    }).catch(() => {});
 
     const init = async () => {
       try {
@@ -1647,12 +1726,16 @@ export default function App() {
                   <ChatHeader />
                   <div className="flex flex-1 overflow-hidden relative">
                     {/* Chat content */}
-                    <div className="flex flex-col flex-1 overflow-hidden"
+                    <div className="flex flex-col flex-1 overflow-hidden relative"
                          onClick={() => {
                            if (rightInfoOverlayOpen) closeRightInfoOverlay();
                          }}>
                       <ChatWindow />
-                      <MessageInput />
+                      {/* Đang mở phần bình luận bài đăng kênh: phần đó có ô soạn tin riêng (gửi vào nhóm thảo luận) → bỏ ô
+                          của kênh để chỉ một ô nhận dán / kéo thả / trích dẫn; tin nháp vẫn giữ trong store */}
+                      {!postDiscussionOpen && <MessageInput />}
+                      {/* Bình luận bài đăng kênh Telegram: phủ lên kênh + ô soạn tin (kênh giữ nguyên vị trí cuộn bên dưới) */}
+                      <TelegramPostDiscussionHost activeAccountId={activeAccountId} activeThreadId={activeThreadId} />
                     </div>
                     {/* Bảng tin nhóm panel */}
                     {showGroupBoard && activeThreadId && activeAccountId && (() => {
@@ -1869,13 +1952,20 @@ export default function App() {
         </div>
       )}
 
-      {/* Reminder Notification */}
+      {/* Reminder Notification (hàng đợi: nhắc hẹn Zalo + lịch Quản lý công việc) */}
       {reminderNotification && (
         <ReminderNotification
+          key={reminderNotification.key}
           data={reminderNotification}
-          onClose={() => setReminderNotification(null)}
+          onClose={() => setReminderQueue(queue => queue.slice(1))}
           onOpenThread={(zaloId, threadId, threadType) => {
-            setReminderNotification(null);
+            const current = reminderNotification;
+            setReminderQueue(queue => queue.slice(1));
+            if (current.kind === 'erp') {
+              // Lịch từ tin nhắn: mở hội thoại như bấm thông báo (đổi tài khoản, báo đã đọc) rồi nhảy tới tin đã thêm vào lịch
+              openLinkedConversation({ linked_account_id: zaloId, linked_contact_id: threadId, linked_msg_id: current.msgId });
+              return;
+            }
             // Switch active thread
             const { setActiveThread, setMessages, clearUnread } = useChatStore.getState();
             const { setActiveAccount } = useAccountStore.getState();
@@ -1884,7 +1974,8 @@ export default function App() {
             clearUnread(zaloId, threadId);
             // Load messages
             DataAccessor.markAsRead({ zaloId, contactId: threadId }).catch(() => {});
-            sendSeenForThread(zaloId, threadId, threadType);
+            // Chủ động mở hội thoại từ nhắc hẹn → báo đã đọc lên nền tảng như khi bấm trong danh sách
+            void liveReadSync.syncOpenedThread({ accountId: zaloId, threadId, threadType });
             DataAccessor.getMessages({ zaloId, threadId, limit: 50, offset: 0 }).then((res: any) => {
               const msgs = res?.messages || [];
               if (msgs.length > 0) {
@@ -1897,6 +1988,9 @@ export default function App() {
           }}
         />
       )}
+
+      {/* Thông báo tin nhắn mới trong app (góc trên bên phải, dưới thanh tiêu đề) */}
+      <InAppMessageToasts belowFriendRequest={friendRequestQueue.length > 0} />
 
       {/* Friend Request In-App Notification - show one at a time from queue */}
       {friendRequestQueue.length > 0 && (

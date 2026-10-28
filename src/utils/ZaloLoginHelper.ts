@@ -9,9 +9,16 @@ import * as fs from "fs";
 import { imageSize } from "image-size";
 import { extractUserProfile } from "./profileUtils";
 import { createProxyAgent } from "./ProxyHelper";
+import { applyZaloBusinessFlag, refreshZaloBusinessFlag } from "./zaloBusinessFlag";
+import { whenStartupSettled } from "./startupSettle";
+import { refreshZaloAutoDelete } from "../services/zalo/zaloAutoDeleteSync";
+import { refreshZaloHidden, zaloHiddenApiOf } from "../services/zalo/zaloHiddenConversations";
+import { describeZaloSocketRetry, installZaloListenerRetryGuard } from "./zaloListenerRetry";
 
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_DELAY_BASE_MS = 5000; // 5s base, exponential backoff
+/** zca-js tự nối lại websocket (retryOnClose): quá lâu chưa nối được thì đăng nhập lại cả phiên như trước. */
+const ZCA_RETRY_WATCHDOG_MS = 90_000;
 
 class ZaloLoginHelper {
 
@@ -180,9 +187,9 @@ class ZaloLoginHelper {
         try {
             const accountInfo = await api.fetchAccountInfo();
             const phone: string = accountInfo?.profile?.phoneNumber || (accountInfo as any)?.phoneNumber || '';
-            const bizPkgId: number = accountInfo?.profile?.bizPkg?.pkgId ?? (accountInfo as any)?.bizPkg?.pkgId ?? 0;
-            const isBusiness = bizPkgId > 0 ? 1 : 0;
-            DatabaseService.getInstance().updateAccountInfo(zaloId, phone, isBusiness);
+            // SĐT rỗng thì giữ số đã lưu; cờ Business qua applyZaloBusinessFlag (không đọc được thì giữ nguyên)
+            DatabaseService.getInstance().updateAccountInfo(zaloId, phone, null);
+            const isBusiness = applyZaloBusinessFlag(zaloId, accountInfo);
             if (phone) savedPhone = phone;
             Logger.log(`[ZaloLoginHelper] Updated ${zaloId}: phone=${phone}, isBusiness=${isBusiness}`);
         } catch (err: any) {
@@ -571,6 +578,14 @@ class ZaloLoginHelper {
             }
 
             this.setupEventListeners(zaloId, connection);
+            // Sau khi app ổn định: đọc lại cờ Zalo Business (đăng nhập QR / cookie đã tự đọc) và danh sách hội thoại đang
+            // bật tự xoá tin (ZL-05 — Zalo không báo khi đổi trên điện thoại). Mỗi việc tối đa 6 giờ / lần / tài khoản.
+            const syncApi = connection.api as any;
+            whenStartupSettled(() => {
+                if (!api) void refreshZaloBusinessFlag(zaloId, syncApi);
+                void refreshZaloAutoDelete(zaloId, syncApi);
+                void refreshZaloHidden(zaloId, zaloHiddenApiOf(syncApi));
+            });
             return true;
         } catch (error: any) {
             Logger.error(`[ZaloLoginHelper] connectZaloUser failed: ${error.message}`);
@@ -1058,29 +1073,63 @@ class ZaloLoginHelper {
             }
         });
 
+        // ── Tự nối lại websocket như Zalo Web (zca-js retryOnClose, zca-js#386) ──────────────────────────────
+        // Zalo PC đăng nhập / đăng xuất làm Zalo đóng kết nối của phiên này. zca-js nối lại ngay trên cùng phiên theo mã
+        // đóng + số lượt Zalo cấu hình; chỉ khi zca-js thôi thử ("closed") hoặc quá ZCA_RETRY_WATCHDOG_MS mới đăng nhập lại
+        // cả phiên bằng cookie như trước. Listener không còn dùng (đã ngắt, đã xoá tài khoản, bị phiên mới thay) thì không
+        // được tự nối lại (zaloListenerRetry.ts).
+        const isCurrentListener = () => ConnectionManager.getConnection(zaloId) === connection;
+        const retryGuard = installZaloListenerRetryGuard(listener, {
+            allowRetry: () => !ZaloLoginHelper.removedAccounts.has(zaloId) && isCurrentListener(),
+            onBlocked: () => Logger.log(`[ZaloLoginHelper] ${zaloId} listener cũ - bỏ lượt tự nối lại`),
+        });
+        let retryWatchdog: ReturnType<typeof setTimeout> | null = null;
+        const clearRetryWatchdog = () => {
+            if (retryWatchdog) clearTimeout(retryWatchdog);
+            retryWatchdog = null;
+        };
+
         listener.on("connected", () => {
+            clearRetryWatchdog();
+            // Listener cũ vẫn nối được (vừa bị phiên mới thay / ngắt / xoá tài khoản): đóng lại, không nhận tin hai lần
+            if (!isCurrentListener()) {
+                Logger.log(`[ZaloLoginHelper] ${zaloId} listener cũ vừa nối lại - đóng`);
+                try { listener.stop(); } catch {}
+                return;
+            }
+            retryGuard.resetRetryBudget();
             Logger.log(`[ZaloLoginHelper] ${zaloId} ✅ Connected`);
             ConnectionManager.setConnected(zaloId, true);
             DatabaseService.getInstance().setListenerActive(zaloId, true);
             EventBroadcaster.broadcastConnected(zaloId, { zaloId, send2meId });
         });
 
+        // Mỗi listener chỉ dọn + hẹn đăng nhập lại một lần ("disconnected" rồi "closed", hoặc chờ nối lại quá lâu)
+        let tornDown = false;
         const handleDisconnection = (eventType: string, code: CloseReason, reason: string) => {
             Logger.warn(`[ZaloLoginHelper] ${zaloId} ${eventType} - Code: ${code}, Reason: ${reason}`);
+            if (tornDown) return;
+
+            const currentConnection = ConnectionManager.getConnection(zaloId);
+            if (currentConnection && currentConnection !== connection) {
+                // Connection bị thay thế bởi fresh login (QR/cookies) trong khi listener cũ vẫn chạy
+                // → listener cũ đang đóng, không reconnect - connection mới đang hoạt động (không đổi trạng thái của nó)
+                Logger.log(`[ZaloLoginHelper] ${zaloId} stale connection closed (replaced by newer) - skipping reconnect`);
+                return;
+            }
+            tornDown = true;
             ConnectionManager.setConnected(zaloId, false);
             ConnectionManager.setListenerStarted(zaloId, false);
 
             EventBroadcaster.broadcastDisconnected(zaloId, `${eventType} - ${CloseReason[code] || code}`);
 
-            const currentConnection = ConnectionManager.getConnection(zaloId);
-            if (currentConnection && currentConnection === connection) {
-                ConnectionManager.removeConnection(zaloId);
-            } else if (currentConnection && currentConnection !== connection) {
-                // Connection bị thay thế bởi fresh login (QR/cookies) trong khi listener cũ vẫn chạy
-                // → listener cũ đang đóng, không reconnect - connection mới đang hoạt động
-                Logger.log(`[ZaloLoginHelper] ${zaloId} stale connection closed (replaced by newer) - skipping reconnect`);
+            if (!currentConnection) {
+                // Đã ngắt chủ động (Ngắt kết nối, đăng xuất, xoá tài khoản): không tự đăng nhập lại. Trước đây vẫn hẹn
+                // đăng nhập lại sau 5 s nên "Ngắt kết nối" không giữ được.
+                Logger.log(`[ZaloLoginHelper] ${zaloId} connection removed - skipping reconnect`);
                 return;
             }
+            ConnectionManager.removeConnection(zaloId);
 
             // ── Auto-reconnect ────────────────────────────────────────────────
             // Một số CloseReason cho biết token không còn hiệu lực → không retry
@@ -1105,10 +1154,23 @@ class ZaloLoginHelper {
         };
 
         listener.on("disconnected", (code: CloseReason, reason: string) => {
-            handleDisconnection('disconnected', code, reason);
+            // zca-js vừa mất kết nối: mã được thử lại thì tự nối lại sau ít giây, không thì phát "closed" ngay sau đây
+            Logger.warn(`[ZaloLoginHelper] ${zaloId} disconnected - Code: ${code}, Reason: ${reason}`);
+            if (tornDown || !isCurrentListener()) return;
+            ConnectionManager.setConnected(zaloId, false);
+            EventBroadcaster.broadcastDisconnected(zaloId, `reconnecting - ${CloseReason[code] || code}`);
+            clearRetryWatchdog();
+            retryWatchdog = setTimeout(() => {
+                retryWatchdog = null;
+                if (tornDown || !isCurrentListener() || ConnectionManager.isConnected(zaloId)) return;
+                Logger.warn(`[ZaloLoginHelper] ${zaloId} chưa tự nối lại sau ${ZCA_RETRY_WATCHDOG_MS / 1000}s - đăng nhập lại phiên`);
+                handleDisconnection('retry_timeout', code, reason);
+                try { listener.stop(); } catch {}
+            }, ZCA_RETRY_WATCHDOG_MS);
         });
 
         listener.on("closed", (code: CloseReason, reason: string) => {
+            clearRetryWatchdog();
             handleDisconnection('closed', code, reason);
         });
 
@@ -1119,9 +1181,9 @@ class ZaloLoginHelper {
         // Đồng bộ tin nhắn từ điện thoại: API pullMobile/znoise + control event "syncmsgmb"
         MobileSyncService.getInstance().attachToApi(zaloId, connection.api);
 
-        listener.start();
+        listener.start({ retryOnClose: true });
         ConnectionManager.setListenerStarted(zaloId, true);
-        Logger.log(`[ZaloLoginHelper] ${zaloId} 🎧 Listener started`);
+        Logger.log(`[ZaloLoginHelper] ${zaloId} 🎧 Listener started (tự nối lại: ${describeZaloSocketRetry(connection.api)})`);
     }
 }
 

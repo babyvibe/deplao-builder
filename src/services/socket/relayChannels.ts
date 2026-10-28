@@ -20,6 +20,8 @@ export const RELAY_CHANNELS: readonly string[] = Object.freeze([
   'event:reaction',
   'event:telegramReaction',
   'event:messageEdited',
+  'event:messagesRepaired', // tin cũ lấy lại từ Telegram (chưa hỗ trợ → đọc được, bài kênh bỏ topic sai)
+  'event:contactPreview', // xem trước hội thoại đổi sau khi sửa tin cũ
   'event:messagesDeleted',
   'event:undo',
   'event:delete',
@@ -46,6 +48,7 @@ export const RELAY_CHANNELS: readonly string[] = Object.freeze([
   'event:connected',
   'event:disconnected',
   'event:listenerDead',
+  'event:accountProfile', // cờ Zalo Business đọc lại khi đăng nhập / kết nối
   // ─── Facebook (id tài khoản: fbAccountId = accounts.zalo_id) ─────────────
   'fb:onMessage',
   'fb:onReaction',
@@ -69,6 +72,7 @@ export const RELAY_CHANNELS: readonly string[] = Object.freeze([
   'db:contactProfileUpdated',
   'db:conversationDeleted',
   'db:unreadChanged',
+  'db:replyStateChanged', // đánh dấu đã trả lời / bỏ đánh dấu (tay, hàng loạt)
   'crm:noteChanged',
   'crm:campaignChanged',
   'crm:campaignDone',
@@ -137,6 +141,7 @@ export const BOSS_ONLY_CHANNELS: Readonly<Record<string, string>> = Object.freez
   'event:telegramCall': 'Báo cuộc gọi Telegram đến (đang làm) — Deplao không nghe máy được, chỉ báo trên máy Boss / điện thoại',
   'event:mobileSync': 'Tiến độ "Đồng bộ từ điện thoại" chạy trên máy Boss',
   'event:fbHistorySync': 'Tiến độ "Đồng bộ tin nhắn Facebook" chạy trên máy Boss; tin đã lưu tới nhân viên qua đọc DB của Boss',
+  'event:mediaProgress': 'Nhịp tiến độ tải video ("2.1 / 5.0 MB") trên máy Boss đang tải; file xong tới nhân viên qua event:localPath',
   'event:telegramBotEditedMessage': 'Chỉ làm trigger workflow trên Boss (renderer không nghe)',
   'event:telegramBotJoinRequest': 'Chỉ làm trigger workflow trên Boss (renderer không nghe)',
   'event:telegramBotCallback': 'Chỉ làm trigger workflow trên Boss (renderer không nghe)',

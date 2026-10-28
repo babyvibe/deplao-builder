@@ -3029,10 +3029,23 @@ export class FacebookService {
     const id = String(threadId || '').replace(/@.*$/, '');
     if (this.e2eeThreads.has(id)) return true;
     try {
-      const row = DatabaseService.getInstance().queryOne?.(
+      const db = DatabaseService.getInstance();
+      const row = db.queryOne?.(
         `SELECT is_e2ee FROM fb_threads WHERE id = ? AND account_id = ?`, [id, this.accountId],
       ) as { is_e2ee?: number } | undefined;
-      return Number(row?.is_e2ee) === 1;
+      if (Number(row?.is_e2ee) === 1) return true;
+      // Chat 1:1 mã hoá đầu cuối thường không có hàng fb_threads (markFBThreadE2EE chỉ UPDATE) → cờ mất sau khi khởi động
+      // lại. Nhận ra từ tin trong máy: tin E2EE mang mã số của bridge, tin Messenger thường luôn có mã "mid.$…". Có tin mà
+      // không tin nào "mid.$" = toàn E2EE, không có lịch sử thường để tải — trước đây rơi xuống GraphQL, Facebook trả lỗi →
+      // khung chat hiện "Lỗi - Thử lại" mỗi lần mở. Hội thoại có cả tin thường (đã chuyển sang E2EE) vẫn tải phần cũ.
+      const owner = String(this.getFacebookId() || '');
+      const kinds = db.queryOne?.(
+        `SELECT EXISTS(SELECT 1 FROM messages WHERE owner_zalo_id = ? AND thread_id = ? AND channel = 'facebook') AS any_msg,
+                EXISTS(SELECT 1 FROM messages WHERE owner_zalo_id = ? AND thread_id = ? AND channel = 'facebook'
+                         AND msg_id GLOB 'mid.$*') AS regular`,
+        [owner, id, owner, id],
+      ) as { any_msg?: number; regular?: number } | undefined;
+      return Number(kinds?.any_msg) === 1 && Number(kinds?.regular) === 0;
     } catch {
       return false;
     }

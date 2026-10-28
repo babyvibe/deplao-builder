@@ -233,8 +233,9 @@ export function registerTelegramUserIpc(): void {
     catch (err: any) { return { success: false, error: err.message }; }
   });
 
-  ipcMain.handle('telegramUser:sendTopicFile', async (_event, params: TelegramForumTopicContext & { filePath: string; caption?: string }) => {
-    try { return await TelegramUser.sendTopicFile(params.accountId, params.chatId, params.topicRootMessageId, params.filePath, params.caption); }
+  // Tệp vào chủ đề forum / chuỗi bình luận bài đăng kênh; replyToMsgId = trả lời một tin cụ thể trong đó
+  ipcMain.handle('telegramUser:sendTopicFile', async (_event, params: TelegramForumTopicContext & { filePath: string; caption?: string; fileType?: string; replyToMsgId?: string }) => {
+    try { return await TelegramUser.sendTopicFile(params.accountId, params.chatId, params.topicRootMessageId, params.filePath, params.caption, params.fileType, params.replyToMsgId); }
     catch (err: any) { return { success: false, error: err.message }; }
   });
 
@@ -329,8 +330,8 @@ export function registerTelegramUserIpc(): void {
     catch (err: any) { return { success: false, error: err.message }; }
   });
 
-  ipcMain.handle('telegramUser:readChatHistory', async (_event, params: { accountId: string; chatId: string }) => {
-    try { return await TelegramUser.readChatHistory(params.accountId, params.chatId); }
+  ipcMain.handle('telegramUser:readChatHistory', async (_event, params: { accountId: string; chatId: string; historyOnly?: boolean }) => {
+    try { return await TelegramUser.readChatHistory(params.accountId, params.chatId, { historyOnly: params.historyOnly === true }); }
     catch (err: any) { return { success: false, error: err.message }; }
   });
 
@@ -490,12 +491,43 @@ export function registerTelegramUserIpc(): void {
     catch (err: any) { return { success: false, reason: 'error', error: err.message }; }
   });
 
-  ipcMain.handle('telegramUser:repairMessageMedia', async (_event, params: { accountId: string; chatId: string; messageId: string }) => {
-    try { return await TelegramUser.repairMessageMedia(params.accountId, params.chatId, params.messageId); }
+  // urgent = người dùng bấm tải / thử lại → hàng tải đưa lên đầu
+  ipcMain.handle('telegramUser:repairMessageMedia', async (_event, params: { accountId: string; chatId: string; messageId: string; urgent?: boolean }) => {
+    try { return await TelegramUser.repairMessageMedia(params.accountId, params.chatId, params.messageId, { urgent: !!params.urgent }); }
     catch (err: any) {
       Logger.error(`[telegramUser:repairMessageMedia] ${err.message}`);
       return { success: false, error: err.message };
     }
+  });
+
+  // Bình luận bài đăng kênh: nằm ở nhóm thảo luận (không phải kênh) — tin gốc, quyền bình luận, bình luận cũ → mới
+  ipcMain.handle('telegramUser:getPostDiscussion', async (_event, params: { accountId: string; channelId: string; postId: string; mode?: 'initial' | 'older' | 'newer' | 'latest'; offsetId?: number; limit?: number }) => {
+    try { return await TelegramUser.getPostDiscussion(params.accountId, params.channelId, params.postId, { mode: params.mode, offsetId: params.offsetId, limit: params.limit }); }
+    catch (err: any) { return { success: false, error: err.message }; }
+  });
+
+  // Đã đọc bình luận tới readMaxId (messages.readDiscussion) — lần mở sau bắt đầu ở bình luận chưa đọc kế tiếp
+  ipcMain.handle('telegramUser:readPostDiscussion', async (_event, params: { accountId: string; chatId: string; rootId: string; readMaxId: number; channelId?: string; postId?: string }) => {
+    try { return await TelegramUser.readPostDiscussion(params.accountId, params.chatId, params.rootId, params.readMaxId, { channelId: params.channelId, postId: params.postId }); }
+    catch (err: any) { return { success: false, error: err.message }; }
+  });
+
+  // Lượt xem / chia sẻ / bình luận của các bài đang hiện (messages.getMessagesViews)
+  ipcMain.handle('telegramUser:refreshPostStats', async (_event, params: { accountId: string; chatId: string; messageIds: string[]; increment?: boolean }) => {
+    try { return await TelegramUser.refreshPostStats(params.accountId, params.chatId, params.messageIds, !!params.increment); }
+    catch (err: any) { return { success: false, error: err.message }; }
+  });
+
+  // Ảnh / video trong tin định dạng phong phú (mediaId trống = mọi ảnh)
+  ipcMain.handle('telegramUser:downloadRichMedia', async (_event, params: { accountId: string; chatId: string; messageId: string; mediaId?: string }) => {
+    try { return await TelegramUser.downloadRichMedia(params.accountId, params.chatId, params.messageId, params.mediaId); }
+    catch (err: any) { return { success: false, error: err.message }; }
+  });
+
+  // Hội thoại Telegram đang mở (null = không mở hội thoại Telegram nào) → hàng tải file của tài khoản đó ưu tiên hội thoại này
+  ipcMain.handle('telegramUser:setDownloadFocus', async (_event, params: { accountId?: string | null; threadId?: string | null } | null) => {
+    TelegramUser.setTelegramDownloadFocus(params?.accountId, params?.threadId);
+    return { success: true };
   });
 
   // Thẻ link của bản ghi cũ: lấy lại attachments theo lô (không tải media)
@@ -589,8 +621,8 @@ export function registerTelegramUserIpc(): void {
     catch (err: any) { return { success: false, error: err.message }; }
   });
 
-  ipcMain.handle('telegramUser:sendTopicMessage', async (_event, params: TelegramForumTopicContext & { text: string }) => {
-    try { return await TelegramUser.sendTopicMessage(params.accountId, params.chatId, params.topicRootMessageId, params.text); }
+  ipcMain.handle('telegramUser:sendTopicMessage', async (_event, params: TelegramForumTopicContext & { text: string; replyToMsgId?: string; mentions?: Array<{ uid: string; pos: number; len: number }> }) => {
+    try { return await TelegramUser.sendTopicMessage(params.accountId, params.chatId, params.topicRootMessageId, params.text, params.replyToMsgId, params.mentions); }
     catch (err: any) { return { success: false, error: err.message }; }
   });
 

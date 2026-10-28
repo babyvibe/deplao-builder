@@ -87,6 +87,9 @@ class PluginsPlatform {
             operations: () => this.operations(),
             hub: () => platform().getHub(),
             invokeIpc: async (channel, payload, principal) => unwrapIpcResult(await platform().getInvoker().invoke(channel, [payload], principal, { requestId: 'plugin' })),
+            // cloudflare:workers:* — cùng IpcInvoker (hàng đợi, timeout, ngữ cảnh API) + giấy uỷ quyền; kết quả trả nguyên.
+            invokeDelegated: (channel, payload, principal, grant, timeoutMs) =>
+                platform().getInvoker().invoke(channel, [payload], principal, { requestId: 'plugin', timeoutMs, pluginGrant: grant }),
             uploads: () => platform().uploads,
             appVersion: () => appVersion(),
         });

@@ -14,12 +14,18 @@ import { searchPickerContacts, PickerContactRow, PickerSearchOptions, PickerSear
 import { addLocalDays, localDayBuckets, localDayDiff, localDayKey, localHourBuckets, sqlLocalDay, sqlLocalHour } from '../../shared/localTimeBuckets';
 import { MEDIA_MESSAGE_COLUMNS, MEDIA_MESSAGE_FILTER, buildMediaCursorQuery, type MediaCursor } from './mediaMessagesQuery';
 import { escapeLikePattern, foldSearchText } from '../../shared/searchFold';
+import { buildMessageFtsQuery, MESSAGE_SEARCH_FTS_CANDIDATES, MESSAGE_SEARCH_LIMIT, MESSAGE_SEARCH_RECENT_SCAN } from '../../shared/messageSearch';
 import { createCRMContactFilter, hasCRMContactFilters, type CRMContactFilters } from '../../shared/crmContactFilters';
 import { mergeZaloReactionAliases, normalizeZaloReactionEmoji } from '../../shared/zaloReactions';
 import { zinstantPreviewText } from '../../shared/zaloZinstant';
+import { contactReplyStateSql } from '../../shared/replyState';
+import { ZALO_TTL_EXPIRY_GRACE_MS, isZaloTtlExpired } from '../../shared/zaloAutoDelete';
+import { TELEGRAM_TOP_MESSAGE_ID_SQL, telegramTopMessageIdParams } from './telegramTopMessage';
 
 // better-sqlite3: native SQLite - no WASM heap, memory-mapped I/O
 let db: BetterSqlite3.Database | null = null;
+/** Câu lệnh tra tin Zalo theo cliMsgId (findZaloRowByCli) — mỗi kết nối DB một bản. */
+const zaloCliLookupStatements = new WeakMap<BetterSqlite3.Database, BetterSqlite3.Statement>();
 
 // ── Cached secondary DB for withDbPath (avoids repeated open/close) ─────────
 let _cachedSecondaryDb: BetterSqlite3.Database | null = null;
@@ -30,6 +36,17 @@ const SECONDARY_DB_TTL_MS = 30_000; // auto-close after 30s idle
 const MARK_READ_SCOPE = 200;
 /** getLinks: hội thoại (theo DB) đã bù link từ tin cũ trong phiên này. */
 const linksBackfilledThreads = new Set<string>();
+/**
+ * Điều kiện "cùng hội thoại" khi tra tin theo msg_id / cli_msg_id. Viết `thread_id = ?` thì SQLite (DB chưa ANALYZE) chọn
+ * idx_messages_thread(_cursor) (owner, thread_id) và QUÉT CẢ HỘI THOẠI để tìm một tin: đo 390 ms / lần trên hội thoại
+ * 99k tin — lúc mở app, trích dẫn chưa có tin gốc tra từng tin (getMessageById) chiếm ~13 s luồng chính. CAST giữ đúng
+ * phép so sánh của cột TEXT (tham số số vẫn khớp, khác `+thread_id`) nhưng không dùng được index theo thread → SQLite tra
+ * index msg_id (UNIQUE) / idx_messages_cli rồi lọc hội thoại (0,3 ms). Điều kiện OR msg_id / cli_msg_id thì tách 2 lần
+ * tra: OR + CAST làm SQLite quét mọi tin của tài khoản.
+ */
+const SAME_THREAD_SQL = 'CAST(thread_id AS TEXT) = ?';
+/** last_message_time theo mili-giây (bản ghi cũ lưu giây). */
+const CONTACT_LAST_MS_SQL = `(CASE WHEN last_message_time > 0 AND last_message_time < 100000000000 THEN last_message_time * 1000 ELSE last_message_time END)`;
 /**
  * Ghi một thành viên nhóm: tên / ảnh / vai trò lấy bản mới như trước; @username mới rỗng (nơi gọi không có — Zalo, lịch
  * sử tin, quét thành viên) thì GIỮ @username đã lưu. Trước đây INSERT OR REPLACE xoá mất @username của Telegram nên ô
@@ -1386,6 +1403,10 @@ class DatabaseService {
                 CREATE INDEX IF NOT EXISTS idx_erp_events_start ON erp_calendar_events(start_at);
                 CREATE INDEX IF NOT EXISTS idx_erp_events_organizer ON erp_calendar_events(organizer_id);
             `);
+            // Lịch tạo từ tin nhắn: tài khoản + tin gốc → nhắc lịch mở đúng hội thoại, nhảy tới tin
+            for (const column of ['linked_account_id', 'linked_msg_id']) {
+                try { this.exec(`ALTER TABLE erp_calendar_events ADD COLUMN ${column} TEXT`); } catch { /* đã có */ }
+            }
 
             this.exec(`
                 CREATE TABLE IF NOT EXISTS erp_event_reminders (
@@ -1667,6 +1688,14 @@ class DatabaseService {
                 db!.exec(`ALTER TABLE messages ADD COLUMN is_edited INTEGER DEFAULT 0`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added is_edited column');
+            }
+
+            // Zalo gắn thời gian tự xoá cho tin (ms, ZL-05): chỉ để hiện đồng hồ — Deplao không xoá tin theo TTL
+            const hasTtl = cols.some((c: any) => c.name === 'ttl');
+            if (!hasTtl) {
+                db!.exec(`ALTER TABLE messages ADD COLUMN ttl INTEGER DEFAULT 0`);
+                this.save();
+                Logger.log('[DatabaseService] Migration: added ttl column');
             }
 
             // Add listener_active column to accounts if missing
@@ -2185,13 +2214,25 @@ class DatabaseService {
                 Logger.log('[DatabaseService] Migration: added is_in_others to contacts');
                 needSave = true;
             }
+            // Zalo: tự xoá tin nhắn (ms, ZL-05 — Deplao chỉ hiển thị, không xoá tin) và hội thoại ẩn bằng PIN (ZL-03)
+            if (!names.includes('zalo_auto_delete_ttl')) {
+                db!.exec(`ALTER TABLE contacts ADD COLUMN zalo_auto_delete_ttl INTEGER DEFAULT 0`);
+                Logger.log('[DatabaseService] Migration: added zalo_auto_delete_ttl to contacts');
+                needSave = true;
+            }
+            if (!names.includes('zalo_hidden')) {
+                db!.exec(`ALTER TABLE contacts ADD COLUMN zalo_hidden INTEGER DEFAULT 0`);
+                Logger.log('[DatabaseService] Migration: added zalo_hidden to contacts');
+                needSave = true;
+            }
             if (!names.includes('has_mention')) {
                 db!.exec(`ALTER TABLE contacts ADD COLUMN has_mention INTEGER DEFAULT 0`);
                 Logger.log('[DatabaseService] Migration: added has_mention to contacts');
                 needSave = true;
             }
-            // Mốc người kia đã nhận / đã xem tin mình gửi (services/receipts/peerReceipts.ts): ms; Telegram theo id tin
-            for (const column of ['peer_delivered_ts', 'peer_read_ts', 'peer_read_max_id']) {
+            // Mốc người kia đã nhận / đã xem tin mình gửi (services/receipts/peerReceipts.ts): ms; Telegram theo id tin.
+            // reply_marked_at: đánh dấu đã trả lời tay / hàng loạt (shared/replyState) — mốc tin mới nhất lúc đánh dấu, ms
+            for (const column of ['peer_delivered_ts', 'peer_read_ts', 'peer_read_max_id', 'reply_marked_at']) {
                 if (!names.includes(column)) {
                     db!.exec(`ALTER TABLE contacts ADD COLUMN ${column} INTEGER DEFAULT 0`);
                     Logger.log(`[DatabaseService] Migration: added ${column} to contacts`);
@@ -3156,18 +3197,15 @@ class DatabaseService {
 
     /** Freeze the history lower bound BEFORE a live message raises MAX(msg_id).
      * PTS recovery may fall back to history; newest live delivery must not hide
-     * the older missing interval. Zero is a valid frozen first-load boundary. */
+     * the older missing interval. Zero is a valid frozen first-load boundary.
+     * Mốc = mã tin lớn nhất trong 200 tin mới nhất (telegramTopMessage.ts), không quét cả kênh. */
     public preserveChannelRecoveryHistoryStart(ownerZaloId: string, channelId: string): void {
         if (!this.initialized) return;
         this.run(`UPDATE telegram_channel_recovery_queue
-            SET history_start_msg_id = (
-                SELECT COALESCE(MAX(CAST(msg_id AS INTEGER)), 0) FROM messages
-                WHERE owner_zalo_id = ? AND thread_id = ? AND channel = 'telegram_user'
-                  AND CAST(msg_id AS INTEGER) BETWEEN 1 AND 2147483647
-            )
+            SET history_start_msg_id = ${TELEGRAM_TOP_MESSAGE_ID_SQL}
             WHERE owner_zalo_id = ? AND channel_id = ?
               AND status IN ('pending', 'draining') AND history_start_msg_id IS NULL`,
-            [ownerZaloId, channelId, ownerZaloId, channelId]);
+            [...telegramTopMessageIdParams(ownerZaloId, channelId), ownerZaloId, channelId]);
     }
 
     /** Dequeue up to `limit` channels ready for recovery (pending + not throttled). */
@@ -3418,25 +3456,27 @@ class DatabaseService {
         // Mọi kênh: cookie Zalo, phiên GramJS, token bot Telegram (trước đây chỉ mã hoá chuỗi dạng JSON)
         const cookiesToStore = this.encryptCookiesForStorage(account.cookies);
 
-        const isBusiness = account.is_business ?? 0;
+        // Không truyền is_business = chưa biết (vd đăng nhập QR lưu tài khoản trước khi hỏi bizPkg) → giữ giá trị đang lưu,
+        // tài khoản mới = 0. Trước đây mặc định 0 ghi đè luôn cờ của tài khoản Zalo Business.
+        const isBusiness = account.is_business ?? null;
         const channel = (account as any).channel || CHANNEL.ZALO;
         const username = (account as any).username || '';
         this.run(
             `INSERT INTO accounts (zalo_id, full_name, avatar_url, phone, username, is_business, imei, user_agent, cookies, is_active, created_at, channel)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+             VALUES (?,?,?,?,?,COALESCE(?, 0),?,?,?,?,?,?)
              ON CONFLICT(zalo_id) DO UPDATE SET
                full_name=excluded.full_name,
                avatar_url=excluded.avatar_url,
                phone=excluded.phone,
                username=excluded.username,
-               is_business=excluded.is_business,
+               is_business=COALESCE(?, accounts.is_business),
                imei=excluded.imei,
                user_agent=excluded.user_agent,
                cookies=excluded.cookies,
                is_active=excluded.is_active,
                channel=excluded.channel,
                last_seen=datetime('now')`,
-            [account.zalo_id, account.full_name, account.avatar_url, normalizedPhone, username, isBusiness, account.imei, account.user_agent, cookiesToStore, account.is_active, account.created_at, channel]
+            [account.zalo_id, account.full_name, account.avatar_url, normalizedPhone, username, isBusiness, account.imei, account.user_agent, cookiesToStore, account.is_active, account.created_at, channel, isBusiness]
         );
     }
 
@@ -3713,11 +3753,23 @@ class DatabaseService {
         this.run('UPDATE accounts SET phone = ? WHERE zalo_id = ?', [this.normalizeVietnamPhone(phone), zaloId]);
     }
 
-    /** Cập nhật thông tin profile: phone + is_business + avatar_url + full_name */
-    public updateAccountInfo(zaloId: string, phone: string, isBusiness: number, avatarUrl?: string, fullName?: string): void {
+    /**
+     * Cập nhật thông tin profile: phone + is_business + avatar_url + full_name.
+     * SĐT rỗng / isBusiness null = giữ giá trị đang lưu (Zalo trả thiếu thì không xoá SĐT hay cờ Business).
+     */
+    public updateAccountInfo(zaloId: string, phone: string, isBusiness: number | null, avatarUrl?: string, fullName?: string): void {
         if (!this.initialized) return;
-        const fields: string[] = ['phone = ?', 'is_business = ?'];
-        const values: any[] = [this.normalizeVietnamPhone(phone), isBusiness];
+        const fields: string[] = [];
+        const values: any[] = [];
+        const normalizedPhone = this.normalizeVietnamPhone(phone);
+        if (normalizedPhone) {
+            fields.push('phone = ?');
+            values.push(normalizedPhone);
+        }
+        if (isBusiness === 0 || isBusiness === 1) {
+            fields.push('is_business = ?');
+            values.push(isBusiness);
+        }
         if (avatarUrl !== undefined) {
             fields.push('avatar_url = ?');
             values.push(avatarUrl);
@@ -3726,11 +3778,21 @@ class DatabaseService {
             fields.push('full_name = ?');
             values.push(fullName);
         }
+        if (!fields.length) return;
         values.push(zaloId);
         this.run(
             `UPDATE accounts SET ${fields.join(', ')} WHERE zalo_id = ?`,
             values
         );
+    }
+
+    /** Ghi cờ Zalo Business (0 / 1) của tài khoản; true khi giá trị thật sự đổi (để báo giao diện). */
+    public setAccountBusiness(zaloId: string, isBusiness: 0 | 1): boolean {
+        if (!this.initialized) return false;
+        const row = this.queryOne<{ is_business: number | null }>('SELECT is_business FROM accounts WHERE zalo_id = ?', [zaloId]);
+        if (!row || Number(row.is_business || 0) === isBusiness) return false;
+        this.run('UPDATE accounts SET is_business = ? WHERE zalo_id = ?', [isBusiness, zaloId]);
+        return true;
     }
 
     /** Kiểm tra tài khoản đã tồn tại trong DB chưa */
@@ -3877,12 +3939,19 @@ class DatabaseService {
                 return;
             }
 
-            this.run(
-                `INSERT OR IGNORE INTO messages
-                 (msg_id, cli_msg_id, owner_zalo_id, thread_id, thread_type, sender_id, content, msg_type, timestamp, is_sent, attachments, local_paths, status, quote_data)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-                row.params
-            );
+            // Tin này đã được đồng bộ từ điện thoại trước đó với id tạm (mb_/cli_ — điện thoại không có id thật của tin
+            // gửi từ máy khác) → đổi dòng đó sang id thật thay vì thêm bản thứ hai
+            if (!this.upgradeSyntheticZaloRow(ownerZaloId, row)) {
+                this.run(
+                    `INSERT OR IGNORE INTO messages
+                     (msg_id, cli_msg_id, owner_zalo_id, thread_id, thread_type, sender_id, content, msg_type, timestamp, is_sent, attachments, local_paths, status, quote_data)
+                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                    row.params
+                );
+            }
+            // Tin Zalo có thời gian tự xoá (ms) → lưu để hiện đồng hồ; Deplao không xoá tin theo TTL
+            const ttl = Number(rawMessage?.data?.ttl) || 0;
+            if (ttl > 0) this.setMessageTtl(ownerZaloId, String(row.params[0]), ttl);
 
             this.updateContactLastMessage(
                 ownerZaloId, row.threadId,
@@ -3988,6 +4057,76 @@ class DatabaseService {
         };
     }
 
+    /** id tạm của tin Zalo không có id thật: `mb_<cliMsgId>` (đồng bộ từ điện thoại), `cli_<cliMsgId>` (bản nhập cũ). */
+    public static isSyntheticZaloMsgId(msgId: unknown): boolean {
+        return /^(mb|cli)_/.test(String(msgId || ''));
+    }
+
+    /**
+     * Cùng một tin Zalo = cùng tài khoản + hội thoại + người gửi + cliMsgId (id phía máy gửi, theo mili-giây). Điện thoại
+     * không lưu id thật (GlbMsgId = 0) cho tin mình gửi từ máy khác (Deplao / Zalo PC) → bản đồng bộ mang id tạm `mb_…`
+     * và trước đây được thêm thành bản thứ hai (khách báo: đồng bộ tin trong ngày → tin đã gửi bị nhân đôi).
+     */
+    private findZaloRowByCli(
+        ownerZaloId: string, threadId: string, senderId: string, cliMsgId: unknown,
+    ): { id: number; msg_id: string; content: string } | undefined {
+        const cli = String(cliMsgId || '');
+        if (!cli) return undefined;
+        // Gọi cho mọi tin Zalo đến → câu lệnh chuẩn bị một lần cho mỗi kết nối DB (db đổi khi xem DB của Boss / workspace).
+        // Chỉ lọc (owner, cli_msg_id) để SQLite luôn dùng idx_messages_cli (vài dòng); thêm thread_id vào WHERE thì có lúc
+        // nó chọn idx_messages_thread_cursor và quét cả lịch sử hội thoại (đo trên DB thật: hàng chục giây / truy vấn)
+        let stmt = zaloCliLookupStatements.get(db!);
+        if (!stmt) {
+            stmt = db!.prepare(
+                `SELECT id, msg_id, thread_id, sender_id, content, COALESCE(channel, 'zalo') AS channel FROM messages
+                  WHERE owner_zalo_id = ? AND cli_msg_id = ?`
+            );
+            zaloCliLookupStatements.set(db!, stmt);
+        }
+        const rows = stmt.all(ownerZaloId, cli) as Array<{ id: number; msg_id: string; thread_id: string; sender_id: string; content: string; channel: string }>;
+        const hit = rows.find(r => r.thread_id === threadId && String(r.sender_id) === senderId && r.channel === 'zalo');
+        return hit ? { id: hit.id, msg_id: String(hit.msg_id), content: String(hit.content ?? '') } : undefined;
+    }
+
+    /**
+     * Zalo đôi khi giao một tin hai lần với id khác nhau — cùng người gửi + cliMsgId + nội dung, chủ yếu tin nhóm (DB thật:
+     * 2.723 cặp, 22/10/2026) → true để bỏ bản sau (không lưu, không hiện, không chạy workflow). Chỉ xét tin có id thật;
+     * khác nội dung thì vẫn là tin khác.
+     */
+    public isDuplicateZaloDelivery(ownerZaloId: string, rawMessage: any): boolean {
+        if (!this.initialized) return false;
+        const row = this.buildZaloMessageRow(ownerZaloId, rawMessage);
+        const msgId = String(row?.params[0] || '');
+        if (!row || !rawMessage?.data?.msgId || DatabaseService.isSyntheticZaloMsgId(msgId)) return false;
+        const existing = this.findZaloRowByCli(ownerZaloId, row.threadId, String(row.params[5] || ''), row.params[1]);
+        return !!existing
+            && existing.msg_id !== msgId
+            && !DatabaseService.isSyntheticZaloMsgId(existing.msg_id)
+            && existing.content === row.content;
+    }
+
+    /**
+     * Tin có id thật trùng một dòng id tạm của cùng tin → đổi dòng đó sang id thật + giờ server (giữ nội dung, media đã
+     * tải, cờ đã đọc…). Trả true khi đã xử lý (không chèn dòng mới).
+     */
+    private upgradeSyntheticZaloRow(
+        ownerZaloId: string,
+        row: { threadId: string; timestamp: number; params: any[] },
+    ): boolean {
+        const msgId = String(row.params[0] || '');
+        if (!msgId || DatabaseService.isSyntheticZaloMsgId(msgId)) return false;
+        const existing = this.findZaloRowByCli(ownerZaloId, row.threadId, String(row.params[5] || ''), row.params[1]);
+        if (!existing || existing.msg_id === msgId || !DatabaseService.isSyntheticZaloMsgId(existing.msg_id)) return false;
+        try {
+            db!.prepare('UPDATE messages SET msg_id = ?, timestamp = ? WHERE id = ?').run(msgId, row.timestamp, existing.id);
+        } catch (err: any) {
+            // Dòng id thật đã có (UNIQUE) → để INSERT OR IGNORE bỏ qua như cũ
+            Logger.warn(`[DatabaseService] Đổi id tạm ${existing.msg_id} → ${msgId} lỗi: ${err?.message}`);
+            return false;
+        }
+        return true;
+    }
+
     /**
      * Lưu hàng loạt tin nhắn lịch sử (đồng bộ từ điện thoại) trong 1 transaction.
      * Map cột giống hệt saveMessage, nhưng KHÔNG tăng unread và chỉ cập nhật preview hội thoại
@@ -4018,6 +4157,14 @@ class DatabaseService {
                     ignored++;
                     continue;
                 }
+                // Đã có tin này (cùng người gửi + cliMsgId) dưới id khác — thường là tin mình gửi: điện thoại chỉ có id tạm
+                // mb_… còn DB có id thật từ lúc gửi → giữ dòng đã có (không nhân đôi); dòng cũ id tạm mà nay có id thật → nâng cấp
+                const sameMessage = this.findZaloRowByCli(ownerZaloId, row.threadId, String(row.params[5] || ''), row.params[1]);
+                if (sameMessage && sameMessage.msg_id !== String(row.params[0])) {
+                    this.upgradeSyntheticZaloRow(ownerZaloId, row);
+                    ignored++;
+                    continue;
+                }
                 const isRecalled = message.isRecalled === true;
                 if (insert.run(...row.params, isRecalled ? 1 : 0).changes === 0) {
                     ignored++;
@@ -4025,6 +4172,8 @@ class DatabaseService {
                 }
                 inserted++;
                 touched.add(row.threadId);
+                const ttl = Number(message?.data?.ttl) || 0;
+                if (ttl > 0) this.setMessageTtl(ownerZaloId, String(row.params[0]), ttl);
                 const prev = latest.get(row.threadId);
                 if (!isRecalled && (!prev || row.timestamp >= prev.timestamp)) latest.set(row.threadId, row);
             }
@@ -4152,7 +4301,8 @@ class DatabaseService {
             return msgs;
         }
         const msgs = this.query<Message>(
-            `SELECT * FROM messages WHERE owner_zalo_id = ? AND thread_id = ?${topicFilter} ORDER BY timestamp DESC LIMIT ? OFFSET ?`,
+            // Cùng mốc (Telegram chỉ có giây) → id sau = tin sau, như truy vấn theo con trỏ ở trên (cùng chỉ mục)
+            `SELECT * FROM messages WHERE owner_zalo_id = ? AND thread_id = ?${topicFilter} ORDER BY timestamp DESC, msg_id DESC LIMIT ? OFFSET ?`,
             [ownerZaloId, threadId, ...topicParams, limit, offset]
         );
         if (msgs.length === 0) {
@@ -4245,36 +4395,49 @@ class DatabaseService {
 
     public searchMessages(ownerZaloId: string, query: string): Message[] {
         if (!this.initialized) return [];
+        const text = String(query ?? '').trim();
+        if (!text) return [];
 
-        // Try FTS5 first (nhanh hơn ~10-50x)
-        try {
-            const ftsExists = this.query<any>(`SELECT name FROM sqlite_master WHERE type='table' AND name='messages_fts'`);
-            if (ftsExists.length > 0) {
-                // Sanitize FTS5 query
-                const sanitized = query.replace(/['"]/g, '').trim();
-                if (sanitized.length > 0) {
-                    const ftsResults = this.query<any>(
-                        `SELECT m.* FROM messages m
-                         JOIN messages_fts fts ON m.rowid = fts.rowid
-                         WHERE messages_fts MATCH ?
-                         AND m.owner_zalo_id = ?
-                         ORDER BY m.timestamp DESC LIMIT 100`,
-                        [sanitized, ownerZaloId]
-                    );
-                    if (ftsResults.length > 0) {
-                        return ftsResults;
-                    }
-                }
+        // FTS5 theo tiền tố, an toàn với ký tự đặc biệt, thử cả d / đ (shared/messageSearch). Chỉ lấy
+        // MESSAGE_SEARCH_FTS_CANDIDATES dòng khớp mới nhất theo rowid rồi mới xếp theo thời gian: xếp MỌI dòng khớp
+        // của từ phổ biến ("anh") mất ~0,6 s, chặn tiến trình chính.
+        const ftsQuery = buildMessageFtsQuery(text);
+        if (ftsQuery && this.hasMessagesFts()) {
+            try {
+                const rows = this.query<Message>(
+                    `SELECT m.* FROM messages m
+                     WHERE m.rowid IN (
+                         SELECT rowid FROM messages_fts
+                         WHERE messages_fts MATCH ? AND owner_zalo_id = ?
+                         ORDER BY rowid DESC LIMIT ${MESSAGE_SEARCH_FTS_CANDIDATES}
+                     )
+                     ORDER BY m.timestamp DESC LIMIT ${MESSAGE_SEARCH_LIMIT}`,
+                    [ftsQuery, ownerZaloId]
+                );
+                if (rows.length > 0) return rows;
+            } catch (err: any) {
+                Logger.warn(`[DatabaseService] searchMessages: FTS lỗi (${err?.message}) — dùng LIKE trên tin gần đây`);
             }
-        } catch {
-            // FTS5 fallback → LIKE
         }
 
-        // Fallback: LIKE (chậm hơn nhưng không phụ thuộc FTS5 index)
+        // Không có FTS / FTS không khớp (khớp giữa từ như "freeship", emoji…): LIKE chỉ trên các tin gần nhất của
+        // tài khoản. Trước đây LIKE '%…%' quét cả bảng — 1,3 triệu tin ≈ 30 s đứng cả app mỗi lần gõ sai / từ hiếm.
         return this.query<Message>(
-            'SELECT * FROM messages WHERE owner_zalo_id = ? AND content LIKE ? ORDER BY timestamp DESC LIMIT 100',
-            [ownerZaloId, `%${query}%`]
+            `SELECT * FROM (
+                 SELECT * FROM messages WHERE owner_zalo_id = ?
+                 ORDER BY timestamp DESC LIMIT ${MESSAGE_SEARCH_RECENT_SCAN}
+             ) WHERE content LIKE ? ESCAPE '\\'
+             ORDER BY timestamp DESC LIMIT ${MESSAGE_SEARCH_LIMIT}`,
+            [ownerZaloId, `%${escapeLikePattern(text)}%`]
         );
+    }
+
+    /** Bảng messages_fts đã có (migrateFTS5 lúc mở DB). Chỉ nhớ khi đã thấy — chưa có thì lần sau kiểm lại. */
+    private messagesFtsReady = false;
+    private hasMessagesFts(): boolean {
+        if (this.messagesFtsReady) return true;
+        this.messagesFtsReady = this.query<any>(`SELECT name FROM sqlite_master WHERE type='table' AND name='messages_fts'`).length > 0;
+        return this.messagesFtsReady;
     }
 
     // ─── Contact Operations ───────────────────────────────────────────────
@@ -4297,10 +4460,78 @@ class DatabaseService {
 
     public getContacts(ownerZaloId: string): Contact[] {
         if (!this.initialized) return [];
+        // is_replied như getContactsFiltered: các nơi nạp lại cả danh bạ (đồng bộ, khởi động) không làm mất trạng thái
         return this.query<Contact>(
-            'SELECT * FROM contacts WHERE owner_zalo_id = ? ORDER BY last_message_time DESC',
+            `SELECT contacts.*, ${this.replyStateColumnSql()} AS is_replied FROM contacts WHERE owner_zalo_id = ? ORDER BY last_message_time DESC`,
             [ownerZaloId]
         );
+    }
+
+    /**
+     * Cột SQL is_replied (đã / chưa trả lời) cho bảng `contacts` của kết nối đang dùng — shared/replyState. DB chưa có cột
+     * reply_marked_at (DB phụ cũ) vẫn đọc được, chỉ không tính đánh dấu tay.
+     */
+    public replyStateColumnSql(): string {
+        return contactReplyStateSql('contacts', this.hasColumn('contacts', 'reply_marked_at'));
+    }
+
+    /** Cột có trong bảng của DB đang dùng không — nhớ theo từng kết nối (DB chính và DB phụ của withDbPath khác nhau). */
+    private static readonly knownColumns = new WeakMap<object, Map<string, boolean>>();
+
+    private hasColumn(table: string, column: string): boolean {
+        if (!db) return false;
+        let columns = DatabaseService.knownColumns.get(db);
+        if (!columns) {
+            columns = new Map();
+            DatabaseService.knownColumns.set(db, columns);
+        }
+        const key = `${table}.${column}`;
+        let exists = columns.get(key);
+        if (exists === undefined) {
+            exists = this.query<{ name: string }>(`PRAGMA table_info(${table})`).some((row) => row.name === column);
+            columns.set(key, exists);
+        }
+        return exists;
+    }
+
+    /**
+     * Đánh dấu đã trả lời / bỏ đánh dấu (không gửi tin) — hàng loạt hoặc một hội thoại. Đánh dấu: reply_marked_at = thời
+     * điểm tin mới nhất của hội thoại lúc này (chỉ tiến lên) → tin người kia tới SAU đó lại thành "chưa trả lời". Bỏ đánh
+     * dấu: 0 (trạng thái lại theo tin cuối). Trả trạng thái mới (is_replied) của từng hội thoại.
+     */
+    public markConversationsReplied(
+        ownerZaloId: string,
+        contactIds: string[],
+        replied: boolean,
+    ): Array<{ contact_id: string; is_replied: number | null; reply_marked_at: number }> {
+        if (!this.initialized || !ownerZaloId || !this.hasColumn('contacts', 'reply_marked_at')) return [];
+        const ids = [...new Set((contactIds || []).map(String).filter(Boolean))];
+        const results: Array<{ contact_id: string; is_replied: number | null; reply_marked_at: number }> = [];
+        const now = Date.now();
+        for (let i = 0; i < ids.length; i += 400) {
+            const chunk = ids.slice(i, i + 400);
+            const marks = chunk.map(() => '?').join(', ');
+            db!.transaction(() => {
+                if (replied) {
+                    this.run(
+                        `UPDATE contacts SET reply_marked_at = MAX(COALESCE(reply_marked_at, 0), COALESCE(
+                            (SELECT MAX(m.timestamp) FROM messages m
+                              WHERE m.owner_zalo_id = contacts.owner_zalo_id AND m.thread_id = contacts.contact_id),
+                            NULLIF(${CONTACT_LAST_MS_SQL}, 0), ?))
+                         WHERE owner_zalo_id = ? AND contact_id IN (${marks})`,
+                        [now, ownerZaloId, ...chunk],
+                    );
+                } else {
+                    this.run(`UPDATE contacts SET reply_marked_at = 0 WHERE owner_zalo_id = ? AND contact_id IN (${marks})`, [ownerZaloId, ...chunk]);
+                }
+            })();
+            results.push(...this.query<any>(
+                `SELECT contact_id, ${this.replyStateColumnSql()} AS is_replied, COALESCE(reply_marked_at, 0) AS reply_marked_at
+                 FROM contacts WHERE owner_zalo_id = ? AND contact_id IN (${marks})`,
+                [ownerZaloId, ...chunk],
+            ));
+        }
+        return results;
     }
 
     /**
@@ -4328,6 +4559,11 @@ class DatabaseService {
         contactType?: 'user' | 'group';
         /** Chỉ các hội thoại này (vd. hội thoại ghim nằm ở trang sau, chưa tải) — tối đa 200. */
         contactIds?: string[];
+        /** Hội thoại 1:1 mà tin thật mới nhất là của người kia (bộ lọc "Chưa trả lời"). */
+        unrepliedOnly?: boolean;
+        /** Tin cuối trong khoảng thời gian (ms, đã tính theo ngày giờ máy ở renderer). */
+        fromTs?: number;
+        toTs?: number;
         limit?: number;
         offset?: number;
     }): Contact[] {
@@ -4364,6 +4600,19 @@ class DatabaseService {
             conditions.push(`contact_id IN (${ids.map(() => '?').join(', ')})`);
             params.push(...ids);
         }
+        const fromTs = Number(opts?.fromTs);
+        if (Number.isFinite(fromTs) && fromTs > 0) {
+            conditions.push(`${CONTACT_LAST_MS_SQL} >= ?`);
+            params.push(Math.floor(fromTs));
+        }
+        const toTs = Number(opts?.toTs);
+        if (Number.isFinite(toTs) && toTs > 0) {
+            conditions.push(`${CONTACT_LAST_MS_SQL} <= ?`);
+            params.push(Math.floor(toTs));
+        }
+        if (opts?.unrepliedOnly) {
+            conditions.push("(contact_type IS NULL OR contact_type != 'group')");
+        }
 
         const where = conditions.join(' AND ');
         const requestedLimit = Number(opts?.limit);
@@ -4376,8 +4625,13 @@ class DatabaseService {
             : 0;
         const pagination = limit > 0 ? ' LIMIT ? OFFSET ?' : '';
         if (limit > 0) params.push(limit, offset);
+        // is_replied: đã trả lời / chưa trả lời theo tin thật mới nhất (shared/replyState) — tính ở đây để danh sách đúng
+        // ngay khi mở app (trước đây chỉ có trong bộ nhớ, mất sau khi khởi động lại)
+        const select = `SELECT contacts.*, ${this.replyStateColumnSql()} AS is_replied FROM contacts WHERE ${where}`;
         return this.query<Contact>(
-            `SELECT * FROM contacts WHERE ${where} ORDER BY last_message_time DESC${pagination}`,
+            opts?.unrepliedOnly
+                ? `SELECT * FROM (${select}) WHERE is_replied = 0 ORDER BY last_message_time DESC${pagination}`
+                : `${select} ORDER BY last_message_time DESC${pagination}`,
             params
         );
     }
@@ -4414,6 +4668,114 @@ class DatabaseService {
         this.run(`UPDATE contacts SET ${sets.join(', ')} WHERE owner_zalo_id=? AND contact_id=?`, vals);
     }
 
+    /** Tự xoá tin nhắn trên Zalo (ms, ZL-05) của một hội thoại; true khi giá trị thật sự đổi. */
+    public setContactAutoDeleteTtl(ownerZaloId: string, contactId: string, ttl: number): boolean {
+        if (!this.initialized || !contactId) return false;
+        const next = Math.max(0, Number(ttl) || 0);
+        const row = this.queryOne<{ zalo_auto_delete_ttl: number | null }>(
+            'SELECT zalo_auto_delete_ttl FROM contacts WHERE owner_zalo_id = ? AND contact_id = ?', [ownerZaloId, contactId],
+        );
+        if (!row || (Number(row.zalo_auto_delete_ttl) || 0) === next) return false;
+        this.run('UPDATE contacts SET zalo_auto_delete_ttl = ? WHERE owner_zalo_id = ? AND contact_id = ?', [next, ownerZaloId, contactId]);
+        return true;
+    }
+
+    /**
+     * Thay cả danh sách hội thoại đang bật tự xoá của một tài khoản (getAutoDeleteChat): hội thoại không còn trong danh
+     * sách về 0. Trả các hội thoại có giá trị đổi (để báo giao diện).
+     */
+    public replaceContactAutoDeleteTtls(ownerZaloId: string, ttls: ReadonlyMap<string, number>): Array<{ contactId: string; ttl: number }> {
+        if (!this.initialized) return [];
+        const changed: Array<{ contactId: string; ttl: number }> = [];
+        const enabled = this.query<{ contact_id: string }>(
+            'SELECT contact_id FROM contacts WHERE owner_zalo_id = ? AND zalo_auto_delete_ttl > 0', [ownerZaloId],
+        );
+        db!.transaction(() => {
+            for (const row of enabled) {
+                if (ttls.has(row.contact_id)) continue;
+                this.run('UPDATE contacts SET zalo_auto_delete_ttl = 0 WHERE owner_zalo_id = ? AND contact_id = ?', [ownerZaloId, row.contact_id]);
+                changed.push({ contactId: row.contact_id, ttl: 0 });
+            }
+            for (const [contactId, ttl] of ttls) {
+                if (this.setContactAutoDeleteTtl(ownerZaloId, contactId, ttl)) changed.push({ contactId, ttl });
+            }
+        })();
+        return changed;
+    }
+
+    /** Thời gian tự xoá (ms) Zalo gắn cho một tin — chỉ để hiển thị; Deplao không xoá tin theo TTL. */
+    public setMessageTtl(ownerZaloId: string, msgId: string, ttl: number): void {
+        if (!this.initialized || !msgId || !(ttl > 0) || !this.hasColumn('messages', 'ttl')) return;
+        this.run('UPDATE messages SET ttl = ? WHERE owner_zalo_id = ? AND msg_id = ?', [ttl, ownerZaloId, msgId]);
+    }
+
+    /** Tự xoá (ms) đang bật của một hội thoại Zalo; 0 = tắt / chưa biết. Tin gửi từ Deplao mang ttl này (FR-ZL05.7). */
+    public getContactAutoDeleteTtl(ownerZaloId: string, contactId: string): number {
+        if (!this.initialized || !contactId) return 0;
+        const row = this.queryOne<{ zalo_auto_delete_ttl: number | null }>(
+            'SELECT zalo_auto_delete_ttl FROM contacts WHERE owner_zalo_id = ? AND contact_id = ?', [ownerZaloId, contactId],
+        );
+        return Math.max(0, Number(row?.zalo_auto_delete_ttl) || 0);
+    }
+
+    /**
+     * Các tin trong `msgIds` (msg_id hoặc cli_msg_id) đã quá hạn tự xoá trên Zalo: sự kiện xoá / thu hồi của chúng là Zalo
+     * dọn tin hết hạn → Deplao giữ nguyên nội dung, không đánh dấu "đã thu hồi" (FR-ZL05.6).
+     */
+    public zaloTtlExpiredMessageIds(
+        ownerZaloId: string, msgIds: string[], threadId?: string, now: number = Date.now(), graceMs: number = ZALO_TTL_EXPIRY_GRACE_MS,
+    ): Set<string> {
+        const expired = new Set<string>();
+        if (!this.initialized || msgIds.length === 0 || !this.hasColumn('messages', 'ttl')) return expired;
+        for (const raw of msgIds) {
+            const msgId = String(raw || '');
+            if (!msgId) continue;
+            const scope = this.messageIdScope(ownerZaloId, msgId, threadId);
+            // msg_id rồi cli_msg_id (2 lần tra index): OR làm SQLite quét mọi tin của tài khoản
+            const row = this.queryOne<{ timestamp: number; ttl: number }>(
+                `SELECT timestamp, ttl FROM messages WHERE owner_zalo_id = ? AND msg_id = ? AND ttl > 0${scope.sql} LIMIT 1`,
+                [ownerZaloId, msgId, ...scope.params],
+            ) ?? this.queryOne<{ timestamp: number; ttl: number }>(
+                `SELECT timestamp, ttl FROM messages WHERE owner_zalo_id = ? AND cli_msg_id = ? AND ttl > 0${scope.sql} LIMIT 1`,
+                [ownerZaloId, msgId, ...scope.params],
+            );
+            if (row && isZaloTtlExpired(row.timestamp, row.ttl, now, graceMs)) expired.add(msgId);
+        }
+        return expired;
+    }
+
+    /** Hội thoại ẩn bằng PIN trên Zalo (ZL-03); true khi giá trị thật sự đổi. */
+    public setContactHidden(ownerZaloId: string, contactId: string, hidden: boolean): boolean {
+        if (!this.initialized || !contactId || !this.hasColumn('contacts', 'zalo_hidden')) return false;
+        const next = hidden ? 1 : 0;
+        const row = this.queryOne<{ zalo_hidden: number | null }>(
+            'SELECT zalo_hidden FROM contacts WHERE owner_zalo_id = ? AND contact_id = ?', [ownerZaloId, contactId],
+        );
+        if (!row || (Number(row.zalo_hidden) || 0) === next) return false;
+        this.run('UPDATE contacts SET zalo_hidden = ? WHERE owner_zalo_id = ? AND contact_id = ?', [next, ownerZaloId, contactId]);
+        return true;
+    }
+
+    /** Thay cả danh sách hội thoại ẩn của một tài khoản (getHiddenConversations); trả các hội thoại có giá trị đổi. */
+    public replaceContactHidden(ownerZaloId: string, hiddenIds: ReadonlySet<string>): Array<{ contactId: string; hidden: boolean }> {
+        if (!this.initialized || !this.hasColumn('contacts', 'zalo_hidden')) return [];
+        const changed: Array<{ contactId: string; hidden: boolean }> = [];
+        const current = this.query<{ contact_id: string }>(
+            'SELECT contact_id FROM contacts WHERE owner_zalo_id = ? AND zalo_hidden = 1', [ownerZaloId],
+        );
+        db!.transaction(() => {
+            for (const row of current) {
+                if (hiddenIds.has(row.contact_id)) continue;
+                this.run('UPDATE contacts SET zalo_hidden = 0 WHERE owner_zalo_id = ? AND contact_id = ?', [ownerZaloId, row.contact_id]);
+                changed.push({ contactId: row.contact_id, hidden: false });
+            }
+            for (const contactId of hiddenIds) {
+                if (this.setContactHidden(ownerZaloId, contactId, true)) changed.push({ contactId, hidden: true });
+            }
+        })();
+        return changed;
+    }
+
     /** Get flag columns for a specific contact */
     public getContactFlags(ownerZaloId: string, contactId: string): { is_muted: number; mute_until: number; is_in_others: number } | null {
         if (!this.initialized) return null;
@@ -4424,10 +4786,13 @@ class DatabaseService {
     }
 
     /** Get all contacts that have flags set (for bulk load on startup) */
-    public getContactsWithFlags(ownerZaloId: string): { contact_id: string; is_muted: number; mute_until: number; is_in_others: number; telegram_archived: number }[] {
+    public getContactsWithFlags(ownerZaloId: string): { contact_id: string; is_muted: number; mute_until: number; is_in_others: number; telegram_archived: number; zalo_hidden?: number }[] {
         if (!this.initialized) return [];
+        // zalo_hidden: hội thoại ẩn bằng PIN (ZL-03) — DB chưa có cột (bản thử nghiệm) thì bỏ qua
+        const hidden = this.hasColumn('contacts', 'zalo_hidden');
         return this.query<any>(
-            'SELECT contact_id, is_muted, mute_until, is_in_others, telegram_archived FROM contacts WHERE owner_zalo_id=? AND (is_muted=1 OR mute_until>0 OR is_in_others=1 OR telegram_archived=1)',
+            `SELECT contact_id, is_muted, mute_until, is_in_others, telegram_archived${hidden ? ', zalo_hidden' : ''} FROM contacts
+             WHERE owner_zalo_id=? AND (is_muted=1 OR mute_until>0 OR is_in_others=1 OR telegram_archived=1${hidden ? ' OR zalo_hidden=1' : ''})`,
             [ownerZaloId]
         );
     }
@@ -4454,8 +4819,8 @@ class DatabaseService {
         try {
             const normalizedPhone = this.normalizeVietnamPhone(phone || '');
             this.run(
-                `INSERT INTO contacts (owner_zalo_id, contact_id, display_name, avatar_url, phone, is_friend, contact_type, unread_count)
-                 VALUES (?,?,?,?,?,0,?,0)
+                `INSERT INTO contacts (owner_zalo_id, contact_id, display_name, avatar_url, phone, is_friend, contact_type, unread_count, channel)
+                 VALUES (?,?,?,?,?,0,?,0, COALESCE((SELECT channel FROM accounts WHERE zalo_id = ?), 'zalo'))
                  ON CONFLICT(owner_zalo_id, contact_id) DO UPDATE SET
                    display_name=CASE WHEN ?!='' THEN ? ELSE contacts.display_name END,
                    avatar_url=CASE WHEN ?!='' THEN ? ELSE contacts.avatar_url END,
@@ -4465,6 +4830,9 @@ class DatabaseService {
                     ownerZaloId, contactId,
                     displayName || contactId, avatarUrl || '', normalizedPhone,
                     contactType || 'user',
+                    // Dòng mới mang kênh của tài khoản sở hữu: mặc định của cột là 'zalo' nên người Telegram (hồ sơ thành viên
+                    // nhóm, "Nhắn tin" từ hồ sơ) từng thành liên hệ Zalo của tài khoản Telegram
+                    ownerZaloId,
                     // ON CONFLICT params: display_name
                     displayName, displayName,
                     // avatar_url
@@ -4875,7 +5243,7 @@ class DatabaseService {
             type ReactionRow = { id: number; reactions: string; channel: string | null };
             const row = (threadId
                 ? this.queryOne<ReactionRow>(
-                    'SELECT id, reactions, channel FROM messages WHERE owner_zalo_id = ? AND msg_id = ? AND thread_id = ? LIMIT 1',
+                    `SELECT id, reactions, channel FROM messages WHERE owner_zalo_id = ? AND msg_id = ? AND ${SAME_THREAD_SQL} LIMIT 1`,
                     [ownerZaloId, String(msgId), String(threadId)]
                 )
                 : undefined)
@@ -5314,7 +5682,7 @@ class DatabaseService {
         if (!this.initialized || !msgIds.length) return;
         try {
             // Telegram: msg_id chỉ duy nhất trong 1 hội thoại → xoá đúng hội thoại, không bao giờ xoá theo msg_id trần
-            const scoped = db!.prepare('DELETE FROM messages WHERE owner_zalo_id = ? AND msg_id = ? AND thread_id = ?');
+            const scoped = db!.prepare(`DELETE FROM messages WHERE owner_zalo_id = ? AND msg_id = ? AND ${SAME_THREAD_SQL}`);
             const unscoped = db!.prepare(
                 `DELETE FROM messages WHERE owner_zalo_id = ? AND msg_id = ? AND COALESCE(channel, 'zalo') NOT IN ('telegram_user', 'telegram_bot')`,
             );
@@ -5662,11 +6030,14 @@ class DatabaseService {
      * khi threadId không khớp.
      */
     private messageIdScope(ownerZaloId: string, msgId: string, threadId?: string): { sql: string; params: string[] } {
-        if (threadId && this.queryOne<any>(
-            'SELECT 1 FROM messages WHERE owner_zalo_id = ? AND thread_id = ? AND (msg_id = ? OR cli_msg_id = ?) LIMIT 1',
-            [ownerZaloId, String(threadId), String(msgId), String(msgId)],
+        const thread = String(threadId || '');
+        if (thread && (
+            this.queryOne<any>(`SELECT 1 FROM messages WHERE owner_zalo_id = ? AND msg_id = ? AND ${SAME_THREAD_SQL} LIMIT 1`,
+                [ownerZaloId, String(msgId), thread])
+            || this.queryOne<any>(`SELECT 1 FROM messages WHERE owner_zalo_id = ? AND cli_msg_id = ? AND ${SAME_THREAD_SQL} LIMIT 1`,
+                [ownerZaloId, String(msgId), thread])
         )) {
-            return { sql: ' AND thread_id = ?', params: [String(threadId)] };
+            return { sql: ` AND ${SAME_THREAD_SQL}`, params: [thread] };
         }
         return { sql: ` AND COALESCE(channel, 'zalo') NOT IN ('telegram_user', 'telegram_bot')`, params: [] };
     }
@@ -5714,7 +6085,7 @@ class DatabaseService {
             const contact = this.queryOne<any>('SELECT last_message FROM contacts WHERE owner_zalo_id = ? AND contact_id = ?', [ownerZaloId, threadId]);
             if (!contact) return;
             const lastMsg = this.queryOne<any>(
-                'SELECT content, msg_type, timestamp FROM messages WHERE owner_zalo_id = ? AND thread_id = ? AND msg_id = ?',
+                `SELECT content, msg_type, timestamp FROM messages WHERE owner_zalo_id = ? AND ${SAME_THREAD_SQL} AND msg_id = ?`,
                 [ownerZaloId, threadId, String(msgId)]
             );
             if (lastMsg) {
@@ -5740,10 +6111,11 @@ class DatabaseService {
         // 1) Tra msg_id trước (unique index). msg_id chỉ unique theo (owner,
         //    channel, thread); với Telegram msg_id có thể lặp giữa các chat nên
         //    chốt deterministic bằng `id DESC` (dòng mới nhất thắng).
+        //    Hội thoại: SAME_THREAD_SQL (thread_id = ? làm SQLite quét cả hội thoại).
         const byMsgId = threadId
             ? this.queryOne<Message>(
                 `SELECT * FROM messages
-                 WHERE owner_zalo_id = ? AND msg_id = ? AND thread_id = ?
+                 WHERE owner_zalo_id = ? AND msg_id = ? AND ${SAME_THREAD_SQL}
                  ORDER BY id DESC LIMIT 1`,
                 [ownerZaloId, m, threadId]
             )
@@ -5759,7 +6131,7 @@ class DatabaseService {
         return threadId
             ? this.queryOne<Message>(
                 `SELECT * FROM messages
-                 WHERE owner_zalo_id = ? AND cli_msg_id = ? AND thread_id = ?
+                 WHERE owner_zalo_id = ? AND cli_msg_id = ? AND ${SAME_THREAD_SQL}
                  ORDER BY id DESC LIMIT 1`,
                 [ownerZaloId, m, threadId]
             )

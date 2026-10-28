@@ -9,7 +9,7 @@
  */
 import * as fs from 'fs';
 import { s } from '../schema';
-import { AccountInfo, ApiContext, ApiError, paged, route, RouteDef, RESPONSE_HANDLED } from '../types';
+import { AccountInfo, ApiContext, ApiError, FileContent, paged, route, RouteDef, RESPONSE_HANDLED } from '../types';
 import { accountAllowed } from '../ApiAuth';
 import * as actions from '../channels/ChannelActions';
 import { CHANNELS, ThreadType, extractSentId, messageText } from '../channels/ChannelActions';
@@ -534,19 +534,20 @@ export function chatRoutes(deps: ChatRouteDeps): RouteDef[] {
         // ── File đính kèm của tin ─────────────────────────────────────────
         route({
             method: 'GET', path: '/accounts/:accountId/conversations/:threadId/messages/:msgId/media', scope: 'media:read', tags: ['Media'], operationId: 'downloadMessageMedia',
-            summary: 'Tải file/ảnh/video của một tin (tự tải về máy nếu chưa có)',
+            summary: 'Tải file/ảnh/video/ghi âm của một tin (tự tải về máy nếu chưa có)',
             params: messageParams,
-            rawResponse: { contentType: 'application/octet-stream', description: 'Nội dung file' },
+            rawResponse: { contentType: 'application/octet-stream', description: 'Nội dung file', file: true },
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
                 const row = await loadMessage(ctx, acc.id, ctx.params.threadId, ctx.params.msgId);
-                const kind = actions.forwardKind(row);
+                // Ghi âm Zalo: app tự tải nền khi tin tới (EventBroadcaster) — gọi ngay sau tin thì có thể chưa xong → tải luôn.
+                const kind: string = VOICE_MSG_TYPES.includes(String(row.msg_type || '')) ? 'voice' : actions.forwardKind(row);
                 let filePath = '';
                 try {
                     const lp = typeof row.local_paths === 'string' ? JSON.parse(row.local_paths || '{}') : (row.local_paths || {});
                     filePath = String(lp?.main || lp?.file || '');
                 } catch { filePath = ''; }
-                if (!filePath && acc.channel === CHANNELS.ZALO && (kind === 'image' || kind === 'video' || kind === 'file')) {
+                if (!filePath && acc.channel === CHANNELS.ZALO && (kind === 'image' || kind === 'video' || kind === 'file' || kind === 'voice')) {
                     const dl = await ctx.call('file:downloadMessageMedia', { zaloId: acc.id, msgId: String(row.msg_id), threadId: String(row.thread_id), kind }, { timeoutMs: 300_000 });
                     filePath = String(dl?.localPath || '');
                 }
@@ -557,9 +558,19 @@ export function chatRoutes(deps: ChatRouteDeps): RouteDef[] {
     ];
 }
 
-/** Stream file trên máy ra response. Đường dẫn tương đối (media/...) được resolve qua FileStorageService. */
-export async function streamFile(ctx: ApiContext, filePath: string, downloadName?: string): Promise<typeof RESPONSE_HANDLED> {
-    if (!ctx.raw) throw new ApiError(400, 'VALIDATION_ERROR', 'Chỉ tải được qua HTTP');
+/** Loại tin ghi âm (Zalo chat.voice; giống bộ lọc trigger). */
+const VOICE_MSG_TYPES = ['chat.voice', 'voice', 'audio'];
+
+function fmtMb(bytes: number): string {
+    return `${(bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`;
+}
+
+/**
+ * Stream file trên máy ra response. Đường dẫn tương đối (media/...) được resolve qua FileStorageService.
+ * Gọi không qua HTTP với ctx.binary (plugin) → trả FileContent base64 (file lớn hơn maxBytes → 413).
+ */
+export async function streamFile(ctx: ApiContext, filePath: string, downloadName?: string): Promise<typeof RESPONSE_HANDLED | FileContent> {
+    if (!ctx.raw && !ctx.binary) throw new ApiError(400, 'VALIDATION_ERROR', 'Chỉ tải được qua HTTP');
     let abs = filePath;
     try {
         const FileStorageService = require('../../file/FileStorageService').default;
@@ -569,6 +580,14 @@ export async function streamFile(ctx: ApiContext, filePath: string, downloadName
     const stat = fs.statSync(abs);
     const name = downloadName || require('path').basename(abs);
     const { mimeFromName } = require('../UploadStore');
+    if (!ctx.raw) {
+        const maxBytes = ctx.binary!.maxBytes;
+        if (stat.size > maxBytes) {
+            throw new ApiError(413, 'PAYLOAD_TOO_LARGE', `File ${fmtMb(stat.size)} lớn hơn giới hạn ${fmtMb(maxBytes)} khi đọc qua ứng dụng — tải qua HTTP API`);
+        }
+        const buf = await fs.promises.readFile(abs);
+        return { name, mime: mimeFromName(name), size: buf.length, base64: buf.toString('base64') };
+    }
     const res = ctx.raw.res;
     res.writeHead(200, {
         'Content-Type': mimeFromName(name),

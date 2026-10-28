@@ -85,6 +85,20 @@ export const FRIEND_PROXY_CHANNELS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Cài đặt của chính tài khoản Zalo (quyền riêng tư — SRS ZL-02; đổi / đặt lại PIN hội thoại ẩn — ZL-03): chỉ người có
+ * quyền quản lý tài khoản (settings_accounts), không theo quyền Chat như các zalo:* khác.
+ */
+export const ACCOUNT_SETTINGS_PROXY_CHANNELS: ReadonlySet<string> = new Set([
+  'zalo:getAccountSettings', 'zalo:updateAccountSetting', 'zalo:hiddenSetPin', 'zalo:hiddenResetPin',
+]);
+
+/** Ghi danh mục sản phẩm Zalo Business (SRS ZL-04): nhân viên cần quyền CRM (quyết định Q7); đọc / gửi theo quyền Chat. */
+export const CATALOG_WRITE_PROXY_CHANNELS: ReadonlySet<string> = new Set([
+  'zalo:createCatalog', 'zalo:updateCatalog', 'zalo:deleteCatalog',
+  'zalo:createCatalogProduct', 'zalo:updateCatalogProduct', 'zalo:deleteCatalogProducts', 'zalo:uploadProductPhoto',
+]);
+
+/**
  * Module quyền cho một kênh proxy: nhân viên cần MỘT trong các module trả về; [] = không yêu cầu module riêng (db:, login:…).
  * Facebook / Telegram theo bảng employeeChannelRoutes (chat; quét dữ liệu Facebook: crm; chặn / thêm liên hệ: friends|chat).
  */
@@ -92,6 +106,8 @@ export function proxyChannelModules(channel: string): string[] {
   const name = String(channel || '');
   const spec = employeeChannelSpec(name);
   if (spec?.modules?.length) return [...spec.modules];
+  if (ACCOUNT_SETTINGS_PROXY_CHANNELS.has(name)) return ['settings_accounts'];
+  if (CATALOG_WRITE_PROXY_CHANNELS.has(name)) return ['crm'];
   if (FRIEND_PROXY_CHANNELS.has(name)) return ['friends', 'chat'];
   if (name.startsWith('zalo:') || name.startsWith('fb:') || name.startsWith('telegramUser:')) return ['chat'];
   if (name.startsWith('crm:')) return ['crm'];

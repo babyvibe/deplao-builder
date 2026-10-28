@@ -66,6 +66,14 @@ interface Props {
   threadType: number;
   initialType?: MediaType;
   onClose: () => void;
+  /**
+   * Telegram: gửi vào chủ đề forum / chuỗi bình luận bài đăng kênh (tin gốc). Thiếu → tệp rơi ra dòng chính của nhóm.
+   */
+  topicRootMessageId?: string | null;
+  /** Telegram: trả lời tin này (ô soạn tin đang trả lời) */
+  replyToMsgId?: string | null;
+  /** Đã gửi (để ô soạn tin bỏ trích dẫn) */
+  onSent?: () => void;
 }
 
 const TYPE_LABELS: Record<MediaType, string> = {
@@ -76,8 +84,14 @@ const TYPE_LABELS: Record<MediaType, string> = {
 };
 
 export default function LibraryPickerModal({
-  zaloId, threadId, threadType, initialType = 'all', onClose,
+  zaloId, threadId, threadType, initialType = 'all', onClose, topicRootMessageId, replyToMsgId, onSent,
 }: Props) {
+  // Telegram: chủ đề forum / chuỗi bình luận + tin được trả lời, gắn vào mọi lần gửi qua adapter (không phải Zalo)
+  const sendTarget = {
+    ...(topicRootMessageId ? { topicRootMessageId: String(topicRootMessageId) } : {}),
+    ...(replyToMsgId && /^\d+$/.test(String(replyToMsgId)) ? { replyToMsgId: String(replyToMsgId) } : {}),
+  };
+  const topicField = topicRootMessageId ? { topic_id: String(topicRootMessageId) } : {};
   const accounts = useAccountStore(state => state.accounts);
   const libraryAccounts = useMemo(() => Array.from(new Map(
     accounts.filter(account => !!account.zalo_id).map(account => [account.zalo_id, account]),
@@ -501,13 +515,14 @@ export default function LibraryPickerModal({
       // Every non-Zalo channel (Facebook included) must go through its adapter.
       if (isNonZaloChannel) {
         if (item.type === 'video') {
-          await channelIpc.sendVideo(channel, { accountId: zaloId, threadId, threadType, filePath });
+          await channelIpc.sendVideo(channel, { accountId: zaloId, threadId, threadType, filePath, ...sendTarget });
         } else {
           await channelIpc.sendAttachment(channel, {
             accountId: zaloId, threadId, threadType, filePath, body: '',
-            fileType: item.type === 'image' ? 'image' : 'file',
+            fileType: item.type === 'image' ? 'image' : 'file', ...sendTarget,
           });
         }
+        onSent?.();
         return;
       }
 
@@ -561,7 +576,7 @@ export default function LibraryPickerModal({
         msg_id: batchTempId, owner_zalo_id: zaloId, thread_id: threadId,
         thread_type: threadType, sender_id: zaloId, content: '',
         msg_type: 'image', timestamp: Date.now(), is_sent: 1, status: 'sending',
-        send_status: 'sending', temp_id: batchTempId, media_type: 'image',
+        send_status: 'sending', temp_id: batchTempId, media_type: 'image', ...topicField,
         attachments: JSON.stringify(previewPaths.map(fp => ({ type: 'image', localPath: fp }))),
         local_paths: JSON.stringify(previewPaths.reduce((acc, fp, i) => ({ ...acc, [`img${i}`]: fp }), {})),
       });
@@ -581,7 +596,7 @@ export default function LibraryPickerModal({
                 if (!fp && !item.uuid) continue;
                 const res: any = await channelIpc.sendAttachment(channel, {
                   accountId: zaloId, threadId, threadType, filePath: fp, body: '', fileType: 'image',
-                  ...(fp ? {} : { libraryUuid: item.uuid }),
+                  ...(fp ? {} : { libraryUuid: item.uuid }), ...sendTarget,
                 });
                 if (res && res.success === false) return { success: false, error: res.error || 'Gửi ảnh thất bại' };
                 if (res?.messageId) lastMsgId = res.messageId;
@@ -627,7 +642,7 @@ export default function LibraryPickerModal({
         msg_id: tempId, owner_zalo_id: zaloId, thread_id: threadId,
         thread_type: threadType, sender_id: zaloId, content: '',
         msg_type: item.type, timestamp: Date.now(), is_sent: 1, status: 'sending',
-        send_status: 'pending', temp_id: tempId, media_type: item.type as any,
+        send_status: 'pending', temp_id: tempId, media_type: item.type as any, ...topicField,
         attachments: JSON.stringify([{ type: item.type, localPath: previewPath }]),
       });
       messageQueue.enqueue({
@@ -641,11 +656,11 @@ export default function LibraryPickerModal({
               // Máy nhân viên: không có file thư viện → uuid, Boss đổi ra đường dẫn file
               const library = fp ? {} : { libraryUuid: item.uuid };
               if (item.type === 'video') {
-                const res = await channelIpc.sendVideo(itemChannel, { accountId: zaloId, threadId, threadType, filePath: fp, ...library });
+                const res = await channelIpc.sendVideo(itemChannel, { accountId: zaloId, threadId, threadType, filePath: fp, ...library, ...sendTarget });
                 return { success: true, ...(res as any) };
               } else {
                 const res = await channelIpc.sendAttachment(itemChannel, {
-                  accountId: zaloId, threadId, threadType, filePath: fp, body: '', fileType: 'file', ...library,
+                  accountId: zaloId, threadId, threadType, filePath: fp, body: '', fileType: 'file', ...library, ...sendTarget,
                 });
                 return { success: true, ...(res as any) };
               }
@@ -681,6 +696,7 @@ export default function LibraryPickerModal({
     setTimeout(() => {
       window.dispatchEvent(new CustomEvent('chat:scrollToBottom'));
     }, 100);
+    onSent?.();
     onClose();
   };
 
@@ -737,11 +753,11 @@ export default function LibraryPickerModal({
         if (isNonZaloChannel) {
           // Facebook and Telegram: send all files via their adapter
           if (file.type.startsWith('video/')) {
-            videoPromises.push(channelIpc.sendVideo(channel, { accountId: zaloId, threadId, threadType, filePath }).then(() => {}));
+            videoPromises.push(channelIpc.sendVideo(channel, { accountId: zaloId, threadId, threadType, filePath, ...sendTarget }).then(() => {}));
           } else {
             filePromises.push(channelIpc.sendAttachment(channel, {
               accountId: zaloId, threadId, threadType, filePath, body: '',
-              fileType: file.type.startsWith('image/') ? 'image' : 'file',
+              fileType: file.type.startsWith('image/') ? 'image' : 'file', ...sendTarget,
             }).then(() => {}));
           }
         } else {
@@ -776,6 +792,7 @@ export default function LibraryPickerModal({
       }
       // Phase 3: send videos and files concurrently (each is independent)
       await Promise.all([...videoPromises, ...filePromises]);
+      onSent?.();
     } catch (err) {
       console.error('[Library] handleDirectFile error:', err);
     }

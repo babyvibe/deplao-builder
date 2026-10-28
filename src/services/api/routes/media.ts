@@ -157,7 +157,7 @@ export function mediaRoutes(deps: MediaRouteDeps): RouteDef[] {
             method: 'GET', path: '/library/items/:uuid/file', scope: 'media:read', tags, operationId: 'downloadLibraryItem',
             summary: 'Tải file của item',
             params: s.object({ uuid: s.string().min(1).max(100) }),
-            rawResponse: { contentType: 'application/octet-stream', description: 'Nội dung file' },
+            rawResponse: { contentType: 'application/octet-stream', description: 'Nội dung file', file: true },
             handler: async ctx => {
                 const item = await libraryItem(ctx, ctx.params.uuid);
                 return streamFile(ctx, String(item._localPath || ''), item.name);
@@ -167,7 +167,7 @@ export function mediaRoutes(deps: MediaRouteDeps): RouteDef[] {
             method: 'GET', path: '/library/items/:uuid/thumb', scope: 'media:read', tags, operationId: 'downloadLibraryThumb',
             summary: 'Ảnh thu nhỏ của item',
             params: s.object({ uuid: s.string().min(1).max(100) }),
-            rawResponse: { contentType: 'image/jpeg', description: 'Ảnh thu nhỏ' },
+            rawResponse: { contentType: 'image/jpeg', description: 'Ảnh thu nhỏ', file: true },
             handler: async ctx => {
                 const item = await libraryItem(ctx, ctx.params.uuid);
                 if (!item._thumbLocalPath) notFound('ảnh thu nhỏ');

@@ -192,17 +192,20 @@ export class TelegramUserAdapter extends BaseChannelAdapter {
       const fileType = params.fileType || (isImage ? 'image' : isVideo ? 'video' : isAudio ? 'audio' : 'file');
       console.log(`[TG:adapter] sendAttachment filePath=${filePath} fileType=${fileType} topicId=${topicId || 'none'}`);
 
+      // Tin được trả lời (trích dẫn): cả trong chủ đề forum / chuỗi bình luận bài đăng kênh
+      let replyToMsgId: string | undefined = params.replyToMsgId;
+      if (!replyToMsgId && params.quote) {
+        try {
+          const q = typeof params.quote === 'string' ? JSON.parse(params.quote) : params.quote;
+          replyToMsgId = q?.msgId || q?.msg_id;
+        } catch {}
+      }
       let res: any;
       if (topicId) {
         res = await (ipc.telegramUser as any)?.sendTopicFile({
-          accountId: params.accountId, chatId, topicRootMessageId: topicId, filePath, caption, fileType, ...library,
+          accountId: params.accountId, chatId, topicRootMessageId: topicId, filePath, caption, fileType, replyToMsgId, ...library,
         });
       } else {
-        // Extract replyToMsgId from quote payload if available
-        let replyToMsgId: string | undefined = params.replyToMsgId;
-        if (!replyToMsgId && params.quote) {
-          try { const q = JSON.parse(params.quote); replyToMsgId = q?.msgId || q?.msg_id; } catch {}
-        }
         res = await (ipc.telegramUser as any)?.sendFile({
           accountId: params.accountId, chatId, filePath, caption, fileType, replyToMsgId, ...library,
         });
@@ -224,6 +227,8 @@ export class TelegramUserAdapter extends BaseChannelAdapter {
       filePath: params.filePath,
       fileType: 'video',
       body: params.body,
+      quote: params.quote ?? undefined,
+      replyToMsgId: params.replyToMsgId,
       libraryUuid: params.libraryUuid,
     });
   }
@@ -392,9 +397,14 @@ export class TelegramUserAdapter extends BaseChannelAdapter {
     }
   }
 
-  async sendTopicMessage(params: { accountId: string; threadId: string; topicId: string; text: string }): Promise<ActionResult> {
+  /** Tin chữ vào chủ đề forum / chuỗi bình luận bài đăng kênh; replyToMsgId = trả lời một tin cụ thể trong đó. */
+  async sendTopicMessage(params: { accountId: string; threadId: string; topicId: string; text: string; replyToMsgId?: string; mentions?: Array<{ uid: string; pos: number; len: number }> }): Promise<ActionResult> {
     try {
-      const res = await ipc.telegramUser?.sendTopicMessage({ accountId: params.accountId, chatId: params.threadId, topicRootMessageId: params.topicId, text: params.text });
+      const res = await ipc.telegramUser?.sendTopicMessage({
+        accountId: params.accountId, chatId: params.threadId, topicRootMessageId: params.topicId, text: params.text,
+        ...(params.replyToMsgId ? { replyToMsgId: params.replyToMsgId } : {}),
+        ...(params.mentions?.length ? { mentions: params.mentions } : {}),
+      });
       return { success: res?.success ?? false, msgId: res?.messageId, messageId: res?.messageId, error: res?.error };
     } catch (err: any) {
       return { success: false, error: err.message };

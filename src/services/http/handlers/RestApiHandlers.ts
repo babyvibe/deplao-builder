@@ -209,8 +209,9 @@ export const handlers = {
       `SELECT COUNT(*) as cnt FROM contacts WHERE ${whereClause}`, countParams
     ))[0]?.cnt || 0;
 
+    // is_replied (đã / chưa trả lời theo tin thật mới nhất) như nhánh IPC getContactsFiltered
     const page = db().query<any>(
-      `SELECT * FROM contacts WHERE ${whereClause} ORDER BY last_message_time DESC LIMIT ? OFFSET ?`,
+      `SELECT contacts.*, ${db().replyStateColumnSql()} AS is_replied FROM contacts WHERE ${whereClause} ORDER BY last_message_time DESC LIMIT ? OFFSET ?`,
       [...queryParams, limit, offset]
     ) || [];
 
@@ -223,6 +224,34 @@ export const handlers = {
       total,
       hasMore: offset + limit < total,
     });
+  },
+
+  /**
+   * Như IPC db:getContactsFiltered — bộ lọc của danh sách hội thoại (kênh, tìm, Chưa đọc, Khác, Chưa trả lời, khoảng
+   * ngày) chạy DatabaseService.getContactsFiltered trên DB Boss cho tài khoản được giao (checkEmployeeAccess đã kiểm
+   * `zaloId`). Không có limit → mọi hội thoại khớp, như nhánh IPC.
+   */
+  getConversationsFiltered(employee: RegisteredEmployee, params: any): JsonResponse {
+    const zaloId = params.zaloId || employee.assigned_accounts[0];
+    if (!zaloId) return error('Missing zaloId');
+    const flag = (value: unknown) => value === true || value === 'true' || value === '1' || value === 1;
+    const positive = (value: unknown) => {
+      const n = Number(value);
+      return Number.isFinite(n) && n > 0 ? n : undefined;
+    };
+    const rows = db().getContactsFiltered(String(zaloId), {
+      channel: params.channel ? String(params.channel) : undefined,
+      search: params.search ? String(params.search) : undefined,
+      unreadOnly: flag(params.unreadOnly),
+      othersOnly: flag(params.othersOnly),
+      excludeOthers: flag(params.excludeOthers),
+      unrepliedOnly: flag(params.unrepliedOnly),
+      fromTs: positive(params.fromTs),
+      toTs: positive(params.toTs),
+      limit: positive(params.limit),
+      offset: positive(params.offset),
+    }) || [];
+    return success({ items: rows.map(toConversationItem) });
   },
 
   getConversationsUpdates(employee: RegisteredEmployee, params: any): JsonResponse {

@@ -14,6 +14,18 @@ function mapAssistant(a: any): any {
     return { ...scrub(rest), has_api_key: !!(api_key_encrypted || apiKey || api_key) };
 }
 
+/** Thông tin tối thiểu để chọn trợ lý (scope ai:use): không system prompt, tri thức hay key. */
+function assistantOption(a: any): any {
+    return {
+        id: String(a?.id ?? ''),
+        name: String(a?.name ?? ''),
+        platform: String(a?.platform ?? ''),
+        model: String(a?.model ?? ''),
+        enabled: a?.enabled !== false && a?.enabled !== 0,
+        is_default: !!(a?.isDefault ?? a?.is_default),
+    };
+}
+
 const REPORTS: Record<string, { channel: string; perAccount: boolean; needsRange: boolean; label: string }> = {
     'dashboard': { channel: 'analytics:dashboardOverview', perAccount: true, needsRange: false, label: 'Tổng quan' },
     'message-volume': { channel: 'analytics:messageVolume', perAccount: true, needsRange: true, label: 'Lượng tin theo giờ/ngày' },
@@ -47,6 +59,11 @@ export function aiRoutes(): RouteDef[] {
             },
         }),
         route({
+            method: 'GET', path: '/ai/assistants/options', scope: 'ai:use', tags, operationId: 'listAiAssistantOptions',
+            summary: 'Trợ lý để chọn khi gọi /ai/chat (chỉ tên, nền tảng, model — không prompt, không key)',
+            handler: async ctx => ((await ctx.call('ai:listAssistants'))?.assistants || []).map(assistantOption),
+        }),
+        route({
             method: 'GET', path: '/ai/default', scope: 'ai:use', tags, operationId: 'getDefaultAiAssistant',
             summary: 'Trợ lý mặc định',
             handler: async ctx => mapAssistant((await ctx.call('ai:getDefault'))?.assistant ?? null),
@@ -56,9 +73,11 @@ export function aiRoutes(): RouteDef[] {
             summary: 'Hỏi trợ lý AI (dùng cấu hình, tri thức và hạn mức của trợ lý)',
             body: s.object({
                 assistant_id: s.id().optional().describe('Bỏ trống = trợ lý mặc định'),
-                messages: s.array(s.object({ role: s.enum(['user', 'assistant', 'system'] as const), content: s.string().max(20000) })).min(1).max(100),
+                messages: s.array(s.object({ role: s.enum(['user', 'assistant', 'system'] as const), content: s.string().max(100000) })).min(1).max(100),
                 max_tokens: s.int().min(1).max(8000).optional(),
                 temperature: s.number().min(0).max(2).optional(),
+                raw_system: s.boolean().optional()
+                    .describe('true = chỉ gửi đúng messages (kể cả system) tới model, không ghép system prompt / tri thức của trợ lý — cho ứng dụng tự lo prompt'),
             }),
             examples: { request: { messages: [{ role: 'user', content: 'Tóm tắt chính sách đổi trả' }] } },
             handler: async ctx => {
@@ -70,6 +89,7 @@ export function aiRoutes(): RouteDef[] {
                 }
                 const r = await ctx.call('ai:chat', {
                     assistantId, messages: ctx.body.messages, maxTokens: ctx.body.max_tokens, temperature: ctx.body.temperature,
+                    rawSystem: ctx.body.raw_system === true,
                 }, { timeoutMs: 180_000 });
                 return { result: r?.result ?? null, total_tokens: r?.totalTokens ?? null, prompt_tokens: r?.promptTokens ?? null, completion_tokens: r?.completionTokens ?? null };
             },

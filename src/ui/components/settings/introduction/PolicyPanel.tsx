@@ -35,6 +35,7 @@ export function PolicyPanel() {
           '<strong class="text-foreground">Dữ liệu lưu hoàn toàn cục bộ</strong> trên máy tính của người dùng. Chúng tôi <em>không</em> thu thập, lưu trữ hoặc xử lý nội dung tin nhắn, danh bạ hay thông tin khách hàng của bạn trên bất kỳ server nào của chúng tôi.',
           '<strong class="text-foreground">Không chia sẻ với bên thứ 3</strong>: Deplao không tích hợp bất kỳ SDK thu thập dữ liệu, analytics hay quảng cáo của bên thứ 3.',
           '<strong class="text-foreground">Phiên Zalo</strong>: Cookie phiên Zalo được mã hóa AES và lưu cục bộ, chỉ dùng để duy trì kết nối Zalo từ máy bạn.',
+          '<strong class="text-foreground">Tin nhắn tự xoá trên Zalo</strong>: khi hội thoại bật "Tự xoá tin nhắn", Zalo xoá tin trên các thiết bị Zalo nhưng Deplao <em>vẫn giữ</em> bản đã lưu trên máy bạn (và trong bản sao lưu nếu có).',
           '<strong class="text-foreground">Đám mây và Public API là tuỳ chọn, mặc định tắt</strong>: lưu media, sao lưu dữ liệu lên Cloudflare R2 hoặc Google Drive chỉ chạy khi bạn tự kết nối tài khoản Cloudflare / Google <em>của chính bạn</em> và bật tính năng (bản sao lưu cơ sở dữ liệu được mã hoá ngay trên máy trước khi tải lên). Public API chạy ngay trên máy bạn và chỉ gọi được bằng API key do bạn tạo.',
         ]} />
       </Card>

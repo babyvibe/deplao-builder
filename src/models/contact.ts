@@ -15,6 +15,10 @@ export interface Contact {
     is_muted?: number;
     mute_until?: number;
     is_in_others?: number;
+    /** Zalo tự xoá tin mới sau N ms (ZL-05, 0 = tắt) */
+    zalo_auto_delete_ttl?: number;
+    /** 1 = hội thoại đang ẩn trên Zalo (ZL-03) */
+    zalo_hidden?: number;
     gender?: number | null;
     birthday?: string | null;
     /** Lần cuối tên/avatar được làm mới hàng loạt từ API (unix ms); 0/NULL = chưa bao giờ */

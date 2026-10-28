@@ -11,7 +11,11 @@
 
 // ─── Kết nối ─────────────────────────────────────────────────────────────────
 
-export type CloudFeature = 'tunnel' | 'r2';
+/**
+ * 'workers' = Worker + D1 cho ứng dụng (quyền plugin cloudflare:workers) — KHÔNG bắt buộc: thiếu quyền không tính là
+ * lỗi của kết nối (không chấm đỏ, không vào lastError), giao diện chỉ hiện dòng "Worker, D1 (cho ứng dụng)".
+ */
+export type CloudFeature = 'tunnel' | 'r2' | 'workers';
 
 export interface CloudPermissionCheck {
     feature: CloudFeature;

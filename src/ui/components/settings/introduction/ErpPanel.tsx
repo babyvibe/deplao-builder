@@ -54,9 +54,12 @@ export function ErpPanel() {
         <SectionTitle><CalendarIcon className="w-4 h-4 inline" /> Lịch làm việc</SectionTitle>
         <BulletList items={[
           'Xem theo <strong class="text-foreground">Tuần / Tháng / Danh sách</strong>, có nút "Hôm nay", chọn tháng hoặc nhảy tới ngày bất kỳ.',
-          '<strong class="text-foreground">+ Sự kiện</strong> hoặc nhấp đúp vào một ngày để tạo nhanh (mặc định 9:00–10:00): tiêu đề, giờ bắt đầu, giờ kết thúc (tuỳ chọn), địa điểm, ghi chú.',
-          'Bấm vào sự kiện để xem, Sửa hoặc Xoá; ngày có nhiều sự kiện hiện "Xem thêm".',
+          '<strong class="text-foreground">+ Sự kiện</strong> hoặc nhấp đúp vào một ngày để tạo nhanh (mặc định 9:00–10:00): tiêu đề, giờ bắt đầu, giờ kết thúc (tuỳ chọn), địa điểm, ghi chú, <strong class="text-foreground">Nhắc trước</strong> (chọn nhiều mốc: Đúng giờ, 5 phút, 15 phút, 30 phút, 1 giờ, 1 ngày; mặc định 15 phút + đúng giờ).',
+          'Bấm vào sự kiện để xem, Sửa hoặc Xoá (lịch thêm từ tin nhắn có thêm Mở hội thoại); ngày có nhiều sự kiện hiện "Xem thêm".',
           'Đang chat với khách? Nút <strong class="text-foreground">+</strong> cạnh ô tìm kiếm hội thoại → <strong class="text-foreground">Thêm lịch hẹn</strong> (Lịch hẹn / Cuộc họp / Nhắc việc, có thể gắn với hội thoại đang mở) hoặc <strong class="text-foreground">Ghi chú nhanh</strong> — lưu thẳng vào Quản lý công việc.',
+          'Từ tin nhắn: tin có ngày giờ sắp tới ("mai 9h", "20 phút nữa", "thứ 6", "20/11 14:00") hiện nút <strong class="text-foreground">Tạo lịch hẹn</strong> ngay dưới tin, bấm là điền sẵn ngày giờ (tin chỉ có ngày thì bạn chọn giờ). Hoặc chuột phải một tin (hoặc chọn nhiều tin) → <strong class="text-foreground">Thêm vào lịch</strong> / <strong class="text-foreground">Lưu vào ghi chú</strong>. Ngày giờ tính từ lúc tin được gửi, ghi chú là nội dung tin, lịch gắn với hội thoại và đúng tin đó.',
+          'Nhắc trước (15 phút, 1 giờ…): chuông trên thanh tiêu đề rung và hiện <strong class="text-foreground">15 phút nữa tới lịch hẹn</strong> (đếm ngược tới giờ hẹn); thông báo nằm trong chuông như thông báo thường, bấm vào là đã đọc và mở hội thoại của lịch (không có thì mở Lịch).',
+          'Đúng giờ hẹn: popup <strong class="text-foreground">Đến giờ hẹn!</strong> như nhắc hẹn Zalo, có nhạc, ghi chú và nút Mở hội thoại (về đúng tin) hoặc Xem lịch; app đang ở nền thì có thêm thông báo của Windows / macOS. Chỉ nhắc lịch của bạn (người tạo hoặc được mời); lịch đã qua lâu (máy tắt lúc tới giờ) chỉ báo "Đã lỡ lịch".',
         ]} />
       </Card>
 

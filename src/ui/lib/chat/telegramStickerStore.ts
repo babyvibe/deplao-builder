@@ -384,6 +384,11 @@ export interface StickerSendTarget {
   accountId: string;
   chatId: string;
   topicId?: string | null;
+  /**
+   * Ô soạn tin gửi vào chỗ khác hội thoại đang mở (phần bình luận bài đăng kênh → nhóm thảo luận): tin đang trả lời của ô
+   * đó. Không có → trích dẫn chung, chỉ khi gửi vào đúng hội thoại đang mở.
+   */
+  replyTo?: import('../../store/chatStore').MessageItem | null;
 }
 
 /** Hội thoại đang mở (tài khoản Telegram cá nhân). */
@@ -402,7 +407,9 @@ export async function sendTelegramStickerItem(item: TelegramStickerItem, target:
   const notifyError = (message: string) => useAppStore.getState().showNotification(message, 'error');
   if (!target) { notifyError('Chưa mở hội thoại'); return false; }
   const chat = useChatStore.getState();
-  const reply = chat.activeThreadId === target.chatId ? chat.replyTo : null;
+  const reply = target.replyTo !== undefined
+    ? target.replyTo
+    : chat.activeThreadId === target.chatId ? chat.replyTo : null;
   const replyToMsgId = reply?.msg_id && /^\d+$/.test(String(reply.msg_id)) ? String(reply.msg_id) : undefined;
   const common = {
     accountId: target.accountId,

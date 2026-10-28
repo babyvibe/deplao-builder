@@ -143,7 +143,7 @@ export function registerDatabaseIpc() {
         }
     });
 
-    ipcMain.handle('db:getContactsFiltered', async (_event, params: { zaloId: string; channel?: string; search?: string; othersOnly?: boolean; excludeOthers?: boolean; unreadOnly?: boolean; contactIds?: string[]; limit?: number; offset?: number }) => {
+    ipcMain.handle('db:getContactsFiltered', async (_event, params: { zaloId: string; channel?: string; search?: string; othersOnly?: boolean; excludeOthers?: boolean; unreadOnly?: boolean; unrepliedOnly?: boolean; fromTs?: number; toTs?: number; contactIds?: string[]; limit?: number; offset?: number }) => {
         try {
             if (isEmployeeMode()) return { success: true, contacts: [] };
             const contacts = DatabaseService.getInstance().getContactsFiltered(params.zaloId, params);
@@ -230,6 +230,21 @@ export function registerDatabaseIpc() {
             return { success: true };
         } catch (error: any) {
             return { success: false, error: error.message };
+        }
+    });
+
+    // Đánh dấu đã trả lời / bỏ đánh dấu (không gửi tin) — hàng loạt hoặc một hội thoại. Máy khác (Boss / nhân viên) cập
+    // nhật qua db:replyStateChanged (relay); nhân viên gọi qua REST /api/command/conversations/replied
+    ipcMain.handle('db:markConversationsReplied', async (_event, params: { zaloId: string; contactIds: string[]; replied?: boolean }) => {
+        try {
+            const zaloId = String(params?.zaloId || '');
+            const contactIds = Array.isArray(params?.contactIds) ? params.contactIds.map(String) : [];
+            if (!zaloId || contactIds.length === 0) return { success: true, items: [] };
+            const items = DatabaseService.getInstance().markConversationsReplied(zaloId, contactIds, params?.replied !== false);
+            if (items.length > 0) EventBroadcaster.emit('db:replyStateChanged', { zaloId, items });
+            return { success: true, items };
+        } catch (error: any) {
+            return { success: false, error: error.message, items: [] };
         }
     });
 

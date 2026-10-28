@@ -14,7 +14,12 @@ export interface ErpCalendarEvent {
   color?: string;
   organizer_id?: string;
   linked_task_id?: string;
+  /** Hội thoại gắn với lịch (contact_id / thread id). */
   linked_contact_id?: string;
+  /** Tài khoản chat của hội thoại gắn với lịch (zalo_id) — nhắc lịch mở đúng hội thoại. */
+  linked_account_id?: string;
+  /** Tin nhắn tạo ra lịch ("Thêm vào lịch" từ tin) — nhắc lịch nhảy tới tin này. */
+  linked_msg_id?: string;
   recurring_rule?: string;
   created_at: number;
   updated_at: number;
@@ -50,6 +55,8 @@ export interface CreateCalendarEventInput {
   attendees?: string[];
   linked_task_id?: string;
   linked_contact_id?: string;
+  linked_account_id?: string;
+  linked_msg_id?: string;
 }
 
 export interface ConflictResult {

@@ -114,6 +114,18 @@ export const WEB_SDK_JS = String.raw`/*! Deplao plugin SDK (web) v${'1.0.0'} */
     });
   }
 
+  // Nhóm có hàm riêng (media.upload) vẫn gọi được operationId: deplao.media.downloadLibraryItem({ uuid })
+  function apiGroup(own) {
+    return new Proxy(own, {
+      get: function (target, fn) {
+        if (typeof fn !== 'string') return undefined;
+        if (fn in target) return target[fn];
+        if (fn === 'then') return undefined;
+        return function (params) { return api(fn, params); };
+      }
+    });
+  }
+
   function resubscribe() {
     return call('events.subscribe', { types: Object.keys(eventHandlers) });
   }
@@ -173,13 +185,13 @@ export const WEB_SDK_JS = String.raw`/*! Deplao plugin SDK (web) v${'1.0.0'} */
     backend: {
       call: function (name, params) { return call('backend.call', { name: name, params: params }); }
     },
-    media: {
+    media: apiGroup({
       upload: function (file, name) {
         return fileToBase64(file).then(function (b64) {
           return call('media.upload', { name: name || file.name || 'file', mime: file.type || '', dataBase64: b64 });
         });
       }
-    },
+    }),
     system: {
       info: function () { return call('system.info'); }
     },

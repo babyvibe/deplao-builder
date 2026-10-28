@@ -36,7 +36,8 @@ async function readCloudAlerts(): Promise<CloudAlertState> {
   const c = conn?.success ? conn.connection : null;
   if (c?.connected) {
     if (c.lastError) reasons.push('Kết nối Cloudflare lỗi');
-    else if (c.permissions?.some(p => !p.ok && !(gdrive && p.feature === 'r2'))) reasons.push('Token Cloudflare thiếu quyền');
+    // Worker + D1 (cho ứng dụng) là quyền không bắt buộc — thiếu không chấm đỏ.
+    else if (c.permissions?.some(p => !p.ok && p.feature !== 'workers' && !(gdrive && p.feature === 'r2'))) reasons.push('Token Cloudflare thiếu quyền');
   }
 
   const list = addrs?.success && Array.isArray(addrs.addresses) ? addrs.addresses : [];

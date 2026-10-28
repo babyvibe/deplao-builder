@@ -33,6 +33,9 @@ export interface MediaAttachment {
   forwards?: number;
   comments?: number;
   discussion_channel_id?: string;
+  recent_repliers?: string[];
+  comments_max_id?: number;
+  comments_read_max_id?: number;
   grouped_id?: string;
   // Video specific
   width?: number;
@@ -279,6 +282,11 @@ export function getTelegramPostMeta(msg: MsgLike): {
   forwards: number;
   comments: number;
   discussionChannelId: string;
+  /** id người bình luận gần đây (ảnh nhỏ ở thanh bình luận, như Telegram) */
+  recentRepliers: string[];
+  /** Bình luận mới nhất / mình đã đọc tới (0 = chưa từng mở phần bình luận) → chấm "chưa đọc" */
+  commentsMaxId: number;
+  commentsReadMaxId: number;
 } | null {
   if (!isTelegram(msg.channel)) return null;
   const attachment = extractAttachments(msg).find((item) =>
@@ -291,6 +299,9 @@ export function getTelegramPostMeta(msg: MsgLike): {
     forwards: Math.max(0, Number(attachment.forwards || 0)),
     comments: Math.max(0, Number(attachment.comments || 0)),
     discussionChannelId: String(attachment.discussion_channel_id || ''),
+    recentRepliers: Array.isArray(attachment.recent_repliers) ? attachment.recent_repliers.map(String).filter(Boolean) : [],
+    commentsMaxId: Math.max(0, Number(attachment.comments_max_id || 0)),
+    commentsReadMaxId: Math.max(0, Number(attachment.comments_read_max_id || 0)),
   };
 }
 

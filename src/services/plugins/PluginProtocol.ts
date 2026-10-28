@@ -3,13 +3,15 @@
  * khác origin của app → iframe plugin không chạm được DOM/IPC của app).
  *
  *  - Chỉ plugin đang bật; file nằm trong thư mục plugin (kiểm tra realpath, chặn symlink ra ngoài).
- *  - CSP chặt: script/style chỉ từ chính plugin; không fetch ra ngoài trừ ui.connectSrc (cần quyền network).
+ *  - CSP chặt: script/style chỉ từ chính plugin; không fetch ra ngoài trừ ui.connectSrc, không tải ảnh ngoài trừ ui.imgSrc
+ *    (cả hai cần quyền network).
  *  - /__deplao/sdk.js trả SDK web nhúng sẵn trong app.
  *  - Trang bị nhúng từ web ngoài (Referer http/https lạ) bị từ chối.
  */
 import * as fs from 'fs';
 import * as path from 'path';
 import type { PluginRecord } from './PluginManager';
+import { isImageSource } from './manifest';
 import { WEB_SDK_JS } from './webSdk';
 
 export const PLUGIN_SCHEME = 'deplao-plugin';
@@ -67,16 +69,21 @@ export function resolvePluginFile(root: string, relPath: string): string | null 
 
 export function buildCsp(rec: PluginRecord): string {
     const connect = ["'self'"];
+    const img = ["'self'", 'data:', 'blob:'];
     if (rec.granted_permissions.includes('network')) {
         for (const o of rec.manifest.ui?.connectSrc || []) {
             try { connect.push(new URL(o).origin); } catch { /* manifest đã kiểm tra */ }
+        }
+        // Ảnh ngoài (vd ảnh đại diện Zalo https://*.zadn.vn) — chỉ nguồn đã khai trong ui.imgSrc, kiểm lại định dạng.
+        for (const o of rec.manifest.ui?.imgSrc || []) {
+            if (isImageSource(o)) img.push(o);
         }
     }
     return [
         "default-src 'self'",
         "script-src 'self'",
         "style-src 'self' 'unsafe-inline'",
-        "img-src 'self' data: blob:",
+        `img-src ${img.join(' ')}`,
         "font-src 'self' data:",
         "media-src 'self' data: blob:",
         `connect-src ${connect.join(' ')}`,

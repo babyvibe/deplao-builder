@@ -1,6 +1,7 @@
 import ZaloLoginHelper from "./ZaloLoginHelper";
 import { API } from "zca-js";
 import Logger from "./Logger";
+import { installZaloSendTtl, zaloTtlLookupFor } from "../services/zalo/zaloSendTtl";
 
 interface Connection {
     api: API;
@@ -91,6 +92,8 @@ class ConnectionManager {
         }
 
         const zaloId = apiInstance.getOwnId();
+        // Hội thoại bật tự xoá → mọi tin gửi qua api này mang ttl của hội thoại (SRS ZL-05, FR-ZL05.7)
+        installZaloSendTtl(apiInstance, zaloTtlLookupFor(zaloId));
         Logger.log(`[ConnectionManager] ✅ Connection ready for ${zaloId}`);
 
         const connection: Connection = {

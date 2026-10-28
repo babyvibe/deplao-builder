@@ -26,6 +26,7 @@ import {fitMediaBox, getKnownDims, ratioDiffers, rememberDims, type MediaDims} f
 import {getTelegramWebpageMeta, TelegramLinkPreviewCard} from './TelegramLinkPreview';
 import {requestTelegramPreviewRefresh} from '@/lib/chat/telegramPreviewRefresh';
 import {fitVideoBox} from './FBVideoThumb';
+import {TelegramPostLayoutContext, telegramPostMediaAspect} from './telegramPostLayout';
 import {DownloadProgressRing, VideoDownloadOverlay} from './MediaDownloadProgress';
 import {isTransferring, useMessageMediaProgress} from '@/lib/media/mediaProgress';
 
@@ -157,7 +158,8 @@ export function useTelegramMediaRepair(msg: any, shouldAutoRepair: boolean) {
         try {
             let request = telegramMediaRepairInFlight.get(repairKey);
             if (!request) {
-                request = ipc.telegramUser.repairMessageMedia({accountId, chatId: threadId, messageId})
+                // Bấm tải / thử lại → lên đầu hàng tải; bong bóng tự xin → mức "đang hiện" (main ưu tiên hội thoại đang mở)
+                request = ipc.telegramUser.repairMessageMedia({accountId, chatId: threadId, messageId, urgent: reason === 'manual_retry'})
                     .finally(() => telegramMediaRepairInFlight.delete(repairKey));
                 telegramMediaRepairInFlight.set(repairKey, request);
             }
@@ -534,7 +536,9 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
     groupMembersList?: any[];
     onMentionClick?: (userId: string, e: React.MouseEvent) => void;
 }) {
-    const surface = useBubbleSurface(isSent);
+    // Bài đăng kênh Telegram: khung / nền do bài đăng vẽ → không lồng thêm bong bóng bên trong
+    const bubbleSurface = useBubbleSurface(isSent);
+    const surface = React.useContext(TelegramPostLayoutContext) ? '' : bubbleSurface;
     // Remote-first: hiển thị CDN ngay lập tức, chuyển sang local sau khi tải xong
     // useLocal=true khi local_paths đã có → thử dùng file local (nhanh hơn, bền vững hơn)
     const [useLocal, setUseLocal] = React.useState(() => hasLocalMediaPath(msg.local_paths));
@@ -624,6 +628,7 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
     if (localUrl && (mediaExpired || !remoteUrl)) localUrl = withCloudWaitHint(localUrl);
     const mediaTime = ownTimestamp(msg);
     const embedded = React.useContext(BubbleEmbedContext);
+    const postLayout = React.useContext(TelegramPostLayoutContext);
     // Kích thước thật của ảnh (metadata hoặc đã đo) → khung đúng tỉ lệ ngay từ đầu, không nhảy khi ảnh tải xong
     const dimsKey = `${msg?.thread_id}:${msg?.msg_id}`;
     const [measured, setMeasured] = React.useState<{ key: string; dims: MediaDims } | null>(null);
@@ -805,7 +810,7 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
     const webpageMeta = linkPreview ? getTelegramWebpageMeta(msg) : null;
     if (linkPreview && (caption || webpageMeta) && (previewBroken || loadFailed || !displayUrl)) {
         return (
-            <div className={`rounded-lg px-3 py-2 text-sm break-words ${surface}`}>
+            <div className={postLayout ? 'px-3 pt-2 text-sm break-words' : `rounded-lg px-3 py-2 text-sm break-words ${surface}`}>
                 {caption && (
                     <TextWithMentions
                         text={caption}
@@ -923,6 +928,62 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
         );
     }
 
+    // Bài đăng kênh Telegram: ảnh rộng hết khung bài, sát mép; ảnh dọc → hai bên là chính ảnh làm mờ (như Telegram),
+    // chữ ở dưới rộng bằng khung bài. Giờ / khung / viền do bài đăng vẽ.
+    if (postLayout && !webpageMeta) {
+        const {box: postAspect, letterbox} = telegramPostMediaAspect(mediaDims?.w, mediaDims?.h);
+        return (
+            <div className="flex flex-col">
+                <div className="relative w-full overflow-hidden bg-black group/media" style={{aspectRatio: String(postAspect)}}>
+                    {letterbox && (
+                        <img src={imgSrc} alt="" aria-hidden
+                             className="pointer-events-none absolute inset-0 h-full w-full scale-110 object-cover opacity-60 blur-2xl"/>
+                    )}
+                    <img
+                        src={imgSrc}
+                        alt=""
+                        decoding="async"
+                        loading={mediaDims ? 'lazy' : 'eager'}
+                        className="relative h-full w-full object-contain cursor-pointer"
+                        onClick={() => onView(viewUrl)}
+                        onError={handleImgError}
+                        onLoad={handleImgLoad}
+                    />
+                    <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover/media:opacity-100 transition-opacity">
+                        {localFilePath && (
+                            <button onClick={handleShowInFolder} title="Mở trong thư mục"
+                                    className="w-7 h-7 bg-black/60 hover:bg-black/80 rounded-lg flex items-center justify-center text-white-important transition-colors backdrop-blur-sm">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
+                                </svg>
+                            </button>
+                        )}
+                        <button onClick={handleSaveAs} disabled={saving} title="Lưu về máy"
+                                className="w-7 h-7 bg-black/60 hover:bg-black/80 rounded-lg flex items-center justify-center text-white-important transition-colors backdrop-blur-sm disabled:opacity-40">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                                <polyline points="7 10 12 15 17 10"/>
+                                <line x1="12" y1="15" x2="12" y2="3"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                {caption && (
+                    <div className="px-3 pt-2 text-sm break-words">
+                        <TextWithMentions
+                            text={caption}
+                            channel={msg.channel}
+                            allContacts={allContacts}
+                            groupMembersList={groupMembersList}
+                            mentionRanges={getMentionRanges(msg.attachments)}
+                            onMentionClick={onMentionClick}
+                        />
+                    </div>
+                )}
+            </div>
+        );
+    }
+
     // Khung ảnh theo tỉ lệ thật (như Telegram). Chưa biết kích thước → khung tạm 4:3, đo khi tải xong rồi nhớ lại.
     const box = mediaDims ? fitMediaBox(mediaDims) : {width: 240, height: 180};
     // Có caption: bong bóng rộng đúng bằng ảnh (tối thiểu 200px) → chữ xuống dòng trong khung ảnh, không tràn
@@ -975,8 +1036,8 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
     if (webpageMeta) {
         // Link preview như Telegram: chữ (link) ở trên, thẻ tên trang / tiêu đề / mô tả bọc ảnh ở dưới
         return (
-            <div className={`flex flex-col rounded-lg px-3 py-2 text-sm break-words ${surface}`}
-                 style={{width: Math.max(shellWidth, 220) + 44, maxWidth: '100%'}}>
+            <div className={postLayout ? 'flex flex-col px-3 pt-2 text-sm break-words' : `flex flex-col rounded-lg px-3 py-2 text-sm break-words ${surface}`}
+                 style={postLayout ? undefined : {width: Math.max(shellWidth, 220) + 44, maxWidth: '100%'}}>
                 {caption && (
                     <TextWithMentions
                         text={caption}
@@ -1061,6 +1122,9 @@ export function TelegramVideoPending({msg, onPlay}: { msg: any; onPlay: (downloa
     const [failed, setFailed] = React.useState(false);
     // Cùng khung với FBVideoThumb sau khi tải (theo tỉ lệ thật, không cắt) → không nhảy kích thước
     const box = fitVideoBox(width && height ? {w: width, h: height} : null);
+    // Bài đăng kênh: rộng hết khung bài, video dọc không làm khung hẹp lại
+    const postLayout = React.useContext(TelegramPostLayoutContext);
+    const postBox = postLayout ? telegramPostMediaAspect(width, height) : null;
 
     const download = async (event: React.MouseEvent) => {
         event.stopPropagation();
@@ -1075,8 +1139,8 @@ export function TelegramVideoPending({msg, onPlay}: { msg: any; onPlay: (downloa
     return (
         <div
             onClick={download}
-            className={`relative overflow-hidden rounded-xl bg-black select-none ${busy ? 'cursor-progress' : 'cursor-pointer'}`}
-            style={{width: box.width, height: box.height, maxWidth: '100%'}}
+            className={`relative overflow-hidden ${postBox ? '' : 'rounded-xl '}bg-black select-none ${busy ? 'cursor-progress' : 'cursor-pointer'}`}
+            style={postBox ? {width: '100%', aspectRatio: String(postBox.box)} : {width: box.width, height: box.height, maxWidth: '100%'}}
             title={busy ? 'Đang tải video — xem được khi tải xong' : 'Tải và phát video'}
         >
             {thumb && <img src={thumb} alt="" className="absolute inset-0 h-full w-full scale-110 object-cover blur-md"/>}
@@ -1635,9 +1699,12 @@ export function MediaGroupBubble({
     // Chia thành hàng, mỗi hàng tối đa 4 ảnh
     const rows: any[][] = [];
     for (let i = 0; i < sorted.length; i += 4) rows.push(sorted.slice(i, i + 4));
+    // Bài đăng kênh Telegram: lưới rộng hết khung bài, hàng ít ảnh thì cao hơn (như Telegram); khung / giờ do bài vẽ
+    const postLayout = React.useContext(TelegramPostLayoutContext);
+    const postRowHeight = (count: number) => (count <= 1 ? 'h-72' : count === 2 ? 'h-52' : count === 3 ? 'h-40' : 'h-32');
 
     return (
-        <div className={`flex flex-col overflow-hidden rounded-lg max-w-xs ${surface}`}>
+        <div className={postLayout ? 'flex w-full flex-col' : `flex flex-col overflow-hidden rounded-lg max-w-xs ${surface}`}>
             <div className="relative flex flex-col gap-0.5">
                 {rows.map((row, ri) => (
                     <div key={ri} className="flex gap-0.5">
@@ -1650,7 +1717,8 @@ export function MediaGroupBubble({
                                                     onVideoPlay={onVideoPlay}
                                                     allContacts={allContacts}
                                                     groupMembersList={groupMembersList}
-                                                    onMentionClick={onMentionClick}/>
+                                                    onMentionClick={onMentionClick}
+                                                    tileHeightClass={postLayout ? postRowHeight(row.length) : undefined}/>
                             </div>
                         ))}
                     </div>
@@ -1659,7 +1727,7 @@ export function MediaGroupBubble({
                 {!telegramCaptionMessage && <MediaTimeBadge timestamp={albumTime}/>}
             </div>
             {telegramCaptionMessage && (
-                <div className="px-3 py-2">
+                <div className={postLayout ? 'px-3 pt-2' : 'px-3 py-2'}>
                     <TextWithInlineTime timestamp={albumTime} className="text-sm whitespace-pre-wrap break-words">
                         <TextWithMentions
                             text={String(telegramCaptionMessage.content || '').trim()}
@@ -1676,14 +1744,15 @@ export function MediaGroupBubble({
     );
 }
 
-/** Ảnh đơn bên trong MediaGroupBubble - chiều cao cố định h-40 */
-export function SingleImageInGroup({msg, onView, isSent, isSelecting: isSelectingProp, isSelected, onToggleSelect, onVideoPlay, allContacts, groupMembersList, onMentionClick}: {
+/** Ảnh đơn bên trong MediaGroupBubble - chiều cao cố định h-40 (bài đăng kênh: theo số ảnh trong hàng) */
+export function SingleImageInGroup({msg, onView, isSent, isSelecting: isSelectingProp, isSelected, onToggleSelect, onVideoPlay, allContacts, groupMembersList, onMentionClick, tileHeightClass = 'h-40'}: {
     msg: any; onView: (src: string) => void; isSent?: boolean;
     isSelecting?: boolean; isSelected?: boolean; onToggleSelect?: (msgId: string) => void;
     /** Called when user clicks play on a video tile. If provided, opens inline player. */
     onVideoPlay?: (msg: any) => void;
     allContacts?: any[]; groupMembersList?: any[];
     onMentionClick?: (userId: string, e: React.MouseEvent) => void;
+    tileHeightClass?: string;
 }) {
     // Remote-first: hiển thị CDN ngay; chuyển local khi file đã tải xong
     const [useLocal, setUseLocal] = React.useState(() => hasLocalMediaPath(msg.local_paths));
@@ -1808,7 +1877,7 @@ export function SingleImageInGroup({msg, onView, isSent, isSelecting: isSelectin
                 onClick={() => void telegramRepair.requestRepair('manual_retry', true)}
                 disabled={!isTelegramUser(msg.channel) || telegramRepair.repairing}
                 title={isTelegramUser(msg.channel) ? 'Tải lại ảnh Telegram này' : undefined}
-                className="h-40 flex-1 min-w-0 bg-foreground/5 flex flex-col gap-1 items-center justify-center text-muted-foreground select-none disabled:cursor-default">
+                className={`${tileHeightClass} flex-1 min-w-0 bg-foreground/5 flex flex-col gap-1 items-center justify-center text-muted-foreground select-none disabled:cursor-default`}>
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"
                      className="opacity-30">
                     <rect x="3" y="3" width="18" height="18" rx="2"/>
@@ -1863,7 +1932,7 @@ export function SingleImageInGroup({msg, onView, isSent, isSelecting: isSelectin
                     muted
                     playsInline
                     preload="metadata"
-                    className="h-40 w-full object-cover bg-black"
+                    className={`${tileHeightClass} w-full object-cover bg-black`}
                     onError={handleImgError}
                 />
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -1911,7 +1980,7 @@ export function SingleImageInGroup({msg, onView, isSent, isSelecting: isSelectin
                 src={displayUrl}
                 alt=""
                 decoding="async"
-                className={`h-40 w-full object-cover transition-opacity bg-foreground/5${isSelectingProp ? '' : ' hover:opacity-90'}`}
+                className={`${tileHeightClass} w-full object-cover transition-opacity bg-foreground/5${isSelectingProp ? '' : ' hover:opacity-90'}`}
                 onError={handleImgError}
             />
             {/* Selection overlay */}
@@ -2949,9 +3018,9 @@ export function applyRtfStyles(text: string, styles: RtfStyle[], mentions?: RtfM
         if (cs.small) cls.push('text-xs');
         if (cs.big) cls.push('text-base font-medium');
         if (cs.mentionUid) {
-            cls.push('font-semibold');
+            // Màu @nhắc tên: .chat-mention (index.css), giao diện tối xanh sáng dễ đọc trên bong bóng gửi
+            cls.push('font-semibold chat-mention');
             if (onMentionClick && cs.mentionUid !== 'unknown') cls.push('cursor-pointer hover:underline');
-            inlineStyle.color = '#5398f3';
         } else if (cs.color) {
             inlineStyle.color = cs.color;
         }
@@ -3046,8 +3115,7 @@ export function TextWithMentions({
             segments.push(
                 <span
                     key={`native-mention-${range.offset}`}
-                    className={`font-semibold${canClick ? ' cursor-pointer hover:underline' : ''}`}
-                    style={{color: '#5398f3'}}
+                    className={`chat-mention font-semibold${canClick ? ' cursor-pointer hover:underline' : ''}`}
                     title={range.isAll ? 'Thông báo tất cả thành viên' : undefined}
                     onClick={canClick ? async (e) => {
                         e.stopPropagation();
@@ -3136,8 +3204,7 @@ export function TextWithMentions({
                     segments.push(
                         <span
                             key={atIdx}
-                            className={`font-semibold${uid && onMentionClick ? ' cursor-pointer hover:underline' : ''}`}
-                            style={{color: '#5398f3'}}
+                            className={`chat-mention font-semibold${uid && onMentionClick ? ' cursor-pointer hover:underline' : ''}`}
                             onClick={uid && onMentionClick ? (e) => {
                                 e.stopPropagation();
                                 onMentionClick(uid, e);
@@ -3229,33 +3296,6 @@ export function ActionRow({icon, label, onClick, textColor = 'text-foreground/80
     );
 }
 
-// ─── Telegram: "Chuyển tiếp từ …" ─────────────────────────────────────────────
+// ─── Telegram: "Chuyển tiếp từ …" (TelegramForwardHeader.tsx, giữ đường import cũ) ─────────────────────────────
 
-/**
- * Dòng nguồn chuyển tiếp của tin Telegram (như Telegram Desktop: đầu bong bóng, trên trích dẫn / nội dung). Tin chỉ có
- * ảnh / file / sticker (không khung chữ) thì đặt ngay trên bong bóng.
- */
-export function TelegramForwardHeader({ name, avatarUrl, postAuthor, className = '' }: {
-  name: string;
-  avatarUrl?: string;
-  postAuthor?: string;
-  className?: string;
-}) {
-  const [avatarFailed, setAvatarFailed] = useState(false);
-  return (
-    <div className={`flex items-center gap-1 min-w-0 max-w-full text-[12px] leading-4 ${className}`}
-      title={`Chuyển tiếp từ ${name}${postAuthor ? ` (${postAuthor})` : ''}`}>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
-        className="w-3 h-3 shrink-0 text-primary" aria-hidden>
-        <polyline points="15 17 20 12 15 7" />
-        <path d="M4 18v-2a4 4 0 0 1 4-4h12" />
-      </svg>
-      <span className="shrink-0 text-muted-foreground">Chuyển tiếp từ</span>
-      {avatarUrl && !avatarFailed && (
-        <img src={avatarUrl} alt="" className="w-4 h-4 rounded-full object-cover shrink-0" onError={() => setAvatarFailed(true)} />
-      )}
-      <span className="min-w-0 truncate font-semibold text-primary">{name}</span>
-      {postAuthor && <span className="min-w-0 truncate text-muted-foreground">({postAuthor})</span>}
-    </div>
-  );
-}
+export { TelegramForwardHeader } from './TelegramForwardHeader';

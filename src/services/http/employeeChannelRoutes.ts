@@ -154,6 +154,9 @@ export const TELEGRAM_USER_CHANNEL_ROUTES: Readonly<Record<string, EmployeeChann
   'telegramUser:checkForumForNewGroups': BOSS_ONLY, // quét nền toàn tài khoản
   // ── Cục bộ ──────────────────────────────────────────────────────────────
   'telegramUser:networkOnline': LOCAL, // máy này có mạng lại: chỉ dựng lại phiên MTProto CỦA máy này (nhân viên không có)
+  // Hội thoại đang mở của máy này → hàng tải file của máy này. Máy nhân viên không có phiên (không tải gì); Boss không nhận
+  // để hội thoại nhân viên đang mở không giành ưu tiên của Boss — file nhân viên xin vẫn là "giao diện xin" (repairMessageMedia).
+  'telegramUser:setDownloadFocus': LOCAL,
   // ── Gửi tin ─────────────────────────────────────────────────────────────
   'telegramUser:sendMessage': proxy(CHAT, { send: true, timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }),
   'telegramUser:sendTopicMessage': proxy(CHAT, { send: true, timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }),
@@ -227,6 +230,11 @@ export const TELEGRAM_USER_CHANNEL_ROUTES: Readonly<Record<string, EmployeeChann
   'telegramUser:getMessageReactions': proxy(),
   'telegramUser:getMessageReadParticipants': proxy(),
   'telegramUser:repairMessageMedia': proxy(CHAT, { timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }),
+  'telegramUser:downloadRichMedia': proxy(CHAT, { timeoutMs: PROXY_SLOW_TIMEOUT_MS }),
+  // Bình luận bài đăng kênh (nhóm thảo luận) + số liệu bài
+  'telegramUser:getPostDiscussion': proxy(CHAT, { timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }),
+  'telegramUser:readPostDiscussion': proxy(),
+  'telegramUser:refreshPostStats': proxy(),
   'telegramUser:repairEmptyMessages': proxy(CHAT, { timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }),
   'telegramUser:refreshMessageAttachments': proxy(CHAT, { timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }),
   'telegramUser:repairMessageQuotes': proxy(CHAT, { timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }),

@@ -3,6 +3,9 @@ import { useErpCalendarStore } from '@/store/erp/erpCalendarStore';
 import { ConfirmDialog, ErpModalCard, ErpOverlay } from '../shared/ErpDialogs';
 import type { ErpCalendarEvent, CreateCalendarEventInput } from '../../../../models/erp';
 import { TrashIcon } from '@/components/common/icons';
+import { hasLinkedConversation, openLinkedConversation } from '@/lib/erp/erpLinkedConversation';
+import ReminderChips from '../shared/ReminderChips';
+import { DEFAULT_ERP_REMINDERS, erpRemindersSummary } from '../../../../shared/erpReminderText';
 
 
 type ViewMode = 'week' | 'month' | 'list';
@@ -38,8 +41,14 @@ function eventToFormSeed(event: ErpCalendarEvent): Partial<CreateCalendarEventIn
     color: event.color,
     linked_task_id: event.linked_task_id,
     linked_contact_id: event.linked_contact_id,
+    // Sửa lịch gửi lại cả danh sách mốc nhắc (ErpCalendarService thay toàn bộ, mốc đã nhắc giữ "đã nhắc")
+    reminders: (event.reminders ?? []).map(r => ({ minutes_before: r.minutes_before, channel: r.channel })),
   };
 }
+
+/** Lịch mới: nhắc 15 phút trước (chuông) + đúng giờ (popup như nhắc hẹn Zalo). */
+const defaultReminders = (): CreateCalendarEventInput['reminders'] =>
+  DEFAULT_ERP_REMINDERS.map(minutes => ({ minutes_before: minutes, channel: 'toast' as const }));
 
 export default function CalendarPage() {
   const { events, loadEvents, createEvent, updateEvent, deleteEvent } = useErpCalendarStore();
@@ -122,7 +131,7 @@ export default function CalendarPage() {
 
   const openCreateEventModal = (seed: Partial<CreateCalendarEventInput> = {}) => {
     setEditingEventId(null);
-    resetEventForm(seed);
+    resetEventForm({ reminders: defaultReminders(), ...seed });
     setShowModal(true);
   };
 
@@ -355,6 +364,17 @@ export default function CalendarPage() {
                 rows={3}
                 className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 resize-y"
               />
+              <div>
+                <label id="erp-event-reminders" className="text-[11px] text-muted-foreground mb-1 block">Nhắc trước</label>
+                <ReminderChips
+                  labelledBy="erp-event-reminders"
+                  value={(newEvent.reminders ?? []).map(r => r.minutes_before)}
+                  onChange={minutes => setNewEvent(v => ({
+                    ...v,
+                    reminders: minutes.map(m => ({ minutes_before: m, channel: v.reminders?.find(r => r.minutes_before === m)?.channel ?? 'toast' })),
+                  }))}
+                />
+              </div>
             </div>
             <div className="flex gap-2 mt-4">
               <button
@@ -392,8 +412,18 @@ export default function CalendarPage() {
                 : ''}
             </p>
             {selectedEvent.location && <p className="text-xs text-muted-foreground mt-1">📍 {selectedEvent.location}</p>}
+            {!!selectedEvent.reminders?.length && (
+              <p className="text-xs text-muted-foreground mt-1">⏰ {erpRemindersSummary(selectedEvent.reminders.map(r => r.minutes_before))}</p>
+            )}
             {selectedEvent.description && <p className="text-xs text-foreground/80 mt-2 whitespace-pre-wrap">{selectedEvent.description}</p>}
             <div className="flex gap-2 mt-4 justify-end">
+              {/* Lịch thêm từ tin nhắn: mở đúng hội thoại, nhảy tới tin */}
+              {hasLinkedConversation(selectedEvent) && (
+                <button
+                  onClick={() => { const event = selectedEvent; setSelectedEvent(null); openLinkedConversation(event); }}
+                  className="mr-auto px-3 py-1.5 text-xs text-blue-300 hover:text-white hover:bg-blue-600 rounded-lg"
+                >Mở hội thoại</button>
+              )}
               <button
                 onClick={() => openEditEventModal(selectedEvent)}
                 className="px-3 py-1.5 text-xs text-blue-300 hover:text-white hover:bg-blue-600 rounded-lg"

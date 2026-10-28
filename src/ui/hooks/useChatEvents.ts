@@ -14,11 +14,14 @@ import { messageQueue } from '@/lib/MessageQueue';
 import DataAccessor from '../lib/data/DataAccessor';;
 import { useChatStore, type MessageItem } from '@/store/chatStore';
 import { FB_TEMPLATE_MSG_TYPE, fbTemplateText } from '../../shared/facebookTemplate';
+import { replyStateForIncoming } from '../../shared/replyState';
 import { useAccountStore } from '@/store/accountStore';
 import { useAppStore } from '@/store/appStore';
 import { useEmployeeStore } from '@/store/employeeStore';
 import { reloadAccountContacts } from '@/lib/chat/accountContacts';
 import { playNotificationSound, showDesktopNotification } from '../utils/NotificationService';
+import { inAppToastAllowed, useInAppNotifyStore } from '@/store/inAppNotifyStore';
+import { isChatPaneVisible } from '@/lib/chat/liveReadSync';
 import { getFilteredUnreadCount } from '@/lib/badgeUtils';
 import { ImageIcon, PaletteIcon, PaperclipIcon } from '@/components/common/icons';
 
@@ -134,6 +137,15 @@ function normalizeFBMessage(fbAccountId: string, msg: any): MessageItem {
   };
 }
 
+/** Cửa sổ app có đang được dùng không: main báo qua 'app:windowFocus' (document.hasFocus() không đáng tin trong Electron). */
+let appWindowFocused = typeof document === 'undefined' || document.hasFocus();
+let appWindowFocusTracked = false;
+function trackAppWindowFocus(): void {
+  if (appWindowFocusTracked) return;
+  appWindowFocusTracked = true;
+  ipc.on?.('app:windowFocus', (focused: boolean) => { appWindowFocused = !!focused; });
+}
+
 /**
  * Hook lắng nghe FB events và cập nhật chatStore thống nhất.
  * Gọi hook này ở App level (cùng chỗ với useZaloEvents).
@@ -143,6 +155,7 @@ export function useChatEvents(): void {
 
   useEffect(() => {
     const unsubscribers: Array<() => void> = [];
+    trackAppWindowFocus();
 
     // ─── fb:onMessage → chatStore.addMessage ──────────────────────────────
     const unsubMsg = ipc.on?.('fb:onMessage', (data: {
@@ -290,6 +303,12 @@ export function useChatEvents(): void {
         }
       }
 
+      // Đã / chưa trả lời theo tin thật mới nhất (shared/replyState): tin mình gửi từ máy khác = đã trả lời, tin của người
+      // kia (kể cả lúc đang mở hội thoại) = chưa trả lời — trước đây chỉ đổi khi cộng chưa đọc
+      const fbReplyState = replyStateForIncoming(
+        { msgType: normalized.msg_type, timestamp: normalized.timestamp, isSelf },
+        (useChatStore.getState().contacts[fbAccountId] || []).find(c => c.contact_id === threadId)?.last_message_time,
+      );
       // Update contact (last message preview + time)
       store.updateContact(fbAccountId, {
         contact_id: threadId,
@@ -298,6 +317,7 @@ export function useChatEvents(): void {
         last_message: lastMsgPreview,
         last_message_time: normalized.timestamp,
         channel: 'facebook',
+        ...(fbReplyState !== undefined ? { is_replied: fbReplyState } : {}),
       });
 
       // ── FE fallback: refresh the conversation entity, not the actor ────────
@@ -330,23 +350,46 @@ export function useChatEvents(): void {
 
       // Increment unread if not currently viewing this thread and not self-sent
       const currentActive = useChatStore.getState().activeThreadId;
-      if (currentActive !== threadId && !isSelf) {
-        store.incrementUnread(fbAccountId, threadId);
+      if (!isSelf) {
+        if (currentActive !== threadId) store.incrementUnread(fbAccountId, threadId);
 
-        // ─── Sound + Desktop notification cho FB messages ────────────────
+        // ─── Âm thanh + thông báo trong app + popup hệ điều hành cho tin FB (một chỗ duy nhất) ──────────
+        // Hội thoại đang hiện trên màn hình và cửa sổ đang dùng → không báo (đã thấy tin). Cửa sổ ở nền thì vẫn báo cả
+        // khi đó là hội thoại đang mở (trước đây App.tsx báo riêng phần này → mỗi tin FB kêu 2 lần, 2 popup).
+        const windowFocused = appWindowFocused;
+        const onScreen = currentActive === threadId
+          && useAccountStore.getState().activeAccountId === fbAccountId
+          && isChatPaneVisible();
         const appState = useAppStore.getState();
-        const { isMuted, isInOthers, getNotifSettingsForAccount } = appState;
-        const fbNotifSettings = getNotifSettingsForAccount(fbAccountId);
-        const notifAllowed = !('Notification' in window) || Notification.permission === 'granted';
-        if (!isMuted(fbAccountId, threadId) && !isInOthers(fbAccountId, threadId)) {
+        const { isMuted, isInOthers, isZaloHidden, getNotifSettingsForAccount } = appState;
+        if ((!onScreen || !windowFocused)
+          && !isMuted(fbAccountId, threadId) && !isInOthers(fbAccountId, threadId) && !isZaloHidden(fbAccountId, threadId)) {
+          const fbNotifSettings = getNotifSettingsForAccount(fbAccountId);
+          const notifAllowed = !('Notification' in window) || Notification.permission === 'granted';
           if (fbNotifSettings.soundEnabled && notifAllowed) {
             playNotificationSound(fbNotifSettings.volume);
           }
-          if (fbNotifSettings.desktopEnabled && notifAllowed) {
-            // Resolve contact name from store
-            const contacts = useChatStore.getState().contacts[fbAccountId] || [];
-            const ctact = contacts.find(c => c.contact_id === threadId);
-            const contactName = ctact?.display_name || message.userID || threadId;
+          // Resolve contact name from store
+          const contacts = useChatStore.getState().contacts[fbAccountId] || [];
+          const ctact = contacts.find(c => c.contact_id === threadId);
+          const contactName = ctact?.alias || ctact?.display_name || data.contactName || message.userID || threadId;
+          const isGroupThread = ctact?.contact_type === 'group' || message.type === 'group' || message.isGroup === true;
+          const showToast = !onScreen && inAppToastAllowed({
+            accountId: fbAccountId, msgType: normalized.msg_type, timestamp: normalized.timestamp, onScreen: false,
+          });
+          if (showToast) {
+            useInAppNotifyStore.getState().push({
+              accountId: fbAccountId,
+              threadId,
+              threadType: isGroupThread ? 1 : 0,
+              msgId: String(normalized.msg_id || ''),
+              conversation: contactName,
+              sender: isGroupThread ? String(message.senderName || '') : '',
+              text: lastMsgPreview,
+            });
+          }
+          // Đang dùng app và thẻ trong app đã hiện → không bật thêm popup của hệ điều hành cho cùng tin
+          if (fbNotifSettings.desktopEnabled && notifAllowed && !(showToast && windowFocused)) {
             const contactAvatar = ctact?.avatar_url || undefined;
             const notifTitle = `[${getAccountDisplayName(fbAccountId)}] ${contactName}`;
             showDesktopNotification(
@@ -357,7 +400,7 @@ export function useChatEvents(): void {
             );
           }
         }
-        ipc.app?.setBadge(getFilteredUnreadCount());
+        if (currentActive !== threadId) ipc.app?.setBadge(getFilteredUnreadCount());
       }
     });
     if (unsubMsg) unsubscribers.push(unsubMsg);

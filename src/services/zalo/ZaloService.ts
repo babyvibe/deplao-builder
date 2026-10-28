@@ -79,6 +79,19 @@ import {GetGroupLinkDetailResponse} from "zca-js/dist/apis/getGroupLinkDetail";
 import {imageSize} from "image-size";
 import {convertThreadType, isImageFile} from "../../utils/Utils";
 import Logger from "../../utils/Logger";
+import { getZaloFriendOnlines, getZaloPresence } from "./zaloPresenceCache";
+import { applyZaloAutoDeleteList, applyZaloAutoDeleteOne } from "./zaloAutoDeleteSync";
+import type { ZaloPresence } from "../../shared/zaloPresence";
+import { isZaloAutoDeleteTtl } from "../../shared/zaloAutoDelete";
+import { isValidZaloSettingValue } from "../../shared/zaloPrivacySettings";
+import {
+    ZALO_PRODUCT_MAX_PHOTOS, mapZaloCatalog, mapZaloProduct, normalizeProductPrice, validateZaloProduct,
+    type ZaloCatalog, type ZaloProduct,
+} from "../../shared/zaloCatalog";
+import {
+    hiddenStatus, resetZaloHiddenPin, setZaloConversationHidden, setZaloHiddenPin, syncZaloHidden, unlockZaloHidden, zaloHiddenApiOf,
+    type HiddenStatus, type UnlockResult,
+} from "./zaloHiddenConversations";
 
 
 interface Auth {
@@ -1832,5 +1845,178 @@ export default class ZaloService {
     public async reviewPendingMemberRequest(payload: any, groupId: string): Promise<any> {
         if (!this.api) throw new Error("API not initialized");
         try { return await (this.api as any).reviewPendingMemberRequest(payload, groupId); } catch (error) { throw error; }
+    }
+
+    // ─── Trạng thái truy cập (ZL-01) ─────────────────────────────────────
+    /** Trạng thái truy cập của một người (lastOnline + bạn đang online; đệm 60 s, gộp lời gọi trùng — zaloPresenceCache). */
+    public async getPresence(userId: string, force: boolean = false): Promise<ZaloPresence> {
+        if (!this.api) throw new Error("API not initialized");
+        if (!userId) throw new Error("Thiếu userId");
+        const api = this.api as any;
+        return getZaloPresence(this.zaloId || '', String(userId), {
+            lastOnline: (uid: string) => api.lastOnline(uid),
+            getFriendOnlines: () => api.getFriendOnlines(),
+        }, { force });
+    }
+
+    /**
+     * Bạn bè đang online (getFriendOnlines, đệm 60 s) — chấm xanh trong danh sách hội thoại (ZL-01 giai đoạn 2).
+     * Zalo trả 404 cho đường này → { supported: false } (giao diện thôi hỏi), không ném lỗi.
+     */
+    public async getFriendOnlineIds(force: boolean = false): Promise<{ supported: boolean; userIds: string[] }> {
+        if (!this.api) throw new Error("API not initialized");
+        const api = this.api as any;
+        return getZaloFriendOnlines(this.zaloId || '', { getFriendOnlines: () => api.getFriendOnlines() }, { force });
+    }
+
+    // ─── Tự xoá tin nhắn (ZL-05) ─────────────────────────────────────────
+    /** Đọc danh sách hội thoại đang bật tự xoá trên Zalo, ghi vào DB (thay cả tập) → [{ threadId, ttl }]. */
+    public async syncAutoDeleteChats(): Promise<Array<{ threadId: string; ttl: number }>> {
+        if (!this.api) throw new Error("API not initialized");
+        const res = await (this.api as any).getAutoDeleteChat();
+        const ttls = applyZaloAutoDeleteList(this.zaloId || '', res);
+        return Array.from(ttls, ([threadId, ttl]) => ({ threadId, ttl }));
+    }
+
+    /** Bật / tắt tự xoá tin nhắn của một hội thoại trên Zalo (ttl ms: 0 | 1 | 7 | 14 ngày); Deplao vẫn giữ tin. */
+    public async setAutoDeleteChat(ttl: number, threadId: string, type?: ThreadType | number): Promise<{ ttl: number }> {
+        if (!this.api) throw new Error("API not initialized");
+        if (!threadId) throw new Error("Thiếu threadId");
+        if (!isZaloAutoDeleteTtl(ttl)) throw new Error("Thời gian tự xoá không hợp lệ (Tắt / 1 / 7 / 14 ngày)");
+        await (this.api as any).updateAutoDeleteChat(ttl, threadId, convertThreadType(type as any));
+        applyZaloAutoDeleteOne(this.zaloId || '', String(threadId), ttl);
+        return { ttl };
+    }
+
+    // ─── Cài đặt quyền riêng tư (ZL-02) ──────────────────────────────────
+    /** Cài đặt tài khoản Zalo (getSettings) — đọc mới mỗi lần, không đệm. */
+    public async getAccountSettings(): Promise<any> {
+        if (!this.api) throw new Error("API not initialized");
+        return await (this.api as any).getSettings();
+    }
+
+    /** Đổi một cài đặt (updateSettings) — chỉ khoá / giá trị trong shared/zaloPrivacySettings. Ghi log cũ → mới. */
+    public async updateAccountSetting(key: string, value: number, previous?: unknown): Promise<{ key: string; value: number }> {
+        if (!this.api) throw new Error("API not initialized");
+        if (!isValidZaloSettingValue(key, value)) throw new Error(`Cài đặt không hợp lệ: ${key} = ${value}`);
+        await (this.api as any).updateSettings(key, value);
+        Logger.log(`[ZaloSettings] ${this.zaloId}: ${key} ${previous ?? '?'} → ${value}`);
+        return { key, value };
+    }
+
+    // ─── Hội thoại ẩn bằng PIN (ZL-03) — MD5 của PIN không rời main ──────
+    /** Có PIN / số hội thoại đang ẩn; chưa đọc trong phiên hoặc `force` → đọc từ Zalo. */
+    public async hiddenConversationStatus(force: boolean = false): Promise<HiddenStatus> {
+        if (!this.api) throw new Error("API not initialized");
+        const zaloId = this.zaloId || '';
+        const known = hiddenStatus(zaloId);
+        if (known.known && !force) return known;
+        return syncZaloHidden(zaloId, zaloHiddenApiOf(this.api));
+    }
+
+    /** So 4 chữ số gõ vào ô tìm kiếm với PIN (sai 5 lần / phút → ngừng 30 s). */
+    public async unlockHiddenConversations(pin: string): Promise<UnlockResult> {
+        if (!this.api) throw new Error("API not initialized");
+        return unlockZaloHidden(this.zaloId || '', String(pin || ''), zaloHiddenApiOf(this.api));
+    }
+
+    /** Ẩn / bỏ ẩn một hội thoại trên Zalo (type 1 = nhóm). */
+    public async setConversationHidden(threadId: string, type: any, hidden: boolean): Promise<HiddenStatus> {
+        if (!this.api) throw new Error("API not initialized");
+        return setZaloConversationHidden(this.zaloId || '', String(threadId || ''), Number(type) === 1, !!hidden, zaloHiddenApiOf(this.api));
+    }
+
+    /** Đặt / đổi PIN (đã có PIN → phải đúng PIN cũ). */
+    public async setHiddenConversationPin(pin: string, oldPin?: string): Promise<HiddenStatus> {
+        if (!this.api) throw new Error("API not initialized");
+        return setZaloHiddenPin(this.zaloId || '', String(pin || ''), oldPin ? String(oldPin) : undefined, zaloHiddenApiOf(this.api));
+    }
+
+    /** Quên PIN → đặt lại trên Zalo (Zalo có thể xoá tin của hội thoại đang ẩn trên thiết bị Zalo; Deplao giữ tin). */
+    public async resetHiddenConversationPin(): Promise<HiddenStatus> {
+        if (!this.api) throw new Error("API not initialized");
+        return resetZaloHiddenPin(this.zaloId || '', zaloHiddenApiOf(this.api));
+    }
+
+    // ─── Danh mục sản phẩm Zalo Business (ZL-04) ─────────────────────────
+    /** Một trang danh mục (getCatalogList). */
+    public async getCatalogs(page: number = 0, limit: number = 20): Promise<{ items: ZaloCatalog[]; hasMore: boolean }> {
+        if (!this.api) throw new Error("API not initialized");
+        const res = await (this.api as any).getCatalogList({ limit: Math.min(50, Math.max(1, limit)), page: Math.max(0, page) });
+        return { items: (Array.isArray(res?.items) ? res.items : []).map(mapZaloCatalog), hasMore: Number(res?.has_more) === 1 };
+    }
+
+    public async createCatalog(name: string): Promise<ZaloCatalog> {
+        if (!this.api) throw new Error("API not initialized");
+        const clean = String(name || '').trim();
+        if (!clean) throw new Error("Nhập tên danh mục");
+        const res = await (this.api as any).createCatalog(clean);
+        return mapZaloCatalog(res?.item);
+    }
+
+    public async updateCatalog(catalogId: string, name: string): Promise<ZaloCatalog> {
+        if (!this.api) throw new Error("API not initialized");
+        const clean = String(name || '').trim();
+        if (!catalogId || !clean) throw new Error("Thiếu danh mục hoặc tên");
+        const res = await (this.api as any).updateCatalog({ catalogId, catalogName: clean });
+        return mapZaloCatalog(res?.item);
+    }
+
+    public async deleteCatalog(catalogId: string): Promise<{ deleted: true }> {
+        if (!this.api) throw new Error("API not initialized");
+        if (!catalogId) throw new Error("Thiếu danh mục");
+        await (this.api as any).deleteCatalog(catalogId);
+        return { deleted: true };
+    }
+
+    /** Một trang sản phẩm của danh mục (getProductCatalogList). */
+    public async getCatalogProducts(catalogId: string, page: number = 0, limit: number = 100): Promise<{ items: ZaloProduct[]; hasMore: boolean }> {
+        if (!this.api) throw new Error("API not initialized");
+        if (!catalogId) throw new Error("Thiếu danh mục");
+        const res = await (this.api as any).getProductCatalogList({ catalogId, limit: Math.min(100, Math.max(1, limit)), page: Math.max(0, page) });
+        return { items: (Array.isArray(res?.items) ? res.items : []).map(mapZaloProduct), hasMore: Number(res?.has_more) === 1 };
+    }
+
+    /** Tạo sản phẩm: ảnh là URL đã tải bằng uploadProductPhoto (zca-js 2.2.0 bỏ qua `files`). */
+    public async createCatalogProduct(input: { catalogId: string; name: string; price: string; description?: string; photos?: string[] }): Promise<ZaloProduct> {
+        if (!this.api) throw new Error("API not initialized");
+        const problem = !input?.catalogId ? "Thiếu danh mục" : validateZaloProduct(input);
+        if (problem) throw new Error(problem);
+        const res = await (this.api as any).createProductCatalog({
+            catalogId: String(input.catalogId), productName: String(input.name).trim(), price: normalizeProductPrice(input.price),
+            description: String(input.description || '').trim(), product_photos: (input.photos || []).map(String).slice(0, ZALO_PRODUCT_MAX_PHOTOS),
+        });
+        return mapZaloProduct(res?.item);
+    }
+
+    /** Sửa sản phẩm: phải gửi lại createTime gốc. */
+    public async updateCatalogProduct(input: { catalogId: string; productId: string; name: string; price: string; description?: string; photos?: string[]; createTime?: number }): Promise<ZaloProduct> {
+        if (!this.api) throw new Error("API not initialized");
+        const problem = !input?.catalogId || !input?.productId ? "Thiếu danh mục hoặc sản phẩm" : validateZaloProduct(input);
+        if (problem) throw new Error(problem);
+        const res = await (this.api as any).updateProductCatalog({
+            catalogId: String(input.catalogId), productId: String(input.productId), productName: String(input.name).trim(),
+            price: normalizeProductPrice(input.price), description: String(input.description || '').trim(),
+            createTime: Number(input.createTime) || Date.now(), product_photos: (input.photos || []).map(String).slice(0, ZALO_PRODUCT_MAX_PHOTOS),
+        });
+        return mapZaloProduct(res?.item);
+    }
+
+    public async deleteCatalogProducts(catalogId: string, productIds: string[]): Promise<{ deleted: number }> {
+        if (!this.api) throw new Error("API not initialized");
+        const ids = (productIds || []).map(String).filter(Boolean);
+        if (!catalogId || ids.length === 0) throw new Error("Thiếu danh mục hoặc sản phẩm");
+        await (this.api as any).deleteProductCatalog({ catalogId, productIds: ids });
+        return { deleted: ids.length };
+    }
+
+    /** Tải một ảnh sản phẩm lên Zalo → URL dùng cho product_photos. */
+    public async uploadProductPhoto(photoPath: string): Promise<{ url: string; thumbUrl: string }> {
+        if (!this.api) throw new Error("API not initialized");
+        if (!photoPath) throw new Error("Thiếu ảnh");
+        const res = await (this.api as any).uploadProductPhoto({ file: photoPath });
+        const url = res?.normalUrl || res?.hdUrl || '';
+        if (!url) throw new Error("Zalo không trả link ảnh");
+        return { url, thumbUrl: res?.thumbUrl || url };
     }
 }

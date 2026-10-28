@@ -177,7 +177,7 @@ export function chatExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         ...([true, false] as const).map(into => route({
             method: into ? 'POST' : 'DELETE', path: '/accounts/:accountId/conversations/:threadId/others', scope: 'chat:manage', tags,
             operationId: into ? 'moveConversationToOthers' : 'moveConversationToMain',
-            summary: into ? 'Chuyển vào thư mục "Khác" (tắt thông báo, Telegram: lưu trữ)' : 'Đưa về danh sách chính (bật thông báo)',
+            summary: into ? 'Chuyển vào "Khác (lưu trữ)" (tắt thông báo, Telegram: lưu trữ)' : 'Đưa về danh sách chính (bật thông báo)',
             params: threadParams,
             handler: async (ctx: ApiContext) => {
                 const acc = await ctx.account(ctx.params.accountId);

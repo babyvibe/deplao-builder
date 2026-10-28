@@ -404,7 +404,8 @@ export default function Sidebar({ onAddAccount }: SidebarProps) {
           <button
             onClick={onAddAccount}
             title="Thêm tài khoản"
-            className="w-10 h-10 rounded-full bg-sidebar-foreground/15 hover:bg-sidebar-hover flex items-center justify-center text-sidebar-foreground/70 hover:text-sidebar-foreground transition-colors border-2 border-dashed border-sidebar-foreground/40"
+            // Nhiều tài khoản phải cuộn: không để flex bóp dẹt nút (các ô tài khoản cũng flex-shrink-0)
+            className="w-10 h-10 flex-shrink-0 rounded-full bg-sidebar-foreground/15 hover:bg-sidebar-hover flex items-center justify-center text-sidebar-foreground/70 hover:text-sidebar-foreground transition-colors border-2 border-dashed border-sidebar-foreground/40"
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
               <path d="M8 2a.75.75 0 0 1 .75.75v4.5h4.5a.75.75 0 0 1 0 1.5h-4.5v4.5a.75.75 0 0 1-1.5 0v-4.5h-4.5a.75.75 0 0 1 0-1.5h4.5v-4.5A.75.75 0 0 1 8 2Z" />

@@ -16,18 +16,23 @@ const MAX_MANIFEST_BYTES = 256 * 1024;
 export type PluginRuntime = 'web' | 'local' | 'remote';
 
 export type PluginPermission =
-    | 'storage' | 'ui:pages' | 'ui:chat-panel' | 'ui:composer'
-    | 'workflow:nodes' | 'events:emit' | 'network' | 'schedules';
+    | 'storage' | 'ui:pages' | 'ui:chat-panel' | 'ui:composer' | 'ui:microphone'
+    | 'workflow:nodes' | 'events:emit' | 'network' | 'schedules'
+    | 'cloudflare:workers';
 
 export const PLUGIN_PERMISSIONS: ReadonlyArray<{ id: PluginPermission; label: string }> = [
     { id: 'storage', label: 'Lưu dữ liệu riêng của ứng dụng trên máy này' },
     { id: 'ui:pages', label: 'Thêm trang riêng trong Deplao' },
     { id: 'ui:chat-panel', label: 'Hiện panel trong màn hình chat và biết bạn đang mở hội thoại nào' },
     { id: 'ui:composer', label: 'Thêm nút vào ô soạn tin nhắn' },
+    // Khung giao diện của ứng dụng được gắn allow="microphone" (PluginFrame) — không có quyền này thì trình duyệt chặn micro.
+    { id: 'ui:microphone', label: 'Dùng micro trong giao diện ứng dụng (ghi âm khi bạn bấm nút ghi âm)' },
     { id: 'workflow:nodes', label: 'Thêm node và trigger vào Workflow' },
     { id: 'events:emit', label: 'Phát sự kiện cho Workflow, webhook và hệ thống khác' },
     { id: 'network', label: 'Kết nối Internet' },
     { id: 'schedules', label: 'Chạy định kỳ khi Deplao đang mở' },
+    // deplao.cloudflare (chỉ backend): token Cloudflare không đưa cho ứng dụng; tên tài nguyên = tiền tố pluginShortName.
+    { id: 'cloudflare:workers', label: 'Triển khai Worker và cơ sở dữ liệu D1 lên tài khoản Cloudflare đã kết nối trong Deplao (chỉ tài nguyên mang tên của ứng dụng này)' },
 ];
 
 /** Scope plugin không được xin (tự nâng quyền / quản trị máy). */
@@ -41,7 +46,7 @@ export const RESERVED_SHORT_NAMES: readonly string[] = [
 ];
 
 /** Scope "nhạy cảm" — tô đỏ ở màn duyệt quyền. */
-const RISKY = new Set(['chat:send', 'chat:manage', 'contacts:write', 'crm:write', 'campaigns:run', 'workflow:write', 'integrations:execute', 'integrations:manage', 'erp:write', 'accounts:manage', 'network']);
+const RISKY = new Set(['chat:send', 'chat:manage', 'contacts:write', 'crm:write', 'campaigns:run', 'workflow:write', 'integrations:execute', 'integrations:manage', 'erp:write', 'accounts:manage', 'network', 'cloudflare:workers', 'ui:microphone']);
 
 export type SettingFieldType = 'string' | 'number' | 'integer' | 'boolean';
 
@@ -78,9 +83,12 @@ export interface ConfigField {
     /** Ô nhập có gợi ý biến {{ ... }} của workflow. */
     'x-template'?: boolean;
     'x-multiline'?: boolean;
-    /** Dùng picker có sẵn của app. */
-    'x-widget'?: 'account' | 'thread' | 'label';
+    /** Dùng picker có sẵn của app (assistant = chọn trợ lý AI của Deplao, lưu id; để trống = ứng dụng tự quyết định). */
+    'x-widget'?: 'account' | 'thread' | 'label' | 'assistant';
 }
+
+/** Picker có sẵn dùng được trong form cấu hình node workflow của ứng dụng. */
+export const CONFIG_WIDGETS = ['account', 'thread', 'label', 'assistant'] as const;
 
 export interface ConfigSchema {
     type?: 'object';
@@ -130,7 +138,7 @@ export interface PluginManifest {
     runtime: PluginRuntime;
     permissions: string[];
     accounts?: 'all' | string[];
-    ui?: { entry: string; connectSrc?: string[] };
+    ui?: { entry: string; connectSrc?: string[]; imgSrc?: string[] };
     backend?: { entry: string };
     remote?: { baseUrl: string };
     contributes?: {
@@ -168,6 +176,16 @@ export function isSafeRelativePath(p: string): boolean {
     if (p.includes('\\') || p.includes('\0') || p.includes(':')) return false;
     if (p.startsWith('/')) return false;
     return p.split('/').every(seg => seg !== '..');
+}
+
+/**
+ * Nguồn ảnh cho CSP img-src của UI plugin: `https://host` hoặc `https://*.domain.tld` (ảnh đại diện trên CDN nhiều subdomain,
+ * vd https://*.zadn.vn). Không đường dẫn / cổng / ký tự CSP; wildcard chỉ ở nhãn đầu và còn ít nhất 2 nhãn sau nó.
+ */
+export function isImageSource(v: unknown): v is string {
+    return typeof v === 'string' && v.length <= 200
+        && /^https:\/\/(\*\.)?([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(v)
+        && (!v.startsWith('https://*.') || v.slice('https://*.'.length).includes('.'));
 }
 
 function isHttpsUrl(v: string, allowLocalHttp = false): boolean {
@@ -209,7 +227,8 @@ function checkFields(c: Collector, where: string, schema: any, allowWidgets: boo
         if (f.type === 'array' && f.items?.type !== 'string') c.add(`${fw}.items`, 'chỉ hỗ trợ mảng chuỗi');
         if (f.enum !== undefined && (!Array.isArray(f.enum) || f.enum.length === 0 || f.enum.length > 100)) c.add(`${fw}.enum`, 'phải là mảng 1–100 giá trị');
         if (f.title !== undefined && !str(f.title, 100)) c.add(`${fw}.title`, 'tối đa 100 ký tự');
-        if (f['x-widget'] !== undefined && (!allowWidgets || !['account', 'thread', 'label'].includes(f['x-widget']))) c.add(`${fw}.x-widget`, 'chỉ account | thread | label (node workflow)');
+        if (f['x-widget'] !== undefined && (!allowWidgets || !(CONFIG_WIDGETS as readonly string[]).includes(f['x-widget']))) c.add(`${fw}.x-widget`, `chỉ ${CONFIG_WIDGETS.join(' | ')} (node workflow)`);
+        if (f['x-widget'] === 'assistant' && f.type !== 'string') c.add(`${fw}.x-widget`, 'assistant chỉ dùng cho trường string (id trợ lý)');
     }
     if (schema.required !== undefined) {
         if (!Array.isArray(schema.required) || schema.required.some((k: any) => !keys.includes(k))) c.add(`${where}.required`, 'phải là tên trường có trong properties');
@@ -265,6 +284,8 @@ export function validateManifest(raw: any, opts: { dir?: string; appVersion?: st
         }
     }
     const has = (p: string) => perms.includes(p);
+    // deplao.cloudflare chỉ có ở backend chạy trên máy (PluginApiBridge từ chối lời gọi từ UI).
+    if (has('cloudflare:workers') && runtime !== 'local') c.add('permissions', 'quyền "cloudflare:workers" chỉ dùng với runtime local (deplao.cloudflare ở backend)');
 
     if (raw.accounts !== undefined && raw.accounts !== 'all') {
         if (!Array.isArray(raw.accounts) || raw.accounts.length > 200 || raw.accounts.some((a: any) => !str(a, 200))) c.add('accounts', '"all" hoặc mảng id tài khoản');
@@ -295,6 +316,11 @@ export function validateManifest(raw: any, opts: { dir?: string; appVersion?: st
         if (raw.ui.connectSrc !== undefined) {
             if (!Array.isArray(raw.ui.connectSrc) || raw.ui.connectSrc.length > 10 || raw.ui.connectSrc.some((o: any) => !isHttpsUrl(String(o)))) c.add('ui.connectSrc', 'mảng tối đa 10 origin https');
             else if (!has('network')) c.add('ui.connectSrc', 'cần quyền "network"');
+        }
+        if (raw.ui.imgSrc !== undefined) {
+            if (!Array.isArray(raw.ui.imgSrc) || raw.ui.imgSrc.length > 10 || raw.ui.imgSrc.some((o: any) => !isImageSource(o))) {
+                c.add('ui.imgSrc', 'mảng tối đa 10 nguồn ảnh https://tên-miền hoặc https://*.tên-miền (không đường dẫn)');
+            } else if (!has('network')) c.add('ui.imgSrc', 'cần quyền "network"');
         }
     }
 

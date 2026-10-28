@@ -3,6 +3,10 @@ import { useAccountStore } from './accountStore';
 import { useEmployeeStore } from './employeeStore';
 import DataAccessor, { isReadFailure } from '@/lib/data/DataAccessor';
 import { isZalo } from '@/lib/channelHelper';
+import {
+  NOTIF_OVERRIDES_STORAGE_KEY, effectiveNotifSettings, normalizeNotifOverrides, withAccountNotifSettings,
+  type NotifSettingsOverride,
+} from '@/lib/notifSettingsOverrides';
 
 type AppView = 'chat' | 'friends' | 'settings' | 'dashboard' | 'crm' | 'workflow' | 'integration' | 'analytics' | 'erp' | 'plugin';
 export type AppTheme = 'dark' | 'light';
@@ -117,6 +121,9 @@ interface AppStore {
   quickChatOpen: boolean;
   quickChatTarget: QuickChatTarget | null;
   quickChatZaloId: string | null;
+  /** Hội thoại đang hiện trong popup Nhắn tin nhanh: tin mới của nó coi như đang xem (không chuông / thẻ, đã đọc) */
+  quickChatThread: { zaloId: string; threadId: string; threadType: number } | null;
+  setQuickChatThread: (thread: { zaloId: string; threadId: string; threadType: number } | null) => void;
   openQuickChat: (opts?: { target?: QuickChatTarget; zaloId?: string }) => void;
   closeQuickChat: () => void;
   labels: Record<string, LabelData[]>;
@@ -136,10 +143,14 @@ interface AppStore {
    */
   mutedThreads: Record<string, Record<string, number>>;
   notifSettings: NotifSettings;
-  /** Per-account notification setting overrides: zaloId -> NotifSettings */
-  notifSettingsOverrides: Record<string, NotifSettings>;
+  /** Cài đặt riêng của từng tài khoản: zaloId → các mục KHÁC mặc định (lib/notifSettingsOverrides, lưu trên máy này) */
+  notifSettingsOverrides: Record<string, NotifSettingsOverride>;
   /** In-memory others cache: zaloId -> Set<contactId> */
   othersConversations: Record<string, Set<string>>;
+  /** Hội thoại Zalo đang ẩn bằng PIN (ZL-03): zaloId → contact_id (contacts.zalo_hidden) */
+  hiddenConversations: Record<string, Set<string>>;
+  /** Tài khoản đang mở khoá hội thoại ẩn (đã gõ đúng PIN): zaloId → thời điểm mở (ms) — chỉ máy này */
+  hiddenUnlocked: Record<string, number>;
 
   theme: AppTheme;
   setTheme: (theme: AppTheme) => void;
@@ -198,10 +209,10 @@ interface AppStore {
 
   /** Get notification settings for a specific account (override + fallback to global) */
   getNotifSettingsForAccount: (zaloId: string) => NotifSettings;
-  /** Set per-account notification settings (persists to DB) */
+  /** Chỉnh cài đặt riêng của một tài khoản (chỉ lưu phần khác mặc định, localStorage của máy này) */
   setNotifSettingsForAccount: (zaloId: string, settings: Partial<NotifSettings>) => Promise<void>;
-  /** Load per-account notification settings from DB into store */
-  loadNotifSettingsForAccount: (zaloId: string) => Promise<void>;
+  /** Bỏ cài đặt riêng: tài khoản theo lại cài đặt mặc định */
+  resetNotifSettingsForAccount: (zaloId: string) => void;
 
   /** Move a contact to Others folder. Persists to DB + updates in-memory cache. */
   addToOthers: (zaloId: string, contactId: string) => void;
@@ -209,11 +220,20 @@ interface AppStore {
   removeFromOthers: (zaloId: string, contactId: string) => void;
   /** Fast in-memory check. */
   isInOthers: (zaloId: string, contactId: string) => boolean;
+  /** Hội thoại đang ẩn trên Zalo (bất kể đã mở khoá): không âm thanh / thông báo / số chưa đọc (quyết định Q3). */
+  isZaloHidden: (zaloId: string, contactId: string) => boolean;
+  /** Ẩn và tài khoản đang khoá → không hiện ở danh sách / tìm kiếm. */
+  isHiddenLocked: (zaloId: string, contactId: string) => boolean;
+  setHiddenUnlocked: (zaloId: string, unlocked: boolean) => void;
+  /** Ẩn lại mọi tài khoản đang mở (khoá app, đổi tài khoản, 5 phút không thao tác). */
+  lockAllHidden: () => void;
+  /** Thay danh sách hội thoại ẩn của một tài khoản (sau khi mở khoá / ẩn / bỏ ẩn). */
+  setHiddenThreads: (zaloId: string, contactIds: string[]) => void;
   /**
    * Áp dụng cờ tắt tiếng / "Khác" vừa đổi ở nơi khác (db:contactFlagsChanged — Boss hoặc nhân viên khác, hoặc tiếng
    * vọng thay đổi của chính mình) vào bộ nhớ đệm. KHÔNG ghi DB. Giá trị như đang có → không đổi state (không render lại).
    */
-  applyContactFlags: (zaloId: string, contactId: string, flags: { is_muted?: number; mute_until?: number; is_in_others?: number }) => void;
+  applyContactFlags: (zaloId: string, contactId: string, flags: { is_muted?: number; mute_until?: number; is_in_others?: number; zalo_hidden?: number }) => void;
 
   // Group info cache
   groupInfoCache: Record<string, Record<string, CachedGroupInfo>>;
@@ -306,6 +326,19 @@ const loadNotifSettings = (): NotifSettings => {
   } catch {
     return { soundEnabled: true, desktopEnabled: true, volume: 0.6 };
   }
+};
+
+// ─── Cài đặt thông báo riêng của từng tài khoản: localStorage của máy này (như notifSettings) ──────────────
+const loadNotifOverrides = (): Record<string, NotifSettingsOverride> => {
+  try {
+    return normalizeNotifOverrides(JSON.parse(localStorage.getItem(NOTIF_OVERRIDES_STORAGE_KEY) || '{}'));
+  } catch {
+    return {};
+  }
+};
+
+const saveNotifOverrides = (overrides: Record<string, NotifSettingsOverride>) => {
+  try { localStorage.setItem(NOTIF_OVERRIDES_STORAGE_KEY, JSON.stringify(overrides)); } catch {}
 };
 
 // ─── Pinned shortcuts persist in localStorage ────────────────────────────────
@@ -429,16 +462,19 @@ export const useAppStore = create<AppStore>((set, get) => ({
   quickChatOpen: false,
   quickChatTarget: null,
   quickChatZaloId: null,
+  quickChatThread: null,
   labels: {},
   labelsVersionMap: {},
   labelsFetchedAt: {},
   mutedThreads: {},
   notifSettings: loadNotifSettings(),
-  notifSettingsOverrides: {},
+  notifSettingsOverrides: loadNotifOverrides(),
   theme: loadTheme(),
   fontSizeScale: loadFontSizeScale(),
   groupInfoCache: {},
   othersConversations: {},
+  hiddenConversations: {},
+  hiddenUnlocked: {},
   mergedInboxMode: false,
   mergedInboxAccounts: [],
   mergedInboxFilterAccount: null,
@@ -457,7 +493,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
     quickChatTarget: opts?.target ?? null,
     quickChatZaloId: opts?.zaloId ?? null,
   }),
-  closeQuickChat: () => set({ quickChatOpen: false, quickChatTarget: null, quickChatZaloId: null }),
+  closeQuickChat: () => set({ quickChatOpen: false, quickChatTarget: null, quickChatZaloId: null, quickChatThread: null }),
+  setQuickChatThread: (thread) => set((state) => {
+    const current = state.quickChatThread;
+    if (current?.zaloId === thread?.zaloId && current?.threadId === thread?.threadId && current?.threadType === thread?.threadType) return state;
+    return { quickChatThread: thread };
+  }),
 
   setView: (view) => set({ view }),
   setLoading: (isLoading) => set({ isLoading }),
@@ -658,6 +699,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       const newMuted: Record<string, number> = {};
       const othersSet = new Set<string>();
+      const hiddenSet = new Set<string>();
 
       for (const row of (res.rows || [])) {
         // Mute: is_muted=1 (indefinite) OR mute_until > now (timed)
@@ -670,11 +712,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
         if (row.is_in_others === 1 || row.telegram_archived === 1) {
           othersSet.add(row.contact_id);
         }
+        // Hội thoại ẩn bằng PIN của Zalo (ZL-03)
+        if (Number(row.zalo_hidden) === 1) hiddenSet.add(row.contact_id);
       }
 
       set((s) => ({
         mutedThreads: { ...s.mutedThreads, [zaloId]: newMuted },
         othersConversations: { ...s.othersConversations, [zaloId]: othersSet },
+        hiddenConversations: { ...s.hiddenConversations, [zaloId]: hiddenSet },
       }));
     } catch {}
   },
@@ -752,35 +797,24 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   getNotifSettingsForAccount: (zaloId) => {
     const state = get();
-    const override = state.notifSettingsOverrides[zaloId];
-    return override ? { ...state.notifSettings, ...override } : state.notifSettings;
+    return effectiveNotifSettings(state.notifSettings, state.notifSettingsOverrides[zaloId]);
   },
 
   setNotifSettingsForAccount: async (zaloId, settings) => {
+    if (!zaloId) return;
     const state = get();
-    const current = (state.notifSettingsOverrides[zaloId] || {}) as NotifSettings;
-    const updated: NotifSettings = {
-      soundEnabled: settings.soundEnabled ?? current.soundEnabled ?? true,
-      desktopEnabled: settings.desktopEnabled ?? current.desktopEnabled ?? true,
-      volume: settings.volume ?? current.volume ?? 0.6,
-    };
-    set((s) => ({
-      notifSettingsOverrides: { ...s.notifSettingsOverrides, [zaloId]: updated },
-    }));
-    try {
-      await DataAccessor.setNotifSettings(zaloId, updated);
-    } catch {}
+    const overrides = withAccountNotifSettings(state.notifSettings, state.notifSettingsOverrides, zaloId, settings);
+    saveNotifOverrides(overrides);
+    set({ notifSettingsOverrides: overrides });
   },
 
-  loadNotifSettingsForAccount: async (zaloId) => {
-    try {
-      const res = await DataAccessor.getNotifSettings(zaloId);
-      if (res?.success && res.settings) {
-        set((s) => ({
-          notifSettingsOverrides: { ...s.notifSettingsOverrides, [zaloId]: res.settings },
-        }));
-      }
-    } catch {}
+  resetNotifSettingsForAccount: (zaloId) => {
+    const current = get().notifSettingsOverrides;
+    if (!current[zaloId]) return;
+    const overrides = { ...current };
+    delete overrides[zaloId];
+    saveNotifOverrides(overrides);
+    set({ notifSettingsOverrides: overrides });
   },
 
   setTheme: (theme) => {
@@ -833,6 +867,24 @@ export const useAppStore = create<AppStore>((set, get) => ({
     return (get().othersConversations[zaloId] || new Set()).has(contactId);
   },
 
+  isZaloHidden: (zaloId, contactId) => !!get().hiddenConversations[zaloId]?.has(contactId),
+
+  isHiddenLocked: (zaloId, contactId) => !!get().hiddenConversations[zaloId]?.has(contactId) && !get().hiddenUnlocked[zaloId],
+
+  setHiddenUnlocked: (zaloId, unlocked) => set((s) => {
+    if (!zaloId || !!s.hiddenUnlocked[zaloId] === unlocked) return s;
+    const next = { ...s.hiddenUnlocked };
+    if (unlocked) next[zaloId] = Date.now();
+    else delete next[zaloId];
+    return { hiddenUnlocked: next };
+  }),
+
+  lockAllHidden: () => set((s) => (Object.keys(s.hiddenUnlocked).length === 0 ? s : { hiddenUnlocked: {} })),
+
+  setHiddenThreads: (zaloId, contactIds) => set((s) => ({
+    hiddenConversations: { ...s.hiddenConversations, [zaloId]: new Set(contactIds.map(String)) },
+  })),
+
   applyContactFlags: (zaloId, contactId, flags) => {
     if (!zaloId || !contactId || !flags) return;
     set((s) => {
@@ -860,6 +912,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
           if (inOthers) updated.add(contactId);
           else updated.delete(contactId);
           patch.othersConversations = { ...s.othersConversations, [zaloId]: updated };
+        }
+      }
+      if (flags.zalo_hidden !== undefined) {
+        const current = s.hiddenConversations[zaloId];
+        const isHidden = Number(flags.zalo_hidden) === 1;
+        if (!!current?.has(contactId) !== isHidden) {
+          const updated = new Set(current || []);
+          if (isHidden) updated.add(contactId);
+          else updated.delete(contactId);
+          patch.hiddenConversations = { ...s.hiddenConversations, [zaloId]: updated };
         }
       }
       return Object.keys(patch).length > 0 ? patch : s;

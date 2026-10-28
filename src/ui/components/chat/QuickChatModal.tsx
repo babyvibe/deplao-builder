@@ -2,22 +2,33 @@
  * QuickChatModal - Popup soạn tin nhắn nhanh
  * Luôn hiển thị trang chi tiết (không có trang danh sách riêng).
  * Tính năng: tìm người nhận inline, chọn tài khoản gửi (avatar+tên+SĐT), lịch sử chat, tin nhắn nhanh.
+ *
+ * Mọi kênh (Zalo, Telegram, Facebook): gửi qua quickChatSend + MessageQueue như ô soạn tin của khung chat; tin của hội
+ * thoại đọc từ bộ nhớ chung nên tin mới về hiện ngay trong popup. Trước đây chỉ gọi ipc.zalo: tài khoản kênh khác gửi lỗi
+ * im lặng, popup không thấy tin trả lời.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppStore, QuickChatTarget } from '@/store/appStore';
 import { useAccountStore } from '@/store/accountStore';
-import { useChatStore, MessageItem } from '@/store/chatStore';
+import { getMessageCacheKey, useChatStore, MessageItem } from '@/store/chatStore';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
 import { MessageCircleIcon } from '@/components/common/icons';
 import DataAccessor from '@/lib/data/DataAccessor';;
-import { sendSeenForThread } from '@/lib/sendSeenHelper';
+import { liveReadSync } from '@/lib/chat/liveReadSync';
+import { messageQueue, generateTempId, type SendResult } from '@/lib/MessageQueue';
+import { openConversation } from '@/lib/chat/openConversation';
+import {
+  fetchQuickChatHistory, recipientLookupKind, sendQuickFile, sendQuickImages, sendQuickText, sendQuickVideo, type QuickSendTarget,
+} from '@/lib/chat/quickChatSend';
+import { queueBadgeRefresh } from '@/lib/badgeUtils';
+import { getCapability, getChannelLabel } from '../../../configs/channelConfig';
 import { toLocalMediaUrl } from '@/lib/localMedia';
 import { fetchQuickMessages, QuickMessage, LocalMediaFile } from './QuickMessageManager';
 import { formatPhone } from '@/utils/phoneUtils';
 import ChatHistoryList from './ChatHistoryList';
 import SharedMessageContent from './SharedMessageContent';
 import { EMOJI_CATEGORIES, QUICK_EMOJIS } from '@/lib/chat/emojiUtils';
-import { CHANNEL } from '@/lib/channelHelper';
+import { CHANNEL, isZalo } from '@/lib/channelHelper';
 import PeerInitials from '@/components/common/PeerInitials';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -59,7 +70,8 @@ function AccountSelector({ accounts, selectedId, onSelect }: {
 
   const info = (a: any) => ({
     name: a.display_name || a.full_name || a.zalo_id,
-    sub: a.phone || a.zalo_id,
+    // Tài khoản mọi kênh: ghi rõ kênh (cùng một tên có thể có cả Zalo lẫn Telegram)
+    sub: [getChannelLabel((a.channel || CHANNEL.ZALO) as any), a.phone || a.zalo_id].filter(Boolean).join(' · '),
   });
 
   // Single account → just show label, no dropdown
@@ -127,8 +139,8 @@ function AccountSelector({ accounts, selectedId, onSelect }: {
 }
 
 // ── Quick Messages Picker ─────────────────────────────────────────────────────
-function QuickMsgPicker({ getAuth, accountId, onSelect, onClose }: {
-  getAuth: () => any; accountId: string; onSelect: (item: QuickMessage) => void; onClose: () => void;
+function QuickMsgPicker({ getAuth, accountId, channel, onSelect, onClose }: {
+  getAuth: () => any; accountId: string; channel: string; onSelect: (item: QuickMessage) => void; onClose: () => void;
 }) {
   const [items, setItems] = useState<QuickMessage[]>([]);
   const [loading, setLoading] = useState(true);
@@ -142,11 +154,13 @@ function QuickMsgPicker({ getAuth, accountId, onSelect, onClose }: {
   }, [onClose]);
 
   useEffect(() => {
+    // Như ô soạn tin: kênh chỉ có tin nhắn nhanh trên máy (Telegram, Facebook) luôn đọc bản trên máy
+    const localOnly = getCapability((channel || CHANNEL.ZALO) as any)?.quickMessageSyncMode === 'local';
+    const mode = localOnly ? 'local' : ((localStorage.getItem(`qm_mode_${accountId}`) as 'zalo'|'local') || CHANNEL.ZALO);
     const auth = getAuth();
-    if (!auth) { setLoading(false); return; }
-    const mode = (localStorage.getItem(`qm_mode_${accountId}`) as 'zalo'|'local') || CHANNEL.ZALO;
+    if (!auth && mode !== 'local') { setLoading(false); return; }
     fetchQuickMessages(auth, accountId, mode).then(setItems).catch(() => setItems([])).finally(() => setLoading(false));
-  }, [accountId]);
+  }, [accountId, channel]);
 
   const filtered = filter.trim()
     ? items.filter(i => i.keyword.toLowerCase().includes(filter.toLowerCase()) || i.message.title.toLowerCase().includes(filter.toLowerCase()))
@@ -204,49 +218,94 @@ function QuickMsgPicker({ getAuth, accountId, onSelect, onClose }: {
 }
 
 // ── Recipient Typeahead Row ───────────────────────────────────────────────────
-function RecipientRow({ zaloId, contacts, accounts, onSelect }: {
-  zaloId: string | null; contacts: any[]; accounts: any[]; onSelect: (c: any) => void;
+const EMPTY_RESULTS: any[] = [];
+
+function RecipientRow({ zaloId, channel, contacts, accounts, onSelect }: {
+  zaloId: string | null; channel: string; contacts: any[]; accounts: any[]; onSelect: (c: any) => void;
 }) {
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<any[]>([]);
-  const [phoneResult, setPhoneResult] = useState<any>(null);
+  const [dbResults, setDbResults] = useState<any[]>([]);
+  const [lookupResult, setLookupResult] = useState<any>(null);
   const [searching, setSearching] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { setTimeout(() => inputRef.current?.focus(), 60); }, []);
 
-  useEffect(() => {
-    if (!query.trim()) { setResults([]); setPhoneResult(null); return; }
-    const q = query.toLowerCase();
-    setResults(contacts.filter(c => {
+  // Liên hệ đã nạp trong máy: hiện ngay khi gõ
+  const results = React.useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return EMPTY_RESULTS;
+    return contacts.filter(c => {
       const n = (c.alias||c.display_name||'').toLowerCase();
       const p = (c.phone||'').toLowerCase();
       return n.includes(q) || p.includes(q) || c.contact_id.includes(q);
-    }).slice(0, 20));
+    }).slice(0, 20);
+  }, [query, contacts]);
 
-    if (/^(\+84|0)\d{8,10}$/.test(query.trim().replace(/\s/g,''))) {
-      const acc = accounts.find(a => a.zalo_id === zaloId);
-      if (!acc) return;
+  // DB + nền tảng: chỉ theo chữ đang gõ (danh bạ đổi liên tục lúc tin về không làm hoãn mãi lần tìm)
+  useEffect(() => {
+    const trimmed = query.trim();
+    if (!trimmed) { setDbResults([]); setLookupResult(null); setSearching(false); return; }
+
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      if (!zaloId) return;
+      // Mọi liên hệ của tài khoản trong DB, gõ không dấu cũng ra (danh sách hội thoại chỉ nạp vài trang đầu)
+      DataAccessor.searchContactsForPicker({ zaloId, search: trimmed, type: 'all', limit: 20 }).then((res) => {
+        if (cancelled || !res?.success) return;
+        setDbResults(res.items.map((item) => ({
+          contact_id: item.id, display_name: item.name, avatar_url: item.avatar || '', phone: item.phone || '',
+          contact_type: item.type,
+        })));
+      }).catch(() => {});
+      // Tìm trên nền tảng: Zalo theo số điện thoại, Telegram theo @username
+      const kind = recipientLookupKind(channel, trimmed);
+      if (!kind) { setLookupResult(null); setSearching(false); return; }
       setSearching(true);
-      const auth = buildZaloAuth(acc, zaloId);
-      ipc.zalo?.findUser({ auth, phone: query.trim() }).then((res: any) => {
-        const p = res?.response?.info || res?.response;
-        if (p?.userId) setPhoneResult({ contact_id: p.userId, display_name: p.displayName||p.zaloName||query.trim(), avatar_url: p.avatar||'', phone: query.trim(), contact_type: 'user', unread_count: 0 });
-      }).catch(()=>{}).finally(()=>setSearching(false));
-    } else { setPhoneResult(null); }
-  }, [query, contacts, zaloId]);
+      const lookup = kind === 'zalo_phone'
+        ? (async () => {
+          const acc = accounts.find(a => a.zalo_id === zaloId);
+          if (!acc) return null;
+          const res: any = await ipc.zalo?.findUser({ auth: buildZaloAuth(acc, zaloId), phone: trimmed });
+          const p = res?.response?.info || res?.response;
+          return p?.userId
+            ? { contact_id: p.userId, display_name: p.displayName||p.zaloName||trimmed, avatar_url: p.avatar||'', phone: trimmed, contact_type: 'user' }
+            : null;
+        })()
+        : (async () => {
+          const res: any = await ipc.telegramUser?.resolveUsername({ accountId: zaloId, username: trimmed });
+          const peer = res?.success ? res.peer : null;
+          return peer?.peerId
+            ? {
+              contact_id: String(peer.peerId), display_name: peer.displayName || trimmed, avatar_url: '', phone: peer.phone || '',
+              contact_type: peer.peerType === 'user' ? 'user' : 'group',
+            }
+            : null;
+        })();
+      lookup
+        .then((found) => { if (!cancelled) setLookupResult(found); })
+        .catch(() => { if (!cancelled) setLookupResult(null); })
+        .finally(() => { if (!cancelled) setSearching(false); });
+    }, 250);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [query, zaloId, channel]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const all = [
-    ...(phoneResult && !results.find(c => c.contact_id === phoneResult.contact_id) ? [phoneResult] : []),
-    ...results,
-  ];
+  const seen = new Set<string>();
+  const all = [...(lookupResult ? [lookupResult] : []), ...results, ...dbResults]
+    .filter((c) => {
+      const id = String(c?.contact_id || '');
+      if (!id || seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    })
+    .slice(0, 25);
 
   return (
     <div className="relative border-b border-border bg-card flex-shrink-0">
       <div className="flex items-center gap-2 px-3 py-2.5">
         <span className="text-xs text-muted-foreground font-semibold flex-shrink-0">Đến:</span>
         <input ref={inputRef} value={query} onChange={e => setQuery(e.target.value)}
-          placeholder="Nhập tên, số điện thoại, UID…"
+          placeholder={isZalo(channel) ? 'Nhập tên, số điện thoại, UID…' : channel === CHANNEL.TELEGRAM_USER ? 'Nhập tên, @username, ID…' : 'Nhập tên, ID…'}
           className="flex-1 bg-transparent text-sm text-foreground placeholder-subtle-foreground focus:outline-none min-w-0"/>
         {searching && <div className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin flex-shrink-0"/>}
         {query && <button onClick={() => setQuery('')} className="text-muted-foreground hover:text-foreground/80 flex-shrink-0">
@@ -274,10 +333,22 @@ function RecipientRow({ zaloId, contacts, accounts, onSelect }: {
 }
 
 // ── Main QuickChatModal ───────────────────────────────────────────────────────
+const EMPTY_LIST: any[] = [];
+/** Số tin mới nhất đọc khi mở một hội thoại trong popup. */
+const QUICK_CHAT_PAGE = 40;
+/** Popup chỉ vẽ ngần này tin mới nhất (khung chat có thể đã tải nhiều hơn cho cùng hội thoại). */
+const QUICK_CHAT_SHOWN = 80;
+
 export default function QuickChatModal() {
-  const { quickChatOpen, quickChatTarget, quickChatZaloId, closeQuickChat } = useAppStore();
-  const { accounts, activeAccountId } = useAccountStore();
-  const { contacts, addMessage, markReplied } = useChatStore();
+  // Selector từng phần: popup luôn gắn trong App, không vẽ lại theo mọi thay đổi của store
+  const quickChatOpen = useAppStore((s) => s.quickChatOpen);
+  const quickChatTarget = useAppStore((s) => s.quickChatTarget);
+  const quickChatZaloId = useAppStore((s) => s.quickChatZaloId);
+  const closeQuickChat = useAppStore((s) => s.closeQuickChat);
+  const accounts = useAccountStore((s) => s.accounts);
+  const activeAccountId = useAccountStore((s) => s.activeAccountId);
+  const addMessage = useChatStore((s) => s.addMessage);
+  const markReplied = useChatStore((s) => s.markReplied);
 
   // ── Resolved zaloId (selected account) ──────────────────────────────────
   const [selectedZaloId, setSelectedZaloId] = useState<string | null>(null);
@@ -285,9 +356,13 @@ export default function QuickChatModal() {
   // ── Target contact ───────────────────────────────────────────────────────
   const [target, setTarget] = useState<QuickChatTarget | null>(null);
 
-  // ── Messages state ───────────────────────────────────────────────────────
-  const [localMsgs, setLocalMsgs] = useState<MessageItem[]>([]);
+  // ── Messages: bộ nhớ chung của hội thoại → tin mới về, tin đang gửi, tin thật thay tin tạm đều hiện như khung chat ──
+  const threadKey = target && selectedZaloId ? getMessageCacheKey(selectedZaloId, target.userId) : '';
+  const threadMsgs: MessageItem[] = useChatStore((s) => (threadKey ? s.messages[threadKey] : undefined)) ?? EMPTY_LIST;
+  const localMsgs = threadMsgs.length > QUICK_CHAT_SHOWN ? threadMsgs.slice(-QUICK_CHAT_SHOWN) : threadMsgs;
   const [msgsLoading, setMsgsLoading] = useState(false);
+  const allContacts: any[] = useChatStore((s) => (selectedZaloId ? s.contacts[selectedZaloId] : undefined)) ?? EMPTY_LIST;
+  const channel = String(accounts.find(a => a.zalo_id === selectedZaloId)?.channel || CHANNEL.ZALO);
 
   // ── Composer state ───────────────────────────────────────────────────────
   const [text, setText] = useState('');
@@ -315,18 +390,43 @@ export default function QuickChatModal() {
 
     // Resolve target
     setTarget(quickChatTarget ?? null);
-    setLocalMsgs([]); setText(''); setClipImgs([]); setPendingQMMedia(null); setShowEmoji(false); setShowQM(false);
-    if (quickChatTarget && zid) loadMessages(zid, quickChatTarget.userId);
-  }, [quickChatOpen]);
+    setText(''); setClipImgs([]); setPendingQMMedia(null); setShowEmoji(false); setShowQM(false);
+    if (quickChatTarget && zid) loadMessages(zid, quickChatTarget.userId, quickChatTarget.threadType);
+    // Mở lại với người nhận khác (nút "Nhắn tin" của hồ sơ khi popup đang mở) cũng khởi tạo lại
+  }, [quickChatOpen, quickChatTarget, quickChatZaloId]);
 
   // ── Load messages for selected thread ───────────────────────────────────
-  const loadMessages = useCallback(async (zaloId: string, threadId: string) => {
+  const loadMessages = useCallback(async (zaloId: string, threadId: string, threadType: number) => {
+    const accountChannel = String(useAccountStore.getState().accounts.find(a => a.zalo_id === zaloId)?.channel || CHANNEL.ZALO);
+    const key = getMessageCacheKey(zaloId, threadId);
     setMsgsLoading(true);
     try {
-      const res = await DataAccessor.getMessages({ zaloId, threadId, limit: 40, offset: 0 });
-      setLocalMsgs([...(res?.messages || [])].reverse());
-    } catch { setLocalMsgs([]); } finally { setMsgsLoading(false); }
+      const res: any = await DataAccessor.getMessages({ zaloId, threadId, limit: QUICK_CHAT_PAGE, offset: 0 });
+      let rows: any[] = res?.messages || res?.items || [];
+      // Máy chưa có tin (người vừa mở từ hồ sơ, tìm theo @username): lịch sử từ Telegram / Facebook như khung chat
+      if (!rows.length && !(useChatStore.getState().messages[key] || []).length) {
+        rows = await fetchQuickChatHistory(zaloId, threadId, accountChannel, QUICK_CHAT_PAGE);
+      }
+      // Gộp vào bộ nhớ, không thay: khung chat có thể đang mở hội thoại này với nhiều tin hơn
+      if (rows.length) useChatStore.getState().prependMessages(zaloId, threadId, [...rows].reverse());
+      // Mở hội thoại = đã đọc, như bấm trong danh sách (Zalo "đã xem", Telegram / Facebook đã đọc)
+      useChatStore.getState().clearUnread(zaloId, threadId);
+      DataAccessor.markAsRead({ zaloId, contactId: threadId }).catch(() => {});
+      queueBadgeRefresh((count) => ipc.app?.setBadge(count));
+      void liveReadSync.syncOpenedThread({ accountId: zaloId, threadId, threadType: threadType === 1 ? 1 : 0 }, rows);
+    } catch { /* không đọc được thì để trống: gửi tin đầu tiên vẫn được */ } finally { setMsgsLoading(false); }
   }, []);
+
+  // ── Hội thoại đang hiện trong popup: tin mới của nó coi như đang xem (useZaloEvents, liveReadSync) ───────────────
+  useEffect(() => {
+    const setThread = useAppStore.getState().setQuickChatThread;
+    if (quickChatOpen && target && selectedZaloId) {
+      setThread({ zaloId: selectedZaloId, threadId: target.userId, threadType: target.threadType });
+    } else {
+      setThread(null);
+    }
+  }, [quickChatOpen, target, selectedZaloId]);
+  useEffect(() => () => useAppStore.getState().setQuickChatThread(null), []);
 
   // ── Scroll to bottom when messages change ────────────────────────────────
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'instant' }); }, [localMsgs.length]);
@@ -409,9 +509,61 @@ export default function QuickChatModal() {
   };
 
   // ── Send message ─────────────────────────────────────────────────────────
+  /** Người nhận + tài khoản gửi cho quickChatSend (Zalo kèm cookie của tài khoản). */
+  const sendTargetOf = (): QuickSendTarget | null => {
+    if (!target || !selectedZaloId) return null;
+    return {
+      accountId: selectedZaloId, channel, threadId: target.userId, threadType: target.threadType,
+      auth: isZalo(channel) ? getAuth() : undefined,
+    };
+  };
+
+  /**
+   * Như ô soạn tin của khung chat: tin tạm `temp_…` hiện ngay (cả trong khung chat), MessageQueue gửi + thử lại, báo lỗi
+   * trên bong bóng, tin thật về thì thay tin tạm. Trước đây tin tạm `qc_…` không bao giờ được thay → hiện 2 lần.
+   */
+  const enqueueSend = (sendTo: QuickSendTarget, temp: Partial<MessageItem>, send: () => Promise<SendResult>, imageCount = 0) => {
+    const tempId = generateTempId();
+    addMessage(sendTo.accountId, sendTo.threadId, {
+      msg_id: tempId, temp_id: tempId, owner_zalo_id: sendTo.accountId, thread_id: sendTo.threadId,
+      thread_type: sendTo.threadType, sender_id: sendTo.accountId, content: '', msg_type: 'text',
+      timestamp: Date.now(), is_sent: 1, status: 'sending', send_status: 'pending', channel: sendTo.channel as any,
+      ...temp,
+    } as MessageItem);
+    messageQueue.enqueue({
+      tempId, zaloId: sendTo.accountId, threadId: sendTo.threadId, threadType: sendTo.threadType,
+      channel: sendTo.channel as any, sendFn: send,
+      onSuccess: () => {
+        markReplied(sendTo.accountId, sendTo.threadId);
+        // Ảnh: giữ ảnh tạm tới khi ảnh thật về
+        if (imageCount > 0) {
+          messageQueue.registerImageBatch(tempId, sendTo.accountId, sendTo.threadId, imageCount,
+            () => useChatStore.getState().removeMessage(sendTo.accountId, sendTo.threadId, tempId));
+        }
+      },
+    });
+  };
+
+  const enqueueImages = (sendTo: QuickSendTarget, paths: string[]) => {
+    if (!paths.length) return;
+    enqueueSend(sendTo, {
+      msg_type: 'image', media_type: 'image', send_status: 'sending',
+      attachments: JSON.stringify(paths.map(fp => ({ type: 'image', localPath: fp }))),
+      local_paths: JSON.stringify(Object.fromEntries(paths.map((fp, i) => [`img${i}`, fp]))),
+    } as Partial<MessageItem>, () => sendQuickImages(sendTo, paths), paths.length);
+  };
+
+  const enqueueFile = (sendTo: QuickSendTarget, filePath: string) => {
+    const name = filePath.split(/[\\/]/).pop() || 'Tệp';
+    enqueueSend(sendTo, {
+      content: `📎 ${name}`, msg_type: 'file', media_type: 'file',
+      attachments: JSON.stringify([{ type: 'file', localPath: filePath, name }]),
+    } as Partial<MessageItem>, () => sendQuickFile(sendTo, filePath));
+  };
+
   const handleSend = async () => {
-    const auth = getAuth();
-    if (!auth || !target || !selectedZaloId || sending) return;
+    const sendTo = sendTargetOf();
+    if (!sendTo || sending) return;
     const msgText = editorRef.current ? getPlainText(editorRef.current).replace(/\u200B/g,'').trim() : text.trim();
     if (!msgText && !clipImgs.length && !pendingQMMedia) return;
     setSending(true);
@@ -423,144 +575,61 @@ export default function QuickChatModal() {
       setTimeout(() => { justSentRef.current = false; }, 50);
     }, 0);
     try {
-      // ── Handle pending QM media (images + videos từ tin nhắn nhanh) ────
+      // ── Media của tin nhắn nhanh (ảnh + video) ────
       if (pendingQMMedia) {
         const { imagePaths, videoPaths } = pendingQMMedia;
-
-        if (imagePaths.length > 0) {
-          const tempImgMsgs: MessageItem[] = imagePaths.map((fp, i) => ({
-            msg_id: `qc_qm_img_${Date.now()}_${i}`,
-            owner_zalo_id: selectedZaloId!,
-            thread_id: target.userId,
-            thread_type: target.threadType,
-            sender_id: selectedZaloId!,
-            content: JSON.stringify({ href: toLocalMediaUrl(fp) }),
-            msg_type: 'photo',
-            timestamp: Date.now() + i,
-            is_sent: 1,
-            status: 'sending',
-            local_paths: JSON.stringify(Object.fromEntries(imagePaths.map((p, i) => [`img_${i}`, p]))),
-          }));
-          setLocalMsgs(p => [...p, ...tempImgMsgs]);
-          await ipc.zalo?.sendImages({ auth, threadId: target.userId, type: target.threadType, filePaths: imagePaths });
-        }
-
-        for (let vi = 0; vi < videoPaths.length; vi++) {
-          const vp = videoPaths[vi];
-          try {
-            setLocalMsgs(p => [...p, {
-              msg_id: `qc_qm_vid_${Date.now()}_${vi}`,
-              owner_zalo_id: selectedZaloId!,
-              thread_id: target.userId,
-              thread_type: target.threadType,
-              sender_id: selectedZaloId!,
-              content: JSON.stringify({ href: toLocalMediaUrl(vp) }),
-              msg_type: 'chat.video.msg',
-              timestamp: Date.now(),
-              is_sent: 1,
-              status: 'sending',
-              local_paths: JSON.stringify({ main: vp }),
-            }]);
-            const metaRes = await ipc.file?.getVideoMeta?.({ filePath: vp });
-            const duration: number = metaRes?.duration || 0;
-            const width: number = metaRes?.width || 0;
-            const height: number = metaRes?.height || 0;
-            let thumbPath: string = metaRes?.thumbPath || '';
-            if (!thumbPath) {
-              const thumbRes = await ipc.file?.saveTempBlob?.({ base64: '', ext: 'jpg' });
-              thumbPath = thumbRes?.filePath || '';
-            }
-            let thumbUrl = '';
-            if (thumbPath) {
-              const uploadThumb = await ipc.zalo?.uploadVideoThumb?.({ auth, thumbPath, threadId: target.userId, type: target.threadType });
-              thumbUrl = uploadThumb?.response?.normalUrl || uploadThumb?.response?.hdUrl || '';
-            }
-            const uploadRes = await ipc.zalo?.uploadVideoFile?.({ auth, videoPath: vp, threadId: target.userId, type: target.threadType });
-            const videoUrl: string = uploadRes?.response?.fileUrl || '';
-            if (videoUrl) {
-              await ipc.zalo?.sendVideo({
-                auth,
-                options: { videoUrl, thumbnailUrl: thumbUrl || videoUrl, duration: duration ? duration * 1000 : undefined, width: width || undefined, height: height || undefined },
-                threadId: target.userId,
-                type: target.threadType,
-              });
-            }
-          } catch (e: any) { console.error('[QuickChat] send video failed', e); }
-        }
-
         setPendingQMMedia(null);
+        enqueueImages(sendTo, imagePaths);
+        for (const videoPath of videoPaths) {
+          enqueueSend(sendTo, {
+            content: '🎬 Video', msg_type: 'video', media_type: 'video', local_paths: JSON.stringify({ main: videoPath }),
+          } as Partial<MessageItem>, () => sendQuickVideo(sendTo, videoPath));
+        }
       }
 
-      // ── Handle clipboard images ─────────────────────────────────────────
+      // ── Ảnh dán từ clipboard ─────────────────────────────────────────
       if (clipImgs.length) {
+        const images = clipImgs;
+        setClipImgs([]);
         const paths: string[] = [];
-        const tempImgMsgs: MessageItem[] = clipImgs.map((img, i) => ({
-          msg_id: `qc_img_${Date.now()}_${i}`,
-          owner_zalo_id: selectedZaloId!,
-          thread_id: target.userId,
-          thread_type: target.threadType,
-          sender_id: selectedZaloId!,
-          content: JSON.stringify({ href: img.dataUrl }),
-          msg_type: 'photo',
-          timestamp: Date.now() + i,
-          is_sent: 1,
-          status: 'sending',
-        }));
-        setLocalMsgs(p => [...p, ...tempImgMsgs]);
-        for (const img of clipImgs) {
+        for (const img of images) {
           const ext = img.blob.type.split('/')[1]||'png';
           const r = await ipc.file?.saveTempBlob({ base64: img.dataUrl, ext });
           if (r?.success && r.filePath) paths.push(r.filePath);
         }
-        if (paths.length) await ipc.zalo?.sendImages({ auth, threadId: target.userId, type: target.threadType, filePaths: paths });
-        setClipImgs([]);
+        enqueueImages(sendTo, paths);
       }
 
       if (msgText) {
-        const temp: MessageItem = {
-          msg_id: `qc_${Date.now()}`, owner_zalo_id: selectedZaloId, thread_id: target.userId,
-          thread_type: target.threadType, sender_id: selectedZaloId, content: msgText,
-          msg_type: 'text', timestamp: Date.now(), is_sent: 1, status: 'sending',
-        };
-        setLocalMsgs(p => [...p, temp]);
-        addMessage(selectedZaloId, target.userId, temp);
-        markReplied(selectedZaloId, target.userId);
-        await ipc.zalo?.sendMessage({ auth, threadId: target.userId, type: target.threadType, message: msgText });
+        enqueueSend(sendTo, { content: msgText, msg_type: 'text', media_type: 'text' } as Partial<MessageItem>,
+          () => sendQuickText(sendTo, msgText));
       }
     } catch (e) { console.error('[QuickChat]', e); }
     finally { setSending(false); setTimeout(() => editorRef.current?.focus(), 40); }
   };
 
-  // ── Go to full conversation (fixed) ──────────────────────────────────────
+  // ── Mở hội thoại đầy đủ: như bấm trong danh sách hội thoại (đổi tài khoản, tải tin, đã đọc) ──────────────────
   const handleGoToConversation = () => {
     if (!target || !selectedZaloId) return;
-    const zid = selectedZaloId;
-    const tid = target.userId;
-    const ttype = target.threadType;
+    const request = {
+      accountId: selectedZaloId, threadId: target.userId, threadType: (target.threadType === 1 ? 1 : 0) as 0 | 1,
+      info: { display_name: target.displayName || undefined, avatar_url: target.avatarUrl || undefined },
+    };
     closeQuickChat();
-    // All Zustand calls are synchronous; defer thread switch by 1 tick so React
-    // re-renders after account switch before we try to display the thread.
-    const { setActiveAccount } = useAccountStore.getState();
-    const { setView } = useAppStore.getState();
-    setActiveAccount(zid);
-    setView('chat');
-    setTimeout(() => {
-      const { setActiveThread, setMessages: storeSet, clearUnread } = useChatStore.getState();
-      setActiveThread(tid, ttype);
-      clearUnread(zid, tid);
-      DataAccessor.markAsRead({ zaloId: zid, contactId: tid }).catch(() => {});
-      sendSeenForThread(zid, tid, ttype);
-      DataAccessor.getMessages({ zaloId: zid, threadId: tid, limit: 50, offset: 0 }).then((res: any) => {
-        const msgs: MessageItem[] = res?.messages || [];
-        if (msgs.length) storeSet(zid, tid, [...msgs].reverse());
-      }).catch(() => {});
-    }, 16);
+    openConversation(request);
   };
 
   if (!quickChatOpen) return null;
 
-  const allContacts = selectedZaloId ? (contacts[selectedZaloId]||[]) : [];
   const selfId = selectedZaloId;
+  /** Đổi tài khoản gửi: cùng kênh thì giữ người nhận (gửi từ tài khoản khác), khác kênh thì mã người nhận vô nghĩa. */
+  const switchAccount = (id: string) => {
+    const nextChannel = String(accounts.find(a => a.zalo_id === id)?.channel || CHANNEL.ZALO);
+    setSelectedZaloId(id);
+    if (!target) return;
+    if (nextChannel !== channel) { setTarget(null); return; }
+    void loadMessages(id, target.userId, target.threadType);
+  };
 
   const getSenderName = (sid: string) => {
     if (sid === selfId) return '';
@@ -605,7 +674,7 @@ export default function QuickChatModal() {
                     return phone ? <p className="text-[11px] text-muted-foreground leading-none truncate mt-0.5">{formatPhone(phone)}</p> : null;
                   })()}
                 </div>
-                <button onClick={() => { setTarget(null); setLocalMsgs([]); }}
+                <button onClick={() => setTarget(null)}
                   className="text-[11px] text-muted-foreground hover:text-foreground/80 px-1.5 py-0.5 rounded hover:bg-muted transition-colors flex-shrink-0 whitespace-nowrap">
                   đổi
                 </button>
@@ -616,7 +685,7 @@ export default function QuickChatModal() {
           </div>
 
           {/* Account selector */}
-          <AccountSelector accounts={accounts} selectedId={selectedZaloId} onSelect={id => { setSelectedZaloId(id); if (target) loadMessages(id, target.userId); }} />
+          <AccountSelector accounts={accounts} selectedId={selectedZaloId} onSelect={switchAccount} />
 
           {/* Go to full conversation */}
           {target && (
@@ -641,17 +710,17 @@ export default function QuickChatModal() {
 
         {/* ── Recipient row (no target) ──────────────────────────────── */}
         {!target && (
-          <RecipientRow zaloId={selectedZaloId} contacts={allContacts} accounts={accounts} onSelect={async c => {
+          <RecipientRow zaloId={selectedZaloId} channel={channel} contacts={allContacts} accounts={accounts} onSelect={async c => {
             const t: QuickChatTarget = { userId: c.contact_id, displayName: c.alias||c.display_name||c.contact_id, avatarUrl: c.avatar_url||'', threadType: c.contact_type==='group'?1:0, phone: c.phone||'' };
             setTarget(t);
-            if (selectedZaloId) await loadMessages(selectedZaloId, t.userId);
+            if (selectedZaloId) await loadMessages(selectedZaloId, t.userId, t.threadType);
             setTimeout(() => editorRef.current?.focus(), 80);
           }}/>
         )}
 
         {/* ── Messages area ────────────────────────────────────────────── */}
         <div className="flex-1 overflow-y-auto px-3 py-2">
-          {msgsLoading && <div className="flex justify-center py-8"><div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"/></div>}
+          {msgsLoading && localMsgs.length === 0 && <div className="flex justify-center py-8"><div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"/></div>}
 
           {!target && !msgsLoading && (
             <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
@@ -674,7 +743,8 @@ export default function QuickChatModal() {
             items={localMsgs}
             bottomRef={bottomRef}
             renderItem={(msg, idx) => {
-              const isSelf = msg.sender_id === selfId;
+              // Facebook: mã tài khoản trong app khác mã người gửi → dựa vào is_sent
+              const isSelf = msg.is_sent === 1 || msg.sender_id === selfId;
               const showTime = idx === 0 || (msg.timestamp - localMsgs[idx - 1].timestamp > 5 * 60 * 1000);
               return (
                 <div key={msg.msg_id}>
@@ -733,26 +803,10 @@ export default function QuickChatModal() {
               <div className="flex items-center gap-1">
                 {/* Image */}
                 <button onClick={async () => {
-                  const auth = getAuth(); if (!auth||!selectedZaloId) return;
+                  const sendTo = sendTargetOf(); if (!sendTo) return;
                   const r = await ipc.file?.openDialog({ filters:[{name:'Images',extensions:['jpg','jpeg','png','gif','webp']}], multiSelect:true });
                   if (r?.canceled||!r?.filePaths?.length) return;
-                  setSending(true);
-                  // Add temp image bubbles using local-media:// URLs for preview
-                  const tempImgMsgs: MessageItem[] = (r.filePaths as string[]).map((fp: string, i: number) => ({
-                    msg_id: `qc_img_fp_${Date.now()}_${i}`,
-                    owner_zalo_id: selectedZaloId!,
-                    thread_id: target.userId,
-                    thread_type: target.threadType,
-                    sender_id: selectedZaloId!,
-                    content: JSON.stringify({ href: toLocalMediaUrl(fp) }),
-                    msg_type: 'photo',
-                    timestamp: Date.now() + i,
-                    is_sent: 1,
-                    status: 'sending',
-                  }));
-                  setLocalMsgs(p => [...p, ...tempImgMsgs]);
-                  try { await ipc.zalo?.sendImages({ auth, threadId: target.userId, type: target.threadType, filePaths: r.filePaths }); } catch{}
-                  setSending(false);
+                  enqueueImages(sendTo, r.filePaths as string[]);
                 }} title="Gửi ảnh"
                   className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -762,12 +816,10 @@ export default function QuickChatModal() {
                 </button>
                 {/* File */}
                 <button onClick={async () => {
-                  const auth = getAuth(); if (!auth) return;
+                  const sendTo = sendTargetOf(); if (!sendTo) return;
                   const r = await ipc.file?.openDialog({ filters:[{name:'All Files',extensions:['*']}] });
                   if (r?.canceled||!r?.filePaths?.length) return;
-                  setSending(true);
-                  try { await ipc.zalo?.sendFile({ auth, threadId: target.userId, type: target.threadType, filePath: r.filePaths[0] }); } catch{}
-                  setSending(false);
+                  enqueueFile(sendTo, String(r.filePaths[0]));
                 }} title="Gửi file"
                   className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -785,7 +837,7 @@ export default function QuickChatModal() {
                   </button>
                   {showQM && selectedZaloId && (
                     <QuickMsgPicker
-                      getAuth={getAuth} accountId={selectedZaloId}
+                      getAuth={getAuth} accountId={selectedZaloId} channel={channel}
                       onSelect={item => {
                         // Luôn đưa text vào editor để có thể sửa trước khi gửi
                         if (item.message.title) {
@@ -863,11 +915,10 @@ export default function QuickChatModal() {
               </button>
             ) : (
               <button disabled={!target} title="Gửi 👍"
-                onClick={async () => {
-                  const auth = getAuth(); if(!auth||!target||!selectedZaloId) return;
-                  await ipc.zalo?.sendMessage({ auth, threadId:target.userId, type:target.threadType, message:'👍' }).catch(()=>{});
-                  const m: MessageItem = { msg_id:`qc_like_${Date.now()}`, owner_zalo_id:selectedZaloId, thread_id:target.userId, thread_type:target.threadType, sender_id:selectedZaloId, content:'👍', msg_type:'text', timestamp:Date.now(), is_sent:1, status:'sent' };
-                  setLocalMsgs(p=>[...p,m]); addMessage(selectedZaloId,target.userId,m);
+                onClick={() => {
+                  const sendTo = sendTargetOf(); if (!sendTo) return;
+                  enqueueSend(sendTo, { content: '👍', msg_type: 'text', media_type: 'text' } as Partial<MessageItem>,
+                    () => sendQuickText(sendTo, '👍'));
                 }}
                 className="w-9 h-9 rounded-lg hover:bg-muted flex items-center justify-center text-blue-400 hover:text-blue-300 disabled:opacity-30 transition-colors text-xl flex-shrink-0">👍</button>
             )}

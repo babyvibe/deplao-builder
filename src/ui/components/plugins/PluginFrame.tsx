@@ -111,12 +111,16 @@ export default function PluginFrame({ contribution, kind, context, className }: 
     if (kind === 'panel') post({ jsonrpc: '2.0', method: 'context.changed', params: contextRef.current ?? null });
   }, [kind, contextKey, post]);
 
+  // Micro chỉ cho ứng dụng đã được duyệt quyền ui:microphone (khung khác origin bị chặn nếu thiếu allow).
+  const allow = contribution.permissions?.includes('ui:microphone') ? 'microphone' : undefined;
+
   return (
     <iframe
       ref={iframeRef}
       src={contribution.url}
       title={`${contribution.pluginName} — ${contribution.title}`}
       sandbox="allow-scripts allow-forms allow-same-origin"
+      allow={allow}
       className={className || 'w-full h-full border-0 bg-transparent'}
     />
   );

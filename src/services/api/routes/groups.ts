@@ -12,6 +12,7 @@ import { s } from '../schema';
 import { AccountInfo, ApiContext, route, RouteDef } from '../types';
 import { CHANNELS, requireOnline, unsupported } from '../channels/ChannelActions';
 import { accountParams, mapConversation, offsetPage, pageShape, scrub } from './common';
+import { foldSearchText } from '../../../shared/searchFold';
 
 const groupParams = s.object({ accountId: s.id(), groupId: s.id().describe('ID nhóm (thread_id)') });
 const userParams = s.object({ accountId: s.id(), userId: s.id().describe('ID người dùng trên kênh') });
@@ -205,8 +206,9 @@ export function groupRoutes(): RouteDef[] {
                 const r = await ctx.call('db:getFriends', { zaloId: acc.id });
                 let rows: any[] = r?.friends || [];
                 if (search) {
-                    const q = String(search).toLowerCase();
-                    rows = rows.filter(f => String(f.display_name || '').toLowerCase().includes(q) || String(f.phone || '').includes(q));
+                    // db:getFriends trả displayName / phoneNumber; tìm không phân biệt hoa thường và dấu ("dao" khớp "Đào").
+                    const q = foldSearchText(search);
+                    rows = rows.filter(f => foldSearchText(f.displayName ?? f.display_name).includes(q) || String(f.phoneNumber ?? f.phone ?? '').includes(q));
                 }
                 return offsetPage(rows.slice(offset, offset + limit), limit, offset, rows.length);
             },

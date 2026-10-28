@@ -9,7 +9,7 @@ Tích hợp CRM · MARKETING · ERP · POS · Workflow · Trợ lý AI - vận h
 
 [🌐 Website](https://deplaoapp.com/) · [🇬🇧 English](./README.en.md)
 
-![Version](https://img.shields.io/badge/version-26.10.2-22c55e)
+![Version](https://img.shields.io/badge/version-26.10.3-22c55e)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Ubuntu-3b82f6)
 ![Electron](https://img.shields.io/badge/Electron-41-47848f?logo=electron&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61dafb?logo=react&logoColor=white)
@@ -42,41 +42,41 @@ Tích hợp CRM · MARKETING · ERP · POS · Workflow · Trợ lý AI - vận h
 <tr>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-Setup-26.10.2.exe">
-<img src="https://img.shields.io/badge/🪟_Windows_10/11-v26.10.2-0078d4?style=for-the-badge&logo=windows&logoColor=white" alt="Download Windows" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-Setup-26.10.3.exe">
+<img src="https://img.shields.io/badge/🪟_Windows_10/11-v26.10.3-0078d4?style=for-the-badge&logo=windows&logoColor=white" alt="Download Windows" />
 </a>
 
-<big><strong>Deplao-Setup-26.10.2.exe</strong></big>
+<big><strong>Deplao-Setup-26.10.3.exe</strong></big>
 
 </td>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.10.2-arm64.dmg">
-<img src="https://img.shields.io/badge/🍎_macOS_M1+-v26.10.2-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Apple Silicon" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.10.3-arm64.dmg">
+<img src="https://img.shields.io/badge/🍎_macOS_M1+-v26.10.3-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Apple Silicon" />
 </a>
 
-<big><strong>Deplao-26.10.2-arm64.dmg</strong></big>
+<big><strong>Deplao-26.10.3-arm64.dmg</strong></big>
 
 </td>
 </tr>
 <tr>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.10.2.AppImage">
-<img src="https://img.shields.io/badge/🐧_Ubuntu_Linux-v26.10.2-e95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Download Ubuntu" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.10.3.AppImage">
+<img src="https://img.shields.io/badge/🐧_Ubuntu_Linux-v26.10.3-e95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Download Ubuntu" />
 </a>
 
-<big><strong>Deplao-26.10.2.AppImage</strong></big><br>
+<big><strong>Deplao-26.10.3.AppImage</strong></big><br>
 <big>chạy mọi distro - <code>chmod +x</code> là dùng được</big>
 
 </td>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.10.2.dmg">
-<img src="https://img.shields.io/badge/🍎_macOS_Intel-v26.10.2-555555?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Intel" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.10.3.dmg">
+<img src="https://img.shields.io/badge/🍎_macOS_Intel-v26.10.3-555555?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Intel" />
 </a>
 
-<big><strong>Deplao-26.10.2.dmg</strong></big>
+<big><strong>Deplao-26.10.3.dmg</strong></big>
 
 </td>
 </tr>

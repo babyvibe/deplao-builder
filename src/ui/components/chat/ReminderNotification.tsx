@@ -1,16 +1,28 @@
 import React, { useEffect, useState } from 'react';
 import { useAppStore } from '@/store/appStore';
 
-interface ReminderData {
+/**
+ * Popup "Nhắc hẹn đã đến!" (có nhạc ~10 giây): nhắc hẹn Zalo (tin chat.ecard) và lịch Quản lý công việc (ERP, lib/erp/
+ * erpReminder). Lịch ERP không gắn hội thoại thì không có phần tài khoản / hội thoại, nút chính là "Xem lịch".
+ */
+export interface ReminderData {
   emoji: string;
   title: string;
   description: string;
-  accountName: string;
-  conversationName: string;
+  accountName?: string;
+  conversationName?: string;
   color: number;
-  zaloId: string;
-  threadId: string;
-  threadType: number;
+  zaloId?: string;
+  threadId?: string;
+  threadType?: number;
+  /** Dòng nhỏ trên tiêu đề (mặc định "Nhắc hẹn đã đến!"). */
+  heading?: string;
+  /** Ghi chú của lịch (ERP): nội dung tin đã thêm vào lịch… */
+  note?: string;
+  /** Màu nhấn #rrggbb (ERP) thay cho mã màu số của Zalo. */
+  colorHex?: string;
+  /** Nút chính khi không có hội thoại để mở (ERP: "Xem lịch"). */
+  secondaryAction?: { label: string; onClick: () => void };
 }
 
 interface Props {
@@ -124,7 +136,9 @@ export default function ReminderNotification({ data, onClose, onOpenThread }: Pr
     };
   }, []);
 
-  const colorHex = getColorHex(data.color);
+  const colorHex = data.colorHex || getColorHex(data.color);
+  const canOpenThread = !!(data.zaloId && data.threadId);
+  const hasInfo = !!(data.accountName || data.conversationName);
 
   return (
     <div
@@ -165,7 +179,7 @@ export default function ReminderNotification({ data, onClose, onOpenThread }: Pr
                     <circle cx="12" cy="12" r="10"/>
                     <polyline points="12 6 12 12 16 14"/>
                   </svg>
-                  <span className={`text-sm font-medium ${isLight ? 'text-blue-600' : 'text-blue-400'}`}>Nhắc hẹn đã đến!</span>
+                  <span className={`text-sm font-medium ${isLight ? 'text-blue-600' : 'text-blue-400'}`}>{data.heading || 'Nhắc hẹn đã đến!'}</span>
                 </div>
                 <h2 className={`text-2xl font-bold mb-1 leading-tight break-words ${isLight ? 'text-gray-900' : 'text-foreground'}`}>
                   {data.title}
@@ -176,10 +190,21 @@ export default function ReminderNotification({ data, onClose, onOpenThread }: Pr
               </div>
             </div>
 
+            {/* Ghi chú của lịch (ERP) */}
+            {data.note && (
+              <p className={`mb-4 max-h-36 overflow-y-auto whitespace-pre-line break-words rounded-xl px-4 py-3 text-sm leading-relaxed ${
+                isLight ? 'bg-gray-50 border border-gray-100 text-gray-700' : 'bg-card/50 text-foreground/85'
+              }`}>
+                {data.note}
+              </p>
+            )}
+
             {/* Info Section */}
+            {hasInfo && (
             <div className={`space-y-3 mb-6 rounded-xl p-4 ${
               isLight ? 'bg-gray-50 border border-gray-100' : 'bg-card/50'
             }`}>
+              {data.accountName && (
               <div className="flex items-center gap-3">
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
                   isLight ? 'bg-blue-100' : 'bg-blue-500/20'
@@ -194,7 +219,9 @@ export default function ReminderNotification({ data, onClose, onOpenThread }: Pr
                   <p className={`text-sm font-medium truncate ${isLight ? 'text-gray-800' : 'text-foreground'}`}>{data.accountName}</p>
                 </div>
               </div>
+              )}
 
+              {data.conversationName && (
               <div className="flex items-center gap-3">
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
                   isLight ? 'bg-green-100' : 'bg-green-500/20'
@@ -208,15 +235,21 @@ export default function ReminderNotification({ data, onClose, onOpenThread }: Pr
                   <p className={`text-sm font-medium truncate ${isLight ? 'text-gray-800' : 'text-foreground'}`}>{data.conversationName}</p>
                 </div>
               </div>
+              )}
             </div>
+            )}
 
             {/* Action Buttons */}
             <div className="flex gap-3">
-              {/* Mở hội thoại */}
+              {/* Mở hội thoại (ERP không gắn hội thoại: "Xem lịch") */}
+              {(canOpenThread || data.secondaryAction) && (
               <button
                 onClick={() => {
                   setShow(false);
-                  setTimeout(() => onOpenThread(data.zaloId, data.threadId, data.threadType), 300);
+                  setTimeout(() => {
+                    if (canOpenThread) onOpenThread(data.zaloId!, data.threadId!, data.threadType ?? 0);
+                    else data.secondaryAction?.onClick();
+                  }, 300);
                 }}
                 className={`flex-1 py-3 rounded-xl font-semibold transition-all duration-200 transform hover:scale-[1.02] active:scale-[0.98] shadow-lg flex items-center justify-center gap-2 ${
                   isLight
@@ -225,8 +258,9 @@ export default function ReminderNotification({ data, onClose, onOpenThread }: Pr
                 }`}
                 style={{ color: '#ffffff' }}
               >
-                Mở hội thoại
+                {canOpenThread ? 'Mở hội thoại' : data.secondaryAction?.label}
               </button>
+              )}
 
               {/* Đã hiểu */}
               <button

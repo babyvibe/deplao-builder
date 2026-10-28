@@ -368,6 +368,25 @@ export class DataAccessor {
     return { success: true, items: ipcRes?.contacts ?? [] };
   }
 
+  /**
+   * Hội thoại đã lọc của danh sách hội thoại (kênh / tìm / Chưa đọc / Khác / Chưa trả lời / khoảng ngày) — như IPC
+   * db:getContactsFiltered (`{ success, contacts }`). Nhân viên: Boss lọc trên DB của Boss — trước đây danh sách gọi thẳng
+   * IPC, DB máy nhân viên trả rỗng nên mọi bộ lọc ra danh sách trống. Lỗi đọc trả `success: false` (không phải "không có").
+   */
+  static async getContactsFiltered(params: {
+    zaloId: string; channel?: string; search?: string; unreadOnly?: boolean; othersOnly?: boolean; excludeOthers?: boolean;
+    unrepliedOnly?: boolean; fromTs?: number; toTs?: number; limit?: number; offset?: number;
+  }): Promise<{ success: boolean; contacts: any[]; error?: string; code?: string }> {
+    if (isEmployee()) {
+      const res = await rest().get('/api/query/conversations/filtered', params);
+      if (!res.success) return { ...restFail(res), contacts: [] as any[] };
+      return { success: true, contacts: restItems(res) };
+    }
+    const ipcRes: any = await window.electronAPI.db.getContactsFiltered(params);
+    if (ipcRes?.success === false) return { success: false, error: ipcRes.error || 'Không đọc được hội thoại', contacts: [] as any[] };
+    return { success: true, contacts: Array.isArray(ipcRes?.contacts) ? ipcRes.contacts : [] };
+  }
+
   static async getConversations(zaloId: string, limit = 50, offset = 0) {
     if (isEmployee()) {
       const res = await rest().get('/api/query/conversations', { zaloId, limit, offset });
@@ -906,25 +925,7 @@ export class DataAccessor {
     return window.electronAPI.db.searchContactByPhone(params);
   }
 
-  // ═════════════════════════════════════════════════════════════════
-  // NOTIFICATION SETTINGS
-  // ═════════════════════════════════════════════════════════════════
-
-  static async getNotifSettings(zaloId: string) {
-    if (isEmployee()) {
-      const res = await rest().get('/api/query/settings/notif', { zaloId });
-      if (!res.success) return { ...restFail(res), settings: undefined };
-      return { success: true, settings: res.data };
-    }
-    return (window.electronAPI.db as any).getNotifSettings(zaloId);
-  }
-
-  static async setNotifSettings(zaloId: string, settings: any) {
-    if (isEmployee()) {
-      return rest().post('/api/command/settings/notif', { zaloId, settings });
-    }
-    return (window.electronAPI.db as any).setNotifSettings(zaloId, settings);
-  }
+  // Cài đặt thông báo theo tài khoản: lưu trên từng máy (lib/notifSettingsOverrides), không qua DB / REST.
 
   // ═════════════════════════════════════════════════════════════════
   // DASHBOARD / ANALYTICS (11 methods + 2 multi-account variants)
@@ -1177,6 +1178,25 @@ export class DataAccessor {
       return { success: true, total: Number(res.data?.total) || 0 };
     }
     return window.electronAPI.db.getUnreadCount(zaloId);
+  }
+
+  /**
+   * Đánh dấu đã trả lời / bỏ đánh dấu (không gửi tin) — hàng loạt hoặc một hội thoại; trả trạng thái mới (is_replied,
+   * reply_marked_at) từng hội thoại. Nhân viên: lệnh REST tới Boss (Boss phát db:replyStateChanged cho các máy).
+   */
+  static async markConversationsReplied(params: { zaloId: string; contactIds: string[]; replied?: boolean }): Promise<{
+    success: boolean; items: Array<{ contact_id: string; is_replied: number | null; reply_marked_at: number }>; error?: string;
+  }> {
+    if (isEmployee()) {
+      const res: any = restWriteResult(await rest().post('/api/command/conversations/replied', params));
+      return { success: !!res.success, items: Array.isArray(res.items) ? res.items : [], ...(res.error ? { error: res.error } : {}) };
+    }
+    const res: any = await window.electronAPI.db.markConversationsReplied(params);
+    return {
+      success: res?.success !== false,
+      items: Array.isArray(res?.items) ? res.items : [],
+      ...(res?.error ? { error: res.error } : {}),
+    };
   }
 
   static async markAsRead(params: { zaloId: string; contactId: string }) {
