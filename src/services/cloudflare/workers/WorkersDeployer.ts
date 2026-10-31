@@ -15,6 +15,10 @@
  *  - workers.get / workers.deployBundle: gói dựng sẵn (bundle.ts) → [asset: upload-session → từng bucket bằng JWT của
  *    phiên tải lên (fetch riêng, KHÔNG dùng token tài khoản)] → PUT script multipart → bật / tắt workers.dev → secrets.
  *    Mỗi request (kể cả tải asset) đi qua ngân sách chung; tiến độ chỉ ghi nhật ký.
+ *  - zones / domain*: tên miền riêng (Workers Custom Domain) cho Worker của ứng dụng. Chỉ gắn TÊN CON MỚI của một tên miền
+ *    trong tài khoản: không gắn tên miền gốc, không đè bản ghi DNS đang có (Địa chỉ Internet của Deplao, website, mail…),
+ *    không lấy tên đang gắn cho Worker khác; gỡ chỉ đụng tên đang gắn cho đúng Worker đó. Cloudflare tự tạo bản ghi DNS +
+ *    chứng chỉ. Ứng dụng gọi → handler IPC truyền `confirm` (hộp thoại của Deplao) chạy SAU khi kiểm xong, TRƯỚC khi ghi.
  *  - Lỗi: CloudError mã hợp đồng CF_NOT_CONNECTED | CF_PERMISSION | CF_NAME_FORBIDDEN | CF_BUNDLE_INVALID | CF_API
  *    (+ VALIDATION_ERROR, NOT_FOUND, CONFLICT). Không log token, JWT, secret hay câu SQL.
  */
@@ -29,9 +33,12 @@ import type { BundleAsset } from './bundle';
 import { buildMultipart } from './multipart';
 import type { MultipartPart } from './multipart';
 import {
-    assertResourceName, normalizeDeployOptions, normalizeQuery, RESOURCE_NAME_RE, WORKERS_PERMISSION_LABELS,
+    assertResourceName, DOMAIN_PERMISSION_LABELS, normalizeDeployOptions, normalizeDomainHostname, normalizeQuery,
+    RESOURCE_NAME_RE, WORKERS_PERMISSION_LABELS,
 } from './validate';
 import type { DeployOptions } from './validate';
+import { listRecordsByName } from '../tunnel/dns';
+import { normalizeHostname } from '../tunnel/ingress';
 
 export interface WorkersStatus {
     connected: boolean;
@@ -50,6 +57,14 @@ export interface DeployResult { name: string; url: string | null; deployedAt: nu
 export interface D1Info { uuid: string; name: string; created: boolean }
 export interface MigrateResult { applied: string[]; skipped: string[] }
 export type Progress = (message: string) => void;
+/** Tên miền (zone) đang hoạt động của tài khoản. */
+export interface DomainZone { id: string; name: string }
+/** Tên miền riêng đang gắn cho một Worker (Workers Custom Domain). */
+export interface WorkerDomain { id: string; hostname: string; zoneId: string; zoneName: string }
+/** created = vừa gắn; false = tên đã gắn sẵn cho đúng Worker này (gọi lại không đổi gì). */
+export interface DomainAttachResult extends WorkerDomain { created: boolean }
+/** Hỏi người dùng trước khi gắn (ứng dụng gọi); false → CF_DECLINED, không ghi gì. */
+export type DomainConfirm = (info: { worker: string; hostname: string; zoneName: string }) => Promise<boolean>;
 
 /** API đã gắn tiền tố — handler IPC tạo một scope cho mỗi lời gọi. */
 export interface WorkersScope {
@@ -63,6 +78,13 @@ export interface WorkersScope {
     /** dir: thư mục tuyệt đối chứa *.sql, người gọi đã kiểm vị trí. */
     d1Migrate(name: unknown, dir: string, onProgress?: Progress): Promise<MigrateResult>;
     d1Query(name: unknown, sql: unknown, params?: unknown): Promise<{ results: any[] }>;
+    /** Tên miền đang hoạt động của tài khoản (nhớ 5 phút). */
+    zones(): Promise<DomainZone[]>;
+    /** Tên miền riêng đang gắn cho Worker `name`. */
+    domainList(name: unknown): Promise<WorkerDomain[]>;
+    domainAttach(name: unknown, hostname: unknown, confirm?: DomainConfirm): Promise<DomainAttachResult>;
+    /** removed=false: tên không gắn cho Worker này (không đụng tên của Worker khác). */
+    domainDetach(name: unknown, hostname: unknown): Promise<{ removed: boolean }>;
 }
 
 export interface WorkersDeployerDeps {
@@ -82,6 +104,10 @@ export interface WorkersDeployerDeps {
 const STATUS_TTL_MS = 60_000;
 const SUBDOMAIN_TTL_MS = 10 * 60_000;
 const D1_TTL_MS = 10 * 60_000;
+const ZONES_TTL_MS = 5 * 60_000;
+/** Danh sách tên miền của một Worker: trang Tuỳ chọn của ứng dụng đọc mỗi lần kiểm tra trạng thái. */
+const DOMAINS_TTL_MS = 60_000;
+const DOMAIN_WRITE_TIMEOUT_MS = 60_000;
 const UPLOAD_TIMEOUT_MS = 120_000;
 const SCRIPT_TIMEOUT_MS = 120_000;
 const QUERY_TIMEOUT_MS = 60_000;
@@ -96,10 +122,14 @@ export const MIGRATIONS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS d1_migrations(
 
 const NOT_CONNECTED_MESSAGE = 'Chưa kết nối Cloudflare — kết nối ở Cài đặt → Internet & Đám mây trên máy chủ';
 const TOKEN_INVALID_MESSAGE = 'Token Cloudflare không còn hợp lệ — kết nối lại ở Cài đặt → Internet & Đám mây';
-const OWN_CODES = new Set(['CF_NOT_CONNECTED', 'CF_PERMISSION', 'CF_NAME_FORBIDDEN', 'CF_BUNDLE_INVALID', 'CF_API', 'VALIDATION_ERROR', 'NOT_FOUND', 'CONFLICT']);
+const OWN_CODES = new Set(['CF_NOT_CONNECTED', 'CF_PERMISSION', 'CF_NAME_FORBIDDEN', 'CF_BUNDLE_INVALID', 'CF_API', 'CF_DECLINED', 'VALIDATION_ERROR', 'NOT_FOUND', 'CONFLICT']);
 
-export function permissionError(need: 'workers' | 'd1', status?: number): CloudError {
-    const label = WORKERS_PERMISSION_LABELS[need];
+/** Quyền token cần cho một nhóm thao tác (Worker, D1, liệt kê tên miền, đọc DNS). */
+export type WorkersNeed = 'workers' | 'd1' | 'zone' | 'dns';
+const NEED_LABELS: Record<WorkersNeed, string> = { ...WORKERS_PERMISSION_LABELS, ...DOMAIN_PERMISSION_LABELS };
+
+export function permissionError(need: WorkersNeed, status?: number): CloudError {
+    const label = NEED_LABELS[need];
     return new CloudError(
         'CF_PERMISSION',
         `Token Cloudflare thiếu quyền "${label}" — thêm quyền này cho token (hoặc tạo token mới bằng link mẫu ở Cài đặt → Internet & Đám mây) rồi bấm Kiểm tra lại token`,
@@ -108,7 +138,7 @@ export function permissionError(need: 'workers' | 'd1', status?: number): CloudE
 }
 
 /** Lỗi bất kỳ → CloudError mã hợp đồng (need: quyền cần nêu khi Cloudflare báo thiếu quyền). */
-export function toWorkersError(err: unknown, need: 'workers' | 'd1'): CloudError {
+export function toWorkersError(err: unknown, need: WorkersNeed): CloudError {
     if (err instanceof CloudApiError) {
         // Mã Cloudflare quyết định trước HTTP status: thiếu quyền một API (mã 10000 "Authentication error") nhiều endpoint
         // trả HTTP 401 — vd liệt kê D1 khi token chưa có D1 — đó là thiếu quyền, không phải token hỏng / chưa kết nối.
@@ -137,6 +167,32 @@ function cleanSubdomain(v: unknown): string | null {
 export function workersDevUrl(name: string, subdomain: string): string {
     return `https://${name}.${subdomain}.workers.dev`;
 }
+
+/** Tên miền dài nhất trong tài khoản chứa `hostname` (tên miền gốc hoặc tên con của nó). */
+export function zoneOf(hostname: string, zones: DomainZone[]): DomainZone | null {
+    let best: DomainZone | null = null;
+    for (const z of zones) {
+        if (hostname !== z.name && !hostname.endsWith(`.${z.name}`)) continue;
+        if (!best || z.name.length > best.name.length) best = z;
+    }
+    return best;
+}
+
+/** Bản ghi Workers Custom Domain của Cloudflare → WorkerDomain (thiếu id / hostname → null). */
+function toDomain(raw: any): (WorkerDomain & { service: string }) | null {
+    const id = typeof raw?.id === 'string' ? raw.id : '';
+    const hostname = normalizeHostname(raw?.hostname);
+    if (!id || !hostname) return null;
+    return {
+        id,
+        hostname,
+        zoneId: typeof raw?.zone_id === 'string' ? raw.zone_id : '',
+        zoneName: normalizeHostname(raw?.zone_name),
+        service: typeof raw?.service === 'string' ? raw.service : '',
+    };
+}
+
+const publicDomain = (d: WorkerDomain): WorkerDomain => ({ id: d.id, hostname: d.hostname, zoneId: d.zoneId, zoneName: d.zoneName });
 
 /** SQL gửi cho một file migration: nội dung file + INSERT tên file vào d1_migrations (cùng một lô). */
 export function migrationSql(content: string, fileName: string): string {
@@ -176,6 +232,9 @@ export class WorkersDeployer {
     private statusCache: { accountId: string; at: number; subdomain: string | null; missing: string[] } | null = null;
     private subdomainCache: { accountId: string; at: number; value: string | null } | null = null;
     private readonly d1Cache = new Map<string, { uuid: string; at: number }>();
+    private zonesCache: { accountId: string; at: number; zones: DomainZone[] } | null = null;
+    /** `${accountId}/${worker}` → tên miền đang gắn. */
+    private readonly domainsCache = new Map<string, { at: number; domains: WorkerDomain[] }>();
     private readonly busy = new Set<string>();
     private unwatch: (() => void) | null = null;
 
@@ -194,6 +253,12 @@ export class WorkersDeployer {
             d1Ensure: async name => this.d1Ensure(assertResourceName(name, prefix, 'D1')),
             d1Migrate: async (name, dir, onProgress) => this.d1Migrate(assertResourceName(name, prefix, 'D1'), dir, onProgress),
             d1Query: async (name, sql, params) => this.d1Query(assertResourceName(name, prefix, 'D1'), normalizeQuery(sql, params)),
+            zones: async () => (await this.zoneList()).map(z => ({ ...z })),
+            domainList: async name => this.domainList(assertResourceName(name, prefix, 'Worker')),
+            domainAttach: async (name, hostname, confirm) =>
+                this.domainAttach(assertResourceName(name, prefix, 'Worker'), normalizeDomainHostname(hostname), confirm),
+            domainDetach: async (name, hostname) =>
+                this.domainDetach(assertResourceName(name, prefix, 'Worker'), normalizeDomainHostname(hostname)),
         };
     }
 
@@ -238,6 +303,8 @@ export class WorkersDeployer {
                 this.statusCache = null;
                 this.subdomainCache = null;
                 this.d1Cache.clear();
+                this.zonesCache = null;
+                this.domainsCache.clear();
             });
         } catch {
             this.unwatch = () => undefined;
@@ -514,6 +581,119 @@ export class WorkersDeployer {
             const detail = first ? `, mã ${first.code}${first.message ? `: ${String(first.message).replace(/\s+/g, ' ').slice(0, 160)}` : ''}` : '';
             throw new CloudError('CF_API', `Cloudflare từ chối tải asset (HTTP ${status}${detail})`, status);
         }
+    }
+
+    // ── Tên miền riêng (Workers Custom Domain) ──
+
+    private async zoneList(fresh = false): Promise<DomainZone[]> {
+        const { accountId } = this.ctx();
+        const c = this.zonesCache;
+        if (!fresh && c && c.accountId === accountId && this.now() - c.at < ZONES_TTL_MS) return c.zones;
+        let raw: Array<{ id?: unknown; name?: unknown; status?: unknown }>;
+        try {
+            raw = await this.core().listZones();
+        } catch (err) {
+            throw toWorkersError(err, 'zone');
+        }
+        const zones = (Array.isArray(raw) ? raw : [])
+            .filter(z => z && typeof z.id === 'string' && z.id && typeof z.name === 'string' && z.name && (!z.status || z.status === 'active'))
+            .map(z => ({ id: String(z.id), name: normalizeHostname(z.name) }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+        this.zonesCache = { accountId, at: this.now(), zones };
+        return zones;
+    }
+
+    /** GET …/workers/domains theo Worker hoặc theo tên; bộ lọc của Cloudflare có thể gần đúng → so khớp đúng ở đây. */
+    private async domainsWhere(api: CloudflareApi, accountId: string, query: { service?: string; hostname?: string }): Promise<Array<WorkerDomain & { service: string }>> {
+        let list: any;
+        try {
+            list = await api.request<any>('GET', `/accounts/${accountId}/workers/domains`, undefined, { query });
+        } catch (err) {
+            throw toWorkersError(err, 'workers');
+        }
+        return (Array.isArray(list) ? list : [])
+            .map(toDomain)
+            .filter((d): d is WorkerDomain & { service: string } => !!d)
+            .filter(d => (!query.service || d.service === query.service) && (!query.hostname || d.hostname === query.hostname));
+    }
+
+    private async domainList(name: string): Promise<WorkerDomain[]> {
+        const { api, accountId } = this.ctx();
+        const key = `${accountId}/${name}`;
+        const c = this.domainsCache.get(key);
+        if (c && this.now() - c.at < DOMAINS_TTL_MS) return c.domains.map(publicDomain);
+        const domains = (await this.domainsWhere(api, accountId, { service: name }))
+            .map(publicDomain)
+            .sort((a, b) => a.hostname.localeCompare(b.hostname));
+        this.domainsCache.set(key, { at: this.now(), domains });
+        return domains.map(publicDomain);
+    }
+
+    private async domainAttach(name: string, hostname: string, confirm?: DomainConfirm): Promise<DomainAttachResult> {
+        const { api, accountId } = this.ctx();
+        return this.exclusive(`${accountId}:domain:${hostname}`, `Gắn tên miền ${hostname}`, async () => {
+            // 1. Tên con của một tên miền trong tài khoản (danh sách nhớ 5 phút; không thấy thì đọc lại một lần).
+            let zones = await this.zoneList();
+            let zone = zoneOf(hostname, zones);
+            if (!zone) {
+                zones = await this.zoneList(true);
+                zone = zoneOf(hostname, zones);
+            }
+            if (!zone) {
+                const known = zones.map(z => z.name).slice(0, 5).join(', ');
+                throw new CloudError('VALIDATION_ERROR', `${hostname} không thuộc tên miền nào của tài khoản Cloudflare đã kết nối${known ? ` (đang có: ${known})` : ''}`);
+            }
+            if (zone.name === hostname) {
+                throw new CloudError('VALIDATION_ERROR', `Chỉ gắn được tên con, vd ${name}.${zone.name}; tên miền gốc ${zone.name} thường đang dùng cho việc khác`);
+            }
+            // 2. Đã gắn cho chính Worker này → trả lại, không hỏi, không ghi. Đang gắn cho Worker khác → không lấy.
+            const existing = await this.domainsWhere(api, accountId, { hostname });
+            const mine = existing.find(d => d.service === name);
+            if (mine) return { ...publicDomain(mine), created: false };
+            if (existing.length) throw new CloudError('CONFLICT', `${hostname} đang được dùng cho một Worker khác, hãy chọn tên khác`);
+            // 3. Không đè bản ghi DNS đang có (Địa chỉ Internet của Deplao, website, mail…).
+            let records: Array<{ type?: string }>;
+            try {
+                records = await listRecordsByName(api, zone.id, hostname);
+            } catch (err) {
+                throw toWorkersError(err, 'dns');
+            }
+            if (records.length) {
+                const types = Array.from(new Set(records.map(r => String(r?.type || '?').toUpperCase()))).join(', ');
+                throw new CloudError('CONFLICT', `${hostname} đã có bản ghi DNS (${types}), hãy chọn tên khác hoặc xoá bản ghi đó trên Cloudflare trước`);
+            }
+            // 4. Người dùng đồng ý (ứng dụng gọi: hộp thoại của Deplao) — sau khi kiểm xong, trước khi ghi.
+            if (confirm && !(await confirm({ worker: name, hostname, zoneName: zone.name }))) {
+                throw new CloudError('CF_DECLINED', `Chưa gắn ${hostname}: bạn đã chọn "Không" ở hộp thoại của Deplao`);
+            }
+            // 5. Gắn: Cloudflare tạo bản ghi DNS + chứng chỉ (vài phút sau tên mới trả lời được).
+            let res: any;
+            try {
+                res = await api.request<any>('PUT', `/accounts/${accountId}/workers/domains`, { hostname, service: name, zone_id: zone.id }, { timeoutMs: DOMAIN_WRITE_TIMEOUT_MS });
+            } catch (err) {
+                throw toWorkersError(err, 'workers');
+            }
+            this.domainsCache.delete(`${accountId}/${name}`);
+            const saved = toDomain(res);
+            this.log(`Đã gắn ${hostname} cho Worker ${name}`);
+            return { id: saved?.id || '', hostname, zoneId: saved?.zoneId || zone.id, zoneName: saved?.zoneName || zone.name, created: true };
+        });
+    }
+
+    private async domainDetach(name: string, hostname: string): Promise<{ removed: boolean }> {
+        const { api, accountId } = this.ctx();
+        return this.exclusive(`${accountId}:domain:${hostname}`, `Gỡ tên miền ${hostname}`, async () => {
+            const mine = (await this.domainsWhere(api, accountId, { hostname })).find(d => d.service === name);
+            if (!mine) return { removed: false };
+            try {
+                await api.request('DELETE', `/accounts/${accountId}/workers/domains/${encodeURIComponent(mine.id)}`, undefined, { timeoutMs: DOMAIN_WRITE_TIMEOUT_MS });
+            } catch (err) {
+                if (!isNotFound(err)) throw toWorkersError(err, 'workers');
+            }
+            this.domainsCache.delete(`${accountId}/${name}`);
+            this.log(`Đã gỡ ${hostname} khỏi Worker ${name}`);
+            return { removed: true };
+        });
     }
 
     // ── D1 ──

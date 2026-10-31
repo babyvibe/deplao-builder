@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import type { CRMCampaign } from '@/store/crmStore';
+import type { CRMCampaign } from '@/store/crm/crmStore';
 import { cn } from '@/lib/cn';
 import { showConfirm } from '@/components/common/ConfirmDialog';
 import PageLoading from '@/components/common/PageLoading';

@@ -2,24 +2,24 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { app, safeStorage } from 'electron';
 import Logger from '../../utils/Logger';
-import { FB_TEMPLATE_MSG_TYPE, fbTemplateFromAttachments, fbTemplateText } from '../../shared/facebookTemplate';
+import { FB_TEMPLATE_MSG_TYPE, fbTemplateFromAttachments, fbTemplateText, isFbUnavailableTemplate, shouldUpgradeFbTemplate } from '../../shared/facebook/facebookTemplate';
 import BetterSqlite3 from 'better-sqlite3';
 import type { Account, Message, Contact, CRMNote, CRMCampaign, CRMCampaignContact, CRMSendLog, CRMCampaignStatus, CRMContactStatus } from '../../models';
-import type { TelegramPeer } from '../../models/telegram';
-import { CHANNEL } from '../../ui/lib/channelHelper';
-import { getTelegramMessagePreview } from '../telegram/TelegramMessagePreview';
-import { normalizeZaloPhotoContent, toZaloJpgUrl } from '../../utils/zaloImageUrl';
+import type { TelegramPeer } from '../../models/telegram/telegram';
+import { CHANNEL } from '../../ui/lib/channels/channelHelper';
+import { getTelegramMessagePreview } from '../telegram/messages/TelegramMessagePreview';
+import { normalizeZaloPhotoContent, toZaloJpgUrl } from '../../utils/zalo/zaloImageUrl';
 import FileStorageService from '../file/FileStorageService';
-import { searchPickerContacts, PickerContactRow, PickerSearchOptions, PickerSearchResult } from '../../shared/contactPickerSearch';
-import { addLocalDays, localDayBuckets, localDayDiff, localDayKey, localHourBuckets, sqlLocalDay, sqlLocalHour } from '../../shared/localTimeBuckets';
+import { searchPickerContacts, PickerContactRow, PickerSearchOptions, PickerSearchResult } from '../../shared/workflow/contactPickerSearch';
+import { addLocalDays, localDayBuckets, localDayDiff, localDayKey, localHourBuckets, sqlLocalDay, sqlLocalHour } from '../../shared/analytics/localTimeBuckets';
 import { MEDIA_MESSAGE_COLUMNS, MEDIA_MESSAGE_FILTER, buildMediaCursorQuery, type MediaCursor } from './mediaMessagesQuery';
-import { escapeLikePattern, foldSearchText } from '../../shared/searchFold';
-import { buildMessageFtsQuery, MESSAGE_SEARCH_FTS_CANDIDATES, MESSAGE_SEARCH_LIMIT, MESSAGE_SEARCH_RECENT_SCAN } from '../../shared/messageSearch';
-import { createCRMContactFilter, hasCRMContactFilters, type CRMContactFilters } from '../../shared/crmContactFilters';
-import { mergeZaloReactionAliases, normalizeZaloReactionEmoji } from '../../shared/zaloReactions';
-import { zinstantPreviewText } from '../../shared/zaloZinstant';
-import { contactReplyStateSql } from '../../shared/replyState';
-import { ZALO_TTL_EXPIRY_GRACE_MS, isZaloTtlExpired } from '../../shared/zaloAutoDelete';
+import { escapeLikePattern, foldSearchText } from '../../shared/chat/searchFold';
+import { buildMessageFtsQuery, MESSAGE_SEARCH_FTS_CANDIDATES, MESSAGE_SEARCH_LIMIT, MESSAGE_SEARCH_RECENT_SCAN } from '../../shared/chat/messageSearch';
+import { createCRMContactFilter, hasCRMContactFilters, type CRMContactFilters } from '../../shared/crm/crmContactFilters';
+import { mergeZaloReactionAliases, normalizeZaloReactionEmoji } from '../../shared/zalo/zaloReactions';
+import { zinstantPreviewText } from '../../shared/zalo/zaloZinstant';
+import { contactReplyStateSql } from '../../shared/chat/replyState';
+import { ZALO_TTL_EXPIRY_GRACE_MS, isZaloTtlExpired } from '../../shared/zalo/zaloAutoDelete';
 import { TELEGRAM_TOP_MESSAGE_ID_SQL, telegramTopMessageIdParams } from './telegramTopMessage';
 
 // better-sqlite3: native SQLite - no WASM heap, memory-mapped I/O
@@ -113,6 +113,12 @@ function employeeLogAccountFilter(zaloIds?: string[] | null): { sql: string; par
     return { sql: ` AND ${sqlAccountFilter('zalo_id', ids)}`, params: ids };
 }
 
+/**
+ * Kết quả saveFBMessage: `new` = hàng mới; `repaired` = hàng đã có (bản tới trước từ nguồn khác) còn rỗng / là thẻ
+ * "File đính kèm không hiển thị" và lần này được sửa; `duplicate` = hàng đã có, không đổi gì (MQTT và bridge cùng nhận
+ * một tin, hoặc phát lại).
+ */
+export type FbSaveOutcome = 'new' | 'repaired' | 'duplicate';
 
 class DatabaseService {
     private static instance: DatabaseService;
@@ -142,7 +148,7 @@ class DatabaseService {
             // ─── Workspace-aware DB path resolution ─────────────────────
             let resolvedViaWorkspace = false;
             try {
-                const WorkspaceManager = require('../../utils/WorkspaceManager').default;
+                const WorkspaceManager = require('../../utils/app/WorkspaceManager').default;
                 const wm = WorkspaceManager.getInstance();
                 const activeDbPath = wm.getActiveDbPath();
                 if (activeDbPath) {
@@ -569,7 +575,7 @@ class DatabaseService {
 
     private normalizeWorkflowChannel(channel?: string): 'zalo' | 'facebook' {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const { normalizeChannel } = require('../../configs/channelConfig');
+        const { normalizeChannel } = require('../../configs/channels/channelConfig');
         return normalizeChannel(channel) as 'zalo' | 'facebook';
     }
 
@@ -2231,7 +2237,7 @@ class DatabaseService {
                 needSave = true;
             }
             // Mốc người kia đã nhận / đã xem tin mình gửi (services/receipts/peerReceipts.ts): ms; Telegram theo id tin.
-            // reply_marked_at: đánh dấu đã trả lời tay / hàng loạt (shared/replyState) — mốc tin mới nhất lúc đánh dấu, ms
+            // reply_marked_at: đánh dấu đã trả lời tay / hàng loạt (shared/chat/replyState) — mốc tin mới nhất lúc đánh dấu, ms
             for (const column of ['peer_delivered_ts', 'peer_read_ts', 'peer_read_max_id', 'reply_marked_at']) {
                 if (!names.includes(column)) {
                     db!.exec(`ALTER TABLE contacts ADD COLUMN ${column} INTEGER DEFAULT 0`);
@@ -2859,6 +2865,14 @@ class DatabaseService {
             }
         } catch (err: any) {
             Logger.warn(`[DatabaseService] messages.topic_id migration: ${err.message}`);
+        }
+        // DB tạo từ 26.8.0 có cột topic_id ngay trong CREATE TABLE nên nhánh trên không chạy → chưa từng có chỉ mục topic
+        // (mở một topic forum quét cả lịch sử nhóm). Bản một phần: chỉ tin có topic, xây nhanh, tin thường không tốn ghi
+        // thêm. DB cũ đã có bản đầy đủ cùng tên thì giữ nguyên — getMessages theo topic dùng được cả hai.
+        try {
+            db!.exec(`CREATE INDEX IF NOT EXISTS idx_messages_topic ON messages(owner_zalo_id, thread_id, topic_id, timestamp) WHERE topic_id IS NOT NULL`);
+        } catch (err: any) {
+            Logger.warn(`[DatabaseService] idx_messages_topic: ${err.message}`);
         }
 
         try {
@@ -4291,18 +4305,22 @@ class DatabaseService {
             ? ` AND (topic_id IS NULL OR topic_id = '' OR topic_id = '1')`
             : topicId ? ' AND topic_id = ?' : '';
         const topicParams = topicId && !isTelegramGeneralTopic ? [topicId] : [];
+        // Một topic: `+msg_id` (cùng giá trị, cùng thứ tự) để SQLite đi idx_messages_topic rồi chỉ xếp phụ các tin trùng mốc.
+        // Viết `msg_id DESC` thì nó chọn idx_messages_thread_cursor (khỏi xếp) và lọc topic_id trên cả lịch sử nhóm — DB
+        // thật: 250-600 ms mỗi lần mở / cuộn một topic của forum 75k tin, nay ~0,3 ms.
+        const orderBy = topicParams.length ? 'timestamp DESC, +msg_id DESC' : 'timestamp DESC, msg_id DESC';
         if (before && before > 0) {
             // Use <= instead of < to handle messages with same timestamp.
             // prependMessages() deduplicates by msg_id, so duplicates are safe.
             const msgs = this.query<Message>(
-                `SELECT * FROM messages WHERE owner_zalo_id = ? AND thread_id = ?${topicFilter} AND timestamp <= ? ORDER BY timestamp DESC, msg_id DESC LIMIT ?`,
+                `SELECT * FROM messages WHERE owner_zalo_id = ? AND thread_id = ?${topicFilter} AND timestamp <= ? ORDER BY ${orderBy} LIMIT ?`,
                 [ownerZaloId, threadId, ...topicParams, before, limit]
             );
             return msgs;
         }
         const msgs = this.query<Message>(
             // Cùng mốc (Telegram chỉ có giây) → id sau = tin sau, như truy vấn theo con trỏ ở trên (cùng chỉ mục)
-            `SELECT * FROM messages WHERE owner_zalo_id = ? AND thread_id = ?${topicFilter} ORDER BY timestamp DESC, msg_id DESC LIMIT ? OFFSET ?`,
+            `SELECT * FROM messages WHERE owner_zalo_id = ? AND thread_id = ?${topicFilter} ORDER BY ${orderBy} LIMIT ? OFFSET ?`,
             [ownerZaloId, threadId, ...topicParams, limit, offset]
         );
         if (msgs.length === 0) {
@@ -4398,7 +4416,7 @@ class DatabaseService {
         const text = String(query ?? '').trim();
         if (!text) return [];
 
-        // FTS5 theo tiền tố, an toàn với ký tự đặc biệt, thử cả d / đ (shared/messageSearch). Chỉ lấy
+        // FTS5 theo tiền tố, an toàn với ký tự đặc biệt, thử cả d / đ (shared/chat/messageSearch). Chỉ lấy
         // MESSAGE_SEARCH_FTS_CANDIDATES dòng khớp mới nhất theo rowid rồi mới xếp theo thời gian: xếp MỌI dòng khớp
         // của từ phổ biến ("anh") mất ~0,6 s, chặn tiến trình chính.
         const ftsQuery = buildMessageFtsQuery(text);
@@ -4468,7 +4486,7 @@ class DatabaseService {
     }
 
     /**
-     * Cột SQL is_replied (đã / chưa trả lời) cho bảng `contacts` của kết nối đang dùng — shared/replyState. DB chưa có cột
+     * Cột SQL is_replied (đã / chưa trả lời) cho bảng `contacts` của kết nối đang dùng — shared/chat/replyState. DB chưa có cột
      * reply_marked_at (DB phụ cũ) vẫn đọc được, chỉ không tính đánh dấu tay.
      */
     public replyStateColumnSql(): string {
@@ -4625,7 +4643,7 @@ class DatabaseService {
             : 0;
         const pagination = limit > 0 ? ' LIMIT ? OFFSET ?' : '';
         if (limit > 0) params.push(limit, offset);
-        // is_replied: đã trả lời / chưa trả lời theo tin thật mới nhất (shared/replyState) — tính ở đây để danh sách đúng
+        // is_replied: đã trả lời / chưa trả lời theo tin thật mới nhất (shared/chat/replyState) — tính ở đây để danh sách đúng
         // ngay khi mở app (trước đây chỉ có trong bộ nhớ, mất sau khi khởi động lại)
         const select = `SELECT contacts.*, ${this.replyStateColumnSql()} AS is_replied FROM contacts WHERE ${where}`;
         return this.query<Contact>(
@@ -6457,7 +6475,7 @@ class DatabaseService {
      * Một trang thành viên nhóm (panel "Thành viên" của khung chat) — đủ mọi thành viên đã có trong DB: quét thành viên
      * ẩn, thu thập từ lịch sử tin Telegram, đồng bộ API. Tìm theo tên / @username / id, không phân biệt dấu và hoa /
      * thường. Thứ tự cố định để phân trang: chủ nhóm, phó nhóm / quản trị, thành viên; người có tên trước người chỉ có
-     * id; rồi theo tên. `ownerRole` = giá trị role của chủ nhóm theo kênh (Zalo 2, Telegram 1 — shared/groupMemberRoles).
+     * id; rồi theo tên. `ownerRole` = giá trị role của chủ nhóm theo kênh (Zalo 2, Telegram 1 — shared/chat/groupMemberRoles).
      * @username: của hàng, hàng chưa có thì lấy @username Telegram đã biết của người đó (telegram_peers). `namedOnly`: bỏ
      * người chưa có tên (chỉ có id) — ô @nhắc đến.
      */
@@ -6474,7 +6492,7 @@ class DatabaseService {
         const limit = Math.min(Math.max(Math.floor(Number(options.limit) || 50), 1), 500);
         const offset = Math.max(Math.floor(Number(options.offset) || 0), 0);
         const ownerRole = Number(options.ownerRole) === 1 ? 1 : 2;
-        const { from, username } = this.groupMemberSource();
+        const { join, username } = this.groupMemberSource();
         // Id thành viên chỉ gồm chữ số (bỏ rác của các lần parse lỗi cũ như "profiles") — như CRM Nhóm
         const conditions = [`gm.owner_zalo_id = ?`, `gm.group_id = ?`, `gm.member_id GLOB '[0-9]*'`, `gm.member_id NOT GLOB '*[^0-9]*'`];
         const params: unknown[] = [ownerZaloId, groupId];
@@ -6486,28 +6504,40 @@ class DatabaseService {
             params.push(like, like, like);
         }
         const where = conditions.join(' AND ');
-        const total = Number(this.queryOne<{ n: number }>(`SELECT COUNT(*) AS n FROM ${from} WHERE ${where}`, params)?.n || 0);
-        const members = this.query<any>(
-            `SELECT gm.member_id, gm.display_name, gm.avatar, gm.role, ${username} AS username, gm.updated_at
-             FROM ${from}
-             WHERE ${where}
-             ORDER BY CASE WHEN gm.role = ? THEN 0 WHEN gm.role > 0 THEN 1 ELSE 2 END,
+        const columns = `gm.member_id, gm.display_name, gm.avatar, gm.role, ${username} AS username, gm.updated_at`;
+        const order = `ORDER BY CASE WHEN gm.role = ? THEN 0 WHEN gm.role > 0 THEN 1 ELSE 2 END,
                       CASE WHEN TRIM(COALESCE(gm.display_name, '')) = '' OR gm.display_name = gm.member_id THEN 1 ELSE 0 END,
-                      deplao_fold(gm.display_name), gm.member_id
-             LIMIT ? OFFSET ?`,
-            [...params, ownerRole, limit, offset],
+                      deplao_fold(gm.display_name), gm.member_id`;
+        if (query) {
+            // Tìm theo @username: điều kiện cần telegram_peers của mọi hàng
+            const total = Number(this.queryOne<{ n: number }>(`SELECT COUNT(*) AS n FROM page_group_member gm ${join} WHERE ${where}`, params)?.n || 0);
+            const members = this.query<any>(
+                `SELECT ${columns} FROM page_group_member gm ${join} WHERE ${where} ${order} LIMIT ? OFFSET ?`,
+                [...params, ownerRole, limit, offset],
+            );
+            return { members, total };
+        }
+        // Không tìm: đếm, xếp, cắt trang chỉ trên page_group_member; @username chỉ lấy cho các hàng của trang. JOIN theo khoá
+        // chính nên không đổi số hàng, xếp lại cùng khoá (member_id duy nhất trong nhóm) nên đúng thứ tự cũ. Nhóm 5k người:
+        // đếm 8 → 0,7 ms, trang 28 → 12 ms (phần còn lại là deplao_fold của từng tên).
+        const total = Number(this.queryOne<{ n: number }>(`SELECT COUNT(*) AS n FROM page_group_member gm WHERE ${where}`, params)?.n || 0);
+        const members = this.query<any>(
+            `SELECT ${columns}
+             FROM (SELECT * FROM page_group_member gm WHERE ${where} ${order} LIMIT ? OFFSET ?) gm ${join}
+             ${order}`,
+            [...params, ownerRole, limit, offset, ownerRole],
         );
         return { members, total };
     }
 
     /**
-     * Nguồn đọc thành viên nhóm: page_group_member `gm`, @username lấy của hàng, thiếu thì @username Telegram đã biết của
-     * người đó (telegram_peers — lưu mỗi lần gặp người đó ở bất kỳ đâu, kể cả trước khi page_group_member giữ @username).
+     * @username của thành viên nhóm (`gm` = page_group_member): của hàng, thiếu thì @username Telegram đã biết của người đó
+     * (`join` nối telegram_peers — lưu mỗi lần gặp người đó ở bất kỳ đâu, kể cả trước khi page_group_member giữ @username).
      */
-    private groupMemberSource(): { from: string; username: string } {
-        if (!this.hasTable('telegram_peers')) return { from: 'page_group_member gm', username: `COALESCE(gm.username, '')` };
+    private groupMemberSource(): { join: string; username: string } {
+        if (!this.hasTable('telegram_peers')) return { join: '', username: `COALESCE(gm.username, '')` };
         return {
-            from: 'page_group_member gm LEFT JOIN telegram_peers tp ON tp.owner_zalo_id = gm.owner_zalo_id AND tp.peer_id = gm.member_id',
+            join: 'LEFT JOIN telegram_peers tp ON tp.owner_zalo_id = gm.owner_zalo_id AND tp.peer_id = gm.member_id',
             username: `COALESCE(NULLIF(gm.username, ''), tp.username, '')`,
         };
     }
@@ -7596,7 +7626,7 @@ class DatabaseService {
         contactTypes?: ('friend' | 'group' | 'non_friend')[];
         sortBy?: 'name' | 'last_message'; sortDir?: 'asc' | 'desc';
         limit?: number; offset?: number;
-        /** Nhãn / Có SĐT / Có ghi chú / Giới tính / Sinh nhật — lọc trước khi cắt trang (shared/crmContactFilters) */
+        /** Nhãn / Có SĐT / Có ghi chú / Giới tính / Sinh nhật — lọc trước khi cắt trang (shared/crm/crmContactFilters) */
         filters?: CRMContactFilters;
     } = {}): { contacts: any[]; total: number } {
         if (!this.initialized) return { contacts: [], total: 0 };
@@ -7896,7 +7926,7 @@ class DatabaseService {
 
     /**
      * Message volume timeline: messages per local clock hour ('hour') or local calendar day ('day').
-     * Buckets follow the calendar whatever sinceTs is (see shared/localTimeBuckets): bucketing by
+     * Buckets follow the calendar whatever sinceTs is (see shared/analytics/localTimeBuckets): bucketing by
      * (timestamp - sinceTs) / 86400000 shifted every day by the time of day of sinceTs and left
      * the last bucket ("today") always empty.
      */
@@ -8982,6 +9012,8 @@ class DatabaseService {
         if (!this.initialized || owners.length === 0) return [];
         try {
             const placeholders = owners.map(() => '?').join(',');
+            // CAST(m.thread_id AS TEXT) (giá trị như cũ): `m.thread_id = s.thread_id` làm SQLite chọn idx_messages_thread_cursor
+            // và duyệt mọi tin của hội thoại cho MỖI tin đánh dấu (hội thoại 100k tin ~12 ms / dòng); nay tra chỉ mục mã tin.
             return this.query<any>(
                 `SELECT s.owner_zalo_id, s.thread_id, s.msg_id, s.starred_at, s.snapshot,
                         m.sender_id, m.content, m.msg_type, m.timestamp, m.attachments, m.local_paths,
@@ -8991,7 +9023,7 @@ class DatabaseService {
                         c.display_name AS thread_name, c.alias AS thread_alias, c.avatar_url AS thread_avatar,
                         c.contact_type AS thread_contact_type, c.channel AS thread_channel
                  FROM starred_messages s
-                 LEFT JOIN messages m ON m.msg_id = s.msg_id AND m.owner_zalo_id = s.owner_zalo_id AND m.thread_id = s.thread_id
+                 LEFT JOIN messages m ON m.msg_id = s.msg_id AND m.owner_zalo_id = s.owner_zalo_id AND CAST(m.thread_id AS TEXT) = s.thread_id
                  LEFT JOIN contacts c ON c.owner_zalo_id = s.owner_zalo_id AND c.contact_id = s.thread_id
                  LEFT JOIN page_group_member gm ON gm.owner_zalo_id = s.owner_zalo_id AND gm.group_id = s.thread_id AND gm.member_id = m.sender_id
                  LEFT JOIN contacts sc ON sc.owner_zalo_id = s.owner_zalo_id AND sc.contact_id = m.sender_id
@@ -9760,8 +9792,9 @@ class DatabaseService {
         reactions?: string;
         /** Historical backfill must never create a new unread notification. */
         is_history?: boolean;
-    }): void {
+    }): FbSaveOutcome {
         const now = Date.now();
+        let repaired = false;
         // `INSERT OR IGNORE` below makes message persistence idempotent, but
         // the preview/contact work used to run even when the row already
         // existed. Replayed MQTT events then produced a second unread badge.
@@ -9848,7 +9881,8 @@ class DatabaseService {
             }
             return '';
         })();
-        this.run(`
+        // Hàng messages vừa chèn (kể cả khi fb_messages đã có) cũng tính là tin mới với người gọi
+        const insertedUnified = this.runChanges(`
             INSERT OR IGNORE INTO messages
               (msg_id, owner_zalo_id, thread_id, thread_type, sender_id, content, msg_type, timestamp, is_sent, attachments, status, channel, reply_to_id, quote_data)
             VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, 'facebook', ?, ?)
@@ -9864,12 +9898,13 @@ class DatabaseService {
         const hasNewAttachments = !['', '[]', 'null'].includes(newAttachments);
         if (!msg.is_unsent && (displayContent || hasNewAttachments)) {
             try {
-                this.run(`
+                const filled = this.runChanges(`
                     UPDATE messages SET content = ?, msg_type = ?, attachments = ?
                     WHERE msg_id = ? AND owner_zalo_id = ? AND thread_id = ? AND channel = 'facebook'
                       AND COALESCE(is_recalled, 0) = 0 AND COALESCE(content, '') = ''
                       AND COALESCE(attachments, '[]') IN ('', '[]', 'null')
                 `, [displayContent, msg.type || 'text', newAttachments, msg.id, ownerZaloId, msg.thread_id]);
+                if (filled > 0 && !isNewMessage) repaired = true;
                 this.run(`
                     UPDATE fb_messages SET body = ?, type = ?, attachments = ?
                     WHERE id = ? AND account_id = ? AND COALESCE(is_unsent, 0) = 0 AND COALESCE(body, '') = ''
@@ -9885,6 +9920,74 @@ class DatabaseService {
                 }
             } catch (err: any) {
                 Logger.warn(`[DB:saveFBMessage] repair empty row error: ${err.message}`);
+            }
+        }
+        // Tin mẫu đã lưu là thẻ thay thế "File đính kèm không hiển thị" (MQTT tới trước) hoặc chỉ có chữ, bản tới sau (bridge
+        // LightSpeed, đồng bộ lúc mở app) có nút / ảnh / link → thay bằng bản đầy đủ. Không bao giờ ngược lại
+        // (shouldUpgradeFbTemplate).
+        if (!isNewMessage && !msg.is_unsent && msg.type === FB_TEMPLATE_MSG_TYPE) {
+            try {
+                const stored = this.queryOne<{ content?: string; msg_type?: string; attachments?: string; is_recalled?: number }>(
+                    `SELECT content, msg_type, attachments, is_recalled FROM messages
+                     WHERE msg_id = ? AND owner_zalo_id = ? AND thread_id = ? AND channel = 'facebook' LIMIT 1`,
+                    [msg.id, ownerZaloId, msg.thread_id],
+                );
+                if (stored && !stored.is_recalled && stored.msg_type === FB_TEMPLATE_MSG_TYPE
+                    && shouldUpgradeFbTemplate(fbTemplateFromAttachments(stored.attachments), fbTemplateFromAttachments(newAttachments))) {
+                    this.run(`
+                        UPDATE messages SET content = ?, attachments = ?
+                        WHERE msg_id = ? AND owner_zalo_id = ? AND thread_id = ? AND channel = 'facebook'
+                    `, [displayContent, newAttachments, msg.id, ownerZaloId, msg.thread_id]);
+                    this.run(`UPDATE fb_messages SET body = ?, attachments = ? WHERE id = ? AND account_id = ?`,
+                        [msg.body || displayContent || null, newAttachments, msg.id, msg.account_id]);
+                    // Xem trước của hội thoại đang là chữ của thẻ thay thế (tin này là tin mới nhất) → chữ thật
+                    const oldPreview = String(stored.content || '').slice(0, 200);
+                    if (displayContent && oldPreview) {
+                        this.run(`
+                            UPDATE contacts SET last_message = ?
+                            WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'facebook' AND last_message = ?
+                        `, [displayContent.slice(0, 200), ownerZaloId, msg.thread_id, oldPreview]);
+                        this.run(`UPDATE fb_threads SET last_message_preview = ? WHERE id = ? AND account_id = ? AND last_message_preview = ?`,
+                            [displayContent.slice(0, 200), msg.thread_id, msg.account_id, oldPreview]);
+                    }
+                    Logger.log(`[DB:saveFBMessage] template upgraded: id=${msg.id} thread_id=${msg.thread_id}`);
+                    repaired = true;
+                }
+            } catch (err: any) {
+                Logger.warn(`[DB:saveFBMessage] upgrade template row error: ${err.message}`);
+            }
+        }
+        // Thẻ thay thế "File đính kèm không hiển thị" (MQTT tới trước) mà bản tới sau là chữ thật không kèm thẻ (bridge cũ
+        // chưa ghép nút của tin "chữ + nút") → thay bằng chữ: có nội dung đọc được thay vì "Tin nhắn chưa hiển thị được".
+        if (!isNewMessage && !msg.is_unsent && msg.type !== FB_TEMPLATE_MSG_TYPE && msg.type !== 'system' && displayContent && !repaired) {
+            try {
+                const stored = this.queryOne<{ content?: string; msg_type?: string; attachments?: string; is_recalled?: number }>(
+                    `SELECT content, msg_type, attachments, is_recalled FROM messages
+                     WHERE msg_id = ? AND owner_zalo_id = ? AND thread_id = ? AND channel = 'facebook' LIMIT 1`,
+                    [msg.id, ownerZaloId, msg.thread_id],
+                );
+                if (stored && !stored.is_recalled && stored.msg_type === FB_TEMPLATE_MSG_TYPE
+                    && isFbUnavailableTemplate(fbTemplateFromAttachments(stored.attachments))) {
+                    this.run(`
+                        UPDATE messages SET content = ?, msg_type = ?, attachments = ?
+                        WHERE msg_id = ? AND owner_zalo_id = ? AND thread_id = ? AND channel = 'facebook'
+                    `, [displayContent, msg.type || 'text', newAttachments, msg.id, ownerZaloId, msg.thread_id]);
+                    this.run(`UPDATE fb_messages SET body = ?, type = ?, attachments = ? WHERE id = ? AND account_id = ?`,
+                        [msg.body || displayContent, msg.type || 'text', newAttachments, msg.id, msg.account_id]);
+                    const oldPreview = String(stored.content || '').slice(0, 200);
+                    if (oldPreview) {
+                        this.run(`
+                            UPDATE contacts SET last_message = ?
+                            WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'facebook' AND last_message = ?
+                        `, [displayContent.slice(0, 200), ownerZaloId, msg.thread_id, oldPreview]);
+                        this.run(`UPDATE fb_threads SET last_message_preview = ? WHERE id = ? AND account_id = ? AND last_message_preview = ?`,
+                            [displayContent.slice(0, 200), msg.thread_id, msg.account_id, oldPreview]);
+                    }
+                    Logger.log(`[DB:saveFBMessage] template placeholder replaced by text: id=${msg.id} thread_id=${msg.thread_id}`);
+                    repaired = true;
+                }
+            } catch (err: any) {
+                Logger.warn(`[DB:saveFBMessage] replace placeholder with text error: ${err.message}`);
             }
         }
         // Tin đã thu hồi trong lịch sử (bridge / GraphQL): hiện "đã thu hồi" thay vì bong bóng rỗng
@@ -9963,6 +10066,7 @@ class DatabaseService {
                 }
             } catch {}
         }
+        return isNewMessage || insertedUnified > 0 ? 'new' : repaired ? 'repaired' : 'duplicate';
     }
 
     public getFBMessages(accountId: string, threadId: string, limit: number = 50, offset: number = 0): any[] {
@@ -9982,8 +10086,9 @@ class DatabaseService {
         );
         this.run(`UPDATE fb_messages SET is_unsent = 1, body = null WHERE id = ?`, [id]);
         const originalContent = existing?.body || null;
+        // Thu hồi báo lần 2 (MQTT và bridge cùng báo): body đã bị xoá ở lần 1 → giữ nội dung gốc đã lưu, không ghi đè rỗng
         this.run(
-            `UPDATE messages SET is_recalled = 1, content = '', recalled_content = ? WHERE msg_id = ? AND channel = 'facebook'`,
+            `UPDATE messages SET is_recalled = 1, content = '', recalled_content = COALESCE(recalled_content, ?) WHERE msg_id = ? AND channel = 'facebook'`,
             [originalContent, id]
         );
     }

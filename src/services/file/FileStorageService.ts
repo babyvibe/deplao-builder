@@ -3,7 +3,7 @@ import * as path from 'path';
 import axios from 'axios';
 import { app } from 'electron';
 import Logger from '../../utils/Logger';
-import { toZaloJpgUrl } from '../../utils/zaloImageUrl';
+import { toZaloJpgUrl } from '../../utils/zalo/zaloImageUrl';
 import { bossAuthHeaders } from '../http/bossSessionAuth';
 import { toSafeFileName } from './safeFileName';
 
@@ -20,7 +20,7 @@ class FileStorageService {
         if (!this.baseDir) {
             // Try workspace-aware resolution first
             try {
-                const WorkspaceManager = require('../../utils/WorkspaceManager').default;
+                const WorkspaceManager = require('../../utils/app/WorkspaceManager').default;
                 const wm = WorkspaceManager.getInstance();
                 this.baseDir = wm.getActiveMediaPath();
             } catch {

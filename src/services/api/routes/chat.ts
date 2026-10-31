@@ -10,7 +10,7 @@
 import * as fs from 'fs';
 import { s } from '../schema';
 import { AccountInfo, ApiContext, ApiError, FileContent, paged, route, RouteDef, RESPONSE_HANDLED } from '../types';
-import { accountAllowed } from '../ApiAuth';
+import { accountAllowed } from '../auth/ApiAuth';
 import * as actions from '../channels/ChannelActions';
 import { CHANNELS, ThreadType, extractSentId, messageText } from '../channels/ChannelActions';
 import { UploadStore, kindFromName } from '../UploadStore';

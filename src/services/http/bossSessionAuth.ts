@@ -12,7 +12,7 @@
  * nhau (không gửi token của Boss https qua http).
  */
 import type { Session } from 'electron';
-import { normalizeBossUrl } from '../../shared/employeeConnection';
+import { normalizeBossUrl } from '../../shared/employee/employeeConnection';
 
 /** Mẫu URL cho webRequest (Chromium match pattern; `*` host khớp mọi cổng). Lọc chính xác ở findBossSession. */
 export const BOSS_FILE_URL_PATTERNS = ['*://*/*api/media/*', '*://*/*api/library/*'];

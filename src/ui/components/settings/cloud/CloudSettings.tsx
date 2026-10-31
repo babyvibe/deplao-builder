@@ -11,11 +11,10 @@
  *    và truyền xuống SyncSection. Bản app cũ không có storage → như trước (R2).
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useAppStore } from '@/store/appStore';
+import { useAppStore } from '@/store/app/appStore';
 import { showConfirm } from '@/components/common/ConfirmDialog';
 import {
   ChevronDownIcon,
-  CloudIcon,
   ExternalLinkIcon,
   GlobeIcon,
   KeyIcon,
@@ -32,7 +31,7 @@ import {
   type BadgeVariant,
 } from '@/components/ui';
 import { cn } from '@/lib/cn';
-import { publishPublicAddresses } from '../../common/PublicAddressCard';
+import { publishPublicAddresses } from '../../common/cloud/PublicAddressCard';
 import type {
   CloudConnectionStatus,
   CloudStorageProvider,
@@ -40,12 +39,12 @@ import type {
   PublicAddress,
   SyncOverview,
   TunnelConfigView,
-} from '../../../../shared/cloudContracts';
-import AddressSection from './AddressSection';
-import SyncSection from './SyncSection';
+} from '../../../../shared/cloud/cloudContracts';
+import AddressSection from './address/AddressSection';
+import SyncSection from './sync/SyncSection';
 import { ConnectCard } from './CloudConnect';
-import { RestoreStateBanner } from './RestoreStateBanner';
-import { syncMediaHint, syncMeta } from './syncHelpers';
+import { RestoreStateBanner } from './restore/RestoreStateBanner';
+import { syncMediaHint, syncMeta } from './sync/syncHelpers';
 import {
   CLOUD_AREAS,
   cloudApi,
@@ -63,6 +62,7 @@ import {
   type CloudArea,
   type CloudSection,
 } from './cloudUi';
+import { SettingsPage } from '../settingsUi';
 
 export type { CloudSection } from './cloudUi';
 
@@ -262,27 +262,19 @@ export default function CloudSettings({ initialSubtab, initial }: CloudSettingsP
     void refresh();
   };
 
-  const header = (
-    <div>
-      <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
-        <CloudIcon className="h-4 w-4 text-primary" /> Internet &amp; Đám mây
-      </h2>
-      <p className="mt-1 text-xs text-muted-foreground">
-        {storage?.provider === 'gdrive'
-          ? 'Địa chỉ cố định cho nhân viên và đối tác trên Cloudflare, lưu media và sao lưu lên Google Drive của bạn'
-          : 'Địa chỉ cố định cho nhân viên và đối tác, lưu media, sao lưu trên Cloudflare, Google Drive của bạn'}
-      </p>
-    </div>
-  );
+  const pageDescription = storage?.provider === 'gdrive'
+    ? 'Địa chỉ cố định cho nhân viên và đối tác trên Cloudflare, lưu media và sao lưu lên Google Drive của bạn'
+    : 'Địa chỉ cố định cho nhân viên và đối tác, lưu media, sao lưu trên Cloudflare, Google Drive của bạn';
 
   if (!api) {
     return (
-      <div className="max-w-5xl space-y-5">
-        {header}
+      <SettingsPage title="Internet & Đám mây" description={pageDescription} width="wide">
+      <div className="space-y-5">
         <Notice tone="warning" title="Bản app này chưa có tính năng Cloudflare">
           <p>Cập nhật Deplao lên bản mới nhất để dùng địa chỉ cố định, lưu media và sao lưu lên Cloudflare.</p>
         </Notice>
       </div>
+      </SettingsPage>
     );
   }
 
@@ -356,8 +348,8 @@ export default function CloudSettings({ initialSubtab, initial }: CloudSettingsP
   }
 
   const page = (
-    <div className="max-w-5xl space-y-5">
-      {header}
+    <SettingsPage title="Internet & Đám mây" description={pageDescription} width="wide">
+    <div className="space-y-5">
       <RestoreStateBanner onOpenAccounts={() => setView('dashboard')} />
       {strip}
 
@@ -433,6 +425,7 @@ export default function CloudSettings({ initialSubtab, initial }: CloudSettingsP
         )}
       </div>
     </div>
+    </SettingsPage>
   );
 
   // Kho lưu cho mọi mảnh bên dưới (SyncSection, hộp dọn file, trình khôi phục mở từ trang này…).

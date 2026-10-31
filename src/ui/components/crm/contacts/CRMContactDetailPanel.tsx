@@ -1,23 +1,23 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import type { CRMContact, CRMNote } from '@/store/crmStore';
-import type { LabelData } from '@/store/appStore';
+import type { CRMContact, CRMNote } from '@/store/crm/crmStore';
+import type { LabelData } from '@/store/app/appStore';
 import ipc, { buildZaloAuth } from '@/lib/ipc'
 import DataAccessor, { isReadFailure, readFailureMessage } from '@/lib/data/DataAccessor';
-import { useEmployeeResync } from '@/hooks/useEmployeeResync';
+import { useEmployeeResync } from '@/hooks/accounts/useEmployeeResync';
 import PageLoading from '@/components/common/PageLoading';
-import { useAccountStore } from '@/store/accountStore';
-import { useAppStore } from '@/store/appStore';
+import { useAccountStore } from '@/store/accounts/accountStore';
+import { useAppStore } from '@/store/app/appStore';
 import ZaloLabelSelector from '../tags/ZaloLabelSelector';
 import ZaloLabelBadge from '../tags/ZaloLabelBadge';
-import LocalLabelSelector from '@/components/common/LocalLabelSelector';
-import type { LocalLabelItem } from '@/components/common/LocalLabelSelector';
+import LocalLabelSelector from '@/components/common/inputs/LocalLabelSelector';
+import type { LocalLabelItem } from '@/components/common/inputs/LocalLabelSelector';
 import NoteList from '../notes/NoteList';
-import PhoneDisplay from '@/components/common/PhoneDisplay';
-import type { PinnedNote } from '@/components/chat/PinnedMessages';
-import { CHANNEL } from '@/lib/channelHelper';
+import PhoneDisplay from '@/components/common/inputs/PhoneDisplay';
+import type { PinnedNote } from '@/components/chat/messages/PinnedMessages';
+import { CHANNEL } from '@/lib/channels/channelHelper';
 import { GiftIcon } from '@/components/common/icons';
-import type { Channel } from '../../../../configs/channelConfig';
-import PeerInitials from '@/components/common/PeerInitials';
+import type { Channel } from '../../../../configs/channels/channelConfig';
+import PeerInitials from '@/components/common/avatars/PeerInitials';
 
 interface CRMContactDetailPanelProps {
   contact: CRMContact;

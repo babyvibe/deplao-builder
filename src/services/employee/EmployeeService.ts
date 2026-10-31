@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import DatabaseService from '../database/DatabaseService';
 import Logger from '../../utils/Logger';
 import type { Employee, EmployeePermission, EmployeeWithDetails, EmployeeModule } from '../../models';
-import { LOGIN_WRONG_PASSWORD_CODE } from '../../shared/employeeConnection';
+import { LOGIN_WRONG_PASSWORD_CODE } from '../../shared/employee/employeeConnection';
 import {
     JWT_SECRET_SETTING_KEY,
     JWT_SECRET_VERSION,

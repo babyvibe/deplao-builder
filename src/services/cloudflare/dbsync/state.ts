@@ -4,7 +4,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import type { CloudStorageProvider, SyncLogEntry } from '../../../shared/cloudContracts';
+import type { CloudStorageProvider, SyncLogEntry } from '../../../shared/cloud/cloudContracts';
 import type { DbManifest } from './Manifest';
 
 export interface WorkspaceSyncState {

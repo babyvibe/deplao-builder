@@ -1,6 +1,6 @@
 /**
- * employeeChannelRoutes.ts — handler IPC Facebook (electron/ipc/facebookIpc.ts) và Telegram cá nhân
- * (electron/ipc/telegramUserIpc.ts) ở chế độ nhân viên. Phần thuần, dùng chung: máy nhân viên định tuyến
+ * employeeChannelRoutes.ts — handler IPC Facebook (electron/ipc/facebook/facebookIpc.ts) và Telegram cá nhân
+ * (electron/ipc/telegram/telegramUserIpc.ts) ở chế độ nhân viên. Phần thuần, dùng chung: máy nhân viên định tuyến
  * (proxyHelper.employeeRoutedIpcMain), Boss kiểm tra (proxyActionPolicy: danh sách kênh, module quyền, tài khoản,
  * "nhân viên nào đã gửi") và test (proxyActionPolicy.test.ts quét hai file IPC).
  *

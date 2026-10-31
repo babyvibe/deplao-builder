@@ -1,6 +1,6 @@
-import { useEmployeeStore } from '@/store/employeeStore';
+import { useEmployeeStore } from '@/store/employee/employeeStore';
 import { useErpEmployeeStore } from '@/store/erp/erpEmployeeStore';
-import { useWorkspaceStore } from '@/store/workspaceStore';
+import { useWorkspaceStore } from '@/store/app/workspaceStore';
 import {
   erpCanWithOverrides,
   parseErpPermissionOverridesFromExtraJson,

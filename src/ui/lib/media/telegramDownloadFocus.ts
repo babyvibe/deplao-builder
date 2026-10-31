@@ -1,14 +1,14 @@
 /**
  * Báo main hội thoại Telegram đang mở → hàng tải file của tài khoản đó tải ảnh / video / file của hội thoại này trước
- * (services/telegram/telegramDownloadQueue.ts). Trước đây hàng tải chạy theo thứ tự xếp hàng: lúc mở app, phần bắt kịp
+ * (services/telegram/media/telegramDownloadQueue.ts). Trước đây hàng tải chạy theo thứ tự xếp hàng: lúc mở app, phần bắt kịp
  * của mọi hội thoại khác xếp trước nên vào hội thoại không xem được video ngay.
  *
  * Chỉ báo khi giá trị đổi (đổi hội thoại / tài khoản). Không phải Telegram hoặc chưa mở hội thoại → bỏ ưu tiên.
  */
 import ipc from '@/lib/ipc';
-import { isTelegramUser } from '@/lib/channelHelper';
-import { useAccountStore } from '@/store/accountStore';
-import { useChatStore } from '@/store/chatStore';
+import { isTelegramUser } from '@/lib/channels/channelHelper';
+import { useAccountStore } from '@/store/accounts/accountStore';
+import { useChatStore } from '@/store/chat/chatStore';
 
 export interface TelegramDownloadFocus {
   accountId: string | null;

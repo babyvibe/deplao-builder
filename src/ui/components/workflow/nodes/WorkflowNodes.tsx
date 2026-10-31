@@ -1,8 +1,8 @@
 import React, { memo } from 'react';
 import { Handle, Position, NodeProps, useReactFlow, BaseEdge, EdgeLabelRenderer, getBezierPath, EdgeProps } from 'reactflow';
 import { LightningIcon } from '@/components/common/icons';
-import { CHANNEL } from '@/lib/channelHelper';
-import { CHANNEL_NAME, NodeIconTile, VarText, accentStyle, getNodeVisual } from '../nodeVisuals';
+import { CHANNEL } from '@/lib/channels/channelHelper';
+import { CHANNEL_NAME, NodeIconTile, VarText, accentStyle, getNodeVisual } from './nodeVisuals';
 
 
 // ─── Custom deletable edge ────────────────────────────────────────────────────

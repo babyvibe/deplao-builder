@@ -9,7 +9,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import { guardedOpen, GuardedStream, BlockedAddressError, GuardTimeoutError, isPrivateAddress } from './netGuard';
+import { guardedOpen, GuardedStream, BlockedAddressError, GuardTimeoutError, isPrivateAddress } from './http/netGuard';
 import { randomUUID } from 'crypto';
 import type { IncomingMessage } from 'http';
 import { ApiError } from './types';

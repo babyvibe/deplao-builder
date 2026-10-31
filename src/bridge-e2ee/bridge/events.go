@@ -706,6 +706,10 @@ func (c *Client) convertWrappedMessage(msg *table.WrappedMessage, extras *tableE
 		m.Mentions = mentions
 	}
 
+	// DEPLAO_ADAPTER: attachments already turned into cards / media (their CTA
+	// rows are not orphan buttons, see orphanButtons in xma.go).
+	cardFbids := make(map[string]bool)
+
 	// Handle blob attachments (images, videos, files, etc.)
 	// Track seen fbids to avoid duplicates (Facebook sometimes sends duplicate LSInsertBlobAttachment)
 	seenBlobFBIDs := make(map[string]bool)
@@ -716,6 +720,9 @@ func (c *Client) convertWrappedMessage(msg *table.WrappedMessage, extras *tableE
 				continue
 			}
 			seenBlobFBIDs[blob.AttachmentFbid] = true
+		}
+		if blob.AttachmentFbid != "" {
+			cardFbids[blob.AttachmentFbid] = true
 		}
 		att := c.convertBlobAttachment(blob)
 		if att != nil {
@@ -745,6 +752,9 @@ func (c *Client) convertWrappedMessage(msg *table.WrappedMessage, extras *tableE
 
 	// Handle XMA attachments (links, shares, locations, etc.)
 	for _, xma := range msg.XMAAttachments {
+		if xma != nil && xma.LSInsertXmaAttachment != nil && xma.AttachmentFbid != "" {
+			cardFbids[xma.AttachmentFbid] = true
+		}
 		// Check if this is a location attachment
 		if xma.CTA != nil && xma.CTA.Type_ == "xma_map" {
 			// Parse location from NativeUrl (format: "lat,lng")
@@ -788,6 +798,9 @@ func (c *Client) convertWrappedMessage(msg *table.WrappedMessage, extras *tableE
 	// DEPLAO_ADAPTER: legacy attachment rows (LSInsertAttachment) were ignored.
 	for _, legacy := range msg.Attachments {
 		if att := extras.convertLegacyAttachment(legacy); att != nil {
+			if legacy.AttachmentFbid != "" {
+				cardFbids[legacy.AttachmentFbid] = true
+			}
 			m.Attachments = append(m.Attachments, att)
 		}
 	}
@@ -795,6 +808,18 @@ func (c *Client) convertWrappedMessage(msg *table.WrappedMessage, extras *tableE
 	// DEPLAO_ADAPTER: carousel items (LSInsertAttachmentItem) are never wrapped
 	// by WrapMessages; attach them to the message's card.
 	m.Attachments = extras.attachTemplateItems(msg.MessageId, m.Attachments)
+
+	// DEPLAO_ADAPTER: buttons of a Page button template (text + CTA rows, no
+	// card) — see orphanButtons in xma.go.
+	if buttons := extras.orphanButtons(msg, cardFbids, usedCtaIDs(m.Attachments)); len(buttons) > 0 {
+		m.Attachments = attachOrphanButtons(m.Attachments, buttons)
+		types := make([]string, 0, len(buttons))
+		for _, button := range buttons {
+			types = append(types, button.Type)
+		}
+		c.Logger.Info().Int("buttons", len(buttons)).Str("types", strings.Join(types, ",")).
+			Bool("has_text", strings.TrimSpace(msg.Text) != "").Msg("Template buttons without a card")
+	}
 
 	return m
 }

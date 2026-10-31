@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { useAccountStore } from '@/store/accountStore';
-import { useAppStore } from '@/store/appStore';
-import { useCRMStore } from '@/store/crmStore';
+import { useAccountStore } from '@/store/accounts/accountStore';
+import { useAppStore } from '@/store/app/appStore';
+import { useCRMStore } from '@/store/crm/crmStore';
 import DataAccessor, { isReadFailure } from '@/lib/data/DataAccessor';
-import { useEmployeeResync } from '@/hooks/useEmployeeResync';
+import { useEmployeeResync } from '@/hooks/accounts/useEmployeeResync';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
-import { extractApiError } from '@/utils/apiError';
-import { UserProfilePopup } from '../../common/UserProfilePopup';
+import { extractApiError } from '@/lib/app/apiError';
+import { UserProfilePopup } from '../../common/profile/UserProfilePopup';
 import {InboxIcon, SendIcon, UsersIcon} from '@/components/common/icons';
 
 /**

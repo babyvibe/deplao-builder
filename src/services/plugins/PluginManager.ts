@@ -15,9 +15,9 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import { apiDb, apiTablesExist } from '../api/dbSchema';
 import { ApiError, Principal } from '../api/types';
-import { pluginPrincipal } from '../api/ApiAuth';
+import { pluginPrincipal } from '../api/auth/ApiAuth';
 import { getApiSettingNumber } from '../api/settings';
-import { decryptSecret, encryptSecret } from '../api/secretBox';
+import { decryptSecret, encryptSecret } from '../api/auth/secretBox';
 import {
     apiScopesOf, describePermissions, MANIFEST_FILE, PermissionInfo, PluginManifest, PluginRuntime, readManifest,
     SettingsSchema, SettingsField,
@@ -464,7 +464,7 @@ class PluginManager {
             const secret = prevSettings[REMOTE_SECRET_KEY] ? decryptSecret(prevSettings[REMOTE_SECRET_KEY]) : '';
             const newSecret = secret || `rps_${crypto.randomBytes(24).toString('base64url')}`;
             prevSettings[REMOTE_SECRET_KEY] = encryptSecret(newSecret);
-            const keys = require('../api/ApiKeyService').default.getInstance();
+            const keys = require('../api/auth/ApiKeyService').default.getInstance();
             keys.revokeByPlugin(m.id);
             const scopes = apiScopesOf(m.permissions);
             // Plugin remote không xin scope API nào (chỉ node/route) → không cần key gọi ngược.
@@ -616,7 +616,7 @@ class PluginManager {
             if (target.startsWith(root + path.sep)) fs.rmSync(target, { recursive: true, force: true });
         }
         apiDb().run('DELETE FROM plugins WHERE id = ?', [id]);
-        try { require('../api/ApiKeyService').default.getInstance().revokeByPlugin(id); } catch { /* ignore */ }
+        try { require('../api/auth/ApiKeyService').default.getInstance().revokeByPlugin(id); } catch { /* ignore */ }
         try { require('../api/ApiPlatform').default.getInstance().getWebhooks().removeByOwner(`plugin:${id}`); } catch { /* ignore */ }
         if (opts.deleteData) {
             this.storage.clear(id);

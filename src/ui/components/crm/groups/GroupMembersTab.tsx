@@ -1,25 +1,25 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import DataAccessor, { isReadFailure } from '@/lib/data/DataAccessor';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
-import { useAccountStore } from '@/store/accountStore';
-import { useAppStore } from '@/store/appStore';
-import { useCRMStore } from '@/store/crmStore';
-import { useEmployeeResync } from '@/hooks/useEmployeeResync';
+import { useAccountStore } from '@/store/accounts/accountStore';
+import { useAppStore } from '@/store/app/appStore';
+import { useCRMStore } from '@/store/crm/crmStore';
+import { useEmployeeResync } from '@/hooks/accounts/useEmployeeResync';
 import { buildGroupRows, countMembersByGroup, phonesByContact, readOutcome, withMemberPhones } from '@/lib/crm/loadFailure';
-import PhoneDisplay from '@/components/common/PhoneDisplay';
-import GroupAvatar from '@/components/common/GroupAvatar';
+import PhoneDisplay from '@/components/common/inputs/PhoneDisplay';
+import GroupAvatar from '@/components/common/avatars/GroupAvatar';
 import CampaignCreateModal from '@/components/crm/campaigns/CampaignCreateModal';
 import AddToContactsModal from '@/components/crm/contacts/AddToContactsModal';
 import LoadFailedNotice from '@/components/crm/LoadFailedNotice';
 import ShareGroupModal from '@/components/crm/groups/ShareGroupModal';
 import SharedGroupsCategoryPopup from '@/components/crm/groups/SharedGroupsCategoryPopup';
 import BulkImportGroupsModal from '@/components/crm/groups/BulkImportGroupsModal';
-import { syncZaloGroups, MemberPlaceholder, SyncGroupsProgress } from '@/lib/zaloGroupUtils';
-import { classifyZaloJoinResult } from '@/lib/zaloJoinGroupResult';
+import { syncZaloGroups, MemberPlaceholder, SyncGroupsProgress } from '@/lib/zalo/zaloGroupUtils';
+import { classifyZaloJoinResult } from '@/lib/zalo/zaloJoinGroupResult';
 import { AlertIcon, CheckIcon, SearchIcon } from '@/components/common/icons';
-import { useGroupMemberSync } from '@/hooks/useGroupMemberSync';
-import { toLocalMediaUrl } from '@/lib/localMedia';
-import { groupRoleKind } from '../../../../shared/groupMemberRoles';
+import { useGroupMemberSync } from '@/hooks/chat/useGroupMemberSync';
+import { toLocalMediaUrl } from '@/lib/media/localMedia';
+import { groupRoleKind } from '../../../../shared/chat/groupMemberRoles';
 
 interface ZaloGroup {
   contact_id: string;
@@ -538,7 +538,7 @@ function ZaloGroupMembersTab() {
     setLinkJoinMsg('');
     try {
       const res = await ipc.zalo?.joinGroupLink({ auth, link: linkScanInput.trim() });
-      // 178 = đã là thành viên, 172 = nhóm đầy, 240 = chờ duyệt (lib/zaloJoinGroupResult)
+      // 178 = đã là thành viên, 172 = nhóm đầy, 240 = chờ duyệt (lib/zalo/zaloJoinGroupResult)
       const join = classifyZaloJoinResult(res);
       if (join.outcome === 'already') {
         setLinkJoinStatus('already');
@@ -636,7 +636,7 @@ function ZaloGroupMembersTab() {
       }
 
       // Gọi backend API quét thành viên
-      const { scanGroupViaBackend } = await import('@/lib/backendService');
+      const { scanGroupViaBackend } = await import('@/lib/crm/backendService');
       const result = await scanGroupViaBackend({
         pageId: activeAccountId,
         cookie: acc.cookies,

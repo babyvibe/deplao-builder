@@ -6,7 +6,7 @@
 import { cn } from '@/lib/cn';
 import React, { useCallback, useEffect, useState } from 'react';
 import ipc, { ApiWebhookDelivery, ApiWebhookRecord } from '@/lib/ipc';
-import { useAppStore } from '@/store/appStore';
+import { useAppStore } from '@/store/app/appStore';
 import { showConfirm } from '@/components/common/ConfirmDialog';
 import { Spinner } from '@/components/common/PageLoading';
 import { PlusIcon, WebhookIcon } from '@/components/common/icons';

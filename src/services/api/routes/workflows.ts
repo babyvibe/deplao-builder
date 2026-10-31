@@ -9,7 +9,7 @@
  */
 import { s } from '../schema';
 import { ApiContext, ApiError, Principal, route, RouteDef } from '../types';
-import { accountAllowed } from '../ApiAuth';
+import { accountAllowed } from '../auth/ApiAuth';
 import { notFound } from './common';
 
 const wfParams = s.object({ workflowId: s.id() });

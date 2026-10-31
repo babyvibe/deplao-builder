@@ -1,4 +1,4 @@
-import ZaloLoginHelper from "../../utils/ZaloLoginHelper";
+import ZaloLoginHelper from "../../utils/zalo/ZaloLoginHelper";
 
 export default class LoginService {
     private loginHelper: ZaloLoginHelper;

@@ -15,9 +15,9 @@ process.env.WS_NO_UTF_8_VALIDATE = '1';
 require('electron').app.setName('Deplao');
 
 // Telegram: schema API layer mới cho GramJS (bản npm vẫn layer 198 → tin dùng tính năng mới thành "chưa hỗ trợ") —
-// phải trước mọi require('telegram'), xem src/services/telegram/telegramApiLayer.ts.
+// phải trước mọi require('telegram'), xem src/services/telegram/api/telegramApiLayer.ts.
 try {
-  const layer = require('../src/services/telegram/telegramApiLayer').installTelegramApiLayer();
+  const layer = require('../src/services/telegram/api/telegramApiLayer').installTelegramApiLayer();
   if (!layer.installed) console.warn(`[bootstrap] Telegram API layer ${layer.layer}: ${layer.reason}`);
 } catch (err: any) {
   console.warn('[bootstrap] Telegram API layer:', err?.message || err);
@@ -26,7 +26,7 @@ try {
 // Chẩn đoán theo yêu cầu (file cờ <userData>/diagnostics/profile-next-startup): hồ sơ CPU 120 s đầu của main process,
 // tính cả lúc nạp main.ts + chờ app ready — bắt đầu trước require('./main').
 try {
-  require('../src/utils/startupProfiler').startMainStartupProfile();
+  require('../src/utils/startup/startupProfiler').startMainStartupProfile();
 } catch (err: any) {
   console.warn('[bootstrap] startup profiler:', err?.message || err);
 }

@@ -15,8 +15,8 @@ import * as os from 'os';
 import * as path from 'path';
 import { randomBytes, randomUUID } from 'crypto';
 import { CloudError, CloudSettingsData, CloudSettingsStore } from './contracts';
-import type { DbSyncMode, MediaSyncOptions, TunnelAutoConfig, TunnelMode, TunnelServiceId } from '../../shared/cloudContracts';
-import { isCloudStorageProvider } from '../../shared/cloudContracts';
+import type { DbSyncMode, MediaSyncOptions, TunnelAutoConfig, TunnelMode, TunnelServiceId } from '../../shared/cloud/cloudContracts';
+import { isCloudStorageProvider } from '../../shared/cloud/cloudContracts';
 import Logger from '../../utils/Logger';
 
 export const CLOUD_SETTINGS_FILE = 'cloud-settings.json';

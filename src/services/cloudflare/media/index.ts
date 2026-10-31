@@ -27,7 +27,7 @@ import * as fs from 'fs';
 import {
     isAllScope, MediaSyncOptions, MediaSyncStatus, normalizeScope, R2CleanupPreview, R2CleanupProgress, R2CleanupRequest,
     R2CleanupResult, scopeIncludesAccount,
-} from '../../../shared/cloudContracts';
+} from '../../../shared/cloud/cloudContracts';
 import type { CloudflareCore, CloudMediaModule, CloudSettingsData } from '../contracts';
 import { CloudError } from '../contracts';
 import {
@@ -824,7 +824,7 @@ export function createDefaultDeps(): CloudMediaServiceDeps {
         supportedWorkspace: () => {
             try {
                 // eslint-disable-next-line @typescript-eslint/no-var-requires
-                return require('../../../utils/WorkspaceManager').default.getInstance().getActiveWorkspace()?.type !== 'remote';
+                return require('../../../utils/app/WorkspaceManager').default.getInstance().getActiveWorkspace()?.type !== 'remote';
             } catch {
                 return true;
             }

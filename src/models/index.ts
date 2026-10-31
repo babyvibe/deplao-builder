@@ -1,14 +1,14 @@
 // Core DB models
-export type { Account } from './account';
-export type { Message, MessageDraft } from './message';
-export type { Contact, Friend, PageGroupMember, FriendRequest, Link } from './contact';
+export type { Account } from './accounts/account';
+export type { Message, MessageDraft } from './chat/message';
+export type { Contact, Friend, PageGroupMember, FriendRequest, Link } from './chat/contact';
 
 // CRM
 export type {
     CRMNote, CRMCampaign, CRMCampaignContact, CRMSendLog,
     CRMTag, CRMContactTag,
     CRMCampaignStatus, CRMContactStatus, CRMCampaignType,
-} from './crm';
+} from './crm/crm';
 
 // Facebook
 export type {
@@ -22,26 +22,26 @@ export type {
     FBConnectionStatus, FBReactionAction,
     FBE2EEStatus, FBE2EEBridgeConfig, FBE2EESendPayload, FBE2EESendResult, FBE2EEMessageRaw,
     FBJsonRpcRequest, FBJsonRpcResponse, FBJsonRpcEvent,
-} from './facebook';
+} from './facebook/facebook';
 
 // AI
-export type { AIAssistant, AIAssistantFile, ChatMessage, AIPlatform, AIUsageLog, AIAccountAssistant } from './ai';
+export type { AIAssistant, AIAssistantFile, ChatMessage, AIPlatform, AIUsageLog, AIAccountAssistant } from './ai/ai';
 
 // Employee
 export type {
     Employee, EmployeePermission, EmployeeWithDetails, EmployeeModule,
     EmployeeGroup, EmployeeSession, EmployeeMessageLog,
-} from './employee';
-export { ALL_MODULES } from './employee';
+} from './employee/employee';
+export { ALL_MODULES } from './employee/employee';
 
 // Proxy
-export type { ProxyConfig } from './proxy';
+export type { ProxyConfig } from './accounts/proxy';
 
 // Workflow
-export type { Workflow, WorkflowRunLog } from './workflow';
+export type { Workflow, WorkflowRunLog } from './workflow/workflow';
 
 // Integration
-export type { Integration } from './integration';
+export type { Integration } from './integrations/integration';
 
 // ERP
 export type { ErpDepartment, ErpPosition, ErpEmployeeProfile, ErpAttendance, ErpLeaveRequest } from './erp/Hrm';

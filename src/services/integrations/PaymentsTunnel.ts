@@ -1,7 +1,7 @@
 /**
  * PaymentsTunnel — địa chỉ Internet của cổng nhận webhook thanh toán / tích hợp (IntegrationRegistry, mặc định 9888:
  * Casso, SePay, phần mềm bán hàng…). Một luồng logic cho:
- *   - ipcMain 'tunnel:start' / 'tunnel:stop' / 'tunnel:status' (electron/ipc/integrationIpc.ts — chỉ gọi vào đây);
+ *   - ipcMain 'tunnel:start' / 'tunnel:stop' / 'tunnel:status' (electron/ipc/integrations/integrationIpc.ts — chỉ gọi vào đây);
  *   - module tunnel (src/services/cloudflare/tunnel) khi bật / tắt dịch vụ 'payments' ở
  *     Cài đặt → Internet & Đám mây → Địa chỉ Internet (chế độ Địa chỉ tạm / ngrok / Cloudflare thủ công).
  *

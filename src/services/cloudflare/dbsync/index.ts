@@ -16,14 +16,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type {
     CloudScope, DbSyncMode, DbSyncStatus, DbSyncWorkspaceStatus, RemoteDbCopy, RestoreProgress, RestoreRequest, SyncLogEntry,
-} from '../../../shared/cloudContracts';
-import { isAllScope, normalizeScope, sameScope, storageLabel } from '../../../shared/cloudContracts';
+} from '../../../shared/cloud/cloudContracts';
+import { isAllScope, normalizeScope, sameScope, storageLabel } from '../../../shared/cloud/cloudContracts';
 import { CloudError } from '../contracts';
 import type { CloudDbModule, R2Client } from '../contracts';
 import { cloudflare } from '../CloudflareService';
 import { invalidateRestoreGate } from '../restoreGate';
 import DatabaseService from '../../database/DatabaseService';
-import WorkspaceManager, { Workspace } from '../../../utils/WorkspaceManager';
+import WorkspaceManager, { Workspace } from '../../../utils/app/WorkspaceManager';
 import Logger from '../../../utils/Logger';
 import { DbOps, createWorkerOps } from './DbOpsClient';
 import type { DbOpsEvent } from './ops';

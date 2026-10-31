@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
-import { useAppStore } from '@/store/appStore';
-import PublicAddressCard, { usePublicAddresses } from '@/components/common/PublicAddressCard';
+import { useAppStore } from '@/store/app/appStore';
+import PublicAddressCard, { usePublicAddresses } from '@/components/common/cloud/PublicAddressCard';
 import { AlertIcon, ChatIcon, CheckIcon, ClipboardListIcon, CloseIcon, CreditCardIcon, GlobeIcon, HardDriveIcon, KeyIcon, LinkIcon, LockIcon, PackageIcon, PluginIcon, RefreshIcon, SearchIcon, SettingsIcon, SunIcon, TruckIcon, UserIcon , EditIcon } from '@/components/common/icons';
-import { getNodeLabel } from '@/components/workflow/workflowConfig';
-import { getNodeDescription } from '@/components/workflow/nodeVisuals';
+import { getNodeLabel } from '@/components/workflow/nodes/workflowConfig';
+import { getNodeDescription } from '@/components/workflow/nodes/nodeVisuals';
 import { missingCredentialMessage, type CredentialAlternative } from './credentialRules';
 import WebhookRegistrationCard from './WebhookRegistrationCard';
-import { isWebhookRegistrationType } from '../../../shared/posWebhookTopics';
+import { isWebhookRegistrationType } from '../../../shared/integrations/posWebhookTopics';
 
 /** Bước Workflow có sẵn cho từng tích hợp — tên và mô tả lấy từ bảng node của Workflow. */
 const WORKFLOW_NODE_TYPES: Record<string, string[]> = {

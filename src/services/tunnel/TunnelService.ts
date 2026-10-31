@@ -48,7 +48,7 @@ import {
   tunnelAddressKind,
   tunnelRestartDelay,
   type TunnelAddressKind,
-} from '../../shared/tunnelAddress';
+} from '../../shared/cloud/tunnelAddress';
 
 let Tunnel: any = null;
 let bin: string | null = null;

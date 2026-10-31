@@ -2,7 +2,7 @@
  * Giới thiệu & Hướng dẫn → "Internet & Đám mây": hướng dẫn trang Cài đặt → Internet & Đám mây (kết nối Cloudflare,
  * Địa chỉ Internet, Kho lưu R2 / Google Drive, Đồng bộ dữ liệu, khôi phục + máy dự phòng, Mức sử dụng & chi phí).
  * Câu chữ bám giao diện ở src/ui/components/settings/cloud/**; giá, hạn mức và cổng lấy thẳng từ R2_PRICING,
- * GDRIVE_LIMITS, SINGLE_HOST_PATH_RULES (src/shared/cloudContracts.ts) để không lệch khi các số này đổi.
+ * GDRIVE_LIMITS, SINGLE_HOST_PATH_RULES (src/shared/cloud/cloudContracts.ts) để không lệch khi các số này đổi.
  */
 import React from 'react';
 import {
@@ -23,7 +23,7 @@ import {
   R2_PRICING,
   SINGLE_HOST_PATH_RULES,
   type TunnelServiceId,
-} from '../../../../shared/cloudContracts';
+} from '../../../../shared/cloud/cloudContracts';
 import { Badge, BulletList, Card, Paragraph, SectionTitle, StepList } from './introUi';
 
 // ─── Định dạng số (kiểu Việt Nam, giống thẻ Kho lưu / Mức sử dụng) ─────────────────────────

@@ -5,9 +5,9 @@
  *   tunnel   src/services/cloudflare/tunnel/index.ts   → export const cloudTunnel: CloudTunnelModule
  *   media    src/services/cloudflare/media/index.ts    → export const cloudMedia: CloudMediaModule
  *   dbsync   src/services/cloudflare/dbsync/index.ts   → export const cloudDb: CloudDbModule
- *   ipc      electron/ipc/cloudflareIpc.ts             → registerCloudflareIpc(): gọi 3 module trên + core
+ *   ipc      electron/ipc/cloud/cloudflareIpc.ts             → registerCloudflareIpc(): gọi 3 module trên + core
  *
- * Kiểu dùng chung với renderer nằm ở src/shared/cloudContracts.ts.
+ * Kiểu dùng chung với renderer nằm ở src/shared/cloud/cloudContracts.ts.
  * Quy ước lỗi: module ném CloudError (code + message tiếng Việt cho người dùng); IPC bọc thành { success:false }.
  */
 import type {
@@ -16,7 +16,7 @@ import type {
     R2CleanupPreview, R2CleanupProgress, R2CleanupRequest, R2CleanupResult, RemoteDbCopy,
     RestoreProgress, RestoreRequest, SyncLogEntry, TunnelAutoConfig, TunnelConfigView, TunnelHealth,
     TunnelMode, TunnelServiceId,
-} from '../../shared/cloudContracts';
+} from '../../shared/cloud/cloudContracts';
 
 export class CloudError extends Error {
     constructor(public code: string, message: string, public status?: number, public retryAfterMs?: number) {

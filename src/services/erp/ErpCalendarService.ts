@@ -6,19 +6,9 @@ import type {
   ErpCalendarEvent, CreateCalendarEventInput, ConflictResult,
 } from '../../models/erp';
 import ErpNotificationService from './ErpNotificationService';
-import { erpReminderLeadText, normalizeErpReminderMinutes } from '../../shared/erpReminderText';
-
-const pad2 = (value: number) => String(value).padStart(2, '0');
-
-/** Giờ hẹn trong thông báo nhắc trước: "09:00" (hôm nay), "09:00 27/10", "Cả ngày 27/10". */
-function reminderWhenText(startAt: number, allDay: boolean, now: number): string {
-  const d = new Date(startAt);
-  const sameDay = new Date(now).toDateString() === d.toDateString();
-  const day = `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}`;
-  if (allDay) return sameDay ? 'Cả ngày hôm nay' : `Cả ngày ${day}`;
-  const time = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-  return sameDay ? time : `${time} ${day}`;
-}
+import { erpReminderLeadText, normalizeErpReminderMinutes } from '../../shared/erp/erpReminderText';
+import { erpTimeRangeText, erpWhenText } from '../../shared/erp/erpNotifyText';
+import { erpPersonName } from './erpPeople';
 
 export default class ErpCalendarService {
   private static instance: ErpCalendarService;
@@ -148,15 +138,20 @@ export default class ErpCalendarService {
     });
     const event = this.getEvent(id)!;
     this.scheduleEventReminders(event);
-    // Notify attendees
+    // Notify attendees: "09:00 - 10:30 31/10 · Phòng A · Mời bởi Lan"
     if (input.attendees?.length) {
+      const inviteBody = [
+        erpTimeRangeText(input.start_at, normalizedEndAt, !!input.all_day, now),
+        input.location,
+        `Mời bởi ${erpPersonName(organizerId)}`,
+      ].filter(Boolean).join(' · ');
       for (const empId of input.attendees) {
         if (empId && empId !== organizerId) {
           try {
             ErpNotificationService.getInstance().notify(
               empId, 'event_invited',
               `Mời tham dự: ${input.title}`,
-              `${new Date(input.start_at).toLocaleString()}${normalizedEndAt > input.start_at ? ` → ${new Date(normalizedEndAt).toLocaleString()}` : ''}${input.location ? ` - ${input.location}` : ''}`,
+              inviteBody,
               `erp://event/${id}`,
               { eventId: id, channels: ['toast', 'zalo'] }
             );
@@ -356,7 +351,7 @@ export default class ErpCalendarService {
         .filter((id): id is string => !!id),
     );
     const title = erpReminderLeadText(event.start_at - now);
-    const body = [event.title, reminderWhenText(event.start_at, !!event.all_day, now), event.location].filter(Boolean).join(' · ');
+    const body = [event.title, erpWhenText(event.start_at, !!event.all_day, now), event.location].filter(Boolean).join(' · ');
     for (const recipient of recipients) {
       try {
         ErpNotificationService.getInstance().notify(recipient, 'event_reminder', title, body, `erp://event/${event.id}`, {

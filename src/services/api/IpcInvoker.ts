@@ -153,6 +153,8 @@ export const defaultErpRunner: ErpRunner = {
  */
 export interface PluginGrant {
     pluginId: string;
+    /** Tên ứng dụng (manifest) — chỉ để hiện cho người dùng, vd trong hộp thoại xác nhận. */
+    pluginName?: string;
     /** Quyền manifest đã kiểm, vd 'cloudflare:workers'. */
     permission: string;
     /** Tiền tố tên tài nguyên của plugin (pluginShortName). */
@@ -187,7 +189,7 @@ export const ADMIN_CHANNEL_PREFIXES = ['api:', 'plugins:', 'cloudflare:'];
  * Ngoại lệ DUY NHẤT của luật trên: kênh quản trị mà principal 'plugin' được gọi khi — và chỉ khi — lời gọi mang giấy
  * uỷ quyền (info.pluginGrant) của chính plugin đó do PluginApiBridge cấp sau khi kiểm quyền manifest + tiền tố.
  * API key, nhân viên, plugin không có giấy (vd route API v1 gọi thay plugin) vẫn bị chặn như mọi kênh quản trị khác.
- * Handler (electron/ipc/cloudflareWorkersIpc.ts) kiểm lại giấy + tiền tố + thư mục.
+ * Handler (electron/ipc/cloud/cloudflareWorkersIpc.ts) kiểm lại giấy + tiền tố + thư mục.
  */
 export const PLUGIN_DELEGATED_CHANNEL_PREFIXES = ['cloudflare:workers:'];
 

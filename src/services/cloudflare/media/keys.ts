@@ -9,7 +9,7 @@
  *  - Phạm vi lưu (tài khoản + từ ngày + file dùng chung): accountOfRelPath / relInScope / dirMayHaveInScope.
  */
 import * as path from 'path';
-import { ALL_SCOPE, CloudScope, scopeIncludesAccount } from '../../../shared/cloudContracts';
+import { ALL_SCOPE, CloudScope, scopeIncludesAccount } from '../../../shared/cloud/cloudContracts';
 
 export function toSlash(p: string): string {
     return String(p).replace(/\\/g, '/');

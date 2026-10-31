@@ -19,7 +19,7 @@
     "connectE2EE registers only devices without a server identity and waits for the encrypted socket",
     "Per-request panic recovery (handleSafely)",
     "Credential login removed from the E2EE bridge; served by loginHelper",
-    "Page templates / XMA kept as structured template attachments with all CTAs + carousel items; legacy LSInsertAttachment rows converted (bridge/xma.go)",
+    "Page templates / XMA kept as structured template attachments with all CTAs + carousel items; legacy LSInsertAttachment rows converted; button templates (message text + CTA rows without a card) get a template with those buttons (bridge/xma.go orphanButtons, events.go)",
     "fetchMessages RPC: per-thread history page via LightSpeed FetchMessagesTask, answered asynchronously; an existing-range answer must carry the request reference timestamp (as in mautrix-meta), one diagnostic log line per page (bridge/history.go)",
     "E2EE: thumbs-up CommonSticker, image galleries, placeholders for view-once / payment / contact; signal-only payloads dropped instead of empty messages"
   ],

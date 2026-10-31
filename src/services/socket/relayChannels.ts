@@ -11,7 +11,7 @@
  *  - BOSS_ONLY_CHANNELS — kênh EventBroadcaster KHÔNG gửi nhân viên, kèm lý do.
  *  - EMPLOYEE_FORWARD_CHANNELS — nhân viên (HttpClientService.handlePushedEvent) chuyển tiếp renderer.
  */
-import { BOSS_URL_CHANGED_EVENT } from '../../shared/tunnelAddress';
+import { BOSS_URL_CHANGED_EVENT } from '../../shared/cloud/tunnelAddress';
 
 /** Kênh Boss relay cho nhân viên (móc EventBroadcaster). Nhóm theo nguồn dữ liệu. */
 export const RELAY_CHANNELS: readonly string[] = Object.freeze([

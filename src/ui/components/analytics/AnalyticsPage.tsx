@@ -3,13 +3,13 @@ import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
-import { useAccountStore, type AccountInfo } from '@/store/accountStore';
-import { useAppStore } from '@/store/appStore';
-import AccountMultiDropdown from '@/components/common/AccountMultiDropdown';
+import { useAccountStore, type AccountInfo } from '@/store/accounts/accountStore';
+import { useAppStore } from '@/store/app/appStore';
+import AccountMultiDropdown from '@/components/common/accounts/AccountMultiDropdown';
 import EmployeeAnalyticsTab from './EmployeeAnalyticsTab';
 import PageLoading from '@/components/common/PageLoading';
 import { ActivityIcon, AlertIcon, AwardIcon, BarChartIcon, BotIcon, BrainIcon, CalendarIcon, CampaignIcon, ChartIcon, ChatIcon, CheckIcon, ClipboardIcon, ClipboardListIcon, ClockIcon, CloseIcon, InboxIcon, InfoIcon, LightningIcon, MailIcon, MessageIcon, PieChartIcon, RocketIcon, SearchIcon, SendIcon, StarIcon, SunIcon, TagIcon, TrendingUpIcon, UserCheckIcon, UserIcon, UsersIcon } from '@/components/common/icons';
-import { resolveAnalyticsRange, toLocalDateInput } from '@/lib/analyticsRange';
+import { resolveAnalyticsRange, toLocalDateInput } from '@/lib/analytics/analyticsRange';
 import {
   ANALYTICS_ACCOUNTS_STORAGE_KEY, isAllAccounts, parseStoredAccountSelection, resolveSelectedAccounts,
   serializeAccountSelection, type StoredAccountSelection,

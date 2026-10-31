@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import ipc from '@/lib/ipc';
-import { useAppStore } from '@/store/appStore';
-import { useWorkspaceStore } from '@/store/workspaceStore';
+import { useAppStore } from '@/store/app/appStore';
+import { useWorkspaceStore } from '@/store/app/workspaceStore';
 import { Spinner } from '@/components/common/PageLoading';import { UserIcon } from '@/components/common/icons';
 
 

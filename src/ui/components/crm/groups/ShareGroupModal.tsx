@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
-import { useAccountStore } from '@/store/accountStore';
-import { submitSharedGroup, DEFAULT_CATEGORIES, type SharedGroupCategory } from '@/lib/backendService';
+import { useAccountStore } from '@/store/accounts/accountStore';
+import { submitSharedGroup, DEFAULT_CATEGORIES, type SharedGroupCategory } from '@/lib/crm/backendService';
 
 // ─── Icons ──────────────────────────────────────────────────────────────────
 

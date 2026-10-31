@@ -7,7 +7,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import type { SyncLogEntry } from '../../../shared/cloudContracts';
+import type { SyncLogEntry } from '../../../shared/cloud/cloudContracts';
 import { CloudError } from '../contracts';
 import type { CloudflareCore, R2Client } from '../contracts';
 import { storeLabelNow } from '../storeLabel';

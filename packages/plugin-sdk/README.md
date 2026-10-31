@@ -36,6 +36,7 @@ module.exports = {
 - `bundleDir` / thư mục migration là đường dẫn tương đối trong thư mục ứng dụng đã cài; gói theo dạng `bundle.json` + `worker/` + `assets/` (tuỳ chọn). Tổng ≤ 50 MB, ≤ 5000 file asset, mỗi file ≤ 25 MiB.
 - Token thiếu quyền → `CF_PERMISSION` (message nêu quyền cần thêm: Workers Scripts · Edit, D1 · Edit); chưa kết nối → `CF_NOT_CONNECTED`; Cloudflare báo lỗi → `CF_API`.
 - Mỗi lời gọi tốn request trong ngân sách 100 request / 5 phút dùng chung của Deplao. Triển khai có thể mất vài phút: chạy ở nền và ghi tiến độ bằng `storage`, đừng để UI chờ `backend.call`.
+- Tên miền riêng cho Worker: `deplao.cloudflare.zones()` liệt kê tên miền của tài khoản; `workers.domains.attach(name, 'app.tenmien.vn')` gắn tên con (Cloudflare tự tạo bản ghi DNS + chứng chỉ, vài phút sau tên mới trả lời được qua HTTPS); `workers.domains.list(name)`, `workers.domains.detach(name, hostname)`. Chỉ gắn tên con mới: không gắn tên miền gốc, không đè bản ghi DNS đang có hay tên đang gắn cho Worker khác (`CONFLICT`). Trước khi ghi, Deplao hỏi người dùng bằng hộp thoại của Deplao; bấm "Không" → `CF_DECLINED`.
 
 ```js
 const crypto = require('crypto');

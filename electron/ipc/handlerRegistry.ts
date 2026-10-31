@@ -11,7 +11,7 @@
  * rộng bề mặt mà nhân viên gọi được.
  */
 import { ipcMain } from 'electron';
-import { timeIpc } from '../../src/utils/mainThreadWatchdog';
+import { timeIpc } from '../../src/utils/startup/mainThreadWatchdog';
 
 export type RegisteredIpcHandler = (event: any, ...args: any[]) => any;
 

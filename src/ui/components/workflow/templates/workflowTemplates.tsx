@@ -1,7 +1,7 @@
 import React from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { DEFAULT_CONFIGS } from '../workflowConfig';
-import { Channel } from '../../../../configs/channelConfig';
+import { DEFAULT_CONFIGS } from '../nodes/workflowConfig';
+import { Channel } from '../../../../configs/channels/channelConfig';
 import { AwardIcon, BellIcon, BookIcon, BookmarkIcon, BotIcon, BrainIcon, CalendarIcon, ChartIcon, ChatIcon, CheckIcon, ClipboardListIcon, ClockIcon, CreditCardIcon, CrownIcon, DollarIcon, EditIcon, FileTextIcon, GiftIcon, HardDriveIcon, HomeIcon, ImageIcon, InboxIcon, KeyIcon, LightningIcon, LinkIcon, MaximizeIcon, MegaphoneIcon, MinimizeIcon, PackageIcon, PinIcon, PluginIcon, RefreshIcon, RocketIcon, SendIcon, SettingsIcon, ShieldIcon, ShoppingCartIcon, ShuffleIcon, SmartphoneIcon, StarIcon, TagIcon, TargetIcon, TrendingUpIcon, TruckIcon, UserCheckIcon, UserIcon, UsersIcon, WaveIcon, WifiIcon } from '@/components/common/icons';
 
 

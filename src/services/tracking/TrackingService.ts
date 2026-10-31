@@ -16,9 +16,9 @@
  * Rate limit: 10 req/giờ/IP - trả về 429 nếu vượt quá.
  */
 
-import { IS_DEV_BUILD } from '../../configs/BuildConfig';
+import { IS_DEV_BUILD } from '../../configs/app/BuildConfig';
 import DatabaseService from '../database/DatabaseService';
-import WorkspaceManager from '../../utils/WorkspaceManager';
+import WorkspaceManager from '../../utils/app/WorkspaceManager';
 import Logger from '../../utils/Logger';
 import * as path from 'path';
 import * as fs from 'fs';

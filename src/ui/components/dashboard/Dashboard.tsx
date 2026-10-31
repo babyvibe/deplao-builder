@@ -1,15 +1,15 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { useAccountStore } from '@/store/accountStore';
-import { useAppStore } from '@/store/appStore';
-import { useEmployeeStore } from '@/store/employeeStore';
-import { useWorkspaceStore } from '@/store/workspaceStore';
-import { useVisibleAccounts } from '@/hooks/useVisibleAccounts';
+import { useAccountStore } from '@/store/accounts/accountStore';
+import { useAppStore } from '@/store/app/appStore';
+import { useEmployeeStore } from '@/store/employee/employeeStore';
+import { useWorkspaceStore } from '@/store/app/workspaceStore';
+import { useVisibleAccounts } from '@/hooks/accounts/useVisibleAccounts';
 import AccountCard from './AccountCard';
 import MergedInboxModal from './MergedInboxModal';
 import EmployeeLoginModal from './EmployeeLoginModal';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
 import PageLoading from '@/components/common/PageLoading';
-import { RestoreStateBanner } from '../settings/cloud/RestoreStateBanner';
+import { RestoreStateBanner } from '../settings/cloud/restore/RestoreStateBanner';
 import { BugIcon, HomeIcon, RefreshIcon, SunIcon, TargetIcon, UserIcon, UsersIcon } from '@/components/common/icons';
 
 const SUPPORT_GITHUB_URL = 'https://github.com/babyvibe/deplao-builder';
@@ -32,7 +32,7 @@ export default function Dashboard() {
   // Khôi phục dữ liệu từ kho đám mây — Cloudflare R2 hoặc Google Drive (máy chủ, bản app có module Cloudflare).
   const canRestoreFromCloud = !isRemoteWs && !!(ipc as { cloudflare?: unknown }).cloudflare;
   const openCloudRestore = () => {
-    void import('../settings/cloud/RestoreWizard').then(m => { m.openRestoreWizard({ mode: 'new' }); });
+    void import('../settings/cloud/restore/RestoreWizard').then(m => { m.openRestoreWizard({ mode: 'new' }); });
   };
 
   const dragIndexRef = useRef<number | null>(null);

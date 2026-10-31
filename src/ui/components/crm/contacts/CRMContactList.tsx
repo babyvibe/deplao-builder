@@ -1,19 +1,19 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { reportBrokenAvatar } from '@/lib/contactRefresh';
-import type { CRMContact } from '@/store/crmStore';
-import type { ContactTypeFilter, GenderFilter, BirthdayFilter } from '@/store/crmStore';
-import type { LabelData } from '@/store/appStore';
-import { useAppStore } from '@/store/appStore';
-import type { LocalLabelItem } from '@/components/common/LocalLabelSelector';
+import { reportBrokenAvatar } from '@/lib/contacts/contactRefresh';
+import type { CRMContact } from '@/store/crm/crmStore';
+import type { ContactTypeFilter, GenderFilter, BirthdayFilter } from '@/store/crm/crmStore';
+import type { LabelData } from '@/store/app/appStore';
+import { useAppStore } from '@/store/app/appStore';
+import type { LocalLabelItem } from '@/components/common/inputs/LocalLabelSelector';
 import ZaloLabelBadge from '../tags/ZaloLabelBadge';
-import { UserProfilePopup } from '@/components/common/UserProfilePopup';
-import PhoneDisplay from '@/components/common/PhoneDisplay';
-import GroupAvatar from '@/components/common/GroupAvatar';
+import { UserProfilePopup } from '@/components/common/profile/UserProfilePopup';
+import PhoneDisplay from '@/components/common/inputs/PhoneDisplay';
+import GroupAvatar from '@/components/common/avatars/GroupAvatar';
 import PageLoading from '@/components/common/PageLoading';
 import { CalendarIcon, ClockIcon, CloseIcon, CloudIcon, EditIcon, FolderIcon, GhostIcon, GiftIcon, HardDriveIcon, PhoneIcon, StarIcon, TagIcon, UserCheckIcon, UserIcon, UsersIcon } from '@/components/common/icons';
-import { CHANNEL } from '@/lib/channelHelper';
-import type { Channel } from '../../../../configs/channelConfig';
-import PeerInitials from '@/components/common/PeerInitials';
+import { CHANNEL } from '@/lib/channels/channelHelper';
+import type { Channel } from '../../../../configs/channels/channelConfig';
+import PeerInitials from '@/components/common/avatars/PeerInitials';
 
 
 

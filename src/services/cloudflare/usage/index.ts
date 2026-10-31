@@ -15,8 +15,8 @@
 import * as path from 'path';
 import type {
     CloudStorageProvider, CloudUsageMeter, CloudUsageReport, GoogleDriveStatus,
-} from '../../../shared/cloudContracts';
-import { GDRIVE_LIMITS, R2_PRICING } from '../../../shared/cloudContracts';
+} from '../../../shared/cloud/cloudContracts';
+import { GDRIVE_LIMITS, R2_PRICING } from '../../../shared/cloud/cloudContracts';
 import type { CloudflareApi, CloudflareCore, CloudUsageModule, R2OpClass } from '../contracts';
 import Logger from '../../../utils/Logger';
 import { UsageMeter } from './UsageMeter';

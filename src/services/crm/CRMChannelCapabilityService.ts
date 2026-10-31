@@ -1,5 +1,5 @@
 import DatabaseService from '../database/DatabaseService';
-import { getCapability, normalizeChannel, type Channel } from '../../configs/channelConfig';
+import { getCapability, normalizeChannel, type Channel } from '../../configs/channels/channelConfig';
 
 /** CRM actions are checked here by both IPC and CRM queue.  UI uses the same
  * ChannelCapability config, while this service prevents bypassing it. */

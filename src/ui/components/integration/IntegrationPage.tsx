@@ -3,12 +3,12 @@ import PageLoading from '@/components/common/PageLoading';
 import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import { cn } from '@/lib/cn';
-import { useEmployeeStore } from '@/store/employeeStore';
-import { useWorkspaceStore } from '@/store/workspaceStore';
-import PublicAddressCard, { usePublicAddresses } from '@/components/common/PublicAddressCard';
+import { useEmployeeStore } from '@/store/employee/employeeStore';
+import { useWorkspaceStore } from '@/store/app/workspaceStore';
+import PublicAddressCard, { usePublicAddresses } from '@/components/common/cloud/PublicAddressCard';
 import { navigateSettings } from '@/components/settings/cloud/cloudUi';
 import IntegrationDetailPage, { type IntegrationWebhookInfo } from './IntegrationDetailPage';
-import AIAssistantPage from './AIAssistantPage';
+import AIAssistantPage from './ai/AIAssistantPage';
 import type { CredentialAlternative } from './credentialRules';
 import { AlertIcon, BotIcon, ChatIcon, CheckCircleIcon, CreditCardIcon, DollarIcon, GlobeIcon, LightningIcon, MenuIcon, PackageIcon, PinIcon, PluginIcon, RefreshIcon, RocketIcon, ShoppingCartIcon, ShuffleIcon, SparklesIcon, StoreIcon, TargetIcon, TruckIcon } from '@/components/common/icons';
 

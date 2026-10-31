@@ -32,7 +32,7 @@ export const PLUGIN_PERMISSIONS: ReadonlyArray<{ id: PluginPermission; label: st
     { id: 'network', label: 'Kết nối Internet' },
     { id: 'schedules', label: 'Chạy định kỳ khi Deplao đang mở' },
     // deplao.cloudflare (chỉ backend): token Cloudflare không đưa cho ứng dụng; tên tài nguyên = tiền tố pluginShortName.
-    { id: 'cloudflare:workers', label: 'Triển khai Worker và cơ sở dữ liệu D1 lên tài khoản Cloudflare đã kết nối trong Deplao (chỉ tài nguyên mang tên của ứng dụng này)' },
+    { id: 'cloudflare:workers', label: 'Triển khai Worker và cơ sở dữ liệu D1 lên tài khoản Cloudflare đã kết nối trong Deplao (chỉ tài nguyên mang tên của ứng dụng này), gắn tên miền con cho Worker đó khi bạn đồng ý' },
 ];
 
 /** Scope plugin không được xin (tự nâng quyền / quản trị máy). */

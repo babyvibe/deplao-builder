@@ -1,4 +1,4 @@
-import type { ScanType } from '../../../../services/facebook/FacebookScanTypes';import { ChatIcon, EditIcon, SearchIcon, UsersIcon } from '@/components/common/icons';
+import type { ScanType } from '../../../../services/facebook/scan/FacebookScanTypes';import { ChatIcon, EditIcon, SearchIcon, UsersIcon } from '@/components/common/icons';
 
 
 /** Bộ lọc cho từng loại scan */

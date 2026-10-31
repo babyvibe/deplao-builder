@@ -1,6 +1,6 @@
 /**
  * ChannelActions — luồng thao tác chat theo kênh, MIRROR đúng cách UI đang làm
- * (src/ui/components/chat/ChatWindow.tsx, MessageInput.tsx, src/ui/lib/adapters/*).
+ * (src/ui/components/chat/window/, src/ui/lib/chat/forward/forwardSend.ts, MessageInput.tsx, src/ui/lib/channels/adapters/*).
  *
  * Chỉ gọi kênh IPC qua ctx.call — không gọi service/DB trực tiếp. Khi UI đổi luồng,
  * cập nhật file này theo (test chatAdapters.test.ts khoá tên kênh + tham số).
@@ -334,7 +334,7 @@ export async function react(ctx: ApiContext, acc: AccountInfo, row: any, emoji: 
     }
 }
 
-/** Bản sao EMOJI_TO_REACTION (src/ui/lib/chat/emojiUtils.ts) — mã reaction Zalo theo emoji. */
+/** Bản sao EMOJI_TO_REACTION (src/ui/lib/chat/messages/emojiUtils.ts) — mã reaction Zalo theo emoji. */
 export const EMOJI_TO_REACTION: Record<string, string> = {
     '❤️': 'HEART', '👍': 'LIKE', '😄': 'HAHA', '😮': 'WOW', '😢': 'CRY', '😡': 'ANGRY',
     '😘': 'KISS', '😂': 'TEARS_OF_JOY', '💩': 'SHIT', '🌹': 'ROSE', '💔': 'BROKEN_HEART',
@@ -420,7 +420,7 @@ const BLOCKED_TYPES = ['chat.ecard', 'group.poll', 'chat.poll', 'chat.todo', 'ch
     'chat.recommended', 'chat.recommend', 'chat.location.new'];
 
 /**
- * Phân loại tin cho API forward — tập con của getForwardPlan (src/ui/lib/chat/forwardSupport.ts).
+ * Phân loại tin cho API forward — tập con của getForwardPlan (src/ui/lib/chat/forward/forwardSupport.ts).
  * Loại UI làm được nhưng API chưa (sticker, danh thiếp, link thẻ, tin thoại, rtf) → 'unsupported'.
  */
 export function forwardKind(row: any): ForwardKind {
@@ -447,7 +447,7 @@ function localMediaPath(row: any): string {
 }
 
 /**
- * Chuyển tiếp — mirror sendOneForward (ChatWindow.tsx) ở các nhánh chính:
+ * Chuyển tiếp — mirror sendOneForward (src/ui/lib/chat/forward/forwardSend.ts) ở các nhánh chính:
  *  - văn bản → gửi lại văn bản (zca-js forwardMessage chỉ hỗ trợ text),
  *  - ảnh/video/file → gửi lại từ file local (tải về qua file:downloadMessageMedia nếu chưa có),
  *  - không có file: Facebook/Telegram dùng forward gốc của kênh.

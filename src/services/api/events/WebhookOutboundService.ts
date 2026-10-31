@@ -21,8 +21,8 @@ import { apiDb, apiTablesExist } from '../dbSchema';
 import { ApiError, Principal } from '../types';
 import { EventHub, ApiEvent, canReceive } from './EventHub';
 import { getApiSettingBool } from '../settings';
-import { guardedRequest } from '../netGuard';
-import { decryptSecret, encryptSecret } from '../secretBox';
+import { guardedRequest } from '../http/netGuard';
+import { decryptSecret, encryptSecret } from '../auth/secretBox';
 
 export const RETRY_SCHEDULE_MS = [30_000, 120_000, 600_000, 3_600_000, 21_600_000];
 /** Lần đầu + 5 lần thử lại. */

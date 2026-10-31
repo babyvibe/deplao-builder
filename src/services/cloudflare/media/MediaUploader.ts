@@ -13,7 +13,7 @@
  *  - Chốt chặn cuối của phạm vi lưu: dòng chờ tải nay ngoài phạm vi (đổi phạm vi khi đang tải, dòng cũ…) → excluded.
  */
 import * as fs from 'fs';
-import type { MediaSyncOptions } from '../../../shared/cloudContracts';
+import type { MediaSyncOptions } from '../../../shared/cloud/cloudContracts';
 import type { R2Client } from '../contracts';
 import type { MediaRow } from './CloudMediaIndex';
 import { absPathFor, contentTypeFor, MediaScopeFilter, normEtag, objectKeyFor, relInScope } from './keys';

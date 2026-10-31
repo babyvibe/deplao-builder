@@ -19,7 +19,7 @@ import * as path from 'path';
 import { app } from 'electron';
 import BetterSqlite3 from 'better-sqlite3';
 import Logger from '../../../utils/Logger';
-import ConnectionManager from '../../../utils/ConnectionManager';
+import ConnectionManager from '../../../utils/connection/ConnectionManager';
 import EventBroadcaster from '../../event/EventBroadcaster';
 import {
     MobileSyncRange,

@@ -73,21 +73,21 @@ import path from "path";
 import * as fs from "node:fs";
 import {SendMessageResult} from "zca-js/dist/apis/sendMessage";
 import {SendCardOptions} from "zca-js/dist/apis/sendCard";
-import ConnectionManager from "../../utils/ConnectionManager";
+import ConnectionManager from "../../utils/connection/ConnectionManager";
 import {SendLinkOptions, SendLinkResponse} from "zca-js/dist/apis/sendLink";
 import {GetGroupLinkDetailResponse} from "zca-js/dist/apis/getGroupLinkDetail";
 import {imageSize} from "image-size";
-import {convertThreadType, isImageFile} from "../../utils/Utils";
+import {convertThreadType, isImageFile} from "../../utils/zalo/Utils";
 import Logger from "../../utils/Logger";
 import { getZaloFriendOnlines, getZaloPresence } from "./zaloPresenceCache";
 import { applyZaloAutoDeleteList, applyZaloAutoDeleteOne } from "./zaloAutoDeleteSync";
-import type { ZaloPresence } from "../../shared/zaloPresence";
-import { isZaloAutoDeleteTtl } from "../../shared/zaloAutoDelete";
-import { isValidZaloSettingValue } from "../../shared/zaloPrivacySettings";
+import type { ZaloPresence } from "../../shared/zalo/zaloPresence";
+import { isZaloAutoDeleteTtl } from "../../shared/zalo/zaloAutoDelete";
+import { isValidZaloSettingValue } from "../../shared/zalo/zaloPrivacySettings";
 import {
     ZALO_PRODUCT_MAX_PHOTOS, mapZaloCatalog, mapZaloProduct, normalizeProductPrice, validateZaloProduct,
     type ZaloCatalog, type ZaloProduct,
-} from "../../shared/zaloCatalog";
+} from "../../shared/zalo/zaloCatalog";
 import {
     hiddenStatus, resetZaloHiddenPin, setZaloConversationHidden, setZaloHiddenPin, syncZaloHidden, unlockZaloHidden, zaloHiddenApiOf,
     type HiddenStatus, type UnlockResult,
@@ -1549,7 +1549,7 @@ export default class ZaloService {
         if (filePaths.length === 1) return this.sendImage(filePaths[0], normalizedThreadId, threadType, undefined, quote);
         try {
             // Các lỗi kiểm tra file dưới đây (trước khi upload) được chuyển tiếp album nhận diện để gửi lại
-            // từng ảnh — đổi câu chữ thì sửa cả FORWARD_ALBUM_PRECHECK_ERROR_RE trong ChatWindow.tsx.
+            // từng ảnh — đổi câu chữ thì sửa cả FORWARD_ALBUM_PRECHECK_ERROR_RE trong src/ui/lib/chat/forward/forwardSend.ts.
             const attachments = filePaths.map(filePath => {
                 if (!filePath || !fs.existsSync(filePath)) throw new Error('Không tìm thấy một trong các tệp ảnh để gửi');
                 const buffer = fs.readFileSync(filePath);
@@ -1895,7 +1895,7 @@ export default class ZaloService {
         return await (this.api as any).getSettings();
     }
 
-    /** Đổi một cài đặt (updateSettings) — chỉ khoá / giá trị trong shared/zaloPrivacySettings. Ghi log cũ → mới. */
+    /** Đổi một cài đặt (updateSettings) — chỉ khoá / giá trị trong shared/zalo/zaloPrivacySettings. Ghi log cũ → mới. */
     public async updateAccountSetting(key: string, value: number, previous?: unknown): Promise<{ key: string; value: number }> {
         if (!this.api) throw new Error("API not initialized");
         if (!isValidZaloSettingValue(key, value)) throw new Error(`Cài đặt không hợp lệ: ${key} = ${value}`);

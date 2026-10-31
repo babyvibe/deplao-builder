@@ -10,7 +10,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import type { RestoreProgress } from '../../../shared/cloudContracts';
+import type { RestoreProgress } from '../../../shared/cloud/cloudContracts';
 import { CloudError } from '../contracts';
 import { storeLabelNow } from '../storeLabel';
 import type { CloudCrypto, R2Client } from '../contracts';

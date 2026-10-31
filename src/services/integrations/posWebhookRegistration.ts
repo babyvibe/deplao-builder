@@ -12,7 +12,7 @@
 import * as crypto from 'crypto';
 import {
   WEBHOOK_EVENT_OPTIONS, WebhookOwnership, WebhookRegistrationType, classifyWebhook, deplaoWebhookUrl,
-} from '../../shared/posWebhookTopics';
+} from '../../shared/integrations/posWebhookTopics';
 import { POS_WEBHOOK_SECRET_FIELD } from './posWebhook';
 
 /** Webhook trên nền tảng, đã chuẩn hoá (KiotViet type/url/isActive, Sapo topic/address). */

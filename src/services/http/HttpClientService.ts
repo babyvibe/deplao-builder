@@ -1,7 +1,7 @@
 import * as http from 'http';
 import Logger from '../../utils/Logger';
-import { BOSS_URL_CHANGED_EVENT } from '../../shared/tunnelAddress';
-import { zaloReactionIconToEmoji } from '../../shared/zaloReactions';
+import { BOSS_URL_CHANGED_EVENT } from '../../shared/cloud/tunnelAddress';
+import { zaloReactionIconToEmoji } from '../../shared/zalo/zaloReactions';
 import { applyBossUrlAnnouncement } from '../tunnel/BossUrlAnnouncement';
 import EventBroadcaster from '../event/EventBroadcaster';
 import SocketIOClient, { type SocketStatusInfo } from '../socket/SocketIOClient';
@@ -11,7 +11,7 @@ import {
     heartbeatResyncReason,
     socketResyncNeeded,
     type EmployeeResyncReason,
-} from '../../shared/employeeConnection';
+} from '../../shared/employee/employeeConnection';
 
 /** Thông tin kèm theo khi trạng thái kết nối đổi (main → HttpConnectionManager → renderer). */
 export interface ServiceStatusInfo {
@@ -526,7 +526,7 @@ class HttpClientService {
         if (channel === 'relay:messageSentByEmployee' && data?.zaloId && data?.employee_id) {
             try {
                 const DatabaseService = require('../database/DatabaseService').default;
-                const WorkspaceManager = require('../../utils/WorkspaceManager').default;
+                const WorkspaceManager = require('../../utils/app/WorkspaceManager').default;
                 const db = DatabaseService.getInstance();
 
                 // Resolve target DB path for this workspace
@@ -585,7 +585,7 @@ class HttpClientService {
         if (channel === 'db:contactAliasChanged' && data) {
             try {
                 const DatabaseService = require('../database/DatabaseService').default;
-                const WorkspaceManager = require('../../utils/WorkspaceManager').default;
+                const WorkspaceManager = require('../../utils/app/WorkspaceManager').default;
                 const db = DatabaseService.getInstance();
 
                 let targetDbPath: string | null = null;
@@ -633,7 +633,7 @@ class HttpClientService {
     private persistRelayConversationEvent(channel: string, data: any): void {
         try {
             const DatabaseService = require('../database/DatabaseService').default;
-            const WorkspaceManager = require('../../utils/WorkspaceManager').default;
+            const WorkspaceManager = require('../../utils/app/WorkspaceManager').default;
             const db = DatabaseService.getInstance();
 
             // Resolve workspace DB path
@@ -792,7 +792,7 @@ class HttpClientService {
     private saveRelayReactionToWorkspaceDb(zaloId: string, reaction: any): void {
         try {
             const DatabaseService = require('../database/DatabaseService').default;
-            const WorkspaceManager = require('../../utils/WorkspaceManager').default;
+            const WorkspaceManager = require('../../utils/app/WorkspaceManager').default;
             const db = DatabaseService.getInstance();
             const wm = WorkspaceManager.getInstance();
 
@@ -850,7 +850,7 @@ class HttpClientService {
     private saveRelayAppDeleteToWorkspaceDb(zaloId: string, msgIds: string[], data: any): void {
         try {
             const DatabaseService = require('../database/DatabaseService').default;
-            const WorkspaceManager = require('../../utils/WorkspaceManager').default;
+            const WorkspaceManager = require('../../utils/app/WorkspaceManager').default;
             const db = DatabaseService.getInstance();
             const ws = this.workspaceId ? WorkspaceManager.getInstance().getWorkspaceById(this.workspaceId) : null;
             const targetDbPath = ws ? WorkspaceManager.getInstance().resolveDbPath(ws.dbPath || 'deplao-tool.db') : null;
@@ -866,7 +866,7 @@ class HttpClientService {
     private saveRelayRecallToWorkspaceDb(_channel: string, _originalData: any, zaloId: string, msgIds: string[], threadId?: string): void {
         try {
             const DatabaseService = require('../database/DatabaseService').default;
-            const WorkspaceManager = require('../../utils/WorkspaceManager').default;
+            const WorkspaceManager = require('../../utils/app/WorkspaceManager').default;
             const db = DatabaseService.getInstance();
             const wm = WorkspaceManager.getInstance();
 
@@ -919,7 +919,7 @@ class HttpClientService {
     private saveRelayMessageToWorkspaceDb(zaloId: string, message: any): void {
         try {
             const DatabaseService = require('../database/DatabaseService').default;
-            const WorkspaceManager = require('../../utils/WorkspaceManager').default;
+            const WorkspaceManager = require('../../utils/app/WorkspaceManager').default;
             const db = DatabaseService.getInstance();
             const wm = WorkspaceManager.getInstance();
 

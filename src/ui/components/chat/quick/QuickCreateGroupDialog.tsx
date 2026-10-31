@@ -3,13 +3,13 @@
  * Thành viên chọn từ các hội thoại 1-1 của tài khoản.
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import { useChatStore } from '@/store/chatStore';
-import { useAppStore } from '@/store/appStore';
-import type { AccountInfo } from '@/store/accountStore';
+import { useChatStore } from '@/store/chat/chatStore';
+import { useAppStore } from '@/store/app/appStore';
+import type { AccountInfo } from '@/store/accounts/accountStore';
 import ipc from '@/lib/ipc';
 import DataAccessor from '@/lib/data/DataAccessor';
 import { cn } from '@/lib/cn';
-import { toLocalMediaUrl } from '@/lib/localMedia';
+import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import {
   Button, Dialog, DialogBody, DialogClose, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Input,
 } from '@/components/ui';

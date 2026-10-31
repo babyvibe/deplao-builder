@@ -20,7 +20,7 @@
  * Nhân viên (trackEnvelope / applyCatchUpResult): lưu { bootId, lastSeqId }; Boss cũ không ack → làm như cũ +
  *  resync nếu là kết nối lại ('catchup-unverified').
  */
-import type { EmployeeResyncReason } from '../../shared/employeeConnection';
+import type { EmployeeResyncReason } from '../../shared/employee/employeeConnection';
 import type { BufferedEvent, CollectResult, CollectSinceTsResult } from './EventBuffer';
 
 export const CATCH_UP_PROTOCOL = 2;

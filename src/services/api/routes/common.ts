@@ -7,7 +7,7 @@
 import { s } from '../schema';
 import { messageText, threadTypeName } from '../channels/ChannelActions';
 import { ApiContext, ApiError, Pagination, paged } from '../types';
-import { isLocalRequest } from '../ip';
+import { isLocalRequest } from '../http/ip';
 import { getApiSettingBool } from '../settings';
 
 export const accountParams = s.object({

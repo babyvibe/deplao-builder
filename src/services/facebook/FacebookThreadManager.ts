@@ -4,7 +4,7 @@
  * Qun l threads: ly danh sch, thay i tn/emoji/nickname
  */
 
-import { templateFromStoryAttachment } from '../../shared/facebookTemplate';
+import { templateFromStoryAttachment } from '../../shared/facebook/facebookTemplate';
 import axios from 'axios';
 import {
   FBSessionData, FBThread, FBThreadDataResult, FBMessageRequest

@@ -20,7 +20,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import type { MediaSyncOptions } from '../../../shared/cloudContracts';
+import type { MediaSyncOptions } from '../../../shared/cloud/cloudContracts';
 import type { R2Client } from '../contracts';
 import type { ScannedFile } from './CloudMediaIndex';
 import {

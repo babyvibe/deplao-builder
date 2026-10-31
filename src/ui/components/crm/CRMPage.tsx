@@ -1,12 +1,12 @@
 import React, { useEffect, useCallback, useRef, useState } from 'react';
-import { useCRMStore, CRMContact } from '@/store/crmStore';
-import { useAccountStore } from '@/store/accountStore';
-import { useAppStore, LabelData } from '@/store/appStore';
+import { useCRMStore, CRMContact } from '@/store/crm/crmStore';
+import { useAccountStore } from '@/store/accounts/accountStore';
+import { useAppStore, LabelData } from '@/store/app/appStore';
 import DataAccessor, { isReadFailure } from '@/lib/data/DataAccessor';
-import { useEmployeeResync } from '@/hooks/useEmployeeResync';
-import { relayEventAccount, THREAD_LABELS_CHANGED_EVENT } from '@/lib/chat/relayUiEvents';
+import { useEmployeeResync } from '@/hooks/accounts/useEmployeeResync';
+import { relayEventAccount, THREAD_LABELS_CHANGED_EVENT } from '@/lib/chat/realtime/relayUiEvents';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
-import { refreshStaleContacts } from '@/lib/contactRefresh';
+import { refreshStaleContacts } from '@/lib/contacts/contactRefresh';
 import CRMContactList from './contacts/CRMContactList';
 import CRMContactDetailPanel from './contacts/CRMContactDetailPanel';
 import BulkActionBar from './contacts/BulkActionBar';
@@ -16,21 +16,21 @@ import CampaignCreateModal from './campaigns/CampaignCreateModal';
 import CampaignCloneModal from './campaigns/CampaignCloneModal';
 import TargetSelector from './campaigns/TargetSelector';
 import ZaloLabelSelector from './tags/ZaloLabelSelector';
-import LocalLabelSelector from '@/components/common/LocalLabelSelector';
+import LocalLabelSelector from '@/components/common/inputs/LocalLabelSelector';
 import QueueStatusBar from './queue/QueueStatusBar';
 import SendHistoryLog from './queue/SendHistoryLog';
 import GroupMembersTab from './groups/GroupMembersTab';
 import CRMSearchTab from './search/CRMSearchTab';
 import CRMRequestsTab from './search/CRMRequestsTab';
 import AddToContactsModal from './contacts/AddToContactsModal';
-import AccountSelectorDropdown from '@/components/common/AccountSelectorDropdown';
-import { getCapability, type Channel } from '../../../configs/channelConfig';
-import { buildCRMContactFilters } from '../../../shared/crmContactFilters';
+import AccountSelectorDropdown from '@/components/common/accounts/AccountSelectorDropdown';
+import { getCapability, type Channel } from '../../../configs/channels/channelConfig';
+import { buildCRMContactFilters } from '../../../shared/crm/crmContactFilters';
 import ScanPanel from './scan/ScanPanel';
 import ScanHistoryTab from './scan/ScanHistoryTab';
 import ScanStatsTab from './scan/ScanStatsTab';
 import { Spinner } from '@/components/common/PageLoading';
-import { CHANNEL } from '@/lib/channelHelper';
+import { CHANNEL } from '@/lib/channels/channelHelper';
 import {
   CampaignIcon, ChartIcon, ClipboardListIcon, CloudIcon, HardDriveIcon, PlusIcon, SearchIcon, SendIcon, UserIcon,
   UserPlusIcon, UsersIcon, WifiIcon

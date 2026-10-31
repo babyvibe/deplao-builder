@@ -170,8 +170,10 @@ const SPECIAL: Record<string, any> = {
     },
     // Worker + D1 trên Cloudflare đã kết nối trong Deplao (quyền cloudflare:workers). Host kiểm quyền + tiền tố tên;
     // bundleDir / dir là thư mục tương đối trong plugin — main tự đọc file, không gửi nội dung qua RPC.
+    // Gắn tên miền: Deplao hỏi người dùng bằng hộp thoại của Deplao trước khi ghi DNS.
     cloudflare: {
         status: () => hostCall('cloudflare.status'),
+        zones: () => hostCall('cloudflare.zones'),
         d1: {
             ensure: (name: string) => hostCall('cloudflare.d1.ensure', { name }),
             migrate: (name: string, dir: string) => hostCall('cloudflare.d1.migrate', { name, dir }),
@@ -180,6 +182,11 @@ const SPECIAL: Record<string, any> = {
         workers: {
             get: (name: string) => hostCall('cloudflare.workers.get', { name }),
             deployBundle: (input: any) => hostCall('cloudflare.workers.deployBundle', input ?? {}),
+            domains: {
+                list: (name: string) => hostCall('cloudflare.workers.domains.list', { name }),
+                attach: (name: string, hostname: string) => hostCall('cloudflare.workers.domains.attach', { name, hostname }),
+                detach: (name: string, hostname: string) => hostCall('cloudflare.workers.domains.detach', { name, hostname }),
+            },
         },
     },
 };

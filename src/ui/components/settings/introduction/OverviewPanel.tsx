@@ -122,7 +122,7 @@ export function OverviewPanel() {
           'RAM tối thiểu: <strong class="text-foreground">4 GB</strong> (đề xuất 8 GB trở lên)',
           'Ổ đĩa còn nhiều dung lượng trống: tin nhắn, ảnh, video lưu trên máy và tăng dần theo thời gian (chuyển thư mục dữ liệu sang ổ khác ở Cài đặt → Lưu trữ)',
           'Kết nối Internet ổn định để nhận tin nhắn theo thời gian thực',
-          'Để app chạy liên tục <strong class="text-foreground">24/7</strong> nếu dùng workflow, chiến dịch hoặc cho nhân viên kết nối vào máy Boss. Nút × trên thanh tiêu đề chỉ ẩn app xuống khay hệ thống (vẫn nhận tin); muốn tắt hẳn: chuột phải vào biểu tượng Deplao ở khay hệ thống → <em>Thoát hoàn toàn</em>.',
+          'Để app chạy liên tục <strong class="text-foreground">24/7</strong> nếu dùng workflow, chiến dịch hoặc cho nhân viên kết nối vào máy Boss. Nút × trên thanh tiêu đề chỉ ẩn app xuống khay hệ thống (vẫn nhận tin); muốn tắt hẳn: chuột phải vào biểu tượng Deplao ở khay hệ thống → <em>Thoát hoàn toàn</em>. Deplao tự mở cùng máy (chạy ngầm ở khay) nên khởi động lại máy không lỡ tin; tắt ở Cài đặt → Thông báo → Khởi động cùng máy.',
           'Bộ cài chưa ký chứng chỉ nên lần đầu mở có thể bị cảnh báo: Windows chọn <em>More info</em> → <em>Run anyway</em>; macOS chuột phải → <em>Open</em> (hoặc System Settings → Privacy &amp; Security → <em>Open Anyway</em>).',
         ]} />
         <div className="flex justify-end">

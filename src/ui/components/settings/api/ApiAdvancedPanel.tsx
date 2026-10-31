@@ -5,7 +5,7 @@
 import { cn } from '@/lib/cn';
 import React, { useEffect, useState } from 'react';
 import ipc from '@/lib/ipc';
-import { useAppStore } from '@/store/appStore';
+import { useAppStore } from '@/store/app/appStore';
 import { Section, Toggle, inputCls } from './apiUi';
 
 type Kind = 'bool' | 'number';

@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import DataAccessor from '@/lib/data/DataAccessor';
-import { useAppStore } from '@/store/appStore';
+import { useAppStore } from '@/store/app/appStore';
 import { AlertIcon, CheckIcon, ClipboardListIcon, CloseIcon, InboxIcon, SendIcon, SkipForwardIcon } from '@/components/common/icons';
 
 

@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useCallback } from 'react';
-import { SCAN_EXCEL_COLUMNS, type ScanType, type ExcelColumn } from '../../../../services/facebook/FacebookScanTypes';
+import { SCAN_EXCEL_COLUMNS, type ScanType, type ExcelColumn } from '../../../../services/facebook/scan/FacebookScanTypes';
 import ipc from '@/lib/ipc';
 import { Spinner } from '@/components/common/PageLoading';
 import { LinkIcon, SearchIcon } from '@/components/common/icons';

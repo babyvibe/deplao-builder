@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import WorkflowList from './WorkflowList';
-import WorkflowEditor from './WorkflowEditor';
-import WorkflowTemplateStore from './WorkflowTemplateStore';
+import WorkflowEditor from './editor/WorkflowEditor';
+import WorkflowTemplateStore from './templates/WorkflowTemplateStore';
 
 type View = 'list' | 'editor' | 'store';
 

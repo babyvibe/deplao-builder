@@ -3,7 +3,7 @@
  *
  * Reads the stored template / mixed config with the same rules as
  * `CRMQueueService` so the screen shows what the queue will actually send.
- * No React, no IPC — covered by `src/__tests__/campaignView.test.ts`.
+ * No React, no IPC — covered by `src/__tests__/crm/campaignView.test.ts`.
  */
 import { parseMarkup } from '../../../services/crm/message-markup';
 import {
@@ -12,9 +12,9 @@ import {
   readCampaignSendOptions,
   type BlockSendPlan,
   type CampaignSendOptions,
-} from '../../../shared/campaignSendPlan';
-import { CAMPAIGN_MIN_CONTACT_DELAY_SECONDS, effectiveContactDelayRange } from '../../../shared/campaignDelay';
-import { partialFailureOf } from '../../../shared/campaignOutcome';
+} from '../../../shared/crm/campaignSendPlan';
+import { CAMPAIGN_MIN_CONTACT_DELAY_SECONDS, effectiveContactDelayRange } from '../../../shared/crm/campaignDelay';
+import { partialFailureOf } from '../../../shared/crm/campaignOutcome';
 
 export { partialFailureOf };
 
@@ -26,7 +26,7 @@ export type SendMode = 'random' | 'all';
 type BadgeTone = 'default' | 'primary' | 'success' | 'warning' | 'destructive' | 'info';
 
 export interface ContentBlock { id: string; text: string; images: string[]; tagAll?: boolean; tagAllText?: string; }
-/** `order` / `combine`: how text and images of a block are sent (shared/campaignSendPlan). */
+/** `order` / `combine`: how text and images of a block are sent (shared/crm/campaignSendPlan). */
 export interface ContentConfig extends CampaignSendOptions { mode: SendMode; blocks: ContentBlock[]; }
 
 export const CAMPAIGN_TYPE_LABEL: Record<CampaignType, string> = {
@@ -50,7 +50,7 @@ export const CONTACT_STATUS_META: Record<CampaignContactStatus, { label: string;
   failed: { label: 'Lỗi', tone: 'destructive' },
 };
 
-/** "Đã gửi" nhưng một số hành động của chiến dịch Hỗn hợp lỗi (shared/campaignOutcome). */
+/** "Đã gửi" nhưng một số hành động của chiến dịch Hỗn hợp lỗi (shared/crm/campaignOutcome). */
 export const CONTACT_PARTIAL_META: { label: string; tone: BadgeTone } = { label: 'Gửi một phần', tone: 'warning' };
 
 export function campaignTypeOf(value: string | null | undefined): CampaignType {
@@ -260,7 +260,7 @@ export function tokenizeTemplate(raw: string | null | undefined, options: { form
 
 /**
  * Delay between two contacts, with the fallback CampaignList always used for old rows — clamped to the queue's
- * 30-second minimum (shared/campaignDelay) so a stored "5–10 s" shows what is really sent.
+ * 30-second minimum (shared/crm/campaignDelay) so a stored "5–10 s" shows what is really sent.
  */
 export function campaignDelayRange(campaign: { delay_seconds?: number; delay_min_seconds?: number; delay_max_seconds?: number }): [number, number] {
   const base = campaign.delay_seconds || 60;

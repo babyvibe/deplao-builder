@@ -7,8 +7,8 @@
  *   s.on('event', e => { lastSeq = e.seq || lastSeq; ... });
  */
 import type { Principal } from '../types';
-import { hasScope } from '../ApiAuth';
-import { ipAllowed, normalizeIp, isLoopback } from '../ip';
+import { hasScope } from '../auth/ApiAuth';
+import { ipAllowed, normalizeIp, isLoopback } from '../http/ip';
 import { getApiSettingBool } from '../settings';
 import { ApiEvent, EventHub } from './EventHub';
 

@@ -13,13 +13,13 @@ import {
     AccountInfo, ApiContext, ApiError, HttpMethod, IpcCallOptions, Paged, Principal, RESPONSE_HANDLED,
     RouteDef, principalLogId,
 } from './types';
-import { CORS_HEADERS, parseQuery, readJsonBody, sendJson } from './http';
-import { clientIp, ipAllowed, isLocalRequest } from './ip';
-import { extractToken, requireAccount, requireScope } from './ApiAuth';
+import { CORS_HEADERS, parseQuery, readJsonBody, sendJson } from './http/http';
+import { clientIp, ipAllowed, isLocalRequest } from './http/ip';
+import { extractToken, requireAccount, requireScope } from './auth/ApiAuth';
 import { IpcInvoker, unwrapIpcResult } from './IpcInvoker';
 import { AccountDirectory } from './AccountDirectory';
-import { RequestLog } from './RequestLog';
-import { BruteForceGuard, RateLimiter } from './RateLimiter';
+import { RequestLog } from './http/RequestLog';
+import { BruteForceGuard, RateLimiter } from './http/RateLimiter';
 import { getApiSettingBool, getApiSettingNumber } from './settings';
 
 export const API_PREFIX = '/api/v1';

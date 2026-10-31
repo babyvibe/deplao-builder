@@ -9,7 +9,7 @@
  *  - workflowRowToDto / maskProxyRow: hình dạng giống IPC, không lộ bí mật
  */
 
-import { normalizeChannel } from '../../configs/channelConfig';
+import { normalizeChannel } from '../../configs/channels/channelConfig';
 
 // ── Query params ───────────────────────────────────────────────────────────────
 

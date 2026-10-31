@@ -15,7 +15,7 @@
 import {
     CloudError, CloudSettingsData, CloudSettingsStore, CloudUsageRecorder, GoogleDriveCore, GoogleSettingsData, R2Client,
 } from '../contracts';
-import type { GoogleClientInput, GoogleDriveQuota, GoogleDriveStatus } from '../../../shared/cloudContracts';
+import type { GoogleClientInput, GoogleDriveQuota, GoogleDriveStatus } from '../../../shared/cloud/cloudContracts';
 import Logger from '../../../utils/Logger';
 import { DriveApi, DriveApiOptions, DriveFetch, DriveFetchResponse, FOLDER_MIME, escapeQueryValue, isNotFound } from './DriveApi';
 import { DriveStore, DriveStoreOptions } from './DriveStore';

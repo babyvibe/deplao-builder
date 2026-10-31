@@ -2,7 +2,7 @@
  * chatLoadFailures.ts - chế độ nhân viên, các màn bên chat (panel Ảnh/Video · File · Link, Nhãn Local của hội thoại):
  * lần đọc lỗi (DataAccessor trả `success: false`, xem agents/REFERENCES/EMPLOYEE_MODE.md §2.2) GIỮ dữ liệu đang có
  * thay vì biến thành danh sách trống, và không làm danh sách dừng hẳn / nhảy trang.
- * Thuần (không store / IPC / DataAccessor). Test: src/__tests__/chatLoadFailures.test.ts.
+ * Thuần (không store / IPC / DataAccessor). Test: src/__tests__/chat/conversations/chatLoadFailures.test.ts.
  */
 
 /** Cùng điều kiện với `isReadFailure` của DataAccessor (module này không import DataAccessor để giữ thuần). */

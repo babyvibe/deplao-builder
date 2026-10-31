@@ -5,14 +5,14 @@
  */
 import React from 'react';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
-import { useAccountStore } from '@/store/accountStore';
-import { useAppStore } from '@/store/appStore';
-import { useChatStore } from '@/store/chatStore';
+import { useAccountStore } from '@/store/accounts/accountStore';
+import { useAppStore } from '@/store/app/appStore';
+import { useChatStore } from '@/store/chat/chatStore';
 import { Select } from '@/components/ui';
 import { ClockIcon } from '@/components/common/icons';
 import {
   ZALO_AUTO_DELETE_NOTE, ZALO_AUTO_DELETE_OPTIONS, zaloAutoDeleteLabel,
-} from '../../../../shared/zaloAutoDelete';
+} from '../../../../shared/zalo/zaloAutoDelete';
 
 const REFRESH_EVERY_MS = 60_000;
 const lastRefreshAt = new Map<string, number>();

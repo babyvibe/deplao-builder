@@ -8,7 +8,7 @@ import { checkEmployeeAccess, isEmployeeSettingKey } from './employeeAccess';
 import { RestReadCache, parseRestQueryParams, restCacheKey } from './employeeRestRead';
 import DatabaseService from '../database/DatabaseService';
 import EventBroadcaster from '../event/EventBroadcaster';
-import ConnectionManager from '../../utils/ConnectionManager';
+import ConnectionManager from '../../utils/connection/ConnectionManager';
 import TunnelService, { TunnelOptions, TunnelProvider, type TunnelChangeInfo } from '../tunnel/TunnelService';
 import {
     BOSS_URL_CHANGED_EVENT,
@@ -17,8 +17,8 @@ import {
     type BossUrlChangeReason,
     type RelayTunnelState,
     type RelayTunnelStatus,
-} from '../../shared/tunnelAddress';
-import { normalizeBossUrl } from '../../shared/employeeConnection';
+} from '../../shared/cloud/tunnelAddress';
+import { normalizeBossUrl } from '../../shared/employee/employeeConnection';
 import SocketIOService from '../socket/SocketIOService';
 import { canReceiveRelayEvent, classifyRelayEvent } from '../socket/relayAudience';
 import { RELAY_CHANNELS } from '../socket/relayChannels';
@@ -820,7 +820,7 @@ class HttpRelayService {
         // phải được giao; kênh chạy bằng phiên tài khoản (registry Zalo, login:connect) mà không ghi rõ → chỉ đoán khi
         // không mơ hồ (một tài khoản được giao / hội thoại thuộc đúng một tài khoản). Trước đây thiếu zaloId → tài khoản
         // được giao ĐẦU TIÊN: gửi tin / cảm xúc / đã đọc từ tài khoản B chạy bằng tài khoản A.
-        const { ipcHandlerRegistry: zaloRegistry } = require('../../../electron/ipc/zaloIpc');
+        const { ipcHandlerRegistry: zaloRegistry } = require('../../../electron/ipc/zalo/zaloIpc');
         const isRegistryChannel = !!zaloRegistry?.has(channel);
         // Facebook / Telegram cá nhân (employeeChannelRoutes, nhóm "proxy"): tài khoản = params.accountId, BẮT BUỘC và phải
         // được giao (Facebook: id nội bộ fb_accounts.id → accounts.zalo_id trước khi so). Trước đây kênh fb: / telegramUser:
@@ -929,7 +929,7 @@ class HttpRelayService {
 
             // Use handler registry. Facebook / Telegram cá nhân (tài khoản đã kiểm tra ở trên): ĐÚNG handler ipcMain của Boss
             // (cùng chuẩn hoá / lưu DB / phát event như UI Boss), đi chung nhánh với registry Zalo để ghi "nhân viên nào đã gửi".
-            const { ipcHandlerRegistry } = require('../../../electron/ipc/zaloIpc');
+            const { ipcHandlerRegistry } = require('../../../electron/ipc/zalo/zaloIpc');
             const handler = ipcHandlerRegistry?.get(channel)
                 ?? (isAccountChannel ? (require('electron').ipcMain as any)?._invokeHandlers?.get(channel) : undefined);
 
@@ -3179,7 +3179,7 @@ class HttpRelayService {
         try {
             const db = DatabaseService.getInstance();
             const provider = (db.getSetting('relay_tunnel_provider') as TunnelProvider) || 'cloudflare';
-            const { decryptSecret } = require('../api/secretBox');
+            const { decryptSecret } = require('../api/auth/secretBox');
             if (provider === 'ngrok') {
                 return {
                     provider: 'ngrok',
@@ -3449,11 +3449,11 @@ class HttpRelayService {
         try {
             if (channel === 'facebook') {
                 const fbAcc = this.runOnPinnedDb((db) => db.getFBAccountByFacebookId(zaloId));
-                const FacebookConnectionManager = require('../../utils/FacebookConnectionManager').default;
+                const FacebookConnectionManager = require('../../utils/connection/FacebookConnectionManager').default;
                 return !!(fbAcc?.id && FacebookConnectionManager.get(fbAcc.id)?.isConnected());
             }
             if (channel === 'telegram_user') return !!require('../telegram/TelegramUserListener').isConnected(zaloId);
-            if (channel === 'telegram_bot') return !!require('../telegram/TelegramBotChannelService').isBotPolling(zaloId);
+            if (channel === 'telegram_bot') return !!require('../telegram/bot/TelegramBotChannelService').isBotPolling(zaloId);
         } catch {
             return false;
         }
@@ -3466,7 +3466,7 @@ class HttpRelayService {
      */
     private getBossMediaBasePath(): string {
         try {
-            const WorkspaceManager = require('../../utils/WorkspaceManager').default;
+            const WorkspaceManager = require('../../utils/app/WorkspaceManager').default;
             const wm = WorkspaceManager.getInstance();
             const defaultWs = wm.getWorkspaceById('default');
             if (defaultWs && defaultWs.dbPath) {

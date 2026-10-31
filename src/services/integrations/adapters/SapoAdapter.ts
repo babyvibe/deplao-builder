@@ -18,7 +18,7 @@ import type { PosWebhookApi, RemoteWebhook } from '../posWebhookRegistration';
  * SĐT khách lưu dạng +84…; dòng đơn hàng gắn `variant_id` (id phiên bản, không phải id sản phẩm).
  */
 
-// ─── Phần thuần (có test: src/__tests__/sapoAdapter.test.ts) ─────────────────────────────────────────────
+// ─── Phần thuần (có test: src/__tests__/integrations/sapoAdapter.test.ts) ─────────────────────────────────────────────
 
 const SAPO_ROOT_DOMAIN = 'mysapo.net';
 

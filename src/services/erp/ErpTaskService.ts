@@ -10,6 +10,8 @@ import type {
   ErpTaskPriority, ErpTaskStatus, ErpChecklistItem, ErpComment, TaskInboxFilter, TaskAttachmentInput,
 } from '../../models/erp';
 import ErpNotificationService from './ErpNotificationService';
+import { erpPersonName } from './erpPeople';
+import { erpWhenText } from '../../shared/erp/erpNotifyText';
 
 export default class ErpTaskService {
   private static instance: ErpTaskService;
@@ -309,23 +311,31 @@ export default class ErpTaskService {
     EventBroadcaster.emit('erp:event:taskCreated', { task });
 
     // Notify only explicit assignees (not auto-self-assigned reporter).
-    if (input.assignees?.length) {
-      for (const empId of input.assignees) {
-        if (empId && empId !== reporterId) {
-          try {
-            ErpNotificationService.getInstance().notify(
-              empId, 'task_assigned',
-              `Bạn được giao task: ${input.title}`,
-              `Được giao bởi ${reporterId}`,
-              `erp://task/${id}`,
-            );
-          } catch (err: any) {
-            Logger.warn(`[ErpTaskService] notify assignee ${empId} failed: ${err.message}`);
-          }
-        }
+    this._notifyAssigned(id, input.title, input.due_date, input.assignees ?? [], new Set(), reporterId);
+    return task;
+  }
+
+  /**
+   * Báo người MỚI được giao (tạo task, đổi người thực hiện): bỏ người giao và người đã được giao từ trước.
+   * "Giao bởi Lan · Hạn: 17:00 31/10". Trước đây chỉ báo lúc tạo task (giao lại không ai được báo) và in id người giao.
+   */
+  private _notifyAssigned(
+    taskId: string, title: string, dueDate: number | null | undefined, employeeIds: string[],
+    previous: ReadonlySet<string>, actorId: string,
+  ): void {
+    const fresh = Array.from(new Set(employeeIds.filter(Boolean))).filter(empId => empId !== actorId && !previous.has(empId));
+    if (!fresh.length) return;
+    const body = [
+      `Giao bởi ${erpPersonName(actorId)}`,
+      dueDate ? `Hạn: ${erpWhenText(Number(dueDate), false, Date.now())}` : '',
+    ].filter(Boolean).join(' · ');
+    for (const empId of fresh) {
+      try {
+        ErpNotificationService.getInstance().notify(empId, 'task_assigned', `Bạn được giao task: ${title}`, body, `erp://task/${taskId}`);
+      } catch (err: any) {
+        Logger.warn(`[ErpTaskService] notify assignee ${empId} failed: ${err.message}`);
       }
     }
-    return task;
   }
 
   updateTask(id: string, patch: UpdateTaskInput, actorId: string): ErpTask {
@@ -352,6 +362,9 @@ export default class ErpTaskService {
     if (patch.status === 'done') {
       this._assertDependenciesSatisfied(id);
     }
+
+    // Người thực hiện trước khi đổi: chỉ báo người mới được giao
+    const previousAssignees = patch.assignees !== undefined ? new Set(this.getTaskAssignees(id)) : null;
 
     this.db().transaction(() => {
       if (fields.length) {
@@ -397,11 +410,15 @@ export default class ErpTaskService {
     }
 
     EventBroadcaster.emit('erp:event:taskUpdated', { taskId: id, patch, actorId, task });
+    if (previousAssignees) {
+      this._notifyAssigned(id, task.title ?? '(Task)', task.due_date, patch.assignees ?? [], previousAssignees, actorId);
+    }
     return task;
   }
 
   assignTask(id: string, employeeIds: string[], actorId: string): void {
     const now = Date.now();
+    const previousAssignees = new Set(this.getTaskAssignees(id));
     this.db().transaction(() => {
       this.db().run(`DELETE FROM erp_task_assignees WHERE task_id = ?`, [id]);
       this._assignTask(id, employeeIds, now);
@@ -409,6 +426,7 @@ export default class ErpTaskService {
     });
     const task = this._getTaskLite(id);
     EventBroadcaster.emit('erp:event:taskUpdated', { taskId: id, patch: { assignees: employeeIds }, actorId, task });
+    this._notifyAssigned(id, task?.title ?? '(Task)', task?.due_date, employeeIds, previousAssignees, actorId);
   }
 
   deleteTask(id: string): void {

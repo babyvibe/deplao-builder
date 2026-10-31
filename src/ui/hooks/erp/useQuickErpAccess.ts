@@ -3,8 +3,8 @@
  * + quyền tạo tương ứng. Dùng cho nút "+" cạnh ô tìm kiếm (QuickActionsButton) và "Thêm vào lịch" / "Lưu vào ghi chú"
  * từ tin nhắn (ChatWindow).
  */
-import { useEmployeeStore } from '@/store/employeeStore';
-import { useFeatureVisibilityStore } from '@/store/featureVisibilityStore';
+import { useEmployeeStore } from '@/store/employee/employeeStore';
+import { useFeatureVisibilityStore } from '@/store/app/featureVisibilityStore';
 import { useErpPermissions } from './useErpContext';
 
 export function useQuickErpAccess(): { event: boolean; note: boolean } {

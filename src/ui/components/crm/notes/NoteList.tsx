@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import type { CRMNote } from '@/store/crmStore';
+import type { CRMNote } from '@/store/crm/crmStore';
 
 interface NoteListProps {
   notes: CRMNote[];

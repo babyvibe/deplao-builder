@@ -22,6 +22,16 @@ export const WORKERS_PERMISSION_LABELS = {
 } as const;
 
 /**
+ * Quyền thêm khi gắn tên miền cho Worker: liệt kê tên miền (zone) và đọc bản ghi DNS để không đè bản ghi đang có.
+ * Link mẫu tạo token của Deplao đã có cả hai (Zone Read, DNS Edit). Không nằm trong `missing` của status: chỉ cần khi
+ * ứng dụng gắn tên miền.
+ */
+export const DOMAIN_PERMISSION_LABELS = {
+    zone: 'Zone · Zone · Read',
+    dns: 'Zone · DNS · Read',
+} as const;
+
+/**
  * Mã lỗi trả cho ứng dụng → HTTP status của DeplaoApiError. Mã của hợp đồng: CF_NOT_CONNECTED, CF_PERMISSION,
  * CF_NAME_FORBIDDEN, CF_BUNDLE_INVALID, CF_API, PLUGIN_PERMISSION; thêm mã API chung VALIDATION_ERROR, NOT_FOUND, CONFLICT.
  */
@@ -32,6 +42,8 @@ export const WORKERS_ERROR_STATUS: Readonly<Record<string, number>> = {
     CF_BUNDLE_INVALID: 400,
     CF_API: 502,
     PLUGIN_PERMISSION: 403,
+    /** Người dùng bấm "Không" ở hộp thoại xác nhận của Deplao (gắn tên miền). */
+    CF_DECLINED: 403,
     VALIDATION_ERROR: 400,
     NOT_FOUND: 404,
     CONFLICT: 409,
@@ -81,6 +93,21 @@ export function assertResourceName(value: unknown, prefix: string | null, kind: 
     }
     if (prefix !== null && !isNameInPrefix(name, prefix)) {
         throw new CloudError('CF_NAME_FORBIDDEN', `Ứng dụng chỉ được dùng ${kind} tên "${prefix}" hoặc bắt đầu bằng "${prefix}-" (nhận "${name}")`);
+    }
+    return name;
+}
+
+/** Tên miền cho Worker: ≥ 2 nhãn DNS (a-z, 0-9, '-' không ở đầu / cuối, ≤ 63 ký tự), tổng ≤ 253 ký tự, không có '*'. */
+export const DOMAIN_HOSTNAME_RE = /^(?=.{3,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
+/**
+ * Tên miền ứng dụng muốn gắn / gỡ cho Worker, vd "fintrack.tenmien.vn" → chữ thường, bỏ dấu chấm cuối. Chỉ kiểm định
+ * dạng; tên phải là tên con của một tên miền trong tài khoản (WorkersDeployer kiểm bằng danh sách zone).
+ */
+export function normalizeDomainHostname(value: unknown): string {
+    const name = typeof value === 'string' ? value.trim().toLowerCase().replace(/\.+$/, '') : '';
+    if (!DOMAIN_HOSTNAME_RE.test(name)) {
+        throw bad(`Tên miền "${preview(value)}" không hợp lệ, vd fintrack.tenmien.vn (chữ thường a-z, số, "-" và ".")`);
     }
     return name;
 }

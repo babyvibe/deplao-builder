@@ -1,16 +1,16 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import DataAccessor, { isReadFailure } from '@/lib/data/DataAccessor';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
-import { useAccountStore } from '@/store/accountStore';
-import { useAppStore, LabelData } from '@/store/appStore';
-import { useEmployeeResync } from '@/hooks/useEmployeeResync';
+import { useAccountStore } from '@/store/accounts/accountStore';
+import { useAppStore, LabelData } from '@/store/app/appStore';
+import { useEmployeeResync } from '@/hooks/accounts/useEmployeeResync';
 import { readOutcome } from '@/lib/crm/loadFailure';
 import ZaloLabelBadge from '../tags/ZaloLabelBadge';
 import LoadFailedNotice from '../LoadFailedNotice';
-import type { LocalLabelItem } from '@/components/common/LocalLabelSelector';
-import { extractUserProfile } from '../../../../utils/profileUtils';
+import type { LocalLabelItem } from '@/components/common/inputs/LocalLabelSelector';
+import { extractUserProfile } from '../../../../utils/zalo/profileUtils';
 import { CloudIcon, CloseIcon, HardDriveIcon, SearchIcon } from '@/components/common/icons';
-import { CHANNEL } from '@/lib/channelHelper';
+import { CHANNEL } from '@/lib/channels/channelHelper';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

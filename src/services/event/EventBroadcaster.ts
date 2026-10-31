@@ -1,12 +1,14 @@
 import { BrowserWindow } from 'electron';
+import * as fs from 'fs';
 import * as path from 'path';
 import Logger from '../../utils/Logger';
-import { normalizeZaloMessageImages } from '../../utils/zaloImageUrl';
+import { normalizeZaloMessageImages } from '../../utils/zalo/zaloImageUrl';
 import DatabaseService from '../database/DatabaseService';
-import { groupEventActorId, groupEventActorText, profileFromUserInfo } from '../../shared/zaloGroupEventActor';
+import { groupEventActorId, groupEventActorText, profileFromUserInfo } from '../../shared/zalo/zaloGroupEventActor';
 import FileStorageService from '../file/FileStorageService';
-import { groupAdminRole, groupOwnerRole } from '../../shared/groupMemberRoles';
-import { zaloReactionIconToEmoji } from '../../shared/zaloReactions';
+import { groupAdminRole, groupOwnerRole } from '../../shared/chat/groupMemberRoles';
+import { zaloReactionIconToEmoji } from '../../shared/zalo/zaloReactions';
+import { applyZaloClearUnread, type ZaloClearUnread } from '../zalo/zaloReadElsewhere';
 
 /** Callback để invalidate group cache trong ZaloLoginHelper (tránh circular import) */
 let _invalidateGroupCacheFn: ((zaloId: string, groupId: string) => void) | null = null;
@@ -102,7 +104,7 @@ class EventBroadcaster {
     // ─── Workspace-aware helpers ──────────────────────────────────────
     private static resolveBossContext(): { bossDbPath: string | null; activeIsDefault: boolean } {
         try {
-            const WorkspaceManager = require('../../utils/WorkspaceManager').default;
+            const WorkspaceManager = require('../../utils/app/WorkspaceManager').default;
             const wm = WorkspaceManager.getInstance();
             const activeIsDefault = wm.getActiveWorkspaceId() === 'default';
             if (!activeIsDefault) {
@@ -317,7 +319,7 @@ class EventBroadcaster {
             let activeIsDefault = true;
             if (!options?.fromRelay) {
                 try {
-                    const WorkspaceManager = require('../../utils/WorkspaceManager').default;
+                    const WorkspaceManager = require('../../utils/app/WorkspaceManager').default;
                     const wm = WorkspaceManager.getInstance();
                     activeIsDefault = wm.getActiveWorkspaceId() === 'default';
                     if (!activeIsDefault) {
@@ -798,11 +800,38 @@ class EventBroadcaster {
             if (!shouldSkipDownload && isPhoto && contentRaw && typeof contentRaw === 'object' && msgId) {
                 const imgUrl = DatabaseService.extractImageUrlFromContent(contentRaw);
                 if (imgUrl) {
-                    FileStorageService.downloadImage(zaloId, imgUrl, undefined, mediaCookies, mediaUserAgent).then((localPath) => {
-                        DatabaseService.getInstance().updateLocalPaths(zaloId, String(msgId), { main: localPath });
-                        EventBroadcaster.send('event:localPath', { zaloId, msgId: String(msgId), threadId: message.threadId, localPaths: { main: localPath } });
-                        Logger.log(`[EventBroadcaster] Downloaded image for msg ${msgId}: ${localPath}`);
-                    }).catch((err) => Logger.warn(`[EventBroadcaster] Image download failed for ${msgId}: ${err.message}`));
+                    const downloadPhoto = (attempt: number): void => {
+                        FileStorageService.downloadImage(zaloId, imgUrl, undefined, mediaCookies, mediaUserAgent).then((localPath) => {
+                            // CDN trả 401/403/409/410 → '' : không ghi local_paths rỗng (giao diện vẫn hiện ảnh CDN)
+                            if (!localPath) return;
+                            // File không hiển thị được (trang lỗi HTML, JPEG XL…) không được thành "ảnh trên máy": giao diện
+                            // sẽ đổi sang file đó → lỗi → tự sửa lại.
+                            const absPath = FileStorageService.resolveAbsolutePath(localPath);
+                            const check = FileStorageService.validateImageFile(absPath);
+                            if (!check.valid && check.reason !== 'truncated') {
+                                try { fs.unlinkSync(absPath); } catch { /* đã mất */ }
+                                Logger.warn(`[EventBroadcaster] Image for msg ${msgId} not displayable (${check.reason}) — keep CDN`);
+                                return;
+                            }
+                            DatabaseService.getInstance().updateLocalPaths(zaloId, String(msgId), { main: localPath });
+                            EventBroadcaster.send('event:localPath', { zaloId, msgId: String(msgId), threadId: message.threadId, localPaths: { main: localPath } });
+                            Logger.log(`[EventBroadcaster] Downloaded image for msg ${msgId}: ${localPath}`);
+                        }).catch((err) => {
+                            Logger.warn(`[EventBroadcaster] Image download failed for ${msgId}: ${err.message}`);
+                            // Mạng chập chờn / quá giờ (không phải CDN trả lỗi HTTP): thử lại 1 lần, trừ khi đã có file (tự sửa)
+                            if (attempt > 0 || err?.response) return;
+                            const retry = setTimeout(() => {
+                                try {
+                                    const row: any = DatabaseService.getInstance().getMessageById(zaloId, String(msgId), message.threadId || undefined);
+                                    const lp = typeof row?.local_paths === 'string' ? JSON.parse(row.local_paths || '{}') : (row?.local_paths || {});
+                                    if (!row || lp?.main) return;
+                                } catch { return; }
+                                downloadPhoto(1);
+                            }, 20_000);
+                            (retry as any).unref?.();
+                        });
+                    };
+                    downloadPhoto(0);
                 }
             }
 
@@ -1240,7 +1269,7 @@ class EventBroadcaster {
                             case 'leave': case 'remove_member': case 'block_member':
                                 db.removeGroupMember(zaloId, groupId, uid);
                                 break;
-                            // Quy ước Zalo trong DB: phó nhóm = 1, trưởng nhóm = 2 (shared/groupMemberRoles) — trước đây
+                            // Quy ước Zalo trong DB: phó nhóm = 1, trưởng nhóm = 2 (shared/chat/groupMemberRoles) — trước đây
                             // ghi phó nhóm mới thành 2 → hiện "Trưởng nhóm"
                             case 'add_admin':
                                 db.upsertGroupMember(zaloId, groupId, { memberId: uid, displayName: um.dName || um.zaloName || '', avatar: um.avatar || um.avatar_25 || '', role: groupAdminRole('zalo') });
@@ -1315,7 +1344,7 @@ class EventBroadcaster {
         const queue = this.actorLookupQueue.get(zaloId);
         this.actorLookupQueue.delete(zaloId);
         if (!queue?.jobs.length) return;
-        const api: any = require('../../utils/ConnectionManager').default.getAllConnections().get(zaloId)?.api;
+        const api: any = require('../../utils/connection/ConnectionManager').default.getAllConnections().get(zaloId)?.api;
         if (!api?.getUserInfo) return;
         const uids = [...new Set(queue.jobs.map((job) => job.actorId))];
         for (let i = 0; i < uids.length; i += 50) {
@@ -1606,6 +1635,30 @@ class EventBroadcaster {
             }
         } catch (e: any) {
             Logger.warn(`[EventBroadcaster] broadcastSeen error: ${e.message}`);
+        }
+    }
+
+    /**
+     * Zalo: hội thoại đã đọc ở máy khác (điện thoại / Zalo PC, cmd 504 / 524, services/zalo/zaloReadElsewhere) → số chưa
+     * đọc trong DB Boss + renderer (db:unreadChanged; 0 = renderer xoá ngay). Không gửi "đã xem" ngược lên Zalo.
+     */
+    public static broadcastZaloReadElsewhere(zaloId: string, items: ZaloClearUnread[]): void {
+        for (const item of items) {
+            try {
+                const result = this.withBossDb((db) => applyZaloClearUnread(db, zaloId, item));
+                if (result.unread !== undefined) {
+                    this.sendAware('db:unreadChanged', {
+                        zaloId, contactId: item.threadId, unread: result.unread, source: 'zalo_read_elsewhere',
+                    });
+                }
+                if (result.mentionCleared) {
+                    this.sendAware('db:contactFlagsChanged', {
+                        ownerZaloId: zaloId, contactId: item.threadId, flags: { has_mention: 0 },
+                    });
+                }
+            } catch (e: any) {
+                Logger.warn(`[EventBroadcaster] broadcastZaloReadElsewhere error: ${e.message}`);
+            }
         }
     }
 

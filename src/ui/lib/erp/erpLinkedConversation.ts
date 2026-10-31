@@ -3,7 +3,7 @@
  * như bấm thông báo) rồi nhảy tới tin đã thêm vào lịch. Dùng ở popup nhắc lịch (App.tsx) và chi tiết lịch (CalendarPage).
  */
 import ipc from '@/lib/ipc';
-import { useChatStore } from '@/store/chatStore';
+import { useChatStore } from '@/store/chat/chatStore';
 import type { ErpCalendarEvent } from '../../../models/erp/CalendarEvent';
 
 type LinkedEvent = Pick<ErpCalendarEvent, 'linked_account_id' | 'linked_contact_id' | 'linked_msg_id'>;

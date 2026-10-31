@@ -1,7 +1,7 @@
 /**
  * employeeTokenPolicy.ts — quy tắc thuần cho token đăng nhập của nhân viên (JWT do Boss ký).
  * Không đụng DB / Electron: EmployeeService đọc trạng thái nhân viên từ DB rồi hỏi các hàm ở đây.
- * Test: src/__tests__/employeeTokenPolicy.test.ts.
+ * Test: src/__tests__/employee/employeeTokenPolicy.test.ts.
  *
  * Token hợp lệ khi (sau khi kiểm chữ ký HS256 + hạn 7 ngày):
  *   1. có employee_id; nhân viên còn tồn tại và đang bật (is_active);

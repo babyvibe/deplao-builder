@@ -102,6 +102,7 @@ export function ErpPanel() {
         <SectionTitle><BellIcon className="w-4 h-4 inline" /> Thông báo &amp; báo cáo</SectionTitle>
         <BulletList items={[
           '<strong class="text-foreground">Chuông Thông báo ERP</strong> trên thanh tiêu đề: được giao task, task sắp đến hạn (trong 1 giờ tới), task quá hạn (mỗi sáng), note được chia sẻ, kết quả đơn nghỉ phép… Có nút "Đọc hết" và "Xoá hết".',
+          '<strong class="text-foreground">Thông báo qua Zalo</strong> (tab Cài đặt, Owner / Admin): chọn một tài khoản Zalo của cửa hàng và loại thông báo, nhân viên nhận thêm tin Zalo theo SĐT trong hồ sơ Nhân sự. Gửi lần lượt cách nhau 5 - 10 giây, mỗi người tối đa 30 tin/ngày; bấm "Gửi thử" để kiểm tra từng người. Nhân viên nên kết bạn Zalo với tài khoản gửi để tin không bị chặn.',
           '<strong class="text-foreground">Tab Báo cáo</strong> (Owner / Admin): task quá hạn, chưa phân công, sắp đến hạn, đơn nghỉ chờ duyệt, ai chưa check-in hôm nay, ai thiếu hồ sơ ERP; biểu đồ trạng thái, độ ưu tiên, xu hướng task và lịch, chấm công theo ngày.',
         ]} />
       </Card>

@@ -12,7 +12,7 @@ import { s } from '../schema';
 import { AccountInfo, ApiContext, route, RouteDef } from '../types';
 import { CHANNELS, requireOnline, unsupported } from '../channels/ChannelActions';
 import { accountParams, mapConversation, offsetPage, pageShape, scrub } from './common';
-import { foldSearchText } from '../../../shared/searchFold';
+import { foldSearchText } from '../../../shared/chat/searchFold';
 
 const groupParams = s.object({ accountId: s.id(), groupId: s.id().describe('ID nhóm (thread_id)') });
 const userParams = s.object({ accountId: s.id(), userId: s.id().describe('ID người dùng trên kênh') });

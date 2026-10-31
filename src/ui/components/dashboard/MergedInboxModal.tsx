@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { useAccountStore } from '@/store/accountStore';
-import { useAppStore } from '@/store/appStore';
+import { useAccountStore } from '@/store/accounts/accountStore';
+import { useAppStore } from '@/store/app/appStore';
 import { FolderIcon } from '@/components/common/icons';
 
 

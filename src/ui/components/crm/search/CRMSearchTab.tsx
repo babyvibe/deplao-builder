@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useAccountStore } from '@/store/accountStore';
-import { useAppStore } from '@/store/appStore';
-import { useChatStore } from '@/store/chatStore';
+import { useAccountStore } from '@/store/accounts/accountStore';
+import { useAppStore } from '@/store/app/appStore';
+import { useChatStore } from '@/store/chat/chatStore';
 import DataAccessor, { isReadFailure } from '@/lib/data/DataAccessor';
-import { useEmployeeResync } from '@/hooks/useEmployeeResync';
+import { useEmployeeResync } from '@/hooks/accounts/useEmployeeResync';
 import { readOutcome } from '@/lib/crm/loadFailure';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
-import { extractApiError } from '@/utils/apiError';
-import { UserProfilePopup } from '../../common/UserProfilePopup';
-import AddFriendModal from '../../common/AddFriendModal';
+import { extractApiError } from '@/lib/app/apiError';
+import { UserProfilePopup } from '../../common/profile/UserProfilePopup';
+import AddFriendModal from '../../common/profile/AddFriendModal';
 import LoadFailedNotice from '../LoadFailedNotice';
 import { CloseIcon} from '@/components/common/icons';
 

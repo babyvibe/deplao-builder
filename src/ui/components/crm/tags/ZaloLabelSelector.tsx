@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import type { LabelData } from '@/store/appStore';
+import type { LabelData } from '@/store/app/appStore';
 import ZaloLabelBadge from './ZaloLabelBadge';
 
 interface ZaloLabelSelectorProps {

@@ -6,7 +6,7 @@
  */
 import { s } from '../schema';
 import { ApiError, route, RouteDef } from '../types';
-import { accountAllowed } from '../ApiAuth';
+import { accountAllowed } from '../auth/ApiAuth';
 import { CHANNELS } from '../channels/ChannelActions';
 import { accountParams, scrub } from './common';
 

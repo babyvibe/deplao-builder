@@ -9,9 +9,9 @@ import React, { useCallback, useEffect, useState } from 'react';
 import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import { Spinner } from '@/components/common/PageLoading';
-import { useAppStore } from '@/store/appStore';
-import POSOrderPanel from './POSOrderPanel';
-import { IS_DEV_BUILD } from "../../../configs/BuildConfig";
+import { useAppStore } from '@/store/app/appStore';
+import POSOrderPanel from './pos/POSOrderPanel';
+import { IS_DEV_BUILD } from "../../../configs/app/BuildConfig";
 import { AlertIcon, ChartIcon, ClipboardListIcon, CloseIcon, CreditCardIcon, DollarIcon, EditIcon, FileTextIcon, GlobeIcon, LightningIcon, LinkIcon, MapPinIcon, PackageIcon, PinIcon, PluginIcon, SearchIcon, SettingsIcon, ShoppingCartIcon, StarIcon, StoreIcon, TagIcon, TargetIcon, TruckIcon, UserIcon , CheckIcon } from '@/components/common/icons';
 
 // ─── Pin icon definitions (SVG) ────────────────────────────────────────────────

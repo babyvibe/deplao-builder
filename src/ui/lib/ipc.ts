@@ -1,27 +1,28 @@
 // Typed wrappers quanh window.electronAPI
 // Dùng trong React components thay vì gọi trực tiếp
 
-import type { FbHistorySyncStatus } from '../../shared/facebookHistorySync';
-import type { PosWebhookListResponse } from '../../shared/posWebhookTopics';
-import { useAppStore } from '../store/appStore';
-import type { TelegramForumTopicContext } from '../../models/telegram';
-import type { ContactsInfoRefreshResult } from '../../models/contact';
+import type { FbHistorySyncStatus } from '../../shared/facebook/facebookHistorySync';
+import type { ErpZaloNotifySettings, ErpZaloNotifyStatus } from '../../shared/erp/erpZaloNotify';
+import type { PosWebhookListResponse } from '../../shared/integrations/posWebhookTopics';
+import { useAppStore } from '../store/app/appStore';
+import type { TelegramForumTopicContext } from '../../models/telegram/telegram';
+import type { ContactsInfoRefreshResult } from '../../models/chat/contact';
 import type {
   TelegramCallHistoryItem, TelegramChatSettings, TelegramContactItem, TelegramCreateChannelResult, TelegramMissingInvitee,
-} from '../../shared/telegramQuickModel';
-import type { TelegramCoveredStickerSet, TelegramStickerFileKind, TelegramStickerItem, TelegramStickerSetInfo } from '../../shared/telegramStickers';
+} from '../../shared/telegram/telegramQuickModel';
+import type { TelegramCoveredStickerSet, TelegramStickerFileKind, TelegramStickerItem, TelegramStickerSetInfo } from '../../shared/telegram/telegramStickers';
 import type {
   EmployeeCredentialsEvent,
   EmployeeResyncEvent,
   WorkspaceConnectionStatusEvent,
-} from '../../shared/employeeConnection';
+} from '../../shared/employee/employeeConnection';
 import type {
   BossAddressInfo,
   BossProbeEvidence,
   BossProbeVerdict,
   EmployeeBossUrlChangedPayload,
   RelayTunnelStatus,
-} from '../../shared/tunnelAddress';
+} from '../../shared/cloud/tunnelAddress';
 import type {
   CloudflareIpc,
   CloudChangedPayload,
@@ -30,7 +31,7 @@ import type {
   CLOUD_CHANGED_EVENT,
   CLOUD_CLEANUP_PROGRESS_EVENT,
   CLOUD_RESTORE_PROGRESS_EVENT,
-} from '../../shared/cloudContracts';
+} from '../../shared/cloud/cloudContracts';
 
 export type { EmployeeCredentialsEvent, EmployeeResyncEvent, WorkspaceConnectionStatusEvent };
 export type { EmployeeBossUrlChangedPayload, RelayTunnelStatus };
@@ -524,7 +525,7 @@ declare global {
         hiddenResetPin: (params: { auth: any }) => Promise<{
           success: boolean; error?: string; response?: { known: boolean; hasPin: boolean; hiddenCount: number };
         }>;
-        /** Danh mục sản phẩm Zalo Business (ZL-04) — dữ liệu đã chuẩn hoá theo shared/zaloCatalog. */
+        /** Danh mục sản phẩm Zalo Business (ZL-04) — dữ liệu đã chuẩn hoá theo shared/zalo/zaloCatalog. */
         getCatalogs: (params: { auth: any; page?: number; limit?: number }) => Promise<{ success: boolean; error?: string; response?: { items: any[]; hasMore: boolean } }>;
         createCatalog: (params: { auth: any; name: string }) => Promise<{ success: boolean; error?: string; response?: any }>;
         updateCatalog: (params: { auth: any; catalogId: string; name: string }) => Promise<{ success: boolean; error?: string; response?: any }>;
@@ -766,6 +767,9 @@ declare global {
         flashFrame: (active: boolean) => void;
         /** Windows: app đang chạy bằng quyền quản trị (kéo-thả từ File Explorer bị chặn) */
         isElevated?: () => Promise<boolean>;
+        /** Tự mở Deplao khi bật máy (lưu theo máy, src/utils/startup/autoLaunch.ts) */
+        getAutoLaunch?: () => Promise<AutoLaunchStatus>;
+        setAutoLaunch?: (patch: { enabled?: boolean; hidden?: boolean }) => Promise<AutoLaunchStatus & { success: boolean; error?: string }>;
       };
       lockScreen: {
         status: () => Promise<{ success: boolean; enabled?: boolean; biometricEnabled?: boolean; biometricAvailable?: boolean; failedAttempts?: number; isCoolingDown?: boolean; remainingCooldown?: number; error?: string }>;
@@ -791,14 +795,14 @@ declare global {
       };
 
       on: {
-        // Sự kiện vòng đời kết nối nhân viên ↔ Boss (payload: src/shared/employeeConnection.ts)
+        // Sự kiện vòng đời kết nối nhân viên ↔ Boss (payload: src/shared/employee/employeeConnection.ts)
         (channel: 'employee:credentials', callback: (data: EmployeeCredentialsEvent) => void): () => void;
         (channel: 'employee:resync', callback: (data: EmployeeResyncEvent) => void): () => void;
         (channel: 'workspace:connectionStatus', callback: (data: WorkspaceConnectionStatusEvent) => void): () => void;
-        // Địa chỉ WAN của Boss (payload: src/shared/tunnelAddress.ts)
+        // Địa chỉ WAN của Boss (payload: src/shared/cloud/tunnelAddress.ts)
         (channel: 'employee:bossUrlChanged', callback: (data: EmployeeBossUrlChangedPayload) => void): () => void;
         (channel: 'relay:tunnelStatusUpdate', callback: (data: RelayTunnelStatus) => void): () => void;
-        // Cloudflare (payload: src/shared/cloudContracts.ts)
+        // Cloudflare (payload: src/shared/cloud/cloudContracts.ts)
         (channel: typeof CLOUD_CHANGED_EVENT, callback: (data: CloudChangedPayload) => void): () => void;
         (channel: typeof CLOUD_RESTORE_PROGRESS_EVENT, callback: (data: RestoreProgress) => void): () => void;
         (channel: typeof CLOUD_CLEANUP_PROGRESS_EVENT, callback: (data: R2CleanupProgress) => void): () => void;
@@ -1317,6 +1321,9 @@ declare global {
       notifyUnreadCount:   (params: any) => Promise<{ success: boolean; count: number; error?: string }>;
       notifyDelete:        (params: any) => Promise<{ success: boolean; error?: string }>;
       notifyDeleteAll:     (params: any) => Promise<{ success: boolean; error?: string }>;
+      notifyZaloStatus:    (params: any) => Promise<{ success: boolean; zalo?: ErpZaloNotifyStatus; error?: string; code?: string }>;
+      notifySetZaloSettings:(params: { settings: Partial<ErpZaloNotifySettings> }) => Promise<{ success: boolean; settings?: ErpZaloNotifySettings; error?: string; code?: string }>;
+      notifyTestZalo:      (params: { employeeId: string }) => Promise<{ success: boolean; sent?: boolean; error?: string; code?: string }>;
     };
   };
 }
@@ -1375,6 +1382,15 @@ function wrapErpApi<T extends Record<string, any> | undefined>(api: T): T {
     };
   }
   return wrapped as T;
+}
+
+/** Cài đặt → Thông báo → Khởi động cùng máy (main: src/utils/startup/autoLaunch.ts). */
+export interface AutoLaunchStatus {
+  supported: boolean;
+  enabled: boolean;
+  hidden: boolean;
+  blocked: boolean;
+  platform: string;
 }
 
 const erp = wrapErpApi(window.electronAPI?.erp);

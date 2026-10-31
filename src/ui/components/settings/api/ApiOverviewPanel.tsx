@@ -4,12 +4,12 @@
  */
 import React, { useEffect, useState } from 'react';
 import ipc, { ApiStatusResult } from '@/lib/ipc';
-import { useAppStore } from '@/store/appStore';
+import { useAppStore } from '@/store/app/appStore';
 import { showConfirm } from '@/components/common/ConfirmDialog';
 import { ActivityIcon, AlertIcon, BookIcon, GlobeIcon, ServerIcon, ShieldIcon } from '@/components/common/icons';
-import RelayAddressNotice from '../RelayAddressNotice';
-import PublicAddressCard, { usePublicAddresses } from '@/components/common/PublicAddressCard';
-import { STOPPED_RELAY_TUNNEL, type RelayTunnelStatus } from '../../../../shared/tunnelAddress';
+import RelayAddressNotice from '../employees/RelayAddressNotice';
+import PublicAddressCard, { usePublicAddresses } from '@/components/common/cloud/PublicAddressCard';
+import { STOPPED_RELAY_TUNNEL, type RelayTunnelStatus } from '../../../../shared/cloud/tunnelAddress';
 import { Badge, btn, CopyField, Section, Toggle } from './apiUi';
 
 interface Props {

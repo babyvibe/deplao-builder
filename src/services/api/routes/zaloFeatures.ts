@@ -1,7 +1,7 @@
 /**
  * Zalo mở rộng (SRS Deplao, ZL-01 → ZL-05): trạng thái truy cập, tự xoá tin nhắn, cài đặt quyền riêng tư, danh mục sản
- * phẩm zBusiness. Mirror UI: chat/zalo/ZaloPresenceLine.tsx, ZaloAutoDeleteSection.tsx, settings/ZaloPrivacySettings.tsx,
- * chat/zalo/ZaloCatalogPicker.tsx. Mọi route gọi đúng IPC handler zalo:* của giao diện.
+ * phẩm zBusiness. Mirror UI: chat/zalo/presence/ZaloPresenceLine.tsx, ZaloAutoDeleteSection.tsx, settings/accounts/ZaloPrivacySettings.tsx,
+ * chat/zalo/catalog/ZaloCatalogPicker.tsx. Mọi route gọi đúng IPC handler zalo:* của giao diện.
  * Hội thoại ẩn bằng PIN (ZL-03) chỉ là lớp hiển thị của app — API giữ nguyên hành vi (quyết định Q2), không có route riêng.
  */
 import { s } from '../schema';
@@ -9,11 +9,11 @@ import { AccountInfo, ApiContext, ApiError, route, RouteDef } from '../types';
 import { CHANNELS, requireOnline, threadTypeNum, unsupported } from '../channels/ChannelActions';
 import { accountParams, threadParams, threadTypeSchema } from './common';
 import { ChatRouteDeps, resolveAttachment } from './chat';
-import { ZALO_AUTO_DELETE_OPTIONS, isZaloAutoDeleteTtl } from '../../../shared/zaloAutoDelete';
+import { ZALO_AUTO_DELETE_OPTIONS, isZaloAutoDeleteTtl } from '../../../shared/zalo/zaloAutoDelete';
 import {
     ZALO_PRIVACY_SETTINGS, isValidZaloSettingValue, readZaloSettingValue, zaloTwoFactorEnabled,
-} from '../../../shared/zaloPrivacySettings';
-import { ZALO_PRODUCT_MAX_PHOTOS, validateZaloProduct } from '../../../shared/zaloCatalog';
+} from '../../../shared/zalo/zaloPrivacySettings';
+import { ZALO_PRODUCT_MAX_PHOTOS, validateZaloProduct } from '../../../shared/zalo/zaloCatalog';
 
 const catalogParams = s.object({ accountId: s.id(), catalogId: s.id().describe('ID danh mục') });
 const productParams = s.object({ accountId: s.id(), catalogId: s.id(), productId: s.id().describe('ID sản phẩm') });

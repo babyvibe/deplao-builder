@@ -6,7 +6,7 @@
  */
 import { s } from '../api/schema';
 import { ApiError, HttpMethod, route, RouteDef } from '../api/types';
-import { principalSummary, requireScope } from '../api/ApiAuth';
+import { principalSummary, requireScope } from '../api/auth/ApiAuth';
 import type { PluginRecord, PluginRuntimeHandle } from './PluginManager';
 import { TIMEOUTS } from './PluginSandbox';
 

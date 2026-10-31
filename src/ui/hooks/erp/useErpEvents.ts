@@ -5,8 +5,8 @@ import { useErpCalendarStore } from '@/store/erp/erpCalendarStore';
 import { useErpNoteStore } from '@/store/erp/erpNoteStore';
 import { useErpNotificationStore } from '@/store/erp/erpNotificationStore';
 import { useErpEmployeeStore } from '@/store/erp/erpEmployeeStore';
-import { useEmployeeResync } from '@/hooks/useEmployeeResync';
-import { useEmployeeStore } from '@/store/employeeStore';
+import { useEmployeeResync } from '@/hooks/accounts/useEmployeeResync';
+import { useEmployeeStore } from '@/store/employee/employeeStore';
 
 /** Gom các event công việc liền nhau thành MỘT lần tải lại hộp việc (event công việc tới mọi nhân viên). */
 const INBOX_RELOAD_DEBOUNCE_MS = 400;

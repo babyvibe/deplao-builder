@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CRMCampaign } from '@/store/crmStore';
-import type { LabelData } from '@/store/appStore';
-import { useAppStore } from '@/store/appStore';
-import { useChatStore } from '@/store/chatStore';
+import type { CRMCampaign } from '@/store/crm/crmStore';
+import type { LabelData } from '@/store/app/appStore';
+import { useAppStore } from '@/store/app/appStore';
+import { useChatStore } from '@/store/chat/chatStore';
 import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import { cn } from '@/lib/cn';
@@ -42,8 +42,8 @@ import {
   CampaignContentPreview, CampaignProgressBar, CampaignSendOptionsControl, CampaignTypeTile, ContactAvatar,
   type CampaignGroupRef,
 } from './CampaignParts';
-import type { CampaignSendOptions } from '../../../../shared/campaignSendPlan';
-import type { Channel } from '../../../../configs/channelConfig';
+import type { CampaignSendOptions } from '../../../../shared/crm/campaignSendPlan';
+import type { Channel } from '../../../../configs/channels/channelConfig';
 
 interface LocalLabelItem {
   id: number;

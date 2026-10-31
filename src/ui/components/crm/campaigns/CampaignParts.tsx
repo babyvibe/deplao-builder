@@ -6,7 +6,7 @@
  */
 import React, { useMemo, useState } from 'react';
 import { cn } from '@/lib/cn';
-import { toLocalMediaUrl } from '@/lib/localMedia';
+import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import { Badge, Checkbox } from '@/components/ui';
 import { ChatIcon, ImageIcon, RepeatIcon, ShuffleIcon, UserPlusIcon, UsersIcon } from '@/components/common/icons';
 import {
@@ -24,7 +24,7 @@ import {
   type ContentConfig,
   type TemplateSegment,
 } from '@/lib/crm/campaignView';
-import { COMBINE_FALLBACK_LABEL, type CampaignSendOptions } from '../../../../shared/campaignSendPlan';
+import { COMBINE_FALLBACK_LABEL, type CampaignSendOptions } from '../../../../shared/crm/campaignSendPlan';
 
 // ── Type icon + status tile ──────────────────────────────────────────────────
 

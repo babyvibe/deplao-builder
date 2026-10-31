@@ -9,7 +9,7 @@ CRM · Marketing · ERP · POS · Workflow · AI Assistant — all in one unifie
 
 [🌐 Website](https://deplaoapp.com/) · [🇻🇳 Tiếng Việt](./README.md)
 
-![Version](https://img.shields.io/badge/version-26.10.3-22c55e)
+![Version](https://img.shields.io/badge/version-26.10.4-22c55e)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Ubuntu-3b82f6)
 ![Electron](https://img.shields.io/badge/Electron-41-47848f?logo=electron&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61dafb?logo=react&logoColor=white)
@@ -42,41 +42,41 @@ CRM · Marketing · ERP · POS · Workflow · AI Assistant — all in one unifie
 <tr>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-Setup-26.10.3.exe">
-<img src="https://img.shields.io/badge/🪟_Windows_10/11-v26.10.3-0078d4?style=for-the-badge&logo=windows&logoColor=white" alt="Download Windows" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-Setup-26.10.4.exe">
+<img src="https://img.shields.io/badge/🪟_Windows_10/11-v26.10.4-0078d4?style=for-the-badge&logo=windows&logoColor=white" alt="Download Windows" />
 </a>
 
-<big><strong>Deplao-Setup-26.10.3.exe</strong></big>
+<big><strong>Deplao-Setup-26.10.4.exe</strong></big>
 
 </td>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.10.3-arm64.dmg">
-<img src="https://img.shields.io/badge/🍎_macOS_M1+-v26.10.3-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Apple Silicon" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.10.4-arm64.dmg">
+<img src="https://img.shields.io/badge/🍎_macOS_M1+-v26.10.4-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Apple Silicon" />
 </a>
 
-<big><strong>Deplao-26.10.3-arm64.dmg</strong></big>
+<big><strong>Deplao-26.10.4-arm64.dmg</strong></big>
 
 </td>
 </tr>
 <tr>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.10.3.AppImage">
-<img src="https://img.shields.io/badge/🐧_Ubuntu_Linux-v26.10.3-e95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Download Ubuntu" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.10.4.AppImage">
+<img src="https://img.shields.io/badge/🐧_Ubuntu_Linux-v26.10.4-e95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Download Ubuntu" />
 </a>
 
-<big><strong>Deplao-26.10.3.AppImage</strong></big><br>
+<big><strong>Deplao-26.10.4.AppImage</strong></big><br>
 <big>works on any distro - <code>chmod +x</code> & run</big>
 
 </td>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.10.3.dmg">
-<img src="https://img.shields.io/badge/🍎_macOS_Intel-v26.10.3-555555?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Intel" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.10.4.dmg">
+<img src="https://img.shields.io/badge/🍎_macOS_Intel-v26.10.4-555555?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Intel" />
 </a>
 
-<big><strong>Deplao-26.10.3.dmg</strong></big>
+<big><strong>Deplao-26.10.4.dmg</strong></big>
 
 </td>
 </tr>
@@ -418,7 +418,7 @@ node packages/plugin-cli/bin/deplao-plugin.js pack my-app --out my-app.zip
 At a glance, Deplao is:
 
 - **An operations hub**: multiple Zalo, Facebook, Telegram accounts, a unified inbox, quick replies, chat history sync
-- **A customer management layer**: CRM, labels, interaction history, messaging campaigns
+- **A customer management layer**: CRM, labels, interaction history, campaigns for friends and customers who have messaged you
 - **An automation layer**: workflows, AI, triggers and actions running in the background
 - **A business connection layer**: POS, shipping, payments, Public API, webhooks and your own apps
 - **An internal management layer**: reports, ERP, permissions, employee workspaces, cloud backups
@@ -428,7 +428,7 @@ At a glance, Deplao is:
 - 👤 **Multi-account Zalo, Facebook, Telegram Bot, Telegram User** - unlimited accounts, fast switching
 - 💬 **Unified inbox** - merged mode consolidates conversations from multiple accounts into one view
 - 📱 **Old message sync** - pull Zalo chat history from your phone into the app by time range; sync Facebook Messenger history by time range
-- 👥 **CRM & Campaign** - contacts, labels, internal notes, re-engagement; scan hidden group members and non-joined groups to find new leads; campaigns with a chat-style content preview and realtime stats
+- 👥 **CRM & Campaign** - contacts, labels, internal notes, re-engagement; campaigns for friends and customers who have messaged you, with a chat-style content preview and realtime stats
 - ⚙️ **Workflow automation** - drag-and-drop Trigger → Node → Action or chat with the AI copilot to build flows, test them in Simulation mode, run 24/7 with no code
 - 🤖 **AI Assistant** - reply suggestions, in-chat AI Q&A, message classification and 24/7 auto-replies
 - 🔗 **External integrations** - POS, shipping, payments, Google Sheets, Telegram, Email, HTTP Request... usable in chat or workflows
@@ -466,27 +466,22 @@ Screens are ordered by real usage flow: dashboard → chat → CRM → workflow 
   </tr>
   <tr>
     <td>
-      <img src="./assets/scan-members-group.png" alt="Scan Zalo group members in Deplao" width="360" />
+      <img src="./assets/campaign.png" alt="Campaigns for friends and customers who have messaged you in Deplao" width="360" />
       <br />
-      <sub><strong>Group member scan</strong></sub>
-    </td>
-    <td>
-      <img src="./assets/campaign.png" alt="Bulk messaging campaigns in Deplao" width="360" />
-      <br />
-      <sub><strong>Bulk messaging campaigns</strong></sub>
+      <sub><strong>Campaigns for friends & customers</strong></sub>
     </td>
     <td>
       <img src="./assets/workflow.png" alt="Drag-and-drop workflow designer in Deplao" width="360" />
       <br />
       <sub><strong>Workflow editor</strong></sub>
     </td>
-  </tr>
-  <tr>
     <td>
       <img src="./assets/detail-workflow.png" alt="Workflow node configuration in Deplao" width="360" />
       <br />
       <sub><strong>Workflow details</strong></sub>
     </td>
+  </tr>
+  <tr>
     <td>
       <img src="./assets/workflow-ai.png" alt="AI-powered workflow creation in Deplao" width="360" />
       <br />
@@ -497,13 +492,13 @@ Screens are ordered by real usage flow: dashboard → chat → CRM → workflow 
       <br />
       <sub><strong>POS, shipping & payment integrations</strong></sub>
     </td>
-  </tr>
-  <tr>
     <td>
       <img src="./assets/report.png" alt="Reports and performance analytics in Deplao" width="360" />
       <br />
       <sub><strong>Reports & analytics</strong></sub>
     </td>
+  </tr>
+  <tr>
     <td>
       <img src="./assets/employees.png" alt="Employee management and permissions in Deplao" width="360" />
       <br />
@@ -514,13 +509,13 @@ Screens are ordered by real usage flow: dashboard → chat → CRM → workflow 
       <br />
       <sub><strong>Internal ERP</strong></sub>
     </td>
-  </tr>
-  <tr>
     <td>
       <img src="./assets/apps-api.png" alt="Apps, API and Webhook in Deplao" width="360" />
       <br />
       <sub><strong>Apps, API & Webhook</strong></sub>
     </td>
+  </tr>
+  <tr>
     <td>
       <img src="./assets/cloud.png" alt="Internet and Cloud with Cloudflare and Google Drive in Deplao" width="360" />
       <br />
@@ -539,7 +534,7 @@ Screens are ordered by real usage flow: dashboard → chat → CRM → workflow 
 Deplao is a great fit for:
 
 - Online shops and sales teams closing orders via Zalo, Facebook, Telegram
-- Workflow automation combined with marketing to find new customers and automate customer care
+- Workflow automation and customer care, with campaigns for friends and customers who have messaged you
 - SMEs needing multiple staff handling inboxes simultaneously
 - Marketing agencies or freelancers managing multiple client accounts
 - Spas, clinics, education, F&B and businesses requiring recurring customer care
@@ -571,12 +566,11 @@ Deplao is a great fit for:
 - Telegram: create groups / channels, group / channel management, contacts, call log, Sticker · GIF panel synced with your account
 
 ### 3) CRM & customer care
-- Sync friends, group members and contact profiles
-- Scan Zalo group members from an invite link, including groups that hide their member list or are pending approval; results are saved to the CRM for friend requests, messages and group invites
+- Sync friends, joined groups and contact profiles
 - Store phone number, gender, birthday, internal notes
 - Two-way Zalo label sync and Local labels shared across accounts
 - Filter contacts by multiple criteria for targeted outreach
-- Create campaigns to send messages, add friends, invite to groups with realtime progress; chat-style content preview, send image first / text first or merge image + text
+- Send campaigns to friends and customers who have messaged you (messages, group invites) with realtime progress; chat-style content preview, send image first / text first or merge image + text
 
 ### 4) Workflow automation
 - No-code drag-and-drop workflows with an auto-layout button
@@ -596,7 +590,7 @@ Deplao is a great fit for:
 
 ### 6) Reports, ERP & employee management
 - Reports: messages, contacts, campaigns, workflows, AI, employees
-- Internal ERP: Tasks, Calendar, Notes
+- Internal ERP: Tasks, Calendar, Notes; work alerts to employees via Zalo (new tasks, due soon, leave requests)
 - Boss ↔ Employee model with module-level permissions; employees only see their assigned accounts
 - Employees connect over LAN or the Internet, reconnect automatically, realtime sync including edits / deletes / reactions
 - Track individual and team performance across time periods

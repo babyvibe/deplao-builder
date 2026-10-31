@@ -1,20 +1,20 @@
-import DateInputVN from '@/components/common/DateInputVN';
+import DateInputVN from '@/components/common/inputs/DateInputVN';
 import PageLoading from '@/components/common/PageLoading';
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend,
 } from 'recharts';
-import { useCRMStore, ContactTypeFilter } from '@/store/crmStore';
-import { useAppStore, LabelData } from '@/store/appStore';
-import { useAccountStore } from '@/store/accountStore';
+import { useCRMStore, ContactTypeFilter } from '@/store/crm/crmStore';
+import { useAppStore, LabelData } from '@/store/app/appStore';
+import { useAccountStore } from '@/store/accounts/accountStore';
 import DataAccessor, { isReadFailure } from '@/lib/data/DataAccessor';
-import { useEmployeeResync } from '@/hooks/useEmployeeResync';
+import { useEmployeeResync } from '@/hooks/accounts/useEmployeeResync';
 import { readOutcome } from '@/lib/crm/loadFailure';
 import LoadFailedNotice from './LoadFailedNotice';
 import ipc from '@/lib/ipc';
 import { CampaignIcon, ChartIcon, ChatIcon, CheckIcon, CloudIcon, EditIcon, GhostIcon, HardDriveIcon, InboxIcon, PlayIcon, SendIcon, ShuffleIcon, TagIcon, UserCheckIcon, UserIcon, UsersIcon } from '@/components/common/icons';
-import { CHANNEL } from '@/lib/channelHelper';
+import { CHANNEL } from '@/lib/channels/channelHelper';
 
 // ── Mini stat card ─────────────────────────────────────────────────────────────
 function MiniStat({ icon, label, value, sub, color = 'blue', onClick }: {

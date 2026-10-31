@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { normalizeAIModel } from '../../shared/aiModelCatalog';
+import { normalizeAIModel } from '../../shared/ai/aiModelCatalog';
 
 export interface AIProviderMessage { role: string; content: string; }
 export interface AICompletionRequest {

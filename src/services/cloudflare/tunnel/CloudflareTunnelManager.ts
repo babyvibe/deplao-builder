@@ -30,7 +30,7 @@
 import { CloudError, type CloudflareApi, type CloudSettingsData, type CloudSettingsStore, type CloudTunnelModule } from '../contracts';
 import type {
     AddressLayout, PublicAddress, TunnelAutoConfig, TunnelConfigView, TunnelHealth, TunnelMode, TunnelServiceId,
-} from '../../../shared/cloudContracts';
+} from '../../../shared/cloud/cloudContracts';
 import {
     addressFor, buildIngress, distinctHostnames, hostnameFor, hostnamesFor, hostPrefixError, ingressKey, isTunnelService,
     legacyAddressFor, normalizeHostname, TUNNEL_SERVICES,

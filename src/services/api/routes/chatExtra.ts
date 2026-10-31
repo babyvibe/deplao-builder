@@ -3,14 +3,14 @@
  * nhắc hẹn Zalo, danh sách nháp. Mirror đúng luồng UI:
  *  - ConversationList.tsx: handleTogglePin, handleMute/handleUnmute, handleMoveToOthers/handleRemoveFromOthers,
  *    handleMarkRead(asRead=false), handleDeleteConversation
- *  - ConversationList.tsx/ChatWindow.tsx: lấy tin cũ (telegramUser:getMessages, fb:fetchThreadMessages, zalo:getGroupChatHistory)
+ *  - ConversationList.tsx / khung chat (chat/window/channels): lấy tin cũ (telegramUser:getMessages, fb:fetchThreadMessages, zalo:getGroupChatHistory)
  *  - MessageInput.tsx: danh thiếp (zalo:sendCard), ghi âm (zalo:uploadVoiceFile → zalo:sendVoice); BankCardModal.tsx
  *  - ReminderPanel.tsx: zalo:getListReminder/createReminder/editReminder/removeReminder
  * Cờ hội thoại lưu như appStore.setMuted/addToOthers: tắt vô thời hạn = is_muted 1; có hạn = mute_until.
  */
 import { s } from '../schema';
 import { AccountInfo, ApiContext, ApiError, route, RouteDef } from '../types';
-import { getCapability } from '../../../configs/channelConfig';
+import { getCapability } from '../../../configs/channels/channelConfig';
 import { CHANNELS, buildQuotePayload, extractSentId, markRead, requireOnline, threadTypeNum, unsupported, zaloAuth } from '../channels/ChannelActions';
 import { ChatRouteDeps, loadMessage, resolveAttachment, threadTypeOf } from './chat';
 import { accountParams, scrub, threadParams, threadTypeSchema } from './common';

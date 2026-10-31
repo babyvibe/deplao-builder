@@ -13,7 +13,7 @@
  *   if (channel === BOSS_URL_CHANGED_EVENT) { applyBossUrlAnnouncement(this.workspaceId, data); return; }
  */
 import Logger from '../../utils/Logger';
-import WorkspaceManager from '../../utils/WorkspaceManager';
+import WorkspaceManager from '../../utils/app/WorkspaceManager';
 import EventBroadcaster from '../event/EventBroadcaster';
 import {
   decideAnnouncedBossUrl,
@@ -21,7 +21,7 @@ import {
   parseBossUrlChangedEvent,
   type AnnouncedUrlDecision,
   type EmployeeBossUrlChangedPayload,
-} from '../../shared/tunnelAddress';
+} from '../../shared/cloud/tunnelAddress';
 
 export interface BossUrlAnnouncementResult {
   applied: boolean;

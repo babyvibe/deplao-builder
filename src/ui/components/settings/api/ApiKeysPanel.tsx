@@ -3,8 +3,8 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import ipc, { ApiKeyCreateInput, ApiKeyRecord, ApiScopeInfo, ApiScopePreset } from '@/lib/ipc';
-import { useAppStore } from '@/store/appStore';
-import { useAccountStore } from '@/store/accountStore';
+import { useAppStore } from '@/store/app/appStore';
+import { useAccountStore } from '@/store/accounts/accountStore';
 import { showConfirm } from '@/components/common/ConfirmDialog';
 import { Spinner } from '@/components/common/PageLoading';
 import { KeyIcon, PlusIcon } from '@/components/common/icons';

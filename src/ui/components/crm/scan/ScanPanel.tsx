@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import ipc from '@/lib/ipc';
-import { SCAN_CONFIGS, type ScanType } from '../../../../services/facebook/FacebookScanTypes';
+import { SCAN_CONFIGS, type ScanType } from '../../../../services/facebook/scan/FacebookScanTypes';
 import { createScanTab, DEFAULT_FILTERS, SCAN_TAB_LABELS, type ScanTabData, type ScanFilters } from './ScanSessionTypes';
 import ScanResultTable from './ScanResultTable';
 import ScanFiltersPanel from './ScanFiltersPanel';
@@ -722,7 +722,7 @@ export default function ScanPanel({ accountId }: Props) {
     try {
       const scanTypeLabel = SCAN_TAB_LABELS[tab.scanType]?.label || tab.scanType;
       const XLSX = await import('xlsx');
-      const { SCAN_EXCEL_COLUMNS } = await import('../../../../services/facebook/FacebookScanTypes');
+      const { SCAN_EXCEL_COLUMNS } = await import('../../../../services/facebook/scan/FacebookScanTypes');
 
       const columns = SCAN_EXCEL_COLUMNS[tab.scanType] || [];
       const data = tab.items.map((item: any, idx: number) => {
@@ -752,10 +752,10 @@ export default function ScanPanel({ accountId }: Props) {
       document.body.removeChild(a);
       URL.revokeObjectURL(url2);
 
-      const { useAppStore } = await import('@/store/appStore');
+      const { useAppStore } = await import('@/store/app/appStore');
       useAppStore.getState().showNotification?.('Đã xuất Excel thành công!', 'success');
     } catch (err: any) {
-      const { useAppStore } = await import('@/store/appStore');
+      const { useAppStore } = await import('@/store/app/appStore');
 
       useAppStore.getState().showNotification?.('Lỗi xuất Excel: ' + err.message, 'error');
     }

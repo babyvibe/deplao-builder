@@ -4,11 +4,11 @@
  * Token chỉ đi một chiều renderer → main (main lưu bằng safeStorage); renderer không bao giờ đọc lại.
  */
 import React, { useId, useState } from 'react';
-import { useAppStore } from '@/store/appStore';
+import { useAppStore } from '@/store/app/appStore';
 import { CloudIcon, ExternalLinkIcon } from '@/components/common/icons';
 import { Button, Card, FormField, Input } from '@/components/ui';
 import { cn } from '@/lib/cn';
-import type { CloudConnectionStatus } from '../../../../shared/cloudContracts';
+import type { CloudConnectionStatus } from '../../../../shared/cloud/cloudContracts';
 import { cleanIpcError, cloudApi, openExternalUrl, useStorage } from './cloudUi';
 
 const ACCOUNT_ID_RE = /^[a-f0-9]{32}$/;

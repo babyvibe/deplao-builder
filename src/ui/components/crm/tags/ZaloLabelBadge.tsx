@@ -1,5 +1,5 @@
 import React from 'react';
-import type { LabelData } from '@/store/appStore';
+import type { LabelData } from '@/store/app/appStore';
 
 interface ZaloLabelBadgeProps {
   label: LabelData;

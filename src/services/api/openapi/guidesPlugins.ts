@@ -91,7 +91,7 @@ const REFERENCE = `
 | \`events:emit\` | \`deplao.events.emit\` (tên khai báo trong \`contributes.events\`) |
 | \`network\` | \`deplao.http.fetch\` ở backend, \`ui.connectSrc\` |
 | \`schedules\` | \`contributes.schedules\` (cron) |
-| \`cloudflare:workers\` | \`deplao.cloudflare\` ở backend (runtime \`local\`): tạo / sửa Worker và D1 tên \`<tiền tố>\` hoặc \`<tiền tố>-…\` (tiền tố = phần cuối id) trên Cloudflare đã kết nối trong Deplao; token Cloudflare không đưa cho ứng dụng |
+| \`cloudflare:workers\` | \`deplao.cloudflare\` ở backend (runtime \`local\`): tạo / sửa Worker và D1 tên \`<tiền tố>\` hoặc \`<tiền tố>-…\` (tiền tố = phần cuối id) trên Cloudflare đã kết nối trong Deplao, gắn tên miền con cho Worker đó khi người dùng đồng ý; token Cloudflare không đưa cho ứng dụng |
 
 ### Điểm mở rộng (\`contributes\`)
 
@@ -122,9 +122,9 @@ const REFERENCE = `
 | \`ui\` (chỉ UI) | \`context\`, \`onContext\`, \`theme\`, \`openConversation\`, \`insertComposerText\`, \`toast\`, \`navigate(pageId)\`, \`openExternal(url)\`, \`onCommand\` |
 | \`backend\` (chỉ UI) | \`call(name, params)\` → \`commands[name]\` trong backend của chính plugin |
 | \`http\` (chỉ backend) | \`fetch(url, init)\` — cần \`network\`, chặn mạng nội bộ, ≤ 5 MB; trả \`text\` hoặc \`base64\` theo Content-Type (thiếu thì xem nội dung), \`init.responseType\` = \`'text'\` / \`'base64'\` để ép |
-| \`cloudflare\` (chỉ backend) | \`status()\`, \`d1.ensure(name)\`, \`d1.migrate(name, dir)\`, \`d1.query(name, sql, params)\`, \`workers.get(name)\`, \`workers.deployBundle({ name, bundleDir, bindings, secrets, workersDev })\` — cần \`cloudflare:workers\`; mỗi lời gọi tính vào ngân sách 100 request / 5 phút của app |
+| \`cloudflare\` (chỉ backend) | \`status()\`, \`zones()\`, \`d1.ensure(name)\`, \`d1.migrate(name, dir)\`, \`d1.query(name, sql, params)\`, \`workers.get(name)\`, \`workers.deployBundle({ name, bundleDir, bindings, secrets, workersDev })\`, \`workers.domains.list(name)\` / \`attach(name, hostname)\` / \`detach(name, hostname)\` (tên miền riêng: chỉ tên con mới, Deplao hỏi người dùng trước khi gắn) — cần \`cloudflare:workers\`; mỗi lời gọi tính vào ngân sách 100 request / 5 phút của app |
 
-Lỗi trả về là \`Error\` có \`code\` (cùng mã lỗi API: \`FORBIDDEN_SCOPE\`, \`FORBIDDEN_ACCOUNT\`, \`VALIDATION_ERROR\`…) và \`status\`. \`deplao.cloudflare\` thêm \`PLUGIN_PERMISSION\`, \`CF_NOT_CONNECTED\`, \`CF_PERMISSION\`, \`CF_NAME_FORBIDDEN\`, \`CF_BUNDLE_INVALID\`, \`CF_API\`.
+Lỗi trả về là \`Error\` có \`code\` (cùng mã lỗi API: \`FORBIDDEN_SCOPE\`, \`FORBIDDEN_ACCOUNT\`, \`VALIDATION_ERROR\`…) và \`status\`. \`deplao.cloudflare\` thêm \`PLUGIN_PERMISSION\`, \`CF_NOT_CONNECTED\`, \`CF_PERMISSION\`, \`CF_NAME_FORBIDDEN\`, \`CF_BUNDLE_INVALID\`, \`CF_API\`, \`CF_DECLINED\` (người dùng không đồng ý gắn tên miền).
 
 ### Backend (runtime \`local\`)
 

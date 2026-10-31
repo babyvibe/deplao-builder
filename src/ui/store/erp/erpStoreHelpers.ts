@@ -1,5 +1,5 @@
 import { isErpPermissionDeniedResponse, reportErpPermissionDenied } from '@/lib/ipc';
-import { useEmployeeStore } from '@/store/employeeStore';
+import { useEmployeeStore } from '@/store/employee/employeeStore';
 
 /**
  * Lệnh ghi ERP qua DataAccessor bị từ chối quyền (`code: 'permission_denied'` — handler IPC, hoặc Boss khi nhân viên

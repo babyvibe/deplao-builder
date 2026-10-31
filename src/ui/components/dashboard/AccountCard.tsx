@@ -1,23 +1,23 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { AccountInfo } from '@/store/accountStore';
-import { useAppStore } from '@/store/appStore';
-import { useAccountStore } from '@/store/accountStore';
+import { AccountInfo } from '@/store/accounts/accountStore';
+import { useAppStore } from '@/store/app/appStore';
+import { useAccountStore } from '@/store/accounts/accountStore';
 import ipc, { buildZaloAuth } from '@/lib/ipc'
-import { handleAvatarError } from '@/lib/avatarRetry'
+import { handleAvatarError } from '@/lib/contacts/avatarRetry'
 import DataAccessor from '@/lib/data/DataAccessor';;
-import { formatPhone } from '@/utils/phoneUtils';
-import PhoneDisplay from '../common/PhoneDisplay';
-import CopyableText from '../common/CopyableText';
+import { formatPhone } from '@/lib/contacts/phoneUtils';
+import PhoneDisplay from '../common/inputs/PhoneDisplay';
+import CopyableText from '../common/inputs/CopyableText';
 import { showConfirm } from '../common/ConfirmDialog';
-import { extractApiError } from '@/utils/apiError';
-import ChannelBadge from '../common/ChannelBadge';
-import { CHANNEL, isZalo, isFacebook, isTelegram, isTelegramUser, isTelegramBot } from '@/lib/channelHelper';
-import { toLocalMediaUrl } from '@/lib/localMedia';
+import { extractApiError } from '@/lib/app/apiError';
+import ChannelBadge from '../common/avatars/ChannelBadge';
+import { CHANNEL, isZalo, isFacebook, isTelegram, isTelegramUser, isTelegramBot } from '@/lib/channels/channelHelper';
+import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import { PhoneIcon } from '@/components/common/icons';
 import { Spinner } from '@/components/common/PageLoading';
-import type { Channel } from '@/../configs/channelConfig';
-import { channelSupports, resolveAccountChannel, getChannelLabel } from '@/../configs/channelConfig';
-import * as channelIpc from '@/lib/channelIpc';
+import type { Channel } from '@/../configs/channels/channelConfig';
+import { channelSupports, resolveAccountChannel, getChannelLabel } from '@/../configs/channels/channelConfig';
+import * as channelIpc from '@/lib/channels/channelIpc';
 
 interface AccountCardProps {
   account: AccountInfo;
@@ -142,7 +142,7 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
       if (isTelegram(channel)) {
         // Telegram: reset avatar cache và fetch lại avatar
         try {
-          const { resetAvatarCache } = await import('../../../utils/avatarFetchCache');
+          const { resetAvatarCache } = await import('../../../utils/telegram/avatarFetchCache');
           resetAvatarCache(acc.zalo_id, acc.zalo_id);
         } catch {}
 

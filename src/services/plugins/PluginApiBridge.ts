@@ -15,11 +15,11 @@ import { ApiError, Principal } from '../api/types';
 import type { EventHub, ApiEvent } from '../api/events/EventHub';
 import type { UploadStore } from '../api/UploadStore';
 import type { PluginGrant } from '../api/IpcInvoker';
-import { guardedRequest } from '../api/netGuard';
+import { guardedRequest } from '../api/http/netGuard';
 import { getApiSettingBool } from '../api/settings';
 import { CloudError } from '../cloudflare/contracts';
 import {
-    assertResourceName, normalizeDeployOptions, normalizeQuery, WORKERS_ERROR_STATUS, WORKERS_PERMISSION,
+    assertResourceName, normalizeDeployOptions, normalizeDomainHostname, normalizeQuery, WORKERS_ERROR_STATUS, WORKERS_PERMISSION,
 } from '../cloudflare/workers/validate';
 import type { PluginRecord, PluginRuntimeHandle } from './PluginManager';
 import type { PluginLogStore, PluginStorage } from './PluginStorage';
@@ -80,6 +80,11 @@ const CLOUDFLARE_TIMEOUTS_MS = {
     d1Query: 60_000,
     d1Migrate: 5 * 60_000,
     deploy: 10 * 60_000,
+    zones: 60_000,
+    domains: 60_000,
+    /** Gồm cả lúc chờ người dùng trả lời hộp thoại xác nhận của Deplao. */
+    domainAttach: 10 * 60_000,
+    domainDetach: 60_000,
 };
 
 function need(rec: PluginRecord, perm: string): void {
@@ -289,6 +294,10 @@ export class PluginApiBridge {
             case 'cloudflare.d1.ensure':
             case 'cloudflare.d1.migrate':
             case 'cloudflare.d1.query':
+            case 'cloudflare.zones':
+            case 'cloudflare.workers.domains.list':
+            case 'cloudflare.workers.domains.attach':
+            case 'cloudflare.workers.domains.detach':
                 return this.cloudflare(rec, principal, m, p, origin);
 
             default: {
@@ -367,6 +376,26 @@ export class PluginApiBridge {
                     timeoutMs = CLOUDFLARE_TIMEOUTS_MS.d1Query;
                     break;
                 }
+                case 'cloudflare.zones':
+                    channel = 'cloudflare:workers:zones';
+                    payload = {};
+                    timeoutMs = CLOUDFLARE_TIMEOUTS_MS.zones;
+                    break;
+                case 'cloudflare.workers.domains.list':
+                    channel = 'cloudflare:workers:domains';
+                    payload = { name: assertResourceName(p.name, prefix, 'Worker') };
+                    timeoutMs = CLOUDFLARE_TIMEOUTS_MS.domains;
+                    break;
+                case 'cloudflare.workers.domains.attach':
+                    channel = 'cloudflare:workers:domainAttach';
+                    payload = { name: assertResourceName(p.name, prefix, 'Worker'), hostname: normalizeDomainHostname(p.hostname) };
+                    timeoutMs = CLOUDFLARE_TIMEOUTS_MS.domainAttach;
+                    break;
+                case 'cloudflare.workers.domains.detach':
+                    channel = 'cloudflare:workers:domainDetach';
+                    payload = { name: assertResourceName(p.name, prefix, 'Worker'), hostname: normalizeDomainHostname(p.hostname) };
+                    timeoutMs = CLOUDFLARE_TIMEOUTS_MS.domainDetach;
+                    break;
                 default:
                     throw new ApiError(404, 'NOT_FOUND', `Không có hàm "${method}"`);
             }
@@ -376,6 +405,7 @@ export class PluginApiBridge {
         if (!this.deps.invokeDelegated) throw new ApiError(501, 'NOT_IMPLEMENTED', 'Bản app này chưa hỗ trợ deplao.cloudflare');
         const grant: PluginGrant = Object.freeze({
             pluginId: rec.id,
+            pluginName: String(rec.name || rec.id).slice(0, 80),
             permission: WORKERS_PERMISSION,
             resourcePrefix: prefix,
             pluginDir,

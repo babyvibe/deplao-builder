@@ -1,12 +1,12 @@
 import DatabaseService from '../database/DatabaseService';
-import ConnectionManager from '../../utils/ConnectionManager';
+import ConnectionManager from '../../utils/connection/ConnectionManager';
 import EventBroadcaster from '../event/EventBroadcaster';
 import Logger from '../../utils/Logger';
 import { parseMarkup } from './message-markup';
 import { sendCampaignBlock } from './campaignBlockSender';
-import { DEFAULT_CAMPAIGN_SEND_OPTIONS, readCampaignSendOptions, type CampaignSendOptions } from '../../shared/campaignSendPlan';
-import { CAMPAIGN_MIN_CONTACT_DELAY_SECONDS, effectiveContactDelayRange } from '../../shared/campaignDelay';
-import { summarizeMixedOutcome, type MixedActionOutcome } from '../../shared/campaignOutcome';
+import { DEFAULT_CAMPAIGN_SEND_OPTIONS, readCampaignSendOptions, type CampaignSendOptions } from '../../shared/crm/campaignSendPlan';
+import { CAMPAIGN_MIN_CONTACT_DELAY_SECONDS, effectiveContactDelayRange } from '../../shared/crm/campaignDelay';
+import { summarizeMixedOutcome, type MixedActionOutcome } from '../../shared/crm/campaignOutcome';
 import { automationsPausedAfterRestore } from '../cloudflare/restoreGate';
 
 /**
@@ -448,7 +448,7 @@ class CRMQueueService {
                         outcomes.push({ action, ok: false, error: actionErr.message });
                     }
                 }
-                // Tất cả hành động lỗi → "Lỗi"; một phần → "Đã gửi" kèm lỗi các hành động hỏng (shared/campaignOutcome)
+                // Tất cả hành động lỗi → "Lỗi"; một phần → "Đã gửi" kèm lỗi các hành động hỏng (shared/crm/campaignOutcome)
                 const summary = summarizeMixedOutcome(outcomes);
                 outcomeStatus = summary.status;
                 outcomeError = summary.error;

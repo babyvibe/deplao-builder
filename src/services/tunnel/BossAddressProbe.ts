@@ -2,7 +2,7 @@
  * BossAddressProbe — main process, phía nhân viên: thăm dò một địa chỉ Boss để biết nó còn dùng được không.
  *
  * Chỉ phân giải tên miền + GET <địa chỉ>/api/health KHÔNG kèm token (không gửi gì của nhân viên đi đâu), rồi
- * phân loại bằng classifyBossProbe (src/shared/tunnelAddress.ts):
+ * phân loại bằng classifyBossProbe (src/shared/cloud/tunnelAddress.ts):
  *  - tên miền tunnel không còn (ENOTFOUND) trong khi tên miền gốc của dịch vụ vẫn phân giải được → 'dead'
  *  - Cloudflare 530 / 1033 (Quick Tunnel), ngrok ERR_NGROK_3200 → 'dead'
  *  - ECONNREFUSED → 'refused'; mất mạng / DNS không trả lời → 'no-network'
@@ -19,7 +19,7 @@ import {
   type BossAddressInfo,
   type BossProbeEvidence,
   type BossProbeVerdict,
-} from '../../shared/tunnelAddress';
+} from '../../shared/cloud/tunnelAddress';
 
 const DNS_TIMEOUT_MS = 5_000;
 const HTTP_TIMEOUT_MS = 8_000;

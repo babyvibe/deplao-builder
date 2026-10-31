@@ -4,10 +4,10 @@
  */
 import React, { useState } from 'react';
 import { cn } from '@/lib/cn';
-import { toLocalMediaUrl } from '@/lib/localMedia';
-import ChannelBadge from '@/components/common/ChannelBadge';
+import { toLocalMediaUrl } from '@/lib/media/localMedia';
+import ChannelBadge from '@/components/common/avatars/ChannelBadge';
 import { CheckIcon, ChevronDownIcon } from '@/components/common/icons';
-import type { Channel } from '../../../../configs/channelConfig';
+import type { Channel } from '../../../../configs/channels/channelConfig';
 import {
   CHANNEL_SHORT_LABEL,
   accountChannel,

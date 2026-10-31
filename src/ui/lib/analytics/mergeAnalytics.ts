@@ -1,6 +1,6 @@
 /**
  * Multi-account Reports (AnalyticsPage): merge the per-account results of the analytics
- * DataAccessor methods into one report. Pure — covered by src/__tests__/analyticsMerge.test.ts.
+ * DataAccessor methods into one report. Pure — covered by src/__tests__/analytics/analyticsMerge.test.ts.
  *
  * Merge rules:
  *  - counters are summed (contacts / friends / groups / campaigns are per-account relationships,

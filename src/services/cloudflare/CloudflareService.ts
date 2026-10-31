@@ -19,7 +19,7 @@ import {
     CLOUD_CHANGED_EVENT,
     CloudChangedPayload, CloudConnectInput, CloudConnectionStatus, CloudPermissionCheck, CloudStorageProvider,
     CloudStorageStatus, CloudZone, isCloudStorageProvider, storageLabel,
-} from '../../shared/cloudContracts';
+} from '../../shared/cloud/cloudContracts';
 import { CloudApiError, CloudflareApiClient, FetchLike, RequestBudget, cfErrorCodes, cloudflareBudget } from './CloudflareApi';
 import { R2BucketClient, R2Fetch, r2CredentialsFromToken } from './r2/R2Client';
 import type { SigV4Credentials } from './r2/sigv4';

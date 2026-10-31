@@ -303,6 +303,17 @@ export const ERP_REST_ROUTES: readonly ErpRestRoute[] = [
   { methods: POST, path: '/api/command/erp/notifications/delete', channel: 'erp:notify:delete', action: 'erp.access',
     input: ({ params: p }) => ({ ids: list(p.ids) ?? [] }) },
   { methods: POST, path: '/api/command/erp/notifications/delete-all', channel: 'erp:notify:deleteAll', action: 'erp.access', input: none },
+
+  // ── Thông báo qua Zalo (Cài đặt, owner / admin). Tài khoản gửi đi tham số `zaloId` → Boss kiểm tra tài khoản được giao
+  //    (employeeAccess) như mọi lệnh theo tài khoản; không gửi `zaloId` = giữ tài khoản đang chọn ──
+  { methods: GET, path: '/api/query/erp/notifications/zalo', channel: 'erp:notify:zaloStatus', action: 'settings.erp', input: none },
+  { methods: POST, path: '/api/command/erp/notifications/zalo', channel: 'erp:notify:setZaloSettings', action: 'settings.erp',
+    input: ({ params: p }) => ({
+      settings: compact({ enabled: given(p.enabled) ? bool(p.enabled) : undefined, accountId: str(p.zaloId), types: list(p.types) }),
+    }) },
+  // employeeId = người nhận tin thử (đối tượng, không phải người làm)
+  { methods: POST, path: '/api/command/erp/notifications/zalo/test', channel: 'erp:notify:testZalo', action: 'settings.erp',
+    input: ({ params: p }) => compact({ employeeId: str(p.employeeId) }) },
 ];
 
 // ── Khớp route ─────────────────────────────────────────────────────────────────────────────────────────────────

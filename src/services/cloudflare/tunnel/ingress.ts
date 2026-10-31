@@ -23,7 +23,7 @@ import {
     type TunnelAutoConfig,
     type TunnelMode,
     type TunnelServiceId,
-} from '../../../shared/cloudContracts';
+} from '../../../shared/cloud/cloudContracts';
 
 export const TUNNEL_SERVICES: readonly TunnelServiceId[] = ['relay', 'payments', 'workflow'];
 

@@ -43,7 +43,7 @@ export function resetAppVersionCacheForTests(): void {
 
 export function appMode(): 'standalone' | 'boss' | 'employee' | 'unknown' {
     try {
-        const AppModeManager = require('../../utils/AppModeManager').default;
+        const AppModeManager = require('../../utils/app/AppModeManager').default;
         return AppModeManager.getInstance().getMode();
     } catch {
         return 'unknown';
@@ -52,7 +52,7 @@ export function appMode(): 'standalone' | 'boss' | 'employee' | 'unknown' {
 
 export function activeWorkspace(): { id: string; name: string; type: string } | null {
     try {
-        const WorkspaceManager = require('../../utils/WorkspaceManager').default;
+        const WorkspaceManager = require('../../utils/app/WorkspaceManager').default;
         const ws = WorkspaceManager.getInstance().getActiveWorkspace();
         return ws ? { id: String(ws.id), name: String(ws.name || ''), type: String(ws.type || 'local') } : null;
     } catch {

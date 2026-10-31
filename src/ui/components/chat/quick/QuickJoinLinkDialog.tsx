@@ -3,15 +3,15 @@
  * tự chọn tài khoản cùng kênh, xem trước nhóm rồi mới tham gia.
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import type { AccountInfo } from '@/store/accountStore';
+import type { AccountInfo } from '@/store/accounts/accountStore';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
-import { toLocalMediaUrl } from '@/lib/localMedia';
-import { classifyZaloJoinResult } from '@/lib/zaloJoinGroupResult';
+import { toLocalMediaUrl } from '@/lib/media/localMedia';
+import { classifyZaloJoinResult } from '@/lib/zalo/zaloJoinGroupResult';
 import {
   Badge, Button, Dialog, DialogBody, DialogClose, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Input,
 } from '@/components/ui';
 import { UsersIcon } from '@/components/common/icons';
-import { groupLinkAccountChannels, parseGroupLink, type GroupLinkTarget } from '../../../../shared/groupLinks';
+import { groupLinkAccountChannels, parseGroupLink, type GroupLinkTarget } from '../../../../shared/crm/groupLinks';
 import { QuickAccountPicker } from './QuickAccountPicker';
 import {
   accountChannel, pickAccountForLink, type OpenQuickConversation, type QuickAccountEntry,
@@ -64,7 +64,7 @@ async function previewLink(account: AccountInfo, target: GroupLinkTarget, link: 
 async function joinLink(account: AccountInfo, target: GroupLinkTarget, link: string, preview: LinkPreview | null): Promise<JoinResult> {
   if (target.channel === 'zalo') {
     const res: any = await ipc.zalo?.joinGroupLink({ auth: buildZaloAuth(account, account.zalo_id), link: target.link });
-    // Chờ duyệt (240) nằm trong `response` → trước đây báo "Đã tham gia nhóm" (lib/zaloJoinGroupResult)
+    // Chờ duyệt (240) nằm trong `response` → trước đây báo "Đã tham gia nhóm" (lib/zalo/zaloJoinGroupResult)
     const join = classifyZaloJoinResult(res);
     let threadId = preview?.threadId;
     if (!threadId) threadId = (await previewLink(account, target, link)).preview?.threadId;

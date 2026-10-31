@@ -10,7 +10,7 @@
  *  - Dự kiến cuối kỳ theo nhịp hiện tại (tuyến tính).
  */
 import type { R2OpClass } from '../contracts';
-import { R2_PRICING } from '../../../shared/cloudContracts';
+import { R2_PRICING } from '../../../shared/cloud/cloudContracts';
 
 export const SECOND_MS = 1000;
 export const HOUR_MS = 60 * 60 * SECOND_MS;

@@ -1,5 +1,5 @@
 /**
- * bossFileAccess.ts — quyền tải file Boss phục vụ cho nhân viên (pure, test ở src/__tests__/bossFileAccess.test.ts).
+ * bossFileAccess.ts — quyền tải file Boss phục vụ cho nhân viên (pure, test ở src/__tests__/employee/bossFileAccess.test.ts).
  *
  * Trước đây GET /api/media/* (media chat) và /api/library/file|thumb/* (thư viện) trả file KHÔNG cần đăng nhập:
  * ai biết URL Boss / tunnel là tải được ảnh, video, tài liệu của khách. Nay HttpRelayService bắt buộc phiên nhân viên

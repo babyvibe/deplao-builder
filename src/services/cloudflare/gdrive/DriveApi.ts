@@ -15,7 +15,7 @@ import { randomBytes } from 'crypto';
 import { Readable, Transform, Writable } from 'stream';
 import { pipeline } from 'stream/promises';
 import { CloudError } from '../contracts';
-import { GDRIVE_LIMITS } from '../../../shared/cloudContracts';
+import { GDRIVE_LIMITS } from '../../../shared/cloud/cloudContracts';
 
 export const DRIVE_API = 'https://www.googleapis.com/drive/v3';
 export const DRIVE_UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3';

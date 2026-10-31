@@ -1,65 +1,65 @@
 import React, { Suspense, useCallback, useEffect, useState, useRef } from 'react';
-import TopBar from './components/layout/TopBar';
-import Sidebar from './components/layout/Sidebar';
-import AccountPanel from './components/layout/AccountPanel';
-import ConversationList from './components/chat/ConversationList';
-import ChatHeader from './components/chat/ChatHeader';
-import ChatWindow from './components/chat/ChatWindow';
-import MessageInput from './components/chat/MessageInput';
-import { TelegramPostDiscussionHost } from './components/chat/telegram/TelegramPostDiscussion';
-import ConversationInfo from './components/chat/ConversationInfo';
-import GroupBoardPanel from './components/chat/GroupBoardPanel';
+import TopBar from './components/layout/topbar/TopBar';
+import Sidebar from './components/layout/sidebar/Sidebar';
+import AccountPanel from './components/layout/sidebar/AccountPanel';
+import ConversationList from './components/chat/conversations/ConversationList';
+import ChatHeader from './components/chat/header/ChatHeader';
+import ChatWindow from './components/chat/window/ChatWindow';
+import MessageInput from './components/chat/composer/MessageInput';
+import { TelegramPostDiscussionHost } from './components/chat/telegram/posts/TelegramPostDiscussion';
+import ConversationInfo from './components/chat/info/ConversationInfo';
+import GroupBoardPanel from './components/chat/groups/GroupBoardPanel';
 import IntegrationQuickPanel from './components/integration/IntegrationQuickPanel';
-import PluginPagesHost from './components/plugins/PluginPagesHost';
-import PluginChatPanel from './components/plugins/PluginChatPanel';
-import { initPluginStore } from './store/pluginStore';
-import AIQuickPanel from './components/integration/AIQuickPanel';
-import ReminderNotification, { type ReminderData } from './components/chat/ReminderNotification';
+import PluginPagesHost from './components/plugins/runtime/PluginPagesHost';
+import PluginChatPanel from './components/plugins/contributions/PluginChatPanel';
+import { initPluginStore } from './store/plugins/pluginStore';
+import AIQuickPanel from './components/integration/ai/AIQuickPanel';
+import ReminderNotification, { type ReminderData } from './components/chat/reminders/ReminderNotification';
 import {
   ERP_EVENT_EMOJI, erpReminderHeading, erpReminderNote, erpReminderWhen, isErpReminderForMe, isMissedErpReminder,
 } from './lib/erp/erpReminder';
-import { playNotificationSound, showDesktopNotification } from './utils/NotificationService';
+import { playNotificationSound, showDesktopNotification } from './lib/notifications/NotificationService';
 import { openLinkedConversation } from './lib/erp/erpLinkedConversation';
 import { useErpReminderAttention } from './store/erp/erpReminderAttentionStore';
-import { erpReminderLeadText } from '../shared/erpReminderText';
-import FriendRequestNotification, { FriendRequestNotifData } from './components/common/FriendRequestNotification';
-import InAppMessageToasts from './components/common/InAppMessageToasts';
-import { useInAppNotifyStore } from './store/inAppNotifyStore';
-import QuickChatModal from './components/chat/QuickChatModal';
-import AccountInitPanel from './components/common/AccountInitPanel';
-import AccountSwitcherOverlay from './components/common/AccountSwitcherOverlay';
-import TelegramIncomingCall from './components/chat/quick/telegram/TelegramIncomingCall';
-import { UpdateNotification } from './components/common/UpdateNotification';
-import { useAppStore } from './store/appStore';
-import { useAccountStore } from './store/accountStore';
-import { useChatStore } from './store/chatStore';
+import { erpReminderLeadText } from '../shared/erp/erpReminderText';
+import FriendRequestNotification, { FriendRequestNotifData } from './components/common/notifications/FriendRequestNotification';
+import InAppMessageToasts from './components/common/notifications/InAppMessageToasts';
+import { useInAppNotifyStore } from './store/chat/inAppNotifyStore';
+import QuickChatModal from './components/chat/quick/QuickChatModal';
+import AccountInitPanel from './components/common/accounts/AccountInitPanel';
+import AccountSwitcherOverlay from './components/common/accounts/AccountSwitcherOverlay';
+import TelegramIncomingCall from './components/chat/telegram/quick/TelegramIncomingCall';
+import { UpdateNotification } from './components/common/notifications/UpdateNotification';
+import { useAppStore } from './store/app/appStore';
+import { useAccountStore } from './store/accounts/accountStore';
+import { useChatStore } from './store/chat/chatStore';
 import { useShallow } from 'zustand/react/shallow';
-import { useCRMStore } from './store/crmStore';
-import { useZaloEvents } from './hooks/useZaloEvents';
-import { useChatEvents } from './hooks/useChatEvents';
-import useIsMobile from './hooks/useIsMobile';
+import { useCRMStore } from './store/crm/crmStore';
+import { useZaloEvents } from './hooks/chat/useZaloEvents';
+import { useChatEvents } from './hooks/chat/useChatEvents';
+import useIsMobile from './hooks/layout/useIsMobile';
 import ipc, { buildZaloAuth } from './lib/ipc';
-import { reportUiSettledWhenReady } from '@/lib/startupSettled';
-import { liveReadSync } from './lib/chat/liveReadSync';
-import { getFilteredUnreadCount } from './lib/badgeUtils';
+import { reportUiSettledWhenReady } from '@/lib/app/startupSettled';
+import { liveReadSync } from './lib/chat/read/liveReadSync';
+import { getFilteredUnreadCount } from './lib/notifications/badgeUtils';
 import DataAccessor, { isReadFailure } from './lib/data/DataAccessor';
-import { reloadAccountContacts } from './lib/chat/accountContacts';
-import { checkAccountInitNeeds } from './lib/zaloInitUtils';
-import AddAccountModal from "@/components/auth/AddAccountModal";
-import EmployeeConnectionBanner from "@/components/common/EmployeeConnectionBanner";
-import { useWorkspaceStore } from './store/workspaceStore';
-import { useEmployeeStore } from './store/employeeStore';
+import { reloadAccountContacts } from './lib/chat/conversations/accountContacts';
+import { checkAccountInitNeeds } from './lib/zalo/zaloInitUtils';
+import AddAccountModal from "@/components/auth/login/AddAccountModal";
+import EmployeeConnectionBanner from "@/components/common/notifications/EmployeeConnectionBanner";
+import { useWorkspaceStore } from './store/app/workspaceStore';
+import { useEmployeeStore } from './store/employee/employeeStore';
 import RestQueryService from '../services/http/RestQueryService';
 import {
   AUTH_EXPIRED_MESSAGE,
   createThrottleGate,
   normalizeBossUrl,
   SNAPSHOT_REFRESH_THROTTLE_MS,
-} from '../shared/employeeConnection';
-import LockScreen from './components/auth/LockScreen';
+} from '../shared/employee/employeeConnection';
+import LockScreen from './components/auth/lock/LockScreen';
 import { Spinner } from '@/components/common/PageLoading';
 import { GlobeIcon } from '@/components/common/icons';
-import { CHANNEL, isZalo, isNonZalo, isFacebook } from '@/lib/channelHelper';
+import { CHANNEL, isZalo, isNonZalo, isFacebook } from '@/lib/channels/channelHelper';
 
 // These pages pull in editors, charts, React Flow and large ERP modules. They
 // are not needed for the first chat frame, so defer them until their view opens.
@@ -69,7 +69,7 @@ const CRMPage = React.lazy(() => import('./components/crm/CRMPage'));
 const WorkflowPage = React.lazy(() => import('./components/workflow/WorkflowPage'));
 const IntegrationPage = React.lazy(() => import('./components/integration/IntegrationPage'));
 const AnalyticsPage = React.lazy(() => import('./components/analytics/AnalyticsPage'));
-const ErpPage = React.lazy(() => import('./features/erp/ErpPage'));
+const ErpPage = React.lazy(() => import('./components/erp/ErpPage'));
 
 const HEALTH_CHECK_INTERVAL_MS = 60 * 1000; // 1 phút
 const NETWORK_RECONNECT_COOLDOWN_MS = 15 * 1000; // 15 giây
@@ -699,7 +699,7 @@ export default function App() {
     const accountId = activeAccountId;
     if (isFacebook(channel)) {
       // FB init: simpler flow - just sync threads
-      import('@/lib/fbInitUtils').then(({ checkFBAccountInitNeeds }) => {
+      import('@/lib/facebook/fbInitUtils').then(({ checkFBAccountInitNeeds }) => {
         checkFBAccountInitNeeds(accountId).then(needs => {
           if (needs.any) {
             setAccountInitId(accountId);
@@ -1209,11 +1209,13 @@ export default function App() {
   }, []);
 
   // ─── Facebook: flash taskbar on new message when window not focused ─────────
-  // Âm thanh, thông báo trong app và popup hệ điều hành của tin FB: hooks/useChatEvents (trước đây báo ở cả hai nơi →
+  // Âm thanh, thông báo trong app và popup hệ điều hành của tin FB: hooks/chat/useChatEvents (trước đây báo ở cả hai nơi →
   // mỗi tin kêu 2 lần, 2 popup).
   useEffect(() => {
     const unsub = window.electronAPI?.on('fb:onMessage', (data: any) => {
       if (isWindowFocusedRef.current) return;
+      // Bản phát lại của tin đã báo (MQTT và bridge cùng nhận): không nháy lần nữa
+      if (data?.message?.repeat === true) return;
       const threadId = data?.message?.replyToID || '';
       const accountId = data?.fbAccountId || '';
       // The backend owns Facebook sender attribution. `senderID` was not

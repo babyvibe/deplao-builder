@@ -1,11 +1,11 @@
-import { DEFAULT_CONFIGS } from '../workflowConfig';
+import { DEFAULT_CONFIGS } from '../nodes/workflowConfig';
 import { WorkflowTemplate } from './workflowTemplates';
 import { BellIcon, BotIcon, ChartIcon, CreditCardIcon, LightningIcon, PackageIcon, ShoppingCartIcon, StarIcon, TagIcon, TrendingDownIcon, TruckIcon } from '@/components/common/icons';
 
 
 // ── Integration Templates ──────────────────────────────────────────────────────
 // Các workflow mẫu kết hợp với tích hợp: KiotViet, Haravan, Nhanh.vn, Sapo, GHN, Casso/SePay (payment trigger),
-// Google Sheets, Telegram. Chỉ dùng cú pháp engine chạy được (kiểm tra ở src/__tests__/integrationTemplates.test.ts):
+// Google Sheets, Telegram. Chỉ dùng cú pháp engine chạy được (kiểm tra ở src/__tests__/integrations/integrationTemplates.test.ts):
 //  - {{ }} chỉ chứa MỘT biến ($trigger.*, $node.<id>.*, $var.*, $date.*) — không có bộ lọc ("| formatVND"…) hay phép tính;
 //  - $trigger.* đúng các trường của trigger (thanh toán có amount, description, bankName, accountNumber, transactionId,
 //    transactionDate… — không có threadId / SĐT người gửi);

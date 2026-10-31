@@ -9,7 +9,7 @@
  * - Lịch đã qua lâu (máy tắt lúc tới giờ, mở lại mới nhắc bù) → báo nhẹ "đã lỡ", không bật popup có nhạc.
  */
 import type { ErpCalendarEvent, ErpEventType } from '../../../models/erp/CalendarEvent';
-import { erpReminderLeadText } from '../../../shared/erpReminderText';
+import { erpReminderLeadText } from '../../../shared/erp/erpReminderText';
 
 /** Lịch kết thúc quá chừng này mới tới nhắc → coi là đã lỡ. */
 export const ERP_REMINDER_MISSED_AFTER_MS = 10 * 60_000;

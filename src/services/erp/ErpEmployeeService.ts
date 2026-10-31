@@ -9,6 +9,8 @@ import type {
 } from '../../models/erp/Hrm';
 import ErpNotificationService from './ErpNotificationService';
 import { canDecideLeave } from './erpAccessRules';
+import { erpPersonName } from './erpPeople';
+import { erpClipText, erpLeaveSummaryText } from '../../shared/erp/erpNotifyText';
 
 /**
  * ErpEmployeeService - Phase 2 HRM.
@@ -286,10 +288,14 @@ export default class ErpEmployeeService {
     const managerId = profile?.manager_employee_id;
     if (managerId) {
       try {
+        // "Lan xin nghỉ ốm 2 ngày (30/10 - 31/10) · Lý do: …"
         ErpNotificationService.getInstance().notify(
           managerId, 'leave_request_new',
           `Yêu cầu nghỉ phép mới`,
-          `${requesterId} xin nghỉ ${days} ngày (${input.start_date} → ${input.end_date})`,
+          [
+            `${erpPersonName(requesterId)} xin ${erpLeaveSummaryText(leave)}`,
+            input.reason ? `Lý do: ${erpClipText(input.reason)}` : '',
+          ].filter(Boolean).join(' · '),
           `erp://leave/${id}`,
           { leaveId: id, channels: ['toast', 'zalo'] }
         );
@@ -334,10 +340,12 @@ export default class ErpEmployeeService {
     const leave = this.db().queryOne<ErpLeaveRequest>(`SELECT * FROM erp_leave_requests WHERE id = ?`, [id]);
     if (!leave) throw new Error('Không tìm thấy yêu cầu nghỉ');
     try {
+      // "Nghỉ phép năm 2 ngày (30/10 - 31/10) · Ghi chú: …"
+      const summary = erpLeaveSummaryText(leave);
       ErpNotificationService.getInstance().notify(
         leave.requester_id, 'leave_request_decided',
         `Yêu cầu nghỉ đã được ${status === 'approved' ? 'duyệt' : 'từ chối'}`,
-        note ?? '',
+        [summary.charAt(0).toUpperCase() + summary.slice(1), note ? `Ghi chú: ${erpClipText(note)}` : ''].filter(Boolean).join(' · '),
         `erp://leave/${id}`,
         { leaveId: id, status, channels: ['toast', 'zalo'] }
       );

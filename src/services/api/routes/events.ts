@@ -3,8 +3,8 @@
  */
 import { s } from '../schema';
 import { ApiContext, ApiError, paged, principalLogId, RESPONSE_HANDLED, route, RouteDef } from '../types';
-import { accountAllowed } from '../ApiAuth';
-import { CORS_HEADERS } from '../http';
+import { accountAllowed } from '../auth/ApiAuth';
+import { CORS_HEADERS } from '../http/http';
 import { EVENT_TYPES } from '../events/catalog';
 import type { EventHub } from '../events/EventHub';
 import type { WebhookOutboundService } from '../events/WebhookOutboundService';

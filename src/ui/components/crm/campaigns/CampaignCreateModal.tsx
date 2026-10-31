@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
-import { toLocalMediaUrl } from '@/lib/localMedia';
+import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import { Spinner } from '@/components/common/PageLoading';
 import { AlertIcon, ChartIcon, ChatIcon, ClipboardListIcon, EditIcon, RocketIcon, SendIcon, ShuffleIcon, UserCheckIcon, UsersIcon } from '@/components/common/icons';
 import { parseMarkup } from '../../../../services/crm/message-markup';
-import { type Channel } from '../../../../configs/channelConfig';
-import { COMBINE_FALLBACK_LABEL, planBlockSend, type CampaignSendOptions } from '../../../../shared/campaignSendPlan';
-import { CAMPAIGN_MIN_CONTACT_DELAY_SECONDS, effectiveContactDelayRange } from '../../../../shared/campaignDelay';
+import { type Channel } from '../../../../configs/channels/channelConfig';
+import { COMBINE_FALLBACK_LABEL, planBlockSend, type CampaignSendOptions } from '../../../../shared/crm/campaignSendPlan';
+import { CAMPAIGN_MIN_CONTACT_DELAY_SECONDS, effectiveContactDelayRange } from '../../../../shared/crm/campaignDelay';
 import { CampaignSendOptionsControl } from './CampaignParts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -18,7 +18,7 @@ type SendMode     = 'random' | 'all';
 
 export interface MixedConfig   { actions: MixedAction[]; group_ids?: string[]; }
 export interface ContentBlock  { id: string; text: string; images: string[]; tagAll?: boolean; tagAllText?: string; }
-/** `order` / `combine`: ảnh kèm chữ (thứ tự, gộp 1 tin) — xem shared/campaignSendPlan. */
+/** `order` / `combine`: ảnh kèm chữ (thứ tự, gộp 1 tin) — xem shared/crm/campaignSendPlan. */
 export interface ContentConfig { mode: SendMode; blocks: ContentBlock[]; order?: CampaignSendOptions['order']; combine?: boolean; }
 
 interface CampaignFormData {

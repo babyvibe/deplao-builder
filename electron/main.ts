@@ -7,35 +7,35 @@ import { Readable } from 'stream';
 import { autoUpdater } from 'electron-updater';
 import * as cron from 'node-cron';
 import DatabaseService from '../src/services/database/DatabaseService';
-import { registerLoginIpc } from './ipc/loginIpc';
-import { registerZaloIpc } from './ipc/zaloIpc';
-import { registerDatabaseIpc } from './ipc/databaseIpc';
-import { registerFileIpc } from './ipc/fileIpc';
-import { registerCRMIpc } from './ipc/crmIpc';
-import { registerWorkflowIpc } from './ipc/workflowIpc';
-import { registerIntegrationIpc } from './ipc/integrationIpc';
-import { registerAIAssistantIpc } from './ipc/aiAssistantIpc';
-import { registerUtilIpc } from './ipc/utilIpc';
-import { registerEmployeeIpc } from './ipc/employeeIpc';
-import { registerRelayIpc } from './ipc/relayIpc';
-import { registerWorkspaceIpc } from './ipc/workspaceIpc';
-import { registerFacebookIpc, reconnectAllFBAccounts } from './ipc/facebookIpc';
-import { registerTelegramIpc } from './ipc/telegramIpc';
-import { registerTelegramUserIpc } from './ipc/telegramUserIpc';
-import { registerProxyIpc } from './ipc/proxyIpc';
-import { registerErpTaskIpc } from './ipc/erpTaskIpc';
-import { registerErpCalendarIpc } from './ipc/erpCalendarIpc';
-import { registerErpNoteIpc } from './ipc/erpNoteIpc';
-import { registerErpNotificationIpc } from './ipc/erpNotificationIpc';
-import { registerErpHrmIpc } from './ipc/erpHrmIpc';
-import { registerLockScreenIpc } from './ipc/lockScreenIpc';
-import { registerLibraryIpc } from './ipc/libraryIpc';
-import { registerMobileSyncIpc } from './ipc/mobileSyncIpc';
-import { registerApiIpc } from './ipc/apiIpc';
-import { registerPluginIpc } from './ipc/pluginIpc';
-import { registerCloudflareIpc } from './ipc/cloudflareIpc';
+import { registerLoginIpc } from './ipc/zalo/loginIpc';
+import { registerZaloIpc } from './ipc/zalo/zaloIpc';
+import { registerDatabaseIpc } from './ipc/database/databaseIpc';
+import { registerFileIpc } from './ipc/file/fileIpc';
+import { registerCRMIpc } from './ipc/crm/crmIpc';
+import { registerWorkflowIpc } from './ipc/workflow/workflowIpc';
+import { registerIntegrationIpc } from './ipc/integrations/integrationIpc';
+import { registerAIAssistantIpc } from './ipc/ai/aiAssistantIpc';
+import { registerUtilIpc } from './ipc/util/utilIpc';
+import { registerEmployeeIpc } from './ipc/employee/employeeIpc';
+import { registerRelayIpc } from './ipc/network/relayIpc';
+import { registerWorkspaceIpc } from './ipc/workspace/workspaceIpc';
+import { registerFacebookIpc, reconnectAllFBAccounts } from './ipc/facebook/facebookIpc';
+import { registerTelegramIpc } from './ipc/telegram/telegramIpc';
+import { registerTelegramUserIpc } from './ipc/telegram/telegramUserIpc';
+import { registerProxyIpc } from './ipc/network/proxyIpc';
+import { registerErpTaskIpc } from './ipc/erp/erpTaskIpc';
+import { registerErpCalendarIpc } from './ipc/erp/erpCalendarIpc';
+import { registerErpNoteIpc } from './ipc/erp/erpNoteIpc';
+import { registerErpNotificationIpc } from './ipc/erp/erpNotificationIpc';
+import { registerErpHrmIpc } from './ipc/erp/erpHrmIpc';
+import { registerLockScreenIpc } from './ipc/security/lockScreenIpc';
+import { registerLibraryIpc } from './ipc/library/libraryIpc';
+import { registerMobileSyncIpc } from './ipc/zalo/mobileSyncIpc';
+import { registerApiIpc } from './ipc/api/apiIpc';
+import { registerPluginIpc } from './ipc/plugins/pluginIpc';
+import { registerCloudflareIpc } from './ipc/cloud/cloudflareIpc';
 import ApiPlatform from '../src/services/api/ApiPlatform';
-import WorkspaceManager from '../src/utils/WorkspaceManager';
+import WorkspaceManager from '../src/utils/app/WorkspaceManager';
 import HttpConnectionManager from '../src/services/http/HttpConnectionManager';
 import { installBossFileAuthHook, setPreferredBossWorkspace } from '../src/services/http/bossSessionAuth';
 import WorkflowEngineService from '../src/services/workflow/WorkflowEngineService';
@@ -45,13 +45,15 @@ import EventBroadcaster from '../src/services/event/EventBroadcaster';
 import CRMQueueService from '../src/services/crm/CRMQueueService';
 import FileStorageService from '../src/services/file/FileStorageService';
 import TrackingService from '../src/services/tracking/TrackingService';
-import { SHOW_DEV_TOOLS, IS_DEV_BUILD } from '../src/configs/BuildConfig';
+import { SHOW_DEV_TOOLS, IS_DEV_BUILD } from '../src/configs/app/BuildConfig';
 import Logger from '../src/utils/Logger';
-import { armStartupSettleFallback, settleWhenMainIdle } from '../src/utils/startupSettle';
-import { startMainThreadWatchdog } from '../src/utils/mainThreadWatchdog';
-import { startRendererStartupProfile } from '../src/utils/startupProfiler';
+import { armStartupSettleFallback, settleWhenMainIdle } from '../src/utils/startup/startupSettle';
+import { startMainThreadWatchdog } from '../src/utils/startup/mainThreadWatchdog';
+import { startRendererStartupProfile } from '../src/utils/startup/startupProfiler';
+import { newerInstallToRelaunch, type LaunchInfo } from './app/singleInstanceRelaunch';
+import { createAutoLaunch, type AutoLaunch } from '../src/utils/startup/autoLaunch';
 
-// CHANNEL constant — same as src/ui/lib/channelHelper.ts (electron build excludes src/ui/)
+// CHANNEL constant — same as src/ui/lib/channels/channelHelper.ts (electron build excludes src/ui/)
 const CHANNEL = { ZALO: 'zalo', FACEBOOK: 'facebook', TELEGRAM_BOT: 'telegram_bot', TELEGRAM_USER: 'telegram_user' } as const;
 
 /**
@@ -209,7 +211,15 @@ app.commandLine.appendSwitch('disable-features', 'AutofillServerCommunication');
 app.commandLine.appendSwitch('disable-features', 'Autofill');
 
 // ─── Single Instance Lock ──────────────────────────────────────────────────────
-const gotLock = app.requestSingleInstanceLock();
+// Bản vừa bấm mở gửi kèm phiên bản + đường dẫn chạy: bản cũ còn chạy ngầm (đã ẩn xuống khay) thấy bản mới hơn thì tự
+// thoát và mở bản mới (singleInstanceRelaunch.ts). Trước đây cài bản mới xong bấm mở không thấy gì tới khi tắt bản cũ.
+const launchInfo: LaunchInfo = {
+  version: app.getVersion(),
+  packaged: app.isPackaged,
+  // AppImage: process.execPath nằm trong thư mục mount tạm của chính file .AppImage
+  execPath: process.env.APPIMAGE || process.execPath,
+};
+const gotLock = app.requestSingleInstanceLock(launchInfo as unknown as Record<string, unknown>);
 if (!gotLock) {
   // Đã có instance đang chạy → focus instance đó rồi thoát
   // ⚡ FIX: app.quit() là async - code phía dưới vẫn chạy tiếp nếu không exit ngay.
@@ -223,6 +233,28 @@ let mainWindow: BrowserWindow | null = null;
 let inAppBrowserWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let rendererReportedReady = false;
+
+// ─── Tự mở cùng máy (src/utils/startup/autoLaunch.ts) ─────────────────────────────────
+// Tạo khi cần: userData chỉ đúng sau app.setName('Deplao').
+let autoLaunchInstance: AutoLaunch | null = null;
+function getAutoLaunch(): AutoLaunch {
+  autoLaunchInstance ??= createAutoLaunch({
+    platform: process.platform,
+    packaged: app.isPackaged,
+    // AppImage: process.execPath nằm trong thư mục mount tạm của file .AppImage
+    launchPath: process.env.APPIMAGE || process.execPath,
+    homeDir: app.getPath('home'),
+    xdgConfigHome: process.env.XDG_CONFIG_HOME,
+    loginItems: {
+      set: (settings) => app.setLoginItemSettings(settings as any),
+      get: (options) => app.getLoginItemSettings(options as any),
+    },
+    configPath: path.join(app.getPath('userData'), 'deplao-config.json'),
+  });
+  return autoLaunchInstance;
+}
+/** Hệ điều hành vừa tự mở app lúc đăng nhập + người dùng chọn chạy ngầm: cửa sổ đầu tiên không hiện */
+let startHiddenAtLogin = false;
 let onRendererReportedReady: (() => void) | null = null;
 
 // In development the renderer is served by Vite. Windows can suspend the
@@ -282,7 +314,7 @@ function createWindow() {
     },
     show: false,
   });
-  // Hồ sơ CPU giao diện lúc mở app — chỉ khi được yêu cầu (file cờ diagnostics/profile-next-startup, xem utils/startupProfiler)
+  // Hồ sơ CPU giao diện lúc mở app — chỉ khi được yêu cầu (file cờ diagnostics/profile-next-startup, xem utils/startup/startupProfiler)
   startRendererStartupProfile(mainWindow.webContents);
 
   // Load Vite dev server or built files
@@ -314,6 +346,12 @@ function createWindow() {
     initialWindowShown = true;
     if (cachedNormalIcon && !cachedNormalIcon.isEmpty()) {
       mainWindow?.setIcon(cachedNormalIcon);
+    }
+    // Tự mở cùng máy: chạy ngầm ở khay, báo một lần (bấm khay hoặc mở Deplao lần nữa để hiện cửa sổ)
+    if (startHiddenAtLogin) {
+      startHiddenAtLogin = false;
+      showTrayNotification('Deplao đã mở cùng máy', 'Đang chạy ngầm để nhận tin nhắn. Bấm biểu tượng Deplao ở khay để mở.');
+      return;
     }
     mainWindow?.show();
   });
@@ -495,7 +533,19 @@ function createWindow() {
 
   // Khi có instance thứ 2 cố mở → focus instance hiện tại
   // Trên Windows: deep link từ trình duyệt → argv chứa URL cần parse
-  app.on('second-instance', (_event, argv) => {
+  app.on('second-instance', (_event, argv, _workingDirectory, additionalData) => {
+    // Bản mới hơn vừa được cài và bấm mở trong lúc bản này chạy ngầm → thoát, mở bản mới (kèm deep link nếu có)
+    const newer = newerInstallToRelaunch(launchInfo, additionalData);
+    if (newer) {
+      Logger.log(`[main] Bản ${newer.version} vừa được mở (đang chạy ${launchInfo.version}) → thoát để mở bản mới`);
+      const deepLink = argv.find((arg: string) => arg.startsWith('deplao://'));
+      app.relaunch({ execPath: newer.execPath, args: deepLink ? [deepLink] : [] });
+      isQuitting = true;
+      app.quit();
+      // Dọn dẹp khi thoát bị kẹt: app.exit vẫn mở bản mới (process.exit thì không)
+      setTimeout(() => app.exit(0), 8000).unref();
+      return;
+    }
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       if (!mainWindow.isVisible()) mainWindow.show();
@@ -570,11 +620,14 @@ function createTray() {
 }
 
 /** Hiển thị thông báo system tray khi ẩn ứng dụng xuống tray */
-function showTrayNotification() {
+function showTrayNotification(
+  title = 'Deplao đang chạy ngầm',
+  body = 'Ứng dụng vẫn đang hoạt động và nhận tin nhắn bình thường. Nhấn vào biểu tượng tray để mở lại.',
+) {
   if (!Notification.isSupported()) return;
   const notif = new Notification({
-    title: 'Deplao đang chạy ngầm',
-    body: 'Ứng dụng vẫn đang hoạt động và nhận tin nhắn bình thường. Nhấn vào biểu tượng tray để mở lại.',
+    title,
+    body,
     silent: false,
   });
   notif.show();
@@ -695,6 +748,16 @@ function registerWindowControls() {
       return elevated;
     });
     return elevatedCheck;
+  });
+
+  // ── Tự mở cùng máy (Cài đặt → Thông báo → Khởi động cùng máy), lưu theo máy ──────────────
+  ipcMain.handle('app:getAutoLaunch', () => getAutoLaunch().status());
+  ipcMain.handle('app:setAutoLaunch', (_event, patch: { enabled?: boolean; hidden?: boolean }) => {
+    try {
+      return { success: true, ...getAutoLaunch().update(patch || {}) };
+    } catch (error: any) {
+      return { success: false, error: error?.message || String(error), ...getAutoLaunch().status() };
+    }
   });
 
   // ── Badge / taskbar unread count ─────────────────────────────────
@@ -850,7 +913,7 @@ async function reconnectAllTelegramAccounts(): Promise<void> {
       const channel = acc.channel || 'zalo';
       try {
         if (channel === 'telegram_bot') {
-          const { startBot } = require('../src/services/telegram/TelegramBotChannelService');
+          const { startBot } = require('../src/services/telegram/bot/TelegramBotChannelService');
           startBot({
             accountId: acc.zalo_id,
             botToken: acc.cookies || '',
@@ -899,7 +962,7 @@ async function reconnectAllTelegramAccounts(): Promise<void> {
 function startTelegramBotHealthCheck(): void {
   setInterval(() => {
     try {
-      const { isBotPolling, isBotPollingConflict, tryReconnectBot, getActiveBots } = require('../src/services/telegram/TelegramBotChannelService');
+      const { isBotPolling, isBotPollingConflict, tryReconnectBot, getActiveBots } = require('../src/services/telegram/bot/TelegramBotChannelService');
       const activeBots = getActiveBots();
       for (const bot of activeBots) {
         if (!isBotPolling(bot.accountId)) {
@@ -997,7 +1060,7 @@ let cloudShutdownState: 'idle' | 'running' | 'done' = 'idle';
 /** Cloudflare chỉ chạy trên máy chủ (không phải máy nhân viên). */
 function cloudAllowedHere(): boolean {
   try {
-    return require('../src/utils/AppModeManager').default.getInstance().getMode() !== 'employee';
+    return require('../src/utils/app/AppModeManager').default.getInstance().getMode() !== 'employee';
   } catch {
     return true;
   }
@@ -1385,9 +1448,19 @@ app.whenReady().then(async () => {
     }
   }
 
+  // Hệ điều hành tự mở lúc đăng nhập: chạy ngầm nếu người dùng chọn vậy
+  try { startHiddenAtLogin = getAutoLaunch().startHidden(process.argv); } catch { startHiddenAtLogin = false; }
   createWindow();
   createTray();
   registerWindowControls();
+  // Tự mở cùng máy: bật mặc định (cả máy cập nhật từ bản cũ), giữ đúng đường dẫn chạy hiện tại
+  try {
+    const autoLaunch = getAutoLaunch().syncAtStartup();
+    Logger.log(`[main] Tự mở cùng máy: ${!autoLaunch.supported ? 'không áp dụng (bản dev)' : autoLaunch.enabled ? 'bật' : 'tắt'}`
+      + `${autoLaunch.blocked ? ' (hệ điều hành đang chặn)' : ''}`);
+  } catch (err: any) {
+    Logger.warn(`[main] Tự mở cùng máy lỗi: ${err?.message || err}`);
+  }
 
   // `ready-to-show` is a Chromium paint signal, not proof that React has
   // mounted. Start network recovery only after the renderer itself reports a
@@ -1400,7 +1473,7 @@ app.whenReady().then(async () => {
     onRendererReportedReady?.();
   });
   // Giao diện đã tải xong danh sách hội thoại → khi luồng chính rảnh mới chạy việc nền nặng (đồng bộ bù tin cũ
-  // Telegram…) — xem src/utils/startupSettle.ts. Chạy ngay lúc mở app làm app giật.
+  // Telegram…) — xem src/utils/startup/startupSettle.ts. Chạy ngay lúc mở app làm app giật.
   ipcMain.on('app:uiSettled', (event) => {
     if (event.sender !== mainWindow?.webContents) return;
     console.log('[main] Renderer UI settled');
@@ -1503,8 +1576,8 @@ app.whenReady().then(async () => {
     // Một lần: tin Telegram đã gửi trước 26.10.3 mang giờ máy → xếp lại theo tin kề trên Telegram (sau khi app ổn định).
     // Máy nhân viên chỉ giữ bản sao DB của Boss → không sửa.
     try {
-      if (require('../src/utils/AppModeManager').default.getInstance().getMode() !== 'employee') {
-        require('../src/services/telegram/telegramSentTimestampRepair').scheduleTelegramSentTimestampRepair();
+      if (require('../src/utils/app/AppModeManager').default.getInstance().getMode() !== 'employee') {
+        require('../src/services/telegram/messages/telegramSentTimestampRepair').scheduleTelegramSentTimestampRepair();
       }
     } catch (err: any) {
       console.error('[main] telegram sent timestamp repair schedule error:', err?.message || err);
@@ -1558,7 +1631,7 @@ app.whenReady().then(async () => {
     try {
       const { getApiSettingBool } = require('../src/services/api/settings');
       if (!getApiSettingBool('api_server_autostart')) return;
-      const AppModeManager = require('../src/utils/AppModeManager').default;
+      const AppModeManager = require('../src/utils/app/AppModeManager').default;
       if (AppModeManager.getInstance().getMode() === 'employee') return;
       const HttpRelayService = (await import('../src/services/http/HttpRelayService')).default;
       const relay = HttpRelayService.getInstance();
@@ -1756,7 +1829,7 @@ app.on('before-quit', (event) => {
 
   try {
     // Stop all Telegram Bot polling and User listeners
-    const { stopAllBots } = require('../src/services/telegram/TelegramBotChannelService');
+    const { stopAllBots } = require('../src/services/telegram/bot/TelegramBotChannelService');
     stopAllBots();
   } catch {}
   try {

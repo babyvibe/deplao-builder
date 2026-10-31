@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import ipc from '@/lib/ipc';
 import DataAccessor from '@/lib/data/DataAccessor';
-import { useEmployeeStore } from '@/store/employeeStore';
+import { useEmployeeStore } from '@/store/employee/employeeStore';
 import type { CreateCalendarEventInput, ErpCalendarEvent } from '../../../models/erp';
 import { withErpDeniedNotice } from './erpStoreHelpers';
 

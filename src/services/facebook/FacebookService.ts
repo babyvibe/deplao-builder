@@ -11,38 +11,40 @@ import {
 } from './FacebookTypes';
 import { getFacebookAvatarById, initSession } from './FacebookSession';
 import { getFacebookUserInfo } from './FacebookUserInfo';
-import { sendMessage as sendMessageREST, unsendMessage, addReaction, editMessage, forwardMessage, pinMessage, unpinMessage, createPoll, votePoll } from './FacebookMessageSender';
-import { uploadAttachment } from './FacebookAttachment';
+import { sendMessage as sendMessageREST, unsendMessage, addReaction, editMessage, forwardMessage, pinMessage, unpinMessage, createPoll, votePoll } from './send/FacebookMessageSender';
+import { uploadAttachment } from './send/FacebookAttachment';
 import {
   getThreadList, getThreadListPage, parseThreadNodes, fetchThreadMessages,
   changeThreadName, changeThreadEmoji, changeNickname,
   addGroupAdmin, removeGroupAdmin, changeApprovalMode,
   approvePendingMember, getGroupLink, setGroupLink,
 } from './FacebookThreadManager';
-import { blockUser, unblockUser } from './FacebookBlock';
-import { changeThreadTheme } from './FacebookChangeTheme';
-import { createNote } from './FacebookCreateNotes';
+import { blockUser, unblockUser } from './actions/FacebookBlock';
+import { changeThreadTheme } from './actions/FacebookChangeTheme';
+import { createNote } from './actions/FacebookCreateNotes';
 import { FacebookMQTTListener } from './FacebookMQTTListener';
-import { FacebookE2EEBridge, BridgeInitialData, type BridgeHistoryPage } from './FacebookE2EEBridge';
+import { FacebookE2EEBridge, BridgeInitialData, type BridgeHistoryPage } from './e2ee/FacebookE2EEBridge';
 import {
   activityMs, isLightSpeedMessageId, messageInRange, nextHistoryAnchor, type FbHistorySyncRange,
-} from '../../shared/facebookHistorySync';
-import { FacebookHumanPacer, sleepUnlessStopped, type PacerWait } from './FacebookHumanPacer';
+} from '../../shared/facebook/facebookHistorySync';
+import { FacebookHumanPacer, sleepUnlessStopped, type PacerWait } from './send/FacebookHumanPacer';
 import {
-  FB_TEMPLATE_MSG_TYPE, fbTemplateText, fbUnsupportedText, templateFromBridgeAttachment, type FbTemplate,
-} from '../../shared/facebookTemplate';
-import { FacebookE2EESender, e2eeSendOutcome } from './FacebookE2EESender';
+  FB_TEMPLATE_MSG_TYPE, fbTemplateText, fbUnsupportedText, isFbUnavailableTemplate, templateFromBridgeAttachment, withTemplateText,
+  type FbTemplate,
+} from '../../shared/facebook/facebookTemplate';
+import { FacebookE2EESender, e2eeSendOutcome } from './e2ee/FacebookE2EESender';
 import { parseE2EECookies, resolveE2EEBinaryPath, normalizeChatJid } from './FacebookUtils';
-import { FacebookE2EEStateStore } from './FacebookE2EEStateStore';
+import { FacebookE2EEStateStore } from './e2ee/FacebookE2EEStateStore';
 import { resolveThreadKind } from './FacebookThreadKind';
-import { FacebookEventPipeline, EventPriority } from './FacebookEventPipeline';
+import { FacebookEventPipeline, EventPriority, bridgeEventKey } from './FacebookEventPipeline';
+import { createRepeatFilter, reactionRepeat, unsendRepeat, type RepeatFilter } from './FacebookEventRepeats';
 import { metricInc } from './FacebookMetrics';
 import EventBroadcaster from '../event/EventBroadcaster';
 import { messageTimestampById, recordPeerReceipt } from '../receipts/peerReceipts';
 import { mediaProgressReporter } from '../media/mediaProgress';
-import DatabaseService from '../database/DatabaseService';
+import DatabaseService, { type FbSaveOutcome } from '../database/DatabaseService';
 import FileStorageService from '../file/FileStorageService';
-import { createProxyAgent } from '../../utils/ProxyHelper';
+import { createProxyAgent } from '../../utils/connection/ProxyHelper';
 import { secureGet } from '../secure/SecureSettingsService';
 import path from 'path';
 import Logger from '../../utils/Logger';
@@ -132,6 +134,8 @@ export class FacebookService {
    *  Dùng để ngăn self-echo duplicate khi bridge/MQTT echo ngược tin nhắn vừa gửi.
    *  Mỗi entry tự xoá sau 60s để tránh memory leak. */
   private _recentlySentMessageIds: Set<string> = new Set();
+  /** Cảm xúc / thu hồi MQTT và bridge cùng báo: bản lặp không ghi / phát lại (FacebookEventRepeats). */
+  private _eventRepeats: RepeatFilter | null = null;
   /** E2EE device state store — persists E2EE state across app restarts */
   private e2eeStateStore: FacebookE2EEStateStore | null = null;
   /** Phase 5: Sequential event pipeline — processes bridge events one-at-a-time */
@@ -395,7 +399,7 @@ export class FacebookService {
       });
 
       this.listener.on('unsend', (data: { messageId: string; threadId: string }) => {
-        if (data?.messageId) {
+        if (data?.messageId && this.acceptRepeatable(unsendRepeat(data.messageId))) {
           try {
             DatabaseService.getInstance().updateFBMessageUnsent(data.messageId);
           } catch {}
@@ -408,7 +412,7 @@ export class FacebookService {
       });
 
       this.listener.on('reaction', (data: { messageId: string; reaction: string; actorFbId: string; threadId: string }) => {
-        if (data?.messageId && data?.reaction) {
+        if (data?.messageId && data?.reaction && this.acceptReactionEvent(data.messageId, data.actorFbId || '', data.reaction)) {
           this.persistReactionToDB(data.messageId, data.actorFbId || '', data.reaction);
           EventBroadcaster.emit('fb:onReaction', {
             fbAccountId: this.getFacebookId(),
@@ -687,6 +691,10 @@ export class FacebookService {
     // ────────────────────────────────────────────────────────────────────────────
 
     // Persist to DB
+    // MQTT và bridge (LightSpeed) cùng nhận mỗi tin thường, cách nhau vài chục ms. Bản tới sau không đổi gì trong DB → bỏ
+    // qua, không phát lại (trước đây mỗi tin cộng chưa đọc / báo / chạy workflow / sự kiện API 2 lần); sửa được hàng rỗng
+    // hoặc thẻ "File đính kèm không hiển thị" → phát lại kèm `repeat` (renderer chỉ vá tin, không báo lần nữa).
+    let saveOutcome: FbSaveOutcome = 'new';
     if (threadId && msg.messageID) {
       try {
         const db = DatabaseService.getInstance();
@@ -747,7 +755,7 @@ export class FacebookService {
         }
         Logger.log(`[FacebookService:${this.accountId}] Calling saveFBMessage: account_id=${this.accountId} thread_id=${threadId} type=${msgType} hasAttachment=${hasAttachment} reply_to_id=${msg.replyToMessageId || '(none)'}`);
         // @ts-ignore
-        db.saveFBMessage({
+        saveOutcome = db.saveFBMessage({
           id: msg.messageID,
           account_id: this.accountId,
           thread_id: threadId,
@@ -759,7 +767,7 @@ export class FacebookService {
           reply_to_id: msg.replyToMessageId,
           is_self: isSelf,
           is_unsent: 0,
-        });
+        }) || 'new';
 
         // Note: fb_threads preview is updated inside saveFBMessage
 
@@ -768,6 +776,11 @@ export class FacebookService {
         // unread counter twice.
       } catch (err: any) {
         Logger.warn(`[FacebookService:${this.accountId}] DB persist error: ${err.message}`);
+      }
+
+      if (saveOutcome === 'duplicate') {
+        Logger.log(`[FacebookService:${this.accountId}] Duplicate delivery skipped: msgId=${msg.messageID} (already received from the other source)`);
+        return;
       }
 
       // For a direct Page/person thread, resolve the conversation identity,
@@ -883,6 +896,7 @@ export class FacebookService {
         ...msg,
         isSelf: !!isSelf,
         ...(broadcastQuoteData ? { quote_data: broadcastQuoteData } : {}),
+        ...(saveOutcome === 'repaired' ? { repeat: true } : {}),
       },
       ...(broadcastContactName ? { contactName: broadcastContactName } : {}),
       ...(broadcastContactAvatar ? { contactAvatar: broadcastContactAvatar } : {}),
@@ -1117,10 +1131,13 @@ export class FacebookService {
         if (evt?.type === 'deviceDataChanged' && evt?.data?.deviceData && this.e2eeStateStore) {
           this.e2eeStateStore.save(evt.data.deviceData);
         }
-        const eventId = evt?.data?.messageId || evt?.data?.id || `evt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        const eventId = bridgeEventKey(evt);
         const priority = this.getEventPriority(evt?.type || '');
+        // Bản trùng (đã / đang xử lý) bị bỏ là bình thường: chỉ khởi động lại bridge khi sự kiện quan trọng bị bỏ vì hàng
+        // đợi đầy
+        const duplicate = this.eventPipeline.isDuplicate(eventId);
         const accepted = this.eventPipeline.enqueue(eventId, priority, bridgeGen, () => this.handleBridgeEvent(evt));
-        if (!accepted && priority === EventPriority.HIGH) {
+        if (!accepted && !duplicate && priority === EventPriority.HIGH) {
           Logger.error(`[FacebookService:${this.accountId}] Critical bridge event was rejected; restarting bridge for recovery`);
           void bridgeInstance.close();
         }
@@ -1373,7 +1390,8 @@ export class FacebookService {
   } {
     const attachments = (Array.isArray(message.attachments) ? message.attachments : []).flatMap((a: any) => {
       if (a?.type !== 'template') return a ? [a] : [];
-      const template = templateFromBridgeAttachment(a);
+      // Tin "chữ + nút": chữ là nội dung tin, thẻ chỉ có nút → ghép chữ vào thẻ
+      const template = withTemplateText(templateFromBridgeAttachment(a), message.text);
       return template ? [template] : [];
     });
     const primary = attachments[0];
@@ -1595,6 +1613,7 @@ export class FacebookService {
         // data: { messageId, threadId, userId, emoji, action }
         if (data?.messageId) {
           const userId = data.userId || data.senderId || '';
+          if (!this.acceptReactionEvent(data.messageId, String(userId), data.emoji || '')) break;
           if (data.emoji) {
             this.persistReactionToDB(data.messageId, userId, data.emoji);
           }
@@ -1611,7 +1630,7 @@ export class FacebookService {
 
       case 'unsend': {
         // data: { messageId, threadId }
-        if (data?.messageId) {
+        if (data?.messageId && this.acceptRepeatable(unsendRepeat(data.messageId))) {
           try {
             DatabaseService.getInstance().updateFBMessageUnsent(data.messageId);
           } catch {}
@@ -1661,7 +1680,7 @@ export class FacebookService {
         const isDelivered = receiptType === '' || receiptType === 'delivered';
         const isRead = receiptType === 'read' || receiptType === 'played';
         if (!isDelivered && !isRead) break;
-        const ts = messageTimestampById(owner, threadId, Array.isArray(data?.messageIds) ? data.messageIds : []);
+        const ts = messageTimestampById(owner, threadId, Array.isArray(data?.messageIds) ? data.messageIds : [], 'facebook');
         if (ts) recordPeerReceipt(owner, threadId, isRead ? { readTs: ts } : { deliveredTs: ts });
         break;
       }
@@ -1680,7 +1699,7 @@ export class FacebookService {
       case 'messageUnsend': {
         // E2EE 1:1 message unsend from bridge
         // data: { isE2EE, messageId, threadId }
-        if (data?.messageId) {
+        if (data?.messageId && this.acceptRepeatable(unsendRepeat(data.messageId))) {
           const stripJid = (id: string) => id.replace(/@.*$/, '');
           const threadId = data.threadId ? stripJid(String(data.threadId)) : '';
           try {
@@ -1702,6 +1721,7 @@ export class FacebookService {
           const stripJid = (id: string) => id.replace(/@.*$/, '');
           const threadId = data.chatJid ? stripJid(String(data.chatJid)) : '';
           const userId = String(data.senderId || data.senderJid?.replace(/:.*$/, '') || '');
+          if (!this.acceptReactionEvent(data.messageId, userId, data.reaction)) break;
           this.persistReactionToDB(data.messageId, userId, data.reaction);
           EventBroadcaster.emit('fb:onReaction', {
             fbAccountId: this.getFacebookId(),
@@ -1892,7 +1912,12 @@ export class FacebookService {
     if (data.attachments?.length) {
       const raw = data.attachments as any[];
       const mapped = raw.flatMap((a: any, idx: number) => {
-        const template = a?.type === 'template' ? templateFromBridgeAttachment(a) : null;
+        // Tin "chữ + nút" của Trang: chữ là nội dung tin, thẻ chỉ có nút → ghép chữ vào thẻ (vẽ đủ chữ + nút)
+        const template = a?.type === 'template' ? withTemplateText(templateFromBridgeAttachment(a), data.text) : null;
+        if (isFbUnavailableTemplate(template)) {
+          // LightSpeed cũng chỉ có thẻ thay thế "File đính kèm không hiển thị" → chẩn đoán (loại XMA, không ghi nội dung)
+          Logger.log(`[FacebookService:${this.accountId}] bridge template placeholder: msgId=${data.id} xmaType=${a?.xmaType || '-'}`);
+        }
         if (a?.type === 'template' && !template) return [];
         return [{
           id: idx + 1,
@@ -3564,6 +3589,16 @@ export class FacebookService {
    * Persist a reaction update to fb_messages DB.
    * Reads current reactions, merges the new one (userId → emoji), saves back.
    */
+  /** false = sự kiện (cảm xúc / thu hồi) vừa được nguồn kia (MQTT / bridge) báo y hệt → bỏ qua, không ghi và phát lại. */
+  private acceptRepeatable(event: { key: string; value: string }): boolean {
+    if (!this._eventRepeats) this._eventRepeats = createRepeatFilter();
+    return this._eventRepeats.accept(event.key, event.value);
+  }
+
+  private acceptReactionEvent(messageId: string, userId: string, emoji: string): boolean {
+    return this.acceptRepeatable(reactionRepeat(messageId, userId, emoji));
+  }
+
   private persistReactionToDB(messageId: string, userId: string, emoji: string): void {
     if (!messageId || !userId || !emoji) return;
     try {

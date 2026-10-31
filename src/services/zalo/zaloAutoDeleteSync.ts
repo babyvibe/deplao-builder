@@ -7,7 +7,7 @@
  */
 import EventBroadcaster from '../event/EventBroadcaster';
 import Logger from '../../utils/Logger';
-import { zaloAutoDeleteMap } from '../../shared/zaloAutoDelete';
+import { zaloAutoDeleteMap } from '../../shared/zalo/zaloAutoDelete';
 
 export const ZALO_AUTO_DELETE_REFRESH_MS = 6 * 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 15_000;

@@ -8,7 +8,7 @@ import mqtt, { MqttClient } from 'mqtt';
 import { EventEmitter } from 'events';
 import WebSocket from 'ws';
 import { FBSessionData, FBMQTTMessage, FBConnectionStatus } from './FacebookTypes';
-import { templateFromStoryAttachment, type FbTemplate } from '../../shared/facebookTemplate';
+import { isFbUnavailableTemplate, templateFromStoryAttachment, type FbTemplate } from '../../shared/facebook/facebookTemplate';
 import {
   generateSessionId, generateClientId
 } from './FacebookUtils';
@@ -688,6 +688,12 @@ export class FacebookMQTTListener extends EventEmitter {
           // Tin mẫu của Page / bot, chia sẻ, thẻ sản phẩm…: trước đây không đọc → tin `text` rỗng
           const ext = mercury.extensible_attachment;
           const parsed = templateFromStoryAttachment(ext);
+          if (isFbUnavailableTemplate(parsed)) {
+            // Facebook chỉ gửi thẻ thay thế "File đính kèm không hiển thị" qua MQTT (bridge thường nhận bản đầy đủ, ghi
+            // sau sẽ thay: saveFBMessage). Ghi cấu trúc để chẩn đoán, không ghi nội dung tin.
+            const story = ext?.story_attachment || {};
+            Logger.log(`[FBMqtt:${this.accountId}] template placeholder: attKeys=${Object.keys(att || {}).join(',')} extKeys=${Object.keys(ext || {}).join(',')} storyKeys=${Object.keys(story).join(',')} style=${JSON.stringify(story.style_list || [])} target=${story.target?.__typename || '-'}`);
+          }
           if (parsed) {
             template = parsed;
             attachmentType = 'template';

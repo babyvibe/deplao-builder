@@ -10,8 +10,8 @@
  */
 
 import { AsyncLocalStorage } from 'async_hooks';
-import AppModeManager from '../../utils/AppModeManager';
-import WorkspaceManager from '../../utils/WorkspaceManager';
+import AppModeManager from '../../utils/app/AppModeManager';
+import WorkspaceManager from '../../utils/app/WorkspaceManager';
 import DatabaseService from '../database/DatabaseService';
 import {
   ErpRole,

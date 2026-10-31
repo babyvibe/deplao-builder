@@ -4,7 +4,7 @@ import {
   DEFAULT_CATEGORIES,
   type SharedGroupItem,
   type SharedGroupCategory,
-} from '@/lib/backendService';
+} from '@/lib/crm/backendService';
 
 // ─── Icons ──────────────────────────────────────────────────────────────────
 

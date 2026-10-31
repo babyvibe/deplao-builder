@@ -3,7 +3,7 @@
  */
 import { s } from '../schema';
 import { API_SCOPES, SCOPE_PRESETS, route, RouteDef } from '../types';
-import { principalSummary } from '../ApiAuth';
+import { principalSummary } from '../auth/ApiAuth';
 import { activeWorkspace, appMode, appVersion, startedAt } from '../runtime';
 
 export function systemRoutes(): RouteDef[] {

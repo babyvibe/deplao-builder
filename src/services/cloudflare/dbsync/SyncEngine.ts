@@ -14,8 +14,8 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import type { CloudScope, DbSyncMode, DbSyncProgress, DbSyncWorkspaceStatus, SyncLogEntry } from '../../../shared/cloudContracts';
-import { ALL_SCOPE, isAllScope, normalizeScope } from '../../../shared/cloudContracts';
+import type { CloudScope, DbSyncMode, DbSyncProgress, DbSyncWorkspaceStatus, SyncLogEntry } from '../../../shared/cloud/cloudContracts';
+import { ALL_SCOPE, isAllScope, normalizeScope } from '../../../shared/cloud/cloudContracts';
 import { CloudError } from '../contracts';
 import { beginDbBaseUpload } from '../uploadCoordinator';
 import type { CloudflareCore, R2Client } from '../contracts';

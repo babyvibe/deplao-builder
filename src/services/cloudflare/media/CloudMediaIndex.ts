@@ -15,7 +15,7 @@
  * Ghi theo lô ≤ 500 dòng / transaction. Không bao giờ xoá dòng (R2 là kho lưu trữ: xoá tin trong app không xoá trên R2;
  * chỉ công cụ dọn R2 do người dùng chạy mới xoá object, dòng chuyển 'removed').
  */
-import { ALL_SCOPE, CloudScope, normalizeScope } from '../../../shared/cloudContracts';
+import { ALL_SCOPE, CloudScope, normalizeScope } from '../../../shared/cloud/cloudContracts';
 import { HOUR, MINUTE } from './util';
 
 export type MediaState = 'pending' | 'uploading' | 'uploaded' | 'evicted' | 'missing' | 'excluded' | 'removed';

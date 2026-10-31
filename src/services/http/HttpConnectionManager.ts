@@ -1,5 +1,5 @@
 import HttpClientService, { type ConnectResult, type ServiceStatusInfo, type SnapshotMeta, type WakeKind } from './HttpClientService';
-import WorkspaceManager from '../../utils/WorkspaceManager';
+import WorkspaceManager from '../../utils/app/WorkspaceManager';
 import Logger from '../../utils/Logger';
 import { removeBossSession, seedBossSession, setBossSession } from './bossSessionAuth';
 import { BrowserWindow, powerMonitor } from 'electron';
@@ -13,7 +13,7 @@ import {
     type EmployeeResyncEvent,
     type EmployeeResyncReason,
     type WorkspaceConnectionStatusEvent,
-} from '../../shared/employeeConnection';
+} from '../../shared/employee/employeeConnection';
 
 interface WorkspaceClient {
     workspaceId: string;

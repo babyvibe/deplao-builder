@@ -24,7 +24,7 @@ import {
   RegistrationContext, WebhookAddress, WebhookListResult, WebhookRegisterResult, isPosWebhookApi, listPosWebhooks,
   registerPosWebhooks, removePosWebhook,
 } from './posWebhookRegistration';
-import { isWebhookRegistrationType } from '../../shared/posWebhookTopics';
+import { isWebhookRegistrationType } from '../../shared/integrations/posWebhookTopics';
 
 /** Map of active adapter instances (integrationId → adapter) */
 const adapterInstances = new Map<string, IntegrationAdapter>();

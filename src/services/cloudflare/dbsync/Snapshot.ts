@@ -13,7 +13,7 @@ import * as fs from 'fs';
 import * as zlib from 'zlib';
 import { Transform } from 'stream';
 import { pipeline } from 'stream/promises';
-import type { CloudScope } from '../../../shared/cloudContracts';
+import type { CloudScope } from '../../../shared/cloud/cloudContracts';
 import { getMeta } from './DirtyTracker';
 import { ScopeApplyReport, applyScopeToCopy, readAccountNames, resolveScope } from './scope';
 import { SqlConn, quoteIdent, tableExists, toNumber } from './sqlConn';

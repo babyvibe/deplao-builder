@@ -10,7 +10,7 @@
 import { randomUUID } from 'crypto';
 import { apiDb, apiTablesExist } from '../dbSchema';
 import { getApiSettingBool, getApiSettingNumber } from '../settings';
-import { accountAllowed } from '../ApiAuth';
+import { accountAllowed } from '../auth/ApiAuth';
 import type { Principal } from '../types';
 import { eventInfo, typeMatches } from './catalog';
 import { NormalizeHelpers, normalizeEvent, PartialEvent, SOURCE_CHANNELS } from './normalize';

@@ -8,7 +8,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { CloudIcon } from '@/components/common/icons';
 import { Button } from '@/components/ui';
 import { cn } from '@/lib/cn';
-import { storageLabel, type CloudStorageProvider, type MediaSyncStatus } from '../../../../shared/cloudContracts';
+import { storageLabel, type CloudStorageProvider, type MediaSyncStatus } from '../../../../shared/cloud/cloudContracts';
 import {
   cloudApi,
   fmtBytes,

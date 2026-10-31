@@ -1,12 +1,12 @@
-import DateInputVN from '@/components/common/DateInputVN';
+import DateInputVN from '@/components/common/inputs/DateInputVN';
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
-import { useAccountStore } from '@/store/accountStore';
-import { formatPhone } from '@/utils/phoneUtils';
+import { useAccountStore } from '@/store/accounts/accountStore';
+import { formatPhone } from '@/lib/contacts/phoneUtils';
 import { CampaignIcon, ChatIcon, ClipboardListIcon, SearchIcon, UserCheckIcon, UsersIcon } from '@/components/common/icons';
-import type { Channel } from '../../../../configs/channelConfig';
-import { CHANNEL } from '@/lib/channelHelper';
+import type { Channel } from '../../../../configs/channels/channelConfig';
+import { CHANNEL } from '@/lib/channels/channelHelper';
 
 interface SendLogEntry {
   id: number;

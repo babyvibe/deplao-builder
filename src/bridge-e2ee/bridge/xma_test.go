@@ -153,3 +153,87 @@ func TestE2EEMessageWithoutContentIsDropped(t *testing.T) {
 		t.Fatalf("empty E2EE message = %#v, want nil", msg)
 	}
 }
+
+// buttonTemplateTable: a Page button template as LightSpeed sends it without an
+// XMA card — the text is the message text, the buttons are CTA rows of the
+// message (the MQTT copy is only "Attachment unavailable").
+func buttonTemplateTable(now int64) *table.LSTable {
+	return &table.LSTable{
+		LSInsertMessage: []*table.LSInsertMessage{{
+			MessageId:   "mid.button",
+			ThreadKey:   1372031469316548,
+			SenderId:    1372031469316548,
+			TimestampMs: now,
+			Text:        "Hãy chọn dịch vụ mà bạn đang quan tâm",
+		}},
+		LSInsertAttachmentCta: []*table.LSInsertAttachmentCta{
+			{CtaId: 31, AttachmentFbid: "att.button", MessageId: "mid.button", Title: "Tư vấn sản phẩm", Type_: "xma_postback"},
+			{CtaId: 32, AttachmentFbid: "att.button", MessageId: "mid.button", Title: "Đặt hàng sản phẩm", Type_: "xma_postback"},
+			{CtaId: 33, AttachmentFbid: "att.button", MessageId: "mid.button", Title: "Tra cứu đơn hàng", Type_: "xma_postback"},
+		},
+	}
+}
+
+func TestButtonTemplateWithoutCardKeepsTextAndButtons(t *testing.T) {
+	now := timeNowMs()
+	client := newEventPipelineTestClient(t, now-1_000)
+	client.handleTable(buttonTemplateTable(now))
+
+	if got := len(client.eventChan); got != 1 {
+		t.Fatalf("emitted %d events, want 1", got)
+	}
+	msg := (<-client.eventChan).Data.(*Message)
+	if msg.Text != "Hãy chọn dịch vụ mà bạn đang quan tâm" {
+		t.Fatalf("text = %q", msg.Text)
+	}
+	if len(msg.Attachments) != 1 || msg.Attachments[0].Type != "template" {
+		t.Fatalf("attachments = %#v, want one template (the buttons were dropped before)", msg.Attachments)
+	}
+	att := msg.Attachments[0]
+	if att.Title != "" || len(att.Buttons) != 3 {
+		t.Fatalf("template = %#v", att)
+	}
+	for i, want := range []string{"Tư vấn sản phẩm", "Đặt hàng sản phẩm", "Tra cứu đơn hàng"} {
+		if att.Buttons[i].Title != want || att.Buttons[i].Type != "xma_postback" {
+			t.Fatalf("button %d = %#v, want %q in table order", i, att.Buttons[i], want)
+		}
+	}
+	if att.Buttons[0].CtaID != "31" {
+		t.Fatalf("cta id = %q", att.Buttons[0].CtaID)
+	}
+}
+
+func TestButtonsOfAttachmentRowWithoutCardFields(t *testing.T) {
+	now := timeNowMs()
+	tbl := buttonTemplateTable(now)
+	// CTA rows only point at an attachment row that has no card fields
+	for _, cta := range tbl.LSInsertAttachmentCta {
+		cta.MessageId = ""
+	}
+	tbl.LSInsertAttachment = []*table.LSInsertAttachment{{MessageId: "mid.button", AttachmentFbid: "att.button"}}
+	extras := newTableExtras(tbl)
+	_, insert := tbl.WrapMessages()
+	msg := (&Client{threadCache: map[int64]*Thread{}}).convertWrappedMessage(insert[0], extras)
+	if len(msg.Attachments) != 1 || len(msg.Attachments[0].Buttons) != 3 {
+		t.Fatalf("attachments = %#v", msg.Attachments)
+	}
+}
+
+func TestCardButtonsAreNotRepeatedAndPollRowsIgnored(t *testing.T) {
+	now := timeNowMs()
+	tbl := optInTable(now)
+	tbl.LSInsertAttachmentCta = append(tbl.LSInsertAttachmentCta,
+		&table.LSInsertAttachmentCta{CtaId: 41, MessageId: "mid.optin", Title: "Bình chọn", Type_: "xma_poll_vote"})
+	extras := newTableExtras(tbl)
+	_, insert := tbl.WrapMessages()
+	msg := (&Client{threadCache: map[int64]*Thread{}}).convertWrappedMessage(insert[0], extras)
+	if len(msg.Attachments) != 1 || len(msg.Attachments[0].Buttons) != 3 {
+		t.Fatalf("attachments = %#v, want the card's 3 buttons only", msg.Attachments)
+	}
+
+	plain := &table.LSTable{LSInsertMessage: []*table.LSInsertMessage{{MessageId: "mid.plain", ThreadKey: 1, SenderId: 2, TimestampMs: now, Text: "hi"}}}
+	_, insert = plain.WrapMessages()
+	if got := (&Client{threadCache: map[int64]*Thread{}}).convertWrappedMessage(insert[0], newTableExtras(plain)); len(got.Attachments) != 0 {
+		t.Fatalf("plain text got attachments %#v", got.Attachments)
+	}
+}

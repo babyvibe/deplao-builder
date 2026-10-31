@@ -8,8 +8,9 @@
  * Sống trong renderer process, dùng Zustand store để check mode.
  */
 
-import { useEmployeeStore } from '../../store/employeeStore';
+import { useEmployeeStore } from '../../store/employee/employeeStore';
 import RestQueryService from '../../../services/http/RestQueryService';
+import type { ErpZaloNotifySettings, ErpZaloNotifyStatus } from '../../../shared/erp/erpZaloNotify';
 
 // ── Helper ──────────────────────────────────────────────────────────
 
@@ -925,7 +926,7 @@ export class DataAccessor {
     return window.electronAPI.db.searchContactByPhone(params);
   }
 
-  // Cài đặt thông báo theo tài khoản: lưu trên từng máy (lib/notifSettingsOverrides), không qua DB / REST.
+  // Cài đặt thông báo theo tài khoản: lưu trên từng máy (lib/notifications/notifSettingsOverrides), không qua DB / REST.
 
   // ═════════════════════════════════════════════════════════════════
   // DASHBOARD / ANALYTICS (11 methods + 2 multi-account variants)
@@ -2295,6 +2296,35 @@ export class DataAccessor {
       return restWriteResult(await rest().post('/api/command/erp/notifications/delete-all', {}));
     }
     return window.electronAPI.erp?.notifyDeleteAll({});
+  }
+
+  // ── Thông báo qua Zalo (Cài đặt của Quản lý công việc, owner / admin) ──
+
+  static async erpZaloNotifyStatus() {
+    if (isEmployee()) {
+      return erpRead(await rest().get('/api/query/erp/notifications/zalo'), { zalo: null as ErpZaloNotifyStatus | null });
+    }
+    return window.electronAPI.erp?.notifyZaloStatus?.({});
+  }
+
+  /** Chỉ trường có gửi. Nhân viên: tài khoản gửi đi `zaloId` (Boss kiểm tra tài khoản được giao). */
+  static async erpSetZaloNotifySettings(patch: Partial<ErpZaloNotifySettings>) {
+    if (isEmployee()) {
+      const { accountId, ...others } = patch;
+      return restWriteResult(await rest().post('/api/command/erp/notifications/zalo', {
+        ...others,
+        ...(accountId !== undefined ? { zaloId: accountId } : {}),
+      }));
+    }
+    return window.electronAPI.erp?.notifySetZaloSettings?.({ settings: patch });
+  }
+
+  /** Gửi thử: chờ tới lượt trong hàng gửi của tài khoản + tìm SĐT + gửi (có thể tới ~1 phút). */
+  static async erpTestZaloNotify(employeeId: string) {
+    if (isEmployee()) {
+      return restWriteResult(await rest().post('/api/command/erp/notifications/zalo/test', { employeeId }, 100_000));
+    }
+    return window.electronAPI.erp?.notifyTestZalo?.({ employeeId });
   }
 
 }

@@ -6,13 +6,13 @@
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import ipc from '@/lib/ipc';
-import { useAppStore } from '@/store/appStore';
+import { useAppStore } from '@/store/app/appStore';
 import { showConfirm } from '@/components/common/ConfirmDialog';
 import { AlertIcon, CheckIcon, RefreshIcon, TrashIcon, WebhookIcon } from '@/components/common/icons';
 import {
   WEBHOOK_EVENT_OPTIONS, defaultWebhookEvents, webhookEventLabel,
   type PosWebhookListResponse, type PosWebhookView, type WebhookOwnership, type WebhookRegistrationType,
-} from '../../../shared/posWebhookTopics';
+} from '../../../shared/integrations/posWebhookTopics';
 
 const OWNERSHIP: Record<WebhookOwnership, { label: string; className: string }> = {
   current: { label: 'Deplao — đang nhận', className: 'bg-success/15 text-success' },

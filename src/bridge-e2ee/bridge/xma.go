@@ -39,11 +39,12 @@ type TemplateItem struct {
 }
 
 // tableExtras indexes the rows of one LightSpeed table that WrapMessages does
-// not attach to messages: every CTA (not only the last per attachment) and the
-// carousel items.
+// not attach to messages: every CTA (not only the last per attachment), the
+// CTAs of each message (button templates have no card) and the carousel items.
 type tableExtras struct {
 	ctaByID          map[int64]*table.LSInsertAttachmentCta
 	ctasByAttachment map[string][]*table.LSInsertAttachmentCta
+	ctasByMessage    map[string][]*table.LSInsertAttachmentCta
 	itemsByMessage   map[string][]*table.LSInsertAttachmentItem
 }
 
@@ -51,6 +52,7 @@ func newTableExtras(tbl *table.LSTable) *tableExtras {
 	extras := &tableExtras{
 		ctaByID:          map[int64]*table.LSInsertAttachmentCta{},
 		ctasByAttachment: map[string][]*table.LSInsertAttachmentCta{},
+		ctasByMessage:    map[string][]*table.LSInsertAttachmentCta{},
 		itemsByMessage:   map[string][]*table.LSInsertAttachmentItem{},
 	}
 	if tbl == nil {
@@ -65,6 +67,9 @@ func newTableExtras(tbl *table.LSTable) *tableExtras {
 		}
 		if cta.AttachmentFbid != "" {
 			extras.ctasByAttachment[cta.AttachmentFbid] = append(extras.ctasByAttachment[cta.AttachmentFbid], cta)
+		}
+		if cta.MessageId != "" {
+			extras.ctasByMessage[cta.MessageId] = append(extras.ctasByMessage[cta.MessageId], cta)
 		}
 	}
 	for _, item := range tbl.LSInsertAttachmentItem {
@@ -144,7 +149,7 @@ func (x *tableExtras) buttons(refs []ctaRef, attachmentFbid string, defaultCtaID
 			if cta.CtaId == 0 || seen[cta.CtaId] || cta.CtaId == defaultCtaID {
 				continue
 			}
-			if strings.HasPrefix(cta.Type_, "xma_poll_") || cta.Type_ == "xma_map" || cta.Type_ == "xma_live_location_sharing" {
+			if isNonButtonCta(cta.Type_) {
 				continue
 			}
 			seen[cta.CtaId] = true
@@ -157,6 +162,99 @@ func (x *tableExtras) buttons(refs []ctaRef, attachmentFbid string, defaultCtaID
 		return nil
 	}
 	return buttons
+}
+
+// isNonButtonCta reports CTA rows that are never visible buttons (poll
+// metadata, map / live-location taps).
+func isNonButtonCta(kind string) bool {
+	return strings.HasPrefix(kind, "xma_poll_") || kind == "xma_map" || kind == "xma_live_location_sharing"
+}
+
+// orphanButtons returns the CTA rows of a message that no card used. A Page
+// button template ("text + up to 3 buttons", e.g. "Hãy chọn dịch vụ…" with
+// "Tư vấn sản phẩm") has no XMA card: the text is the message text and the
+// buttons are CTA rows tied to the message, or to an attachment row without
+// card fields. Upstream drops them, and the MQTT copy of the same message is
+// only Facebook's "Attachment unavailable" placeholder, so Deplao showed
+// nothing usable. cardFbids are attachments already turned into cards (their
+// CTAs were considered there); used are CTA ids already shown as buttons.
+func (x *tableExtras) orphanButtons(msg *table.WrappedMessage, cardFbids map[string]bool, used map[string]bool) []*TemplateButton {
+	if x == nil || msg == nil || msg.LSInsertMessage == nil || msg.MessageId == "" {
+		return nil
+	}
+	candidates := append([]*table.LSInsertAttachmentCta{}, x.ctasByMessage[msg.MessageId]...)
+	for _, legacy := range msg.Attachments {
+		if legacy != nil && legacy.AttachmentFbid != "" && !cardFbids[legacy.AttachmentFbid] {
+			candidates = append(candidates, x.ctasByAttachment[legacy.AttachmentFbid]...)
+		}
+	}
+	buttons := []*TemplateButton{}
+	seen := map[string]bool{}
+	for _, cta := range candidates {
+		if cta == nil || isNonButtonCta(cta.Type_) {
+			continue
+		}
+		if cta.AttachmentFbid != "" && cardFbids[cta.AttachmentFbid] {
+			continue
+		}
+		key := "title:" + strings.TrimSpace(cta.Title)
+		if cta.CtaId != 0 {
+			key = "id:" + strconv.FormatInt(cta.CtaId, 10)
+			if used[strconv.FormatInt(cta.CtaId, 10)] {
+				continue
+			}
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		if button := x.button(ctaRef{id: cta.CtaId, title: cta.Title, kind: cta.Type_}); button != nil {
+			buttons = append(buttons, button)
+		}
+	}
+	if len(buttons) == 0 {
+		return nil
+	}
+	return buttons
+}
+
+// usedCtaIDs collects the CTA ids already shown as buttons on the cards.
+func usedCtaIDs(attachments []*Attachment) map[string]bool {
+	used := map[string]bool{}
+	add := func(buttons []*TemplateButton) {
+		for _, button := range buttons {
+			if button != nil && button.CtaID != "" {
+				used[button.CtaID] = true
+			}
+		}
+	}
+	for _, att := range attachments {
+		if att == nil {
+			continue
+		}
+		add(att.Buttons)
+		for _, item := range att.Items {
+			if item != nil {
+				add(item.Buttons)
+			}
+		}
+	}
+	return used
+}
+
+// attachOrphanButtons puts the orphan CTA rows of a message on its first
+// template, or on a new text-less template (the text stays the message text).
+func attachOrphanButtons(attachments []*Attachment, buttons []*TemplateButton) []*Attachment {
+	if len(buttons) == 0 {
+		return attachments
+	}
+	for _, att := range attachments {
+		if att != nil && att.Type == "template" {
+			att.Buttons = append(att.Buttons, buttons...)
+			return attachments
+		}
+	}
+	return append(attachments, &Attachment{Type: "template", Buttons: buttons})
 }
 
 func (x *tableExtras) defaultActionURL(defaultCtaID int64, fallback string) string {

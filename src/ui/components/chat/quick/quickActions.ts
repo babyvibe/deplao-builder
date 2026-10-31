@@ -1,10 +1,10 @@
 /**
  * Nút "Thao tác nhanh" cạnh ô tìm kiếm hội thoại — quy tắc thuần (có test ở
- * src/__tests__/quickActions.test.ts): kênh nào làm được thao tác nào, tài khoản mặc định theo
+ * src/__tests__/chat/quickActions.test.ts): kênh nào làm được thao tác nào, tài khoản mặc định theo
  * chế độ thường / gộp trang, chọn tài khoản phù hợp với link nhóm vừa dán.
  */
-import type { GroupLinkTarget } from '../../../../shared/groupLinks';
-import { groupLinkAccountChannels } from '../../../../shared/groupLinks';
+import type { GroupLinkTarget } from '../../../../shared/crm/groupLinks';
+import { groupLinkAccountChannels } from '../../../../shared/crm/groupLinks';
 
 export type QuickActionId = 'createGroup' | 'createChannel' | 'joinLink' | 'addFriend' | 'contacts' | 'calls';
 

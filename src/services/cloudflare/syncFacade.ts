@@ -10,7 +10,7 @@
  */
 import {
     normalizeScope, sameScope, type CloudScope, type DbSyncMode, type SyncConfig, type SyncOverview,
-} from '../../shared/cloudContracts';
+} from '../../shared/cloud/cloudContracts';
 import { CloudError } from './contracts';
 import type { CloudDbModule, CloudflareCore, CloudMediaModule } from './contracts';
 

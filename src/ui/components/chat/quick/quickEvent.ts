@@ -1,9 +1,9 @@
 /**
  * "Thêm lịch hẹn" nhanh (lịch ERP): giá trị mặc định của form và dữ liệu gửi createEvent.
- * Ngày / giờ là giờ máy (input type="date" / "time"). Thuần — test ở src/__tests__/quickActions.test.ts.
+ * Ngày / giờ là giờ máy (input type="date" / "time"). Thuần — test ở src/__tests__/chat/quickActions.test.ts.
  */
 import type { CreateCalendarEventInput, ErpEventType } from '../../../../models/erp/CalendarEvent';
-import { normalizeErpReminderMinutes } from '../../../../shared/erpReminderText';
+import { normalizeErpReminderMinutes } from '../../../../shared/erp/erpReminderText';
 
 export type QuickEventDuration = '15' | '30' | '60' | '90' | '120' | 'all_day';
 

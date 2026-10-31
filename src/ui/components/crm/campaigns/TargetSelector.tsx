@@ -1,17 +1,17 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import type { LabelData } from '@/store/appStore';
+import type { LabelData } from '@/store/app/appStore';
 import DataAccessor, { isReadFailure } from '@/lib/data/DataAccessor';
-import { useEmployeeResync } from '@/hooks/useEmployeeResync';
+import { useEmployeeResync } from '@/hooks/accounts/useEmployeeResync';
 import {
   collectGroupTargets, countMembersByGroup, readOutcome, targetConfirmBlockReason, type GroupMembersRead,
 } from '@/lib/crm/loadFailure';
 import ipc from '@/lib/ipc';
 import ZaloLabelBadge from '../tags/ZaloLabelBadge';
 import LoadFailedNotice from '../LoadFailedNotice';
-import { formatPhone } from '@/utils/phoneUtils';
+import { formatPhone } from '@/lib/contacts/phoneUtils';
 import { CloudIcon, HardDriveIcon, LinkIcon, TagIcon, UserCheckIcon, UsersIcon } from '@/components/common/icons';
-import { CHANNEL } from '@/lib/channelHelper';
-import { getCapability, type Channel } from '../../../../configs/channelConfig';
+import { CHANNEL } from '@/lib/channels/channelHelper';
+import { getCapability, type Channel } from '../../../../configs/channels/channelConfig';
 
 export interface LocalLabelItem {
   id: number;

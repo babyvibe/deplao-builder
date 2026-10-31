@@ -21,7 +21,7 @@
  */
 import { randomBytes } from 'crypto';
 import * as fs from 'fs';
-import type { R2CleanupPreview, R2CleanupProgress, R2CleanupRequest, R2CleanupResult } from '../../../shared/cloudContracts';
+import type { R2CleanupPreview, R2CleanupProgress, R2CleanupRequest, R2CleanupResult } from '../../../shared/cloud/cloudContracts';
 import type { R2Client } from '../contracts';
 import { CloudError } from '../contracts';
 import type { MediaDb } from './CloudMediaIndex';

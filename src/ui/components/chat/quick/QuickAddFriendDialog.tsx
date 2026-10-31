@@ -3,9 +3,9 @@
  * số điện thoại hoặc @tên người dùng. Xong có nút "Nhắn tin" mở hội thoại 1-1.
  */
 import React, { useState } from 'react';
-import type { AccountInfo } from '@/store/accountStore';
+import type { AccountInfo } from '@/store/accounts/accountStore';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
-import { toLocalMediaUrl } from '@/lib/localMedia';
+import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import {
   Badge, Button, Dialog, DialogBody, DialogClose, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Input, Textarea,
 } from '@/components/ui';

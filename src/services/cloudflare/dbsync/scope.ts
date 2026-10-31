@@ -9,7 +9,7 @@
  *
  * Chỉ import trong thư mục dbsync (chạy trong worker — xem sqlConn.ts). CloudScope chỉ dùng làm kiểu.
  */
-import type { CloudScope } from '../../../shared/cloudContracts';
+import type { CloudScope } from '../../../shared/cloud/cloudContracts';
 import { SqlConn, SqlStatement, quoteIdent, tableExists, toNumber } from './sqlConn';
 import { ResolvedScopePolicy, pickRowidAlias, resolveScopePolicies, tableColumns } from './tableSelection';
 

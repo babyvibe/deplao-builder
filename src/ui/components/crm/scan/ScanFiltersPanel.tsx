@@ -1,5 +1,5 @@
 import React from 'react';
-import type { ScanType } from '../../../../services/facebook/FacebookScanTypes';
+import type { ScanType } from '../../../../services/facebook/scan/FacebookScanTypes';
 import type { ScanFilters } from './ScanSessionTypes';
 import { YEAR_OPTIONS, COMMENT_SORT_OPTIONS } from './ScanSessionTypes';
 

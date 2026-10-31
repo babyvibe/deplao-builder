@@ -16,8 +16,8 @@
  * (Chỉ dùng ở main — import cloudContracts lúc chạy được; worker không nạp file này.)
  */
 import type { R2Client } from '../contracts';
-import type { CloudScope } from '../../../shared/cloudContracts';
-import { ALL_SCOPE, isAllScope, normalizeScope, sameScope } from '../../../shared/cloudContracts';
+import type { CloudScope } from '../../../shared/cloud/cloudContracts';
+import { ALL_SCOPE, isAllScope, normalizeScope, sameScope } from '../../../shared/cloud/cloudContracts';
 import { SCOPE_POLICY_VERSION } from './tableSelection';
 
 export const MANIFEST_VERSION = 1;

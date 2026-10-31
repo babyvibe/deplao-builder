@@ -17,50 +17,51 @@ import * as fs from 'fs';
 import Logger from '../../utils/Logger';
 import DatabaseService from '../database/DatabaseService';
 import { TELEGRAM_TOP_MESSAGE_ID_SQL, telegramTopMessageIdParams } from '../database/telegramTopMessage';
-import { createCatchUpPacer, focusFirst } from './telegramCatchUpPacer';
+import { createCatchUpPacer, focusFirst } from './messages/telegramCatchUpPacer';
 import EventBroadcaster from '../event/EventBroadcaster';
 import FileStorageService from '../file/FileStorageService';
-import { shouldFetchAvatar, markAvatarFetched, markAvatarSuccess, resetAvatarCache } from '../../utils/avatarFetchCache';
-import type { TelegramPeerType } from '../../models/telegram';
-import { getTelegramMessagePreview } from './TelegramMessagePreview';
-import { parseGroupLink } from '../../shared/groupLinks';
-import { describeTelegramServiceAction } from './telegramServiceText';
-import { getTelegramForwardAttachment, telegramEntityName } from './telegramForward';
-import { markTelegramMessagesDeleted } from './telegramDeletions';
-import { telegramStrippedThumb, telegramVideoAttributes, telegramWebpageMeta } from './telegramMediaMeta';
-import * as TelegramStickers from './telegramStickers';
-import { stickerSetRefOf, type StickerClientDeps, type TelegramStickerSetRef } from './telegramStickers';
-import { mapReadReceiptError, normalizeReadParticipants, type ReadReceiptUnavailableReason } from './telegramReadReceipts';
-import { applyTelegramReadUpdate, parseTelegramReadUpdate } from './telegramReadHistory';
-import { isStartupSettled, whenStartupSettled } from '../../utils/startupSettle';
-import { telegramSentTimestamp } from '../../utils/serverClock';
+import { shouldFetchAvatar, markAvatarFetched, markAvatarSuccess, resetAvatarCache } from '../../utils/telegram/avatarFetchCache';
+import type { TelegramPeerType } from '../../models/telegram/telegram';
+import { getTelegramMessagePreview } from './messages/TelegramMessagePreview';
+import { parseGroupLink } from '../../shared/crm/groupLinks';
+import { describeTelegramServiceAction } from './messages/telegramServiceText';
+import { getTelegramForwardAttachment, telegramEntityName } from './messages/telegramForward';
+import { markTelegramMessagesDeleted } from './messages/telegramDeletions';
+import { telegramStrippedThumb, telegramVideoAttributes, telegramWebpageMeta } from './media/telegramMediaMeta';
+import * as TelegramStickers from './media/telegramStickers';
+import { stickerSetRefOf, type StickerClientDeps, type TelegramStickerSetRef } from './media/telegramStickers';
+import { mapForumTopics } from './channels/telegramForumTopics';
+import { mapReadReceiptError, normalizeReadParticipants, type ReadReceiptUnavailableReason } from './read/telegramReadReceipts';
+import { applyTelegramReadUpdate, parseTelegramReadUpdate } from './read/telegramReadHistory';
+import { isStartupSettled, whenStartupSettled } from '../../utils/startup/startupSettle';
+import { telegramSentTimestamp } from '../../utils/time/serverClock';
 import { messageTimestampById, recordPeerReceipt } from '../receipts/peerReceipts';
 import { mediaProgressReporter } from '../media/mediaProgress';
 import {
   createTelegramDownloadQueue, isTelegramDownloadPreempted,
   type TelegramDownloadOptions, type TelegramDownloadRun, type TelegramDownloadUrgency,
-} from './telegramDownloadQueue';
-import { richMediaRefs, richMessageToBlocks, richMessageToText, todoListToText } from './telegramRichMessage';
+} from './media/telegramDownloadQueue';
+import { richMediaRefs, richMessageToBlocks, richMessageToText, todoListToText } from './messages/telegramRichMessage';
 import {
   chatInviteJoinOutcome, inlineButtonInfo, stripUnsupportedTelegramPeers, TELEGRAM_BOT_VERIFICATION_ERROR,
-} from './telegramLayerCompat';
-import { GRAMJS_BUNDLED_LAYER, telegramApiLayerState } from './telegramApiLayer';
+} from './api/telegramLayerCompat';
+import { GRAMJS_BUNDLED_LAYER, telegramApiLayerState } from './api/telegramApiLayer';
 import {
   discussionAccess, discussionOpenWindow, discussionPageFlags, discussionRoot, mergeTelegramPostStats, withCommentsRead,
   type DiscussionAnchor,
-} from './telegramChannelPosts';
-import { isTelegramMetaAttachment } from '../../shared/telegramAttachmentTypes';
-import { isUndecryptedCredential } from '../../shared/storedCredential';
-import { normalizeTelegramReaction, orderTelegramReactions, type TelegramChatReactions, type TelegramReactionCatalog } from '../../shared/telegramReactions';
+} from './channels/telegramChannelPosts';
+import { isTelegramMetaAttachment } from '../../shared/telegram/telegramAttachmentTypes';
+import { isUndecryptedCredential } from '../../shared/accounts/storedCredential';
+import { normalizeTelegramReaction, orderTelegramReactions, type TelegramChatReactions, type TelegramReactionCatalog } from '../../shared/telegram/telegramReactions';
 import {
   normalizeTelegramTtl, telegramCallCardContent, telegramCallReasonOf, telegramPresenceOf, telegramPresenceRank,
   telegramUsernameError, validateTelegramUsername,
   type TelegramCallHistoryItem, type TelegramCallInfo, type TelegramChatSettings, type TelegramContactItem,
   type TelegramCreateChannelResult, type TelegramMissingInvitee,
-} from '../../shared/telegramQuickModel';
+} from '../../shared/telegram/telegramQuickModel';
 
 // Telegram API credentials - đăng ký tại my.telegram.org
-import { API_ID, API_HASH } from '../../configs/telegram.config';
+import { API_ID, API_HASH } from '../../configs/channels/telegram.config';
 
 export interface TelegramUserAccount {
   accountId: string;     // = Telegram user ID
@@ -453,7 +454,7 @@ function persistTelegramDialogState(
   if (readOutboxMaxId > (Number(existing?.peer_read_max_id) || 0)) {
     recordPeerReceipt(accountId, chatId, {
       readMaxId: readOutboxMaxId,
-      readTs: messageTimestampById(accountId, chatId, [String(readOutboxMaxId)]),
+      readTs: messageTimestampById(accountId, chatId, [String(readOutboxMaxId)], 'telegram_user'),
     });
   }
   // Saved Messages (self-chat) → auto pin local
@@ -2367,7 +2368,7 @@ function startHealthCheck(listener: ActiveListener): void {
  */
 function scheduleReconnectCatchUp(listener: ActiveListener, client: TelegramClient, mode: CatchUpMode = 'full'): void {
   if (!isStartupSettled()) {
-    // Vừa mở app: đồng bộ bù / tải lại tin cũ chờ giao diện tải xong + luồng chính rảnh (utils/startupSettle) — chạy
+    // Vừa mở app: đồng bộ bù / tải lại tin cũ chờ giao diện tải xong + luồng chính rảnh (utils/startup/startupSettle) — chạy
     // ngay lúc khởi động tranh CPU / IPC với giao diện nên app giật. Tin mới qua socket vẫn lưu + hiện ngay.
     whenStartupSettled(() => {
       if (listener.stopped || listener.client !== client || !client.connected) return;
@@ -4250,7 +4251,7 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
               // Mốc "đã xem tới tin số…" của hội thoại → dấu ✓✓ cạnh giờ các tin mình gửi (services/receipts)
               recordPeerReceipt(account.accountId, readUpdate.chatId, {
                 readMaxId: readUpdate.maxId,
-                readTs: messageTimestampById(account.accountId, readUpdate.chatId, [String(readUpdate.maxId)]),
+                readTs: messageTimestampById(account.accountId, readUpdate.chatId, [String(readUpdate.maxId)], 'telegram_user'),
               });
               EventBroadcaster.emit('event:seen', {
                 zaloId: account.accountId,
@@ -4419,7 +4420,7 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
     // catch-up until the next outage.
     scheduleReconnectCatchUp(listener, client, 'full');
 
-    // Vừa mở app: các việc dưới đây (gọi Telegram + ghi DB hàng loạt) chờ app ổn định (utils/startupSettle);
+    // Vừa mở app: các việc dưới đây (gọi Telegram + ghi DB hàng loạt) chờ app ổn định (utils/startup/startupSettle);
     // kết nối lại giữa phiên thì chạy ngay như trước.
     whenStartupSettled(() => {
       if (listener.stopped || listener.client !== client || !client.connected) return;
@@ -10675,7 +10676,7 @@ function telegramUsernameOf(user: any): string {
  * Ô @nhắc đến của nhóm lớn (như Telegram): tìm thành viên theo tên / @username ngay trên Telegram (channels.getParticipants,
  * bộ lọc Mentions — bỏ quản trị viên ẩn danh) rồi LƯU vào page_group_member kèm @username: lần sau tìm trong DB, không
  * cần mạng. Nhóm thường (basic group) đã có đủ người qua getGroupMembers → không tìm. `complete`: đã trả đủ mọi người
- * khớp — gõ thêm chữ sau đó không cần hỏi lại (ui/lib/chat/mentionMembers.ts).
+ * khớp — gõ thêm chữ sau đó không cần hỏi lại (ui/lib/chat/members/mentionMembers.ts).
  */
 export async function searchGroupMembers(
   accountId: string,
@@ -11836,31 +11837,22 @@ export async function getForumTopics(accountId: string, chatId: string): Promise
       }));
 
     const topics = (result as any)?.topics || [];
-    const users = (result as any)?.users || [];
-    const userMap = new Map<string, any>(users.map((u: any) => [String(u.id), u]));
-
-    const mappedTopics = topics.map((t: any) => ({
-      // ForumTopic.id is the topic/thread root. topMessage is only the latest
-      // message currently present in that topic.
-      id: String(t.id || ''),
-      forumTopicId: String(t.id || ''),
-      title: t.title || '',
-      iconEmojiId: t.iconEmojiId ? String(t.iconEmojiId) : '',
-      iconColor: t.iconColor || 0,
-      rootMessageId: String(t.id || ''),
-      topMessageId: String(t.topMessage || ''), // compatibility for current UI
-      topMessageDate: t.date || 0,
-      unreadCount: t.unreadCount || 0,
-      isPinned: !!t.pinned,
-      isClosed: !!t.closed,
-      isShort: !!t.short,
-      creatorId: String(t.fromId?.userId || ''),
-      creatorName: (() => {
-        const uid = String(t.fromId?.userId || '');
-        const u = userMap.get(uid);
-        return u ? [u.firstName, u.lastName].filter(Boolean).join(' ') : '';
-      })(),
-    }));
+    // Biểu tượng emoji tuỳ chỉnh của chủ đề (1 lần gọi cho các id chưa có); lỗi / chậm thì vẽ biểu tượng màu
+    let iconEmoji = new Map<string, any>();
+    const emojiIds = topics.map((topic: any) => (topic?.iconEmojiId ? String(topic.iconEmojiId) : '')).filter(Boolean);
+    if (emojiIds.length > 0) {
+      try {
+        const { Api } = require('telegram');
+        iconEmoji = await Promise.race([
+          TelegramStickers.getCustomEmojiItems(accountId, emojiIds, { client: conn.client, Api }),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000)),
+        ]);
+      } catch (emojiErr: any) {
+        Logger.warn(`[TelegramUserListener] getForumTopics: topic icons for ${chatId}: ${emojiErr?.message || emojiErr}`);
+      }
+    }
+    // Dòng tin mới nhất + giờ của TIN đó (ForumTopic.date là ngày tạo chủ đề) — telegramForumTopics.ts
+    const mappedTopics = mapForumTopics(result, (message: any) => normalizeTelegramMessageMedia(message), iconEmoji);
 
     tgLog('info', accountId, 'topic_api', `TOPICS_RECEIVED for ${chatId}`, {
       count: topics.length,
@@ -12965,7 +12957,11 @@ export async function setStickerSetInstalled(accountId: string, ref: TelegramSti
 /** File vẽ sticker / GIF trong bảng: 'thumb' ảnh tĩnh nhỏ, 'full' cả file (phát khi rê chuột). */
 export async function getStickerFile(accountId: string, docId: string, variant: 'thumb' | 'full' = 'thumb') {
   const deps = telegramStickerDeps(accountId);
-  if ('error' in deps) return { success: false as const, error: deps.error };
+  if ('error' in deps) {
+    // Chưa kết nối: file đã tải trước đây vẫn vẽ được (biểu tượng chủ đề forum lưu sẵn, sticker gần đây…)
+    const onDisk = TelegramStickers.stickerFileOnDisk(FileStorageService.getBaseDir(), accountId, String(docId || ''), variant);
+    return onDisk ? { success: true as const, ...onDisk } : { success: false as const, error: deps.error };
+  }
   return TelegramStickers.getStickerFile(accountId, String(docId || ''), variant, deps);
 }
 

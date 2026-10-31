@@ -21,7 +21,7 @@ import Logger from '../../../utils/Logger';
 import TunnelService, { type TunnelOptions } from '../../tunnel/TunnelService';
 import { cloudflare } from '../CloudflareService';
 import { CloudError, type CloudTunnelModule } from '../contracts';
-import type { TunnelMode, TunnelServiceId } from '../../../shared/cloudContracts';
+import type { TunnelMode, TunnelServiceId } from '../../../shared/cloud/cloudContracts';
 import {
     CloudflareTunnelManager,
     type CloudTunnelRunner,
@@ -165,7 +165,7 @@ function legacyFailure(service: TunnelServiceId, on: boolean, detail: unknown): 
 /** Cổng relay đã lưu của workspace đang mở (như lúc mở app tự bật relay); không đọc được → cổng relay đang nhớ. */
 function workspaceRelayPort(): number | undefined {
     try {
-        const ws = require('../../../utils/WorkspaceManager').default.getInstance().getActiveWorkspace();
+        const ws = require('../../../utils/app/WorkspaceManager').default.getInstance().getActiveWorkspace();
         const port = Number(ws?.relayPort);
         if (ws?.type !== 'remote' && Number.isInteger(port) && port > 0 && port < 65536) return port;
     } catch { /* WorkspaceManager chưa sẵn sàng */ }

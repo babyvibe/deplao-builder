@@ -1,36 +1,85 @@
+/**
+ * Màn Cài đặt: cột menu chia nhóm (Chung · Tài khoản & nhóm · Dữ liệu & mạng · Hỗ trợ) + trang bên phải. Mỗi trang dùng
+ * khung chung settingsUi (tiêu đề + 1 dòng mô tả, khối, dòng cài đặt). Mã tab giữ nguyên vì nhiều nơi mở thẳng một tab qua
+ * sự kiện nav:settings { tab, subtab }.
+ */
 import React, { useState, useEffect } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import ipc from '@/lib/ipc';
-import { useAccountStore } from '@/store/accountStore';
-import { useAppStore } from '@/store/appStore';
-import { useEmployeeStore } from '@/store/employeeStore';
-import { playNotificationSound, requestNotificationPermission, showDesktopNotification } from '@/utils/NotificationService';
+import { cn } from '@/lib/cn';
+import { useAccountStore } from '@/store/accounts/accountStore';
+import { FONT_SCALE_MAX, FONT_SCALE_MIN, FONT_SCALE_STEP, useAppStore } from '@/store/app/appStore';
+import { useEmployeeStore } from '@/store/employee/employeeStore';
+import { playNotificationSound, requestNotificationPermission, showDesktopNotification } from '@/lib/notifications/NotificationService';
 import { showConfirm } from '../common/ConfirmDialog';
-import { extractApiError } from '@/utils/apiError';
-import { AlertIcon, ArrowRightIcon, BellIcon, BookIcon, ClipboardIcon, CloudIcon, FolderIcon, HardDriveIcon, LightningIcon, LockIcon, MessageIcon, MonitorIcon, PackageIcon, PaletteIcon, RefreshIcon, ShieldIcon, UserIcon, UsersIcon, ClipboardListIcon, GlobeIcon, MinimizeIcon, SmartphoneIcon, StarIcon, SunIcon } from '../common/icons';
-import IntroductionSettings from './IntroductionSettings';
-import ChangelogSettings from './ChangelogSettings';
-import ConversationSettings from './ConversationSettings';
-import EmployeeSettings from './EmployeeSettings';
-import WorkspaceSettings from './WorkspaceSettings';
-import ProxySettings from './ProxySettings';
-import LockScreenSettings from './LockScreenSettings';
-import AccountSettings from './AccountSettings';
-import InAppNotifySettings from './InAppNotifySettings';
-import LogViewer from './LogViewer';
+import { extractApiError } from '@/lib/app/apiError';
+import {
+  BellIcon, BookIcon, BriefcaseIcon, CheckIcon, ClipboardIcon, CloudIcon, FolderIcon, GlobeIcon, HardDriveIcon, MessageIcon,
+  MoonIcon, PaletteIcon, ShieldIcon, SunIcon, TerminalIcon, UserIcon, UsersIcon,
+} from '../common/icons';
+import IntroductionSettings from './introduction/IntroductionSettings';
+import ChangelogSettings from './changelog/ChangelogSettings';
+import ConversationSettings from './conversation/ConversationSettings';
+import EmployeeSettings from './employees/EmployeeSettings';
+import WorkspaceSettings from './workspace/WorkspaceSettings';
+import ProxySettings from './proxy/ProxySettings';
+import LockScreenSettings from './security/LockScreenSettings';
+import AccountSettings from './accounts/AccountSettings';
+import InAppNotifySettings from './notifications/InAppNotifySettings';
+import AutoLaunchSettings from './notifications/AutoLaunchSettings';
+import LogViewer from './logs/LogViewer';
 import CloudSettings, { type CloudSection } from './cloud/CloudSettings';
 import CloudMediaSummary from './cloud/CloudMediaSummary';
 import { toCloudSection } from './cloud/cloudUi';
 import { useCloudAlert } from './cloud/useCloudAlert';
-import { loadSeenTabs, markTabSeen, SETTINGS_WATCHLIST, hasUnseenChangelog, markChangelogSeen } from '@/utils/settingsSeenTabs';
-import { Button } from '@/components/ui/button';
+import { loadSeenTabs, markTabSeen, SETTINGS_WATCHLIST, hasUnseenChangelog, markChangelogSeen } from '@/lib/app/settingsSeenTabs';
+import { Button, Select, Switch } from '@/components/ui';
 import { DesignSystemPage } from '@/components/ui/DesignSystemPage';
-import { isZalo, isFacebook, isTelegram } from '@/lib/channelHelper';
+import { isZalo, isFacebook, isTelegram } from '@/lib/channels/channelHelper';
+import { Notice, PathText, SettingsPage, SettingsRow, SettingsSection } from './settingsUi';
 
 type SettingsTab = 'notifications' | 'accounts' | 'storage' | 'cloud' | 'conversation' | 'employees' | 'workspace' | 'introduction' | 'changelog' | 'appearance' | 'proxy' | 'security' | 'logs';
 
+interface NavItem { id: SettingsTab; icon: React.ReactNode; label: string; requiredPerm?: string }
+
+const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
+  {
+    label: 'Chung',
+    items: [
+      { id: 'conversation',  icon: <MessageIcon className="w-4 h-4" />, label: 'Hội thoại' },
+      { id: 'notifications', icon: <BellIcon className="w-4 h-4" />, label: 'Thông báo' },
+      { id: 'appearance',    icon: <PaletteIcon className="w-4 h-4" />, label: 'Giao diện' },
+      { id: 'security',      icon: <ShieldIcon className="w-4 h-4" />, label: 'Bảo mật' },
+    ],
+  },
+  {
+    label: 'Tài khoản & nhóm',
+    items: [
+      { id: 'accounts',  icon: <UserIcon className="w-4 h-4" />, label: 'Tài khoản', requiredPerm: 'settings_accounts' },
+      { id: 'employees', icon: <UsersIcon className="w-4 h-4" />, label: 'Nhân viên', requiredPerm: 'settings_employees' },
+      { id: 'workspace', icon: <BriefcaseIcon className="w-4 h-4" />, label: 'Workspace' },
+    ],
+  },
+  {
+    label: 'Dữ liệu & mạng',
+    items: [
+      { id: 'storage', icon: <HardDriveIcon className="w-4 h-4" />, label: 'Lưu trữ' },
+      { id: 'cloud',   icon: <CloudIcon className="w-4 h-4" />, label: 'Internet & Đám mây' },
+      { id: 'proxy',   icon: <GlobeIcon className="w-4 h-4" />, label: 'Proxy' },
+    ],
+  },
+  {
+    label: 'Hỗ trợ',
+    items: [
+      { id: 'introduction', icon: <BookIcon className="w-4 h-4" />, label: 'Giới thiệu' },
+      { id: 'changelog',    icon: <ClipboardIcon className="w-4 h-4" />, label: 'Log phiên bản' },
+      { id: 'logs',         icon: <TerminalIcon className="w-4 h-4" />, label: 'Nhật ký' },
+    ],
+  },
+];
+
 export default function Settings() {
   const [activeTab, setActiveTab] = useState<SettingsTab>('conversation');
-  const [showDesignSystem, setShowDesignSystem] = useState(false);
   const [introSubtab, setIntroSubtab] = useState<string | null>(null);
   // Internet & Đám mây: phần mở sẵn theo nav:settings { tab: 'cloud', subtab: 'address' | 'sync' } ('media' / 'db' cũ → 'sync')
   const [cloudSubtab, setCloudSubtab] = useState<CloudSection | null>(null);
@@ -48,12 +97,7 @@ export default function Settings() {
   // Live progress khi đang copy media
   const [copyProgress, setCopyProgress] = useState<number>(0);
   const [copyTotal, setCopyTotal] = useState<number>(0);
-  const { accounts } = useAccountStore();
-  const {
-    showNotification, notifSettings, setNotifSettings, notifSettingsOverrides, getNotifSettingsForAccount, setNotifSettingsForAccount,
-    resetNotifSettingsForAccount, theme, setTheme,
-  } = useAppStore();
-  const [selectedNotifAccount, setSelectedNotifAccount] = useState<string>('__global__');
+  const showNotification = useAppStore(s => s.showNotification);
 
   useEffect(() => {
     ipc.db?.getStoragePath().then((res: any) => {
@@ -120,8 +164,8 @@ export default function Settings() {
 
       // Thư mục trống → xác nhận sao chép bình thường
       const ok = await showConfirm({
-        title: 'Thay đổi thư mục lưu trữ?',
-        message: `Thư mục mới:\n${newFolder}\n\nDữ liệu hiện tại sẽ được sao chép sang thư mục mới tự động.`,
+        title: 'Đổi thư mục lưu trữ?',
+        message: `Thư mục mới:\n${newFolder}\n\nDữ liệu hiện tại sẽ được sao chép sang đây.`,
         confirmText: 'Tiếp tục',
         variant: 'warning',
       });
@@ -179,483 +223,136 @@ export default function Settings() {
     await applyStorageChange(defaultStoragePath, false);
   };
 
-  const NAV_ITEMS: { id: SettingsTab; icon: React.ReactNode; label: string; requiredPerm?: string }[] = [
-    { id: 'conversation',  icon: <MessageIcon className="w-4 h-4" />, label: 'Hội thoại' },
-    { id: 'appearance',    icon: <PaletteIcon className="w-4 h-4" />, label: 'Giao diện' },
-    { id: 'notifications', icon: <BellIcon className="w-4 h-4" />, label: 'Thông báo' },
-    { id: 'accounts',      icon: <UserIcon className="w-4 h-4" />, label: 'Tài khoản', requiredPerm: 'settings_accounts' },
-    { id: 'proxy',         icon: <LockIcon className="w-4 h-4" />, label: 'Proxy' },
-    { id: 'security',      icon: <ShieldIcon className="w-4 h-4" />, label: 'Bảo mật' },
-    { id: 'employees',     icon: <UsersIcon className="w-4 h-4" />, label: 'Nhân viên', requiredPerm: 'settings_employees' },
-    { id: 'workspace',     icon: <FolderIcon className="w-4 h-4" />, label: 'Workspace' },
-    { id: 'storage',       icon: <FolderIcon className="w-4 h-4" />, label: 'Lưu trữ' },
-    { id: 'cloud',         icon: <CloudIcon className="w-4 h-4" />, label: 'Internet & Đám mây' },
-    { id: 'introduction',  icon: <BookIcon className="w-4 h-4" />, label: 'Giới thiệu' },
-    { id: 'changelog',     icon: <ClipboardIcon className="w-4 h-4" />, label: 'Log phiên bản' },
-    { id: 'logs',          icon: <ClipboardListIcon className="w-4 h-4" />, label: 'Nhật ký' },
-  ];
-
   // Filter nav items by permission - employee/simulation mode may hide certain tabs
-  const { mode: empMode, permissions: empPermissions } = useEmployeeStore();
+  const { mode: empMode, permissions: empPermissions } = useEmployeeStore(useShallow(s => ({ mode: s.mode, permissions: s.permissions })));
   const hasSettingsPerm = (perm?: string) => {
     if (!perm) return true; // no permission required
     return useEmployeeStore.getState().hasPermission(perm);
   };
   // Internet & Đám mây (Cloudflare) chỉ dành cho máy chủ — máy nhân viên không thấy.
   const hideCloud = isEmployee || empMode === 'employee';
-  const visibleNavItems = NAV_ITEMS.filter(item => hasSettingsPerm(item.requiredPerm) && (item.id !== 'cloud' || !hideCloud));
+  const isVisible = (item: NavItem) => hasSettingsPerm(item.requiredPerm) && (item.id !== 'cloud' || !hideCloud);
+  const visibleGroups = NAV_GROUPS
+    .map(group => ({ ...group, items: group.items.filter(isVisible) }))
+    .filter(group => group.items.length > 0);
+  const visibleNavItems = visibleGroups.flatMap(group => group.items);
   // Chấm đỏ khi phần Cloudflare cần xem (lỗi token / địa chỉ / media / đồng bộ DB, hoặc vừa khôi phục).
   const cloudAlert = useCloudAlert(!hideCloud);
 
   // Guard: nếu activeTab không còn trong visibleNavItems (do đổi workspace/quyền) → reset về tab đầu tiên
   useEffect(() => {
-    const isVisible = visibleNavItems.some(item => item.id === activeTab);
-    if (!isVisible && visibleNavItems.length > 0) {
+    const visible = visibleNavItems.some(item => item.id === activeTab);
+    if (!visible && visibleNavItems.length > 0) {
       setActiveTab(visibleNavItems[0].id);
     }
   }, [empMode, empPermissions, hideCloud]);
 
+  const dotFor = (id: SettingsTab): string | null => {
+    if ((SETTINGS_WATCHLIST as readonly string[]).includes(id) && !seenTabs.has(id)) return 'Mới';
+    if (id === 'changelog' && unreadChangelog) return 'Có bản cập nhật mới';
+    if (id === 'cloud' && cloudAlert.reasons.length > 0) return cloudAlert.reasons.join(' · ');
+    return null;
+  };
+
   return (
     <>
     <div className="flex h-full overflow-hidden">
-      {/* ─── Left sidebar ─── */}
-      <div className="w-44 flex-shrink-0 border-r border-border bg-card flex flex-col py-3 gap-0.5 overflow-y-auto">
-        <p className="px-4 pb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Cài đặt</p>
-        {visibleNavItems.map((item, idx) => (
-          <React.Fragment key={item.id}>
-            <button onClick={() => { setActiveTab(item.id); setCloudSubtab(null); }}
-              className={`flex items-center gap-2.5 w-full px-4 py-2.5 text-sm rounded-none transition-colors text-left ${
-                activeTab === item.id
-                  ? 'bg-selected text-primary border-r-2 border-primary'
-                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-              }`}>
-              <span className="text-base leading-none">{item.icon}</span>
-              <span className="font-medium">{item.label}</span>
-              {/* Chấm đỏ "mới" - chỉ hiện khi tab chưa được xem lần nào */}
-              {(SETTINGS_WATCHLIST as readonly string[]).includes(item.id) && !seenTabs.has(item.id) && (
-                <span className="ml-auto w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
-              )}
-              {/* Chấm đỏ cho changelog - hiện khi có bản cập nhật chưa đọc */}
-              {item.id === 'changelog' && unreadChangelog && (
-                <span className="ml-auto w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
-              )}
-              {item.id === 'cloud' && cloudAlert.reasons.length > 0 && (
-                <span
-                  className="ml-auto w-2 h-2 rounded-full bg-destructive flex-shrink-0"
-                  title={cloudAlert.reasons.join(' · ')}
-                  aria-label={cloudAlert.reasons.join(' · ')}
-                />
-              )}
-            </button>
-          </React.Fragment>
-        ))}
-      </div>
-
-      {/* ─── Right content ─── */}
-      <div className="flex-1 overflow-y-auto pb-6 p-2 space-y-5">
-
-        {/* ── Appearance ── */}
-        {activeTab === 'appearance' && (
-          <>
-            <h2 className="text-base font-semibold text-foreground flex items-center gap-2"><PaletteIcon className="w-4 h-4" /> Giao diện</h2>
-            <Section>
-              <div className="space-y-4">
-                <div>
-                  <p className="text-sm text-foreground font-medium mb-3">Chủ đề màu sắc</p>
-                  <div className="flex gap-3">
-                    {/* Dark theme option */}
-                    <button
-                      onClick={() => setTheme('dark')}
-                      className={`flex-1 flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all ${
-                        theme === 'dark'
-                          ? 'border-blue-500 bg-blue-600/10'
-                          : 'border-input hover:border-border-strong'
-                      }`}
-                    >
-                      <div className="w-full h-14 rounded-lg bg-background border border-border flex items-end p-1.5 gap-1 overflow-hidden">
-                        <div className="w-6 h-10 rounded bg-card flex-shrink-0" />
-                        <div className="flex-1 flex flex-col gap-1">
-                          <div className="h-3 rounded bg-muted w-3/4" />
-                          <div className="h-2 rounded bg-blue-600 w-1/2 self-end" />
-                          <div className="h-2 rounded bg-muted w-2/3" />
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        {theme === 'dark' && (
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="text-blue-400">
-                            <path d="M20 6L9 17l-5-5" stroke="currentColor" fill="none" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-                          </svg>
-                        )}
-                        <span className={`text-xs font-medium ${theme === 'dark' ? 'text-blue-400' : 'text-muted-foreground'}`}><MinimizeIcon className="w-4 h-4 inline" /> Tối</span>
-                      </div>
-                    </button>
-
-                    {/* Light theme option */}
-                    <button
-                      onClick={() => setTheme('light')}
-                      className={`flex-1 flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all ${
-                        theme === 'light'
-                          ? 'border-blue-500 bg-blue-600/10'
-                          : 'border-input hover:border-border-strong'
-                      }`}
-                    >
-                      <div className="w-full h-14 rounded-lg border border-stone-200 flex items-end p-1.5 gap-1 overflow-hidden" style={{ backgroundColor: '#f7f6f3' }}>
-                        <div className="w-6 h-10 rounded flex-shrink-0" style={{ backgroundColor: '#e8e4de' }} />
-                        <div className="flex-1 flex flex-col gap-1">
-                          <div className="h-3 rounded w-3/4" style={{ backgroundColor: '#e3dfd8' }} />
-                          <div className="h-2 rounded bg-blue-500 w-1/2 self-end" />
-                          <div className="h-2 rounded w-2/3" style={{ backgroundColor: '#e3dfd8' }} />
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        {theme === 'light' && (
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="text-blue-400">
-                            <path d="M20 6L9 17l-5-5" stroke="currentColor" fill="none" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-                          </svg>
-                        )}
-                        <span className={`text-xs font-medium ${theme === 'light' ? 'text-blue-400' : 'text-muted-foreground'}`}><SunIcon className="w-4 h-4 inline" /> Sáng</span>
-                      </div>
-                    </button>
-                  </div>
-                </div>
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  Thay đổi giao diện áp dụng ngay lập tức và được lưu tự động.
-                </p>
-              </div>
-            </Section>
-            <Section>
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm text-foreground font-medium">Hệ thống giao diện</p>
-                  <p className="text-xs text-muted-foreground">Token màu và bộ component dùng chung của Deplao, xem được ở cả hai theme.</p>
-                </div>
-                <Button variant="outline" size="sm" onClick={() => setShowDesignSystem(v => !v)}>
-                  {showDesignSystem ? 'Ẩn' : 'Xem'}
-                </Button>
-              </div>
-              {showDesignSystem && (
-                <div className="mt-5">
-                  <DesignSystemPage />
-                </div>
-              )}
-            </Section>
-          </>
-        )}
-
-        {/* ── Notifications ── */}
-        {activeTab === 'notifications' && (
-          <>
-            <h2 className="text-base font-semibold text-foreground"><BellIcon className="w-4 h-4 inline" /> Cài đặt thông báo</h2>
-
-            {/* Account selector */}
-            <div className="mb-2">
-              <label className="text-sm text-muted-foreground block mb-1">Áp dụng cho tài khoản</label>
-              <select
-                value={selectedNotifAccount}
-                onChange={e => setSelectedNotifAccount(e.target.value)}
-                className="w-full bg-muted text-foreground rounded-lg p-2 text-sm border border-input"
-              >
-                <option value="__global__"><GlobeIcon className="w-4 h-4 inline" /> Mặc định (tất cả tài khoản)</option>
-                {accounts.filter(a => isZalo(a.channel)).map(acc => (
-                  <option key={acc.zalo_id} value={acc.zalo_id}><SmartphoneIcon className="w-4 h-4 inline" /> {acc.full_name || acc.zalo_id}{notifSettingsOverrides[acc.zalo_id] ? ' (cài đặt riêng)' : ''}
-                  </option>
-                ))}
-                {accounts.filter(a => isFacebook(a.channel)).map(acc => (
-                  <option key={acc.zalo_id} value={acc.zalo_id}><BookIcon className="w-4 h-4 inline" /> {acc.full_name || acc.zalo_id}{notifSettingsOverrides[acc.zalo_id] ? ' (cài đặt riêng)' : ''}
-                  </option>
-                ))}
-                {accounts.filter(a => isTelegram(a.channel)).map(acc => (
-                  <option key={acc.zalo_id} value={acc.zalo_id}>✈️ {acc.full_name || acc.zalo_id}{notifSettingsOverrides[acc.zalo_id] ? ' (cài đặt riêng)' : ''}
-                  </option>
-                ))}
-              </select>
-              {selectedNotifAccount !== '__global__' && (
-                notifSettingsOverrides[selectedNotifAccount] ? (
-                  <div className="mt-1.5 flex items-center gap-2 text-xs text-muted-foreground">
-                    <span>Tài khoản này đang dùng cài đặt riêng.</span>
-                    <button
-                      onClick={() => resetNotifSettingsForAccount(selectedNotifAccount)}
-                      className="text-blue-400 hover:text-blue-300 hover:underline"
-                    >
-                      Dùng cài đặt mặc định
-                    </button>
-                  </div>
-                ) : (
-                  <p className="mt-1.5 text-xs text-muted-foreground">Đang theo cài đặt mặc định. Chỉnh bên dưới để đặt riêng cho tài khoản này.</p>
-                )
-              )}
-            </div>
-
-            <Section>
-              <div className="space-y-4">
-                {(() => {
-                  const isGlobal = selectedNotifAccount === '__global__';
-                  const settings = isGlobal
-                    ? notifSettings
-                    : getNotifSettingsForAccount(selectedNotifAccount);
-                  const saveSettings = isGlobal
-                    ? setNotifSettings
-                    : (partial: any) => setNotifSettingsForAccount(selectedNotifAccount, partial);
-
-                  return (
-                    <>
-                      <ToggleRow
-                        title="Thông báo màn hình"
-                        desc="Hiện popup ở góc màn hình khi có tin nhắn mới"
-                        value={settings.desktopEnabled}
-                        onChange={(v) => {
-                          if (v) requestNotificationPermission().then(granted => {
-                            if (!granted) { showNotification('Trình duyệt đã chặn thông báo. Vui lòng cấp quyền trong cài đặt.', 'warning'); return; }
-                            saveSettings({ desktopEnabled: true });
-                          });
-                          else saveSettings({ desktopEnabled: false });
-                        }}
-                      />
-                      <ToggleRow
-                        title="Âm thanh thông báo"
-                        desc="Phát tiếng khi nhận tin nhắn mới"
-                        value={settings.soundEnabled}
-                        onChange={(v) => saveSettings({ soundEnabled: v })}
-                      />
-                      {settings.soundEnabled && (
-                        <div className="space-y-1.5">
-                          <div className="flex items-center justify-between">
-                            <p className="text-sm text-muted-foreground">Âm lượng</p>
-                            <span className="text-xs text-muted-foreground">{Math.round(settings.volume * 100)}%</span>
-                          </div>
-                          <input type="range" min="0" max="100" step="5"
-                            value={Math.round(settings.volume * 100)}
-                            onChange={e => saveSettings({ volume: parseInt(e.target.value) / 100 })}
-                            className="w-full accent-blue-500" />
-                        </div>
-                      )}
-                      <div className="flex gap-2 pt-1">
-                        <button onClick={() => { if (settings.soundEnabled) playNotificationSound(settings.volume); else showNotification('Hãy bật âm thanh trước', 'info'); }}
-                          className="flex-1 py-1.5 text-xs bg-muted hover:bg-accent text-foreground/80 rounded-lg transition-colors"><BellIcon className="w-4 h-4 inline" /> Test âm thanh
-                        </button>
-                        <button onClick={() => {
-                          requestNotificationPermission().then(granted => {
-                            if (!granted) { showNotification('Cần cấp quyền thông báo', 'warning'); return; }
-                            showDesktopNotification('Deplao', 'Đây là thông báo thử nghiệm 🎉');
-                          });
-                        }} className="flex-1 py-1.5 text-xs bg-muted hover:bg-accent text-foreground/80 rounded-lg transition-colors">
-                          <MonitorIcon className="w-4 h-4 inline" /> Test popup
-                        </button>
-                      </div>
-                    </>
-                  );
-                })()}
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  * Thông báo không hiện với những hội thoại đã tắt thông báo.<br />
-                  * Cài đặt lưu trên máy này (máy nhân viên chỉnh riêng, không ảnh hưởng máy khác).<br />
-                  * <strong>Windows:</strong> Kiểm tra quyền trong Settings &gt; Notifications.<br />
-                  * <strong>macOS:</strong> Kiểm tra trong System Settings &gt; Notifications &gt; Deplao.<br />
-                  * Khi tắt notification ở cấp hệ điều hành, âm thanh cũng sẽ bị tắt theo.
-                </p>
-              </div>
-            </Section>
-
-            <h3 className="pt-2 text-sm font-semibold text-foreground">Thông báo tin nhắn trong app</h3>
-            <Section>
-              <InAppNotifySettings />
-            </Section>
-          </>
-        )}
-
-        {/* ── Accounts ── */}
-        {activeTab === 'accounts' && <AccountSettings />}
-
-        {/* ── Storage ── */}
-        {activeTab === 'storage' && (
-          <>
-            <h2 className="text-base font-semibold text-foreground"><FolderIcon className="w-4 h-4 inline" /> Thư mục lưu trữ dữ liệu</h2>
-
-            {isEmployee ? (
-              // ── Employee mode: chỉ hiển thị cache local, không đổi được Boss storage ──
-              <>
-                <div className="bg-blue-900/20 border border-blue-500/40 rounded-xl p-4 space-y-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-lg"><SunIcon className="w-4 h-4" /></span>
-                    <p className="text-sm font-semibold text-blue-300">Chế độ Nhân viên</p>
-                  </div>
-                  <p className="text-xs text-blue-300/80 leading-relaxed">
-                    Dữ liệu chat, ảnh, file được lấy từ máy chủ (Boss) qua kết nối từ xa.
-                    Thư mục bên dưới là <strong>bộ nhớ đệm (cache) trên máy nhân viên</strong>,
-                    lưu tạm file media (ảnh, video, tài liệu) khi bạn xem để lần sau mở nhanh hơn — <strong>lưu trên ổ cứng, không phải RAM</strong>.
-                    Dữ liệu gốc được quản lý trên máy Boss.
-                  </p>
-                </div>
-                <Section>
-                  <div className="space-y-3">
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-1">📍 Cache media (máy nhân viên):</p>
-                      <div className="flex items-center gap-2">
-                        <code className="flex-1 text-xs bg-muted text-green-300 px-2 py-1.5 rounded truncate block">{mediaCachePath || 'Đang tải...'}</code>
-                        {mediaCachePath && (
-                          <button onClick={() => ipc.file?.openPath(mediaCachePath)} className="text-xs text-blue-400 hover:text-blue-300 flex-shrink-0" title="Mở thư mục"><FolderIcon className="w-4 h-4" /></button>
-                        )}
-                      </div>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-1"><HardDriveIcon className="w-4 h-4 inline" /> Dung lượng cache:</p>
-                      <p className="text-sm text-foreground font-medium">
-                        {mediaCacheSize > 0
-                          ? mediaCacheSize > 1024 * 1024 * 1024
-                            ? `${(mediaCacheSize / 1024 / 1024 / 1024).toFixed(1)} GB`
-                            : `${(mediaCacheSize / 1024 / 1024).toFixed(1)} MB`
-                          : 'Đang tính...'}
-                      </p>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Ảnh, video, file được tự động tải về cache khi bạn xem hoặc khi mở hội thoại.
-                      Cache tự động xóa file cũ nhất khi quá 2GB. Có thể xóa thủ công bằng cách mở thư mục cache bên trên.
-                    </p>
-                  </div>
-                </Section>
-              </>
-            ) : (
-              // ── Boss/Standalone mode ──
-              <>
-            {/* ── Khuyến nghị đổi ổ lưu trữ ── */}
-            <div className="bg-amber-900/20 border border-amber-500/40 rounded-xl p-4 space-y-2">
-              <div className="flex items-center gap-2">
-                <AlertIcon className="w-5 h-5 text-amber-400" />
-                <p className="text-sm font-semibold text-amber-300">Khuyến nghị: Đổi sang ổ khác (không dùng ổ C:)</p>
-              </div>
-              <ul className="space-y-1.5 pl-1">
-                {[
-                  { icon: <HardDriveIcon className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />, text: 'Ổ C: thường là ổ hệ thống, dung lượng trống ít - tin nhắn, ảnh, video sẽ tích lũy nhanh theo thời gian.' },
-                  { icon: <RefreshIcon className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />, text: 'Khi cài lại Windows, toàn bộ dữ liệu trên ổ C: bị xóa. Lưu ở ổ D:, E:... giúp bảo toàn lịch sử chat qua mọi lần cài lại.' },
-                  { icon: <LightningIcon className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />, text: 'Trên máy SSD đa ổ, tách DB sang ổ phụ giảm áp lực I/O cho ổ hệ thống, app chạy mượt hơn.' },
-                  { icon: <PackageIcon className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />, text: 'Dễ backup: chỉ cần copy một thư mục sang ổ ngoài / cloud là có toàn bộ dữ liệu.' },
-                  { icon: <LockIcon className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />, text: 'Tránh bị antivirus/Windows Update can thiệp nhầm vào dữ liệu app khi quét ổ C:.' },
-                ].map((item, i) => (
-                  <li key={i} className="flex items-start gap-2 text-xs text-amber-300/80">
-                    {item.icon}
-                    <span className="leading-relaxed">{item.text}</span>
-                  </li>
-                ))}
-              </ul>
-              <p className="text-xs text-amber-400 font-medium pt-1">
-                <ArrowRightIcon className="w-3 h-3 inline-block mr-0.5" /> Nhấn <strong>"Chọn thư mục khác"</strong> bên dưới để chuyển sang ổ D:, E:, hoặc ổ ngoài. Dữ liệu sẽ được sao chép tự động.
-              </p>
-            </div>
-            <Section>
-              <div className="space-y-3">
-                <div>
-                  <p className="text-xs text-muted-foreground mb-1">Thư mục cấu hình:</p>
-                  <div className="flex items-center gap-2">
-                    <code className="flex-1 text-xs bg-muted text-green-300 px-2 py-1.5 rounded truncate block">{storagePath || 'Đang tải...'}</code>
-                    <button onClick={() => ipc.file?.openPath(storagePath)} className="text-xs text-blue-400 hover:text-blue-300 flex-shrink-0" title="Mở thư mục"><FolderIcon className="w-4 h-4" /></button>
-                  </div>
-                </div>
-                {actualDbPath && (
-                  <div>
-                    <p className="text-xs text-muted-foreground mb-1">File DB đang dùng:</p>
-                    <code className="w-full text-xs bg-muted text-yellow-300 px-2 py-1.5 rounded truncate block">{actualDbPath}</code>
-                  </div>
-                )}
-                {/* Cảnh báo nếu DB thực tế khác với config (thường xảy ra sau khi cài lại) */}
-                {actualDbPath && storagePath && !actualDbPath.startsWith(storagePath) && (
-                  <div className="bg-red-900/40 border border-red-500/50 rounded-lg p-3">
-                    <p className="text-xs text-red-300 font-semibold mb-1"><AlertIcon className="w-4 h-4 inline" /> Phát hiện không khớp thư mục!</p>
-                    <p className="text-xs text-red-200 leading-relaxed">
-                      DB đang đọc từ vị trí khác với cấu hình. Điều này thường xảy ra khi nâng cấp Electron làm thay đổi <code>userData</code> path.<br/>
-                      Nhấn <strong>Chọn thư mục khác</strong> và trỏ lại đúng thư mục để khôi phục dữ liệu.
-                    </p>
-                  </div>
-                )}
-                <p className="text-xs text-muted-foreground">
-                  Dữ liệu tin nhắn, liên hệ và cài đặt được lưu trong thư mục này.
-                  Khi thay đổi, dữ liệu được sao chép sang vị trí mới và áp dụng ngay (không cần khởi động lại).
-                </p>
-                <div className="flex gap-2">
-                  <button onClick={handleChangeStorageFolder} disabled={changingStorage}
-                    className="btn-primary text-white-important text-sm flex-1 disabled:opacity-50">
-                    {changingStorage
-                      ? copyProgress > 0
-                        ? <><FolderIcon className="w-4 h-4 inline" /> {copyProgress.toLocaleString()}{copyTotal > 0 ? ` / ${copyTotal.toLocaleString()}` : ''} files…</>
-                        : 'Đang xử lý...'
-                      : <><FolderIcon className="w-4 h-4 inline" /> Chọn thư mục khác</>}
-                  </button>
-                  {storagePath && storagePath !== defaultStoragePath && (
-                    <button onClick={handleResetStoragePath} className="btn-secondary text-sm">Đặt lại mặc định</button>
+      {/* ─── Menu trái ─── */}
+      <nav aria-label="Cài đặt" className="flex w-52 flex-shrink-0 flex-col overflow-y-auto border-r border-border bg-card pb-4 pt-4">
+        <p className="px-5 text-base font-semibold text-foreground">Cài đặt</p>
+        {visibleGroups.map(group => (
+          <div key={group.label} className="pt-4">
+            <p className="px-5 pb-1 text-[11px] font-semibold uppercase tracking-wider text-subtle-foreground">{group.label}</p>
+            {group.items.map(item => {
+              const active = activeTab === item.id;
+              const dot = dotFor(item.id);
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  aria-current={active ? 'page' : undefined}
+                  onClick={() => { setActiveTab(item.id); setCloudSubtab(null); }}
+                  className={cn(
+                    'relative flex w-full items-center gap-2.5 px-5 py-2 text-left text-sm transition-colors',
+                    active ? 'bg-selected font-medium text-primary' : 'text-muted-foreground hover:bg-muted hover:text-foreground',
                   )}
-                </div>
-              </div>
-            </Section>
-            {/* Media trên đám mây (Cloudflare R2) — chỉ máy chủ, bản app có module Cloudflare */}
-            <CloudMediaSummary />
-            </>
-          )} {/* end ternary isEmployee */}
-          </>
+                >
+                  {active && <span aria-hidden="true" className="absolute inset-y-1 left-0 w-[3px] rounded-r-full bg-primary" />}
+                  <span className="flex-shrink-0">{item.icon}</span>
+                  <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                  {/* Chấm đỏ: tab mới chưa xem / log phiên bản chưa đọc / Internet & Đám mây cần xem */}
+                  {dot && <span className="h-2 w-2 flex-shrink-0 rounded-full bg-destructive" title={dot} aria-label={dot} />}
+                </button>
+              );
+            })}
+          </div>
+        ))}
+      </nav>
+
+      {/* ─── Trang ─── */}
+      <main className="min-w-0 flex-1 overflow-y-auto">
+        {activeTab === 'appearance' && <AppearancePage />}
+        {activeTab === 'notifications' && <NotificationsPage />}
+        {activeTab === 'accounts' && <AccountSettings />}
+        {activeTab === 'storage' && (
+          <StoragePage
+            isEmployee={isEmployee}
+            storagePath={storagePath}
+            defaultStoragePath={defaultStoragePath}
+            actualDbPath={actualDbPath}
+            mediaCachePath={mediaCachePath}
+            mediaCacheSize={mediaCacheSize}
+            changing={changingStorage}
+            copyProgress={copyProgress}
+            copyTotal={copyTotal}
+            onChangeFolder={handleChangeStorageFolder}
+            onReset={handleResetStoragePath}
+          />
         )}
-
-        {/* ── Conversation ── */}
         {activeTab === 'conversation' && <ConversationSettings />}
-
-        {/* ── Security ── */}
         {activeTab === 'security' && <LockScreenSettings />}
-
         {activeTab === 'logs' && <LogViewer />}
-
-        {/* ── Employees ── */}
         {activeTab === 'proxy' && <ProxySettings />}
         {activeTab === 'employees' && <EmployeeSettings />}
         {activeTab === 'workspace' && <WorkspaceSettings />}
-
-        {/* ── Internet & Đám mây (Cloudflare, chỉ máy chủ) ── */}
+        {/* Internet & Đám mây (Cloudflare, chỉ máy chủ) */}
         {activeTab === 'cloud' && !hideCloud && <CloudSettings initialSubtab={cloudSubtab} />}
-
-        {/* ── Introduction ── */}
         {activeTab === 'introduction' && <IntroductionSettings initialSubtab={introSubtab as any} />}
-
-        {/* ── Changelog ── */}
         {activeTab === 'changelog' && <ChangelogSettings />}
-
-      </div>
+      </main>
     </div>
 
-    {/* ── Modal chọn hành động khi thư mục đích có dữ liệu cũ ── */}
+    {/* ── Thư mục đích đã có dữ liệu: dùng dữ liệu đó hay ghi đè bằng dữ liệu hiện tại ── */}
     {pendingFolder && (
-      <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
         onClick={() => !changingStorage && setPendingFolder(null)}>
-        <div className="bg-card border border-input rounded-2xl w-full max-w-md shadow-2xl overflow-hidden"
+        <div role="dialog" aria-modal="true" aria-labelledby="storage-existing-title"
+          className="w-full max-w-md overflow-hidden rounded-2xl border border-border bg-popover shadow-2xl"
           onClick={e => e.stopPropagation()}>
-          {/* Header */}
-          <div className="px-5 pt-5 pb-3 border-b border-border">
-            <div className="flex items-center gap-3 mb-1">
-              <FolderIcon className="w-6 h-6" />
-              <h3 className="text-base font-semibold text-foreground">Thư mục đã có dữ liệu</h3>
-            </div>
-            <p className="text-xs text-muted-foreground break-word leading-relaxed mt-1">
-              <span className="font-mono text-green-300">{pendingFolder}</span>
-            </p>
-            <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
-              Thư mục này đã có file dữ liệu (<code className="text-yellow-300">deplao-tool.db</code>).
-              Bạn muốn làm gì?
-            </p>
+          <div className="border-b border-border px-5 pb-3 pt-5">
+            <h3 id="storage-existing-title" className="flex items-center gap-2 text-base font-semibold text-foreground">
+              <FolderIcon className="h-5 w-5 text-primary" /> Thư mục đã có dữ liệu
+            </h3>
+            <PathText value={pendingFolder} className="mt-2" />
+            <p className="mt-2 text-xs text-muted-foreground">Ở đây đã có file dữ liệu Deplao. Bạn muốn làm gì?</p>
           </div>
 
-          {/* Options */}
-          <div className="p-4 space-y-3">
-            {/* Option A: Use existing data */}
+          <div className="space-y-2.5 p-4">
             <button
+              type="button"
               disabled={changingStorage}
               onClick={() => applyStorageChange(pendingFolder, true)}
-              className="w-full flex items-start gap-3 p-3.5 rounded-xl border-2 border-blue-500 bg-blue-500/10 hover:bg-blue-500/20 transition-colors text-left disabled:opacity-50"
+              className="flex w-full items-start gap-3 rounded-xl border-2 border-primary bg-primary/5 p-3.5 text-left transition-colors hover:bg-primary/10 disabled:opacity-50"
             >
-              <HardDriveIcon className="w-5 h-5 flex-shrink-0 mt-0.5" />
+              <HardDriveIcon className="mt-0.5 h-5 w-5 flex-shrink-0 text-primary" />
               <div className="min-w-0">
-                <p className="text-sm font-semibold text-blue-300">Dùng dữ liệu cũ tại đây</p>
-                <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
-                  Chuyển sang DB có sẵn trong thư mục này. Dữ liệu hiện tại giữ nguyên ở vị trí cũ, không bị xóa.
-                </p>
+                <p className="text-sm font-semibold text-foreground">Dùng dữ liệu có sẵn ở đây</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">Dữ liệu hiện tại vẫn giữ ở chỗ cũ, không bị xoá.</p>
               </div>
             </button>
 
-            {/* Option B: Copy current data */}
             <button
+              type="button"
               disabled={changingStorage}
               onClick={async () => {
                 const ok = await showConfirm({
@@ -667,68 +364,56 @@ export default function Settings() {
                 if (!ok) return;
                 await applyStorageChange(pendingFolder, false);
               }}
-              className="w-full flex items-start gap-3 p-3.5 rounded-xl border border-input hover:bg-muted transition-colors text-left disabled:opacity-50"
+              className="flex w-full items-start gap-3 rounded-xl border border-border p-3.5 text-left transition-colors hover:bg-muted disabled:opacity-50"
             >
-              <span className="text-xl flex-shrink-0 mt-0.5"><ClipboardListIcon className="w-4 h-4" /></span>
+              <FolderIcon className="mt-0.5 h-5 w-5 flex-shrink-0 text-muted-foreground" />
               <div className="min-w-0">
-                <p className="text-sm font-semibold text-foreground">Sao chép dữ liệu hiện tại vào đây</p>
-                <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
-                  Sao chép DB + toàn bộ ảnh, video, file đính kèm sang thư mục mới.{' '}
-                  <span className="text-red-400">Dữ liệu cũ tại đây sẽ bị ghi đè.</span>
+                <p className="text-sm font-semibold text-foreground">Chép dữ liệu hiện tại sang đây</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Chép cả ảnh, video, file. <span className="text-destructive">Dữ liệu cũ ở đây sẽ bị ghi đè.</span>
                 </p>
               </div>
             </button>
           </div>
 
-          {/* Footer */}
           <div className="px-4 pb-4">
-            {/* Progress khi đang copy media */}
             {changingStorage && (
-              <div className="mb-3 bg-muted rounded-xl px-3 py-3">
+              <div className="mb-3 rounded-xl bg-muted px-3 py-3">
                 {copyProgress > 0 ? (
                   <>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <div className="flex items-center gap-1.5">
-                        <div className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
-                        <span className="text-xs text-blue-300 font-medium">Đang sao chép media...</span>
-                      </div>
-                      <span className="text-xs text-foreground/80 font-mono tabular-nums">
+                    <div className="mb-1.5 flex items-center justify-between text-xs">
+                      <span className="flex items-center gap-1.5 font-medium text-primary">
+                        <span className="h-3 w-3 flex-shrink-0 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                        Đang chép ảnh, file...
+                      </span>
+                      <span className="font-mono tabular-nums text-foreground/80">
                         {copyProgress.toLocaleString()}
                         {copyTotal > 0 && <span className="text-muted-foreground"> / {copyTotal.toLocaleString()}</span>}
                       </span>
                     </div>
-                    {/* Progress bar */}
-                    <div className="w-full h-1.5 bg-accent rounded-full overflow-hidden">
+                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-accent">
                       <div
-                        className="h-full bg-blue-500 rounded-full transition-all duration-200"
+                        className="h-full rounded-full bg-primary transition-all duration-200"
                         style={{ width: copyTotal > 0 ? `${Math.min(100, (copyProgress / copyTotal) * 100).toFixed(1)}%` : '100%' }}
                       />
                     </div>
                     {copyTotal > 0 && (
-                      <p className="text-[11px] text-muted-foreground mt-1">
-                        {((copyProgress / copyTotal) * 100).toFixed(0)}% - vui lòng không đóng ứng dụng
+                      <p className="mt-1 text-[11px] text-muted-foreground">
+                        {((copyProgress / copyTotal) * 100).toFixed(0)}% - đừng đóng ứng dụng
                       </p>
                     )}
                   </>
                 ) : (
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
-                    <span className="text-xs text-muted-foreground">Đang chuẩn bị...</span>
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <span className="h-3 w-3 flex-shrink-0 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                    Đang chuẩn bị...
                   </div>
                 )}
               </div>
             )}
-            <button
-              disabled={changingStorage}
-              onClick={() => setPendingFolder(null)}
-              className="w-full py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-xl transition-colors disabled:opacity-50"
-            >
-              {changingStorage ? (
-                copyProgress > 0
-                  ? `${copyProgress.toLocaleString()}${copyTotal > 0 ? ` / ${copyTotal.toLocaleString()}` : ''} files copied…`
-                  : 'Đang xử lý...'
-              ) : 'Hủy'}
-            </button>
+            <Button variant="ghost" className="w-full" disabled={changingStorage} onClick={() => setPendingFolder(null)}>
+              {changingStorage ? 'Đang xử lý...' : 'Huỷ'}
+            </Button>
           </div>
         </div>
       </div>
@@ -737,31 +422,338 @@ export default function Settings() {
   );
 }
 
-function Section({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="bg-card rounded-xl p-4">
-      {children}
-    </div>
-  );
-}
+// ─── Giao diện ──────────────────────────────────────────────────────────────────────────
 
-function ToggleRow({ title, desc, value, onChange }: { title: string; desc?: string; value: boolean; onChange: (v: boolean) => void }) {
+/** Màu xem trước của từng chủ đề (cố định, để thẻ "Tối" vẫn tối khi app đang sáng và ngược lại). */
+const THEME_PREVIEW = {
+  dark: { bg: '#131518', panel: '#1c1f25', line: '#373f49', primary: '#2f7bff' },
+  light: { bg: '#eceef3', panel: '#ffffff', line: '#dde1e7', primary: '#1f6bf2' },
+} as const;
+
+function ThemeCard({ label, icon, preview, active, onSelect }: {
+  label: string;
+  icon: React.ReactNode;
+  preview: (typeof THEME_PREVIEW)[keyof typeof THEME_PREVIEW];
+  active: boolean;
+  onSelect: () => void;
+}) {
   return (
-    <div className="flex items-center justify-between gap-4">
-      <div className="flex-1">
-        <p className="text-sm text-foreground font-medium">{title}</p>
-        {desc && <p className="text-xs text-muted-foreground mt-0.5">{desc}</p>}
+    <button
+      type="button"
+      role="radio"
+      aria-checked={active}
+      onClick={onSelect}
+      className={cn(
+        'w-44 rounded-xl border-2 p-2 text-left transition-colors',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        active ? 'border-primary' : 'border-border hover:border-border-strong',
+      )}
+    >
+      <div className="flex h-20 gap-1.5 overflow-hidden rounded-lg p-1.5" style={{ backgroundColor: preview.bg }}>
+        <div className="w-7 rounded-md" style={{ backgroundColor: preview.panel }} />
+        <div className="flex flex-1 flex-col justify-end gap-1.5 rounded-md p-1.5" style={{ backgroundColor: preview.panel }}>
+          <div className="h-2 w-3/4 rounded-full" style={{ backgroundColor: preview.line }} />
+          <div className="h-2 w-1/2 self-end rounded-full" style={{ backgroundColor: preview.primary }} />
+          <div className="h-2 w-2/3 rounded-full" style={{ backgroundColor: preview.line }} />
+        </div>
       </div>
-      <Toggle value={value} onChange={onChange} />
-    </div>
+      <div className="mt-2 flex items-center gap-1.5 px-1 text-sm">
+        <span className={active ? 'text-primary' : 'text-muted-foreground'}>{icon}</span>
+        <span className={cn('flex-1', active ? 'font-medium text-foreground' : 'text-muted-foreground')}>{label}</span>
+        {active && <CheckIcon className="h-4 w-4 text-primary" />}
+      </div>
+    </button>
   );
 }
 
-function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
+function AppearancePage() {
+  const theme = useAppStore(s => s.theme);
+  const setTheme = useAppStore(s => s.setTheme);
+  const fontSizeScale = useAppStore(s => s.fontSizeScale);
+  const setFontSizeScale = useAppStore(s => s.setFontSizeScale);
+  const [showDesignSystem, setShowDesignSystem] = useState(false);
+  // Kéo thanh cỡ chữ: hiện số ngay, áp dụng khi thả (đổi cỡ chữ vẽ lại cả app)
+  const [fontDraft, setFontDraft] = useState(fontSizeScale);
+  useEffect(() => { setFontDraft(fontSizeScale); }, [fontSizeScale]);
+  const commitFont = () => { if (fontDraft !== fontSizeScale) setFontSizeScale(fontDraft); };
+  const px = (scale: number) => Math.round(16 * scale);
+
   return (
-    <button onClick={() => onChange(!value)}
-      className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${value ? 'bg-blue-600' : 'bg-accent'}`}>
-      <span className={`absolute top-0.5 left-0 w-5 h-5 bg-white rounded-full shadow transition-transform ${value ? 'translate-x-5' : 'translate-x-0.5'}`} />
-    </button>
+    <SettingsPage title="Giao diện" description="Màu nền và cỡ chữ, áp dụng ngay.">
+      <SettingsSection title="Chủ đề" flush bodyClassName="p-4">
+        <div role="radiogroup" aria-label="Chủ đề" className="flex flex-wrap gap-3">
+          <ThemeCard label="Sáng" icon={<SunIcon className="h-4 w-4" />} preview={THEME_PREVIEW.light}
+            active={theme === 'light'} onSelect={() => setTheme('light')} />
+          <ThemeCard label="Tối" icon={<MoonIcon className="h-4 w-4" />} preview={THEME_PREVIEW.dark}
+            active={theme === 'dark'} onSelect={() => setTheme('dark')} />
+        </div>
+      </SettingsSection>
+
+      <SettingsSection title="Cỡ chữ">
+        <SettingsRow
+          title={`${px(fontDraft)} px`}
+          description="Cỡ chữ của cả ứng dụng. Cũng chỉnh được ở thanh tiêu đề."
+          control={px(fontDraft) !== 16 && (
+            <Button variant="ghost" size="sm" onClick={() => { setFontDraft(1); setFontSizeScale(1); }}>Mặc định</Button>
+          )}
+        >
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-muted-foreground">A</span>
+            <input
+              type="range"
+              aria-label="Cỡ chữ"
+              min={FONT_SCALE_MIN}
+              max={FONT_SCALE_MAX}
+              step={FONT_SCALE_STEP}
+              value={fontDraft}
+              onChange={e => setFontDraft(Number(e.target.value))}
+              onMouseUp={commitFont}
+              onTouchEnd={commitFont}
+              onKeyUp={commitFont}
+              onBlur={commitFont}
+              className="w-64 accent-primary"
+            />
+            <span className="text-base text-muted-foreground">A</span>
+          </div>
+        </SettingsRow>
+      </SettingsSection>
+
+      <SettingsSection>
+        <SettingsRow
+          title="Bộ giao diện"
+          description="Màu và các thành phần giao diện dùng chung (cho người phát triển)."
+          control={<Button variant="outline" size="sm" onClick={() => setShowDesignSystem(v => !v)}>{showDesignSystem ? 'Ẩn' : 'Xem'}</Button>}
+        >
+          {showDesignSystem ? <DesignSystemPage /> : undefined}
+        </SettingsRow>
+      </SettingsSection>
+    </SettingsPage>
+  );
+}
+
+// ─── Thông báo ──────────────────────────────────────────────────────────────────────────
+
+function NotificationsPage() {
+  const accounts = useAccountStore(s => s.accounts);
+  const {
+    showNotification, notifSettings, setNotifSettings, notifSettingsOverrides, getNotifSettingsForAccount,
+    setNotifSettingsForAccount, resetNotifSettingsForAccount,
+  } = useAppStore(useShallow(s => ({
+    showNotification: s.showNotification, notifSettings: s.notifSettings, setNotifSettings: s.setNotifSettings,
+    notifSettingsOverrides: s.notifSettingsOverrides, getNotifSettingsForAccount: s.getNotifSettingsForAccount,
+    setNotifSettingsForAccount: s.setNotifSettingsForAccount, resetNotifSettingsForAccount: s.resetNotifSettingsForAccount,
+  })));
+  const [selectedNotifAccount, setSelectedNotifAccount] = useState<string>('__global__');
+
+  const isGlobal = selectedNotifAccount === '__global__';
+  const settings = isGlobal ? notifSettings : getNotifSettingsForAccount(selectedNotifAccount);
+  const saveSettings = isGlobal
+    ? setNotifSettings
+    : (partial: any) => setNotifSettingsForAccount(selectedNotifAccount, partial);
+  const hasOverride = !isGlobal && !!notifSettingsOverrides[selectedNotifAccount];
+
+  const accountOption = (acc: (typeof accounts)[number]) => (
+    <option key={acc.zalo_id} value={acc.zalo_id}>
+      {acc.full_name || acc.zalo_id}{notifSettingsOverrides[acc.zalo_id] ? ' · riêng' : ''}
+    </option>
+  );
+  const zaloAccounts = accounts.filter(a => isZalo(a.channel));
+  const facebookAccounts = accounts.filter(a => isFacebook(a.channel));
+  const telegramAccounts = accounts.filter(a => isTelegram(a.channel));
+
+  return (
+    <SettingsPage title="Thông báo" description="Cách Deplao báo tin nhắn mới. Lưu riêng trên máy này.">
+      <SettingsSection
+        title="Popup và âm thanh"
+        footer="Hội thoại đã tắt thông báo sẽ không báo. Không thấy popup? Bật thông báo cho Deplao trong cài đặt Windows / macOS."
+        action={(
+          <Select
+            aria-label="Áp dụng cho tài khoản"
+            value={selectedNotifAccount}
+            onChange={e => setSelectedNotifAccount(e.target.value)}
+            wrapperClassName="w-60"
+            className="h-8 text-xs"
+          >
+            <option value="__global__">Tất cả tài khoản (mặc định)</option>
+            {zaloAccounts.length > 0 && <optgroup label="Zalo">{zaloAccounts.map(accountOption)}</optgroup>}
+            {facebookAccounts.length > 0 && <optgroup label="Facebook">{facebookAccounts.map(accountOption)}</optgroup>}
+            {telegramAccounts.length > 0 && <optgroup label="Telegram">{telegramAccounts.map(accountOption)}</optgroup>}
+          </Select>
+        )}
+      >
+        {!isGlobal && (
+          <div className="flex flex-wrap items-center gap-2 py-2.5 text-xs text-muted-foreground">
+            {hasOverride ? (
+              <>
+                <span>Tài khoản này đang dùng cài đặt riêng.</span>
+                <Button variant="link" size="sm" className="text-xs" onClick={() => resetNotifSettingsForAccount(selectedNotifAccount)}>
+                  Dùng mặc định
+                </Button>
+              </>
+            ) : (
+              <span>Đang theo mặc định. Đổi bên dưới để đặt riêng cho tài khoản này.</span>
+            )}
+          </div>
+        )}
+        <SettingsRow
+          title="Popup trên màn hình"
+          description="Hiện ở góc màn hình khi có tin mới."
+          control={(
+            <Switch
+              aria-label="Popup trên màn hình"
+              checked={settings.desktopEnabled}
+              onCheckedChange={(v) => {
+                if (v) requestNotificationPermission().then(granted => {
+                  if (!granted) { showNotification('Máy đang chặn thông báo của Deplao. Hãy cho phép trong cài đặt hệ thống.', 'warning'); return; }
+                  saveSettings({ desktopEnabled: true });
+                });
+                else saveSettings({ desktopEnabled: false });
+              }}
+            />
+          )}
+        />
+        <SettingsRow
+          title="Âm thanh"
+          description="Phát tiếng khi có tin mới."
+          control={<Switch aria-label="Âm thanh thông báo" checked={settings.soundEnabled} onCheckedChange={(v) => saveSettings({ soundEnabled: v })} />}
+        >
+          {settings.soundEnabled ? (
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-muted-foreground">Âm lượng</span>
+              <input type="range" min="0" max="100" step="5" aria-label="Âm lượng"
+                value={Math.round(settings.volume * 100)}
+                onChange={e => saveSettings({ volume: parseInt(e.target.value) / 100 })}
+                className="w-56 accent-primary" />
+              <span className="w-9 text-right text-xs tabular-nums text-muted-foreground">{Math.round(settings.volume * 100)}%</span>
+            </div>
+          ) : undefined}
+        </SettingsRow>
+        <SettingsRow
+          title="Thử thông báo"
+          control={(
+            <>
+              <Button variant="outline" size="sm"
+                onClick={() => { if (settings.soundEnabled) playNotificationSound(settings.volume); else showNotification('Hãy bật âm thanh trước', 'info'); }}>
+                Âm thanh
+              </Button>
+              <Button variant="outline" size="sm"
+                onClick={() => {
+                  requestNotificationPermission().then(granted => {
+                    if (!granted) { showNotification('Cần cấp quyền thông báo', 'warning'); return; }
+                    showDesktopNotification('Deplao', 'Đây là thông báo thử nghiệm 🎉');
+                  });
+                }}>
+                Popup
+              </Button>
+            </>
+          )}
+        />
+      </SettingsSection>
+
+      <SettingsSection title="Thông báo trong app" description="Thẻ tin nhắn mới ở góc trên bên phải khi đang dùng app." flush bodyClassName="p-2">
+        <InAppNotifySettings />
+      </SettingsSection>
+
+      {/* Tự mở cùng máy: khởi động lại máy xong không phải nhớ mở Deplao (lưu theo máy) */}
+      <SettingsSection title="Khởi động cùng máy" flush bodyClassName="p-4">
+        <AutoLaunchSettings />
+      </SettingsSection>
+    </SettingsPage>
+  );
+}
+
+// ─── Lưu trữ ────────────────────────────────────────────────────────────────────────────
+
+function formatBytes(bytes: number): string {
+  return bytes > 1024 * 1024 * 1024
+    ? `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`
+    : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function StoragePage({
+  isEmployee, storagePath, defaultStoragePath, actualDbPath, mediaCachePath, mediaCacheSize, changing, copyProgress, copyTotal,
+  onChangeFolder, onReset,
+}: {
+  isEmployee: boolean;
+  storagePath: string;
+  defaultStoragePath: string;
+  actualDbPath: string;
+  mediaCachePath: string;
+  mediaCacheSize: number;
+  changing: boolean;
+  copyProgress: number;
+  copyTotal: number;
+  onChangeFolder: () => void;
+  onReset: () => void;
+}) {
+  if (isEmployee) {
+    // Máy nhân viên: chỉ có bộ nhớ đệm, dữ liệu gốc do máy chủ quản lý
+    return (
+      <SettingsPage title="Lưu trữ" description="Máy nhân viên: dữ liệu gốc nằm trên máy chủ.">
+        <SettingsSection title="Bộ nhớ đệm trên máy này" description="Ảnh, video, file đã xem được giữ lại để lần sau mở nhanh. Tự dọn khi quá 2 GB.">
+          <SettingsRow
+            title="Thư mục"
+            control={mediaCachePath ? (
+              <Button variant="outline" size="sm" onClick={() => ipc.file?.openPath(mediaCachePath)} leftIcon={<FolderIcon className="h-4 w-4" />}>Mở</Button>
+            ) : undefined}
+          >
+            <PathText value={mediaCachePath || 'Đang tải...'} />
+          </SettingsRow>
+          <SettingsRow
+            title="Dung lượng"
+            control={<span className="text-sm font-medium text-foreground">{mediaCacheSize > 0 ? formatBytes(mediaCacheSize) : 'Đang tính...'}</span>}
+          />
+        </SettingsSection>
+      </SettingsPage>
+    );
+  }
+
+  // Ổ C: của Windows: dễ đầy, mất khi cài lại Windows → gợi ý chuyển (đã ở ổ khác thì không nhắc)
+  const onSystemDrive = /^c:[\\/]/i.test(storagePath);
+  const mismatch = !!actualDbPath && !!storagePath && !actualDbPath.startsWith(storagePath);
+  const progressText = copyProgress > 0
+    ? `${copyProgress.toLocaleString()}${copyTotal > 0 ? ` / ${copyTotal.toLocaleString()}` : ''} file…`
+    : 'Đang xử lý...';
+
+  return (
+    <SettingsPage title="Lưu trữ" description="Nơi lưu tin nhắn, danh bạ, ảnh và file trên máy này.">
+      {onSystemDrive && (
+        <Notice tone="warning" title="Nên chuyển dữ liệu khỏi ổ C:">
+          <p>Ổ C: hay đầy và bị xoá khi cài lại Windows. Chuyển sang ổ D:, E: hoặc ổ ngoài, dữ liệu tự chép sang.</p>
+        </Notice>
+      )}
+      {mismatch && (
+        <Notice tone="destructive" title="Dữ liệu đang đọc ở thư mục khác">
+          <p>Thường do cập nhật app. Bấm "Chọn thư mục khác" và trỏ lại đúng thư mục chứa dữ liệu.</p>
+        </Notice>
+      )}
+
+      <SettingsSection title="Thư mục dữ liệu" description="Đổi thư mục thì dữ liệu tự chép sang và dùng ngay, không cần mở lại app.">
+        <SettingsRow
+          title="Thư mục"
+          control={(
+            <>
+              {storagePath && storagePath !== defaultStoragePath && (
+                <Button variant="ghost" size="sm" onClick={onReset} disabled={changing}>Đặt lại mặc định</Button>
+              )}
+              {storagePath && (
+                <Button variant="outline" size="sm" onClick={() => ipc.file?.openPath(storagePath)} leftIcon={<FolderIcon className="h-4 w-4" />}>Mở</Button>
+              )}
+              <Button size="sm" onClick={onChangeFolder} disabled={changing}>
+                {changing ? progressText : 'Chọn thư mục khác'}
+              </Button>
+            </>
+          )}
+        >
+          <PathText value={storagePath || 'Đang tải...'} />
+          {actualDbPath && (
+            <p className="mt-1.5 truncate text-xs text-muted-foreground" title={actualDbPath}>File dữ liệu: {actualDbPath}</p>
+          )}
+        </SettingsRow>
+      </SettingsSection>
+
+      {/* Media trên đám mây (Cloudflare R2 / Google Drive), chỉ máy chủ, bản app có module Cloudflare */}
+      <CloudMediaSummary />
+    </SettingsPage>
   );
 }

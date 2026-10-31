@@ -74,25 +74,41 @@ export function recordPeerReceipt(ownerId: string, threadId: string, update: Pee
 }
 
 /**
- * Thời điểm (ms) mới nhất của các tin có id trong danh sách, ở hội thoại này (msg_id, rồi cli_msg_id — hai lần tra theo
- * chỉ mục riêng: dạng "msg_id = ? OR cli_msg_id = ?" quét cả tài khoản). Không thấy → 0.
+ * Thời điểm (ms) mới nhất của các tin có id trong danh sách, ở hội thoại này. Chạy mỗi lần nền tảng báo đã nhận / đã xem
+ * nên phải tra bằng chỉ mục của mã tin:
+ *  - msg_id: ghim đủ 4 cột chỉ mục duy nhất (msg_id, owner_zalo_id, channel, thread_id) → 0,01 ms;
+ *  - không thấy → cli_msg_id từng id (idx_messages_cli, LIMIT 1, không MAX).
+ * Đo trên DB thật 29/10/2026 (hội thoại ~100k tin): thiếu `channel` thì SQLite quét chỉ mục hội thoại (10-30 ms), dạng
+ * cli_msg_id IN + MAX quét cả hội thoại (50-200 ms), thêm CAST(thread_id) vào dạng MAX thì quét cả tài khoản (tới 3 s).
+ * Không thấy → 0.
  */
-export function messageTimestampById(ownerId: string, threadId: string, msgIds: Array<string | number | null | undefined>): number {
+export function messageTimestampById(
+  ownerId: string,
+  threadId: string,
+  msgIds: Array<string | number | null | undefined>,
+  channel: 'zalo' | 'telegram_user' | 'telegram_bot' | 'facebook',
+): number {
   const db = DatabaseService.getInstance();
+  const thread = String(threadId ?? '');
   const ids = [...new Set(msgIds.map((id) => String(id ?? '').trim()).filter((id) => id && id !== '0'))].slice(0, 50);
-  if (!db || !ownerId || !threadId || !ids.length) return 0;
+  if (!db || !ownerId || !thread || !ids.length) return 0;
   const placeholders = ids.map(() => '?').join(', ');
   const byId = db.queryOne<{ ts: number | null }>(
-    `SELECT MAX(timestamp) AS ts FROM messages WHERE owner_zalo_id = ? AND msg_id IN (${placeholders}) AND thread_id = ?`,
-    [ownerId, ...ids, threadId],
+    `SELECT MAX(timestamp) AS ts FROM messages
+     WHERE owner_zalo_id = ? AND msg_id IN (${placeholders}) AND channel = ? AND thread_id = ?`,
+    [ownerId, ...ids, channel, thread],
   );
   const ts = num(byId?.ts);
   if (ts) return ts;
-  const byCli = db.queryOne<{ ts: number | null }>(
-    `SELECT MAX(timestamp) AS ts FROM messages WHERE owner_zalo_id = ? AND cli_msg_id IN (${placeholders}) AND thread_id = ?`,
-    [ownerId, ...ids, threadId],
-  );
-  return num(byCli?.ts);
+  let latest = 0;
+  for (const id of ids) {
+    const byCli = db.queryOne<{ timestamp: number | null }>(
+      `SELECT timestamp FROM messages WHERE owner_zalo_id = ? AND cli_msg_id = ? AND CAST(thread_id AS TEXT) = ? LIMIT 1`,
+      [ownerId, id, thread],
+    );
+    latest = Math.max(latest, num(byCli?.timestamp));
+  }
+  return latest;
 }
 
 /**
@@ -105,7 +121,7 @@ export function recordZaloReceipt(ownerId: string, event: any, kind: 'read' | 'd
   const threadId = String(event.threadId || event.data?.groupId || event.data?.idTo || '');
   const data = event.data || {};
   if (!threadId) return null;
-  let ts = messageTimestampById(ownerId, threadId, [data.msgId, data.realMsgId]);
+  let ts = messageTimestampById(ownerId, threadId, [data.msgId, data.realMsgId], 'zalo');
   // Tin chưa có trong máy: thời điểm tin Zalo gửi kèm thông báo đã nhận (ms)
   if (!ts && kind === 'delivered' && num(data.mSTs) > 1e12) ts = num(data.mSTs);
   const seen = kind === 'read' || Number(data.seen) === 1 || (Array.isArray(data.seenUids) && data.seenUids.length > 0);

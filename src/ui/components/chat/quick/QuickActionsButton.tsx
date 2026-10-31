@@ -7,9 +7,9 @@
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { useAppStore } from '@/store/appStore';
-import { useAccountStore, type AccountInfo } from '@/store/accountStore';
-import { useVisibleAccounts } from '@/hooks/useVisibleAccounts';
+import { useAppStore } from '@/store/app/appStore';
+import { useAccountStore, type AccountInfo } from '@/store/accounts/accountStore';
+import { useVisibleAccounts } from '@/hooks/accounts/useVisibleAccounts';
 import { useQuickErpAccess } from '@/hooks/erp/useQuickErpAccess';
 import { cn } from '@/lib/cn';
 import { DropdownMenu, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator } from '@/components/ui';
@@ -17,17 +17,17 @@ import {
   ArrowLeftIcon, BookIcon, CalendarIcon, CheckIcon, ChevronDownIcon, FileTextIcon, LinkIcon, PhoneIcon, PlusIcon,
   UserPlusIcon, UsersIcon,
 } from '@/components/common/icons';
-import { CreateGroupModal } from '../GroupModals';
+import { CreateGroupModal } from '../groups/GroupModals';
 import { QuickAccountAvatar } from './QuickAccountPicker';
 import QuickCreateGroupDialog from './QuickCreateGroupDialog';
 import QuickJoinLinkDialog from './QuickJoinLinkDialog';
 import QuickAddFriendDialog from './QuickAddFriendDialog';
 import { QuickEventDialog, QuickNoteDialog } from './QuickErpDialogs';
-import TelegramNewGroupDialog from './telegram/TelegramNewGroupDialog';
-import TelegramNewChannelDialog from './telegram/TelegramNewChannelDialog';
-import TelegramContactsDialog from './telegram/TelegramContactsDialog';
-import TelegramCallsDialog from './telegram/TelegramCallsDialog';
-import { MegaphoneGlyph } from './telegram/TelegramUi';
+import TelegramNewGroupDialog from '../telegram/quick/TelegramNewGroupDialog';
+import TelegramNewChannelDialog from '../telegram/quick/TelegramNewChannelDialog';
+import TelegramContactsDialog from '../telegram/quick/TelegramContactsDialog';
+import TelegramCallsDialog from '../telegram/quick/TelegramCallsDialog';
+import { MegaphoneGlyph } from '../telegram/quick/TelegramUi';
 import {
   CHANNEL_SHORT_LABEL, accountChannel, accountLabel, defaultQuickAccountId, orderQuickAccounts, quickActionSupport, quickActionVisible,
   type OpenQuickConversation, type QuickActionId, type QuickModeState,

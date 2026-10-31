@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { getCapability, type Channel } from '../../../../configs/channelConfig';
-import { CHANNEL } from '@/lib/channelHelper';
+import { getCapability, type Channel } from '../../../../configs/channels/channelConfig';
+import { CHANNEL } from '@/lib/channels/channelHelper';
 
 interface BulkActionBarProps {
   channel: string;

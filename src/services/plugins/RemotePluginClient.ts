@@ -9,7 +9,7 @@
  * Server remote tạm không chạy khi bật app → chỉ ghi cảnh báo, không tắt plugin.
  */
 import { randomUUID } from 'crypto';
-import { guardedRequest } from '../api/netGuard';
+import { guardedRequest } from '../api/http/netGuard';
 import { getApiSettingBool } from '../api/settings';
 import { signPayload } from '../api/events/WebhookOutboundService';
 import type { PluginRuntimeHandle, RuntimeContext, RuntimeStats } from './PluginManager';

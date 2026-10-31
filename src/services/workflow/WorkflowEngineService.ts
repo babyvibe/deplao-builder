@@ -1,15 +1,15 @@
 import EventBroadcaster from '../event/EventBroadcaster';
 import DatabaseService from '../database/DatabaseService';
-import ConnectionManager from '../../utils/ConnectionManager';
+import ConnectionManager from '../../utils/connection/ConnectionManager';
 import AccountSendQueue from './AccountSendQueue';
 import { recipientGapRangeMs } from './recipientPacing';
 import { FacebookService } from '../facebook/FacebookService';
-import { FacebookSendService } from '../facebook/FacebookSendService';
+import { FacebookSendService } from '../facebook/send/FacebookSendService';
 import { resolveThreadKind } from '../facebook/FacebookThreadKind';
 import Logger from '../../utils/Logger';
 import IntegrationRegistry from '../integrations/IntegrationRegistry';
 import * as TelegramUser from '../telegram/TelegramUserListener';
-import * as TelegramBot from '../telegram/TelegramBotChannelService';
+import * as TelegramBot from '../telegram/bot/TelegramBotChannelService';
 import axios from 'axios';
 import { v4 as uuidv4 } from 'uuid';
 import * as cron from 'node-cron';
@@ -17,8 +17,8 @@ import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
 import { google } from 'googleapis';
-import { parseStructuredResponse, isValidStructuredResponse } from '../../utils/aiUtils';
-import { CHANNEL } from '../../ui/lib/channelHelper';
+import { parseStructuredResponse, isValidStructuredResponse } from '../../shared/ai/aiUtils';
+import { CHANNEL } from '../../ui/lib/channels/channelHelper';
 import { Reactions } from 'zca-js';
 import { requestAICompletion } from '../ai/AIProviderAdapter';
 import { automationsPausedAfterRestore } from '../cloudflare/restoreGate';
@@ -323,7 +323,7 @@ class WorkflowEngineService {
 
   private normalizeWorkflowChannel(channel?: string): WorkflowChannel {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { normalizeChannel } = require('../../configs/channelConfig');
+    const { normalizeChannel } = require('../../configs/channels/channelConfig');
     // Legacy 'telegram' → default to 'telegram_user' (MTProto)
     if (channel === 'telegram') return 'telegram_user';
     return normalizeChannel(channel) as WorkflowChannel;
@@ -3906,7 +3906,7 @@ class WorkflowEngineService {
         const text = resolvedMessage.text || ctx.trigger?.content || '';
         if (!text) throw new Error('[tgbot.action.sendMessage] message required');
 
-        const TelegramBotChannel = require('../telegram/TelegramBotChannelService');
+        const TelegramBotChannel = require('../telegram/bot/TelegramBotChannelService');
         const replyMarkup = this.buildTelegramBotReplyMarkup(cfg.keyboard);
         const result = await TelegramBotChannel.sendMessage({
           accountId: botAccountId,
@@ -3997,7 +3997,7 @@ class WorkflowEngineService {
           return [{ text: row.text || '', callback_data: row.callback_data || '' }];
         });
 
-        const TelegramBotChannel = require('../telegram/TelegramBotChannelService');
+        const TelegramBotChannel = require('../telegram/bot/TelegramBotChannelService');
         const result = await TelegramBotChannel.sendMessage({
           accountId: botAccountId,
           chatId,
@@ -4021,7 +4021,7 @@ class WorkflowEngineService {
           formContent += `${i + 1}. ${f.label}${f.required ? ' *' : ''}\n`;
         });
 
-        const TelegramBotChannel = require('../telegram/TelegramBotChannelService');
+        const TelegramBotChannel = require('../telegram/bot/TelegramBotChannelService');
         const result = await TelegramBotChannel.sendMessage({
           accountId: botAccountId,
           chatId,
@@ -5031,7 +5031,7 @@ class WorkflowEngineService {
    * Parse structured AI JSON response: [{type:"text",content:"..."}, {type:"image",content:["url",...]}]
    * Returns null if the message is not structured JSON, otherwise returns the parsed array.
    */
-  // parseStructuredAIResponse → moved to utils/aiUtils.ts
+  // parseStructuredAIResponse → moved to shared/ai/aiUtils.ts
 
   /**
    * Download a URL to a temporary file. Returns the local temp file path.

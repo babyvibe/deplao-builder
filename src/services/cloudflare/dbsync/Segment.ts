@@ -14,7 +14,7 @@
  * Phạm vi đồng bộ (tài khoản + từ ngày, xem scope.ts): dòng ngoài phạm vi KHÔNG bao giờ được gửi nội dung — xem chú thích
  * trong packSegment về cách xử lý (bỏ qua hẳn / gửi lệnh xoá) để bản sao một phần không giữ dòng cũ khi rowid bị dùng lại.
  */
-import type { CloudScope } from '../../../shared/cloudContracts';
+import type { CloudScope } from '../../../shared/cloud/cloudContracts';
 import { BindValue, EncodedValue, decodeValue, encodeRow, encodeValue, safeInt } from './codec';
 import { RowScope, resolveScope } from './scope';
 import { SqlConn, SqlStatement, canonicalTableName, quoteIdent, readTx, tableExists } from './sqlConn';

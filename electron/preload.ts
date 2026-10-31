@@ -1,9 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { TelegramForumTopicContext } from '../src/models/telegram';
+import type { TelegramForumTopicContext } from '../src/models/telegram/telegram';
 // import type: preload không require file khác lúc chạy (hằng kênh được kiểm kiểu bằng typeof bên dưới).
-import type { CloudflareIpc, CLOUD_CHANGED_EVENT, CLOUD_CLEANUP_PROGRESS_EVENT, CLOUD_RESTORE_PROGRESS_EVENT } from '../src/shared/cloudContracts';
+import type { CloudflareIpc, CLOUD_CHANGED_EVENT, CLOUD_CLEANUP_PROGRESS_EVENT, CLOUD_RESTORE_PROGRESS_EVENT } from '../src/shared/cloud/cloudContracts';
 
-// ─── Cloudflare (Internet & Đám mây) — kênh 'cloudflare:*', xem electron/ipc/cloudflareIpc.ts ───────────
+// ─── Cloudflare (Internet & Đám mây) — kênh 'cloudflare:*', xem electron/ipc/cloud/cloudflareIpc.ts ───────────
 // Token / mật khẩu sao lưu chỉ đi một chiều renderer → main (connect, setPassphrase, restore…), không bao giờ quay về.
 const CLOUD_EVENT_CHANNELS: [typeof CLOUD_CHANGED_EVENT, typeof CLOUD_RESTORE_PROGRESS_EVENT, typeof CLOUD_CLEANUP_PROGRESS_EVENT] = ['cloudflare:changed', 'cloudflare:restoreProgress', 'cloudflare:cleanupProgress'];
 const cloudflareBridge: CloudflareIpc = {
@@ -441,6 +441,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     flashFrame: (active: boolean) => ipcRenderer.send('app:flashFrame', { active }),
     /** Windows: app đang chạy bằng quyền quản trị (kéo-thả từ File Explorer bị chặn) */
     isElevated: (): Promise<boolean> => ipcRenderer.invoke('app:isElevated'),
+    /** Tự mở Deplao khi bật máy (lưu theo máy) */
+    getAutoLaunch: () => ipcRenderer.invoke('app:getAutoLaunch'),
+    setAutoLaunch: (patch: { enabled?: boolean; hidden?: boolean }) => ipcRenderer.invoke('app:setAutoLaunch', patch),
   },
 
   // ─── Auto-update ─────────────────────────────────────────────────
@@ -944,6 +947,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     notifyUnreadCount:  (params: any) => ipcRenderer.invoke('erp:notify:unreadCount', params),
     notifyDelete:       (params: any) => ipcRenderer.invoke('erp:notify:delete', params),
     notifyDeleteAll:    (params: any) => ipcRenderer.invoke('erp:notify:deleteAll', params),
+    // Thông báo qua Zalo (Cài đặt)
+    notifyZaloStatus:   (params: any) => ipcRenderer.invoke('erp:notify:zaloStatus', params),
+    notifySetZaloSettings: (params: any) => ipcRenderer.invoke('erp:notify:setZaloSettings', params),
+    notifyTestZalo:     (params: any) => ipcRenderer.invoke('erp:notify:testZalo', params),
   },
   lockScreen: {
     status:           () => ipcRenderer.invoke('lockScreen:status'),

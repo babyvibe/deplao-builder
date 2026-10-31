@@ -3,7 +3,7 @@
  * đồng bộ DB) và của PublicAddressCard. Chỉ dùng token màu của hệ thống giao diện (bg-card, text-foreground,
  * primary / success / warning / destructive / info…).
  *
- * Mọi lệnh đi qua window.electronAPI.cloudflare (CloudflareIpc, src/shared/cloudContracts.ts). Bản app cũ không có
+ * Mọi lệnh đi qua window.electronAPI.cloudflare (CloudflareIpc, src/shared/cloud/cloudContracts.ts). Bản app cũ không có
  * module này → cloudApi() trả undefined và giao diện tự ẩn / báo cập nhật.
  *
  * Kho lưu (R2 hoặc Google Drive): CloudSettings đọc storage.status() và đặt vào StorageContext; các mảnh bên dưới đọc
@@ -11,7 +11,7 @@
  */
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import ipc from '@/lib/ipc';
-import { useAppStore } from '@/store/appStore';
+import { useAppStore } from '@/store/app/appStore';
 import { cn } from '@/lib/cn';
 import { AlertIcon, CheckCircleIcon, ExternalLinkIcon, InfoIcon, RefreshIcon } from '@/components/common/icons';
 import { Button, type BadgeVariant } from '@/components/ui';
@@ -34,7 +34,7 @@ import {
   type PublicAddress,
   type TunnelMode,
   type TunnelServiceId,
-} from '../../../../shared/cloudContracts';
+} from '../../../../shared/cloud/cloudContracts';
 
 declare const __APP_VERSION__: string;
 

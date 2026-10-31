@@ -6,8 +6,8 @@ import {
 } from 'recharts';
 import ipc from '@/lib/ipc';
 import PageLoading, { Spinner } from '@/components/common/PageLoading';
-import { toLocalMediaUrl } from '@/lib/localMedia';
-import { addLocalDays } from '../../../shared/localTimeBuckets';
+import { toLocalMediaUrl } from '@/lib/media/localMedia';
+import { addLocalDays } from '../../../shared/analytics/localTimeBuckets';
 import { ActivityIcon, ChartIcon, ChatIcon, ClipboardListIcon, ClockIcon, FolderIcon, InboxIcon, InfoIcon, PieChartIcon, RefreshIcon, TrendingUpIcon, UsersIcon } from '@/components/common/icons';
 
 

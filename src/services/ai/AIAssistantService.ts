@@ -12,7 +12,7 @@ import DatabaseService from '../database/DatabaseService';
 import IntegrationRegistry from '../integrations/IntegrationRegistry';
 import Logger from '../../utils/Logger';
 import { requestAICompletion } from './AIProviderAdapter';
-import { normalizeAIModel } from '../../shared/aiModelCatalog';
+import { normalizeAIModel } from '../../shared/ai/aiModelCatalog';
 import type { AIAssistant, AIAssistantFile, ChatMessage, AIPlatform } from '../../models';
 
 // ─── Encryption helpers ───────────────────────────────────────────────────────

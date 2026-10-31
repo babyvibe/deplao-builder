@@ -3,7 +3,7 @@
  *
  * Pure helpers cho các bộ lọc trigger / audience mở rộng của Workflow Engine.
  * KHÔNG import Electron, DB hay zca-js → dùng được trong main process và unit-test trực tiếp
- * (src/__tests__/workflowTriggerFilters.test.ts).
+ * (src/__tests__/workflow/workflowTriggerFilters.test.ts).
  *
  * Mọi khoá cấu hình đều tuỳ chọn: khi vắng / rỗng / ở giá trị trung tính, bộ lọc KHÔNG có tác dụng
  * → workflow cũ chạy y như trước.

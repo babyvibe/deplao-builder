@@ -1,6 +1,6 @@
 /**
  * Gửi một khối nội dung chiến dịch (chữ + ảnh) tới một người nhận, theo tuỳ chọn ảnh của chiến
- * dịch (thứ tự chữ / ảnh, gộp ảnh + chữ thành 1 tin) — xem shared/campaignSendPlan.
+ * dịch (thứ tự chữ / ảnh, gộp ảnh + chữ thành 1 tin) — xem shared/crm/campaignSendPlan.
  * Mặc định (chữ trước, không gộp) giữ nguyên cách gửi cũ:
  *   Zalo: tin chữ (markup + @all) → 500 ms → một lần gửi tất cả ảnh;
  *   Telegram: tin chữ → từng ảnh một.
@@ -11,12 +11,12 @@ import imageSize from 'image-size';
 import Logger from '../../utils/Logger';
 import { parseMarkup } from './message-markup';
 import * as TelegramUser from '../telegram/TelegramUserListener';
-import * as TelegramBot from '../telegram/TelegramBotChannelService';
+import * as TelegramBot from '../telegram/bot/TelegramBotChannelService';
 import {
   COMBINE_FALLBACK_LABEL,
   planBlockSend,
   type CampaignSendOptions,
-} from '../../shared/campaignSendPlan';
+} from '../../shared/crm/campaignSendPlan';
 
 export interface CampaignContentBlock {
   text: string;

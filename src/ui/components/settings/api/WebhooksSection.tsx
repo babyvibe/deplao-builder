@@ -5,10 +5,10 @@
  */
 import React, { useEffect, useState } from 'react';
 import ipc from '@/lib/ipc';
-import { useAppStore } from '@/store/appStore';
+import { useAppStore } from '@/store/app/appStore';
 import { AlertIcon, BookIcon, DownloadIcon, SendIcon } from '@/components/common/icons';
 import { Button, Tabs, TabsList, TabsTrigger } from '@/components/ui';
-import { openDocs } from '@/components/plugins/PluginDevPanel';
+import { openDocs } from '@/components/plugins/hub/PluginDevPanel';
 import { ErrorBox } from './apiUi';
 import InboundWebhooksPanel from './InboundWebhooksPanel';
 import ApiWebhooksPanel from './ApiWebhooksPanel';

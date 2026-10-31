@@ -30,7 +30,7 @@ import {
   isAuthRejectionMessage,
   SOCKET_RECONNECT_BACKOFF_MS,
   type EmployeeResyncReason,
-} from '../../shared/employeeConnection';
+} from '../../shared/employee/employeeConnection';
 import {
   applyCatchUpResult,
   buildCatchUpRequest,

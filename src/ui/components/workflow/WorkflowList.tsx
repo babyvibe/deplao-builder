@@ -1,17 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
 import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '../../lib/ipc';
-import { useEmployeeStore } from '@/store/employeeStore';
-import { useAppStore } from '@/store/appStore';
-import { useAccountStore } from '@/store/accountStore';
+import { useEmployeeStore } from '@/store/employee/employeeStore';
+import { useAppStore } from '@/store/app/appStore';
+import { useAccountStore } from '@/store/accounts/accountStore';
 import { v4 as uuidv4 } from 'uuid';
 import { showConfirm } from '../common/ConfirmDialog';
 import PageLoading from '../common/PageLoading';
-import { FacebookIcon, ZaloIcon, TelegramIcon } from '../common/ChannelBadge';
-import type { Channel } from '../../../configs/channelConfig';
-import { getChannelColor, normalizeChannel, getChannelLabel } from '../../../configs/channelConfig';
+import { FacebookIcon, ZaloIcon, TelegramIcon } from '../common/avatars/ChannelBadge';
+import type { Channel } from '../../../configs/channels/channelConfig';
+import { getChannelColor, normalizeChannel, getChannelLabel } from '../../../configs/channels/channelConfig';
 import { ChatIcon, HomeIcon, LightningIcon, PackageIcon, PlayIcon, SearchIcon, SmartphoneIcon, TagIcon, UsersIcon } from '@/components/common/icons';
-import { CHANNEL } from '@/lib/channelHelper';
+import { CHANNEL } from '@/lib/channels/channelHelper';
 
 interface PageAccount {
   zalo_id: string;

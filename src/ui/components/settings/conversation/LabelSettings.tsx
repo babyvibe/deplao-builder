@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import DataAccessor from '@/lib/data/DataAccessor';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
-import { AccountInfo } from '@/store/accountStore';
-import { useAppStore } from '@/store/appStore';
+import { AccountInfo } from '@/store/accounts/accountStore';
+import { useAppStore } from '@/store/app/appStore';
 import { showConfirm } from '../../common/ConfirmDialog';
-import AccountSelectorDropdown, { AccountOption } from '../../common/AccountSelectorDropdown';
-import AccountMultiDropdown from '../../common/AccountMultiDropdown';
-import { syncZaloLabelsToLocalDB } from '@/lib/labelUtils';
-import { CHANNEL, isZalo } from '@/lib/channelHelper';
-import { LabelEmojiPicker, KeyboardShortcutInput } from '../../common/LabelEmojiPicker';
+import AccountSelectorDropdown, { AccountOption } from '../../common/accounts/AccountSelectorDropdown';
+import AccountMultiDropdown from '../../common/accounts/AccountMultiDropdown';
+import { syncZaloLabelsToLocalDB } from '@/lib/labels/labelUtils';
+import { CHANNEL, isZalo } from '@/lib/channels/channelHelper';
+import { LabelEmojiPicker, KeyboardShortcutInput } from '../../common/inputs/LabelEmojiPicker';
 import PageLoading from '@/components/common/PageLoading';
 import { AlertIcon, CheckIcon, ClipboardListIcon, CloudIcon, CloseIcon, EditIcon, HardDriveIcon, InboxIcon, PluginIcon, RefreshIcon, TagIcon } from '@/components/common/icons';
 
@@ -1001,33 +1001,33 @@ export default function LabelSettings({ accounts, filterAccounts, searchText }: 
   return (
     <div className="flex flex-col flex-1 min-h-0">
       {/* Sub-tabs + Actions - pill style giống trang bạn bè */}
-      <div className="bg-background px-4 py-2 border-b border-border flex items-center gap-2">
-        <div className="flex bg-card rounded-lg p-0.5 gap-0.5">
+      <div className="px-4 py-2.5 border-b border-border/60 flex items-center gap-2">
+        <div className="flex bg-muted rounded-lg p-1 gap-1">
           {([
             { id: 'local' as const, label: 'Local' },
             ...(!hideZaloTab ? [{ id: 'zalo' as const, label: 'Zalo' }] : []),
           ] as const).map(src => (
             <button key={src.id} onClick={() => setLabelSource(src.id)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap
-                ${effectiveLabelSource === src.id ? 'bg-blue-600 text-white shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}
+                ${effectiveLabelSource === src.id ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
             >{src.label}</button>
           ))}
         </div>
         {/* Help button - right next to tabs */}
         <button onClick={() => setShowHelp(true)} title="Hướng dẫn sử dụng"
-          className="p-1.5 hover:bg-muted rounded-full text-muted-foreground hover:text-blue-400 transition-colors">
+          className="p-1.5 hover:bg-muted rounded-full text-muted-foreground hover:text-primary transition-colors">
           <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>
           </svg>
         </button>
         {/* Action buttons */}
-        <div className="ml-auto pb-2 flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-2">
           {effectiveLabelSource === 'local' && (<>
             <button onClick={() => setCloneLabelModal(true)}
               className="bg-card hover:bg-muted text-foreground/80 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 border border-input"><ClipboardListIcon className="w-4 h-4 inline" /> Sao chép
             </button>
             <button onClick={() => setLabelModal({ open: true, data: null })}
-              className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5">
+              className="bg-primary hover:bg-primary-hover text-primary-foreground text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
               Thêm nhãn
             </button>
@@ -1052,7 +1052,7 @@ export default function LabelSettings({ accounts, filterAccounts, searchText }: 
                 onDragEnter={() => { labelDragOverRef.current = idx; setLabelDragOver(idx); }}
                 onDragOver={e => e.preventDefault()}
                 onDragEnd={() => handleLabelReorder(filteredLabels)}
-                className={labelDragOver === idx && labelDragging !== idx ? 'ring-2 ring-blue-400/60 rounded-xl' : ''}
+                className={labelDragOver === idx && labelDragging !== idx ? 'ring-2 ring-primary/50 rounded-xl' : ''}
               >
                 <LabelRow item={item} getAccountName={getAccountName} getAccountPhone={getAccountPhone} getAccountAvatar={getAccountAvatar}
                   onEdit={() => setLabelModal({ open: true, data: item })}

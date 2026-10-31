@@ -6,11 +6,11 @@
  * online của người khác.
  *
  * getFriendOnlines (/api/social/friend/onlines) trả HTTP 404 — gặp trên tài khoản thật ngày 22/10/2026, zca-js 2.2.0 mới
- * nhất vẫn gọi đường này → tạm tắt hẳn bằng ZALO_FRIEND_ONLINES_ENABLED (shared/zaloPresence). Khi bật lại mà vẫn gặp 404
+ * nhất vẫn gọi đường này → tạm tắt hẳn bằng ZALO_FRIEND_ONLINES_ENABLED (shared/zalo/zaloPresence). Khi bật lại mà vẫn gặp 404
  * → tài khoản đó không hỏi lại trong phiên app: chấm xanh tắt, trạng thái truy cập chỉ dựa vào lastOnline.
  */
 import Logger from '../../utils/Logger';
-import { type ZaloPresence, ZALO_FRIEND_ONLINES_ENABLED, zaloOnlineIds, zaloPresenceFrom } from '../../shared/zaloPresence';
+import { type ZaloPresence, ZALO_FRIEND_ONLINES_ENABLED, zaloOnlineIds, zaloPresenceFrom } from '../../shared/zalo/zaloPresence';
 
 export const ZALO_PRESENCE_TTL_MS = 60_000;
 const CALL_TIMEOUT_MS = 15_000;

@@ -1,19 +1,19 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import DataAccessor from '@/lib/data/DataAccessor';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
-import { AccountInfo } from '@/store/accountStore';
-import { useAppStore } from '@/store/appStore';
+import { AccountInfo } from '@/store/accounts/accountStore';
+import { useAppStore } from '@/store/app/appStore';
 import { showConfirm } from '../../common/ConfirmDialog';
-import AccountSelectorDropdown, { AccountOption } from '../../common/AccountSelectorDropdown';
-import AccountMultiDropdown from '../../common/AccountMultiDropdown';
-import { QuickMessage, LocalMediaFile, fetchZaloQuickMessages, invalidateZaloQuickMessageCache } from '../../chat/QuickMessageManager';
-import { toLocalMediaUrl } from '@/lib/localMedia';
-import { CHANNEL, isZalo } from '@/lib/channelHelper';
+import AccountSelectorDropdown, { AccountOption } from '../../common/accounts/AccountSelectorDropdown';
+import AccountMultiDropdown from '../../common/accounts/AccountMultiDropdown';
+import { QuickMessage, LocalMediaFile, fetchZaloQuickMessages, invalidateZaloQuickMessageCache } from '../../chat/composer/QuickMessageManager';
+import { toLocalMediaUrl } from '@/lib/media/localMedia';
+import { CHANNEL, isZalo } from '@/lib/channels/channelHelper';
 import {
   QMConflictMode, QMMediaFile, findSharedCopies, formatAccountNames, groupSharedCopies, mediaFileName,
   pickOwnMediaCopy, planQuickMessageSave, qmContentSignature, rowsByOwnerForKeyword, summarizeQuickMessageResult,
-} from '@/lib/quickMessageAccounts';
-import PhoneDisplay from '@/components/common/PhoneDisplay';
+} from '@/lib/chat/composer/quickMessageAccounts';
+import PhoneDisplay from '@/components/common/inputs/PhoneDisplay';
 import { AlertIcon, ChartIcon, ClipboardListIcon, CloudIcon, HardDriveIcon, ImageIcon, InboxIcon, LightningIcon, PluginIcon, PlusIcon, RefreshIcon, UsersIcon } from '@/components/common/icons';
 
 
@@ -239,7 +239,7 @@ function ZaloMsgRow({ item, onEdit, onDelete }: { item: QuickMessage; onEdit: ()
 // ─── Modal: Local Quick Message ───────────────────────────────────────────────
 // Multi-account like LabelModal (AccountMultiDropdown). Labels share ONE row (`page_ids`);
 // local quick messages are one row per account, so the rules live in planQuickMessageSave()
-// (@/lib/quickMessageAccounts): the same keyword + content on several accounts is one shared
+// (@/lib/chat/composer/quickMessageAccounts): the same keyword + content on several accounts is one shared
 // item, a deselected sharing account loses it, an account that already uses the keyword with
 // other content is a conflict resolved once (overwrite / skip).
 interface LocalMsgSaveData {
@@ -1136,21 +1136,21 @@ export default function QuickMessageSettings({ accounts, filterAccounts, searchT
   return (
     <div className="flex flex-col flex-1 min-h-0">
       {/* Sub-tabs + Actions header */}
-      <div className="bg-background px-4 py-2 border-b border-border flex items-center gap-2">
-        <div className="flex bg-card rounded-lg p-0.5 gap-0.5">
+      <div className="px-4 py-2.5 border-b border-border/60 flex items-center gap-2">
+        <div className="flex bg-muted rounded-lg p-1 gap-1">
           {([
             { id: 'local' as const, label: 'Local' },
             ...(!hideZaloTab ? [{ id: 'zalo' as const, label: 'Zalo' }] : []),
           ] as const).map(src => (
             <button key={src.id} onClick={() => setSource(src.id)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap
-                ${effectiveSource === src.id ? 'bg-blue-600 text-white shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}
+                ${effectiveSource === src.id ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
             >{src.label}</button>
           ))}
         </div>
         {/* Help button - right next to tabs */}
         <button onClick={() => setShowHelp(true)} title="Hướng dẫn sử dụng"
-          className="p-1.5 hover:bg-muted rounded-full text-muted-foreground hover:text-blue-400 transition-colors">
+          className="p-1.5 hover:bg-muted rounded-full text-muted-foreground hover:text-primary transition-colors">
           <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>
           </svg>
@@ -1162,7 +1162,7 @@ export default function QuickMessageSettings({ accounts, filterAccounts, searchT
               className="bg-card hover:bg-muted text-foreground/80 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 border border-input"><ClipboardListIcon className="w-4 h-4 inline" /> Sao chép
             </button>
             <button onClick={() => setLocalMsgModal({ open: true, data: null })}
-              className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5">
+              className="bg-primary hover:bg-primary-hover text-primary-foreground text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
               Thêm mới
             </button>
@@ -1174,7 +1174,7 @@ export default function QuickMessageSettings({ accounts, filterAccounts, searchT
               </button>
             )}
             <button onClick={() => setZaloMsgModal({ open: true, data: null })} disabled={!isConnected}
-              className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="bg-primary hover:bg-primary-hover text-primary-foreground text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
               title={isConnected ? undefined : 'Tài khoản chưa kết nối'}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
               Thêm lên Zalo
@@ -1195,7 +1195,7 @@ export default function QuickMessageSettings({ accounts, filterAccounts, searchT
                 onDragEnter={() => { qmDragOverRef.current = idx; setQMDragOver(idx); }}
                 onDragOver={e => e.preventDefault()}
                 onDragEnd={() => handleQMReorder(filteredLocalMessages)}
-                className={qmDragOver === idx && qmDragging !== idx ? 'ring-2 ring-blue-400/60 rounded-xl' : ''}
+                className={qmDragOver === idx && qmDragging !== idx ? 'ring-2 ring-primary/50 rounded-xl' : ''}
               >
                 <LocalMsgRow item={item}
                   accountName={getAccountName(item.owner_zalo_id)}

@@ -4,7 +4,7 @@
  */
 import * as crypto from 'crypto';
 import * as fs from 'fs';
-import { ALL_SCOPE, CloudScope, MediaSyncOptions, normalizeScope, sameScope } from '../../../shared/cloudContracts';
+import { ALL_SCOPE, CloudScope, MediaSyncOptions, normalizeScope, sameScope } from '../../../shared/cloud/cloudContracts';
 
 export const SECOND = 1000;
 export const MINUTE = 60 * SECOND;

@@ -1,6 +1,6 @@
 /**
  * Account filter of the Reports page (AnalyticsPage): several accounts, remembered in localStorage.
- * Pure — covered by src/__tests__/analyticsMerge.test.ts.
+ * Pure — covered by src/__tests__/analytics/analyticsMerge.test.ts.
  */
 
 export const ANALYTICS_ACCOUNTS_STORAGE_KEY = 'deplao:analytics-accounts:v1';

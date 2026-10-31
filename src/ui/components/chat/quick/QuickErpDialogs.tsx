@@ -3,7 +3,7 @@
  * Không theo tài khoản chat: lưu vào lịch / ghi chú của người đang dùng app.
  */
 import React, { useState } from 'react';
-import { useAppStore } from '@/store/appStore';
+import { useAppStore } from '@/store/app/appStore';
 import { useErpCalendarStore } from '@/store/erp/erpCalendarStore';
 import { useErpNoteStore } from '@/store/erp/erpNoteStore';
 import {
@@ -13,9 +13,9 @@ import {
   QUICK_EVENT_DURATIONS, QUICK_EVENT_TYPES, buildQuickEventInput, defaultQuickEventStart, quickEventInputsAt,
   quickNoteTitle, type QuickEventDuration,
 } from './quickEvent';
-import ReminderChips from '@/features/erp/shared/ReminderChips';
+import ReminderChips from '@/components/erp/shared/ReminderChips';
 import type { ErpEventType } from '../../../../models/erp/CalendarEvent';
-import { DEFAULT_ERP_REMINDERS } from '../../../../shared/erpReminderText';
+import { DEFAULT_ERP_REMINDERS } from '../../../../shared/erp/erpReminderText';
 
 function Field({ label, htmlFor, children }: { label: string; htmlFor?: string; children: React.ReactNode }) {
   return (
@@ -33,7 +33,7 @@ const formatWhen = (ts: number, allDay: boolean) => {
   return allDay ? `ngày ${day}` : `${pad2(d.getHours())}:${pad2(d.getMinutes())} ${day}`;
 };
 
-/** Giá trị điền sẵn (vd "Thêm vào lịch" từ tin nhắn: lib/chat/messageToErp). */
+/** Giá trị điền sẵn (vd "Thêm vào lịch" từ tin nhắn: lib/chat/erp/messageToErp). */
 export interface QuickEventInitial {
   title?: string;
   /** Thời điểm bắt đầu (ms); không có → nửa giờ tròn kế tiếp. */

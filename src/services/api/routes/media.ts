@@ -6,9 +6,9 @@
 import * as fs from 'fs';
 import { s } from '../schema';
 import { ApiContext, ApiError, route, RouteDef } from '../types';
-import { accountAllowed } from '../ApiAuth';
+import { accountAllowed } from '../auth/ApiAuth';
 import { UploadStore, parseMultipartFile } from '../UploadStore';
-import { readBodyBuffer } from '../http';
+import { readBodyBuffer } from '../http/http';
 import { getApiSettingNumber } from '../settings';
 import { accountParams, notFound, offsetPage } from './common';
 import { streamFile } from './chat';

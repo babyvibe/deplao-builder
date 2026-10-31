@@ -141,7 +141,7 @@ export interface DeplaoWeb extends DeplaoCommon {
  * Token Cloudflare không bao giờ đưa cho ứng dụng. Tên Worker / D1 phải ĐÚNG BẰNG tiền tố của ứng dụng (phần cuối id,
  * vd "io.github.acme.fintrack" → "fintrack") hoặc bắt đầu bằng "<tiền tố>-" (1–63 ký tự a-z, 0-9, "-").
  * Lỗi: DeplaoApiError với code PLUGIN_PERMISSION | CF_NOT_CONNECTED | CF_PERMISSION | CF_NAME_FORBIDDEN |
- * CF_BUNDLE_INVALID | CF_API (+ VALIDATION_ERROR, NOT_FOUND, CONFLICT, TIMEOUT).
+ * CF_BUNDLE_INVALID | CF_API | CF_DECLINED (+ VALIDATION_ERROR, NOT_FOUND, CONFLICT, TIMEOUT).
  * Mỗi lời gọi tốn request trong ngân sách 100 request / 5 phút dùng chung của Deplao — đừng gọi theo vòng lặp.
  */
 export interface DeplaoCloudflare {
@@ -157,6 +157,8 @@ export interface DeplaoCloudflare {
     /** Quyền token còn thiếu, vd ["Account · D1 · Edit"]; rỗng = đủ. */
     missing: string[];
   }>;
+  /** Tên miền đang hoạt động trong tài khoản Cloudflare (để người dùng chọn khi gắn tên miền riêng), nhớ ~5 phút. */
+  zones(): Promise<Array<{ id: string; name: string }>>;
   d1: {
     /** Tìm theo tên, chưa có thì tạo (location hint 'apac'). */
     ensure(name: string): Promise<{ uuid: string; name: string; created: boolean }>;
@@ -193,6 +195,20 @@ export interface DeplaoCloudflare {
       /** Bật route <tên>.<subdomain>.workers.dev (mặc định true). */
       workersDev?: boolean;
     }): Promise<{ name: string; url: string | null; deployedAt: number }>;
+    /**
+     * Tên miền riêng (Workers Custom Domain) của Worker: Cloudflare tự tạo bản ghi DNS + chứng chỉ, vài phút sau tên mới
+     * trả lời được (HTTPS). Chỉ tên con mới của một tên miền trong tài khoản: không gắn tên miền gốc, không đè bản ghi DNS
+     * đang có (CONFLICT), không lấy tên đang gắn cho Worker khác. Trước khi ghi, Deplao hỏi người dùng bằng hộp thoại của
+     * Deplao: bấm "Không" → CF_DECLINED (60 giây sau mới hỏi lại được). Thiếu quyền Zone / DNS của token → CF_PERMISSION.
+     */
+    domains: {
+      /** Tên miền đang gắn cho Worker `name` (nhớ ~1 phút, gắn / gỡ thì đọc lại). */
+      list(name: string): Promise<Array<{ id: string; hostname: string; zoneId: string; zoneName: string }>>;
+      /** created = false: tên đã gắn sẵn cho Worker này (không hỏi, không đổi gì). */
+      attach(name: string, hostname: string): Promise<{ id: string; hostname: string; zoneId: string; zoneName: string; created: boolean }>;
+      /** removed = false: tên không gắn cho Worker này (tên của Worker khác không bao giờ bị gỡ). */
+      detach(name: string, hostname: string): Promise<{ removed: boolean }>;
+    };
   };
 }
 

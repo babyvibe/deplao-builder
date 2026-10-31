@@ -36,6 +36,24 @@ const MAX_CRITICAL_QUEUE_SIZE = 2000;
 /** Dedup window — events with same ID within this window are dropped */
 const DEDUP_WINDOW_MS = 5000;
 
+/**
+ * Khoá chống trùng của một sự kiện bridge: loại + id tin; cảm xúc thêm người thả, cảm xúc, thời điểm; sửa tin thêm lần
+ * sửa. Trước đây chỉ là id tin → cảm xúc / sửa / thu hồi tới trong 5 s sau chính tin đó bị coi là bản trùng và bỏ (thu
+ * hồi là sự kiện quan trọng nên còn làm khởi động lại bridge).
+ */
+export function bridgeEventKey(evt: any): string {
+  const type = String(evt?.type || '');
+  const data = evt?.data || {};
+  const id = data.messageId || data.id;
+  if (!id) return `evt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  if (type === 'reaction' || type === 'e2eeReaction') {
+    const actor = data.userId ?? data.senderId ?? data.senderJid ?? '';
+    return `${type}:${id}:${actor}:${data.emoji ?? data.reaction ?? ''}:${data.timestampMs ?? ''}`;
+  }
+  if (type === 'messageEdit') return `${type}:${id}:${data.editCount ?? ''}:${data.newText ?? ''}`;
+  return `${type}:${id}`;
+}
+
 export class FacebookEventPipeline {
   private accountId: string;
   private queue: PipelineEvent[] = [];
@@ -87,8 +105,7 @@ export class FacebookEventPipeline {
 
     // Dedup by durable identity
     const now = Date.now();
-    const lastSeen = this.seenEvents.get(id);
-    if (this.queuedEventIds.has(id) || (lastSeen && (now - lastSeen) < DEDUP_WINDOW_MS)) {
+    if (this.isDuplicate(id)) {
       Logger.log(`[EventPipeline:${this.accountId}] Deduped event id=${id}`);
       return false;
     }
@@ -152,6 +169,15 @@ export class FacebookEventPipeline {
       this.seenCleanupTimer = null;
     }
     Logger.log(`[EventPipeline:${this.accountId}] Stopped. Processed=${this.processedCount} Dropped=${this.droppedCount}`);
+  }
+
+  /**
+   * Sự kiện cùng khoá đang chờ hoặc vừa xử lý xong (trong DEDUP_WINDOW_MS): enqueue sẽ bỏ như bản trùng. Người gọi dùng
+   * để phân biệt "bỏ vì trùng" (đã xử lý rồi) với "bỏ vì hàng đợi đầy" (cần khôi phục).
+   */
+  isDuplicate(id: string): boolean {
+    const lastSeen = this.seenEvents.get(id);
+    return this.queuedEventIds.has(id) || (lastSeen !== undefined && (Date.now() - lastSeen) < DEDUP_WINDOW_MS);
   }
 
   /**

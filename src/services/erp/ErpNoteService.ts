@@ -7,6 +7,7 @@ import type {
   ErpNoteShare, NoteSharePermission, NoteShareScope,
 } from '../../models/erp';
 import ErpNotificationService from './ErpNotificationService';
+import { erpPersonName } from './erpPeople';
 
 export default class ErpNoteService {
   private static instance: ErpNoteService;
@@ -269,7 +270,7 @@ export default class ErpNoteService {
         ErpNotificationService.getInstance().notify(
           s.employeeId, 'note_shared',
           `Ghi chú được chia sẻ: ${note.title}`,
-          `Bởi ${actorId} - quyền: ${s.permission}`,
+          `Bởi ${erpPersonName(actorId)} · ${s.permission === 'edit' ? 'Được sửa' : 'Chỉ xem'}`,
           `erp://note/${noteId}`,
           { noteId, permission: s.permission, channels: ['toast'] }
         );

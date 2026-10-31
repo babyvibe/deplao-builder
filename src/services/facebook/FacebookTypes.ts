@@ -3,7 +3,7 @@
  * Tất cả TypeScript interfaces và types cho Facebook integration
  */
 
-import type { FbTemplate } from '../../shared/facebookTemplate';
+import type { FbTemplate } from '../../shared/facebook/facebookTemplate';
 
 // ─── Session & Auth ───────────────────────────────────────────────────────────
 
@@ -213,7 +213,7 @@ export interface FBMQTTAttachment {
   mediaSha256?: string;
   /** Encrypted media SHA256 hash (base64) for E2EE decryption */
   mediaEncSha256?: string;
-  /** Tin mẫu của Page (attachmentType 'template'): chữ, ảnh, nút, carousel — xem shared/facebookTemplate.ts */
+  /** Tin mẫu của Page (attachmentType 'template'): chữ, ảnh, nút, carousel — xem shared/facebook/facebookTemplate.ts */
   template?: FbTemplate;
 }
 

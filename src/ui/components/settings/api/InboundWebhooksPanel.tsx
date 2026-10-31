@@ -10,8 +10,8 @@ import ipc from '@/lib/ipc';
 import { CreditCardIcon, InfoIcon, LightningIcon } from '@/components/common/icons';
 import { Badge, Button, Card, Input } from '@/components/ui';
 import { cn } from '@/lib/cn';
-import PublicAddressCard, { usePublicAddresses } from '@/components/common/PublicAddressCard';
-import type { TunnelServiceId } from '../../../../shared/cloudContracts';
+import PublicAddressCard, { usePublicAddresses } from '@/components/common/cloud/PublicAddressCard';
+import type { TunnelServiceId } from '../../../../shared/cloud/cloudContracts';
 
 const PORT_KEYS = { integration: 'webhook_port_integration', workflow: 'webhook_port_workflow' } as const;
 type ServiceKey = keyof typeof PORT_KEYS;

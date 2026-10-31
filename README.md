@@ -9,7 +9,7 @@ Tích hợp CRM · MARKETING · ERP · POS · Workflow · Trợ lý AI - vận h
 
 [🌐 Website](https://deplaoapp.com/) · [🇬🇧 English](./README.en.md)
 
-![Version](https://img.shields.io/badge/version-26.10.3-22c55e)
+![Version](https://img.shields.io/badge/version-26.10.4-22c55e)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Ubuntu-3b82f6)
 ![Electron](https://img.shields.io/badge/Electron-41-47848f?logo=electron&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61dafb?logo=react&logoColor=white)
@@ -42,41 +42,41 @@ Tích hợp CRM · MARKETING · ERP · POS · Workflow · Trợ lý AI - vận h
 <tr>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-Setup-26.10.3.exe">
-<img src="https://img.shields.io/badge/🪟_Windows_10/11-v26.10.3-0078d4?style=for-the-badge&logo=windows&logoColor=white" alt="Download Windows" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-Setup-26.10.4.exe">
+<img src="https://img.shields.io/badge/🪟_Windows_10/11-v26.10.4-0078d4?style=for-the-badge&logo=windows&logoColor=white" alt="Download Windows" />
 </a>
 
-<big><strong>Deplao-Setup-26.10.3.exe</strong></big>
+<big><strong>Deplao-Setup-26.10.4.exe</strong></big>
 
 </td>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.10.3-arm64.dmg">
-<img src="https://img.shields.io/badge/🍎_macOS_M1+-v26.10.3-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Apple Silicon" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.10.4-arm64.dmg">
+<img src="https://img.shields.io/badge/🍎_macOS_M1+-v26.10.4-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Apple Silicon" />
 </a>
 
-<big><strong>Deplao-26.10.3-arm64.dmg</strong></big>
+<big><strong>Deplao-26.10.4-arm64.dmg</strong></big>
 
 </td>
 </tr>
 <tr>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.10.3.AppImage">
-<img src="https://img.shields.io/badge/🐧_Ubuntu_Linux-v26.10.3-e95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Download Ubuntu" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.10.4.AppImage">
+<img src="https://img.shields.io/badge/🐧_Ubuntu_Linux-v26.10.4-e95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Download Ubuntu" />
 </a>
 
-<big><strong>Deplao-26.10.3.AppImage</strong></big><br>
+<big><strong>Deplao-26.10.4.AppImage</strong></big><br>
 <big>chạy mọi distro - <code>chmod +x</code> là dùng được</big>
 
 </td>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.10.3.dmg">
-<img src="https://img.shields.io/badge/🍎_macOS_Intel-v26.10.3-555555?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Intel" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.10.4.dmg">
+<img src="https://img.shields.io/badge/🍎_macOS_Intel-v26.10.4-555555?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Intel" />
 </a>
 
-<big><strong>Deplao-26.10.3.dmg</strong></big>
+<big><strong>Deplao-26.10.4.dmg</strong></big>
 
 </td>
 </tr>
@@ -419,7 +419,7 @@ node packages/plugin-cli/bin/deplao-plugin.js pack my-app --out my-app.zip
 Nếu nhìn nhanh, có thể hiểu Deplao là:
 
 - **trung tâm vận hành**: nhiều tài khoản Zalo, Facebook, Telegram, inbox tập trung, trả lời nhanh, đồng bộ lịch sử chat
-- **lớp quản lý khách hàng**: CRM, nhãn, lịch sử tương tác, chiến dịch gửi tin
+- **lớp quản lý khách hàng**: CRM, nhãn, lịch sử tương tác, chiến dịch cho bạn bè và khách hàng đã nhắn tin
 - **lớp tự động hóa**: workflow, AI, trigger và action chạy nền
 - **lớp kết nối kinh doanh**: POS, vận chuyển, thanh toán, Public API, webhook và ứng dụng tự phát triển
 - **lớp quản trị nội bộ**: báo cáo, ERP, phân quyền, workspace nhân viên, sao lưu đám mây
@@ -429,7 +429,7 @@ Nếu nhìn nhanh, có thể hiểu Deplao là:
 - 👤 **Đa tài khoản Zalo, Facebook, Telegram Bot, Telegram User** - đăng nhập không giới hạn tài khoản, chuyển đổi qua lại nhanh
 - 💬 **Hộp thư tập trung** - chế độ gộp tài khoản giúp gom và xử lý hội thoại từ nhiều tài khoản trong một giao diện duy nhất
 - 📱 **Đồng bộ tin nhắn cũ** - kéo lịch sử chat Zalo từ điện thoại về app theo khoảng thời gian; Facebook đồng bộ lịch sử Messenger theo khoảng thời gian
-- 👥 **CRM & Campaign** - quản lý liên hệ, nhãn, ghi chú nội bộ, chăm sóc khách cũ. Quét thành viên nhóm ẩn, nhóm chưa tham gia để tìm khách mới; chiến dịch gửi tin xem trước nội dung như khung chat, thống kê realtime
+- 👥 **CRM & Campaign** - quản lý liên hệ, nhãn, ghi chú nội bộ, chăm sóc khách cũ; gửi chiến dịch cho bạn bè và khách hàng đã nhắn tin, xem trước nội dung như khung chat, thống kê realtime
 - ⚙️ **Workflow tự động hóa** - kéo-thả Trigger → Node → Action hoặc trò chuyện với AI copilot để tạo quy trình, chạy thử ở chế độ Mô phỏng, chạy nền 24/7 không cần code
 - 🤖 **AI Assistant** - hỗ trợ gợi ý câu trả lời, chat trực tiếp trong hội thoại. Còn giúp phân loại tin nhắn, trả lời khách hàng 24/7.
 - 🔗 **Tích hợp ngoài** - POS, vận chuyển, thanh toán, Google Sheets, Telegram, Email, HTTP Request... Kết hợp sử dụng khi chat hoặc workflow
@@ -467,27 +467,22 @@ Các màn hình dưới đây được sắp theo luồng sử dụng thực t�
   </tr>
   <tr>
     <td>
-      <img src="./assets/scan-members-group.png" alt="Quét thành viên nhóm Zalo trong Deplao" width="360" />
+      <img src="./assets/campaign.png" alt="Chiến dịch cho bạn bè và khách hàng đã nhắn tin trong Deplao" width="360" />
       <br />
-      <sub><strong>Quét thành viên nhóm</strong></sub>
-    </td>
-    <td>
-      <img src="./assets/campaign.png" alt="Chiến dịch gửi tin hàng loạt trong Deplao" width="360" />
-      <br />
-      <sub><strong>Chiến dịch gửi tin hàng loạt</strong></sub>
+      <sub><strong>Chiến dịch cho bạn bè, khách đã nhắn tin</strong></sub>
     </td>
     <td>
       <img src="./assets/workflow.png" alt="Trình thiết kế workflow kéo thả trong Deplao" width="360" />
       <br />
       <sub><strong>Workflow editor</strong></sub>
     </td>
-  </tr>
-  <tr>
     <td>
       <img src="./assets/detail-workflow.png" alt="Chi tiết cấu hình workflow trong Deplao" width="360" />
       <br />
       <sub><strong>Chi tiết workflow</strong></sub>
     </td>
+  </tr>
+  <tr>
     <td>
       <img src="./assets/workflow-ai.png" alt="Workflow kết hợp AI trong Deplao" width="360" />
       <br />
@@ -498,13 +493,13 @@ Các màn hình dưới đây được sắp theo luồng sử dụng thực t�
       <br />
       <sub><strong>Tích hợp POS, VC, Thanh toán</strong></sub>
     </td>
-  </tr>
-  <tr>
     <td>
       <img src="./assets/report.png" alt="Báo cáo và phân tích hiệu suất trong Deplao" width="360" />
       <br />
       <sub><strong>Báo cáo & phân tích</strong></sub>
     </td>
+  </tr>
+  <tr>
     <td>
       <img src="./assets/employees.png" alt="Quản lý nhân viên và phân quyền trong Deplao" width="360" />
       <br />
@@ -515,13 +510,13 @@ Các màn hình dưới đây được sắp theo luồng sử dụng thực t�
       <br />
       <sub><strong>ERP nội bộ</strong></sub>
     </td>
-  </tr>
-  <tr>
     <td>
       <img src="./assets/apps-api.png" alt="Ứng dụng, API và Webhook trong Deplao" width="360" />
       <br />
       <sub><strong>Ứng dụng, API & Webhook</strong></sub>
     </td>
+  </tr>
+  <tr>
     <td>
       <img src="./assets/cloud.png" alt="Internet và Đám mây với Cloudflare, Google Drive trong Deplao" width="360" />
       <br />
@@ -540,7 +535,7 @@ Các màn hình dưới đây được sắp theo luồng sử dụng thực t�
 Deplao phù hợp cho:
 
 - Shop online và đội ngũ chốt đơn qua Zalo, Facebook, Telegram
-- Tự động hoá quy trình làm việc, kết hợp marketing để tìm kiếm khách hàng mới, tự động hóa chăm sóc khách hàng
+- Tự động hoá quy trình làm việc và chăm sóc khách hàng, gửi chiến dịch cho bạn bè và khách hàng đã nhắn tin
 - Doanh nghiệp SME cần nhiều nhân viên xử lý inbox cùng lúc
 - Marketing agency hoặc freelancer quản lý nhiều tài khoản khách hàng
 - Spa, phòng khám, giáo dục, F&B và các mô hình cần chăm sóc khách hàng định kỳ
@@ -572,12 +567,11 @@ Deplao phù hợp cho:
 - Telegram: tạo nhóm / kênh, quản lý nhóm / kênh, danh bạ, nhật ký cuộc gọi, bảng Sticker · GIF đồng bộ tài khoản
 
 ### 3) CRM & chăm sóc khách hàng
-- Đồng bộ bạn bè, thành viên nhóm và hồ sơ liên hệ
-- Quét thành viên nhóm Zalo theo link, kể cả nhóm ẩn danh sách thành viên hoặc nhóm đang chờ duyệt; kết quả lưu vào CRM để kết bạn, nhắn tin, mời vào nhóm
+- Đồng bộ bạn bè, nhóm đã tham gia và hồ sơ liên hệ
 - Lưu số điện thoại, giới tính, ngày sinh, ghi chú nội bộ
 - Tạo và quản lý nhãn Zalo hai chiều, nhãn Local dùng chung nhiều tài khoản
 - Lọc liên hệ theo nhiều tiêu chí để chăm sóc đúng nhóm khách hàng
-- Tạo campaign gửi tin, kết bạn, mời vào nhóm với tiến độ realtime; xem trước nội dung như khung chat, tuỳ chọn gửi ảnh trước / chữ trước hoặc gộp ảnh + chữ
+- Gửi chiến dịch cho bạn bè và khách hàng đã nhắn tin (tin nhắn, mời vào nhóm) với tiến độ realtime; xem trước nội dung như khung chat, tuỳ chọn gửi ảnh trước / chữ trước hoặc gộp ảnh + chữ
 
 ### 4) Workflow tự động hóa
 - Workflow kéo-thả không cần code, sơ đồ có nút sắp xếp tự động
@@ -597,7 +591,7 @@ Deplao phù hợp cho:
 
 ### 6) Báo cáo, ERP và nhân viên
 - Báo cáo tin nhắn, liên hệ, chiến dịch, workflow, AI, nhân viên
-- ERP nội bộ gồm Task, Calendar, Notes
+- ERP nội bộ gồm Task, Calendar, Notes; báo việc cho nhân viên qua Zalo (giao việc, sắp đến hạn, nghỉ phép)
 - Mô hình boss ↔ nhân viên và phân quyền module, nhân viên chỉ thấy tài khoản được giao
 - Nhân viên kết nối qua LAN hoặc Internet, tự kết nối lại, đồng bộ realtime cả sửa / xoá / cảm xúc
 - Hỗ trợ theo dõi hiệu suất làm việc theo từng người và từng giai đoạn

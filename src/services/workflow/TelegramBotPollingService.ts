@@ -10,8 +10,8 @@
 import Logger from '../../utils/Logger';
 import WorkflowEngineService from '../workflow/WorkflowEngineService';
 import IntegrationRegistry from '../integrations/IntegrationRegistry';
-import * as BotIngress from '../telegram/TelegramBotIngressService';
-import type { BotAccount, NormalizedUpdate, BotUpdateConsumer } from '../telegram/TelegramBotIngressService';
+import * as BotIngress from '../telegram/bot/TelegramBotIngressService';
+import type { BotAccount, NormalizedUpdate, BotUpdateConsumer } from '../telegram/bot/TelegramBotIngressService';
 
 /** Map integrationId → consumer reference (for unregister) */
 const registeredConsumers = new Map<string, BotUpdateConsumer>();
